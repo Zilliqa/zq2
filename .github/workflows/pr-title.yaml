@@ -1,0 +1,20 @@
+name: Check PR title
+# This workflow is triggered on pushes to the repository.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  build:
+    name: Check that PR is associated with Jira ticket
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: deepakputhraya/action-pr-title@master
+        with:
+          regex: '(ZQ2)\-\d+\:\s+.*'
+          allowed_prefixes: "ZQ2" # title should start with the given prefix
+          disallowed_prefixes: "release/,feature/,feat/,hotfix"
+          prefix_case_sensitive: true
+          min_length: 5
+          max_length: 100
+          github_token: ${{ github.token }}
