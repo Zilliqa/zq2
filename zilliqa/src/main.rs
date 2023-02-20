@@ -144,12 +144,6 @@ async fn main() -> Result<()> {
 
                     node.add_peer(peer_id, public_key)?;
                 }
-                SwarmEvent::Behaviour(BehaviourEvent::Kademlia(KademliaEvent::OutboundQueryProgressed {
-                    result: QueryResult::GetRecord(Err(e)),
-                    ..
-                })) => {
-                    return Err(anyhow!("failed to get public key: {e:?}"));
-                }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(GossipsubEvent::Message{
                     message: GossipsubMessage {
                         source,
