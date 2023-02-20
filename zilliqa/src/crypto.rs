@@ -57,7 +57,7 @@ impl<'de> Deserialize<'de> for Signature {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PublicKey(bls_signatures::PublicKey);
 
 impl PublicKey {
@@ -67,10 +67,6 @@ impl PublicKey {
 
     pub fn as_bytes(&self) -> Vec<u8> {
         self.0.as_bytes()
-    }
-
-    pub fn from_hex(s: &str) -> Result<PublicKey> {
-        PublicKey::from_bytes(&hex::decode(s)?)
     }
 
     pub fn verify(&self, message: &[u8], signature: Signature) -> Result<()> {
