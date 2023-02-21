@@ -1,7 +1,7 @@
 [workspace]
 
 members = [
- "p2p",
+ "zilliqa",
 ]
 
 
@@ -21,4 +21,3 @@ inherits = "release"
 # Enable "thin" LTO to reduce both the compilation time and the binary size.
 # See: https://doc.rust-lang.org/cargo/reference/profiles.html#lto
 lto = "thin"
-

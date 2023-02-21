@@ -1,0 +1,626 @@
+use std::collections::BTreeMap;
+
+use anyhow::{anyhow, Result};
+use bitvec::bitvec;
+use libp2p::PeerId;
+use tokio::sync::mpsc::UnboundedSender;
+
+use crate::{
+    crypto::{verify_messages, Hash, PublicKey, SecretKey, Signature},
+    message::{
+        AggregateQc, BitSlice, BitVec, Block, BlockRequest, BlockResponse, Message, NewView,
+        Proposal, QuorumCertificate, Vote,
+    },
+};
+
+#[derive(Debug, Clone)]
+pub struct ValidatorSet {
+    pub public_keys: Vec<PublicKey>,
+    pub peer_ids: Vec<PeerId>,
+    pub weights: Vec<u128>,
+}
+
+impl ValidatorSet {
+    pub fn get_leader(&self, view: u64) -> u16 {
+        // currently it's a simple round robin but later
+        // we will select the leader based on the weights
+        (view % (self.weights.len() as u64)) as u16
+    }
+
+    pub fn total(&self) -> u128 {
+        self.weights.iter().sum()
+    }
+
+    pub fn check_quorum_in_bits(&self, cosigned: &BitSlice) -> Result<()> {
+        let cosigned_sum: u128 = self
+            .weights
+            .iter()
+            .enumerate()
+            .map(|(i, weight)| if cosigned[i] { *weight } else { 0 })
+            .sum();
+
+        if cosigned_sum * 3 <= self.total() * 2 {
+            return Err(anyhow!("no quorum"));
+        }
+
+        Ok(())
+    }
+
+    pub fn check_quorum_in_indices(&self, signers: &[u16]) -> Result<()> {
+        let signed_sum: u128 = signers.iter().map(|i| self.weights[*i as usize]).sum();
+
+        if signed_sum * 3 <= self.total() * 2 {
+            return Err(anyhow!("no quorum"));
+        }
+
+        Ok(())
+    }
+}
+
+pub struct Node {
+    index: u16,
+    committee: ValidatorSet,
+    blocks: BTreeMap<Hash, Block>,
+    votes: BTreeMap<Hash, (Vec<Signature>, BitVec, u128)>,
+    new_views: BTreeMap<
+        u64,
+        (
+            Vec<Signature>,
+            Vec<u16>,
+            BitVec,
+            u128,
+            Vec<QuorumCertificate>,
+        ),
+    >,
+    high_qc: Option<QuorumCertificate>, // none before we receive the first proposal
+    view: u64,
+    secret_key: SecretKey,
+    /// The latest block in the chain.
+    head: Hash,
+    /// The latest finalized block.
+    finalized: Hash,
+    message_sender: UnboundedSender<(PeerId, Message)>,
+    reset_timeout: UnboundedSender<()>,
+}
+
+impl Node {
+    pub fn new(
+        index: u16,
+        committee: ValidatorSet,
+        secret_key: SecretKey,
+        genesis: Block,
+        message_sender: UnboundedSender<(PeerId, Message)>,
+        reset_timeout: UnboundedSender<()>,
+    ) -> Result<Node> {
+        let mut node = Node {
+            index,
+            committee,
+            blocks: BTreeMap::new(),
+            votes: BTreeMap::new(),
+            new_views: BTreeMap::new(),
+            high_qc: Some(genesis.qc.clone()),
+            view: 0,
+            secret_key,
+            head: genesis.hash,
+            finalized: genesis.hash,
+            message_sender,
+            reset_timeout,
+        };
+
+        let vote = node.vote_from_block(&genesis);
+        node.add_block(genesis);
+        node.view = 1;
+        node.reset_timeout.send(())?;
+        let leader = &node.committee.peer_ids[node.committee.get_leader(node.view) as usize];
+        node.send_message(*leader, Message::Vote(vote))?;
+
+        Ok(node)
+    }
+
+    // TODO: Multithreading - `&mut self` -> `&self`
+    pub fn handle_message(&mut self, source: PeerId, message: Message) -> Result<()> {
+        match message {
+            Message::Proposal(m) => self.handle_proposal(source, m),
+            Message::Vote(m) => self.handle_vote(source, m),
+            Message::NewView(m) => self.handle_new_view(source, m),
+            Message::BlockRequest(m) => self.handle_block_request(source, m),
+            Message::BlockResponse(m) => self.handle_block_response(source, m),
+        }
+    }
+
+    pub fn handle_timeout(&mut self) -> Result<()> {
+        self.view += 1;
+        self.reset_timeout.send(())?;
+
+        if let Some(high_qc) = &self.high_qc {
+            let new_view = self.new_view_from_qc(high_qc);
+            self.send_message(
+                self.committee.peer_ids[self.committee.get_leader(self.view) as usize],
+                Message::NewView(new_view),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn send_message(&mut self, peer: PeerId, message: Message) -> Result<()> {
+        if peer == self.committee.peer_ids[self.index as usize] {
+            // We need to 'send' this message to ourselves.
+            self.handle_message(peer, message)?;
+        } else {
+            self.message_sender.send((peer, message))?;
+        }
+        Ok(())
+    }
+
+    fn broadcast_message(&mut self, message: Message) -> Result<()> {
+        self.handle_message(
+            self.committee.peer_ids[self.index as usize],
+            message.clone(),
+        )?;
+        // FIXME: We broadcast everything, so the recipient doesn't matter.
+        self.message_sender
+            .send((PeerId::random(), message))?;
+        Ok(())
+    }
+
+    fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
+        let block = self.get_block(&request.hash)?;
+
+        self.send_message(
+            source,
+            Message::BlockResponse(BlockResponse {
+                block: block.clone(),
+            }),
+        )?;
+
+        Ok(())
+    }
+
+    fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
+        self.blocks
+            .entry(response.block.hash)
+            .or_insert(response.block);
+
+        Ok(())
+    }
+
+    fn handle_new_view(&mut self, _: PeerId, new_view: NewView) -> Result<()> {
+        // if we are not the leader of the round in which the vote counts
+        if self.committee.get_leader(new_view.view) != self.index {
+            println!("Not the leader of view {}", new_view.view);
+            return Ok(());
+        }
+        // if the vote is too old and does not count anymore
+        if new_view.view < self.view {
+            return Ok(());
+        }
+        // verify the sender's signature on the block hash
+        let mut message = Vec::new();
+        message.extend_from_slice(new_view.qc.compute_hash().as_bytes());
+        message.extend_from_slice(&new_view.index.to_be_bytes());
+        message.extend_from_slice(&new_view.view.to_be_bytes());
+        self.committee.public_keys[new_view.index as usize].verify(&message, new_view.signature)?;
+
+        let (mut signatures, mut signers, mut cosigned, mut cosigned_weight, mut qcs) =
+            self.new_views.remove(&new_view.view).unwrap_or_else(|| {
+                (
+                    Vec::new(),
+                    Vec::new(),
+                    bitvec![u8, bitvec::order::Msb0; 0; self.committee.public_keys.len()],
+                    0,
+                    Vec::new(),
+                )
+            });
+
+        let mut supermajority = false;
+        // if the vote is new, stores it
+        if !cosigned[new_view.index as usize] {
+            signatures.push(new_view.signature);
+            signers.push(new_view.index);
+            cosigned.set(new_view.index as usize, true);
+            cosigned_weight += self.committee.weights[new_view.index as usize];
+            qcs.push(new_view.qc);
+            supermajority = cosigned_weight * 3 > self.committee.total() * 2;
+            println!("Signers: {}, weight: {}, supermajority: {supermajority}, current view: {}, new view: {}", signers.len(), cosigned_weight, self.view, new_view.view);
+            // if we are already in the round in which the vote counts and have reached supermajority
+            if new_view.view == self.view && supermajority {
+                // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
+                let agg =
+                    self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, signers)?;
+                let high_qc = self.get_highest_from_agg(&agg)?;
+                let proposal = self.block_from_agg(
+                    self.view,
+                    high_qc.clone(),
+                    agg,
+                    self.head,
+                    vec![], // replace this with the real commands
+                );
+                // as a future improvement, process the proposal before broadcasting it
+                self.broadcast_message(Message::Proposal(Proposal { block: proposal }))?;
+                // we don't want to keep the collected votes if we proposed a new block
+                return Ok(());
+                // we should remove the collected votes if we couldn't reach supermajority within the view
+            }
+        }
+        if !supermajority {
+            self.new_views.insert(
+                new_view.view,
+                (signatures, signers, cosigned, cosigned_weight, qcs),
+            );
+        }
+
+        Ok(())
+    }
+
+    fn handle_vote(&mut self, _: PeerId, vote: Vote) -> Result<()> {
+        let Ok(block) = self.get_block(&vote.block_hash) else { return Ok(()); }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
+        let block_hash = block.hash;
+        let block_view = block.view;
+        println!("Vote in view {block_view}");
+        // if we are not the leader of the round in which the vote counts
+        if self.committee.get_leader(block_view + 1) != self.index {
+            println!("Not the leader of block {}", block_view + 1);
+            return Ok(());
+        }
+        // if the vote is too old and does not count anymore
+        if block_view + 1 < self.view {
+            return Ok(());
+        }
+        // verify the sender's signature on block_hash
+        self.committee.public_keys[vote.index as usize]
+            .verify(block.hash.as_bytes(), vote.signature)?;
+
+        let (mut signatures, mut cosigned, mut cosigned_weight) =
+            self.votes.remove(&block_hash).unwrap_or_else(|| {
+                (
+                    Vec::new(),
+                    bitvec![u8, bitvec::order::Msb0; 0; self.committee.public_keys.len()],
+                    0,
+                )
+            });
+
+        let mut supermajority = false;
+        // if the vote is new, store it
+        if !cosigned[vote.index as usize] {
+            signatures.push(vote.signature);
+            cosigned.set(vote.index as usize, true);
+            cosigned_weight += self.committee.weights[vote.index as usize];
+
+            supermajority = cosigned_weight * 3 > self.committee.total() * 2;
+            println!("Cosigned: {cosigned} ({cosigned_weight}), supermajority: {supermajority}, current_view: {}, block_view: {}", self.view, block_view + 1);
+            // if we are already in the round in which the vote counts and have reached supermajority
+            if block_view + 1 == self.view && supermajority {
+                // if the voted block's view is higher than our current head's view then use it as head
+                if block_view > self.get_block(&self.head)?.view {
+                    self.head = block_hash;
+                }
+                let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
+                let proposal = self.block_from_qc(self.view, qc, self.head, vec![]); // replace this with the real commands
+                                                                                     // as a future improvement, process the proposal before broadcasting it
+                println!("Vote successful, sending proposal: {proposal:?}");
+                self.broadcast_message(Message::Proposal(Proposal { block: proposal }))?;
+                // we don't want to keep the collected votes if we proposed a new block
+                return Ok(());
+                // we should remove the collected votes if we couldn't reach supermajority within the view
+            }
+        }
+        if !supermajority {
+            self.votes
+                .insert(block_hash, (signatures, cosigned, cosigned_weight));
+        }
+
+        Ok(())
+    }
+
+    fn handle_proposal(&mut self, _: PeerId, message: Proposal) -> Result<()> {
+        let proposal = message.block;
+
+        // derive the sender from the proposal's view
+        let sender_index = self.committee.get_leader(proposal.view);
+        // verify the sender's signature on the proposal
+        self.committee.public_keys[sender_index as usize]
+            .verify(proposal.hash.as_bytes(), proposal.signature)?;
+        // in the future check if we already have another block with the same view as proposal, which means that the sender equivocates; also figure out who voted for both of these blocks and thus equivocated
+        // check if the co-signers of the proposal's qc represent the supermajority
+        self.committee.check_quorum_in_bits(&proposal.qc.cosigned)?;
+
+        // FIXME: Sane validation of genesis blocks
+        let proposal_view = proposal.view;
+        if proposal_view > 2 {
+            // verify the block qc's signature
+            self.verify_qc_signature(&proposal.qc)?;
+        }
+
+        if let Some(agg) = &proposal.agg {
+            // check if the signers of the proposal's agg represent the supermajority
+            self.committee.check_quorum_in_indices(&agg.signers)?;
+
+            // verify the block aggregate qc's signature
+            self.batch_verify_agg_signature(agg)?;
+        }
+
+        // retrieve the highest among the aggregated qcs and check if it equals the block's qc
+        let proposal_high_qc = self.get_high_qc_from_block(&proposal)?;
+
+        let mut proposal_high_qc_view = 0;
+
+        match &self.high_qc {
+            None => {
+                let block_hash = proposal_high_qc.block_hash;
+                self.high_qc = Some(proposal_high_qc.clone());
+                proposal_high_qc_view = self.get_block(&block_hash)?.view;
+            }
+            Some(high_qc) => {
+                let proposal_high_qc_view = self.get_block(&proposal_high_qc.block_hash)?.view;
+                if proposal_high_qc_view > self.get_block(&high_qc.block_hash)?.view {
+                    self.high_qc = Some(proposal_high_qc.clone());
+                }
+            }
+        }
+        // todo: adjust the node's view if the high_qc's view is higher
+        if proposal_high_qc_view > self.view {
+            self.view = proposal_high_qc_view;
+        }
+        let vote = self.vote_from_block(&proposal);
+
+        let proposal_view = proposal.view;
+        if self.check_safe_block(proposal) {
+            // TODO: Download blocks up to `proposal_view - 1`.
+            self.view = proposal_view + 1;
+            self.reset_timeout.send(())?;
+            let leader = self.committee.peer_ids[self.committee.get_leader(self.view) as usize];
+            println!("Sending vote to {leader:?} for block {proposal_view}");
+            self.send_message(leader, Message::Vote(vote))?;
+        }
+
+        Ok(())
+    }
+
+    fn aggregate_qc_from_indexes(
+        &self,
+        view: u64,
+        qcs: Vec<QuorumCertificate>,
+        signatures: &[Signature],
+        signers: Vec<u16>,
+    ) -> Result<AggregateQc> {
+        assert_eq!(qcs.len(), signatures.len());
+        assert_eq!(signatures.len(), signers.len());
+        Ok(AggregateQc {
+            signature: Signature::aggregate(signatures)?,
+            signers,
+            view,
+            qcs,
+        })
+    }
+
+    fn block_from_qc(
+        &self,
+        view: u64,
+        qc: QuorumCertificate,
+        parent_hash: Hash,
+        commands: Vec<u8>,
+    ) -> Block {
+        let digest = Hash::compute(&[
+            &view.to_be_bytes(),
+            qc.compute_hash().as_bytes(),
+            // hash of agg missing here intentionally
+            parent_hash.as_bytes(),
+        ]);
+        let signature = self.secret_key.sign(digest.as_bytes());
+        Block {
+            view,
+            qc,
+            agg: None,
+            hash: digest,
+            parent_hash,
+            signature,
+            commands,
+        }
+    }
+
+    fn block_from_agg(
+        &self,
+        view: u64,
+        qc: QuorumCertificate,
+        agg: AggregateQc,
+        parent_hash: Hash,
+        commands: Vec<u8>,
+    ) -> Block {
+        let digest = Hash::compute(&[
+            &view.to_be_bytes(),
+            qc.compute_hash().as_bytes(),
+            agg.compute_hash().as_bytes(),
+            parent_hash.as_bytes(),
+        ]);
+        let signature = self.secret_key.sign(digest.as_bytes());
+        Block {
+            view,
+            qc,
+            agg: Some(agg),
+            hash: digest,
+            parent_hash,
+            signature,
+            commands,
+        }
+    }
+
+    fn qc_from_bits(
+        &self,
+        block_hash: Hash,
+        signatures: &[Signature],
+        cosigned: BitVec,
+    ) -> QuorumCertificate {
+        // we've already verified the signatures upon receipt of the responses so there's no need to do it again
+        QuorumCertificate {
+            signature: Signature::aggregate(signatures).unwrap(),
+            cosigned,
+            block_hash,
+        }
+    }
+
+    fn block_extends_from(&self, block: &Block, ancestor: &Block) -> Result<bool> {
+        // todo: the block extends from another block through a chain of parent hashes and not qcs
+        let mut current = block;
+        while current.view > ancestor.view {
+            current = self.get_block(&current.parent_hash)?;
+        }
+        Ok(current.hash == ancestor.hash)
+    }
+
+    fn check_safe_block(&mut self, proposal: Block) -> bool {
+        let Ok(qc_block) = self.get_block(&proposal.qc.block_hash) else { return false; };
+        match proposal.agg {
+            // we check elsewhere that qc is the highest among the qcs in the agg
+            Some(_) => match self.block_extends_from(&proposal, qc_block) {
+                Ok(true) => {
+                    let block_hash = proposal.hash;
+                    self.add_block(proposal);
+                    self.check_and_commit(block_hash);
+                    true
+                }
+                Ok(false) => false,
+                Err(_) => {
+                    /* todo: we must add the proposed block although a missing block prevented us from checking if it extended from its highest qc's block otherwise we won't have any chance to add it later. if it becomes the head and 2f+1 vote for it, we will use it as parent for proposing a new block in the next round otherwise we won't be able to propose any block unless we receive 2f+1 new view requests. in this case we mustn't use it as parent and hope that 2f+1 have the missing block to conform that our block is safe since if they don't and they add our block just like we added the current one, we end up in an infinite sequence of unsafe blocks noone votes for but everyone uses as parent. therefore we add the proposed block but keep the previous head. if we receive 2f+1 votes for the added block we will store it as head and use it as parent.*/
+                    self.blocks.insert(proposal.hash, proposal);
+                    false
+                }
+            },
+            None => {
+                let not_outdated = proposal.view >= self.view;
+                if proposal.view == qc_block.view + 1 {
+                    // todo: we store 1-direct chain proposals even if they are outdated and we don't vote for them
+                    let hash = proposal.hash;
+                    self.add_block(proposal);
+                    self.check_and_commit(hash);
+                    not_outdated
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    fn check_and_commit(&mut self, proposal_hash: Hash) {
+        let Ok(proposal) = self.get_block(&proposal_hash) else { return; };
+        let Ok(prev_1) = self.get_block(&proposal.qc.block_hash) else { return; };
+        let Ok(prev_2) = self.get_block(&prev_1.qc.block_hash) else { return; };
+
+        if prev_1.view == prev_2.view + 1 {
+            let committed_block = prev_2;
+            let Ok(finalized_block) = self.get_block(&self.finalized) else { return; };
+            let mut current = committed_block;
+            // commit blocks back to the last finalized block
+            while current.view > finalized_block.view {
+                let Ok(new) = self.get_block(&current.parent_hash) else { return; };
+                current = new;
+            }
+            if current.hash == self.finalized {
+                self.finalized = committed_block.hash;
+                // discard blocks that can't be committed anymore
+            }
+        }
+    }
+
+    fn add_block(&mut self, block: Block) {
+        let is_higher = self
+            .blocks
+            .get(&self.head)
+            .map(|head| block.view > head.view)
+            .unwrap_or(true);
+        if is_higher {
+            self.head = block.hash;
+        }
+        println!("Added block with hash {:?}", block.hash);
+        self.blocks.insert(block.hash, block);
+    }
+
+    fn vote_from_block(&self, block: &Block) -> Vote {
+        Vote {
+            block_hash: block.hash,
+            signature: self.secret_key.sign(block.hash.as_bytes()),
+            index: self.index,
+        }
+    }
+
+    fn get_high_qc_from_block<'a>(&self, block: &'a Block) -> Result<&'a QuorumCertificate> {
+        let Some(agg) = &block.agg else { return Ok(&block.qc); };
+
+        let high_qc = self.get_highest_from_agg(agg)?;
+
+        if &block.qc != high_qc {
+            return Err(anyhow!("qc mismatch"));
+        }
+
+        Ok(&block.qc)
+    }
+
+    fn get_block(&self, key: &Hash) -> Result<&Block> {
+        self.blocks
+            .get(key)
+            .ok_or_else(|| anyhow!("block not found: {key:?}"))
+    }
+
+    fn get_highest_from_agg<'a>(&self, agg: &'a AggregateQc) -> Result<&'a QuorumCertificate> {
+        agg.qcs
+            .iter()
+            .map(|qc| (qc, self.get_block(&qc.block_hash)))
+            .try_fold(None, |acc, (qc, block)| {
+                if let Some((_, acc_view)) = acc {
+                    let block = block?;
+                    if acc_view < block.view {
+                        Ok::<_, anyhow::Error>(Some((qc, block.view)))
+                    } else {
+                        Ok(acc)
+                    }
+                } else {
+                    Ok(Some((qc, block?.view)))
+                }
+            })?
+            .ok_or_else(|| anyhow!("no qcs in agg"))
+            .map(|(qc, _)| qc)
+    }
+
+    fn verify_qc_signature(&self, _: &QuorumCertificate) -> Result<()> {
+        // TODO: Build aggregate signature from public keys and validate `qc.block_hash` against `qc.signature`.
+        Ok(())
+    }
+
+    fn batch_verify_agg_signature(&self, agg: &AggregateQc) -> Result<()> {
+        let messages: Vec<_> = agg
+            .qcs
+            .iter()
+            .enumerate()
+            .map(|(i, qc)| {
+                let mut bytes = Vec::new();
+                bytes.extend_from_slice(qc.compute_hash().as_bytes());
+                bytes.extend_from_slice(&agg.signers[i].to_be_bytes());
+                bytes.extend_from_slice(&agg.view.to_be_bytes());
+                bytes
+            })
+            .collect();
+        let messages: Vec<_> = messages.iter().map(|m| m.as_slice()).collect();
+
+        let public_keys: Vec<_> = agg
+            .signers
+            .iter()
+            .map(|i| self.committee.public_keys[*i as usize])
+            .collect();
+
+        verify_messages(agg.signature, &messages, &public_keys)
+    }
+
+    fn new_view_from_qc(&self, qc: &QuorumCertificate) -> NewView {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(qc.compute_hash().as_bytes());
+        bytes.extend_from_slice(&self.index.to_be_bytes());
+        bytes.extend_from_slice(&self.view.to_be_bytes());
+
+        NewView {
+            signature: self.secret_key.sign(&bytes),
+            qc: qc.clone(),
+            view: self.view,
+            index: self.index,
+        }
+    }
+}
