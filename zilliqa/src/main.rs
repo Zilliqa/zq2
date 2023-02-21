@@ -7,7 +7,6 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use crypto::{PublicKey, SecretKey};
-use itertools::Itertools;
 use libp2p::{
     core::upgrade,
     futures::StreamExt,
@@ -15,12 +14,18 @@ use libp2p::{
         Gossipsub, GossipsubConfigBuilder, GossipsubEvent, GossipsubMessage, IdentTopic,
         MessageAuthenticity,
     },
-    mdns, mplex, noise,
+    identify,
+    kad::{
+        store::MemoryStore, GetRecordOk, Kademlia, KademliaEvent, PeerRecord, QueryResult, Quorum,
+        Record,
+    },
+    mdns, mplex,
+    multihash::Multihash,
+    noise,
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, PeerId, Swarm, Transport,
 };
-use message::Block;
-use node::{Node, ValidatorSet};
+use node::Node;
 use tokio::{
     select,
     sync::mpsc,
@@ -32,54 +37,23 @@ use crate::message::Message;
 
 #[derive(Debug, Parser)]
 struct Args {
-    index: u16,
-    #[arg(value_parser = validator_set_from_str)]
-    committee: ValidatorSet,
     #[arg(value_parser = SecretKey::from_hex)]
     secret_key: SecretKey,
-}
-
-fn validator_set_from_str(s: &str) -> Result<ValidatorSet> {
-    let validators = s.split(',').map(|v| {
-        let Some((key, rest)) = v.split_once(':') else { return Err(anyhow!("invalid validator: {v}")); };
-        let Some((libp2p_key, weight)) = rest.split_once(':') else { return Err(anyhow!("invalid validator: {v}")); };
-
-        let key = PublicKey::from_hex(key)?;
-        let peer_id: PeerId = libp2p::identity::PublicKey::from_protobuf_encoding(&hex::decode(libp2p_key)?)?.into();
-        let weight: u128 = weight.parse()?;
-
-        Ok((key, peer_id, weight))
-    });
-
-    let (public_keys, peer_ids, weights): (Vec<_>, Vec<_>, Vec<_>) =
-        itertools::process_results(validators, |iter| iter.multiunzip())?;
-
-    Ok(ValidatorSet {
-        public_keys,
-        peer_ids,
-        weights,
-    })
 }
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
     gossipsub: Gossipsub,
     mdns: mdns::tokio::Behaviour,
+    kademlia: Kademlia<MemoryStore>,
+    identify: identify::Behaviour,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    println!("Public key: {}", args.secret_key.public_key());
-
-    let genesis = Block::genesis(args.committee.peer_ids.len());
-
     let key_pair = args.secret_key.to_libp2p_keypair()?;
-    println!(
-        "libp2p public key: {:?}",
-        hex::encode(key_pair.public().to_protobuf_encoding())
-    );
     let peer_id = PeerId::from(key_pair.public());
     println!("Peer ID: {peer_id:?}");
 
@@ -91,13 +65,18 @@ async fn main() -> Result<()> {
 
     let behaviour = Behaviour {
         gossipsub: Gossipsub::new(
-            MessageAuthenticity::Signed(key_pair),
+            MessageAuthenticity::Signed(key_pair.clone()),
             GossipsubConfigBuilder::default()
                 .build()
                 .map_err(|e| anyhow!(e))?,
         )
         .map_err(|e| anyhow!(e))?,
         mdns: mdns::Behaviour::new(Default::default())?,
+        kademlia: Kademlia::new(peer_id, MemoryStore::new(peer_id)),
+        identify: identify::Behaviour::new(identify::Config::new(
+            "/ipfs/id/1.0.0".to_owned(),
+            key_pair.public(),
+        )),
     };
 
     let mut swarm = Swarm::with_tokio_executor(transport, behaviour, peer_id);
@@ -107,16 +86,23 @@ async fn main() -> Result<()> {
     let topic = IdentTopic::new("topic");
     swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
 
+    // Store our public key in the DHT, indexed by our peer ID.
+    swarm.behaviour_mut().kademlia.put_record(
+        Record::new(
+            Multihash::from(peer_id), // TODO: Disambiguate this key?
+            args.secret_key.public_key().as_bytes(),
+        ),
+        Quorum::One,
+    )?;
+
     let (message_sender, message_receiver) = mpsc::unbounded_channel();
     let mut message_receiver = UnboundedReceiverStream::new(message_receiver);
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     let mut reset_timeout_receiver = UnboundedReceiverStream::new(reset_timeout_receiver);
 
     let mut node = Node::new(
-        args.index,
-        args.committee,
+        peer_id,
         args.secret_key,
-        genesis,
         message_sender,
         reset_timeout_sender,
     )?;
@@ -130,14 +116,33 @@ async fn main() -> Result<()> {
                     println!("Listening on {address:?}");
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
-                    for (peer, _) in list {
+                    for (peer, address) in list {
                         swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
+                        swarm.behaviour_mut().kademlia.add_address(&peer, address);
+                        swarm.behaviour_mut().kademlia.get_record(Multihash::from(peer).into());
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
-                    for (peer, _) in list {
+                    for (peer, address) in list {
                         swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer);
+                        swarm.behaviour_mut().kademlia.remove_address(&peer, &address);
                     }
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info: identify::Info { listen_addrs, .. }})) => {
+                    for address in listen_addrs {
+                        swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                        swarm.behaviour_mut().kademlia.add_address(&peer_id, address);
+                        swarm.behaviour_mut().kademlia.get_record(Multihash::from(peer_id).into());
+                    }
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Kademlia(KademliaEvent::OutboundQueryProgressed {
+                    result: QueryResult::GetRecord(Ok(GetRecordOk::FoundRecord(PeerRecord { record: Record { key, value, .. }, .. }))),
+                    ..
+                })) => {
+                    let peer_id = PeerId::from_multihash(Multihash::from_bytes(key.as_ref())?).expect("key should be a peer ID");
+                    let public_key = PublicKey::from_bytes(&value)?;
+
+                    node.add_peer(peer_id, public_key)?;
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(GossipsubEvent::Message{
                     message: GossipsubMessage {

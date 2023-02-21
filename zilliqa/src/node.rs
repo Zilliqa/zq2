@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
+use itertools::Itertools;
 use libp2p::PeerId;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -13,53 +14,15 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone)]
-pub struct ValidatorSet {
-    pub public_keys: Vec<PublicKey>,
-    pub peer_ids: Vec<PeerId>,
-    pub weights: Vec<u128>,
-}
-
-impl ValidatorSet {
-    pub fn get_leader(&self, view: u64) -> u16 {
-        // currently it's a simple round robin but later
-        // we will select the leader based on the weights
-        (view % (self.weights.len() as u64)) as u16
-    }
-
-    pub fn total(&self) -> u128 {
-        self.weights.iter().sum()
-    }
-
-    pub fn check_quorum_in_bits(&self, cosigned: &BitSlice) -> Result<()> {
-        let cosigned_sum: u128 = self
-            .weights
-            .iter()
-            .enumerate()
-            .map(|(i, weight)| if cosigned[i] { *weight } else { 0 })
-            .sum();
-
-        if cosigned_sum * 3 <= self.total() * 2 {
-            return Err(anyhow!("no quorum"));
-        }
-
-        Ok(())
-    }
-
-    pub fn check_quorum_in_indices(&self, signers: &[u16]) -> Result<()> {
-        let signed_sum: u128 = signers.iter().map(|i| self.weights[*i as usize]).sum();
-
-        if signed_sum * 3 <= self.total() * 2 {
-            return Err(anyhow!("no quorum"));
-        }
-
-        Ok(())
-    }
+#[derive(Debug, Clone, Copy)]
+pub struct Validator {
+    pub public_key: PublicKey,
+    pub peer_id: PeerId,
+    pub weight: u128,
 }
 
 pub struct Node {
-    index: u16,
-    committee: ValidatorSet,
+    committee: Vec<Validator>,
     blocks: BTreeMap<Hash, Block>,
     votes: BTreeMap<Hash, (Vec<Signature>, BitVec, u128)>,
     new_views: BTreeMap<
@@ -81,38 +44,37 @@ pub struct Node {
     finalized: Hash,
     message_sender: UnboundedSender<(PeerId, Message)>,
     reset_timeout: UnboundedSender<()>,
+    /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
+    pending_peers: Vec<(PeerId, PublicKey)>,
 }
 
 impl Node {
     pub fn new(
-        index: u16,
-        committee: ValidatorSet,
+        peer_id: PeerId,
         secret_key: SecretKey,
-        genesis: Block,
         message_sender: UnboundedSender<(PeerId, Message)>,
         reset_timeout: UnboundedSender<()>,
     ) -> Result<Node> {
-        let mut node = Node {
-            index,
-            committee,
+        let validator = Validator {
+            public_key: secret_key.public_key(),
+            peer_id,
+            weight: 100,
+        };
+
+        let node = Node {
+            committee: vec![validator],
             blocks: BTreeMap::new(),
             votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
-            high_qc: Some(genesis.qc.clone()),
+            high_qc: None,
             view: 0,
             secret_key,
-            head: genesis.hash,
-            finalized: genesis.hash,
+            head: Hash::ZERO,
+            finalized: Hash::ZERO,
             message_sender,
             reset_timeout,
+            pending_peers: Vec::new(),
         };
-
-        let vote = node.vote_from_block(&genesis);
-        node.add_block(genesis);
-        node.view = 1;
-        node.reset_timeout.send(())?;
-        let leader = &node.committee.peer_ids[node.committee.get_leader(node.view) as usize];
-        node.send_message(*leader, Message::Vote(vote))?;
 
         Ok(node)
     }
@@ -129,13 +91,13 @@ impl Node {
     }
 
     pub fn handle_timeout(&mut self) -> Result<()> {
-        self.view += 1;
+        self.update_view(self.view + 1);
         self.reset_timeout.send(())?;
 
         if let Some(high_qc) = &self.high_qc {
             let new_view = self.new_view_from_qc(high_qc);
             self.send_message(
-                self.committee.peer_ids[self.committee.get_leader(self.view) as usize],
+                self.get_leader(self.view).peer_id,
                 Message::NewView(new_view),
             )?;
         }
@@ -143,8 +105,57 @@ impl Node {
         Ok(())
     }
 
+    pub fn add_peer(&mut self, peer: PeerId, public_key: PublicKey) -> Result<()> {
+        if self.pending_peers.contains(&(peer, public_key)) {
+            return Ok(());
+        }
+
+        self.pending_peers.push((peer, public_key));
+
+        // Before we have at least 3 other nodes (not including ourselves) there is no point trying to propose blocks,
+        // because the supermajority condition is impossible to achieve.
+        if self.pending_peers.len() >= 3 && self.view == 0 {
+            let genesis = Block::genesis(self.committee.len());
+            self.high_qc = Some(genesis.qc.clone());
+            self.add_block(genesis.clone());
+            self.update_view(1);
+            let vote = self.vote_from_block(&genesis);
+            self.reset_timeout.send(())?;
+            let leader = self.get_leader(self.view).peer_id;
+            self.send_message(leader, Message::Vote(vote))?;
+        }
+
+        Ok(())
+    }
+
+    fn update_view(&mut self, view: u64) {
+        self.view = view;
+        let pending_peers = self.pending_peers.drain(..);
+
+        for (peer_id, public_key) in pending_peers {
+            if self
+                .committee
+                .iter()
+                .filter(|v| v.peer_id == peer_id)
+                .count()
+                > 0
+            {
+                continue;
+            }
+
+            let validator = Validator {
+                peer_id,
+                public_key,
+                weight: 100, // Arbitrary weight
+            };
+            self.committee.push(validator);
+        }
+        // We always keep the committee sorted by the peer ID to give a stable ordering across the network.
+        self.committee.sort_unstable_by_key(|v| v.peer_id);
+    }
+
     fn send_message(&mut self, peer: PeerId, message: Message) -> Result<()> {
-        if peer == self.committee.peer_ids[self.index as usize] {
+        if peer == self.validator().peer_id {
             // We need to 'send' this message to ourselves.
             self.handle_message(peer, message)?;
         } else {
@@ -154,13 +165,9 @@ impl Node {
     }
 
     fn broadcast_message(&mut self, message: Message) -> Result<()> {
-        self.handle_message(
-            self.committee.peer_ids[self.index as usize],
-            message.clone(),
-        )?;
+        self.handle_message(self.validator().peer_id, message.clone())?;
         // FIXME: We broadcast everything, so the recipient doesn't matter.
-        self.message_sender
-            .send((PeerId::random(), message))?;
+        self.message_sender.send((PeerId::random(), message))?;
         Ok(())
     }
 
@@ -187,7 +194,7 @@ impl Node {
 
     fn handle_new_view(&mut self, _: PeerId, new_view: NewView) -> Result<()> {
         // if we are not the leader of the round in which the vote counts
-        if self.committee.get_leader(new_view.view) != self.index {
+        if self.get_leader(new_view.view).public_key != self.secret_key.public_key() {
             println!("Not the leader of view {}", new_view.view);
             return Ok(());
         }
@@ -200,14 +207,15 @@ impl Node {
         message.extend_from_slice(new_view.qc.compute_hash().as_bytes());
         message.extend_from_slice(&new_view.index.to_be_bytes());
         message.extend_from_slice(&new_view.view.to_be_bytes());
-        self.committee.public_keys[new_view.index as usize].verify(&message, new_view.signature)?;
+        let sender = self.get_member(new_view.index);
+        sender.public_key.verify(&message, new_view.signature)?;
 
         let (mut signatures, mut signers, mut cosigned, mut cosigned_weight, mut qcs) =
             self.new_views.remove(&new_view.view).unwrap_or_else(|| {
                 (
                     Vec::new(),
                     Vec::new(),
-                    bitvec![u8, bitvec::order::Msb0; 0; self.committee.public_keys.len()],
+                    bitvec![u8, bitvec::order::Msb0; 0; self.committee.len()],
                     0,
                     Vec::new(),
                 )
@@ -219,9 +227,9 @@ impl Node {
             signatures.push(new_view.signature);
             signers.push(new_view.index);
             cosigned.set(new_view.index as usize, true);
-            cosigned_weight += self.committee.weights[new_view.index as usize];
+            cosigned_weight += sender.weight;
             qcs.push(new_view.qc);
-            supermajority = cosigned_weight * 3 > self.committee.total() * 2;
+            supermajority = cosigned_weight * 3 > self.committee_weight() * 2;
             println!("Signers: {}, weight: {}, supermajority: {supermajority}, current view: {}, new view: {}", signers.len(), cosigned_weight, self.view, new_view.view);
             // if we are already in the round in which the vote counts and have reached supermajority
             if new_view.view == self.view && supermajority {
@@ -259,7 +267,7 @@ impl Node {
         let block_view = block.view;
         println!("Vote in view {block_view}");
         // if we are not the leader of the round in which the vote counts
-        if self.committee.get_leader(block_view + 1) != self.index {
+        if self.get_leader(block_view + 1).public_key != self.secret_key.public_key() {
             println!("Not the leader of block {}", block_view + 1);
             return Ok(());
         }
@@ -268,14 +276,16 @@ impl Node {
             return Ok(());
         }
         // verify the sender's signature on block_hash
-        self.committee.public_keys[vote.index as usize]
+        let sender = self.get_member(vote.index);
+        sender
+            .public_key
             .verify(block.hash.as_bytes(), vote.signature)?;
 
         let (mut signatures, mut cosigned, mut cosigned_weight) =
             self.votes.remove(&block_hash).unwrap_or_else(|| {
                 (
                     Vec::new(),
-                    bitvec![u8, bitvec::order::Msb0; 0; self.committee.public_keys.len()],
+                    bitvec![u8, bitvec::order::Msb0; 0; self.committee.len()],
                     0,
                 )
             });
@@ -285,9 +295,9 @@ impl Node {
         if !cosigned[vote.index as usize] {
             signatures.push(vote.signature);
             cosigned.set(vote.index as usize, true);
-            cosigned_weight += self.committee.weights[vote.index as usize];
+            cosigned_weight += sender.weight;
 
-            supermajority = cosigned_weight * 3 > self.committee.total() * 2;
+            supermajority = cosigned_weight * 3 > self.committee_weight() * 2;
             println!("Cosigned: {cosigned} ({cosigned_weight}), supermajority: {supermajority}, current_view: {}, block_view: {}", self.view, block_view + 1);
             // if we are already in the round in which the vote counts and have reached supermajority
             if block_view + 1 == self.view && supermajority {
@@ -298,7 +308,7 @@ impl Node {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                 let proposal = self.block_from_qc(self.view, qc, self.head, vec![]); // replace this with the real commands
                                                                                      // as a future improvement, process the proposal before broadcasting it
-                println!("Vote successful, sending proposal: {proposal:?}");
+                println!("Vote successful, sending proposal");
                 self.broadcast_message(Message::Proposal(Proposal { block: proposal }))?;
                 // we don't want to keep the collected votes if we proposed a new block
                 return Ok(());
@@ -317,13 +327,14 @@ impl Node {
         let proposal = message.block;
 
         // derive the sender from the proposal's view
-        let sender_index = self.committee.get_leader(proposal.view);
+        let sender = self.get_leader(proposal.view);
         // verify the sender's signature on the proposal
-        self.committee.public_keys[sender_index as usize]
+        sender
+            .public_key
             .verify(proposal.hash.as_bytes(), proposal.signature)?;
         // in the future check if we already have another block with the same view as proposal, which means that the sender equivocates; also figure out who voted for both of these blocks and thus equivocated
         // check if the co-signers of the proposal's qc represent the supermajority
-        self.committee.check_quorum_in_bits(&proposal.qc.cosigned)?;
+        self.check_quorum_in_bits(&proposal.qc.cosigned)?;
 
         // FIXME: Sane validation of genesis blocks
         let proposal_view = proposal.view;
@@ -334,7 +345,7 @@ impl Node {
 
         if let Some(agg) = &proposal.agg {
             // check if the signers of the proposal's agg represent the supermajority
-            self.committee.check_quorum_in_indices(&agg.signers)?;
+            self.check_quorum_in_indices(&agg.signers)?;
 
             // verify the block aggregate qc's signature
             self.batch_verify_agg_signature(agg)?;
@@ -360,16 +371,16 @@ impl Node {
         }
         // todo: adjust the node's view if the high_qc's view is higher
         if proposal_high_qc_view > self.view {
-            self.view = proposal_high_qc_view;
+            self.update_view(proposal_high_qc_view);
         }
         let vote = self.vote_from_block(&proposal);
 
         let proposal_view = proposal.view;
         if self.check_safe_block(proposal) {
             // TODO: Download blocks up to `proposal_view - 1`.
-            self.view = proposal_view + 1;
+            self.update_view(proposal_view + 1);
             self.reset_timeout.send(())?;
-            let leader = self.committee.peer_ids[self.committee.get_leader(self.view) as usize];
+            let leader = self.get_leader(self.view).peer_id;
             println!("Sending vote to {leader:?} for block {proposal_view}");
             self.send_message(leader, Message::Vote(vote))?;
         }
@@ -539,7 +550,7 @@ impl Node {
         Vote {
             block_hash: block.hash,
             signature: self.secret_key.sign(block.hash.as_bytes()),
-            index: self.index,
+            index: self.index(),
         }
     }
 
@@ -604,7 +615,7 @@ impl Node {
         let public_keys: Vec<_> = agg
             .signers
             .iter()
-            .map(|i| self.committee.public_keys[*i as usize])
+            .map(|i| self.committee[*i as usize].public_key)
             .collect();
 
         verify_messages(agg.signature, &messages, &public_keys)
@@ -613,14 +624,73 @@ impl Node {
     fn new_view_from_qc(&self, qc: &QuorumCertificate) -> NewView {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(qc.compute_hash().as_bytes());
-        bytes.extend_from_slice(&self.index.to_be_bytes());
+        bytes.extend_from_slice(&self.index().to_be_bytes());
         bytes.extend_from_slice(&self.view.to_be_bytes());
 
         NewView {
             signature: self.secret_key.sign(&bytes),
             qc: qc.clone(),
             view: self.view,
-            index: self.index,
+            index: self.index(),
         }
+    }
+
+    fn get_leader(&self, view: u64) -> Validator {
+        // currently it's a simple round robin but later
+        // we will select the leader based on the weights
+        self.committee[(view % (self.committee.len() as u64)) as usize]
+    }
+
+    fn get_member(&self, index: u16) -> Validator {
+        self.committee[index as usize]
+    }
+
+    fn committee_weight(&self) -> u128 {
+        self.committee.iter().map(|v| v.weight).sum()
+    }
+
+    fn check_quorum_in_bits(&self, cosigned: &BitSlice) -> Result<()> {
+        let cosigned_sum: u128 = self
+            .committee
+            .iter()
+            .enumerate()
+            .map(|(i, v)| if cosigned[i] { v.weight } else { 0 })
+            .sum();
+
+        if cosigned_sum * 3 <= self.committee_weight() * 2 {
+            return Err(anyhow!("no quorum"));
+        }
+
+        Ok(())
+    }
+
+    fn check_quorum_in_indices(&self, signers: &[u16]) -> Result<()> {
+        let signed_sum: u128 = signers
+            .iter()
+            .map(|i| self.committee[*i as usize].weight)
+            .sum();
+
+        if signed_sum * 3 <= self.committee_weight() * 2 {
+            return Err(anyhow!("no quorum"));
+        }
+
+        Ok(())
+    }
+
+    fn validator(&self) -> Validator {
+        *self
+            .committee
+            .iter()
+            .find(|v| v.public_key == self.secret_key.public_key())
+            .expect("node should be in committee")
+    }
+
+    /// My own index within the committee.
+    fn index(&self) -> u16 {
+        self.committee
+            .iter()
+            .find_position(|v| v.public_key == self.secret_key.public_key())
+            .expect("node should be in committee")
+            .0 as u16
     }
 }
