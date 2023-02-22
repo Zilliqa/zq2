@@ -5,9 +5,9 @@ use std::vec::Vec;
 use tokio::sync::mpsc;
 
 pub struct Collector {
-    runners: Vec<runner::Process>,
-    reader: Option<tokio::task::JoinHandle<()>>,
-    nr_nodes: usize,
+    pub runners: Vec<runner::Process>,
+    pub reader: Option<tokio::task::JoinHandle<()>>,
+    pub nr_nodes: usize,
 }
 
 impl Collector {
@@ -42,7 +42,7 @@ impl Collector {
         })
     }
 
-    pub async fn complete(&mut self) {
+    pub async fn complete(&mut self) -> Result<()> {
         futures::future::join_all(
             self.runners
                 .iter_mut()
@@ -58,8 +58,8 @@ impl Collector {
         )
         .await;
         if let Some(val) = self.reader.take() {
-            val.await;
+            val.await?;
         }
-        // .collect::Vec<JoinAll<tokio::task::JoinHandle<()>>>::(),
+        Ok(())
     }
 }

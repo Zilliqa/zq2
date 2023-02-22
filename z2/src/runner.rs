@@ -1,8 +1,8 @@
 use eyre::Result;
 use futures::future::JoinAll;
-use std::process::{ExitStatus, Stdio};
+use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use tokio::sync::mpsc;
 
 pub struct Process {
@@ -40,18 +40,22 @@ impl Process {
         let tx_1 = channel.clone();
         let join_handle = tokio::spawn(async move {
             let status = child.wait().await.expect("Child errored");
-            tx_1.send(Message::Exited(ExitValue { index, status }))
+            // @TODO not sure there is much we can do if this fails ..
+            let _ = tx_1
+                .send(Message::Exited(ExitValue { index, status }))
                 .await;
             println!("Child status {status}");
         });
         let tx_2 = channel.clone();
         let output_waiter = tokio::spawn(async move {
             while let Some(line) = stdout_reader.next_line().await.expect("Boo!") {
-                tx_2.send(Message::OutputData(OutputData {
-                    index,
-                    line: line.to_string(),
-                }))
-                .await;
+                // @todo Not sure if there is much we can do if this fails - rrw 2023-02-22
+                let _ = tx_2
+                    .send(Message::OutputData(OutputData {
+                        index,
+                        line: line.to_string(),
+                    }))
+                    .await;
                 // println!("Stdout says {line}");
             }
         });

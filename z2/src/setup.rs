@@ -6,11 +6,11 @@ use zilliqa::crypto;
 
 pub struct Setup {
     /// How many nodes should we start?
-    how_many: u32,
+    pub how_many: u32,
     /// Secret keys for the nodes (we deliberately elect not to know too much about them)
-    secret_keys: Vec<String>,
+    pub secret_keys: Vec<String>,
     /// The collector, if one is running
-    collector: Option<collector::Collector>,
+    pub collector: Option<collector::Collector>,
 }
 
 impl Setup {
@@ -33,7 +33,7 @@ impl Setup {
         // Generate a collector
         self.collector = Some(collector::Collector::new(&self.secret_keys).await?);
         if let Some(mut c) = self.collector.take() {
-            c.complete().await;
+            c.complete().await?;
         }
         Ok(())
     }
