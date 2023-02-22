@@ -13,7 +13,7 @@ bls12_381 = "0.7.0"
 clap = { version = "4.1.4", features = ["derive"] }
 hex = "0.4.3"
 itertools = "0.10.5"
-libp2p = { version = "0.50.0", features = ["secp256k1", "gossipsub", "macros", "tcp", "tokio", "noise", "mplex", "mdns", "request-response", "kad", "identify"] }
+libp2p = { version = "0.50.0", features = ["gossipsub", "macros", "tcp", "tokio", "noise", "mplex", "mdns", "request-response", "kad", "identify"] }
 rand = "0.8.5"
 serde = { version = "1.0.152", features = ["derive"] }
 serde_json = "1.0.93"

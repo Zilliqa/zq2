@@ -116,10 +116,12 @@ impl SecretKey {
         PublicKey(self.0.public_key())
     }
 
-    pub fn to_libp2p_keypair(self) -> Result<libp2p::identity::Keypair> {
-        Ok(libp2p::identity::Keypair::Secp256k1(
-            libp2p::identity::secp256k1::SecretKey::from_bytes(self.0.as_bytes())?.into(),
-        ))
+    pub fn to_libp2p_keypair(self) -> libp2p::identity::Keypair {
+        libp2p::identity::Keypair::Ed25519(
+            libp2p::identity::ed25519::SecretKey::from_bytes(self.0.as_bytes())
+                .expect("`SecretKey::from_bytes` returns an `Err` only when the length is not 32, we know the length is 32")
+                .into(),
+        )
     }
 }
 
