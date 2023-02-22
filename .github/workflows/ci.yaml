@@ -1,0 +1,63 @@
+name: ZQ2 CI
+
+on:
+  push:
+    branches:
+      - "**"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION_STABLE: 1.66.1
+  CRATE_PATHS: .
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install Ubuntu pre-requirements
+        run: |
+          sudo apt install -y protobuf-compiler
+        shell: bash
+      - name: Checkout
+        uses: actions/checkout@v2
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION_STABLE }}
+          profile: minimal
+          override: true
+      - name: Build
+        run: cargo build --all-targets
+  lint-rust:
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION_STABLE }}
+          profile: minimal
+          components: rustfmt
+          override: true
+      - name: Rustfmt Check
+        uses: actions-rust-lang/rustfmt@v1
