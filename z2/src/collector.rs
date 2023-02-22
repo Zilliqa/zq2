@@ -7,16 +7,17 @@ use tokio::sync::mpsc;
 pub struct Collector {
     runners: Vec<runner::Process>,
     reader: Option<tokio::task::JoinHandle<()>>,
-    nr_nodes: u32,
+    nr_nodes: usize,
 }
 
 impl Collector {
-    pub async fn new(nr: u32) -> Result<Collector> {
+    pub async fn new(keys: &Vec<String>) -> Result<Collector> {
         let mut runners = Vec::new();
         let (tx, mut rx) = mpsc::channel(32);
+        let nr = keys.len();
         // Fire everything up.
-        for i in 0..nr - 1 {
-            runners.push(runner::Process::spawn(i, &tx).await?)
+        for i in 0..nr {
+            runners.push(runner::Process::spawn(i, &keys[i], &tx).await?);
         }
         let reader = tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {

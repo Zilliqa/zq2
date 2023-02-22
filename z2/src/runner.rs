@@ -6,17 +6,17 @@ use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
 pub struct Process {
-    pub index: u32,
+    pub index: usize,
     pub join_handle: Option<JoinAll<tokio::task::JoinHandle<()>>>,
 }
 
 pub struct OutputData {
-    pub index: u32,
+    pub index: usize,
     pub line: String,
 }
 
 pub struct ExitValue {
-    pub index: u32,
+    pub index: usize,
     pub status: std::process::ExitStatus,
 }
 
@@ -26,9 +26,13 @@ pub enum Message {
 }
 
 impl Process {
-    pub async fn spawn(index: u32, channel: &mpsc::Sender<Message>) -> Result<Process> {
-        let mut cmd = Command::new("cat");
-        cmd.arg("/etc/services");
+    pub async fn spawn(
+        index: usize,
+        key: &str,
+        channel: &mpsc::Sender<Message>,
+    ) -> Result<Process> {
+        let mut cmd = Command::new("target/debug/zilliqa");
+        cmd.arg(key);
         cmd.stdout(Stdio::piped());
         let mut child = cmd.spawn().expect("Failed to spawn");
         let stdout = child.stdout.take().expect("No handle to stdout");
