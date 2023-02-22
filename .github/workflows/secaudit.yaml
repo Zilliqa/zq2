@@ -1,4 +1,4 @@
-name: Security audit
+name: ZQ2 Security audit
 on:
   push:
     paths: 
