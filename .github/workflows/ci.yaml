@@ -1,0 +1,44 @@
+name: ZQ2 CI
+
+on:
+  push:
+    branches:
+      - "**"
+
+env:
+  CARGO_TERM_COLOR: always
+  CRATE_PATHS: .
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install Ubuntu pre-requirements
+        run: |
+          sudo apt install -y protobuf-compiler
+        shell: bash
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Configure the cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install Rust toolchain
+        run: rustup show
+      - name: Build
+        run: cargo build --all-targets
+  lint-rust:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Install Rust toolchain
+        run: rustup show
+      - name: Rustfmt Check
+        uses: actions-rust-lang/rustfmt@v1

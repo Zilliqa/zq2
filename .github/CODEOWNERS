@@ -1,0 +1,13 @@
+# Use this file to define individuals or teams that are responsible for code in a repository.
+# Read more: <https://help.github.com/articles/about-codeowners/>
+#
+# Order is important: the last matching pattern has the highest precedence
+
+# These owners will be the default owners for everything
+# *             @zilliqa/zilliqa-tech-team << ADD WHEN WE MADE THE REPO PUBLIC >>
+
+# Zilliqa DevOps and and ZQ2 leads must review any changes to GitHub actions
+.github/*     @zilliqa/devops-team @rrw-zilliqa @JamesHinshelwood
+
+# Zilliqa DevOps and ZQ2 leads must review all changes to CODEOWNERS or the mergify configuration
+.github/CODEOWNERS  @zilliqa/devops-team @rrw-zilliqa @JamesHinshelwood
