@@ -20,7 +20,8 @@ jobs:
         shell: bash
       - name: Checkout
         uses: actions/checkout@v2
-      - uses: actions/cache@v3
+      - name: Configure the cache
+        uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/bin/
@@ -43,7 +44,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-      - uses: actions/cache@v3
+      - name: Configure the cache
+        uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/bin/
