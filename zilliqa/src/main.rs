@@ -53,7 +53,7 @@ struct Behaviour {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let key_pair = args.secret_key.to_libp2p_keypair()?;
+    let key_pair = args.secret_key.to_libp2p_keypair();
     let peer_id = PeerId::from(key_pair.public());
     println!("Peer ID: {peer_id:?}");
 
