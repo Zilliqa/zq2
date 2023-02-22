@@ -35,20 +35,9 @@ jobs:
         run: cargo build --all-targets
   lint-rust:
     runs-on: ubuntu-22.04
-    needs: build
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-      - name: Configure the cache
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Rust toolchain
         run: rustup show
       - name: Rustfmt Check
