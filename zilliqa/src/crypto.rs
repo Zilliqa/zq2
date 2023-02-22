@@ -9,6 +9,7 @@ use std::fmt::Display;
 use anyhow::{anyhow, Result};
 use bls12_381::G2Affine;
 use bls_signatures::Serialize;
+use rand_core;
 use serde::{
     de::{self, Unexpected},
     Deserialize,
@@ -100,12 +101,26 @@ pub fn verify_messages(
 #[derive(Debug, Clone, Copy)]
 pub struct SecretKey(pub bls_signatures::PrivateKey);
 impl SecretKey {
+    pub fn new() -> Result<SecretKey> {
+        Ok(SecretKey(bls_signatures::PrivateKey::generate(
+            &mut rand_core::OsRng,
+        )))
+    }
+
     pub fn from_bytes(bytes: &[u8]) -> Result<SecretKey> {
         Ok(SecretKey(bls_signatures::PrivateKey::from_bytes(bytes)?))
     }
 
     pub fn from_hex(s: &str) -> Result<SecretKey> {
         SecretKey::from_bytes(&hex::decode(s)?)
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        Ok(self.0.as_bytes())
+    }
+
+    pub fn to_hex(&self) -> Result<String> {
+        Ok(hex::encode(self.0.as_bytes()))
     }
 
     pub fn sign(&self, message: &[u8]) -> Signature {

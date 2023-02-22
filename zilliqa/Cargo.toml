@@ -3,6 +3,16 @@ name = "zilliqa"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "zilliqa"
+path = "src/lib.rs"
+test = false
+
+[[bin]]
+name = "zilliqa"
+path = "src/bin/zilliqa.rs"
+test = false
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -15,6 +25,7 @@ hex = "0.4.3"
 itertools = "0.10.5"
 libp2p = { version = "0.50.0", features = ["gossipsub", "macros", "tcp", "tokio", "noise", "mplex", "mdns", "request-response", "kad", "identify"] }
 rand = "0.8.5"
+rand_core = "0.6.4"
 serde = { version = "1.0.152", features = ["derive"] }
 serde_json = "1.0.93"
 sha3 = "0.10.6"
