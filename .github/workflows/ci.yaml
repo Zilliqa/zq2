@@ -7,7 +7,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION_STABLE: 1.66.1
   CRATE_PATHS: .
 
 jobs:
@@ -31,11 +30,7 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ env.RUST_VERSION_STABLE }}
-          profile: minimal
-          override: true
+        run: rustup show
       - name: Build
         run: cargo build --all-targets
   lint-rust:
@@ -55,11 +50,6 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ env.RUST_VERSION_STABLE }}
-          profile: minimal
-          components: rustfmt
-          override: true
+        run: rustup show
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
