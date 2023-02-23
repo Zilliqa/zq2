@@ -1,6 +1,7 @@
-mod crypto;
-mod message;
-mod node;
+use zilliqa::crypto;
+use zilliqa::message;
+use zilliqa::node;
+
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
