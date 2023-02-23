@@ -1,5 +1,6 @@
 name: ZQ2 Security audit
 on:
+  pull_request:
   push:
     paths: 
       - '**/Cargo.toml'
