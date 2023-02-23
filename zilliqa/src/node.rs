@@ -22,20 +22,19 @@ pub struct Validator {
     pub weight: u128,
 }
 
+struct NewViewVote {
+    signatures: Vec<Signature>,
+    signers: Vec<u16>,
+    cosigned: BitVec,
+    cosigned_weight: u128,
+    qcs: Vec<QuorumCertificate>,
+}
+
 pub struct Node {
     committee: Vec<Validator>,
     blocks: BTreeMap<Hash, Block>,
     votes: BTreeMap<Hash, (Vec<Signature>, BitVec, u128)>,
-    new_views: BTreeMap<
-        u64,
-        (
-            Vec<Signature>,
-            Vec<u16>,
-            BitVec,
-            u128,
-            Vec<QuorumCertificate>,
-        ),
-    >,
+    new_views: BTreeMap<u64, NewViewVote>,
     high_qc: Option<QuorumCertificate>, // none before we receive the first proposal
     view: u64,
     secret_key: SecretKey,
@@ -211,15 +210,21 @@ impl Node {
         let sender = self.get_member(new_view.index);
         sender.public_key.verify(&message, new_view.signature)?;
 
-        let (mut signatures, mut signers, mut cosigned, mut cosigned_weight, mut qcs) =
-            self.new_views.remove(&new_view.view).unwrap_or_else(|| {
-                (
-                    Vec::new(),
-                    Vec::new(),
-                    bitvec![u8, bitvec::order::Msb0; 0; self.committee.len()],
-                    0,
-                    Vec::new(),
-                )
+        let NewViewVote {
+            mut signatures,
+            mut signers,
+            mut cosigned,
+            mut cosigned_weight,
+            mut qcs,
+        } = self
+            .new_views
+            .remove(&new_view.view)
+            .unwrap_or_else(|| NewViewVote {
+                signatures: Vec::new(),
+                signers: Vec::new(),
+                cosigned: bitvec![u8, bitvec::order::Msb0; 0; self.committee.len()],
+                cosigned_weight: 0,
+                qcs: Vec::new(),
             });
 
         let mut supermajority = false;
@@ -263,7 +268,13 @@ impl Node {
         if !supermajority {
             self.new_views.insert(
                 new_view.view,
-                (signatures, signers, cosigned, cosigned_weight, qcs),
+                NewViewVote {
+                    signatures,
+                    signers,
+                    cosigned,
+                    cosigned_weight,
+                    qcs,
+                },
             );
         }
 
