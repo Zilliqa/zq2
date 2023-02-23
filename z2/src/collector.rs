@@ -16,8 +16,8 @@ impl Collector {
         let (tx, mut rx) = mpsc::channel(32);
         let nr = keys.len();
         // Fire everything up.
-        for i in 0..nr {
-            runners.push(runner::Process::spawn(i, &keys[i], &tx).await?);
+        for (i, key) in keys.iter().enumerate() {
+            runners.push(runner::Process::spawn(i, key, &tx).await?);
         }
         let reader = tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
