@@ -90,7 +90,6 @@ async fn main() -> Result<()> {
 
     if let Some(port) = args.bind_port {
         addr.push(Protocol::Tcp(port));
-        println!("Zilliqa server is running on {:?}...", port);
     } else {
         addr.push(Protocol::Tcp(0));
     }
