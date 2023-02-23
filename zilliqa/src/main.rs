@@ -1,7 +1,6 @@
 mod crypto;
 mod message;
 mod node;
-
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -20,6 +19,7 @@ use libp2p::{
         Record,
     },
     mdns, mplex,
+    multiaddr::{Multiaddr, Protocol},
     multihash::Multihash,
     noise,
     swarm::{NetworkBehaviour, SwarmEvent},
@@ -36,10 +36,12 @@ use tracing::{debug, info, trace};
 
 use crate::message::Message;
 
-#[derive(Debug, Parser)]
+#[derive(Parser, Debug)]
 struct Args {
     #[arg(value_parser = SecretKey::from_hex)]
     secret_key: SecretKey,
+    #[clap(long)]
+    bind_port: Option<u16>,
 }
 
 #[derive(NetworkBehaviour)]
@@ -84,7 +86,16 @@ async fn main() -> Result<()> {
 
     let mut swarm = Swarm::with_tokio_executor(transport, behaviour, peer_id);
 
-    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+    let mut addr: Multiaddr = "/ip4/0.0.0.0".parse().unwrap();
+
+    if let Some(port) = args.bind_port {
+        addr.push(Protocol::Tcp(port));
+        println!("Zilliqa server is running on {:?}...", port);
+    } else {
+        addr.push(Protocol::Tcp(0));
+    }
+
+    swarm.listen_on(addr)?;
 
     let topic = IdentTopic::new("topic");
     swarm.behaviour_mut().gossipsub.subscribe(&topic)?;

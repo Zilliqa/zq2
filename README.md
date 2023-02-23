@@ -17,3 +17,10 @@ cargo run -- db670cbff28f4b15297d03fafdab8f5303d68b7591bd59e31eaef215dd0f246a
 ```
 
 You may also want to set `RUST_LOG=zilliqa=trace` to see the most detailed level of logs.
+
+### Bootstrap with docker-compose
+
+Automated bootstrap of a 4 nodes Zilliqa 2.0 aka zq2 network.
+```
+docker-compose up
+````
