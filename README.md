@@ -15,3 +15,5 @@ cargo run -- 62070b1a3b5b30236e43b4f1bfd617e1af7474635558314d46127a708b9d302e
 cargo run -- 56d7a450d75c6ba2706ef71da6ca80143ec4971add9c44d7d129a12fa7d3a364
 cargo run -- db670cbff28f4b15297d03fafdab8f5303d68b7591bd59e31eaef215dd0f246a
 ```
+
+You may also want to set `RUST_LOG=zilliqa=trace` to see the most detailed level of logs.

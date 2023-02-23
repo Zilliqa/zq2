@@ -5,6 +5,7 @@ use bitvec::bitvec;
 use itertools::Itertools;
 use libp2p::PeerId;
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::trace;
 
 use crate::{
     crypto::{verify_messages, Hash, PublicKey, SecretKey, Signature},
@@ -195,7 +196,7 @@ impl Node {
     fn handle_new_view(&mut self, _: PeerId, new_view: NewView) -> Result<()> {
         // if we are not the leader of the round in which the vote counts
         if self.get_leader(new_view.view).public_key != self.secret_key.public_key() {
-            println!("Not the leader of view {}", new_view.view);
+            trace!(new_view.view, "skipping new view, not the leader");
             return Ok(());
         }
         // if the vote is too old and does not count anymore
@@ -230,7 +231,15 @@ impl Node {
             cosigned_weight += sender.weight;
             qcs.push(new_view.qc);
             supermajority = cosigned_weight * 3 > self.committee_weight() * 2;
-            println!("Signers: {}, weight: {}, supermajority: {supermajority}, current view: {}, new view: {}", signers.len(), cosigned_weight, self.view, new_view.view);
+            let num_signers = signers.len();
+            trace!(
+                num_signers,
+                cosigned_weight,
+                supermajority,
+                self.view,
+                new_view.view,
+                "storing vote for new view"
+            );
             // if we are already in the round in which the vote counts and have reached supermajority
             if new_view.view == self.view && supermajority {
                 // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
@@ -265,10 +274,10 @@ impl Node {
         let Ok(block) = self.get_block(&vote.block_hash) else { return Ok(()); }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
         let block_hash = block.hash;
         let block_view = block.view;
-        println!("Vote in view {block_view}");
+        trace!(block_view, "handling vote");
         // if we are not the leader of the round in which the vote counts
         if self.get_leader(block_view + 1).public_key != self.secret_key.public_key() {
-            println!("Not the leader of block {}", block_view + 1);
+            trace!(vote_view = block_view + 1, "skipping vote, not the leader");
             return Ok(());
         }
         // if the vote is too old and does not count anymore
@@ -298,7 +307,13 @@ impl Node {
             cosigned_weight += sender.weight;
 
             supermajority = cosigned_weight * 3 > self.committee_weight() * 2;
-            println!("Cosigned: {cosigned} ({cosigned_weight}), supermajority: {supermajority}, current_view: {}, block_view: {}", self.view, block_view + 1);
+            trace!(
+                cosigned_weight,
+                supermajority,
+                self.view,
+                vote_view = block_view + 1,
+                "storing vote"
+            );
             // if we are already in the round in which the vote counts and have reached supermajority
             if block_view + 1 == self.view && supermajority {
                 // if the voted block's view is higher than our current head's view then use it as head
@@ -308,7 +323,7 @@ impl Node {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                 let proposal = self.block_from_qc(self.view, qc, self.head, vec![]); // replace this with the real commands
                                                                                      // as a future improvement, process the proposal before broadcasting it
-                println!("Vote successful, sending proposal");
+                trace!("vote successful");
                 self.broadcast_message(Message::Proposal(Proposal { block: proposal }))?;
                 // we don't want to keep the collected votes if we proposed a new block
                 return Ok(());
@@ -381,7 +396,7 @@ impl Node {
             self.update_view(proposal_view + 1);
             self.reset_timeout.send(())?;
             let leader = self.get_leader(self.view).peer_id;
-            println!("Sending vote to {leader:?} for block {proposal_view}");
+            trace!(proposal_view, "voting for block");
             self.send_message(leader, Message::Vote(vote))?;
         }
 
@@ -542,7 +557,7 @@ impl Node {
         if is_higher {
             self.head = block.hash;
         }
-        println!("Added block with hash {:?}", block.hash);
+        trace!(?block.hash, "added block");
         self.blocks.insert(block.hash, block);
     }
 

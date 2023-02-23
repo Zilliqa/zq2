@@ -32,6 +32,7 @@ use tokio::{
     time::{self, Instant},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tracing::{debug, info, trace};
 
 use crate::message::Message;
 
@@ -51,11 +52,13 @@ struct Behaviour {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
+
     let args = Args::parse();
 
     let key_pair = args.secret_key.to_libp2p_keypair();
     let peer_id = PeerId::from(key_pair.public());
-    println!("Peer ID: {peer_id:?}");
+    info!(%peer_id);
 
     let transport = tcp::tokio::Transport::new(tcp::Config::default())
         .upgrade(upgrade::Version::V1)
@@ -113,7 +116,7 @@ async fn main() -> Result<()> {
         select! {
             event = swarm.next() => match event.expect("swarm stream should be infinite") {
                 SwarmEvent::NewListenAddr { address, .. } => {
-                    println!("Listening on {address:?}");
+                    info!(%address, "started listening");
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
                     for (peer, address) in list {
@@ -152,25 +155,27 @@ async fn main() -> Result<()> {
                 })) => {
                     let source = source.expect("message should have a source");
                     let message = serde_json::from_slice::<Message>(&data).unwrap();
-                    println!("Received {} from {source:?}", message.name());
+                    let message_type = message.name();
+                    debug!(%source, message_type, "message recieved");
                     node.handle_message(source, message).unwrap();
                 }
                 _ => {}
             },
             message = message_receiver.next() => {
-                let (peer_id, message) = message.expect("message stream should be infinite");
-                println!("Sending {} to {peer_id:?}", message.name());
+                let (dest, message) = message.expect("message stream should be infinite");
+                let message_type = message.name();
+                debug!(%dest, message_type, "sending message");
                 let data = serde_json::to_vec(&message).unwrap();
                 swarm.behaviour_mut().gossipsub.publish(topic.hash(), data).ok();
             },
             () = &mut sleep => {
-                println!("Timeout elapsed");
+                trace!("timeout elapsed");
                 node.handle_timeout().unwrap();
                 sleep.as_mut().reset(Instant::now() + Duration::from_secs(5));
             },
             r = reset_timeout_receiver.next() => {
                 let () = r.expect("reset timeout stream should be infinite");
-                println!("Timeout reset");
+                trace!("timeout reset");
                 sleep.as_mut().reset(Instant::now() + Duration::from_secs(5));
             },
         }
