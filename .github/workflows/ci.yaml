@@ -1,9 +1,15 @@
 name: ZQ2 CI
 
 on:
-  push:
+  pull_request:
+    types:
+    - opened
+    - edited
+    - closed
+    - reopened
     branches:
-      - "**"
+      - 'main'
+  push:
 
 env:
   CARGO_TERM_COLOR: always
@@ -42,3 +48,24 @@ jobs:
         run: rustup show
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
+  clippy-check:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Configure the cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install Rust toolchain
+        run: rustup show
+      - uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-targets --no-deps --all-features -- -D warnings
