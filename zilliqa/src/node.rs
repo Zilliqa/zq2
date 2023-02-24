@@ -399,15 +399,17 @@ impl Node {
         if proposal_high_qc_view > self.view {
             self.update_view(proposal_high_qc_view);
         }
-        let vote = self.vote_from_block(&proposal);
+
+        self.add_block(proposal.clone());
 
         let proposal_view = proposal.view;
-        if self.check_safe_block(proposal) {
+        if self.check_safe_block(&proposal) {
             // TODO: Download blocks up to `proposal_view - 1`.
             self.update_view(proposal_view + 1);
             self.reset_timeout.send(())?;
             let leader = self.get_leader(self.view).peer_id;
             trace!(proposal_view, "voting for block");
+            let vote = self.vote_from_block(&proposal);
             self.send_message(leader, Message::Vote(vote))?;
         }
 
@@ -505,31 +507,23 @@ impl Node {
         Ok(current.hash == ancestor.hash)
     }
 
-    fn check_safe_block(&mut self, proposal: Block) -> bool {
+    fn check_safe_block(&mut self, proposal: &Block) -> bool {
         let Ok(qc_block) = self.get_block(&proposal.qc.block_hash) else { return false; };
+        // We don't vote on blocks older than our view
+        let not_outdated = proposal.view >= self.view;
         match proposal.agg {
             // we check elsewhere that qc is the highest among the qcs in the agg
-            Some(_) => match self.block_extends_from(&proposal, qc_block) {
+            Some(_) => match self.block_extends_from(proposal, qc_block) {
                 Ok(true) => {
                     let block_hash = proposal.hash;
-                    self.add_block(proposal);
                     self.check_and_commit(block_hash);
-                    true
+                    not_outdated
                 }
-                Ok(false) => false,
-                Err(_) => {
-                    /* todo: we must add the proposed block although a missing block prevented us from checking if it extended from its highest qc's block otherwise we won't have any chance to add it later. if it becomes the head and 2f+1 vote for it, we will use it as parent for proposing a new block in the next round otherwise we won't be able to propose any block unless we receive 2f+1 new view requests. in this case we mustn't use it as parent and hope that 2f+1 have the missing block to conform that our block is safe since if they don't and they add our block just like we added the current one, we end up in an infinite sequence of unsafe blocks noone votes for but everyone uses as parent. therefore we add the proposed block but keep the previous head. if we receive 2f+1 votes for the added block we will store it as head and use it as parent.*/
-                    self.blocks.insert(proposal.hash, proposal);
-                    false
-                }
+                Ok(false) | Err(_) => false,
             },
             None => {
-                let not_outdated = proposal.view >= self.view;
                 if proposal.view == qc_block.view + 1 {
-                    // todo: we store 1-direct chain proposals even if they are outdated and we don't vote for them
-                    let hash = proposal.hash;
-                    self.add_block(proposal);
-                    self.check_and_commit(hash);
+                    self.check_and_commit(proposal.hash);
                     not_outdated
                 } else {
                     false
