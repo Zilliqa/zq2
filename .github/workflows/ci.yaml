@@ -65,7 +65,6 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Rust toolchain
         run: rustup show
-      - uses: actions-rs/clippy-check@v1
+      - uses: actions-rs-plus/clippy-check@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           args: --all-targets --no-deps --all-features -- -D warnings
