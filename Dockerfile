@@ -1,4 +1,4 @@
-FROM rust:1.67.1-slim-buster as build-env
+FROM rust:1.67.1-slim-bullseye as builder
 
 RUN apt update -y && \
     apt upgrade -y && \
@@ -6,18 +6,16 @@ RUN apt update -y && \
 
 RUN apt autoremove
 
+RUN mkdir build
+
 COPY . .
 
-RUN cargo build --release --bin zilliqa
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/target \
+    cargo build --release --bin zilliqa && \
+    mv /target/release/zilliqa /build/
 
 
-FROM rust:1.67.1-slim-buster
+FROM gcr.io/distroless/cc-debian11
 
-RUN apt update -y && \
-    apt upgrade -y
-
-RUN apt autoremove
-
-COPY --from=build-env /target/release/zilliqa /zilliqa
-
-
+COPY --from=builder /build/zilliqa /zilliqa
