@@ -1,6 +1,9 @@
 version: '3'
 services:
   node0:
+    environment:
+      RUST_BACKTRACE: 1
+      RUST_LOG: zilliqa=trace
     build:
       context: .
       dockerfile: Dockerfile
@@ -13,6 +16,9 @@ services:
         ipv4_address: 172.10.10.2
 
   node1:
+    environment:
+      RUST_BACKTRACE: 1
+      RUST_LOG: zilliqa=trace
     container_name: zilliqanode1
     image: zq2-node0
     command:
@@ -23,6 +29,9 @@ services:
         ipv4_address: 172.10.10.3
 
   node2:
+    environment:
+      RUST_BACKTRACE: 1
+      RUST_LOG: zilliqa=trace
     container_name: zilliqanode2
     image: zq2-node0
     command:
@@ -33,6 +42,9 @@ services:
         ipv4_address: 172.10.10.4
 
   node3:
+    environment:
+      RUST_BACKTRACE: 1
+      RUST_LOG: zilliqa=trace
     container_name: zilliqanode3
     image: zq2-node0
     command:
