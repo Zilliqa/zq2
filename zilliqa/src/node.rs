@@ -5,7 +5,7 @@ use bitvec::bitvec;
 use itertools::Itertools;
 use libp2p::PeerId;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::trace;
+use tracing::{debug, trace};
 
 use crate::{
     crypto::{verify_messages, Hash, PublicKey, SecretKey, Signature},
@@ -91,8 +91,11 @@ impl Node {
     }
 
     pub fn handle_timeout(&mut self) -> Result<()> {
+        if self.view == 0 {
+            return Ok(());
+        }
+
         self.update_view(self.view + 1);
-        self.reset_timeout.send(())?;
 
         if let Some(high_qc) = &self.high_qc {
             let new_view = self.new_view_from_qc(high_qc);
@@ -109,6 +112,8 @@ impl Node {
         if self.pending_peers.contains(&(peer, public_key)) {
             return Ok(());
         }
+
+        debug!(%peer, "added pending peer");
 
         self.pending_peers.push((peer, public_key));
 
