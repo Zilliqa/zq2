@@ -38,8 +38,6 @@ pub struct Node {
     high_qc: Option<QuorumCertificate>, // none before we receive the first proposal
     view: u64,
     secret_key: SecretKey,
-    /// The latest block in the chain.
-    head: Hash,
     /// The latest finalized block.
     finalized: Hash,
     message_sender: UnboundedSender<(PeerId, Message)>,
@@ -69,7 +67,6 @@ impl Node {
             high_qc: None,
             view: 0,
             secret_key,
-            head: Hash::ZERO,
             finalized: Hash::ZERO,
             message_sender,
             reset_timeout,
@@ -251,11 +248,12 @@ impl Node {
                 let agg =
                     self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, signers)?;
                 let high_qc = self.get_highest_from_agg(&agg)?;
+                let parent = high_qc.block_hash;
                 let proposal = self.block_from_agg(
                     self.view,
                     high_qc.clone(),
                     agg,
-                    self.head,
+                    parent,
                     vec![], // replace this with the real commands
                 );
                 // as a future improvement, process the proposal before broadcasting it
@@ -327,13 +325,10 @@ impl Node {
             );
             // if we are already in the round in which the vote counts and have reached supermajority
             if block_view + 1 == self.view && supermajority {
-                // if the voted block's view is higher than our current head's view then use it as head
-                if block_view > self.get_block(&self.head)?.view {
-                    self.head = block_hash;
-                }
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
-                let proposal = self.block_from_qc(self.view, qc, self.head, vec![]); // replace this with the real commands
-                                                                                     // as a future improvement, process the proposal before broadcasting it
+                let parent = qc.block_hash;
+                let proposal = self.block_from_qc(self.view, qc, parent, vec![]); // replace this with the real commands
+                                                                                  // as a future improvement, process the proposal before broadcasting it
                 trace!("vote successful");
                 self.broadcast_message(Message::Proposal(Proposal { block: proposal }))?;
                 // we don't want to keep the collected votes if we proposed a new block
@@ -560,14 +555,6 @@ impl Node {
     }
 
     fn add_block(&mut self, block: Block) {
-        let is_higher = self
-            .blocks
-            .get(&self.head)
-            .map(|head| block.view > head.view)
-            .unwrap_or(true);
-        if is_higher {
-            self.head = block.hash;
-        }
         trace!(?block.hash, "added block");
         self.blocks.insert(block.hash, block);
     }
