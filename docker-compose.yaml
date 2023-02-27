@@ -14,6 +14,8 @@ services:
     networks:
       localnet:
         ipv4_address: 172.10.10.2
+    ports:
+      - "4201:4201"
 
   node1:
     environment:
