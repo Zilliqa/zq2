@@ -1,8 +1,8 @@
-use zilliqa::crypto;
-use zilliqa::message;
-use zilliqa::node;
-
-use std::time::Duration;
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
@@ -31,6 +31,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, info, trace};
+use zilliqa::{api, crypto, message, node};
 
 use crate::message::Message;
 
@@ -111,12 +112,19 @@ async fn main() -> Result<()> {
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     let mut reset_timeout_receiver = UnboundedReceiverStream::new(reset_timeout_receiver);
 
-    let mut node = Node::new(
+    let node = Node::new(
         peer_id,
         args.secret_key,
         message_sender,
         reset_timeout_sender,
     )?;
+    let node = Arc::new(Mutex::new(node));
+
+    let server = jsonrpsee::server::ServerBuilder::new()
+        .build("0.0.0.0:4201".parse::<SocketAddr>()?)
+        .await?;
+    let handle = server.start(api::zilliqa::rpc_module(Arc::clone(&node)))?;
+    tokio::spawn(handle.stopped());
 
     let sleep = time::sleep(Duration::from_secs(5));
     tokio::pin!(sleep);
@@ -153,7 +161,7 @@ async fn main() -> Result<()> {
                     let peer_id = PeerId::from_multihash(Multihash::from_bytes(key.as_ref())?).expect("key should be a peer ID");
                     let public_key = PublicKey::from_bytes(&value)?;
 
-                    node.add_peer(peer_id, public_key)?;
+                    node.lock().unwrap().add_peer(peer_id, public_key)?;
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
                     message: gossipsub::Message {
@@ -165,7 +173,7 @@ async fn main() -> Result<()> {
                     let message = serde_json::from_slice::<Message>(&data).unwrap();
                     let message_type = message.name();
                     debug!(%source, message_type, "message recieved");
-                    node.handle_message(source, message).unwrap();
+                    node.lock().unwrap().handle_message(source, message).unwrap();
                 }
                 _ => {}
             },
@@ -178,7 +186,7 @@ async fn main() -> Result<()> {
             },
             () = &mut sleep => {
                 trace!("timeout elapsed");
-                node.handle_timeout().unwrap();
+                node.lock().unwrap().handle_timeout().unwrap();
                 sleep.as_mut().reset(Instant::now() + Duration::from_secs(5));
             },
             r = reset_timeout_receiver.next() => {
