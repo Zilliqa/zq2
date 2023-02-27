@@ -20,7 +20,7 @@ impl Api for Arc<Mutex<Node>> {
     fn ds_block_listing(&self, _: u64) -> Result<DsBlockListing> { todo() }
     fn get_blockchain_info(&self) -> Result<BlockchainInfo> { todo() }
     fn get_current_ds_epoch(&self) -> Result<u64> { todo() }
-    fn get_current_tx_epoch(&self) -> Result<u64> { todo() }
+    fn get_current_tx_epoch(&self) -> Result<u64> { Ok(self.lock().unwrap().view()) }
     fn get_ds_block(&self, _: u64) -> Result<DsBlock> { todo() }
     fn get_ds_block_rate(&self) -> Result<f64> { todo() }
     fn get_miner_info(&self, _: u64) -> Result<MinerInfo> { todo() }
