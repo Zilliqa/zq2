@@ -10,10 +10,7 @@ use crypto::{PublicKey, SecretKey};
 use libp2p::{
     core::upgrade,
     futures::StreamExt,
-    gossipsub::{
-        Gossipsub, GossipsubConfigBuilder, GossipsubEvent, GossipsubMessage, IdentTopic,
-        MessageAuthenticity,
-    },
+    gossipsub::{self, IdentTopic, MessageAuthenticity},
     identify,
     kad::{
         store::MemoryStore, GetRecordOk, Kademlia, KademliaEvent, PeerRecord, QueryResult, Quorum,
@@ -47,7 +44,7 @@ struct Args {
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
-    gossipsub: Gossipsub,
+    gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
     kademlia: Kademlia<MemoryStore>,
     identify: identify::Behaviour,
@@ -70,14 +67,14 @@ async fn main() -> Result<()> {
         .boxed();
 
     let behaviour = Behaviour {
-        gossipsub: Gossipsub::new(
+        gossipsub: gossipsub::Behaviour::new(
             MessageAuthenticity::Signed(key_pair.clone()),
-            GossipsubConfigBuilder::default()
+            gossipsub::ConfigBuilder::default()
                 .build()
                 .map_err(|e| anyhow!(e))?,
         )
         .map_err(|e| anyhow!(e))?,
-        mdns: mdns::Behaviour::new(Default::default())?,
+        mdns: mdns::Behaviour::new(Default::default(), peer_id)?,
         kademlia: Kademlia::new(peer_id, MemoryStore::new(peer_id)),
         identify: identify::Behaviour::new(identify::Config::new(
             "/ipfs/id/1.0.0".to_owned(),
@@ -158,8 +155,8 @@ async fn main() -> Result<()> {
 
                     node.add_peer(peer_id, public_key)?;
                 }
-                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(GossipsubEvent::Message{
-                    message: GossipsubMessage {
+                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
+                    message: gossipsub::Message {
                         source,
                         data, ..
                     }, ..
