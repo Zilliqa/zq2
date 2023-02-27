@@ -51,6 +51,10 @@ jobs:
   clippy-check:
     runs-on: ubuntu-22.04
     steps:
+      - name: Install Ubuntu pre-requirements
+        run: |
+          sudo apt install -y protobuf-compiler
+        shell: bash
       - name: Checkout
         uses: actions/checkout@v3
       - name: Configure the cache
