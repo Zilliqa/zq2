@@ -5,6 +5,7 @@ on:
     types:
     - opened
     - closed
+    - edited
     - reopened
     branches:
       - 'main'
