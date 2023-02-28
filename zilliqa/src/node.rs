@@ -130,6 +130,10 @@ impl Node {
         Ok(())
     }
 
+    pub fn view(&self) -> u64 {
+        self.view
+    }
+
     fn update_view(&mut self, view: u64) {
         self.view = view;
         let pending_peers = self.pending_peers.drain(..);
