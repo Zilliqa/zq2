@@ -1,12 +1,14 @@
 use std::{
-    net::SocketAddr,
+    fs,
+    net::Ipv4Addr,
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use crypto::{PublicKey, SecretKey};
+use crypto::PublicKey;
 use libp2p::{
     core::upgrade,
     futures::StreamExt,
@@ -31,7 +33,12 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, info, trace};
-use zilliqa::{api, crypto, message, node};
+use zilliqa::{
+    api,
+    cfg::Config,
+    crypto::{self, SecretKey},
+    message, node,
+};
 
 use crate::message::Message;
 
@@ -39,8 +46,8 @@ use crate::message::Message;
 struct Args {
     #[arg(value_parser = SecretKey::from_hex)]
     secret_key: SecretKey,
-    #[clap(long)]
-    bind_port: Option<u16>,
+    #[clap(long, short, default_value = "config.toml")]
+    config_file: PathBuf,
 }
 
 #[derive(NetworkBehaviour)]
@@ -56,6 +63,15 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
+
+    let config = if args.config_file.exists() {
+        fs::read_to_string(&args.config_file)?
+    } else {
+        // If the configuration file doesn't exist, we can still construct a default configuration file by parsing an
+        // empty TOML document.
+        String::new()
+    };
+    let config: Config = toml::from_str(&config)?;
 
     let key_pair = args.secret_key.to_libp2p_keypair();
     let peer_id = PeerId::from(key_pair.public());
@@ -87,7 +103,7 @@ async fn main() -> Result<()> {
 
     let mut addr: Multiaddr = "/ip4/0.0.0.0".parse().unwrap();
 
-    if let Some(port) = args.bind_port {
+    if let Some(port) = config.p2p_port {
         addr.push(Protocol::Tcp(port));
     } else {
         addr.push(Protocol::Tcp(0));
@@ -121,7 +137,7 @@ async fn main() -> Result<()> {
     let node = Arc::new(Mutex::new(node));
 
     let server = jsonrpsee::server::ServerBuilder::new()
-        .build("0.0.0.0:4201".parse::<SocketAddr>()?)
+        .build((Ipv4Addr::UNSPECIFIED, config.json_rpc_port))
         .await?;
     let handle = server.start(api::zilliqa::rpc_module(Arc::clone(&node)))?;
     tokio::spawn(handle.stopped());
