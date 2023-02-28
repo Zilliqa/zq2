@@ -212,6 +212,9 @@ impl Node {
         let sender = self.get_member(new_view.index);
         sender.public_key.verify(&message, new_view.signature)?;
 
+        // check if the sender's qc is higher than our high_qc or even higher than our view
+        self.update_high_qc_and_view(false, new_view.qc.clone())?;
+
         let NewViewVote {
             mut signatures,
             mut signers,
@@ -380,27 +383,8 @@ impl Node {
         // retrieve the highest among the aggregated qcs and check if it equals the block's qc
         let proposal_high_qc = self.get_high_qc_from_block(&proposal)?;
 
-        let mut proposal_high_qc_view = 0;
-
-        match &self.high_qc {
-            None => {
-                let block_hash = proposal_high_qc.block_hash;
-                self.high_qc = Some(proposal_high_qc.clone());
-                proposal_high_qc_view = self.get_block(&block_hash)?.view;
-            }
-            Some(high_qc) => {
-                let proposal_high_qc_view = self.get_block(&proposal_high_qc.block_hash)?.view;
-                if proposal_high_qc_view > self.get_block(&high_qc.block_hash)?.view {
-                    self.high_qc = Some(proposal_high_qc.clone());
-                }
-            }
-        }
-        // todo: adjust the node's view if the high_qc's view is higher
-        if proposal_high_qc_view > self.view {
-            self.update_view(proposal_high_qc_view);
-        }
-
         self.add_block(proposal.clone());
+        self.update_high_qc_and_view(proposal.agg.is_some(), proposal_high_qc.clone())?;
 
         let proposal_view = proposal.view;
         if self.check_safe_block(&proposal) {
@@ -413,6 +397,32 @@ impl Node {
             self.send_message(leader, Message::Vote(vote))?;
         }
 
+        Ok(())
+    }
+
+    fn update_high_qc_and_view(
+        &mut self,
+        from_agg: bool,
+        new_high_qc: QuorumCertificate,
+    ) -> Result<()> {
+        let Some(new_high_qc_block) = self.blocks.get(&new_high_qc.block_hash) else {
+            // We don't set high_qc to a qc if we don't have its block.
+            return Ok(());
+        };
+        match &self.high_qc {
+            None => {
+                self.high_qc = Some(new_high_qc);
+            }
+            Some(high_qc) => {
+                let current_high_qc_view = self.get_block(&high_qc.block_hash)?.view;
+                // If `from_agg` then we always release the lock because the supermajority has a different high_qc.
+                if from_agg || new_high_qc_block.view > current_high_qc_view {
+                    self.high_qc = Some(new_high_qc);
+                }
+            }
+        }
+        // TODO: Download the missing blocks
+        self.update_view(new_high_qc_block.view);
         Ok(())
     }
 
