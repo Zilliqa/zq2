@@ -14,4 +14,4 @@ jobs:
       - name: Check for high and critical vulnerabilities on deps
         uses: actions-rs/audit-check@v1
         with:
-          token: ${{ github.token }}
+          token: ${{ secrets.PAT_TOKEN }}
