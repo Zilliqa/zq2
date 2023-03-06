@@ -5,6 +5,10 @@ on:
     paths: 
       - '**/Cargo.toml'
       - '**/Cargo.lock'
+
+permissions:
+  pull-requests: write
+
 jobs:
   audit:
     runs-on: ubuntu-22.04
