@@ -8,10 +8,11 @@ on:
 jobs:
   audit:
     runs-on: ubuntu-22.04
+    permissions: write-all
     steps:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Check for high and critical vulnerabilities on deps
         uses: actions-rs/audit-check@v1
         with:
-          token: ${{ secrets.PAT_TOKEN }}
+          token: ${{ github.token }}
