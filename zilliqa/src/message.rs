@@ -1,7 +1,10 @@
 use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{Hash, Signature};
+use crate::{
+    crypto::{Hash, Signature},
+    state::NewTransaction,
+};
 
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
 pub type BitSlice = bitvec::slice::BitSlice<u8, Msb0>;
@@ -45,6 +48,7 @@ pub enum Message {
     NewView(NewView),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
+    NewTransaction(NewTransaction),
 }
 
 impl Message {
@@ -55,6 +59,7 @@ impl Message {
             Message::NewView(_) => "NewView",
             Message::BlockRequest(_) => "BlockRequest",
             Message::BlockResponse(_) => "BlockResponse",
+            Message::NewTransaction(_) => "NewTransaction",
         }
     }
 }
@@ -113,6 +118,8 @@ pub struct Block {
     pub hash: Hash,
     pub parent_hash: Hash,
     pub signature: Signature,
+    pub state_root_hash: u64,
+    pub transactions: Vec<Hash>,
 }
 
 impl Block {
@@ -128,6 +135,8 @@ impl Block {
             hash: Hash::ZERO,
             parent_hash: Hash::ZERO,
             signature: Signature::identity(),
+            state_root_hash: 0,
+            transactions: vec![],
         }
     }
 }

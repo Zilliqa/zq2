@@ -1,18 +1,21 @@
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use itertools::Itertools;
 use libp2p::PeerId;
+use primitive_types::H256;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, trace};
 
 use crate::{
+    api::types::{EthTransaction, EthTransactionReceipt},
     crypto::{verify_messages, Hash, PublicKey, SecretKey, Signature},
     message::{
         AggregateQc, BitSlice, BitVec, Block, BlockRequest, BlockResponse, Message, NewView,
         Proposal, QuorumCertificate, Vote,
     },
+    state::{Account, Address, NewTransaction, State, Transaction},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +33,20 @@ struct NewViewVote {
     qcs: Vec<QuorumCertificate>,
 }
 
+/// The central data structure for a blockchain node.
+///
+/// # Transaction Lifecycle
+/// 1. New transactions are created with a call to [`Node::new_transaction()`].
+/// The node gossips the transaction to the network via a [`Message::NewTransaction`] message.
+/// This initial node also stores the transaction hash in `pending_transactions`.
+///
+/// 1. When a node recieves a [`NewTransaction`] via [`Node::handle_message()`], it stores it in `new_transactions`.
+/// This contains all transactions which have been receieved, but not yet executed.
+///
+/// 1. When the initial node is a leader of a block, it adds all transaction hashes in `pending_transactions` to the block.
+///
+/// 1. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
+/// Successfully executed transactions are added to `transactions` so they can be returned via APIs.
 pub struct Node {
     committee: Vec<Validator>,
     blocks: BTreeMap<Hash, Block>,
@@ -44,6 +61,15 @@ pub struct Node {
     reset_timeout: UnboundedSender<()>,
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<(PeerId, PublicKey)>,
+    /// Transactions that have been sent to this node. They will be added to the next block we author.
+    // TODO(#82): Add transactions to the next block, not *MY* next block.
+    pending_transactions: Vec<Hash>,
+    /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
+    new_transactions: BTreeMap<Hash, NewTransaction>,
+    /// Transactions that have been executed and included in a block.
+    transactions: BTreeMap<Hash, Transaction>,
+    /// The account store.
+    state: State,
 }
 
 impl Node {
@@ -71,6 +97,10 @@ impl Node {
             message_sender,
             reset_timeout,
             pending_peers: Vec::new(),
+            pending_transactions: Vec::new(),
+            new_transactions: BTreeMap::new(),
+            transactions: BTreeMap::new(),
+            state: State::new(),
         };
 
         Ok(node)
@@ -84,6 +114,10 @@ impl Node {
             Message::NewView(m) => self.handle_new_view(source, m),
             Message::BlockRequest(m) => self.handle_block_request(source, m),
             Message::BlockResponse(m) => self.handle_block_response(source, m),
+            Message::NewTransaction(t) => {
+                self.new_transactions.insert(t.hash(), t);
+                Ok(())
+            }
         }
     }
 
@@ -132,6 +166,93 @@ impl Node {
 
     pub fn view(&self) -> u64 {
         self.view
+    }
+
+    pub fn new_transaction(&mut self, transaction: NewTransaction) -> Result<Hash> {
+        let hash = transaction.hash();
+        self.broadcast_message(Message::NewTransaction(transaction))?;
+
+        self.pending_transactions.push(hash);
+
+        Ok(hash)
+    }
+
+    pub fn call_contract(&self, contract: Address, data: Vec<u8>) -> Result<Vec<u8>> {
+        self.state.call_contract(contract, data)
+    }
+
+    pub fn get_account(&self, address: Address) -> Result<Cow<'_, Account>> {
+        Ok(self.state.get_account(address))
+    }
+
+    pub fn get_latest_block(&self) -> Option<&Block> {
+        self.blocks.values().max_by_key(|b| b.view)
+    }
+
+    pub fn get_block_by_view(&self, view: u64) -> Option<&Block> {
+        self.blocks.values().find(|b| b.view == view)
+    }
+
+    pub fn get_block_by_hash(&self, hash: Hash) -> Option<&Block> {
+        self.blocks.get(&hash)
+    }
+
+    pub fn get_transaction_receipt(&self, hash: Hash) -> Option<EthTransactionReceipt> {
+        let transaction = self.transactions.get(&hash)?;
+        let block = self
+            .blocks
+            .values()
+            .find(|block| block.transactions.contains(&hash))?;
+
+        let receipt = EthTransactionReceipt {
+            transaction_hash: H256(hash.0),
+            transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
+            block_hash: H256::from_slice(block.hash.as_bytes()),
+            block_number: block.view,
+            from: transaction.from_addr.0,
+            to: transaction.to_addr.0,
+            cumulative_gas_used: 0,
+            effective_gas_price: 0,
+            gas_used: 0,
+            contract_address: transaction.contract_address.map(|a| a.0),
+            logs: vec![],
+            logs_bloom: [0; 256],
+            ty: 0,
+            status: true,
+        };
+
+        Some(receipt)
+    }
+
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<EthTransaction> {
+        let transaction = self.transactions.get(&hash)?;
+        let block = self
+            .blocks
+            .values()
+            .find(|block| block.transactions.contains(&hash))?;
+
+        let response = EthTransaction {
+            block_hash: H256(block.hash.0),
+            block_number: block.view,
+            from: transaction.from_addr.0,
+            gas: 0,
+            gas_price: transaction.gas_price as u64,
+            input: transaction.payload.clone(),
+            nonce: transaction.nonce,
+            // `to` should be `None` if `transaction` is a contract creation.
+            to: if transaction.contract_address.is_none() {
+                Some(transaction.to_addr.0)
+            } else {
+                None
+            },
+            transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
+            value: transaction.amount as u64,
+            v: 0,
+            r: [0; 32],
+            s: [0; 32],
+        };
+
+        Some(response)
     }
 
     fn update_view(&mut self, view: u64) {
@@ -333,7 +454,8 @@ impl Node {
             if block_view + 1 == self.view && supermajority {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                 let parent = qc.block_hash;
-                let proposal = self.block_from_qc(self.view, qc, parent);
+                let transactions = self.pending_transactions.drain(..).collect();
+                let proposal = self.block_from_qc(self.view, qc, parent, transactions);
                 // as a future improvement, process the proposal before broadcasting it
                 trace!("vote successful");
                 self.broadcast_message(Message::Proposal(Proposal { block: proposal }))?;
@@ -386,6 +508,21 @@ impl Node {
 
         let proposal_view = proposal.view;
         if self.check_safe_block(&proposal) {
+            for txn in &proposal.transactions {
+                // TODO(#83): Currently we return an error if the transaction's hash was not in `self.new_transactions`.
+                // However, it is quite possible that we haven't yet received the transaction. We should do something
+                // in this case (Request from another node and wait for a response? Just wait for the gossip to
+                // arrive?)
+                let txn = self
+                    .new_transactions
+                    .remove(txn)
+                    .ok_or_else(|| anyhow!("missing transaction"))?;
+
+                let txn = self.state.apply_transaction(txn)?;
+
+                self.transactions.insert(txn.hash(), txn);
+            }
+            // TODO(#84): compare state roots
             // TODO: Download blocks up to `proposal_view - 1`.
             self.update_view(proposal_view + 1);
             self.reset_timeout.send(())?;
@@ -441,12 +578,19 @@ impl Node {
         })
     }
 
-    fn block_from_qc(&self, view: u64, qc: QuorumCertificate, parent_hash: Hash) -> Block {
+    fn block_from_qc(
+        &self,
+        view: u64,
+        qc: QuorumCertificate,
+        parent_hash: Hash,
+        transactions: Vec<Hash>,
+    ) -> Block {
         let digest = Hash::compute(&[
             &view.to_be_bytes(),
             qc.compute_hash().as_bytes(),
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
+            &self.state.root_hash().to_be_bytes(),
         ]);
         let signature = self.secret_key.sign(digest.as_bytes());
         Block {
@@ -456,6 +600,8 @@ impl Node {
             hash: digest,
             parent_hash,
             signature,
+            state_root_hash: self.state.root_hash(),
+            transactions,
         }
     }
 
@@ -471,6 +617,7 @@ impl Node {
             qc.compute_hash().as_bytes(),
             agg.compute_hash().as_bytes(),
             parent_hash.as_bytes(),
+            &self.state.root_hash().to_be_bytes(),
         ]);
         let signature = self.secret_key.sign(digest.as_bytes());
         Block {
@@ -480,6 +627,8 @@ impl Node {
             hash: digest,
             parent_hash,
             signature,
+            state_root_hash: self.state.root_hash(),
+            transactions: vec![],
         }
     }
 
