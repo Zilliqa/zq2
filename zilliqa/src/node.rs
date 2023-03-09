@@ -1,18 +1,26 @@
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
+use evm::{
+    backend::Apply,
+    executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata},
+    Capture, Config, Context, CreateScheme, ExitReason, ExitSucceed, Handler,
+};
 use itertools::Itertools;
 use libp2p::PeerId;
+use primitive_types::{H160, H256, U256};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 use crate::{
+    api::types::{EthTransaction, EthTransactionReceipt},
     crypto::{verify_messages, Hash, PublicKey, SecretKey, Signature},
     message::{
         AggregateQc, BitSlice, BitVec, Block, BlockRequest, BlockResponse, Message, NewView,
         Proposal, QuorumCertificate, Vote,
     },
+    state::{Account, Address, NewTransaction, State, Transaction},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -44,6 +52,15 @@ pub struct Node {
     reset_timeout: UnboundedSender<()>,
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<(PeerId, PublicKey)>,
+    /// Transactions that have been sent to this node. They will be added to the next block we author.
+    // TODO: Add transactions to the next block, not *MY* next block.
+    pending_transactions: Vec<Hash>,
+    /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
+    new_transactions: BTreeMap<Hash, NewTransaction>,
+    /// Transactions that have been executed and included in a block.
+    transactions: BTreeMap<Hash, Transaction>,
+    /// The account store.
+    state: State,
 }
 
 impl Node {
@@ -71,6 +88,10 @@ impl Node {
             message_sender,
             reset_timeout,
             pending_peers: Vec::new(),
+            pending_transactions: Vec::new(),
+            new_transactions: BTreeMap::new(),
+            transactions: BTreeMap::new(),
+            state: State::new(),
         };
 
         Ok(node)
@@ -84,6 +105,10 @@ impl Node {
             Message::NewView(m) => self.handle_new_view(source, m),
             Message::BlockRequest(m) => self.handle_block_request(source, m),
             Message::BlockResponse(m) => self.handle_block_response(source, m),
+            Message::NewTransaction(t) => {
+                self.new_transactions.insert(t.hash(), t);
+                Ok(())
+            }
         }
     }
 
@@ -132,6 +157,113 @@ impl Node {
 
     pub fn view(&self) -> u64 {
         self.view
+    }
+
+    pub fn new_transaction(&mut self, transaction: NewTransaction) -> Result<Hash> {
+        let hash = transaction.hash();
+        self.broadcast_message(Message::NewTransaction(transaction))?;
+
+        self.pending_transactions.push(hash);
+
+        Ok(hash)
+    }
+
+    pub fn call_contract(&self, contract: Address, data: Vec<u8>) -> Result<Vec<u8>> {
+        // FIXME: There is a bit of code duplication between here and `Self::apply_transaction`.
+        let config = Config::london();
+        let stack_state_metadata = StackSubstateMetadata::new(u64::MAX, &config);
+        let context = self.state.call_context(U256::MAX, H160::zero());
+        let stack_state = MemoryStackState::new(stack_state_metadata, &context);
+        let mut executor = StackExecutor::new_with_precompiles(stack_state, &config, &());
+
+        let context = Context {
+            address: contract.0,
+            caller: H160::zero(),
+            apparent_value: U256::zero(),
+        };
+        let call = executor.call(contract.0, None, data, None, true, context);
+        let (reason, data) = match call {
+            Capture::Exit(e) => e,
+            Capture::Trap(i) => match i {},
+        };
+        match reason {
+            ExitReason::Succeed(ExitSucceed::Returned) => Ok(data),
+            _ => Err(anyhow!("no return value")),
+        }
+    }
+
+    pub fn get_account(&self, address: Address) -> Result<Cow<'_, Account>> {
+        Ok(self.state.get_account(address))
+    }
+
+    pub fn get_latest_block(&self) -> Option<&Block> {
+        self.blocks.values().max_by_key(|b| b.view)
+    }
+
+    pub fn get_block_by_view(&self, view: u64) -> Option<&Block> {
+        self.blocks.values().find(|b| b.view == view)
+    }
+
+    pub fn get_block_by_hash(&self, hash: Hash) -> Option<&Block> {
+        self.blocks.get(&hash)
+    }
+
+    pub fn get_transaction_receipt(&self, hash: Hash) -> Option<EthTransactionReceipt> {
+        let transaction = self.transactions.get(&hash)?;
+        let block = self
+            .blocks
+            .values()
+            .find(|block| block.transactions.contains(&hash))?;
+
+        let receipt = EthTransactionReceipt {
+            transaction_hash: H256(hash.0),
+            transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
+            block_hash: H256::from_slice(block.hash.as_bytes()),
+            block_number: block.view,
+            from: transaction.from_addr.0,
+            to: transaction.to_addr.0,
+            cumulative_gas_used: 0,
+            effective_gas_price: 0,
+            gas_used: 0,
+            contract_address: transaction.contract_address.map(|a| a.0),
+            logs: vec![],
+            logs_bloom: [0; 256],
+            ty: 0,
+            status: true,
+        };
+
+        Some(receipt)
+    }
+
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<EthTransaction> {
+        let transaction = self.transactions.get(&hash)?;
+        let block = self
+            .blocks
+            .values()
+            .find(|block| block.transactions.contains(&hash))?;
+
+        let response = EthTransaction {
+            block_hash: H256(block.hash.0),
+            block_number: block.view,
+            from: transaction.from_addr.0,
+            gas: 0,
+            gas_price: transaction.gas_price as u64,
+            input: transaction.payload.clone(),
+            nonce: transaction.nonce,
+            // `to` should be `None` if `transaction` is a contract creation.
+            to: if transaction.contract_address.is_none() {
+                Some(transaction.to_addr.0)
+            } else {
+                None
+            },
+            transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
+            value: transaction.amount as u64,
+            v: 0,
+            r: [0; 32],
+            s: [0; 32],
+        };
+
+        Some(response)
     }
 
     fn update_view(&mut self, view: u64) {
@@ -333,7 +465,8 @@ impl Node {
             if block_view + 1 == self.view && supermajority {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                 let parent = qc.block_hash;
-                let proposal = self.block_from_qc(self.view, qc, parent);
+                let transactions = self.pending_transactions.drain(..).collect();
+                let proposal = self.block_from_qc(self.view, qc, parent, transactions);
                 // as a future improvement, process the proposal before broadcasting it
                 trace!("vote successful");
                 self.broadcast_message(Message::Proposal(Proposal { block: proposal }))?;
@@ -386,6 +519,13 @@ impl Node {
 
         let proposal_view = proposal.view;
         if self.check_safe_block(&proposal) {
+            for txn in &proposal.transactions {
+                self.apply_transaction(*txn)?;
+            }
+            //if self.state.root_hash() != proposal.state_root_hash {
+            //    return Err(anyhow!("state divergence"));
+            //}
+            // TODO: execute block and compare state roots
             // TODO: Download blocks up to `proposal_view - 1`.
             self.update_view(proposal_view + 1);
             self.reset_timeout.send(())?;
@@ -394,6 +534,102 @@ impl Node {
             let vote = self.vote_from_block(&proposal);
             self.send_message(leader, Message::Vote(vote))?;
         }
+
+        Ok(())
+    }
+
+    fn apply_transaction(&mut self, txn: Hash) -> Result<()> {
+        let txn = self
+            .new_transactions
+            .remove(&txn)
+            .ok_or_else(|| anyhow!("missing transaction"))?;
+
+        let config = Config::london();
+        let stack_state_metadata = StackSubstateMetadata::new(txn.gas_limit, &config);
+        let context = self
+            .state
+            .call_context(txn.gas_price.into(), txn.from_addr.0);
+        let stack_state = MemoryStackState::new(stack_state_metadata, &context);
+        let mut executor = StackExecutor::new_with_precompiles(stack_state, &config, &());
+
+        let contract_address = if txn.to_addr == Address::DEPLOY_CONTRACT {
+            let create = executor.create(
+                txn.from_addr.0,
+                CreateScheme::Legacy {
+                    caller: txn.from_addr.0,
+                },
+                U256::zero(),
+                txn.payload.clone(),
+                Some(txn.gas_limit),
+            );
+            // TODO: Do something with the `ExitReason` and data.
+            let (_, address, _) = match create {
+                Capture::Exit(e) => e,
+                Capture::Trap(i) => match i {},
+            };
+            address
+        } else {
+            let context = Context {
+                address: txn.to_addr.0,
+                caller: txn.from_addr.0,
+                apparent_value: U256::zero(),
+            };
+            let call = executor.call(
+                txn.to_addr.0,
+                None,
+                txn.payload.clone(),
+                None,
+                false,
+                context,
+            );
+            // TODO: Do something with the `ExitReason` and data.
+            let (_, _) = match call {
+                Capture::Exit(e) => e,
+                Capture::Trap(i) => match i {},
+            };
+            None
+        };
+
+        let (applys, logs) = executor.into_state().deconstruct();
+        // `applys` borrows from `self.state`. Clone it so that we can mutate `self.state`.
+        let applys: Vec<_> = applys
+            .into_iter()
+            .map(|a| match a {
+                Apply::Modify {
+                    address,
+                    basic,
+                    code,
+                    storage,
+                    reset_storage,
+                } => Apply::Modify {
+                    address,
+                    basic,
+                    code,
+                    storage: storage.into_iter().collect::<Vec<_>>(),
+                    reset_storage,
+                },
+                Apply::Delete { address } => Apply::Delete { address },
+            })
+            .collect();
+        let logs: Vec<_> = logs.into_iter().collect();
+
+        self.state.apply(applys);
+
+        // TODO: Handle `logs`.
+        let transaction = Transaction {
+            nonce: txn.nonce,
+            gas_price: txn.gas_price,
+            gas_limit: txn.gas_limit,
+            from_addr: txn.from_addr,
+            to_addr: txn.to_addr,
+            contract_address: contract_address.map(Address),
+            amount: txn.amount,
+            payload: txn.payload,
+        };
+
+        self.transactions.insert(transaction.hash(), transaction);
+
+        info!(?logs, "transaction processed");
 
         Ok(())
     }
@@ -441,12 +677,19 @@ impl Node {
         })
     }
 
-    fn block_from_qc(&self, view: u64, qc: QuorumCertificate, parent_hash: Hash) -> Block {
+    fn block_from_qc(
+        &self,
+        view: u64,
+        qc: QuorumCertificate,
+        parent_hash: Hash,
+        transactions: Vec<Hash>,
+    ) -> Block {
         let digest = Hash::compute(&[
             &view.to_be_bytes(),
             qc.compute_hash().as_bytes(),
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
+            &self.state.root_hash().to_be_bytes(),
         ]);
         let signature = self.secret_key.sign(digest.as_bytes());
         Block {
@@ -456,6 +699,8 @@ impl Node {
             hash: digest,
             parent_hash,
             signature,
+            state_root_hash: self.state.root_hash(),
+            transactions,
         }
     }
 
@@ -471,6 +716,7 @@ impl Node {
             qc.compute_hash().as_bytes(),
             agg.compute_hash().as_bytes(),
             parent_hash.as_bytes(),
+            &self.state.root_hash().to_be_bytes(),
         ]);
         let signature = self.secret_key.sign(digest.as_bytes());
         Block {
@@ -480,6 +726,8 @@ impl Node {
             hash: digest,
             parent_hash,
             signature,
+            state_root_hash: self.state.root_hash(),
+            transactions: vec![],
         }
     }
 
