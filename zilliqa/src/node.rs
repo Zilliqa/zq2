@@ -261,13 +261,7 @@ impl Node {
                     self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, signers)?;
                 let high_qc = self.get_highest_from_agg(&agg)?;
                 let parent = high_qc.block_hash;
-                let proposal = self.block_from_agg(
-                    self.view,
-                    high_qc.clone(),
-                    agg,
-                    parent,
-                    vec![], // replace this with the real commands
-                );
+                let proposal = self.block_from_agg(self.view, high_qc.clone(), agg, parent);
                 // as a future improvement, process the proposal before broadcasting it
                 self.broadcast_message(Message::Proposal(Proposal { block: proposal }))?;
                 // we don't want to keep the collected votes if we proposed a new block
@@ -339,8 +333,8 @@ impl Node {
             if block_view + 1 == self.view && supermajority {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                 let parent = qc.block_hash;
-                let proposal = self.block_from_qc(self.view, qc, parent, vec![]); // replace this with the real commands
-                                                                                  // as a future improvement, process the proposal before broadcasting it
+                let proposal = self.block_from_qc(self.view, qc, parent);
+                // as a future improvement, process the proposal before broadcasting it
                 trace!("vote successful");
                 self.broadcast_message(Message::Proposal(Proposal { block: proposal }))?;
                 // we don't want to keep the collected votes if we proposed a new block
@@ -447,13 +441,7 @@ impl Node {
         })
     }
 
-    fn block_from_qc(
-        &self,
-        view: u64,
-        qc: QuorumCertificate,
-        parent_hash: Hash,
-        commands: Vec<u8>,
-    ) -> Block {
+    fn block_from_qc(&self, view: u64, qc: QuorumCertificate, parent_hash: Hash) -> Block {
         let digest = Hash::compute(&[
             &view.to_be_bytes(),
             qc.compute_hash().as_bytes(),
@@ -468,7 +456,6 @@ impl Node {
             hash: digest,
             parent_hash,
             signature,
-            commands,
         }
     }
 
@@ -478,7 +465,6 @@ impl Node {
         qc: QuorumCertificate,
         agg: AggregateQc,
         parent_hash: Hash,
-        commands: Vec<u8>,
     ) -> Block {
         let digest = Hash::compute(&[
             &view.to_be_bytes(),
@@ -494,7 +480,6 @@ impl Node {
             hash: digest,
             parent_hash,
             signature,
-            commands,
         }
     }
 
