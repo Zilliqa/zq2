@@ -3,7 +3,7 @@ services:
   node0:
     environment:
       RUST_BACKTRACE: 1
-      RUST_LOG: zilliqa=trace
+      RUST_LOG: zilliqa=info
     build:
       context: .
       dockerfile: Dockerfile
@@ -20,7 +20,7 @@ services:
   node1:
     environment:
       RUST_BACKTRACE: 1
-      RUST_LOG: zilliqa=trace
+      RUST_LOG: zilliqa=info
     container_name: zilliqanode1
     image: zq2-node0
     command:
@@ -33,7 +33,7 @@ services:
   node2:
     environment:
       RUST_BACKTRACE: 1
-      RUST_LOG: zilliqa=trace
+      RUST_LOG: zilliqa=info
     container_name: zilliqanode2
     image: zq2-node0
     command:
@@ -46,7 +46,7 @@ services:
   node3:
     environment:
       RUST_BACKTRACE: 1
-      RUST_LOG: zilliqa=trace
+      RUST_LOG: zilliqa=info
     container_name: zilliqanode3
     image: zq2-node0
     command:
