@@ -148,7 +148,8 @@ async fn main() -> Result<()> {
         .set_middleware(middleware)
         .build((Ipv4Addr::UNSPECIFIED, config.json_rpc_port))
         .await?;
-    let rpc_module = api::zilliqa::rpc_module(Arc::clone(&node));
+    let mut rpc_module = api::zilliqa::rpc_module(Arc::clone(&node));
+    rpc_module.merge(api::eth::rpc_module(Arc::clone(&node)))?;
     let handle = server.start(rpc_module)?;
     tokio::spawn(handle.stopped());
 
