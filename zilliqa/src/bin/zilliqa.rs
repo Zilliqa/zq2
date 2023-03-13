@@ -9,6 +9,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use crypto::PublicKey;
+use http::{header, Method};
 use libp2p::{
     core::upgrade,
     futures::StreamExt,
@@ -32,6 +33,7 @@ use tokio::{
     time::{self, Instant},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::{debug, info, trace};
 use zilliqa::{
     api,
@@ -136,10 +138,18 @@ async fn main() -> Result<()> {
     )?;
     let node = Arc::new(Mutex::new(node));
 
+    // Construct the JSON-RPC API server. We inject a [CorsLayer] to ensure web browsers can call our API directly.
+    let cors = CorsLayer::new()
+        .allow_methods(Method::POST)
+        .allow_origin(Any)
+        .allow_headers([header::CONTENT_TYPE]);
+    let middleware = tower::ServiceBuilder::new().layer(cors);
     let server = jsonrpsee::server::ServerBuilder::new()
+        .set_middleware(middleware)
         .build((Ipv4Addr::UNSPECIFIED, config.json_rpc_port))
         .await?;
-    let handle = server.start(api::zilliqa::rpc_module(Arc::clone(&node)))?;
+    let rpc_module = api::zilliqa::rpc_module(Arc::clone(&node));
+    let handle = server.start(rpc_module)?;
     tokio::spawn(handle.stopped());
 
     let sleep = time::sleep(Duration::from_secs(5));
