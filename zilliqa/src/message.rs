@@ -113,7 +113,6 @@ pub struct Block {
     pub hash: Hash,
     pub parent_hash: Hash,
     pub signature: Signature,
-    pub commands: Vec<u8>,
 }
 
 impl Block {
@@ -129,7 +128,6 @@ impl Block {
             hash: Hash::ZERO,
             parent_hash: Hash::ZERO,
             signature: Signature::identity(),
-            commands: vec![],
         }
     }
 }
