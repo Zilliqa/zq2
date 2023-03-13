@@ -12,8 +12,8 @@ COPY . .
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/target \
-    cargo build --release --bin zilliqa && \
-    mv /target/release/zilliqa /build/
+    cargo build --bin zilliqa && \
+    mv /target/debug/zilliqa /build/
 
 
 FROM gcr.io/distroless/cc-debian11
