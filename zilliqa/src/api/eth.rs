@@ -58,11 +58,11 @@ fn accounts(_: Params, _: &Arc<Mutex<Node>>) -> RpcResult<[(); 0]> {
     Ok([])
 }
 
-fn block_number(_: Params, node: &Arc<Mutex<Node>>) -> RpcResult<Option<String>> {
+fn block_number(_: Params, node: &Arc<Mutex<Node>>) -> RpcResult<String> {
     if let Some(block) = node.lock().unwrap().view().checked_sub(1) {
-        Ok(Some(block.to_hex()))
+        Ok(block.to_hex())
     } else {
-        Ok(None)
+        Err(anyhow!("no blocks").into())
     }
 }
 
