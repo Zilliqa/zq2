@@ -12,6 +12,7 @@ use jsonrpsee::{core::RpcResult, types::Params, RpcModule};
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use primitive_types::{H160, H256};
 use rlp::{Rlp, RlpStream};
+use serde::Serialize;
 use sha2::Digest;
 use sha3::Keccak256;
 
@@ -29,9 +30,27 @@ use super::{
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = RpcModule::new(node);
 
+    fn method_map_err<C, R, F>(
+        method: F,
+    ) -> impl Fn(Params, &C) -> RpcResult<R> + Send + Sync + 'static
+    where
+        C: Send + Sync + 'static,
+        R: Serialize,
+        F: Fn(Params, &C) -> Result<R> + Send + Sync + 'static,
+    {
+        move |params, context| {
+            method(params, context).map_err(|e| {
+                tracing::error!(?e);
+                e.into()
+            })
+        }
+    }
+
     macro_rules! method {
-        ($name:expr, $imp:path) => {
-            module.register_method($name, $imp).unwrap();
+        ($name:expr, $method:path) => {
+            module
+                .register_method($name, method_map_err($method))
+                .unwrap();
         };
     }
 
@@ -54,19 +73,19 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     module
 }
 
-fn accounts(_: Params, _: &Arc<Mutex<Node>>) -> RpcResult<[(); 0]> {
+fn accounts(_: Params, _: &Arc<Mutex<Node>>) -> Result<[(); 0]> {
     Ok([])
 }
 
-fn block_number(_: Params, node: &Arc<Mutex<Node>>) -> RpcResult<String> {
+fn block_number(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     if let Some(block) = node.lock().unwrap().view().checked_sub(1) {
         Ok(block.to_hex())
     } else {
-        Err(anyhow!("no blocks").into())
+        Err(anyhow!("no blocks"))
     }
 }
 
-fn call(params: Params, node: &Arc<Mutex<Node>>) -> RpcResult<String> {
+fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
     let _tag: &str = params.next()?;
@@ -79,21 +98,22 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> RpcResult<String> {
     Ok(return_value.to_hex())
 }
 
-fn chain_id(_: Params, _: &Arc<Mutex<Node>>) -> RpcResult<&'static str> {
+fn chain_id(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
     // TODO: #68
     Ok("0x1")
 }
 
-fn estimate_gas(_: Params, _: &Arc<Mutex<Node>>) -> RpcResult<&'static str> {
+fn estimate_gas(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
     // TODO: #69
     Ok("0x100")
 }
 
-fn get_balance(_: Params, _: &Arc<Mutex<Node>>) -> RpcResult<&'static str> {
+fn get_balance(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
     // TODO: #70
     Ok("0xf000000000000000")
 }
-fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> RpcResult<String> {
+
+fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let _tag: &str = params.next()?;
@@ -106,7 +126,7 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> RpcResult<String> {
         .to_hex())
 }
 
-fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> RpcResult<String> {
+fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let _tag: &str = params.next()?;
@@ -119,18 +139,18 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> RpcResult<S
         .to_hex())
 }
 
-fn gas_price(_: Params, _: &Arc<Mutex<Node>>) -> RpcResult<&'static str> {
+fn gas_price(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
     // TODO: #71
     Ok("0x454b7b38e70")
 }
 
-fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> RpcResult<Option<EthBlock>> {
+fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
     let mut params = params.sequence();
     let block: &str = params.next()?;
     let full: bool = params.next()?;
 
     if full {
-        return Err(anyhow!("full transaction objects not supported").into());
+        return Err(anyhow!("full transaction objects not supported"));
     }
 
     if block == "latest" {
@@ -141,7 +161,7 @@ fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> RpcResult<Opt
         let block = block
             .strip_prefix("0x")
             .ok_or_else(|| anyhow!("no 0x prefix"))?;
-        let block = u64::from_str_radix(block, 16).map_err(anyhow::Error::from)?;
+        let block = u64::from_str_radix(block, 16)?;
 
         let block = node
             .lock()
@@ -153,13 +173,13 @@ fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> RpcResult<Opt
     }
 }
 
-fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> RpcResult<Option<EthBlock>> {
+fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
     let mut params = params.sequence();
     let hash: H256 = params.next()?;
     let full: bool = params.next()?;
 
     if full {
-        return Err(anyhow!("full transaction objects not supported").into());
+        return Err(anyhow!("full transaction objects not supported"));
     }
 
     let block = node
@@ -174,7 +194,7 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> RpcResult<Optio
 fn get_transaction_by_hash(
     params: Params,
     node: &Arc<Mutex<Node>>,
-) -> RpcResult<Option<EthTransaction>> {
+) -> Result<Option<EthTransaction>> {
     let hash: H256 = params.one()?;
 
     Ok(node.lock().unwrap().get_transaction_by_hash(Hash(hash.0)))
@@ -183,18 +203,18 @@ fn get_transaction_by_hash(
 fn get_transaction_receipt(
     params: Params,
     node: &Arc<Mutex<Node>>,
-) -> RpcResult<Option<EthTransactionReceipt>> {
+) -> Result<Option<EthTransactionReceipt>> {
     let hash: H256 = params.one()?;
 
     Ok(node.lock().unwrap().get_transaction_receipt(Hash(hash.0)))
 }
 
-fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> RpcResult<String> {
+fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let transaction: String = params.one()?;
     let transaction = transaction
         .strip_prefix("0x")
         .ok_or_else(|| anyhow!("no 0x prefix"))?;
-    let transaction = hex::decode(transaction).map_err(anyhow::Error::from)?;
+    let transaction = hex::decode(transaction)?;
     let mut transaction = transaction_from_rlp(&transaction).unwrap();
     transaction.gas_limit = 100000000000000;
 
@@ -203,7 +223,7 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> RpcResult<St
     Ok(transaction_hash.to_hex())
 }
 
-fn version(_: Params, _: &Arc<Mutex<Node>>) -> RpcResult<&'static str> {
+fn version(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
     // TODO: #68
     Ok("1")
 }
@@ -211,7 +231,6 @@ fn version(_: Params, _: &Arc<Mutex<Node>>) -> RpcResult<&'static str> {
 /// Decode a transaction from its RLP-encoded form.
 fn transaction_from_rlp(bytes: &[u8]) -> Result<NewTransaction> {
     let rlp = Rlp::new(bytes);
-
     let nonce = rlp.val_at(0)?;
     let gas_price = rlp.val_at(1)?;
     let gas_limit: u64 = rlp.val_at(2)?;
