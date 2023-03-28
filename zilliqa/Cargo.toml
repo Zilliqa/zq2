@@ -22,7 +22,7 @@ bls-signatures = "0.13.0"
 bls12_381 = "0.7.0"
 clap = { version = "4.1.11", features = ["derive"] }
 evm = { version = "0.37.0", features = ["tracing"] }
-generic-array = "0.14.6"
+generic-array = "0.14.7"
 hex = { version = "0.4.3", features = ["serde"] }
 http = "0.2.9"
 itertools = "0.10.5"
