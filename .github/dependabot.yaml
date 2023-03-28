@@ -17,4 +17,3 @@ updates:
         # These are peer deps of Cargo and should not be automatically bumped
         - dependency-name: "semver"
         - dependency-name: "crates-io"
-    rebase-strategy: "disabled"
