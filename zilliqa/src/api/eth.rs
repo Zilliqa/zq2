@@ -1,6 +1,9 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::SystemTime,
+};
 
 use anyhow::{anyhow, Result};
 use generic_array::{
@@ -13,6 +16,7 @@ use jsonrpsee::{
     RpcModule,
 };
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use opentelemetry::{metrics::Unit, Context, KeyValue};
 use primitive_types::{H160, H256};
 use rlp::{Rlp, RlpStream};
 use sha2::Digest;
@@ -31,22 +35,46 @@ use super::{
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = RpcModule::new(node);
+    let meter = opentelemetry::global::meter("");
 
     macro_rules! method {
-        ($name:expr, $method:path) => {
+        ($name:expr, $method:path) => {{
+            let rpc_server_duration = meter
+                .f64_histogram("rpc.server.duration")
+                .with_unit(Unit::new("ms"))
+                .init();
+            let cx = Context::new();
             module
-                .register_method($name, |params, context| {
-                    $method(params, context).map_err(|e| {
+                .register_method($name, move |params, context| {
+                    let mut attributes = vec![
+                        KeyValue::new("rpc.system", "jsonrpc"),
+                        KeyValue::new("rpc.service", "zilliqa.eth"),
+                        KeyValue::new("rpc.method", $name),
+                        KeyValue::new("network.transport", "tcp"),
+                        KeyValue::new("rpc.jsonrpc.version", "2.0"),
+                    ];
+
+                    let start = SystemTime::now();
+                    let result = $method(params, context).map_err(|e| {
                         tracing::error!(?e);
                         ErrorObject::owned(
                             ErrorCode::InternalError.code(),
                             e.to_string(),
                             None as Option<String>,
                         )
-                    })
+                    });
+                    if let Err(err) = &result {
+                        attributes.push(KeyValue::new("rpc.jsonrpc.error_code", err.code() as i64));
+                    }
+                    rpc_server_duration.record(
+                        &cx,
+                        start.elapsed().map_or(0.0, |d| d.as_secs_f64() * 1000.0),
+                        &attributes,
+                    );
+                    result
                 })
                 .unwrap();
-        };
+        }};
     }
 
     method!("eth_accounts", accounts);
