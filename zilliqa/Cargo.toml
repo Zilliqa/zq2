@@ -27,7 +27,7 @@ hex = { version = "0.4.3", features = ["serde"] }
 http = "0.2.9"
 itertools = "0.10.5"
 jsonrpsee = { version = "0.16.2", features = ["server"] }
-k256 = "0.13.0"
+k256 = "0.13.1"
 libp2p = { version = "0.51.0", features = ["gossipsub", "macros", "tcp", "tokio", "noise", "mplex", "mdns", "request-response", "kad", "identify"] }
 primitive-types = { version = "0.12.1", features = ["serde"] }
 rand = "0.8.5"
