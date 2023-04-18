@@ -1,4 +1,4 @@
-use primitive_types::{H128, H160, H256, H384, H512, H768};
+use primitive_types::{H128, H160, H256, H384, H512, H768, U128, U256, U512};
 
 /// A version of [hex::ToHex] which is also implemented for integer types. This version also prefixes the produced
 /// string with `"0x"`.
@@ -23,6 +23,20 @@ macro_rules! int_impl {
         impl ToHex for $T {
             fn to_hex(&self) -> String {
                 format!("0x{}", hex::encode(self.to_be_bytes()))
+            }
+        }
+    };
+}
+
+/// Generates an implementation of [ToHex] for types which have `Self::zero()` and `.to_big_endian(bytes: &mut [u8])`
+/// methods.
+macro_rules! big_int_impl {
+    ($T:ty) => {
+        impl ToHex for $T {
+            fn to_hex(&self) -> String {
+                let mut bytes = [0; <$T>::zero().0.len() * 8];
+                self.to_big_endian(&mut bytes);
+                format!("0x{}", hex::encode(bytes))
             }
         }
     };
@@ -63,3 +77,7 @@ int_impl!(u64);
 int_impl!(u128);
 int_impl!(isize);
 int_impl!(usize);
+
+big_int_impl!(U128);
+big_int_impl!(U256);
+big_int_impl!(U512);
