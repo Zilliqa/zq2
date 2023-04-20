@@ -131,6 +131,7 @@ async fn main() -> Result<()> {
     let mut reset_timeout_receiver = UnboundedReceiverStream::new(reset_timeout_receiver);
 
     let node = Node::new(
+        config.clone(),
         peer_id,
         args.secret_key,
         message_sender,
