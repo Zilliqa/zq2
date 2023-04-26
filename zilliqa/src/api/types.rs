@@ -9,7 +9,7 @@ use crate::message;
 use super::to_hex::ToHex;
 
 /// A block object, returned by the Ethereum API.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EthBlock {
     #[serde(serialize_with = "hex")]
@@ -78,7 +78,7 @@ impl From<&message::Block> for EthBlock {
 }
 
 /// A transaction object, returned by the Ethereum API.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EthTransaction {
     #[serde(serialize_with = "hex")]
@@ -110,7 +110,7 @@ pub struct EthTransaction {
 }
 
 /// A transaction receipt object, returned by the Ethereum API.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EthTransactionReceipt {
     #[serde(serialize_with = "hex")]

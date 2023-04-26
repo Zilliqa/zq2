@@ -8,11 +8,13 @@ use generic_array::{
     typenum::{U12, U20},
     GenericArray,
 };
-use jsonrpsee::{core::RpcResult, types::Params, RpcModule};
+use jsonrpsee::{
+    types::{error::ErrorCode, ErrorObject, Params},
+    RpcModule,
+};
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use primitive_types::{H160, H256};
 use rlp::{Rlp, RlpStream};
-use serde::Serialize;
 use sha2::Digest;
 use sha3::Keccak256;
 
@@ -30,26 +32,19 @@ use super::{
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = RpcModule::new(node);
 
-    fn method_map_err<C, R, F>(
-        method: F,
-    ) -> impl Fn(Params, &C) -> RpcResult<R> + Send + Sync + 'static
-    where
-        C: Send + Sync + 'static,
-        R: Serialize,
-        F: Fn(Params, &C) -> Result<R> + Send + Sync + 'static,
-    {
-        move |params, context| {
-            method(params, context).map_err(|e| {
-                tracing::error!(?e);
-                e.into()
-            })
-        }
-    }
-
     macro_rules! method {
         ($name:expr, $method:path) => {
             module
-                .register_method($name, method_map_err($method))
+                .register_method($name, |params, context| {
+                    $method(params, context).map_err(|e| {
+                        tracing::error!(?e);
+                        ErrorObject::owned(
+                            ErrorCode::InternalError.code(),
+                            e.to_string(),
+                            None as Option<String>,
+                        )
+                    })
+                })
                 .unwrap();
         };
     }
