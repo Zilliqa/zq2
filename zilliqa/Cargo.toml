@@ -18,7 +18,7 @@ test = false
 [dependencies]
 anyhow = { version = "1.0.70", features = ["backtrace"] }
 bitvec = { version = "1.0.1", features = ["serde"] }
-bls-signatures = "0.13.0"
+bls-signatures = "0.14.0"
 bls12_381 = "0.7.0"
 clap = { version = "4.1.11", features = ["derive"] }
 evm = { version = "0.37.0", features = ["tracing"] }
