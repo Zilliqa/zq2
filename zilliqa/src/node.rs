@@ -10,6 +10,7 @@ use tracing::{debug, trace};
 
 use crate::{
     api::types::{EthTransaction, EthTransactionReceipt},
+    cfg::Config,
     crypto::{verify_messages, Hash, PublicKey, SecretKey, Signature},
     message::{
         AggregateQc, BitSlice, BitVec, Block, BlockRequest, BlockResponse, Message, NewView,
@@ -48,6 +49,7 @@ struct NewViewVote {
 /// 1. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
 /// Successfully executed transactions are added to `transactions` so they can be returned via APIs.
 pub struct Node {
+    pub config: Config,
     committee: Vec<Validator>,
     blocks: BTreeMap<Hash, Block>,
     votes: BTreeMap<Hash, (Vec<Signature>, BitVec, u128)>,
@@ -74,6 +76,7 @@ pub struct Node {
 
 impl Node {
     pub fn new(
+        config: Config,
         peer_id: PeerId,
         secret_key: SecretKey,
         message_sender: UnboundedSender<(PeerId, Message)>,
@@ -86,6 +89,7 @@ impl Node {
         };
 
         let node = Node {
+            config,
             committee: vec![validator],
             blocks: BTreeMap::new(),
             votes: BTreeMap::new(),

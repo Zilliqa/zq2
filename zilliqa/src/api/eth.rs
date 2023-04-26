@@ -98,9 +98,8 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(return_value.to_hex())
 }
 
-fn chain_id(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
-    // TODO: #68
-    Ok("0x1")
+fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok(node.lock().unwrap().config.eth_chain_id.to_hex())
 }
 
 fn estimate_gas(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
@@ -223,9 +222,8 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
     Ok(transaction_hash.to_hex())
 }
 
-fn version(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
-    // TODO: #68
-    Ok("1")
+fn version(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok(node.lock().unwrap().config.eth_chain_id.to_string())
 }
 
 /// Decode a transaction from its RLP-encoded form.
