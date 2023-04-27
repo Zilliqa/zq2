@@ -19,7 +19,7 @@ test = false
 anyhow = { version = "1.0.70", features = ["backtrace"] }
 bitvec = { version = "1.0.1", features = ["serde"] }
 bls-signatures = "0.14.0"
-bls12_381 = "0.7.0"
+bls12_381 = "0.8.0"
 clap = { version = "4.1.11", features = ["derive"] }
 evm = { version = "0.37.0", features = ["tracing"] }
 generic-array = "0.14.7"
