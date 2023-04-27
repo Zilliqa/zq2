@@ -236,8 +236,8 @@ fn transaction_from_rlp(bytes: &[u8]) -> Result<NewTransaction> {
     let amount = rlp.val_at(4)?;
     let payload = rlp.val_at(5)?;
     let v = rlp.val_at::<u8>(6)?;
-    let r = vec_to_arr(rlp.val_at::<Vec<_>>(7)?)?;
-    let s = vec_to_arr(rlp.val_at::<Vec<_>>(8)?)?;
+    let r = left_pad_arr(&rlp.val_at::<Vec<_>>(7)?)?;
+    let s = left_pad_arr(&rlp.val_at::<Vec<_>>(8)?)?;
 
     const ETH_CHAIN_ID: u8 = 1;
 
@@ -285,16 +285,34 @@ fn transaction_from_rlp(bytes: &[u8]) -> Result<NewTransaction> {
     })
 }
 
-fn vec_to_arr<const N: usize>(v: Vec<u8>) -> Result<[u8; N]> {
-    v.try_into()
-        .map_err(|v: Vec<_>| anyhow!("invalid length: {}", v.len()))
+fn left_pad_arr<const N: usize>(v: &[u8]) -> Result<[u8; N]> {
+    let mut arr = [0; N];
+
+    if v.len() > arr.len() {
+        return Err(anyhow!(
+            "invalid length: {}, expected: {}",
+            v.len(),
+            arr.len()
+        ));
+    }
+
+    if !v.is_empty() && v[0] == 0 {
+        return Err(anyhow!("unnecessary leading zero"));
+    }
+
+    let start = arr.len() - v.len();
+    arr[start..].copy_from_slice(v);
+    Ok(arr)
 }
 
 #[cfg(test)]
 mod tests {
     use primitive_types::H160;
 
-    use crate::{api::eth::transaction_from_rlp, state::Address};
+    use crate::{
+        api::eth::{left_pad_arr, transaction_from_rlp},
+        state::Address,
+    };
 
     #[test]
     fn test_transaction_from_rlp() {
@@ -322,5 +340,27 @@ mod tests {
                     .unwrap()
             )
         );
+    }
+
+    #[test]
+    fn test_left_pad_arr() {
+        let cases = [
+            ("", Ok([0; 4])),
+            ("01", Ok([0, 0, 0, 1])),
+            ("ffffffff", Ok([255; 4])),
+            ("ffffffffff", Err("invalid length: 5, expected: 4")),
+            ("0001", Err("unnecessary leading zero")),
+        ];
+
+        for (val, expected) in cases {
+            let vec = hex::decode(val).unwrap();
+            let actual = left_pad_arr(&vec);
+
+            match (expected, actual) {
+                (Ok(e), Ok(a)) => assert_eq!(e, a),
+                (Err(e), Err(a)) => assert_eq!(e, a.to_string()),
+                _ => panic!("case failed: {val}"),
+            }
+        }
     }
 }
