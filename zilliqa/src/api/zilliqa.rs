@@ -11,7 +11,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
 
     module
         .register_method("GetCurrentMiniEpoch", |_, node| {
-            Ok(node.lock().unwrap().view().to_string())
+            node.lock().unwrap().view().to_string()
         })
         .unwrap();
 
