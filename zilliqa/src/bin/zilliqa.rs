@@ -133,7 +133,6 @@ async fn main() -> Result<()> {
 
     let node = Node::new(
         config.clone(),
-        peer_id,
         args.secret_key,
         message_sender,
         reset_timeout_sender,
