@@ -29,6 +29,7 @@ use libp2p::{
 use node::Node;
 use tokio::{
     select,
+    signal::{self, unix::SignalKind},
     sync::mpsc,
     time::{self, Instant},
 };
@@ -154,6 +155,8 @@ async fn main() -> Result<()> {
     let handle = server.start(rpc_module)?;
     tokio::spawn(handle.stopped());
 
+    let mut terminate = signal::unix::signal(SignalKind::terminate())?;
+
     let sleep = time::sleep(Duration::from_secs(5));
     tokio::pin!(sleep);
     loop {
@@ -222,6 +225,10 @@ async fn main() -> Result<()> {
                 trace!("timeout reset");
                 sleep.as_mut().reset(Instant::now() + Duration::from_secs(5));
             },
+            _ = terminate.recv() => { break; },
+            _ = signal::ctrl_c() => { break; },
         }
     }
+
+    Ok(())
 }
