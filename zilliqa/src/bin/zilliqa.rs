@@ -27,6 +27,8 @@ use libp2p::{
     tcp, PeerId, Swarm, Transport,
 };
 use node::Node;
+use opentelemetry::runtime;
+use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
@@ -75,6 +77,22 @@ async fn main() -> Result<()> {
         String::new()
     };
     let config: Config = toml::from_str(&config)?;
+
+    if let Some(endpoint) = &config.otlp_collector_endpoint {
+        let export_config = ExportConfig {
+            endpoint: endpoint.clone(),
+            ..Default::default()
+        };
+        opentelemetry_otlp::new_pipeline()
+            .metrics(runtime::Tokio)
+            .with_period(Duration::from_secs(10))
+            .with_exporter(
+                opentelemetry_otlp::new_exporter()
+                    .tonic()
+                    .with_export_config(export_config),
+            )
+            .build()?;
+    }
 
     let key_pair = args.secret_key.to_libp2p_keypair();
     let peer_id = PeerId::from(key_pair.public());
