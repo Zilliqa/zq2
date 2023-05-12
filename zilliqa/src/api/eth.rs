@@ -24,13 +24,14 @@ use sha3::Keccak256;
 
 use crate::{
     crypto::Hash,
+    message::Block,
     node::Node,
     state::{Address, NewTransaction},
 };
 
 use super::{
     to_hex::ToHex,
-    types::{CallParams, EthBlock, EthTransaction, EthTransactionReceipt},
+    types::{CallParams, EthBlock, EthTransaction, EthTransactionReceipt, HashOrTransaction},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -171,10 +172,6 @@ fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option
     let block: &str = params.next()?;
     let full: bool = params.next()?;
 
-    if full {
-        return Err(anyhow!("full transaction objects not supported"));
-    }
-
     if block == "latest" {
         let block = node.lock().unwrap().get_latest_block().map(EthBlock::from);
 
@@ -189,7 +186,8 @@ fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option
             .lock()
             .unwrap()
             .get_block_by_view(block)
-            .map(EthBlock::from);
+            .map(|b| convert_block(node, b, full))
+            .transpose()?;
 
         Ok(block)
     }
@@ -200,17 +198,36 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<E
     let hash: H256 = params.next()?;
     let full: bool = params.next()?;
 
-    if full {
-        return Err(anyhow!("full transaction objects not supported"));
-    }
-
     let block = node
         .lock()
         .unwrap()
         .get_block_by_hash(Hash(hash.0))
-        .map(EthBlock::from);
+        .map(|b| convert_block(node, b, full))
+        .transpose()?;
 
     Ok(block)
+}
+
+fn convert_block(node: &Arc<Mutex<Node>>, block: &Block, full: bool) -> Result<EthBlock> {
+    if !full {
+        Ok(block.into())
+    } else {
+        let transactions = block
+            .transactions
+            .iter()
+            .map(|h| {
+                node.lock()
+                    .unwrap()
+                    .get_transaction_by_hash(*h)
+                    .ok_or_else(|| anyhow!("missing transaction: {h}"))
+            })
+            .map(|t| Ok(HashOrTransaction::Transaction(t?)))
+            .collect::<Result<_>>()?;
+        Ok(EthBlock {
+            transactions,
+            ..block.into()
+        })
+    }
 }
 
 fn get_transaction_by_hash(
