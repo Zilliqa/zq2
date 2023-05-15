@@ -254,7 +254,8 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
         .strip_prefix("0x")
         .ok_or_else(|| anyhow!("no 0x prefix"))?;
     let transaction = hex::decode(transaction)?;
-    let mut transaction = transaction_from_rlp(&transaction).unwrap();
+    let chain_id = node.lock().unwrap().config.eth_chain_id;
+    let mut transaction = transaction_from_rlp(&transaction, chain_id).unwrap();
     transaction.gas_limit = 100000000000000;
 
     let transaction_hash = H256(node.lock().unwrap().create_transaction(transaction)?.0);
@@ -267,7 +268,7 @@ fn version(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 /// Decode a transaction from its RLP-encoded form.
-fn transaction_from_rlp(bytes: &[u8]) -> Result<NewTransaction> {
+fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<NewTransaction> {
     let rlp = Rlp::new(bytes);
     let nonce = rlp.val_at(0)?;
     let gas_price = rlp.val_at(1)?;
@@ -275,13 +276,11 @@ fn transaction_from_rlp(bytes: &[u8]) -> Result<NewTransaction> {
     let to_addr = rlp.val_at::<Vec<u8>>(3)?;
     let amount = rlp.val_at(4)?;
     let payload = rlp.val_at(5)?;
-    let v = rlp.val_at::<u8>(6)?;
+    let v = rlp.val_at::<u64>(6)?;
     let r = left_pad_arr(&rlp.val_at::<Vec<_>>(7)?)?;
     let s = left_pad_arr(&rlp.val_at::<Vec<_>>(8)?)?;
 
-    const ETH_CHAIN_ID: u8 = 1;
-
-    let (recovery_id, reencoded) = if v >= (ETH_CHAIN_ID * 2) + 35 {
+    let (recovery_id, reencoded) = if v >= (chain_id * 2) + 35 {
         let mut rlp = RlpStream::new_list(9);
         rlp.append(&nonce)
             .append(&gas_price)
@@ -289,10 +288,10 @@ fn transaction_from_rlp(bytes: &[u8]) -> Result<NewTransaction> {
             .append(&to_addr)
             .append(&amount)
             .append(&payload)
-            .append(&ETH_CHAIN_ID)
+            .append(&chain_id)
             .append(&0u8)
             .append(&0u8);
-        (v - ((ETH_CHAIN_ID * 2) + 35), rlp.out())
+        (v - ((chain_id * 2) + 35), rlp.out())
     } else {
         let mut rlp = RlpStream::new_list(6);
         rlp.append(&nonce)
@@ -304,7 +303,7 @@ fn transaction_from_rlp(bytes: &[u8]) -> Result<NewTransaction> {
         (v - 27, rlp.out())
     };
     let hash = Keccak256::digest(reencoded);
-    let recovery_id = RecoveryId::from_byte(recovery_id)
+    let recovery_id = RecoveryId::from_byte(recovery_id.try_into()?)
         .ok_or_else(|| anyhow!("invalid recovery id: {recovery_id}"))?;
     let signature = Signature::from_scalars(r, s)?;
 
@@ -358,7 +357,7 @@ mod tests {
     fn test_transaction_from_rlp() {
         // From https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md#example
         let transaction = hex::decode("f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83").unwrap();
-        let transaction = transaction_from_rlp(&transaction).unwrap();
+        let transaction = transaction_from_rlp(&transaction, 1).unwrap();
         assert_eq!(transaction.nonce, 9);
         assert_eq!(transaction.gas_price, 20 * 10u128.pow(9));
         assert_eq!(transaction.gas_limit, 21000u64);
