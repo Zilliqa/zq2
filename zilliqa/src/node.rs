@@ -125,7 +125,7 @@ impl Node {
     }
 
     pub fn get_latest_block(&self) -> Option<&Block> {
-        self.get_block_by_view(self.consensus.view())
+        self.get_block_by_view(self.consensus.view() - 1)
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Option<&Block> {
