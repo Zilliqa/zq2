@@ -190,7 +190,13 @@ impl Consensus {
 
                 self.transactions.insert(txn.hash(), txn);
             }
-            // TODO(#84): compare state roots
+            if self.state.root_hash() != block.state_root_hash {
+                return Err(anyhow!(
+                    "state root hash mismatch, expected: {}, actual: {}",
+                    block.state_root_hash,
+                    self.state.root_hash()
+                ));
+            }
             // TODO: Download blocks up to `proposal_view - 1`.
             self.update_view(proposal_view + 1);
             let leader = self.get_leader(self.view).peer_id;
@@ -250,6 +256,17 @@ impl Consensus {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                 let parent = qc.block_hash;
                 let transactions = self.pending_transactions.drain(..).collect();
+                for txn in &transactions {
+                    // We don't remove the transaction from `new_transactions` yet, because we will also validate and
+                    // vote on our own block proposal later. Once we've implemented processing of the proposal before
+                    // broadcasting, this can be optimised.
+                    let txn = self
+                        .new_transactions
+                        .get(txn)
+                        .ok_or_else(|| anyhow!("missing transaction"))?;
+                    let txn = self.state.apply_transaction(txn.clone(), parent)?;
+                    self.transactions.insert(txn.hash(), txn);
+                }
                 let proposal = Block::from_qc(
                     self.secret_key,
                     self.view,
