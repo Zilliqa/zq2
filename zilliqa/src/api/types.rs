@@ -8,46 +8,53 @@ use crate::message;
 
 use super::to_hex::ToHex;
 
+#[derive(Clone, Serialize)]
+#[serde(untagged)]
+pub enum HashOrTransaction {
+    Hash(H256),
+    Transaction(EthTransaction),
+}
+
 /// A block object, returned by the Ethereum API.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EthBlock {
     #[serde(serialize_with = "hex")]
-    number: u64,
+    pub number: u64,
     #[serde(serialize_with = "hex")]
-    hash: H256,
+    pub hash: H256,
     #[serde(serialize_with = "hex")]
-    parent_hash: H256,
+    pub parent_hash: H256,
     #[serde(serialize_with = "hex")]
-    nonce: u64,
+    pub nonce: u64,
     #[serde(serialize_with = "hex")]
-    sha_3_uncles: H256,
+    pub sha_3_uncles: H256,
     #[serde(serialize_with = "hex")]
-    logs_bloom: [u8; 256],
+    pub logs_bloom: [u8; 256],
     #[serde(serialize_with = "hex")]
-    transactions_root: H256,
+    pub transactions_root: H256,
     #[serde(serialize_with = "hex")]
-    state_root: H256,
+    pub state_root: H256,
     #[serde(serialize_with = "hex")]
-    receipts_root: H256,
+    pub receipts_root: H256,
     #[serde(serialize_with = "hex")]
-    miner: H160,
+    pub miner: H160,
     #[serde(serialize_with = "hex")]
-    difficulty: u64,
+    pub difficulty: u64,
     #[serde(serialize_with = "hex")]
-    total_difficulty: u64,
+    pub total_difficulty: u64,
     #[serde(serialize_with = "hex")]
-    extra_data: Vec<u8>,
+    pub extra_data: Vec<u8>,
     #[serde(serialize_with = "hex")]
-    size: u64,
+    pub size: u64,
     #[serde(serialize_with = "hex")]
-    gas_limit: u64,
+    pub gas_limit: u64,
     #[serde(serialize_with = "hex")]
-    gas_used: u64,
+    pub gas_used: u64,
     #[serde(serialize_with = "hex")]
-    timestamp: u64,
-    transactions: Vec<H256>,
-    uncles: Vec<H256>,
+    pub timestamp: u64,
+    pub transactions: Vec<HashOrTransaction>,
+    pub uncles: Vec<H256>,
 }
 
 impl From<&message::Block> for EthBlock {
@@ -71,7 +78,11 @@ impl From<&message::Block> for EthBlock {
             gas_limit: 0,
             gas_used: 0,
             timestamp: 0,
-            transactions: block.transactions.iter().map(|h| H256(h.0)).collect(),
+            transactions: block
+                .transactions
+                .iter()
+                .map(|h| HashOrTransaction::Hash(H256(h.0)))
+                .collect(),
             uncles: vec![],
         }
     }
@@ -161,6 +172,10 @@ fn bool_as_int<S: Serializer>(b: &bool, serializer: S) -> Result<S::Ok, S::Error
 /// Parameters passed to `eth_call`.
 #[derive(Deserialize)]
 pub struct CallParams {
+    // The documentation states that the `to` field is required, but some clients (notably Ethers.js) omit it for
+    // contract creations, where the `to` address is zero. Therefore, we default to the zero address if `to` is
+    // omitted.
+    #[serde(default)]
     pub to: H160,
     #[serde(deserialize_with = "deserialize_data")]
     pub data: Vec<u8>,

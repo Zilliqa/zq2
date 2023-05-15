@@ -35,6 +35,7 @@ use libp2p::{
 use node::Node;
 use tokio::{
     select,
+    signal::{self, unix::SignalKind},
     sync::mpsc,
     time::{self, Instant},
 };
@@ -198,6 +199,7 @@ impl NodeLauncher {
             Quorum::One,
         )?;
 
+        let mut terminate = signal::unix::signal(SignalKind::terminate())?;
         let sleep = time::sleep(Duration::from_secs(5));
         tokio::pin!(sleep);
 
@@ -269,7 +271,10 @@ impl NodeLauncher {
                     trace!("timeout reset");
                     sleep.as_mut().reset(Instant::now() + Duration::from_secs(5));
                 },
+                _ = terminate.recv() => { break; },
+                _ = signal::ctrl_c() => { break; },
             }
         }
+        Ok(())
     }
 }

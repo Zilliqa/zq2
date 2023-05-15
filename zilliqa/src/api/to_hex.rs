@@ -1,7 +1,7 @@
-use primitive_types::{H128, H160, H256, H384, H512, H768, U128, U256, U512};
+use primitive_types::{H128, H160, H256, H384, H512, H768};
 
 /// A version of [hex::ToHex] which is also implemented for integer types. This version also prefixes the produced
-/// string with `"0x"`.
+/// string with `"0x"` and omits leading zeroes.
 pub trait ToHex {
     fn to_hex(&self) -> String;
 }
@@ -11,32 +11,23 @@ macro_rules! as_ref_impl {
     ($T:ty) => {
         impl ToHex for $T {
             fn to_hex(&self) -> String {
-                format!("0x{}", hex::encode(self))
+                let hex = hex::encode(self);
+                let first_non_zero = hex
+                    .bytes()
+                    .position(|b| b != ('0' as u8))
+                    .unwrap_or(hex.len());
+                format!("0x{}", &hex[first_non_zero..])
             }
         }
     };
 }
 
-/// Generates an implementation of [ToHex] for types which have a `.to_be_bytes()` method.
+/// Generates an implementation of [ToHex] for types which implement [std::fmt::LowerHex].
 macro_rules! int_impl {
     ($T:ty) => {
         impl ToHex for $T {
             fn to_hex(&self) -> String {
-                format!("0x{}", hex::encode(self.to_be_bytes()))
-            }
-        }
-    };
-}
-
-/// Generates an implementation of [ToHex] for types which have `Self::zero()` and `.to_big_endian(bytes: &mut [u8])`
-/// methods.
-macro_rules! big_int_impl {
-    ($T:ty) => {
-        impl ToHex for $T {
-            fn to_hex(&self) -> String {
-                let mut bytes = [0; <$T>::zero().0.len() * 8];
-                self.to_big_endian(&mut bytes);
-                format!("0x{}", hex::encode(bytes))
+                format!("{:#x}", self)
             }
         }
     };
@@ -50,7 +41,7 @@ impl<T: ToHex> ToHex for &T {
 
 impl<const N: usize> ToHex for [u8; N] {
     fn to_hex(&self) -> String {
-        format!("0x{}", hex::encode(self))
+        self.as_ref().to_hex()
     }
 }
 
@@ -78,6 +69,34 @@ int_impl!(u128);
 int_impl!(isize);
 int_impl!(usize);
 
-big_int_impl!(U128);
-big_int_impl!(U256);
-big_int_impl!(U512);
+#[cfg(test)]
+mod tests {
+    use std::assert_eq;
+
+    use super::ToHex;
+
+    #[test]
+    fn test_as_ref_to_hex() {
+        let cases = [
+            (vec![], "0x"),
+            (vec![0u8, 0, 0, 0], "0x"),
+            (vec![0, 0, 0, 1], "0x1"),
+            (vec![1, 2, 3, 4], "0x1020304"),
+        ];
+
+        for (val, expected) in cases {
+            let actual = val.to_hex();
+            assert_eq!(expected, actual);
+        }
+    }
+
+    #[test]
+    fn test_int_to_hex() {
+        let cases = [(0, "0x0"), (1, "0x1")];
+
+        for (val, expected) in cases {
+            let actual = val.to_hex();
+            assert_eq!(expected, actual);
+        }
+    }
+}

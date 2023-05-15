@@ -26,18 +26,21 @@ generic-array = "0.14.7"
 hex = { version = "0.4.3", features = ["serde"] }
 http = "0.2.9"
 itertools = "0.10.5"
-jsonrpsee = { version = "0.18.1", features = ["server"] }
+jsonrpsee = { version = "0.18.2", features = ["server"] }
 k256 = "0.13.1"
 libp2p = { version = "0.51.0", features = ["gossipsub", "macros", "tcp", "tokio", "noise", "mplex", "mdns", "request-response", "kad", "identify"] }
+# TODO: Use "0.20.0" when released
+opentelemetry = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "ecf0dda5686dc45470ae02993a4748c289c407de", features = ["metrics", "rt-tokio"] }
+opentelemetry-otlp = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "ecf0dda5686dc45470ae02993a4748c289c407de", features = ["metrics", "http-proto"] }
 primitive-types = { version = "0.12.1", features = ["serde"] }
 rand = "0.8.5"
 rand_core = "0.6.4"
 rlp = "0.5.2"
-serde = { version = "1.0.162", features = ["derive"] }
+serde = { version = "1.0.163", features = ["derive"] }
 serde_json = "1.0.96"
 sha2 = "0.10.6"
 sha3 = "0.10.8"
-tokio = { version = "1.28.0", features = ["macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1.28.1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 tokio-stream = "0.1.14"
 toml = "0.7.3"
 tower = "0.4.13"

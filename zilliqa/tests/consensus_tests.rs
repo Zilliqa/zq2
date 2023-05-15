@@ -2,7 +2,7 @@ mod manual_consensus;
 
 use crate::manual_consensus::ManualConsensus;
 use tokio::time::{sleep, Duration};
-use zilliqa::crypto::{Hash, SecretKey};
+use zilliqa::crypto::SecretKey;
 use zilliqa::node_launcher::NodeLauncher;
 use zilliqa::state::Address;
 

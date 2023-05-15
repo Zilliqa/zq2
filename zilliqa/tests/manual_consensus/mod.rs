@@ -82,10 +82,10 @@ impl ManualConsensus {
         nodes: &mut Vec<NodeLauncher>,
         new_view: u64,
         current_hash: Hash,
-        transactions: &mut Vec<NewTransaction>,
+        transactions: &mut [NewTransaction],
     ) -> Block {
         let leader_idx: usize = (new_view % nodes.len() as u64).try_into().unwrap();
-        let leader_id = nodes[leader_idx].peer_id.clone();
+        let leader_id = nodes[leader_idx].peer_id;
 
         let mut votes_to_leader = Vec::new();
         for (i, wrapped_node) in nodes.iter_mut().enumerate() {
@@ -115,7 +115,7 @@ impl ManualConsensus {
         }
 
         let mut transaction_messages_from_leader = Vec::new();
-        for tx in transactions.clone() {
+        for tx in transactions.iter_mut() {
             nodes[leader_idx]
                 .node
                 .lock()

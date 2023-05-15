@@ -9,6 +9,9 @@ use libp2p::{
     mdns,
     swarm::NetworkBehaviour,
 };
+use opentelemetry::runtime;
+use opentelemetry_otlp::{ExportConfig, WithExportConfig};
+use tokio::time::Duration;
 
 use zilliqa::{cfg::Config, crypto::SecretKey, node_launcher::NodeLauncher};
 
@@ -49,6 +52,21 @@ async fn main() -> Result<()> {
         port
     } else {
         0
+    };
+    if let Some(endpoint) = &config.otlp_collector_endpoint {
+        let export_config = ExportConfig {
+            endpoint: endpoint.clone(),
+            ..Default::default()
+        };
+        opentelemetry_otlp::new_pipeline()
+            .metrics(runtime::Tokio)
+            .with_period(Duration::from_secs(10))
+            .with_exporter(
+                opentelemetry_otlp::new_exporter()
+                    .tonic()
+                    .with_export_config(export_config),
+            )
+            .build()?;
     };
 
     let mut networked_node = NodeLauncher::new(args.secret_key, config)?;
