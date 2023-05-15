@@ -212,7 +212,7 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
     let mut transaction = transaction_from_rlp(&transaction).unwrap();
     transaction.gas_limit = 100000000000000;
 
-    let transaction_hash = H256(node.lock().unwrap().new_transaction(transaction)?.0);
+    let transaction_hash = H256(node.lock().unwrap().create_transaction(transaction)?.0);
 
     Ok(transaction_hash.to_hex())
 }

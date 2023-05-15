@@ -111,6 +111,7 @@ pub struct Transaction {
     pub contract_address: Option<Address>,
     pub amount: u128,
     pub payload: Vec<u8>,
+    pub block_hash: crypto::Hash,
 }
 
 impl Transaction {

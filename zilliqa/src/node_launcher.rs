@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     api,
@@ -64,9 +65,12 @@ struct Behaviour {
 pub struct NodeLauncher {
     pub node: Arc<Mutex<Node>>,
     pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
-    secret_key: SecretKey,
-    message_receiver: UnboundedReceiverStream<(PeerId, Message)>,
-    reset_timeout_receiver: UnboundedReceiverStream<()>,
+    pub secret_key: SecretKey,
+    pub peer_id: PeerId,
+    pub message_sender: UnboundedSender<(PeerId, Message)>,
+    pub message_receiver: UnboundedReceiverStream<(PeerId, Message)>,
+    pub reset_timeout_sender: UnboundedSender<()>,
+    pub reset_timeout_receiver: UnboundedReceiverStream<()>,
     rpc_launched: bool,
     node_launched: bool,
 }
@@ -82,10 +86,9 @@ impl NodeLauncher {
 
         let node = Node::new(
             config,
-            peer_id,
             secret_key,
-            message_sender,
-            reset_timeout_sender,
+            message_sender.clone(),
+            reset_timeout_sender.clone(),
         )?;
         let node = Arc::new(Mutex::new(node));
 
@@ -96,19 +99,30 @@ impl NodeLauncher {
             node,
             rpc_module,
             secret_key,
+            peer_id,
+            message_sender,
             message_receiver,
+            reset_timeout_sender,
             reset_timeout_receiver,
             rpc_launched: false,
             node_launched: false,
         })
     }
 
-    pub fn get_node(&self) -> Arc<Mutex<Node>> {
+    pub fn get_node_handle(&self) -> Arc<Mutex<Node>> {
         self.node.clone()
     }
 
-    pub fn get_rpc_server(&self) -> RpcModule<Arc<Mutex<Node>>> {
+    pub fn get_rpc_server_handle(&self) -> RpcModule<Arc<Mutex<Node>>> {
         self.rpc_module.clone()
+    }
+
+    pub fn get_message_sender_handle(&self) -> UnboundedSender<(PeerId, Message)> {
+        self.message_sender.clone()
+    }
+
+    pub fn get_reset_timeout_sender_handle(&self) -> UnboundedSender<()> {
+        self.reset_timeout_sender.clone()
     }
 
     pub async fn launch_rpc_server(&mut self) -> Result<ServerHandle> {

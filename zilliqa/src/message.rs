@@ -66,6 +66,7 @@ impl Message {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuorumCertificate {
+    /// An aggregated signature from `n - f` distinct replicas, built by signing a block hash in a specific view.
     pub signature: Signature,
     pub cosigned: BitVec,
     pub block_hash: Hash,
@@ -81,6 +82,7 @@ impl QuorumCertificate {
     }
 }
 
+/// A collection of `n - f` [QuorumCertificate]s.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateQc {
     pub signature: Signature,
@@ -113,7 +115,11 @@ impl AggregateQc {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub view: u64, // the proposer's index can be derived from the block's view
+    /// A block's quorum certificate (QC) is proof that more than `2n/3` nodes (out of `n`) have voted for this block.
+    /// It also includes a pointer to the parent block.
     pub qc: QuorumCertificate,
+    /// The block will include an [AggregateQc] if the previous leader failed, meaning we couldn't construct a QC. When
+    /// this is not `None`, `qc` will contain a clone of the highest QC within this [AggregateQc];
     pub agg: Option<AggregateQc>,
     pub hash: Hash,
     pub parent_hash: Hash,

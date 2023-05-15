@@ -9,6 +9,7 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 100
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
@@ -17,3 +18,4 @@ updates:
         # These are peer deps of Cargo and should not be automatically bumped
         - dependency-name: "semver"
         - dependency-name: "crates-io"
+    open-pull-requests-limit: 100

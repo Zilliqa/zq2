@@ -9,7 +9,10 @@ use evm::{
 use primitive_types::{H160, H256, U256};
 use tracing::info;
 
-use crate::state::{Address, NewTransaction, State, Transaction};
+use crate::{
+    crypto,
+    state::{Address, NewTransaction, State, Transaction},
+};
 
 pub struct CallContext<'a> {
     state: &'a State,
@@ -38,7 +41,11 @@ impl State {
         StackExecutor::new_with_precompiles(stack_state, &CONFIG, &())
     }
 
-    pub fn apply_transaction(&mut self, txn: NewTransaction) -> Result<Transaction> {
+    pub fn apply_transaction(
+        &mut self,
+        txn: NewTransaction,
+        block_hash: crypto::Hash,
+    ) -> Result<Transaction> {
         let context = self.call_context(txn.gas_price.into(), txn.from_addr.0);
         let mut executor = self.executor(&context, txn.gas_limit);
 
@@ -150,6 +157,7 @@ impl State {
             contract_address: contract_address.map(Address),
             amount: txn.amount,
             payload: txn.payload,
+            block_hash,
         };
 
         info!(?logs, "transaction processed");
