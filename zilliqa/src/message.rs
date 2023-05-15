@@ -1,8 +1,9 @@
+use anyhow::Result;
 use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    crypto::{Hash, Signature},
+    crypto::{Hash, PublicKey, SecretKey, Signature},
     state::NewTransaction,
 };
 
@@ -22,6 +23,20 @@ pub struct Vote {
     pub index: u16,
 }
 
+impl Vote {
+    pub fn new(secret_key: SecretKey, block_hash: Hash, index: u16) -> Self {
+        Vote {
+            signature: secret_key.sign(block_hash.as_bytes()),
+            block_hash,
+            index,
+        }
+    }
+
+    pub fn verify(&self, public_key: PublicKey) -> Result<()> {
+        public_key.verify(self.block_hash.as_bytes(), self.signature)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewView {
     /// A signature on the view, QC hash and validator index.
@@ -29,6 +44,31 @@ pub struct NewView {
     pub qc: QuorumCertificate,
     pub view: u64,
     pub index: u16,
+}
+
+impl NewView {
+    pub fn new(secret_key: SecretKey, qc: QuorumCertificate, view: u64, index: u16) -> Self {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(qc.compute_hash().as_bytes());
+        bytes.extend_from_slice(&view.to_be_bytes());
+        bytes.extend_from_slice(&index.to_be_bytes());
+
+        NewView {
+            signature: secret_key.sign(&bytes),
+            qc,
+            view,
+            index,
+        }
+    }
+
+    pub fn verify(&self, public_key: PublicKey) -> Result<()> {
+        let mut message = Vec::new();
+        message.extend_from_slice(self.qc.compute_hash().as_bytes());
+        message.extend_from_slice(&self.index.to_be_bytes());
+        message.extend_from_slice(&self.view.to_be_bytes());
+
+        public_key.verify(&message, self.signature)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +113,14 @@ pub struct QuorumCertificate {
 }
 
 impl QuorumCertificate {
+    pub fn new(signatures: &[Signature], cosigned: BitVec, block_hash: Hash) -> Self {
+        QuorumCertificate {
+            signature: Signature::aggregate(signatures).unwrap(),
+            cosigned,
+            block_hash,
+        }
+    }
+
     pub fn compute_hash(&self) -> Hash {
         Hash::compute(&[
             &self.signature.to_bytes(),
@@ -144,5 +192,65 @@ impl Block {
             state_root_hash: 0,
             transactions: vec![],
         }
+    }
+
+    pub fn from_qc(
+        secret_key: SecretKey,
+        view: u64,
+        qc: QuorumCertificate,
+        parent_hash: Hash,
+        state_root_hash: u64,
+        transactions: Vec<Hash>,
+    ) -> Block {
+        let digest = Hash::compute(&[
+            &view.to_be_bytes(),
+            qc.compute_hash().as_bytes(),
+            // hash of agg missing here intentionally
+            parent_hash.as_bytes(),
+            &state_root_hash.to_be_bytes(),
+        ]);
+        let signature = secret_key.sign(digest.as_bytes());
+        Block {
+            view,
+            qc,
+            agg: None,
+            hash: digest,
+            parent_hash,
+            signature,
+            state_root_hash,
+            transactions,
+        }
+    }
+
+    pub fn from_agg(
+        secret_key: SecretKey,
+        view: u64,
+        qc: QuorumCertificate,
+        agg: AggregateQc,
+        parent_hash: Hash,
+        state_root_hash: u64,
+    ) -> Block {
+        let digest = Hash::compute(&[
+            &view.to_be_bytes(),
+            qc.compute_hash().as_bytes(),
+            agg.compute_hash().as_bytes(),
+            parent_hash.as_bytes(),
+            &state_root_hash.to_be_bytes(),
+        ]);
+        let signature = secret_key.sign(digest.as_bytes());
+        Block {
+            view,
+            qc,
+            agg: Some(agg),
+            hash: digest,
+            parent_hash,
+            signature,
+            state_root_hash,
+            transactions: vec![],
+        }
+    }
+
+    pub fn verify(&self, public_key: PublicKey) -> Result<()> {
+        public_key.verify(self.hash.as_bytes(), self.signature)
     }
 }

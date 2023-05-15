@@ -137,7 +137,7 @@ impl Consensus {
         self.update_view(self.view + 1);
 
         if let Some(high_qc) = &self.high_qc {
-            let new_view = self.new_view_from_qc(high_qc);
+            let new_view = NewView::new(self.secret_key, high_qc.clone(), self.view, self.index());
             return Ok(Some((self.get_leader(self.view).peer_id, new_view)));
         }
 
@@ -148,9 +148,7 @@ impl Consensus {
         // derive the sender from the proposal's view
         let sender = self.get_leader(block.view);
         // verify the sender's signature on the proposal
-        sender
-            .public_key
-            .verify(block.hash.as_bytes(), block.signature)?;
+        block.verify(sender.public_key)?;
         // in the future check if we already have another block with the same view as proposal, which means that the sender equivocates; also figure out who voted for both of these blocks and thus equivocated
         // check if the co-signers of the proposal's qc represent the supermajority
         self.check_quorum_in_bits(&block.qc.cosigned)?;
@@ -221,9 +219,7 @@ impl Consensus {
         }
         // verify the sender's signature on block_hash
         let sender = self.get_member(vote.index);
-        sender
-            .public_key
-            .verify(block.hash.as_bytes(), vote.signature)?;
+        vote.verify(sender.public_key)?;
 
         let (mut signatures, mut cosigned, mut cosigned_weight) =
             self.votes.remove(&block_hash).unwrap_or_else(|| {
@@ -254,7 +250,14 @@ impl Consensus {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                 let parent = qc.block_hash;
                 let transactions = self.pending_transactions.drain(..).collect();
-                let proposal = self.block_from_qc(self.view, qc, parent, transactions);
+                let proposal = Block::from_qc(
+                    self.secret_key,
+                    self.view,
+                    qc,
+                    parent,
+                    self.state.root_hash(),
+                    transactions,
+                );
                 // as a future improvement, process the proposal before broadcasting it
                 trace!("vote successful");
                 return Ok(Some(proposal));
@@ -281,12 +284,8 @@ impl Consensus {
             return Ok(None);
         }
         // verify the sender's signature on the block hash
-        let mut message = Vec::new();
-        message.extend_from_slice(new_view.qc.compute_hash().as_bytes());
-        message.extend_from_slice(&new_view.index.to_be_bytes());
-        message.extend_from_slice(&new_view.view.to_be_bytes());
         let sender = self.get_member(new_view.index);
-        sender.public_key.verify(&message, new_view.signature)?;
+        new_view.verify(sender.public_key)?;
 
         // check if the sender's qc is higher than our high_qc or even higher than our view
         self.update_high_qc_and_view(false, new_view.qc.clone())?;
@@ -333,7 +332,14 @@ impl Consensus {
                     self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, signers)?;
                 let high_qc = self.get_highest_from_agg(&agg)?;
                 let parent = high_qc.block_hash;
-                let proposal = self.block_from_agg(self.view, high_qc.clone(), agg, parent);
+                let proposal = Block::from_agg(
+                    self.secret_key,
+                    self.view,
+                    high_qc.clone(),
+                    agg,
+                    parent,
+                    self.state.root_hash(),
+                );
                 // as a future improvement, process the proposal before broadcasting it
                 return Ok(Some(proposal));
                 // we don't want to keep the collected votes if we proposed a new block
@@ -413,60 +419,6 @@ impl Consensus {
             view,
             qcs,
         })
-    }
-
-    fn block_from_qc(
-        &self,
-        view: u64,
-        qc: QuorumCertificate,
-        parent_hash: Hash,
-        transactions: Vec<Hash>,
-    ) -> Block {
-        let digest = Hash::compute(&[
-            &view.to_be_bytes(),
-            qc.compute_hash().as_bytes(),
-            // hash of agg missing here intentionally
-            parent_hash.as_bytes(),
-            &self.state.root_hash().to_be_bytes(),
-        ]);
-        let signature = self.secret_key.sign(digest.as_bytes());
-        Block {
-            view,
-            qc,
-            agg: None,
-            hash: digest,
-            parent_hash,
-            signature,
-            state_root_hash: self.state.root_hash(),
-            transactions,
-        }
-    }
-
-    fn block_from_agg(
-        &self,
-        view: u64,
-        qc: QuorumCertificate,
-        agg: AggregateQc,
-        parent_hash: Hash,
-    ) -> Block {
-        let digest = Hash::compute(&[
-            &view.to_be_bytes(),
-            qc.compute_hash().as_bytes(),
-            agg.compute_hash().as_bytes(),
-            parent_hash.as_bytes(),
-            &self.state.root_hash().to_be_bytes(),
-        ]);
-        let signature = self.secret_key.sign(digest.as_bytes());
-        Block {
-            view,
-            qc,
-            agg: Some(agg),
-            hash: digest,
-            parent_hash,
-            signature,
-            state_root_hash: self.state.root_hash(),
-            transactions: vec![],
-        }
     }
 
     fn qc_from_bits(
@@ -629,20 +581,6 @@ impl Consensus {
             .collect();
 
         verify_messages(agg.signature, &messages, &public_keys)
-    }
-
-    fn new_view_from_qc(&self, qc: &QuorumCertificate) -> NewView {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(qc.compute_hash().as_bytes());
-        bytes.extend_from_slice(&self.index().to_be_bytes());
-        bytes.extend_from_slice(&self.view.to_be_bytes());
-
-        NewView {
-            signature: self.secret_key.sign(&bytes),
-            qc: qc.clone(),
-            view: self.view,
-            index: self.index(),
-        }
     }
 
     fn get_leader(&self, view: u64) -> Validator {
