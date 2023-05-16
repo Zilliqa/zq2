@@ -177,14 +177,14 @@ impl Consensus {
         let proposal_view = block.view;
         if self.check_safe_block(&block) {
             for txn in &block.transactions {
-                // TODO(#83): Currently we return an error if the transaction's hash was not in `self.new_transactions`.
-                // However, it is quite possible that we haven't yet received the transaction. We should do something
-                // in this case (Request from another node and wait for a response? Just wait for the gossip to
-                // arrive?)
-                let txn = self
+                // If `new_transactions` does not contain `txn`, then either:
+                // 1. We are the proposer of this block, and so have already executed this transaction on our state. We
+                // shouldn't execute it again.
+                // 2. We haven't yet recieved the broadcast of this transaction. In this case, we will skip it and the
+                // state root hashes will not match. TODO(#83): Handle this case.
+                let Some(txn) = self
                     .new_transactions
-                    .remove(txn)
-                    .ok_or_else(|| anyhow!("missing transaction"))?;
+                    .remove(txn) else { continue; };
 
                 let txn = self.state.apply_transaction(txn, block.hash)?;
 
@@ -257,12 +257,11 @@ impl Consensus {
                 let parent = qc.block_hash;
                 let transactions = self.pending_transactions.drain(..).collect();
                 for txn in &transactions {
-                    // We don't remove the transaction from `new_transactions` yet, because we will also validate and
-                    // vote on our own block proposal later. Once we've implemented processing of the proposal before
-                    // broadcasting, this can be optimised.
+                    // We remove the transaction from `new_transactions` immediately, as we're about to apply it to our
+                    // state and we don't want to be re-executed later.
                     let txn = self
                         .new_transactions
-                        .get(txn)
+                        .remove(txn)
                         .ok_or_else(|| anyhow!("missing transaction"))?;
                     let txn = self.state.apply_transaction(txn.clone(), parent)?;
                     self.transactions.insert(txn.hash(), txn);
