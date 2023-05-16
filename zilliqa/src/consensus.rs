@@ -39,9 +39,6 @@ pub struct Consensus {
     finalized: Hash,
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<(PeerId, PublicKey)>,
-    /// Transactions that have been sent to this node. They will be added to the next block we author.
-    // TODO(#82): Add transactions to the next block, not *MY* next block.
-    pending_transactions: Vec<Hash>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
     new_transactions: BTreeMap<Hash, NewTransaction>,
     /// Transactions that have been executed and included in a block.
@@ -68,7 +65,6 @@ impl Consensus {
             view: 0,
             finalized: Hash::ZERO,
             pending_peers: Vec::new(),
-            pending_transactions: Vec::new(),
             new_transactions: BTreeMap::new(),
             transactions: BTreeMap::new(),
             state: State::new(),
@@ -255,24 +251,21 @@ impl Consensus {
             if block_view + 1 == self.view && supermajority {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                 let parent = qc.block_hash;
-                let transactions = self.pending_transactions.drain(..).collect();
-                for txn in &transactions {
-                    // We remove the transaction from `new_transactions` immediately, as we're about to apply it to our
-                    // state and we don't want to be re-executed later.
-                    let txn = self
-                        .new_transactions
-                        .remove(txn)
-                        .ok_or_else(|| anyhow!("missing transaction"))?;
-                    let txn = self.state.apply_transaction(txn.clone(), parent)?;
-                    self.transactions.insert(txn.hash(), txn);
+
+                let txn_hashes: Vec<_> = self.new_transactions.keys().copied().collect();
+                for hash in &txn_hashes {
+                    let txn = self.new_transactions.remove(hash).unwrap();
+                    let txn = self.state.apply_transaction(txn, parent)?;
+                    self.transactions.insert(*hash, txn);
                 }
+
                 let proposal = Block::from_qc(
                     self.secret_key,
                     self.view,
                     qc,
                     parent,
                     self.state.root_hash(),
-                    transactions,
+                    txn_hashes,
                 );
                 // as a future improvement, process the proposal before broadcasting it
                 trace!("vote successful");
@@ -376,12 +369,6 @@ impl Consensus {
         }
 
         Ok(None)
-    }
-
-    pub fn create_transaction(&mut self, txn: &NewTransaction) -> Result<()> {
-        self.pending_transactions.push(txn.hash());
-
-        Ok(())
     }
 
     pub fn new_transaction(&mut self, txn: NewTransaction) -> Result<()> {
