@@ -151,6 +151,11 @@ impl State {
 
     pub fn call_contract(&self, contract: Address, data: Vec<u8>) -> Result<Vec<u8>> {
         let context = self.call_context(U256::zero(), H160::zero());
+
+        if context.code(contract.0).is_empty() {
+            return Ok(vec![]);
+        }
+
         let mut executor = self.executor(&context, u64::MAX);
 
         let context = Context {
