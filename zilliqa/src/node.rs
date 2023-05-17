@@ -106,7 +106,6 @@ impl Node {
 
     pub fn create_transaction(&mut self, txn: NewTransaction) -> Result<Hash> {
         let hash = txn.hash();
-        self.consensus.create_transaction(&txn)?;
         self.broadcast_message(Message::NewTransaction(txn))?;
 
         Ok(hash)

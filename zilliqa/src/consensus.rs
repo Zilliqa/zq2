@@ -39,9 +39,6 @@ pub struct Consensus {
     finalized: Hash,
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<(PeerId, PublicKey)>,
-    /// Transactions that have been sent to this node. They will be added to the next block we author.
-    // TODO(#82): Add transactions to the next block, not *MY* next block.
-    pending_transactions: Vec<Hash>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
     new_transactions: BTreeMap<Hash, NewTransaction>,
     /// Transactions that have been executed and included in a block.
@@ -68,7 +65,6 @@ impl Consensus {
             view: 0,
             finalized: Hash::ZERO,
             pending_peers: Vec::new(),
-            pending_transactions: Vec::new(),
             new_transactions: BTreeMap::new(),
             transactions: BTreeMap::new(),
             state: State::new(),
@@ -177,14 +173,14 @@ impl Consensus {
         let proposal_view = block.view;
         if self.check_safe_block(&block) {
             for txn in &block.transactions {
-                // TODO(#83): Currently we return an error if the transaction's hash was not in `self.new_transactions`.
-                // However, it is quite possible that we haven't yet received the transaction. We should do something
-                // in this case (Request from another node and wait for a response? Just wait for the gossip to
-                // arrive?)
-                let txn = self
+                // If `new_transactions` does not contain `txn`, then either:
+                // 1. We are the proposer of this block, and so have already executed this transaction on our state. We
+                // shouldn't execute it again.
+                // 2. We haven't yet recieved the broadcast of this transaction. In this case, we will skip it and the
+                // state root hashes will not match. TODO(#83): Handle this case.
+                let Some(txn) = self
                     .new_transactions
-                    .remove(txn)
-                    .ok_or_else(|| anyhow!("missing transaction"))?;
+                    .remove(txn) else { continue; };
 
                 let txn = self.state.apply_transaction(txn, block.hash)?;
 
@@ -255,25 +251,21 @@ impl Consensus {
             if block_view + 1 == self.view && supermajority {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                 let parent = qc.block_hash;
-                let transactions = self.pending_transactions.drain(..).collect();
-                for txn in &transactions {
-                    // We don't remove the transaction from `new_transactions` yet, because we will also validate and
-                    // vote on our own block proposal later. Once we've implemented processing of the proposal before
-                    // broadcasting, this can be optimised.
-                    let txn = self
-                        .new_transactions
-                        .get(txn)
-                        .ok_or_else(|| anyhow!("missing transaction"))?;
-                    let txn = self.state.apply_transaction(txn.clone(), parent)?;
-                    self.transactions.insert(txn.hash(), txn);
+
+                let txn_hashes: Vec<_> = self.new_transactions.keys().copied().collect();
+                for hash in &txn_hashes {
+                    let txn = self.new_transactions.remove(hash).unwrap();
+                    let txn = self.state.apply_transaction(txn, parent)?;
+                    self.transactions.insert(*hash, txn);
                 }
+
                 let proposal = Block::from_qc(
                     self.secret_key,
                     self.view,
                     qc,
                     parent,
                     self.state.root_hash(),
-                    transactions,
+                    txn_hashes,
                 );
                 // as a future improvement, process the proposal before broadcasting it
                 trace!("vote successful");
@@ -377,12 +369,6 @@ impl Consensus {
         }
 
         Ok(None)
-    }
-
-    pub fn create_transaction(&mut self, txn: &NewTransaction) -> Result<()> {
-        self.pending_transactions.push(txn.hash());
-
-        Ok(())
     }
 
     pub fn new_transaction(&mut self, txn: NewTransaction) -> Result<()> {
