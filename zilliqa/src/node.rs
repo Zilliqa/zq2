@@ -124,7 +124,7 @@ impl Node {
     }
 
     pub fn get_latest_block(&self) -> Option<&Block> {
-        self.get_block_by_view(self.consensus.view() - 1)
+        self.get_block_by_view(self.consensus.view().saturating_sub(1))
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Option<&Block> {
@@ -200,9 +200,11 @@ impl Node {
     }
 
     fn broadcast_message(&mut self, message: Message) -> Result<()> {
-        self.handle_message(self.peer_id, message.clone())?;
         // FIXME: We broadcast everything, so the recipient doesn't matter.
-        self.message_sender.send((PeerId::random(), message))?;
+        self.message_sender
+            .send((PeerId::random(), message.clone()))?;
+        // Also handle it ourselves
+        self.handle_message(self.peer_id, message)?;
         Ok(())
     }
 
