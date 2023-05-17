@@ -1,7 +1,7 @@
 use primitive_types::{H128, H160, H256, H384, H512, H768};
 
 /// A version of [hex::ToHex] which is also implemented for integer types. This version also prefixes the produced
-/// string with `"0x"` and omits leading zeroes.
+/// string with `"0x"` and omits leading zeroes for quantities (types with fixed lengths).
 pub trait ToHex {
     fn to_hex(&self) -> String;
 }
@@ -11,12 +11,7 @@ macro_rules! as_ref_impl {
     ($T:ty) => {
         impl ToHex for $T {
             fn to_hex(&self) -> String {
-                let hex = hex::encode(self);
-                let first_non_zero = hex
-                    .bytes()
-                    .position(|b| b != ('0' as u8))
-                    .unwrap_or(hex.len());
-                format!("0x{}", &hex[first_non_zero..])
+                format!("0x{}", hex::encode(self))
             }
         }
     };
