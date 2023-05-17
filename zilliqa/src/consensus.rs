@@ -176,21 +176,19 @@ impl Consensus {
 
         let proposal_view = block.view;
         if self.check_safe_block(&block) {
-            // we only re-apply transactions if it isn't our own proposal in the first place
-            if !self.is_leader(block.view) {
-                for tx_hash in &block.transactions {
-                    // TODO(#83): Currently we return an error if the transaction's hash was not in `self.new_transactions`.
-                    // However, it is quite possible that we haven't yet received the transaction. We should do something
-                    // in this case (Request from another node and wait for a response? Just wait for the gossip to
-                    // arrive?)
-                    let txn = self
-                        .new_transactions
-                        .remove(tx_hash)
-                        .ok_or_else(|| anyhow!("missing transaction"))?;
+            for txn in &block.transactions {
+                // TODO(#83): Currently we return an error if the transaction's hash was not in `self.new_transactions`.
+                // However, it is quite possible that we haven't yet received the transaction. We should do something
+                // in this case (Request from another node and wait for a response? Just wait for the gossip to
+                // arrive?)
+                let txn = self
+                    .new_transactions
+                    .remove(txn)
+                    .ok_or_else(|| anyhow!("missing transaction"))?;
 
-                    let txn = self.state.apply_transaction(txn, block.hash)?;
-                    self.transactions.insert(txn.hash(), txn);
-                }
+                let txn = self.state.apply_transaction(txn, block.hash)?;
+
+                self.transactions.insert(txn.hash(), txn);
             }
             if self.state.root_hash() != block.state_root_hash {
                 return Err(anyhow!(
@@ -217,7 +215,7 @@ impl Consensus {
         let block_view = block.view;
         trace!(block_view, self.view, "handling vote");
         // if we are not the leader of the round in which the vote counts
-        if !self.is_leader(block_view + 1) {
+        if self.get_leader(block_view + 1).public_key != self.secret_key.public_key() {
             trace!(vote_view = block_view + 1, "skipping vote, not the leader");
             return Ok(None);
         }
@@ -294,7 +292,7 @@ impl Consensus {
 
     pub fn new_view(&mut self, _: PeerId, new_view: NewView) -> Result<Option<Block>> {
         // if we are not the leader of the round in which the vote counts
-        if !self.is_leader(new_view.view) {
+        if self.get_leader(new_view.view).public_key != self.secret_key.public_key() {
             trace!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
@@ -606,10 +604,6 @@ impl Consensus {
         // currently it's a simple round robin but later
         // we will select the leader based on the weights
         self.committee[(view % (self.committee.len() as u64)) as usize]
-    }
-
-    fn is_leader(&self, view: u64) -> bool {
-        self.get_leader(view).public_key == self.secret_key.public_key()
     }
 
     fn get_member(&self, index: u16) -> Validator {
