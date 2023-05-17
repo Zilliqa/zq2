@@ -1,6 +1,8 @@
 //! Manages execution of transactions on state.
 
-use anyhow::{anyhow, Result};
+use std::{borrow::Cow, time::SystemTime};
+
+use anyhow::Result;
 use evm::{
     backend::{Apply, Backend, Basic},
     executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata},
@@ -9,22 +11,35 @@ use evm::{
 use primitive_types::{H160, H256, U256};
 use tracing::info;
 
-use crate::state::{Address, State, Transaction};
+use crate::{
+    message::BlockHeader,
+    state::{Address, State, Transaction},
+};
 
 pub struct CallContext<'a> {
     state: &'a State,
     gas_price: U256,
     origin: H160,
+    chain_id: u64,
+    current_block: BlockHeader,
 }
 
 const CONFIG: Config = Config::london();
 
 impl State {
-    fn call_context(&self, gas_price: U256, origin: H160) -> CallContext<'_> {
+    fn call_context(
+        &self,
+        gas_price: U256,
+        origin: H160,
+        chain_id: u64,
+        current_block: BlockHeader,
+    ) -> CallContext<'_> {
         CallContext {
             state: self,
             gas_price,
             origin,
+            chain_id,
+            current_block,
         }
     }
 
@@ -40,8 +55,18 @@ impl State {
 
     /// Apply a transaction to the account state. If the transaction is a contract creation, the created contract's
     /// address will be added to the transaction.
-    pub fn apply_transaction(&mut self, mut txn: Transaction) -> Result<Transaction> {
-        let context = self.call_context(txn.gas_price.into(), txn.from_addr.0);
+    pub fn apply_transaction(
+        &mut self,
+        mut txn: Transaction,
+        chain_id: u64,
+        current_block: BlockHeader,
+    ) -> Result<Transaction> {
+        let context = self.call_context(
+            txn.gas_price.into(),
+            txn.from_addr.0,
+            chain_id,
+            current_block,
+        );
         let mut executor = self.executor(&context, txn.gas_limit);
 
         let contract_address = if txn.to_addr == Address::DEPLOY_CONTRACT {
@@ -153,8 +178,14 @@ impl State {
         Ok(txn)
     }
 
-    pub fn call_contract(&self, contract: Address, data: Vec<u8>) -> Result<Vec<u8>> {
-        let context = self.call_context(U256::zero(), H160::zero());
+    pub fn call_contract(
+        &self,
+        contract: Address,
+        data: Vec<u8>,
+        chain_id: u64,
+        current_block: BlockHeader,
+    ) -> Result<Vec<u8>> {
+        let context = self.call_context(U256::zero(), H160::zero(), chain_id, current_block);
 
         if context.code(contract.0).is_empty() {
             return Ok(vec![]);
@@ -174,7 +205,7 @@ impl State {
         };
         match reason {
             ExitReason::Succeed(ExitSucceed::Returned) => Ok(data),
-            _ => Err(anyhow!("no return value")),
+            _ => Ok(vec![]),
         }
     }
 }
@@ -189,39 +220,49 @@ impl<'a> Backend for CallContext<'a> {
     }
 
     fn block_hash(&self, _: U256) -> H256 {
-        todo!()
+        // TODO: Get the hash of one of the 256 most recent blocks.
+        H256::zero()
     }
 
     fn block_number(&self) -> U256 {
-        todo!()
+        self.current_block.view.into()
     }
 
     fn block_coinbase(&self) -> H160 {
-        todo!()
+        // TODO: Return something here, probably the proposer of the current block.
+        H160::zero()
     }
 
     fn block_timestamp(&self) -> U256 {
-        todo!()
+        self.current_block
+            .timestamp
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or_default()
+            .into()
     }
 
     fn block_difficulty(&self) -> U256 {
-        todo!()
+        0.into()
     }
 
     fn block_gas_limit(&self) -> U256 {
-        todo!()
+        0.into()
     }
 
     fn block_base_fee_per_gas(&self) -> U256 {
-        todo!()
+        0.into()
     }
 
     fn chain_id(&self) -> U256 {
-        todo!()
+        self.chain_id.into()
     }
 
-    fn exists(&self, _: H160) -> bool {
-        todo!()
+    fn exists(&self, address: H160) -> bool {
+        // Ethereum charges extra gas for `CALL`s or `SELFDESTRUCT`s which create new accounts, to discourage the
+        // creation of many addresses and the resulting increase in state size. We can tell if an account exists in our
+        // state by checking whether the response from `State::get_account` is borrowed.
+        matches!(self.state.get_account(Address(address)), Cow::Borrowed(_))
     }
 
     fn basic(&self, address: H160) -> Basic {

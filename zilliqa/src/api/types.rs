@@ -61,14 +61,14 @@ impl From<&message::Block> for EthBlock {
     fn from(block: &message::Block) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         EthBlock {
-            number: block.view,
-            hash: H256(block.hash.0),
-            parent_hash: H256(block.parent_hash.0),
+            number: block.view(),
+            hash: H256(block.hash().0),
+            parent_hash: H256(block.parent_hash().0),
             nonce: 0,
             sha_3_uncles: H256::zero(),
             logs_bloom: [0; 256],
             transactions_root: H256::zero(),
-            state_root: H256::from_low_u64_be(block.state_root_hash),
+            state_root: H256::from_low_u64_be(block.state_root_hash()),
             receipts_root: H256::zero(),
             miner: H160::zero(),
             difficulty: 0,
