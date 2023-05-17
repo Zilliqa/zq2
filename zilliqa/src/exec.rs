@@ -9,10 +9,7 @@ use evm::{
 use primitive_types::{H160, H256, U256};
 use tracing::info;
 
-use crate::{
-    crypto,
-    state::{Address, NewTransaction, State, Transaction},
-};
+use crate::state::{Address, NewTransaction, State};
 
 pub struct CallContext<'a> {
     state: &'a State,
@@ -41,11 +38,9 @@ impl State {
         StackExecutor::new_with_precompiles(stack_state, &CONFIG, &())
     }
 
-    pub fn apply_transaction(
-        &mut self,
-        txn: NewTransaction,
-        block_hash: crypto::Hash,
-    ) -> Result<Transaction> {
+    /// Apply a transaction to the account state. If the transaction is a contract creation, the created contract's
+    /// address will be returned.
+    pub fn apply_transaction(&mut self, txn: &NewTransaction) -> Result<Option<Address>> {
         let context = self.call_context(txn.gas_price.into(), txn.from_addr.0);
         let mut executor = self.executor(&context, txn.gas_limit);
 
@@ -148,21 +143,10 @@ impl State {
         }
 
         // TODO(#80): Handle `logs`.
-        let transaction = Transaction {
-            nonce: txn.nonce,
-            gas_price: txn.gas_price,
-            gas_limit: txn.gas_limit,
-            from_addr: txn.from_addr,
-            to_addr: txn.to_addr,
-            contract_address: contract_address.map(Address),
-            amount: txn.amount,
-            payload: txn.payload,
-            block_hash,
-        };
 
         info!(?logs, "transaction processed");
 
-        Ok(transaction)
+        Ok(contract_address.map(Address))
     }
 
     pub fn call_contract(&self, contract: Address, data: Vec<u8>) -> Result<Vec<u8>> {

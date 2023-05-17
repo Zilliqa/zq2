@@ -115,6 +115,24 @@ pub struct Transaction {
 }
 
 impl Transaction {
+    pub fn new(
+        new_transaction: NewTransaction,
+        contract_address: Option<Address>,
+        block_hash: crypto::Hash,
+    ) -> Self {
+        Transaction {
+            nonce: new_transaction.nonce,
+            gas_price: new_transaction.gas_price,
+            gas_limit: new_transaction.gas_limit,
+            from_addr: new_transaction.from_addr,
+            to_addr: new_transaction.to_addr,
+            contract_address,
+            amount: new_transaction.amount,
+            payload: new_transaction.payload,
+            block_hash,
+        }
+    }
+
     pub fn hash(&self) -> crypto::Hash {
         crypto::Hash::compute(&[
             &self.nonce.to_be_bytes(),

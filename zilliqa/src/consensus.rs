@@ -182,7 +182,9 @@ impl Consensus {
                     .new_transactions
                     .remove(txn) else { continue; };
 
-                let txn = self.state.apply_transaction(txn, block.hash)?;
+                let contract_address = self.state.apply_transaction(&txn)?;
+
+                let txn = Transaction::new(txn, contract_address, block.hash);
 
                 self.transactions.insert(txn.hash(), txn);
             }
@@ -253,11 +255,15 @@ impl Consensus {
                 let parent = qc.block_hash;
 
                 let txn_hashes: Vec<_> = self.new_transactions.keys().copied().collect();
-                for hash in &txn_hashes {
-                    let txn = self.new_transactions.remove(hash).unwrap();
-                    let txn = self.state.apply_transaction(txn, parent)?;
-                    self.transactions.insert(*hash, txn);
-                }
+
+                let applied_txns: Vec<_> = txn_hashes
+                    .iter()
+                    .map(|hash| {
+                        let txn: NewTransaction = self.new_transactions.remove(hash).unwrap();
+                        let contract_address = self.state.apply_transaction(&txn)?;
+                        Ok((txn, contract_address))
+                    })
+                    .collect::<Result<_>>()?;
 
                 let proposal = Block::from_qc(
                     self.secret_key,
@@ -267,6 +273,12 @@ impl Consensus {
                     self.state.root_hash(),
                     txn_hashes,
                 );
+
+                for (txn, contract_address) in applied_txns {
+                    let txn = Transaction::new(txn, contract_address, proposal.hash);
+                    self.transactions.insert(txn.hash(), txn);
+                }
+
                 // as a future improvement, process the proposal before broadcasting it
                 trace!("vote successful");
                 return Ok(Some(proposal));
