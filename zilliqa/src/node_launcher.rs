@@ -167,6 +167,7 @@ impl NodeLauncher {
             gossipsub: gossipsub::Behaviour::new(
                 MessageAuthenticity::Signed(key_pair.clone()),
                 gossipsub::ConfigBuilder::default()
+                    .max_transmit_size(524288)
                     .build()
                     .map_err(|e| anyhow!(e))?,
             )
