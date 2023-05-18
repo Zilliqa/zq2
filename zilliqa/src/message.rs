@@ -50,8 +50,8 @@ impl NewView {
     pub fn new(secret_key: SecretKey, qc: QuorumCertificate, view: u64, index: u16) -> Self {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(qc.compute_hash().as_bytes());
-        bytes.extend_from_slice(&view.to_be_bytes());
         bytes.extend_from_slice(&index.to_be_bytes());
+        bytes.extend_from_slice(&view.to_be_bytes());
 
         NewView {
             signature: secret_key.sign(&bytes),

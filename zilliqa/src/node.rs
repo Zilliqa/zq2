@@ -125,7 +125,7 @@ impl Node {
     }
 
     pub fn get_latest_block(&self) -> Option<&Block> {
-        self.get_block_by_view(self.consensus.view() - 1)
+        self.get_block_by_view(self.consensus.view().saturating_sub(1))
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Option<&Block> {
@@ -139,11 +139,17 @@ impl Node {
     pub fn get_transaction_receipt(&self, hash: Hash) -> Option<EthTransactionReceipt> {
         let transaction = self.consensus.get_transaction_by_hash(hash)?;
         // TODO: Return error if block does not exist.
-        let block = self.consensus.get_block(&transaction.block_hash).ok()?;
+        let block = self
+            .consensus
+            .get_block_by_transaction_hash(transaction.hash())?;
 
         let receipt = EthTransactionReceipt {
             transaction_hash: H256(hash.0),
-            transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
+            transaction_index: block
+                .transactions
+                .iter()
+                .position(|t| t.hash() == hash)
+                .unwrap() as u64,
             block_hash: H256::from_slice(block.hash.as_bytes()),
             block_number: block.view,
             from: transaction.from_addr.0,
@@ -164,10 +170,12 @@ impl Node {
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<EthTransaction> {
         let transaction = self.consensus.get_transaction_by_hash(hash)?;
         // TODO: Return error if block does not exist.
-        let block = self.consensus.get_block(&transaction.block_hash).ok()?;
+        let block = self
+            .consensus
+            .get_block_by_transaction_hash(transaction.hash())?;
 
         let response = EthTransaction {
-            block_hash: H256(transaction.block_hash.0),
+            block_hash: H256(block.hash.0),
             block_number: block.view,
             from: transaction.from_addr.0,
             gas: 0,
@@ -180,7 +188,11 @@ impl Node {
             } else {
                 None
             },
-            transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
+            transaction_index: block
+                .transactions
+                .iter()
+                .position(|t| t.hash() == hash)
+                .unwrap() as u64,
             value: transaction.amount as u64,
             v: 0,
             r: [0; 32],
@@ -201,9 +213,11 @@ impl Node {
     }
 
     fn broadcast_message(&mut self, message: Message) -> Result<()> {
-        self.handle_message(self.peer_id, message.clone())?;
         // FIXME: We broadcast everything, so the recipient doesn't matter.
-        self.message_sender.send((PeerId::random(), message))?;
+        self.message_sender
+            .send((PeerId::random(), message.clone()))?;
+        // Also handle it ourselves
+        self.handle_message(self.peer_id, message)?;
         Ok(())
     }
 

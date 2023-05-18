@@ -16,8 +16,10 @@ impl Collector {
         let (tx, mut rx) = mpsc::channel(32);
         let nr = keys.len();
         // Fire everything up.
+        let mut do_rpc = true;
         for (i, key) in keys.iter().enumerate() {
-            runners.push(runner::Process::spawn(i, key, &tx).await?);
+            runners.push(runner::Process::spawn(i, key, do_rpc, &tx).await?);
+            do_rpc = false; // only launch RPC server in first node. TODO: better config on nodes
         }
         let reader = tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {

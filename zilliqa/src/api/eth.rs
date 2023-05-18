@@ -93,6 +93,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     method!("eth_getTransactionReceipt", get_transaction_receipt);
     method!("eth_sendRawTransaction", send_raw_transaction);
     method!("net_version", version);
+    method!("web3_clientVersion", client_version);
 
     module
 }
@@ -267,6 +268,11 @@ fn version(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(node.lock().unwrap().config.eth_chain_id.to_string())
 }
 
+fn client_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
+    // Format: "<name>/<version>"
+    Ok(concat!("zilliqa2/v", env!("CARGO_PKG_VERSION")))
+}
+
 /// Decode a transaction from its RLP-encoded form.
 fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<Transaction> {
     let rlp = Rlp::new(bytes);
@@ -322,7 +328,6 @@ fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<Transaction> {
         to_addr: Address::from_slice(&to_addr),
         amount,
         payload,
-        block_hash: None
     })
 }
 

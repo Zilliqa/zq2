@@ -7,7 +7,7 @@ use libp2p::PeerId;
 use tracing::{debug, trace};
 
 use crate::{
-    crypto::{verify_messages, Hash, PublicKey, SecretKey, Signature, self},
+    crypto::{self, verify_messages, Hash, PublicKey, SecretKey, Signature},
     message::{AggregateQc, BitSlice, BitVec, Block, NewView, QuorumCertificate, Vote},
     state::{State, Transaction},
 };
@@ -180,8 +180,8 @@ impl Consensus {
                 // If we haven't applied it yet, do so
                 // This comes up when we're the proposer of the block
                 if !self.transactions.contains_key(&txn.hash()) {
-                    let txn = self.state.apply_transaction(txn, block.hash)?;
-                    self.transactions.insert(txn.hash(), txn);
+                    let txn = self.state.apply_transaction(txn.clone())?;
+                    self.transactions.insert(txn.hash(), (txn, block.hash));
                 }
             }
             if self.state.root_hash() != block.state_root_hash {
@@ -207,7 +207,7 @@ impl Consensus {
         let Ok(block) = self.get_block(&vote.block_hash) else { return Ok(None); }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
         let block_hash = block.hash;
         let block_view = block.view;
-        trace!(block_view, "handling vote");
+        trace!(block_view, self.view, "handling vote");
         // if we are not the leader of the round in which the vote counts
         if self.get_leader(block_view + 1).public_key != self.secret_key.public_key() {
             trace!(vote_view = block_view + 1, "skipping vote, not the leader");
@@ -250,10 +250,22 @@ impl Consensus {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                 let parent = qc.block_hash;
 
-                for (hash, tx) in &self.new_transactions {
-                    let tx = self.state.apply_transaction(tx, parent)?;
-                    self.transactions.insert(*hash, tx);
+                // let txn_hashes: Vec<_> = self.new_transactions.keys().copied().collect();
+
+                // let applied_txns: Vec<_> = txn_hashes
+                //     .iter()
+                //     .map(|hash| {
+                //         let tx: Transaction = self.new_transactions.remove(hash).unwrap();
+                //         let tx = self.state.apply_transaction(tx)?;
+                //         Ok(tx)
+                //     })
+                //     .collect::<Result<_>>()?;
+
+                let mut applied_transactions = Vec::new();
+                for tx in self.new_transactions.values() {
+                    applied_transactions.push(self.state.apply_transaction(tx.clone())?)
                 }
+                self.new_transactions.clear();
 
                 let proposal = Block::from_qc(
                     self.secret_key,
@@ -261,8 +273,13 @@ impl Consensus {
                     qc,
                     parent,
                     self.state.root_hash(),
-                    self.new_transactions.into_values().collect(),
+                    applied_transactions,
                 );
+
+                for tx in &proposal.transactions {
+                    self.transactions
+                        .insert(tx.hash(), (tx.clone(), proposal.hash));
+                }
 
                 // as a future improvement, process the proposal before broadcasting it
                 trace!("vote successful");
@@ -375,7 +392,15 @@ impl Consensus {
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<Transaction> {
-        Some(self.transactions.get(&hash)?.clone())
+        Some(self.transactions.get(&hash)?.0.clone())
+    }
+
+    pub fn get_block_by_transaction_hash(&self, tx_hash: Hash) -> Option<Block> {
+        Some(
+            self.blocks
+                .get(&self.transactions.get(&tx_hash)?.1)?
+                .clone(),
+        )
     }
 
     fn update_high_qc_and_view(

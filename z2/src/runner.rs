@@ -29,10 +29,14 @@ impl Process {
     pub async fn spawn(
         index: usize,
         key: &str,
+        rpc: bool,
         channel: &mpsc::Sender<Message>,
     ) -> Result<Process> {
         let mut cmd = Command::new("target/debug/zilliqa");
         cmd.arg(key);
+        if !rpc {
+            cmd.arg("--no-jsonrpc");
+        }
         cmd.stdout(Stdio::piped());
         let mut child = cmd.spawn().expect("Failed to spawn");
         let stdout = child.stdout.take().expect("No handle to stdout");
