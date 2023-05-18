@@ -167,6 +167,7 @@ impl NodeLauncher {
             gossipsub: gossipsub::Behaviour::new(
                 MessageAuthenticity::Signed(key_pair.clone()),
                 gossipsub::ConfigBuilder::default()
+                    .max_transmit_size(524288)
                     .build()
                     .map_err(|e| anyhow!(e))?,
             )
@@ -259,7 +260,7 @@ impl NodeLauncher {
                     let message_type = message.name();
                     debug!(%dest, message_type, "sending message");
                     let data = serde_json::to_vec(&message).unwrap();
-                    swarm.behaviour_mut().gossipsub.publish(topic.hash(), data).ok();
+                    swarm.behaviour_mut().gossipsub.publish(topic.hash(), data).unwrap();
                 },
                 () = &mut sleep => {
                     trace!("timeout elapsed");
