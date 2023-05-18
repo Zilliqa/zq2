@@ -142,6 +142,9 @@ impl State {
             }
         }
 
+        let account = self.get_account_mut(txn.from_addr);
+        account.nonce += 1;
+
         // TODO(#80): Handle `logs`.
 
         info!(?logs, "transaction processed");
