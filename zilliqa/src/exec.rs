@@ -11,7 +11,7 @@ use tracing::info;
 
 use crate::{
     crypto,
-    state::{Address, NewTransaction, State, Transaction},
+    state::{Address, State, Transaction},
 };
 
 pub struct CallContext<'a> {
@@ -43,7 +43,7 @@ impl State {
 
     pub fn apply_transaction(
         &mut self,
-        txn: NewTransaction,
+        txn: &Transaction,
         block_hash: crypto::Hash,
     ) -> Result<Transaction> {
         let context = self.call_context(txn.gas_price.into(), txn.from_addr.0);
@@ -157,7 +157,6 @@ impl State {
             contract_address: contract_address.map(Address),
             amount: txn.amount,
             payload: txn.payload,
-            block_hash,
         };
 
         info!(?logs, "transaction processed");

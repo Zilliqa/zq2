@@ -7,9 +7,9 @@ use libp2p::PeerId;
 use tracing::{debug, trace};
 
 use crate::{
-    crypto::{verify_messages, Hash, PublicKey, SecretKey, Signature},
+    crypto::{verify_messages, Hash, PublicKey, SecretKey, Signature, self},
     message::{AggregateQc, BitSlice, BitVec, Block, NewView, QuorumCertificate, Vote},
-    state::{NewTransaction, State, Transaction},
+    state::{State, Transaction},
 };
 
 struct NewViewVote {
@@ -40,9 +40,10 @@ pub struct Consensus {
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<(PeerId, PublicKey)>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
-    new_transactions: BTreeMap<Hash, NewTransaction>,
-    /// Transactions that have been executed and included in a block.
-    transactions: BTreeMap<Hash, Transaction>,
+    new_transactions: BTreeMap<Hash, Transaction>,
+    /// Transactions that have been executed and included in a block, and the blocks the are
+    /// included in.
+    transactions: BTreeMap<Hash, (Transaction, crypto::Hash)>,
     /// The account store.
     state: State,
 }
@@ -173,18 +174,15 @@ impl Consensus {
         let proposal_view = block.view;
         if self.check_safe_block(&block) {
             for txn in &block.transactions {
-                // If `new_transactions` does not contain `txn`, then either:
-                // 1. We are the proposer of this block, and so have already executed this transaction on our state. We
-                // shouldn't execute it again.
-                // 2. We haven't yet recieved the broadcast of this transaction. In this case, we will skip it and the
-                // state root hashes will not match. TODO(#83): Handle this case.
-                let Some(txn) = self
-                    .new_transactions
-                    .remove(txn) else { continue; };
+                // If we have the transaction in the mempool, remove it
+                self.new_transactions.remove(&txn.hash());
 
-                let txn = self.state.apply_transaction(txn, block.hash)?;
-
-                self.transactions.insert(txn.hash(), txn);
+                // If we haven't applied it yet, do so
+                // This comes up when we're the proposer of the block
+                if !self.transactions.contains_key(&txn.hash()) {
+                    let txn = self.state.apply_transaction(txn, block.hash)?;
+                    self.transactions.insert(txn.hash(), txn);
+                }
             }
             if self.state.root_hash() != block.state_root_hash {
                 return Err(anyhow!(
@@ -252,11 +250,9 @@ impl Consensus {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                 let parent = qc.block_hash;
 
-                let txn_hashes: Vec<_> = self.new_transactions.keys().copied().collect();
-                for hash in &txn_hashes {
-                    let txn = self.new_transactions.remove(hash).unwrap();
-                    let txn = self.state.apply_transaction(txn, parent)?;
-                    self.transactions.insert(*hash, txn);
+                for (hash, tx) in &self.new_transactions {
+                    let tx = self.state.apply_transaction(tx, parent)?;
+                    self.transactions.insert(*hash, tx);
                 }
 
                 let proposal = Block::from_qc(
@@ -265,8 +261,9 @@ impl Consensus {
                     qc,
                     parent,
                     self.state.root_hash(),
-                    txn_hashes,
+                    self.new_transactions.into_values().collect(),
                 );
+
                 // as a future improvement, process the proposal before broadcasting it
                 trace!("vote successful");
                 return Ok(Some(proposal));
@@ -371,7 +368,7 @@ impl Consensus {
         Ok(None)
     }
 
-    pub fn new_transaction(&mut self, txn: NewTransaction) -> Result<()> {
+    pub fn new_transaction(&mut self, txn: Transaction) -> Result<()> {
         self.new_transactions.insert(txn.hash(), txn);
 
         Ok(())

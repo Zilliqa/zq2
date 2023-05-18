@@ -1,3 +1,4 @@
+use crate::state::Transaction;
 use std::borrow::Cow;
 
 use anyhow::Result;
@@ -11,7 +12,7 @@ use crate::{
     consensus::Consensus,
     crypto::{Hash, PublicKey, SecretKey},
     message::{Block, BlockRequest, BlockResponse, Message, Proposal},
-    state::{Account, Address, NewTransaction},
+    state::{Account, Address},
 };
 
 /// The central data structure for a blockchain node.
@@ -104,7 +105,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn create_transaction(&mut self, txn: NewTransaction) -> Result<Hash> {
+    pub fn create_transaction(&mut self, txn: Transaction) -> Result<Hash> {
         let hash = txn.hash();
         self.broadcast_message(Message::NewTransaction(txn))?;
 
