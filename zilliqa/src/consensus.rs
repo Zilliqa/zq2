@@ -250,17 +250,6 @@ impl Consensus {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                 let parent = qc.block_hash;
 
-                // let txn_hashes: Vec<_> = self.new_transactions.keys().copied().collect();
-
-                // let applied_txns: Vec<_> = txn_hashes
-                //     .iter()
-                //     .map(|hash| {
-                //         let tx: Transaction = self.new_transactions.remove(hash).unwrap();
-                //         let tx = self.state.apply_transaction(tx)?;
-                //         Ok(tx)
-                //     })
-                //     .collect::<Result<_>>()?;
-
                 let mut applied_transactions = Vec::new();
                 for tx in self.new_transactions.values() {
                     applied_transactions.push(self.state.apply_transaction(tx.clone())?)
