@@ -7,12 +7,12 @@ use zilliqa::message::Message;
 use zilliqa::message::Proposal;
 use zilliqa::message::Vote;
 use zilliqa::node_launcher::NodeLauncher;
-use zilliqa::state::NewTransaction;
+use zilliqa::state::Transaction;
 
 pub struct ManualConsensus {
     pub latest_block: Block,
     pub nodes: Vec<NodeLauncher>,
-    pending_transactions: Vec<NewTransaction>,
+    pending_transactions: Vec<Transaction>,
 }
 
 impl ManualConsensus {
@@ -73,7 +73,7 @@ impl ManualConsensus {
         self
     }
 
-    pub fn submit_transaction(&mut self, tx: NewTransaction) -> &mut Self {
+    pub fn submit_transaction(&mut self, tx: Transaction) -> &mut Self {
         self.pending_transactions.push(tx);
         self
     }
@@ -82,7 +82,7 @@ impl ManualConsensus {
         nodes: &mut Vec<NodeLauncher>,
         new_view: u64,
         current_hash: Hash,
-        transactions: &mut [NewTransaction],
+        transactions: &mut [Transaction],
     ) -> Block {
         let leader_idx: usize = (new_view % nodes.len() as u64).try_into().unwrap();
         let leader_id = nodes[leader_idx].peer_id;
@@ -124,10 +124,11 @@ impl ManualConsensus {
                 .unwrap();
             let (_, msg) = nodes[leader_idx].message_receiver.next().await.unwrap();
             match msg.clone() {
-                Message::NewTransaction(NewTransaction {
+                Message::NewTransaction(Transaction {
                     nonce,
                     gas_price,
                     gas_limit,
+                    contract_address: _, // TODO: unvalidated
                     from_addr,
                     to_addr,
                     amount,
@@ -165,7 +166,14 @@ impl ManualConsensus {
                 // TODO: potentially add more assertions on the state here?
                 assert_eq!(block.view, new_view);
                 assert_eq!(block.parent_hash, current_hash);
-                assert_eq!(block.transactions, tx_hashes);
+                let block_tx_hashes = block
+                    .transactions
+                    .iter()
+                    .map(|tx| tx.hash())
+                    .collect::<Vec<_>>();
+                for hash in tx_hashes {
+                    assert!(block_tx_hashes.contains(&hash));
+                }
                 block
             }
             _ => {

@@ -26,7 +26,7 @@ use crate::{
     crypto::Hash,
     message::Block,
     node::Node,
-    state::{Address, NewTransaction},
+    state::{Address, Transaction},
 };
 
 use super::{
@@ -219,8 +219,8 @@ fn convert_block(node: &Arc<Mutex<Node>>, block: &Block, full: bool) -> Result<E
             .map(|h| {
                 node.lock()
                     .unwrap()
-                    .get_transaction_by_hash(*h)
-                    .ok_or_else(|| anyhow!("missing transaction: {h}"))
+                    .get_transaction_by_hash(h.hash())
+                    .ok_or_else(|| anyhow!("missing transaction: {}", h.hash()))
             })
             .map(|t| Ok(HashOrTransaction::Transaction(t?)))
             .collect::<Result<_>>()?;
@@ -274,7 +274,7 @@ fn client_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
 }
 
 /// Decode a transaction from its RLP-encoded form.
-fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<NewTransaction> {
+fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<Transaction> {
     let rlp = Rlp::new(bytes);
     let nonce = rlp.val_at(0)?;
     let gas_price = rlp.val_at(1)?;
@@ -319,11 +319,12 @@ fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<NewTransaction> {
     let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
     let from_addr = Address::from_bytes(bytes.into());
 
-    Ok(NewTransaction {
+    Ok(Transaction {
         nonce,
         gas_price,
         gas_limit,
         from_addr,
+        contract_address: None,
         to_addr: Address::from_slice(&to_addr),
         amount,
         payload,

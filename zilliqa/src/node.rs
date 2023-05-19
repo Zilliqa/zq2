@@ -1,3 +1,4 @@
+use crate::state::Transaction;
 use std::borrow::Cow;
 
 use anyhow::Result;
@@ -11,7 +12,7 @@ use crate::{
     consensus::Consensus,
     crypto::{Hash, PublicKey, SecretKey},
     message::{Block, BlockRequest, BlockResponse, Message, Proposal},
-    state::{Account, Address, NewTransaction},
+    state::{Account, Address},
 };
 
 /// The central data structure for a blockchain node.
@@ -104,7 +105,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn create_transaction(&mut self, txn: NewTransaction) -> Result<Hash> {
+    pub fn create_transaction(&mut self, txn: Transaction) -> Result<Hash> {
         let hash = txn.hash();
         self.broadcast_message(Message::NewTransaction(txn))?;
 
@@ -138,11 +139,17 @@ impl Node {
     pub fn get_transaction_receipt(&self, hash: Hash) -> Option<EthTransactionReceipt> {
         let transaction = self.consensus.get_transaction_by_hash(hash)?;
         // TODO: Return error if block does not exist.
-        let block = self.consensus.get_block(&transaction.block_hash).ok()?;
+        let block = self
+            .consensus
+            .get_block_by_transaction_hash(transaction.hash())?;
 
         let receipt = EthTransactionReceipt {
             transaction_hash: H256(hash.0),
-            transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
+            transaction_index: block
+                .transactions
+                .iter()
+                .position(|t| t.hash() == hash)
+                .unwrap() as u64,
             block_hash: H256::from_slice(block.hash.as_bytes()),
             block_number: block.view,
             from: transaction.from_addr.0,
@@ -163,10 +170,12 @@ impl Node {
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<EthTransaction> {
         let transaction = self.consensus.get_transaction_by_hash(hash)?;
         // TODO: Return error if block does not exist.
-        let block = self.consensus.get_block(&transaction.block_hash).ok()?;
+        let block = self
+            .consensus
+            .get_block_by_transaction_hash(transaction.hash())?;
 
         let response = EthTransaction {
-            block_hash: H256(transaction.block_hash.0),
+            block_hash: H256(block.hash.0),
             block_number: block.view,
             from: transaction.from_addr.0,
             gas: 0,
@@ -179,7 +188,11 @@ impl Node {
             } else {
                 None
             },
-            transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
+            transaction_index: block
+                .transactions
+                .iter()
+                .position(|t| t.hash() == hash)
+                .unwrap() as u64,
             value: transaction.amount as u64,
             v: 0,
             r: [0; 32],

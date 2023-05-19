@@ -44,10 +44,11 @@ async fn test_manual_block_production() {
 #[tokio::test]
 async fn test_manual_transaction_submission() {
     let mut manual_consensus = ManualConsensus::new();
-    let tx = zilliqa::state::NewTransaction {
+    let tx = zilliqa::state::Transaction {
         nonce: 0,
         gas_price: 0,
         gas_limit: 1,
+        contract_address: None,
         from_addr: Address::DEPLOY_CONTRACT,
         to_addr: Address::DEPLOY_CONTRACT,
         amount: 0,

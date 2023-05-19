@@ -9,7 +9,7 @@ use evm::{
 use primitive_types::{H160, H256, U256};
 use tracing::info;
 
-use crate::state::{Address, NewTransaction, State};
+use crate::state::{Address, State, Transaction};
 
 pub struct CallContext<'a> {
     state: &'a State,
@@ -39,8 +39,8 @@ impl State {
     }
 
     /// Apply a transaction to the account state. If the transaction is a contract creation, the created contract's
-    /// address will be returned.
-    pub fn apply_transaction(&mut self, txn: &NewTransaction) -> Result<Option<Address>> {
+    /// address will be added to the transaction.
+    pub fn apply_transaction(&mut self, mut txn: Transaction) -> Result<Transaction> {
         let context = self.call_context(txn.gas_price.into(), txn.from_addr.0);
         let mut executor = self.executor(&context, txn.gas_limit);
 
@@ -146,10 +146,11 @@ impl State {
         account.nonce += 1;
 
         // TODO(#80): Handle `logs`.
-
         info!(?logs, "transaction processed");
 
-        Ok(contract_address.map(Address))
+        txn.contract_address = contract_address.map(Address);
+
+        Ok(txn)
     }
 
     pub fn call_contract(&self, contract: Address, data: Vec<u8>) -> Result<Vec<u8>> {

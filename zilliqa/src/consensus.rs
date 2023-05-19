@@ -7,9 +7,9 @@ use libp2p::PeerId;
 use tracing::{debug, trace};
 
 use crate::{
-    crypto::{verify_messages, Hash, PublicKey, SecretKey, Signature},
+    crypto::{self, verify_messages, Hash, PublicKey, SecretKey, Signature},
     message::{AggregateQc, BitSlice, BitVec, Block, NewView, QuorumCertificate, Vote},
-    state::{NewTransaction, State, Transaction},
+    state::{State, Transaction},
 };
 
 struct NewViewVote {
@@ -40,9 +40,10 @@ pub struct Consensus {
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<(PeerId, PublicKey)>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
-    new_transactions: BTreeMap<Hash, NewTransaction>,
-    /// Transactions that have been executed and included in a block.
-    transactions: BTreeMap<Hash, Transaction>,
+    new_transactions: BTreeMap<Hash, Transaction>,
+    /// Transactions that have been executed and included in a block, and the blocks the are
+    /// included in.
+    transactions: BTreeMap<Hash, (Transaction, crypto::Hash)>,
     /// The account store.
     state: State,
 }
@@ -173,20 +174,15 @@ impl Consensus {
         let proposal_view = block.view;
         if self.check_safe_block(&block) {
             for txn in &block.transactions {
-                // If `new_transactions` does not contain `txn`, then either:
-                // 1. We are the proposer of this block, and so have already executed this transaction on our state. We
-                // shouldn't execute it again.
-                // 2. We haven't yet recieved the broadcast of this transaction. In this case, we will skip it and the
-                // state root hashes will not match. TODO(#83): Handle this case.
-                let Some(txn) = self
-                    .new_transactions
-                    .remove(txn) else { continue; };
+                // If we have the transaction in the mempool, remove it
+                self.new_transactions.remove(&txn.hash());
 
-                let contract_address = self.state.apply_transaction(&txn)?;
-
-                let txn = Transaction::new(txn, contract_address, block.hash);
-
-                self.transactions.insert(txn.hash(), txn);
+                // If we haven't applied it yet, do so
+                // This ensures we don't execute the transaction twice if we're the block proposer
+                if !self.transactions.contains_key(&txn.hash()) {
+                    let txn = self.state.apply_transaction(txn.clone())?;
+                    self.transactions.insert(txn.hash(), (txn, block.hash));
+                }
             }
             if self.state.root_hash() != block.state_root_hash {
                 return Err(anyhow!(
@@ -254,16 +250,11 @@ impl Consensus {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                 let parent = qc.block_hash;
 
-                let txn_hashes: Vec<_> = self.new_transactions.keys().copied().collect();
-
-                let applied_txns: Vec<_> = txn_hashes
-                    .iter()
-                    .map(|hash| {
-                        let txn: NewTransaction = self.new_transactions.remove(hash).unwrap();
-                        let contract_address = self.state.apply_transaction(&txn)?;
-                        Ok((txn, contract_address))
-                    })
-                    .collect::<Result<_>>()?;
+                let mut applied_transactions = Vec::new();
+                for tx in self.new_transactions.values() {
+                    applied_transactions.push(self.state.apply_transaction(tx.clone())?)
+                }
+                self.new_transactions.clear();
 
                 let proposal = Block::from_qc(
                     self.secret_key,
@@ -271,12 +262,12 @@ impl Consensus {
                     qc,
                     parent,
                     self.state.root_hash(),
-                    txn_hashes,
+                    applied_transactions,
                 );
 
-                for (txn, contract_address) in applied_txns {
-                    let txn = Transaction::new(txn, contract_address, proposal.hash);
-                    self.transactions.insert(txn.hash(), txn);
+                for tx in &proposal.transactions {
+                    self.transactions
+                        .insert(tx.hash(), (tx.clone(), proposal.hash));
                 }
 
                 // as a future improvement, process the proposal before broadcasting it
@@ -383,14 +374,22 @@ impl Consensus {
         Ok(None)
     }
 
-    pub fn new_transaction(&mut self, txn: NewTransaction) -> Result<()> {
+    pub fn new_transaction(&mut self, txn: Transaction) -> Result<()> {
         self.new_transactions.insert(txn.hash(), txn);
 
         Ok(())
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<Transaction> {
-        Some(self.transactions.get(&hash)?.clone())
+        Some(self.transactions.get(&hash)?.0.clone())
+    }
+
+    pub fn get_block_by_transaction_hash(&self, tx_hash: Hash) -> Option<Block> {
+        Some(
+            self.blocks
+                .get(&self.transactions.get(&tx_hash)?.1)?
+                .clone(),
+        )
     }
 
     fn update_high_qc_and_view(

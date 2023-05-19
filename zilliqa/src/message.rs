@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     crypto::{Hash, PublicKey, SecretKey, Signature},
-    state::NewTransaction,
+    state::Transaction,
 };
 
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
@@ -88,7 +88,7 @@ pub enum Message {
     NewView(NewView),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
-    NewTransaction(NewTransaction),
+    NewTransaction(Transaction),
 }
 
 impl Message {
@@ -173,7 +173,7 @@ pub struct Block {
     pub parent_hash: Hash,
     pub signature: Signature,
     pub state_root_hash: u64,
-    pub transactions: Vec<Hash>,
+    pub transactions: Vec<Transaction>,
 }
 
 impl Block {
@@ -200,7 +200,7 @@ impl Block {
         qc: QuorumCertificate,
         parent_hash: Hash,
         state_root_hash: u64,
-        transactions: Vec<Hash>,
+        transactions: Vec<Transaction>,
     ) -> Block {
         let digest = Hash::compute(&[
             &view.to_be_bytes(),

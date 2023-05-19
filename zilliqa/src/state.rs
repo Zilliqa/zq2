@@ -71,36 +71,7 @@ pub struct Account {
     pub storage: BTreeMap<H256, H256>,
 }
 
-/// A message flooded to the network whenever a node recieves a transaction request. Once a block contains this
-/// transaction's hash, nodes will execute it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewTransaction {
-    pub nonce: u64,
-    pub gas_price: u128,
-    pub gas_limit: u64,
-    // TODO(#86): Don't include the `from_addr` here - We need to retain the signature from the initial transaction request.
-    // Otherwise, other nodes have no way to validate this transaction.
-    pub from_addr: Address,
-    pub to_addr: Address,
-    pub amount: u128,
-    pub payload: Vec<u8>,
-}
-
-impl NewTransaction {
-    pub fn hash(&self) -> crypto::Hash {
-        crypto::Hash::compute(&[
-            &self.nonce.to_be_bytes(),
-            &self.gas_price.to_be_bytes(),
-            &self.gas_limit.to_be_bytes(),
-            &self.from_addr.as_bytes(),
-            &self.to_addr.as_bytes(),
-            &self.amount.to_be_bytes(),
-            &self.payload,
-        ])
-    }
-}
-
-/// A transaction body, persisted by nodes after the transaction is executed.
+/// A transaction body, broadcast before execution and then persisted as part of a block after the transaction is executed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     pub nonce: u64,
@@ -111,28 +82,9 @@ pub struct Transaction {
     pub contract_address: Option<Address>,
     pub amount: u128,
     pub payload: Vec<u8>,
-    pub block_hash: crypto::Hash,
 }
 
 impl Transaction {
-    pub fn new(
-        new_transaction: NewTransaction,
-        contract_address: Option<Address>,
-        block_hash: crypto::Hash,
-    ) -> Self {
-        Transaction {
-            nonce: new_transaction.nonce,
-            gas_price: new_transaction.gas_price,
-            gas_limit: new_transaction.gas_limit,
-            from_addr: new_transaction.from_addr,
-            to_addr: new_transaction.to_addr,
-            contract_address,
-            amount: new_transaction.amount,
-            payload: new_transaction.payload,
-            block_hash,
-        }
-    }
-
     pub fn hash(&self) -> crypto::Hash {
         crypto::Hash::compute(&[
             &self.nonce.to_be_bytes(),
