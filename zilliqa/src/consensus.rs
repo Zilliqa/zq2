@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::SystemTime};
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
@@ -7,6 +7,7 @@ use libp2p::PeerId;
 use tracing::{debug, trace};
 
 use crate::{
+    cfg::Config,
     crypto::{self, verify_messages, Hash, PublicKey, SecretKey, Signature},
     message::{AggregateQc, BitSlice, BitVec, Block, NewView, QuorumCertificate, Vote},
     state::{State, Transaction},
@@ -29,6 +30,7 @@ pub struct Validator {
 
 pub struct Consensus {
     secret_key: SecretKey,
+    config: Config,
     committee: Vec<Validator>,
     blocks: BTreeMap<Hash, Block>,
     votes: BTreeMap<Hash, (Vec<Signature>, BitVec, u128)>,
@@ -49,7 +51,7 @@ pub struct Consensus {
 }
 
 impl Consensus {
-    pub fn new(secret_key: SecretKey) -> Self {
+    pub fn new(secret_key: SecretKey, config: Config) -> Self {
         let validator = Validator {
             public_key: secret_key.public_key(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
@@ -58,6 +60,7 @@ impl Consensus {
 
         Consensus {
             secret_key,
+            config,
             committee: vec![validator],
             blocks: BTreeMap::new(),
             votes: BTreeMap::new(),
@@ -143,7 +146,7 @@ impl Consensus {
 
     pub fn proposal(&mut self, block: Block) -> Result<Option<(PeerId, Vote)>> {
         // derive the sender from the proposal's view
-        let sender = self.get_leader(block.view);
+        let sender = self.get_leader(block.view());
         // verify the sender's signature on the proposal
         block.verify(sender.public_key)?;
         // in the future check if we already have another block with the same view as proposal, which means that the sender equivocates; also figure out who voted for both of these blocks and thus equivocated
@@ -151,7 +154,7 @@ impl Consensus {
         self.check_quorum_in_bits(&block.qc.cosigned)?;
 
         // FIXME: Sane validation of genesis blocks
-        let proposal_view = block.view;
+        let proposal_view = block.view();
         if proposal_view > 2 {
             // verify the block qc's signature
             self.verify_qc_signature(&block.qc)?;
@@ -165,13 +168,33 @@ impl Consensus {
             self.batch_verify_agg_signature(agg)?;
         }
 
+        let parent = self.get_block(&block.parent_hash())?;
+        let parent_header = parent.header;
+
+        // This block's timestamp must be greater than or equal to the parent block's timestamp.
+        if block.timestamp() < parent.timestamp() {
+            return Err(anyhow!("timestamp decreased from parent"));
+        }
+
+        // This block's timestamp must be at most `self.allowed_timestamp_skew` away from the current time. Note this
+        // can be either forwards or backwards in time.
+        let difference = block
+            .timestamp()
+            .elapsed()
+            .unwrap_or_else(|err| err.duration());
+        if difference > self.config.allowed_timestamp_skew {
+            return Err(anyhow!(
+                "timestamp difference greater than allowed skew: {difference:?}"
+            ));
+        }
+
         // retrieve the highest among the aggregated qcs and check if it equals the block's qc
         let proposal_high_qc = self.get_high_qc_from_block(&block)?;
 
         self.add_block(block.clone());
         self.update_high_qc_and_view(block.agg.is_some(), proposal_high_qc.clone())?;
 
-        let proposal_view = block.view;
+        let proposal_view = block.view();
         if self.check_safe_block(&block) {
             for txn in &block.transactions {
                 // If we have the transaction in the mempool, remove it
@@ -180,14 +203,18 @@ impl Consensus {
                 // If we haven't applied it yet, do so
                 // This ensures we don't execute the transaction twice if we're the block proposer
                 if !self.transactions.contains_key(&txn.hash()) {
-                    let txn = self.state.apply_transaction(txn.clone())?;
-                    self.transactions.insert(txn.hash(), (txn, block.hash));
+                    let txn = self.state.apply_transaction(
+                        txn.clone(),
+                        self.config.eth_chain_id,
+                        parent_header,
+                    )?;
+                    self.transactions.insert(txn.hash(), (txn, block.hash()));
                 }
             }
-            if self.state.root_hash() != block.state_root_hash {
+            if self.state.root_hash() != block.state_root_hash() {
                 return Err(anyhow!(
                     "state root hash mismatch, expected: {}, actual: {}",
-                    block.state_root_hash,
+                    block.state_root_hash(),
                     self.state.root_hash()
                 ));
             }
@@ -205,8 +232,8 @@ impl Consensus {
 
     pub fn vote(&mut self, _: PeerId, vote: Vote) -> Result<Option<Block>> {
         let Ok(block) = self.get_block(&vote.block_hash) else { return Ok(None); }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
-        let block_hash = block.hash;
-        let block_view = block.view;
+        let block_hash = block.hash();
+        let block_view = block.view();
         trace!(block_view, self.view, "handling vote");
         // if we are not the leader of the round in which the vote counts
         if self.get_leader(block_view + 1).public_key != self.secret_key.public_key() {
@@ -248,11 +275,17 @@ impl Consensus {
             // if we are already in the round in which the vote counts and have reached supermajority
             if block_view + 1 == self.view && supermajority {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
-                let parent = qc.block_hash;
+                let parent_hash = qc.block_hash;
+                let parent = self.get_block(&parent_hash)?;
+                let parent_header = parent.header;
 
                 let mut applied_transactions = Vec::new();
                 for tx in self.new_transactions.values() {
-                    applied_transactions.push(self.state.apply_transaction(tx.clone())?)
+                    applied_transactions.push(self.state.apply_transaction(
+                        tx.clone(),
+                        self.config.eth_chain_id,
+                        parent_header,
+                    )?)
                 }
                 self.new_transactions.clear();
 
@@ -260,14 +293,15 @@ impl Consensus {
                     self.secret_key,
                     self.view,
                     qc,
-                    parent,
+                    parent_hash,
                     self.state.root_hash(),
                     applied_transactions,
+                    SystemTime::max(SystemTime::now(), parent_header.timestamp),
                 );
 
                 for tx in &proposal.transactions {
                     self.transactions
-                        .insert(tx.hash(), (tx.clone(), proposal.hash));
+                        .insert(tx.hash(), (tx.clone(), proposal.hash()));
                 }
 
                 // as a future improvement, process the proposal before broadcasting it
@@ -343,14 +377,16 @@ impl Consensus {
                 let agg =
                     self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, signers)?;
                 let high_qc = self.get_highest_from_agg(&agg)?;
-                let parent = high_qc.block_hash;
+                let parent_hash = high_qc.block_hash;
+                let parent = self.get_block(&parent_hash)?;
                 let proposal = Block::from_agg(
                     self.secret_key,
                     self.view,
                     high_qc.clone(),
                     agg,
-                    parent,
+                    parent_hash,
                     self.state.root_hash(),
+                    SystemTime::max(SystemTime::now(), parent.timestamp()),
                 );
                 // as a future improvement, process the proposal before broadcasting it
                 return Ok(Some(proposal));
@@ -406,15 +442,15 @@ impl Consensus {
                 self.high_qc = Some(new_high_qc);
             }
             Some(high_qc) => {
-                let current_high_qc_view = self.get_block(&high_qc.block_hash)?.view;
+                let current_high_qc_view = self.get_block(&high_qc.block_hash)?.view();
                 // If `from_agg` then we always release the lock because the supermajority has a different high_qc.
-                if from_agg || new_high_qc_block.view > current_high_qc_view {
+                if from_agg || new_high_qc_block.view() > current_high_qc_view {
                     self.high_qc = Some(new_high_qc);
                 }
             }
         }
         // TODO: Download the missing blocks
-        self.update_view(new_high_qc_block.view);
+        self.update_view(new_high_qc_block.view());
         Ok(())
     }
 
@@ -452,29 +488,29 @@ impl Consensus {
     fn block_extends_from(&self, block: &Block, ancestor: &Block) -> Result<bool> {
         // todo: the block extends from another block through a chain of parent hashes and not qcs
         let mut current = block;
-        while current.view > ancestor.view {
-            current = self.get_block(&current.parent_hash)?;
+        while current.view() > ancestor.view() {
+            current = self.get_block(&current.parent_hash())?;
         }
-        Ok(current.hash == ancestor.hash)
+        Ok(current.hash() == ancestor.hash())
     }
 
     fn check_safe_block(&mut self, proposal: &Block) -> bool {
         let Ok(qc_block) = self.get_block(&proposal.qc.block_hash) else { return false; };
         // We don't vote on blocks older than our view
-        let not_outdated = proposal.view >= self.view;
+        let not_outdated = proposal.view() >= self.view;
         match proposal.agg {
             // we check elsewhere that qc is the highest among the qcs in the agg
             Some(_) => match self.block_extends_from(proposal, qc_block) {
                 Ok(true) => {
-                    let block_hash = proposal.hash;
+                    let block_hash = proposal.hash();
                     self.check_and_commit(block_hash);
                     not_outdated
                 }
                 Ok(false) | Err(_) => false,
             },
             None => {
-                if proposal.view == qc_block.view + 1 {
-                    self.check_and_commit(proposal.hash);
+                if proposal.view() == qc_block.view() + 1 {
+                    self.check_and_commit(proposal.hash());
                     not_outdated
                 } else {
                     false
@@ -488,31 +524,32 @@ impl Consensus {
         let Ok(prev_1) = self.get_block(&proposal.qc.block_hash) else { return; };
         let Ok(prev_2) = self.get_block(&prev_1.qc.block_hash) else { return; };
 
-        if prev_1.view == prev_2.view + 1 {
+        if prev_1.view() == prev_2.view() + 1 {
             let committed_block = prev_2;
             let Ok(finalized_block) = self.get_block(&self.finalized) else { return; };
             let mut current = committed_block;
             // commit blocks back to the last finalized block
-            while current.view > finalized_block.view {
-                let Ok(new) = self.get_block(&current.parent_hash) else { return; };
+            while current.view() > finalized_block.view() {
+                let Ok(new) = self.get_block(&current.parent_hash()) else { return; };
                 current = new;
             }
-            if current.hash == self.finalized {
-                self.finalized = committed_block.hash;
+            if current.hash() == self.finalized {
+                self.finalized = committed_block.hash();
                 // discard blocks that can't be committed anymore
             }
         }
     }
 
     pub fn add_block(&mut self, block: Block) {
-        trace!(?block.hash, "added block");
-        self.blocks.insert(block.hash, block);
+        let hash = block.hash();
+        trace!(?hash, "added block");
+        self.blocks.insert(hash, block);
     }
 
     fn vote_from_block(&self, block: &Block) -> Vote {
         Vote {
-            block_hash: block.hash,
-            signature: self.secret_key.sign(block.hash.as_bytes()),
+            block_hash: block.hash(),
+            signature: self.secret_key.sign(block.hash().as_bytes()),
             index: self.index(),
         }
     }
@@ -537,7 +574,7 @@ impl Consensus {
 
     pub fn get_block_by_view(&self, view: u64) -> Option<&Block> {
         // TODO: Inefficient - Use an index.
-        self.blocks.values().find(|b| b.view == view)
+        self.blocks.values().find(|b| b.view() == view)
     }
 
     pub fn view(&self) -> u64 {
@@ -555,13 +592,13 @@ impl Consensus {
             .try_fold(None, |acc, (qc, block)| {
                 if let Some((_, acc_view)) = acc {
                     let block = block?;
-                    if acc_view < block.view {
-                        Ok::<_, anyhow::Error>(Some((qc, block.view)))
+                    if acc_view < block.view() {
+                        Ok::<_, anyhow::Error>(Some((qc, block.view())))
                     } else {
                         Ok(acc)
                     }
                 } else {
-                    Ok(Some((qc, block?.view)))
+                    Ok(Some((qc, block?.view())))
                 }
             })?
             .ok_or_else(|| anyhow!("no qcs in agg"))

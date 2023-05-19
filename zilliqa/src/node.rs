@@ -1,7 +1,7 @@
 use crate::state::Transaction;
 use std::borrow::Cow;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use primitive_types::H256;
 use tokio::sync::mpsc::UnboundedSender;
@@ -45,11 +45,11 @@ impl Node {
         reset_timeout: UnboundedSender<()>,
     ) -> Result<Node> {
         let node = Node {
-            config,
+            config: config.clone(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             message_sender,
             reset_timeout,
-            consensus: Consensus::new(secret_key),
+            consensus: Consensus::new(secret_key, config),
         };
 
         Ok(node)
@@ -117,7 +117,16 @@ impl Node {
     }
 
     pub fn call_contract(&self, contract: Address, data: Vec<u8>) -> Result<Vec<u8>> {
-        self.consensus.state().call_contract(contract, data)
+        let current_block = self
+            .get_latest_block()
+            .ok_or_else(|| anyhow!("no blocks"))?
+            .header;
+        self.consensus.state().call_contract(
+            contract,
+            data,
+            self.config.eth_chain_id,
+            current_block,
+        )
     }
 
     pub fn get_account(&self, address: Address) -> Result<Cow<'_, Account>> {
@@ -150,8 +159,8 @@ impl Node {
                 .iter()
                 .position(|t| t.hash() == hash)
                 .unwrap() as u64,
-            block_hash: H256::from_slice(block.hash.as_bytes()),
-            block_number: block.view,
+            block_hash: H256::from_slice(block.hash().as_bytes()),
+            block_number: block.view(),
             from: transaction.from_addr.0,
             to: transaction.to_addr.0,
             cumulative_gas_used: 0,
@@ -175,8 +184,8 @@ impl Node {
             .get_block_by_transaction_hash(transaction.hash())?;
 
         let response = EthTransaction {
-            block_hash: H256(block.hash.0),
-            block_number: block.view,
+            block_hash: H256(block.hash().0),
+            block_number: block.view(),
             from: transaction.from_addr.0,
             gas: 0,
             gas_price: transaction.gas_price as u64,

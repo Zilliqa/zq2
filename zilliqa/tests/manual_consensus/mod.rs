@@ -58,8 +58,8 @@ impl ManualConsensus {
     pub async fn mine_block(&mut self) -> &mut Self {
         self.latest_block = Self::progress_one_block(
             &mut self.nodes,
-            self.latest_block.view + 1,
-            self.latest_block.hash,
+            self.latest_block.view() + 1,
+            self.latest_block.hash(),
             &mut self.pending_transactions,
         )
         .await;
@@ -164,8 +164,8 @@ impl ManualConsensus {
         let block = match proposal_message.clone() {
             Message::Proposal(Proposal { block }) => {
                 // TODO: potentially add more assertions on the state here?
-                assert_eq!(block.view, new_view);
-                assert_eq!(block.parent_hash, current_hash);
+                assert_eq!(block.view(), new_view);
+                assert_eq!(block.parent_hash(), current_hash);
                 let block_tx_hashes = block
                     .transactions
                     .iter()

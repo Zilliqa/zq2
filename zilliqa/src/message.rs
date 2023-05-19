@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use anyhow::Result;
 use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Serialize};
@@ -160,36 +162,47 @@ impl AggregateQc {
     }
 }
 
+/// The [Copy]-able subset of a block.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct BlockHeader {
+    pub view: u64, // the proposer's index can be derived from the block's view
+    pub hash: Hash,
+    pub parent_hash: Hash,
+    pub signature: Signature,
+    pub state_root_hash: u64,
+    /// The time this block was mined at.
+    pub timestamp: SystemTime,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
-    pub view: u64, // the proposer's index can be derived from the block's view
+    pub header: BlockHeader,
     /// A block's quorum certificate (QC) is proof that more than `2n/3` nodes (out of `n`) have voted for this block.
     /// It also includes a pointer to the parent block.
     pub qc: QuorumCertificate,
     /// The block will include an [AggregateQc] if the previous leader failed, meaning we couldn't construct a QC. When
     /// this is not `None`, `qc` will contain a clone of the highest QC within this [AggregateQc];
     pub agg: Option<AggregateQc>,
-    pub hash: Hash,
-    pub parent_hash: Hash,
-    pub signature: Signature,
-    pub state_root_hash: u64,
     pub transactions: Vec<Transaction>,
 }
 
 impl Block {
     pub fn genesis(committee_size: usize) -> Block {
         Block {
-            view: 0,
+            header: BlockHeader {
+                view: 0,
+                hash: Hash::ZERO,
+                parent_hash: Hash::ZERO,
+                signature: Signature::identity(),
+                state_root_hash: 0,
+                timestamp: SystemTime::UNIX_EPOCH,
+            },
             qc: QuorumCertificate {
                 signature: Signature::identity(),
                 cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
                 block_hash: Hash::ZERO,
             },
             agg: None,
-            hash: Hash::ZERO,
-            parent_hash: Hash::ZERO,
-            signature: Signature::identity(),
-            state_root_hash: 0,
             transactions: vec![],
         }
     }
@@ -201,6 +214,7 @@ impl Block {
         parent_hash: Hash,
         state_root_hash: u64,
         transactions: Vec<Transaction>,
+        timestamp: SystemTime,
     ) -> Block {
         let digest = Hash::compute(&[
             &view.to_be_bytes(),
@@ -211,13 +225,16 @@ impl Block {
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {
-            view,
+            header: BlockHeader {
+                view,
+                hash: digest,
+                parent_hash,
+                signature,
+                state_root_hash,
+                timestamp,
+            },
             qc,
             agg: None,
-            hash: digest,
-            parent_hash,
-            signature,
-            state_root_hash,
             transactions,
         }
     }
@@ -229,6 +246,7 @@ impl Block {
         agg: AggregateQc,
         parent_hash: Hash,
         state_root_hash: u64,
+        timestamp: SystemTime,
     ) -> Block {
         let digest = Hash::compute(&[
             &view.to_be_bytes(),
@@ -239,18 +257,45 @@ impl Block {
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {
-            view,
+            header: BlockHeader {
+                view,
+                hash: digest,
+                parent_hash,
+                signature,
+                state_root_hash,
+                timestamp,
+            },
             qc,
             agg: Some(agg),
-            hash: digest,
-            parent_hash,
-            signature,
-            state_root_hash,
             transactions: vec![],
         }
     }
 
     pub fn verify(&self, public_key: PublicKey) -> Result<()> {
-        public_key.verify(self.hash.as_bytes(), self.signature)
+        public_key.verify(self.header.hash.as_bytes(), self.header.signature)
+    }
+
+    pub fn view(&self) -> u64 {
+        self.header.view
+    }
+
+    pub fn hash(&self) -> Hash {
+        self.header.hash
+    }
+
+    pub fn parent_hash(&self) -> Hash {
+        self.header.parent_hash
+    }
+
+    pub fn signature(&self) -> Signature {
+        self.header.signature
+    }
+
+    pub fn state_root_hash(&self) -> u64 {
+        self.header.state_root_hash
+    }
+
+    pub fn timestamp(&self) -> SystemTime {
+        self.header.timestamp
     }
 }

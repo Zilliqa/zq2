@@ -25,7 +25,7 @@ async fn test_networked_block_production() {
             .lock()
             .unwrap()
             .get_latest_block()
-            .map_or(0, |block| block.view)
+            .map_or(0, |block| block.view())
             >= 10
         {
             return;
