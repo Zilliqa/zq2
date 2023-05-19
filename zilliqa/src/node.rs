@@ -59,19 +59,29 @@ impl Node {
     pub fn handle_message(&mut self, source: PeerId, message: Message) -> Result<()> {
         match message {
             Message::Proposal(m) => {
-                if let Some((leader, vote)) = self.consensus.proposal(m.block)? {
+                if let Some((leader, vote)) = self.consensus.proposal(m)? {
                     self.reset_timeout.send(())?;
                     self.send_message(leader, Message::Vote(vote))?;
                 }
             }
             Message::Vote(m) => {
-                if let Some(proposal) = self.consensus.vote(source, m)? {
-                    self.broadcast_message(Message::Proposal(Proposal { block: proposal }))?;
+                if let Some((block, transactions)) = self.consensus.vote(source, m)? {
+                    self.broadcast_message(Message::Proposal(Proposal {
+                        header: block.header,
+                        qc: block.qc,
+                        agg: block.agg,
+                        transactions,
+                    }))?;
                 }
             }
             Message::NewView(m) => {
-                if let Some(proposal) = self.consensus.new_view(source, m)? {
-                    self.broadcast_message(Message::Proposal(Proposal { block: proposal }))?;
+                if let Some(block) = self.consensus.new_view(source, m)? {
+                    self.broadcast_message(Message::Proposal(Proposal {
+                        header: block.header,
+                        qc: block.qc,
+                        agg: block.agg,
+                        transactions: vec![],
+                    }))?;
                 }
             }
             Message::BlockRequest(m) => {
@@ -154,11 +164,7 @@ impl Node {
 
         let receipt = EthTransactionReceipt {
             transaction_hash: H256(hash.0),
-            transaction_index: block
-                .transactions
-                .iter()
-                .position(|t| t.hash() == hash)
-                .unwrap() as u64,
+            transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
             block_hash: H256::from_slice(block.hash().as_bytes()),
             block_number: block.view(),
             from: transaction.from_addr.0,
@@ -197,11 +203,7 @@ impl Node {
             } else {
                 None
             },
-            transaction_index: block
-                .transactions
-                .iter()
-                .position(|t| t.hash() == hash)
-                .unwrap() as u64,
+            transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
             value: transaction.amount as u64,
             v: 0,
             r: [0; 32],
