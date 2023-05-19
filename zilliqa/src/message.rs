@@ -231,7 +231,6 @@ impl Block {
                 parent_hash,
                 signature,
                 state_root_hash,
-                // TODO: We should be smarter with timestamp generation. We should set it to `max(parent.timestamp, now)` to avoid generating an invalid block.
                 timestamp,
             },
             qc,
