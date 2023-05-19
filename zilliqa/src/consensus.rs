@@ -13,14 +13,6 @@ use crate::{
     state::{State, Transaction},
 };
 
-fn max(a: SystemTime, b: SystemTime) -> SystemTime {
-    if a > b {
-        a
-    } else {
-        b
-    }
-}
-
 struct NewViewVote {
     signatures: Vec<Signature>,
     signers: Vec<u16>,
@@ -304,7 +296,7 @@ impl Consensus {
                     parent_hash,
                     self.state.root_hash(),
                     applied_transactions,
-                    max(SystemTime::now(), parent_header.timestamp),
+                    SystemTime::max(SystemTime::now(), parent_header.timestamp),
                 );
 
                 for tx in &proposal.transactions {
@@ -394,7 +386,7 @@ impl Consensus {
                     agg,
                     parent_hash,
                     self.state.root_hash(),
-                    max(SystemTime::now(), parent.timestamp()),
+                    SystemTime::max(SystemTime::now(), parent.timestamp()),
                 );
                 // as a future improvement, process the proposal before broadcasting it
                 return Ok(Some(proposal));
