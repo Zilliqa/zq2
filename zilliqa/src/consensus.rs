@@ -178,7 +178,7 @@ impl Consensus {
                 self.new_transactions.remove(&txn.hash());
 
                 // If we haven't applied it yet, do so
-                // This comes up when we're the proposer of the block
+                // This ensures we don't execute the transaction twice if we're the block proposer
                 if !self.transactions.contains_key(&txn.hash()) {
                     let txn = self.state.apply_transaction(txn.clone())?;
                     self.transactions.insert(txn.hash(), (txn, block.hash));
