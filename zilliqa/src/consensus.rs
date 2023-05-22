@@ -9,7 +9,7 @@ use tracing::{debug, trace};
 use crate::{
     cfg::Config,
     crypto::{self, verify_messages, Hash, PublicKey, SecretKey, Signature},
-    message::{AggregateQc, BitSlice, BitVec, Block, NewView, QuorumCertificate, Vote},
+    message::{AggregateQc, BitSlice, BitVec, Block, NewView, Proposal, QuorumCertificate, Vote},
     state::{State, Transaction},
 };
 
@@ -144,7 +144,9 @@ impl Consensus {
         Ok(None)
     }
 
-    pub fn proposal(&mut self, block: Block) -> Result<Option<(PeerId, Vote)>> {
+    pub fn proposal(&mut self, proposal: Proposal) -> Result<Option<(PeerId, Vote)>> {
+        let (block, transactions) = proposal.into_parts();
+
         // derive the sender from the proposal's view
         let sender = self.get_leader(block.view());
         // verify the sender's signature on the proposal
@@ -196,7 +198,7 @@ impl Consensus {
 
         let proposal_view = block.view();
         if self.check_safe_block(&block) {
-            for txn in &block.transactions {
+            for txn in &transactions {
                 // If we have the transaction in the mempool, remove it
                 self.new_transactions.remove(&txn.hash());
 
@@ -230,7 +232,7 @@ impl Consensus {
         }
     }
 
-    pub fn vote(&mut self, _: PeerId, vote: Vote) -> Result<Option<Block>> {
+    pub fn vote(&mut self, _: PeerId, vote: Vote) -> Result<Option<(Block, Vec<Transaction>)>> {
         let Ok(block) = self.get_block(&vote.block_hash) else { return Ok(None); }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
         let block_hash = block.hash();
         let block_view = block.view();
@@ -279,15 +281,20 @@ impl Consensus {
                 let parent = self.get_block(&parent_hash)?;
                 let parent_header = parent.header;
 
-                let mut applied_transactions = Vec::new();
-                for tx in self.new_transactions.values() {
-                    applied_transactions.push(self.state.apply_transaction(
-                        tx.clone(),
-                        self.config.eth_chain_id,
-                        parent_header,
-                    )?)
-                }
+                let applied_transactions: Vec<_> = self
+                    .new_transactions
+                    .values()
+                    .map(|tx| {
+                        self.state.apply_transaction(
+                            tx.clone(),
+                            self.config.eth_chain_id,
+                            parent_header,
+                        )
+                    })
+                    .collect::<Result<_>>()?;
                 self.new_transactions.clear();
+                let applied_transaction_hashes: Vec<_> =
+                    applied_transactions.iter().map(|tx| tx.hash()).collect();
 
                 let proposal = Block::from_qc(
                     self.secret_key,
@@ -295,18 +302,18 @@ impl Consensus {
                     qc,
                     parent_hash,
                     self.state.root_hash(),
-                    applied_transactions,
+                    applied_transaction_hashes,
                     SystemTime::max(SystemTime::now(), parent_header.timestamp),
                 );
 
-                for tx in &proposal.transactions {
+                for tx in &applied_transactions {
                     self.transactions
                         .insert(tx.hash(), (tx.clone(), proposal.hash()));
                 }
 
                 // as a future improvement, process the proposal before broadcasting it
                 trace!("vote successful");
-                return Ok(Some(proposal));
+                return Ok(Some((proposal, applied_transactions)));
                 // we don't want to keep the collected votes if we proposed a new block
                 // we should remove the collected votes if we couldn't reach supermajority within the view
             }

@@ -12,9 +12,28 @@ use crate::{
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
 pub type BitSlice = bitvec::slice::BitSlice<u8, Msb0>;
 
+/// A block proposal. The only difference between this and [Block] is that `transactions` contains the full transaction
+/// bodies, rather than just hashes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Proposal {
-    pub block: Block,
+    pub header: BlockHeader,
+    pub qc: QuorumCertificate,
+    pub agg: Option<AggregateQc>,
+    pub transactions: Vec<Transaction>,
+}
+
+impl Proposal {
+    pub fn into_parts(self) -> (Block, Vec<Transaction>) {
+        (
+            Block {
+                header: self.header,
+                qc: self.qc,
+                agg: self.agg,
+                transactions: self.transactions.iter().map(|txn| txn.hash()).collect(),
+            },
+            self.transactions,
+        )
+    }
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -183,7 +202,7 @@ pub struct Block {
     /// The block will include an [AggregateQc] if the previous leader failed, meaning we couldn't construct a QC. When
     /// this is not `None`, `qc` will contain a clone of the highest QC within this [AggregateQc];
     pub agg: Option<AggregateQc>,
-    pub transactions: Vec<Transaction>,
+    pub transactions: Vec<Hash>,
 }
 
 impl Block {
@@ -213,7 +232,7 @@ impl Block {
         qc: QuorumCertificate,
         parent_hash: Hash,
         state_root_hash: u64,
-        transactions: Vec<Transaction>,
+        transactions: Vec<Hash>,
         timestamp: SystemTime,
     ) -> Block {
         let digest = Hash::compute(&[

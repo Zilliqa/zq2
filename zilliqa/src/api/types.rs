@@ -81,7 +81,7 @@ impl From<&message::Block> for EthBlock {
             transactions: block
                 .transactions
                 .iter()
-                .map(|h| HashOrTransaction::Hash(H256(h.hash().0)))
+                .map(|h| HashOrTransaction::Hash(H256(h.0)))
                 .collect(),
             uncles: vec![],
         }

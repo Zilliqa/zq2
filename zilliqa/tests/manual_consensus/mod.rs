@@ -4,7 +4,6 @@ use zilliqa::crypto::Hash;
 use zilliqa::crypto::SecretKey;
 use zilliqa::message::Block;
 use zilliqa::message::Message;
-use zilliqa::message::Proposal;
 use zilliqa::message::Vote;
 use zilliqa::node_launcher::NodeLauncher;
 use zilliqa::state::Transaction;
@@ -162,15 +161,12 @@ impl ManualConsensus {
 
         let (_peer_id, proposal_message) = nodes[leader_idx].message_receiver.next().await.unwrap();
         let block = match proposal_message.clone() {
-            Message::Proposal(Proposal { block }) => {
+            Message::Proposal(p) => {
                 // TODO: potentially add more assertions on the state here?
+                let (block, transactions) = p.into_parts();
                 assert_eq!(block.view(), new_view);
                 assert_eq!(block.parent_hash(), current_hash);
-                let block_tx_hashes = block
-                    .transactions
-                    .iter()
-                    .map(|tx| tx.hash())
-                    .collect::<Vec<_>>();
+                let block_tx_hashes = transactions.iter().map(|tx| tx.hash()).collect::<Vec<_>>();
                 for hash in tx_hashes {
                     assert!(block_tx_hashes.contains(&hash));
                 }

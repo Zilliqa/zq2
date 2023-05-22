@@ -219,8 +219,8 @@ fn convert_block(node: &Arc<Mutex<Node>>, block: &Block, full: bool) -> Result<E
             .map(|h| {
                 node.lock()
                     .unwrap()
-                    .get_transaction_by_hash(h.hash())
-                    .ok_or_else(|| anyhow!("missing transaction: {}", h.hash()))
+                    .get_transaction_by_hash(*h)
+                    .ok_or_else(|| anyhow!("missing transaction: {}", h))
             })
             .map(|t| Ok(HashOrTransaction::Transaction(t?)))
             .collect::<Result<_>>()?;
