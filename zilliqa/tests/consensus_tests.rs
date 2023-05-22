@@ -91,7 +91,6 @@ async fn test_manual_transaction_submission() {
         nonce: 0,
         gas_price: 0,
         gas_limit: 1,
-        contract_address: None,
         from_addr: Address::DEPLOY_CONTRACT,
         to_addr: Address::DEPLOY_CONTRACT,
         amount: 0,

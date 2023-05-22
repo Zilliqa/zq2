@@ -1,8 +1,10 @@
 use primitive_types::{H160, H256};
 use serde::{
     de::{self, Unexpected},
+    ser::SerializeSeq,
     Deserialize, Deserializer, Serialize, Serializer,
 };
+use sha3::{Digest, Keccak256};
 
 use crate::message;
 
@@ -144,13 +146,59 @@ pub struct EthTransactionReceipt {
     pub gas_used: u64,
     #[serde(serialize_with = "option_hex")]
     pub contract_address: Option<H160>,
-    pub logs: Vec<String>,
+    pub logs: Vec<Log>,
     #[serde(serialize_with = "hex")]
     pub logs_bloom: [u8; 256],
     #[serde(serialize_with = "hex")]
     pub ty: u64,
     #[serde(serialize_with = "bool_as_int")]
     pub status: bool,
+}
+
+/// A transaction receipt object, returned by the Ethereum API.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Log {
+    pub removed: bool,
+    #[serde(serialize_with = "hex")]
+    pub log_index: u64,
+    #[serde(serialize_with = "hex")]
+    pub transaction_index: u64,
+    #[serde(serialize_with = "hex")]
+    pub transaction_hash: H256,
+    #[serde(serialize_with = "hex")]
+    pub block_hash: H256,
+    #[serde(serialize_with = "hex")]
+    pub block_number: u64,
+    #[serde(serialize_with = "hex")]
+    pub address: H160,
+    #[serde(serialize_with = "hex")]
+    pub data: Vec<u8>,
+    #[serde(serialize_with = "vec_hex")]
+    pub topics: Vec<H256>,
+}
+
+impl Log {
+    pub fn bloom(&self, bloom: &mut [u8; 256]) {
+        m3_2048(bloom, self.address.as_bytes());
+        for topic in &self.topics {
+            m3_2048(bloom, topic.as_bytes());
+        }
+    }
+}
+
+// Adapted from https://github.com/paradigmxyz/reth/blob/c991a31e0d7bc8415e081d8549311122e7531c77/crates/primitives/src/bloom.rs#L194.
+fn m3_2048(bloom: &mut [u8; 256], data: &[u8]) {
+    let hash = Keccak256::digest(data);
+
+    for i in [0usize, 2, 4] {
+        // Calculate `m` by taking the bottom 11 bits of each pair from the hash. (2 ^ 11) - 1 = 2047.
+        let m = (hash[i + 1] as usize + ((hash[i] as usize) << 8)) & 2047;
+        // The bit at index `2047 - m` (big-endian) in `bloom` should be set to 1.
+        let byte = m / 8;
+        let bit = m % 8;
+        bloom[255 - byte] |= 1 << bit;
+    }
 }
 
 fn hex<S: Serializer, T: ToHex>(data: T, serializer: S) -> Result<S::Ok, S::Error> {
@@ -163,6 +211,15 @@ fn option_hex<S: Serializer, T: ToHex>(data: &Option<T>, serializer: S) -> Resul
     } else {
         serializer.serialize_none()
     }
+}
+
+fn vec_hex<S: Serializer, T: ToHex>(data: &Vec<T>, serializer: S) -> Result<S::Ok, S::Error> {
+    let mut serializer = serializer.serialize_seq(Some(data.len()))?;
+
+    data.iter()
+        .try_for_each(|item| serializer.serialize_element(&item.to_hex()))?;
+
+    serializer.end()
 }
 
 fn bool_as_int<S: Serializer>(b: &bool, serializer: S) -> Result<S::Ok, S::Error> {
@@ -189,4 +246,44 @@ fn deserialize_data<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8
     })?;
 
     hex::decode(s).map_err(de::Error::custom)
+}
+
+#[cfg(test)]
+mod tests {
+    use primitive_types::H256;
+
+    use super::Log;
+
+    #[test]
+    fn test_logs_bloom() {
+        // Random example from Ethereum mainnet: https://etherscan.io/tx/0x0d70ebb14d21e085b5e9f68a157f58592147e2606f2b75aa996eb2e1648eab7e.
+        let log = Log {
+            removed: false,
+            log_index: 0,
+            transaction_index: 0,
+            transaction_hash: H256::zero(),
+            block_hash: H256::zero(),
+            block_number: 0,
+            address: "0xdac17f958d2ee523a2206206994597c13d831ec7"
+                .parse()
+                .unwrap(),
+            data: vec![],
+            topics: vec![
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+                    .parse()
+                    .unwrap(),
+                "0x0000000000000000000000006113dbc74fa1bb8b39ba8d529cc3e212730ef796"
+                    .parse()
+                    .unwrap(),
+                "0x000000000000000000000000c84eb339b9679c9febb073cb2657fa4bbdc48a9f"
+                    .parse()
+                    .unwrap(),
+            ],
+        };
+
+        let expected = hex::decode("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010002000010020000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000040000000000000000000000000000000000100000010000000001000000000000000000000000000000000000000000000000000000000100000000000000000000000000080000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap();
+        let mut actual = [0; 256];
+        log.bloom(&mut actual);
+        assert_eq!(actual.as_slice(), expected.as_slice());
+    }
 }

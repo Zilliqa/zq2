@@ -31,7 +31,7 @@ use crate::{
 
 use super::{
     to_hex::ToHex,
-    types::{CallParams, EthBlock, EthTransaction, EthTransactionReceipt, HashOrTransaction},
+    types::{CallParams, EthBlock, EthTransaction, EthTransactionReceipt, HashOrTransaction, Log},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -217,9 +217,7 @@ fn convert_block(node: &Arc<Mutex<Node>>, block: &Block, full: bool) -> Result<E
             .transactions
             .iter()
             .map(|h| {
-                node.lock()
-                    .unwrap()
-                    .get_transaction_by_hash(*h)
+                get_transaction_inner(*h, node)?
                     .ok_or_else(|| anyhow!("missing transaction: {}", h))
             })
             .map(|t| Ok(HashOrTransaction::Transaction(t?)))
@@ -236,8 +234,35 @@ fn get_transaction_by_hash(
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<EthTransaction>> {
     let hash: H256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+    get_transaction_inner(hash, node)
+}
 
-    Ok(node.lock().unwrap().get_transaction_by_hash(Hash(hash.0)))
+fn get_transaction_inner(hash: Hash, node: &Arc<Mutex<Node>>) -> Result<Option<EthTransaction>> {
+    let node = node.lock().unwrap();
+    let Some(transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
+    // TODO: Return error if receipt or block does not exist.
+    let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
+    let Some(block) = node.get_block_by_hash(receipt.block_hash) else { return Ok(None); };
+
+    let transaction = EthTransaction {
+        block_hash: H256(block.hash().0),
+        block_number: block.view(),
+        from: transaction.from_addr.0,
+        gas: 0,
+        gas_price: transaction.gas_price as u64,
+        input: transaction.payload.clone(),
+        nonce: transaction.nonce,
+        // `to` should be `None` if `transaction` is a contract creation.
+        to: (transaction.to_addr != Address::DEPLOY_CONTRACT).then_some(transaction.to_addr.0),
+        transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
+        value: transaction.amount as u64,
+        v: 0,
+        r: [0; 32],
+        s: [0; 32],
+    };
+
+    Ok(Some(transaction))
 }
 
 fn get_transaction_receipt(
@@ -245,8 +270,62 @@ fn get_transaction_receipt(
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<EthTransactionReceipt>> {
     let hash: H256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
 
-    Ok(node.lock().unwrap().get_transaction_receipt(Hash(hash.0)))
+    let node = node.lock().unwrap();
+    let Some(transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
+    // TODO: Return error if receipt or block does not exist.
+    let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
+    let Some(block) = node.get_block_by_hash(receipt.block_hash) else { return Ok(None); };
+
+    let transaction_hash = H256(hash.0);
+    let transaction_index = block.transactions.iter().position(|t| *t == hash).unwrap() as u64;
+    let block_hash = H256::from_slice(block.hash().as_bytes());
+    let block_number = block.view();
+
+    let mut logs_bloom = [0; 256];
+
+    let logs = receipt
+        .logs
+        .into_iter()
+        .enumerate()
+        .map(|(log_index, log)| {
+            let log = Log {
+                removed: false,
+                log_index: log_index as u64,
+                transaction_index,
+                transaction_hash,
+                block_hash,
+                block_number,
+                address: log.address.0,
+                data: log.data,
+                topics: log.topics,
+            };
+
+            log.bloom(&mut logs_bloom);
+
+            log
+        })
+        .collect();
+
+    let receipt = EthTransactionReceipt {
+        transaction_hash,
+        transaction_index,
+        block_hash,
+        block_number,
+        from: transaction.from_addr.0,
+        to: transaction.to_addr.0,
+        cumulative_gas_used: 0,
+        effective_gas_price: 0,
+        gas_used: 0,
+        contract_address: receipt.contract_address.map(|a| a.0),
+        logs,
+        logs_bloom,
+        ty: 0,
+        status: true,
+    };
+
+    Ok(Some(receipt))
 }
 
 fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -324,7 +403,6 @@ fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<Transaction> {
         gas_price,
         gas_limit,
         from_addr,
-        contract_address: None,
         to_addr: Address::from_slice(&to_addr),
         amount,
         payload,

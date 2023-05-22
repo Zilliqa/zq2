@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, time::SystemTime};
+use std::{
+    collections::{btree_map::Entry, BTreeMap},
+    time::SystemTime,
+};
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
@@ -8,9 +11,9 @@ use tracing::{debug, trace};
 
 use crate::{
     cfg::Config,
-    crypto::{self, verify_messages, Hash, PublicKey, SecretKey, Signature},
+    crypto::{verify_messages, Hash, PublicKey, SecretKey, Signature},
     message::{AggregateQc, BitSlice, BitVec, Block, NewView, Proposal, QuorumCertificate, Vote},
-    state::{State, Transaction},
+    state::{State, Transaction, TransactionReceipt},
 };
 
 struct NewViewVote {
@@ -45,7 +48,8 @@ pub struct Consensus {
     new_transactions: BTreeMap<Hash, Transaction>,
     /// Transactions that have been executed and included in a block, and the blocks the are
     /// included in.
-    transactions: BTreeMap<Hash, (Transaction, crypto::Hash)>,
+    transactions: BTreeMap<Hash, Transaction>,
+    transaction_receipts: BTreeMap<Hash, TransactionReceipt>,
     /// The account store.
     state: State,
 }
@@ -71,6 +75,7 @@ impl Consensus {
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
             transactions: BTreeMap::new(),
+            transaction_receipts: BTreeMap::new(),
             state: State::new(),
         }
     }
@@ -204,13 +209,19 @@ impl Consensus {
 
                 // If we haven't applied it yet, do so
                 // This ensures we don't execute the transaction twice if we're the block proposer
-                if !self.transactions.contains_key(&txn.hash()) {
-                    let txn = self.state.apply_transaction(
+                if let Entry::Vacant(entry) = self.transactions.entry(txn.hash()) {
+                    let (contract_address, logs) = self.state.apply_transaction(
                         txn.clone(),
                         self.config.eth_chain_id,
                         parent_header,
                     )?;
-                    self.transactions.insert(txn.hash(), (txn, block.hash()));
+                    entry.insert(txn.clone());
+                    let receipt = TransactionReceipt {
+                        block_hash: block.hash(),
+                        contract_address,
+                        logs,
+                    };
+                    self.transaction_receipts.insert(txn.hash(), receipt);
                 }
             }
             if self.state.root_hash() != block.state_root_hash() {
@@ -285,16 +296,19 @@ impl Consensus {
                     .new_transactions
                     .values()
                     .map(|tx| {
-                        self.state.apply_transaction(
+                        let (contract_address, logs) = self.state.apply_transaction(
                             tx.clone(),
                             self.config.eth_chain_id,
                             parent_header,
-                        )
+                        )?;
+                        Ok((tx.clone(), contract_address, logs))
                     })
                     .collect::<Result<_>>()?;
                 self.new_transactions.clear();
-                let applied_transaction_hashes: Vec<_> =
-                    applied_transactions.iter().map(|tx| tx.hash()).collect();
+                let applied_transaction_hashes: Vec<_> = applied_transactions
+                    .iter()
+                    .map(|(tx, _, _)| tx.hash())
+                    .collect();
 
                 let proposal = Block::from_qc(
                     self.secret_key,
@@ -306,10 +320,19 @@ impl Consensus {
                     SystemTime::max(SystemTime::now(), parent_header.timestamp),
                 );
 
-                for tx in &applied_transactions {
-                    self.transactions
-                        .insert(tx.hash(), (tx.clone(), proposal.hash()));
-                }
+                let applied_transactions: Vec<_> = applied_transactions
+                    .into_iter()
+                    .map(|(tx, contract_address, logs)| {
+                        self.transactions.insert(tx.hash(), tx.clone());
+                        let receipt = TransactionReceipt {
+                            block_hash: proposal.hash(),
+                            contract_address,
+                            logs,
+                        };
+                        self.transaction_receipts.insert(tx.hash(), receipt);
+                        tx
+                    })
+                    .collect();
 
                 // as a future improvement, process the proposal before broadcasting it
                 trace!("vote successful");
@@ -424,15 +447,11 @@ impl Consensus {
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<Transaction> {
-        Some(self.transactions.get(&hash)?.0.clone())
+        Some(self.transactions.get(&hash)?.clone())
     }
 
-    pub fn get_block_by_transaction_hash(&self, tx_hash: Hash) -> Option<Block> {
-        Some(
-            self.blocks
-                .get(&self.transactions.get(&tx_hash)?.1)?
-                .clone(),
-        )
+    pub fn get_transaction_receipt(&self, hash: Hash) -> Option<TransactionReceipt> {
+        Some(self.transaction_receipts.get(&hash)?.clone())
     }
 
     fn update_high_qc_and_view(
