@@ -1,36 +1,79 @@
 mod manual_consensus;
 
 use crate::manual_consensus::ManualConsensus;
-use tokio::time::{sleep, Duration};
+use futures::{Stream, StreamExt};
+use itertools::Itertools;
+use libp2p::PeerId;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::UnboundedReceiverStream;
+use zilliqa::cfg::Config;
 use zilliqa::crypto::SecretKey;
-use zilliqa::node_launcher::NodeLauncher;
+use zilliqa::message::Message;
+use zilliqa::node::Node;
 use zilliqa::state::Address;
 
-#[tokio::test]
-async fn test_networked_block_production() {
-    // tracing_subscriber::fmt::init();
+fn node() -> (
+    SecretKey,
+    impl Stream<Item = (PeerId, PeerId, Message)>,
+    Node,
+) {
+    let secret_key = SecretKey::new().unwrap();
 
-    let mut nodes_vec = Vec::new();
-    for _ in 0..4 {
-        let secret_key = SecretKey::new().unwrap();
-        let mut launcher = NodeLauncher::new(secret_key, toml::from_str("").unwrap()).unwrap();
-        let node = launcher.get_node_handle();
-        tokio::spawn(async move { launcher.start_p2p_node(0).await });
-        nodes_vec.push(node);
+    let (message_sender, message_receiver) = mpsc::unbounded_channel();
+    let message_receiver = UnboundedReceiverStream::new(message_receiver);
+    // Augment the `message_receiver` stream to include the sender's `PeerId`.
+    let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+    let message_receiver = message_receiver.map(move |(dest, message)| (peer_id, dest, message));
+    let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
+    std::mem::forget(reset_timeout_receiver);
+
+    (
+        secret_key,
+        message_receiver,
+        Node::new(
+            Config::default(),
+            secret_key,
+            message_sender,
+            reset_timeout_sender,
+        )
+        .unwrap(),
+    )
+}
+
+#[tokio::test]
+async fn test_block_production() {
+    let nodes = 4;
+    let (keys, receivers, mut nodes): (Vec<_>, Vec<_>, Vec<_>) =
+        (0..nodes).map(|_| node()).multiunzip();
+
+    for (i, node) in nodes.iter_mut().enumerate() {
+        for (j, key) in keys.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            node.add_peer(
+                key.to_libp2p_keypair().public().to_peer_id(),
+                key.public_key(),
+            )
+            .unwrap();
+        }
     }
-    let timeout = 40; // seconds
-    for _ in 0..timeout {
-        sleep(Duration::from_secs(1)).await;
-        if nodes_vec[0]
-            .lock()
-            .unwrap()
-            .get_latest_block()
-            .map_or(0, |block| block.view())
-            >= 10
-        {
+
+    let messages = futures::stream::select_all(receivers);
+    // Fail if we don't reach block 10 after 100 messages.
+    let mut messages = messages.take(100);
+
+    while let Some((source, _destination, message)) = messages.next().await {
+        // Currently, all messages are broadcast, so we replicate that behaviour here.
+        for node in nodes.iter_mut() {
+            node.handle_message(source, message.clone()).unwrap();
+        }
+
+        if nodes[0].get_latest_block().map_or(0, |b| b.view()) >= 10 {
             return;
         }
     }
+
     panic!("Did not reach 10 blocks produced within the timeout");
 }
 
