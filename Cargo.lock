@@ -5641,6 +5641,7 @@ dependencies = [
  "bls12_381",
  "clap",
  "evm",
+ "futures",
  "generic-array",
  "hex",
  "http",
