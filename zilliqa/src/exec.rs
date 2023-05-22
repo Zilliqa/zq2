@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use evm::{
     backend::{Apply, Backend, Basic},
     executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata},
-    Capture, Config, Context, CreateScheme, ExitReason, Handler,
+    Config, CreateScheme, ExitReason,
 };
 use primitive_types::{H160, H256, U256};
 use tracing::info;
@@ -70,39 +70,26 @@ impl State {
         let mut executor = self.executor(&context, txn.gas_limit);
 
         let (exit_reason, contract_address) = if txn.to_addr == Address::DEPLOY_CONTRACT {
-            let create = executor.create(
-                txn.from_addr.0,
-                CreateScheme::Legacy {
-                    caller: txn.from_addr.0,
-                },
-                U256::zero(),
-                txn.payload.clone(),
-                Some(txn.gas_limit),
-            );
-            let (exit_reason, address, _) = match create {
-                Capture::Exit(e) => e,
-                Capture::Trap(i) => match i {},
-            };
-            (exit_reason, address)
-        } else {
-            let context = Context {
-                address: txn.to_addr.0,
+            let address = executor.create_address(CreateScheme::Legacy {
                 caller: txn.from_addr.0,
-                apparent_value: U256::zero(),
-            };
-            let call = executor.call(
-                txn.to_addr.0,
-                None,
+            });
+            let (exit_reason, _) = executor.transact_create(
+                txn.from_addr.0,
+                txn.amount.into(),
                 txn.payload.clone(),
-                None,
-                false,
-                context,
+                txn.gas_limit,
+                vec![],
             );
-            // TODO(#80): Do something with the `ExitReason` and data.
-            let (exit_reason, _) = match call {
-                Capture::Exit(e) => e,
-                Capture::Trap(i) => match i {},
-            };
+            (exit_reason, Some(address))
+        } else {
+            let (exit_reason, _) = executor.transact_call(
+                txn.from_addr.0,
+                txn.to_addr.0,
+                txn.amount.into(),
+                txn.payload.clone(),
+                txn.gas_limit,
+                vec![],
+            );
             (exit_reason, None)
         };
 
@@ -210,16 +197,8 @@ impl State {
 
         let mut executor = self.executor(&context, u64::MAX);
 
-        let context = Context {
-            address: contract.0,
-            caller: caller.0,
-            apparent_value: U256::zero(),
-        };
-        let call = executor.call(contract.0, None, data, None, false, context);
-        let (reason, data) = match call {
-            Capture::Exit(e) => e,
-            Capture::Trap(i) => match i {},
-        };
+        let (reason, data) =
+            executor.transact_call(caller.0, contract.0, 0.into(), data, u64::MAX, vec![]);
         match reason {
             ExitReason::Succeed(_) | ExitReason::Revert(_) | ExitReason::Error(_) => Ok(data),
             ExitReason::Fatal(e) => Err(anyhow!("EVM fatal error: {e:?}")),
@@ -261,6 +240,10 @@ impl<'a> Backend for CallContext<'a> {
 
     fn block_difficulty(&self) -> U256 {
         0.into()
+    }
+
+    fn block_randomness(&self) -> Option<H256> {
+        None
     }
 
     fn block_gas_limit(&self) -> U256 {
