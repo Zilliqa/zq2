@@ -48,11 +48,7 @@ async fn main() -> Result<()> {
     };
     let config: Config = toml::from_str(&config)?;
 
-    let p2p_port = if let Some(port) = config.p2p_port {
-        port
-    } else {
-        0
-    };
+    let p2p_port = config.p2p_port;
     if let Some(endpoint) = &config.otlp_collector_endpoint {
         let export_config = ExportConfig {
             endpoint: endpoint.clone(),
