@@ -13,7 +13,7 @@ use tracing::info;
 
 use crate::{
     message::BlockHeader,
-    state::{Address, State, Transaction},
+    state::{Address, Log, State, Transaction},
 };
 
 pub struct CallContext<'a> {
@@ -57,10 +57,10 @@ impl State {
     /// address will be added to the transaction.
     pub fn apply_transaction(
         &mut self,
-        mut txn: Transaction,
+        txn: Transaction,
         chain_id: u64,
         current_block: BlockHeader,
-    ) -> Result<Transaction> {
+    ) -> Result<(Option<Address>, Vec<Log>)> {
         let context = self.call_context(
             txn.gas_price.into(),
             txn.from_addr.0,
@@ -170,12 +170,18 @@ impl State {
         let account = self.get_account_mut(txn.from_addr);
         account.nonce += 1;
 
-        // TODO(#80): Handle `logs`.
-        info!(?logs, "transaction processed");
+        info!("transaction processed");
 
-        txn.contract_address = contract_address.map(Address);
-
-        Ok(txn)
+        Ok((
+            contract_address.map(Address),
+            logs.into_iter()
+                .map(|log| Log {
+                    address: Address(log.address),
+                    topics: log.topics,
+                    data: log.data,
+                })
+                .collect(),
+        ))
     }
 
     pub fn call_contract(

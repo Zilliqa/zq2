@@ -127,7 +127,6 @@ impl ManualConsensus {
                     nonce,
                     gas_price,
                     gas_limit,
-                    contract_address: _, // TODO: unvalidated
                     from_addr,
                     to_addr,
                     amount,

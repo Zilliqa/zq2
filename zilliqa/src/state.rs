@@ -79,7 +79,6 @@ pub struct Transaction {
     pub gas_limit: u64,
     pub from_addr: Address,
     pub to_addr: Address,
-    pub contract_address: Option<Address>,
     pub amount: u128,
     pub payload: Vec<u8>,
 }
@@ -96,4 +95,19 @@ impl Transaction {
             &self.payload,
         ])
     }
+}
+
+/// A transaction receipt stores data about the execution of a transaction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionReceipt {
+    pub block_hash: crypto::Hash,
+    pub contract_address: Option<Address>,
+    pub logs: Vec<Log>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Log {
+    pub address: Address,
+    pub topics: Vec<H256>,
+    pub data: Vec<u8>,
 }
