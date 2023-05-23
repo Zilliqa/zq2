@@ -2,11 +2,11 @@
 
 use std::{borrow::Cow, time::SystemTime};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use evm::{
     backend::{Apply, Backend, Basic},
     executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata},
-    Capture, Config, Context, CreateScheme, ExitReason, ExitSucceed, Handler,
+    Capture, Config, Context, CreateScheme, ExitReason, Handler,
 };
 use primitive_types::{H160, H256, U256};
 use tracing::info;
@@ -204,8 +204,8 @@ impl State {
             Capture::Trap(i) => match i {},
         };
         match reason {
-            ExitReason::Succeed(ExitSucceed::Returned) => Ok(data),
-            _ => Ok(vec![]),
+            ExitReason::Succeed(_) | ExitReason::Revert(_) | ExitReason::Error(_) => Ok(data),
+            ExitReason::Fatal(e) => Err(anyhow!("EVM fatal error: {e:?}")),
         }
     }
 }
