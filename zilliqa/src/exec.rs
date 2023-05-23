@@ -60,7 +60,7 @@ impl State {
         txn: Transaction,
         chain_id: u64,
         current_block: BlockHeader,
-    ) -> Result<(Option<Address>, Vec<Log>)> {
+    ) -> Result<(bool, Option<Address>, Vec<Log>)> {
         let context = self.call_context(
             txn.gas_price.into(),
             txn.from_addr.0,
@@ -69,7 +69,7 @@ impl State {
         );
         let mut executor = self.executor(&context, txn.gas_limit);
 
-        let contract_address = if txn.to_addr == Address::DEPLOY_CONTRACT {
+        let (exit_reason, contract_address) = if txn.to_addr == Address::DEPLOY_CONTRACT {
             let create = executor.create(
                 txn.from_addr.0,
                 CreateScheme::Legacy {
@@ -79,12 +79,11 @@ impl State {
                 txn.payload.clone(),
                 Some(txn.gas_limit),
             );
-            // TODO(#80): Do something with the `ExitReason` and data.
-            let (_, address, _) = match create {
+            let (exit_reason, address, _) = match create {
                 Capture::Exit(e) => e,
                 Capture::Trap(i) => match i {},
             };
-            address
+            (exit_reason, address)
         } else {
             let context = Context {
                 address: txn.to_addr.0,
@@ -100,12 +99,22 @@ impl State {
                 context,
             );
             // TODO(#80): Do something with the `ExitReason` and data.
-            let (_, _) = match call {
+            let (exit_reason, _) = match call {
                 Capture::Exit(e) => e,
                 Capture::Trap(i) => match i {},
             };
-            None
+            (exit_reason, None)
         };
+
+        match exit_reason {
+            ExitReason::Succeed(_) => {}
+            ExitReason::Error(_) | ExitReason::Revert(_) => {
+                return Ok((false, None, vec![]));
+            }
+            ExitReason::Fatal(e) => {
+                return Err(anyhow!("EVM fatal error: {e:?}"));
+            }
+        }
 
         let (applys, logs) = executor.into_state().deconstruct();
         // `applys` borrows from `self`. Clone it so that we can mutate `self`.
@@ -173,6 +182,7 @@ impl State {
         info!("transaction processed");
 
         Ok((
+            true,
             contract_address.map(Address),
             logs.into_iter()
                 .map(|log| Log {
