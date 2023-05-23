@@ -1,13 +1,11 @@
-use crate::state::Transaction;
+use crate::state::{Transaction, TransactionReceipt};
 use std::borrow::Cow;
 
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
-use primitive_types::H256;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    api::types::{EthTransaction, EthTransactionReceipt},
     cfg::Config,
     consensus::Consensus,
     crypto::{BlsPublicKey, Hash, SecretKey},
@@ -126,12 +124,18 @@ impl Node {
         self.consensus.view()
     }
 
-    pub fn call_contract(&self, contract: Address, data: Vec<u8>) -> Result<Vec<u8>> {
+    pub fn call_contract(
+        &self,
+        caller: Address,
+        contract: Address,
+        data: Vec<u8>,
+    ) -> Result<Vec<u8>> {
         let current_block = self
             .get_latest_block()
             .ok_or_else(|| anyhow!("no blocks"))?
             .header;
         self.consensus.state().call_contract(
+            caller,
             contract,
             data,
             self.config.eth_chain_id,
@@ -155,62 +159,12 @@ impl Node {
         self.consensus.get_block(&hash).ok()
     }
 
-    pub fn get_transaction_receipt(&self, hash: Hash) -> Option<EthTransactionReceipt> {
-        let transaction = self.consensus.get_transaction_by_hash(hash)?;
-        // TODO: Return error if block does not exist.
-        let block = self
-            .consensus
-            .get_block_by_transaction_hash(transaction.hash())?;
-
-        let receipt = EthTransactionReceipt {
-            transaction_hash: H256(hash.0),
-            transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
-            block_hash: H256::from_slice(block.hash().as_bytes()),
-            block_number: block.view(),
-            from: transaction.from_addr.0,
-            to: transaction.to_addr.0,
-            cumulative_gas_used: 0,
-            effective_gas_price: 0,
-            gas_used: 0,
-            contract_address: transaction.contract_address.map(|a| a.0),
-            logs: vec![],
-            logs_bloom: [0; 256],
-            ty: 0,
-            status: true,
-        };
-
-        Some(receipt)
+    pub fn get_transaction_receipt(&self, hash: Hash) -> Option<TransactionReceipt> {
+        self.consensus.get_transaction_receipt(hash)
     }
 
-    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<EthTransaction> {
-        let transaction = self.consensus.get_transaction_by_hash(hash)?;
-        // TODO: Return error if block does not exist.
-        let block = self
-            .consensus
-            .get_block_by_transaction_hash(transaction.hash())?;
-
-        let response = EthTransaction {
-            block_hash: H256(block.hash().0),
-            block_number: block.view(),
-            from: transaction.from_addr.0,
-            gas: 0,
-            gas_price: transaction.gas_price as u64,
-            input: transaction.payload.clone(),
-            nonce: transaction.nonce,
-            // `to` should be `None` if `transaction` is a contract creation.
-            to: if transaction.contract_address.is_none() {
-                Some(transaction.to_addr.0)
-            } else {
-                None
-            },
-            transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
-            value: transaction.amount as u64,
-            v: 0,
-            r: [0; 32],
-            s: [0; 32],
-        };
-
-        Some(response)
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<Transaction> {
+        self.consensus.get_transaction_by_hash(hash)
     }
 
     fn send_message(&mut self, peer: PeerId, message: Message) -> Result<()> {

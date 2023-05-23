@@ -2,18 +2,18 @@
 
 use std::{borrow::Cow, time::SystemTime};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use evm::{
     backend::{Apply, Backend, Basic},
     executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata},
-    Capture, Config, Context, CreateScheme, ExitReason, ExitSucceed, Handler,
+    Capture, Config, Context, CreateScheme, ExitReason, Handler,
 };
 use primitive_types::{H160, H256, U256};
 use tracing::info;
 
 use crate::{
     message::BlockHeader,
-    state::{Address, State, Transaction},
+    state::{Address, Log, State, Transaction},
 };
 
 pub struct CallContext<'a> {
@@ -57,10 +57,10 @@ impl State {
     /// address will be added to the transaction.
     pub fn apply_transaction(
         &mut self,
-        mut txn: Transaction,
+        txn: Transaction,
         chain_id: u64,
         current_block: BlockHeader,
-    ) -> Result<Transaction> {
+    ) -> Result<(bool, Option<Address>, Vec<Log>)> {
         let context = self.call_context(
             txn.gas_price.into(),
             txn.from_addr.0,
@@ -69,7 +69,7 @@ impl State {
         );
         let mut executor = self.executor(&context, txn.gas_limit);
 
-        let contract_address = if txn.to_addr == Address::DEPLOY_CONTRACT {
+        let (exit_reason, contract_address) = if txn.to_addr == Address::DEPLOY_CONTRACT {
             let create = executor.create(
                 txn.from_addr.0,
                 CreateScheme::Legacy {
@@ -79,12 +79,11 @@ impl State {
                 txn.payload.clone(),
                 Some(txn.gas_limit),
             );
-            // TODO(#80): Do something with the `ExitReason` and data.
-            let (_, address, _) = match create {
+            let (exit_reason, address, _) = match create {
                 Capture::Exit(e) => e,
                 Capture::Trap(i) => match i {},
             };
-            address
+            (exit_reason, address)
         } else {
             let context = Context {
                 address: txn.to_addr.0,
@@ -100,12 +99,22 @@ impl State {
                 context,
             );
             // TODO(#80): Do something with the `ExitReason` and data.
-            let (_, _) = match call {
+            let (exit_reason, _) = match call {
                 Capture::Exit(e) => e,
                 Capture::Trap(i) => match i {},
             };
-            None
+            (exit_reason, None)
         };
+
+        match exit_reason {
+            ExitReason::Succeed(_) => {}
+            ExitReason::Error(_) | ExitReason::Revert(_) => {
+                return Ok((false, None, vec![]));
+            }
+            ExitReason::Fatal(e) => {
+                return Err(anyhow!("EVM fatal error: {e:?}"));
+            }
+        }
 
         let (applys, logs) = executor.into_state().deconstruct();
         // `applys` borrows from `self`. Clone it so that we can mutate `self`.
@@ -170,22 +179,30 @@ impl State {
         let account = self.get_account_mut(txn.from_addr);
         account.nonce += 1;
 
-        // TODO(#80): Handle `logs`.
-        info!(?logs, "transaction processed");
+        info!("transaction processed");
 
-        txn.contract_address = contract_address.map(Address);
-
-        Ok(txn)
+        Ok((
+            true,
+            contract_address.map(Address),
+            logs.into_iter()
+                .map(|log| Log {
+                    address: Address(log.address),
+                    topics: log.topics,
+                    data: log.data,
+                })
+                .collect(),
+        ))
     }
 
     pub fn call_contract(
         &self,
+        caller: Address,
         contract: Address,
         data: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<Vec<u8>> {
-        let context = self.call_context(U256::zero(), H160::zero(), chain_id, current_block);
+        let context = self.call_context(U256::zero(), caller.0, chain_id, current_block);
 
         if context.code(contract.0).is_empty() {
             return Ok(vec![]);
@@ -195,17 +212,17 @@ impl State {
 
         let context = Context {
             address: contract.0,
-            caller: H160::zero(),
+            caller: caller.0,
             apparent_value: U256::zero(),
         };
-        let call = executor.call(contract.0, None, data, None, true, context);
+        let call = executor.call(contract.0, None, data, None, false, context);
         let (reason, data) = match call {
             Capture::Exit(e) => e,
             Capture::Trap(i) => match i {},
         };
         match reason {
-            ExitReason::Succeed(ExitSucceed::Returned) => Ok(data),
-            _ => Ok(vec![]),
+            ExitReason::Succeed(_) | ExitReason::Revert(_) | ExitReason::Error(_) => Ok(data),
+            ExitReason::Fatal(e) => Err(anyhow!("EVM fatal error: {e:?}")),
         }
     }
 }

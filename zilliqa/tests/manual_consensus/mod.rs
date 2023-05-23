@@ -129,7 +129,6 @@ impl ManualConsensus {
                     gas_limit,
                     signature,
                     pubkey: _,
-                    contract_address: _, // TODO: unvalidated
                     from_addr,
                     to_addr,
                     amount,
