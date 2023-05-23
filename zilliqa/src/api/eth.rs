@@ -323,7 +323,7 @@ fn get_transaction_receipt(
         logs,
         logs_bloom,
         ty: 0,
-        status: true,
+        status: receipt.success,
     };
 
     Ok(Some(receipt))

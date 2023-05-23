@@ -101,6 +101,7 @@ impl Transaction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionReceipt {
     pub block_hash: crypto::Hash,
+    pub success: bool,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
 }

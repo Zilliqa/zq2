@@ -210,7 +210,7 @@ impl Consensus {
                 // If we haven't applied it yet, do so
                 // This ensures we don't execute the transaction twice if we're the block proposer
                 if let Entry::Vacant(entry) = self.transactions.entry(txn.hash()) {
-                    let (contract_address, logs) = self.state.apply_transaction(
+                    let (success, contract_address, logs) = self.state.apply_transaction(
                         txn.clone(),
                         self.config.eth_chain_id,
                         parent_header,
@@ -218,6 +218,7 @@ impl Consensus {
                     entry.insert(txn.clone());
                     let receipt = TransactionReceipt {
                         block_hash: block.hash(),
+                        success,
                         contract_address,
                         logs,
                     };
@@ -296,18 +297,18 @@ impl Consensus {
                     .new_transactions
                     .values()
                     .map(|tx| {
-                        let (contract_address, logs) = self.state.apply_transaction(
+                        let (success, contract_address, logs) = self.state.apply_transaction(
                             tx.clone(),
                             self.config.eth_chain_id,
                             parent_header,
                         )?;
-                        Ok((tx.clone(), contract_address, logs))
+                        Ok((tx.clone(), success, contract_address, logs))
                     })
                     .collect::<Result<_>>()?;
                 self.new_transactions.clear();
                 let applied_transaction_hashes: Vec<_> = applied_transactions
                     .iter()
-                    .map(|(tx, _, _)| tx.hash())
+                    .map(|(tx, _, _, _)| tx.hash())
                     .collect();
 
                 let proposal = Block::from_qc(
@@ -322,10 +323,11 @@ impl Consensus {
 
                 let applied_transactions: Vec<_> = applied_transactions
                     .into_iter()
-                    .map(|(tx, contract_address, logs)| {
+                    .map(|(tx, success, contract_address, logs)| {
                         self.transactions.insert(tx.hash(), tx.clone());
                         let receipt = TransactionReceipt {
                             block_hash: proposal.hash(),
+                            success,
                             contract_address,
                             logs,
                         };
