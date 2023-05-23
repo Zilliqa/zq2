@@ -186,12 +186,13 @@ impl State {
 
     pub fn call_contract(
         &self,
+        caller: Address,
         contract: Address,
         data: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<Vec<u8>> {
-        let context = self.call_context(U256::zero(), H160::zero(), chain_id, current_block);
+        let context = self.call_context(U256::zero(), caller.0, chain_id, current_block);
 
         if context.code(contract.0).is_empty() {
             return Ok(vec![]);
@@ -201,7 +202,7 @@ impl State {
 
         let context = Context {
             address: contract.0,
-            caller: H160::zero(),
+            caller: caller.0,
             apparent_value: U256::zero(),
         };
         let call = executor.call(contract.0, None, data, None, true, context);

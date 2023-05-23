@@ -124,12 +124,18 @@ impl Node {
         self.consensus.view()
     }
 
-    pub fn call_contract(&self, contract: Address, data: Vec<u8>) -> Result<Vec<u8>> {
+    pub fn call_contract(
+        &self,
+        caller: Address,
+        contract: Address,
+        data: Vec<u8>,
+    ) -> Result<Vec<u8>> {
         let current_block = self
             .get_latest_block()
             .ok_or_else(|| anyhow!("no blocks"))?
             .header;
         self.consensus.state().call_contract(
+            caller,
             contract,
             data,
             self.config.eth_chain_id,
