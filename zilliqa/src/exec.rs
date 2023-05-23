@@ -198,7 +198,7 @@ impl State {
             caller: H160::zero(),
             apparent_value: U256::zero(),
         };
-        let call = executor.call(contract.0, None, data, None, true, context);
+        let call = executor.call(contract.0, None, data, None, false, context);
         let (reason, data) = match call {
             Capture::Exit(e) => e,
             Capture::Trap(i) => match i {},
