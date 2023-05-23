@@ -205,6 +205,7 @@ impl Consensus {
                 // If we haven't applied it yet, do so
                 // This ensures we don't execute the transaction twice if we're the block proposer
                 if !self.transactions.contains_key(&txn.hash()) {
+                    txn.verify()?;
                     let txn = self.state.apply_transaction(
                         txn.clone(),
                         self.config.eth_chain_id,
@@ -284,6 +285,7 @@ impl Consensus {
                 let applied_transactions: Vec<_> = self
                     .new_transactions
                     .values()
+                    .filter(|tx| tx.verify().is_ok()) // only apply signed transactions
                     .map(|tx| {
                         self.state.apply_transaction(
                             tx.clone(),
@@ -418,6 +420,7 @@ impl Consensus {
     }
 
     pub fn new_transaction(&mut self, txn: Transaction) -> Result<()> {
+        txn.verify()?; // sanity check
         self.new_transactions.insert(txn.hash(), txn);
 
         Ok(())

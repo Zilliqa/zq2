@@ -127,6 +127,8 @@ impl ManualConsensus {
                     nonce,
                     gas_price,
                     gas_limit,
+                    signature,
+                    pubkey: _,
                     contract_address: _, // TODO: unvalidated
                     from_addr,
                     to_addr,
@@ -140,6 +142,9 @@ impl ManualConsensus {
                     assert_eq!(to_addr, tx.to_addr);
                     assert_eq!(amount, tx.amount);
                     assert_eq!(payload, tx.payload);
+                    assert_eq!(signature, tx.signature);
+                    assert_eq!(payload, tx.payload);
+                    assert!(tx.verify().is_ok());
                 }
                 _ => {
                     panic!("Wrong message received: expecting NewTransaction for every submitted transaction");

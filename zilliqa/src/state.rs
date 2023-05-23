@@ -103,7 +103,7 @@ impl Transaction {
     pub fn verify(&self) -> Result<()> {
         match (self.pubkey, self.signature) {
             (Some(pubkey), Some(sig)) => pubkey.verify(self.hash().as_bytes(), sig),
-            _ => Err(anyhow!("Transaction is unsigned"))
+            _ => Err(anyhow!("Transaction is unsigned")),
         }
     }
 }
