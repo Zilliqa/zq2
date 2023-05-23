@@ -26,8 +26,7 @@ use crate::{
     crypto::{BlsOrEcdsaPublicKey, BlsOrEcdsaSignature, Hash},
     message::Block,
     node::Node,
-    state::Address,
-    transaction::Transaction,
+    state::{Address, Transaction},
 };
 
 use super::{

@@ -7,10 +7,10 @@ use libp2p::PeerId;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use zilliqa::cfg::Config;
-use zilliqa::crypto::SecretKey;
+use zilliqa::crypto::{SecretKey, BlsOrEcdsaPublicKey, BlsOrEcdsaSignature};
 use zilliqa::message::Message;
 use zilliqa::node::Node;
-use zilliqa::state::Address;
+use zilliqa::state::{Address, Transaction};
 
 fn node() -> (
     SecretKey,
@@ -92,10 +92,18 @@ async fn test_manual_transaction_submission() {
         gas_price: 0,
         gas_limit: 1,
         contract_address: None,
+        pubkey: None,
+        signature: None,
         from_addr: Address::DEPLOY_CONTRACT,
         to_addr: Address::DEPLOY_CONTRACT,
         amount: 0,
         payload: vec![],
+    };
+    let tx_origin = SecretKey::new().unwrap();
+    let tx = Transaction {
+        ..tx,
+        pubkey: Some(BlsOrEcdsaPublicKey::Bls(tx_origin.bls_public_key())),
+        signature: Some(BlsOrEcdsaSignature::Bls(tx_origin.sign(tx.hash())))
     };
     manual_consensus.submit_transaction(tx.clone());
     manual_consensus.mine_block().await;

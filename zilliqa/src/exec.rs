@@ -13,8 +13,7 @@ use tracing::info;
 
 use crate::{
     message::BlockHeader,
-    state::{Address, State},
-    transaction::Transaction,
+    state::{Address, State, Transaction},
 };
 
 pub struct CallContext<'a> {

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     crypto::{BlsPublicKey, BlsSignature, Hash, SecretKey},
-    transaction::Transaction,
+    state::Transaction,
 };
 
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;

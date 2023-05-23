@@ -10,8 +10,7 @@ use crate::{
     cfg::Config,
     crypto::{self, verify_messages, BlsPublicKey, BlsSignature, Hash, SecretKey},
     message::{AggregateQc, BitSlice, BitVec, Block, NewView, Proposal, QuorumCertificate, Vote},
-    state::State,
-    transaction::Transaction,
+    state::{State, Transaction},
 };
 
 struct NewViewVote {
