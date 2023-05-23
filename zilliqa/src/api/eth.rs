@@ -115,10 +115,11 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let call_params: CallParams = params.next()?;
     let _tag: &str = params.next()?;
 
-    let return_value = node
-        .lock()
-        .unwrap()
-        .call_contract(Address(call_params.to), call_params.data)?;
+    let return_value = node.lock().unwrap().call_contract(
+        Address(call_params.from),
+        Address(call_params.to),
+        call_params.data,
+    )?;
 
     Ok(return_value.to_hex())
 }

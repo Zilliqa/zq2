@@ -172,6 +172,8 @@ fn bool_as_int<S: Serializer>(b: &bool, serializer: S) -> Result<S::Ok, S::Error
 /// Parameters passed to `eth_call`.
 #[derive(Deserialize)]
 pub struct CallParams {
+    #[serde(default)]
+    pub from: H160,
     // The documentation states that the `to` field is required, but some clients (notably Ethers.js) omit it for
     // contract creations, where the `to` address is zero. Therefore, we default to the zero address if `to` is
     // omitted.
