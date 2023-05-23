@@ -42,7 +42,7 @@ impl ManualConsensus {
                     .node
                     .lock()
                     .unwrap()
-                    .add_peer(peer_node.peer_id, peer_node.secret_key.public_key())
+                    .add_peer(peer_node.peer_id, peer_node.secret_key.bls_public_key())
                     .expect("Failed adding peer");
             }
         }

@@ -1,4 +1,4 @@
-use crate::state::Transaction;
+use crate::transaction::Transaction;
 use std::borrow::Cow;
 
 use anyhow::{anyhow, Result};
@@ -10,7 +10,7 @@ use crate::{
     api::types::{EthTransaction, EthTransactionReceipt},
     cfg::Config,
     consensus::Consensus,
-    crypto::{Hash, PublicKey, SecretKey},
+    crypto::{BlsPublicKey, Hash, SecretKey},
     message::{Block, BlockRequest, BlockResponse, Message, Proposal},
     state::{Account, Address},
 };
@@ -106,7 +106,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn add_peer(&mut self, peer: PeerId, public_key: PublicKey) -> Result<()> {
+    pub fn add_peer(&mut self, peer: PeerId, public_key: BlsPublicKey) -> Result<()> {
         if let Some((leader, vote)) = self.consensus.add_peer(peer, public_key)? {
             self.reset_timeout.send(())?;
             self.send_message(leader, Message::Vote(vote))?;

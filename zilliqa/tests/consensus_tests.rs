@@ -53,7 +53,7 @@ async fn test_block_production() {
             }
             node.add_peer(
                 key.to_libp2p_keypair().public().to_peer_id(),
-                key.public_key(),
+                key.bls_public_key(),
             )
             .unwrap();
         }

@@ -23,10 +23,11 @@ use sha2::Digest;
 use sha3::Keccak256;
 
 use crate::{
-    crypto::Hash,
+    crypto::{BlsOrEcdsaPublicKey, BlsOrEcdsaSignature, Hash},
     message::Block,
     node::Node,
-    state::{Address, Transaction},
+    state::Address,
+    transaction::Transaction,
 };
 
 use super::{
@@ -323,6 +324,8 @@ fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<Transaction> {
         nonce,
         gas_price,
         gas_limit,
+        signature: BlsOrEcdsaSignature::Ecdsa(signature),
+        pubkey: BlsOrEcdsaPublicKey::Ecdsa(verifying_key),
         from_addr,
         contract_address: None,
         to_addr: Address::from_slice(&to_addr),

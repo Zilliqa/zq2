@@ -8,29 +8,30 @@ use std::fmt::Display;
 
 use anyhow::{anyhow, Result};
 use bls12_381::G2Affine;
-use bls_signatures::Serialize;
+use bls_signatures::Serialize as BlsSerialize;
+use k256::ecdsa::{signature::Verifier, Signature as EcdsaSignature, VerifyingKey};
 use rand_core;
 use serde::{
     de::{self, Unexpected},
-    Deserialize,
+    Deserialize, Serialize,
 };
 use sha3::{Digest, Keccak256};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Signature(bls_signatures::Signature);
+pub struct BlsSignature(bls_signatures::Signature);
 
-impl Signature {
-    pub fn identity() -> Signature {
-        Signature(G2Affine::identity().into())
+impl BlsSignature {
+    pub fn identity() -> BlsSignature {
+        BlsSignature(G2Affine::identity().into())
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<Signature> {
-        Ok(Signature(bls_signatures::Signature::from_bytes(bytes)?))
+    pub fn from_bytes(bytes: &[u8]) -> Result<BlsSignature> {
+        Ok(BlsSignature(bls_signatures::Signature::from_bytes(bytes)?))
     }
 
-    pub fn aggregate(signatures: &[Signature]) -> Result<Signature> {
+    pub fn aggregate(signatures: &[BlsSignature]) -> Result<BlsSignature> {
         let signatures: Vec<_> = signatures.iter().map(|s| s.0).collect();
-        Ok(Signature(bls_signatures::aggregate(&signatures)?))
+        Ok(BlsSignature(bls_signatures::aggregate(&signatures)?))
     }
 
     pub fn to_bytes(self) -> Vec<u8> {
@@ -38,7 +39,7 @@ impl Signature {
     }
 }
 
-impl serde::Serialize for Signature {
+impl serde::Serialize for BlsSignature {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -47,30 +48,36 @@ impl serde::Serialize for Signature {
     }
 }
 
-impl<'de> Deserialize<'de> for Signature {
+impl<'de> Deserialize<'de> for BlsSignature {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let bytes = <Vec<u8>>::deserialize(deserializer)?;
-        Signature::from_bytes(&bytes)
+        BlsSignature::from_bytes(&bytes)
             .map_err(|_| de::Error::invalid_value(Unexpected::Bytes(&bytes), &"a signature"))
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PublicKey(bls_signatures::PublicKey);
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum BlsOrEcdsaSignature {
+    Bls(BlsSignature),
+    Ecdsa(EcdsaSignature),
+}
 
-impl PublicKey {
-    pub fn from_bytes(bytes: &[u8]) -> Result<PublicKey> {
-        Ok(PublicKey(bls_signatures::PublicKey::from_bytes(bytes)?))
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlsPublicKey(bls_signatures::PublicKey);
+
+impl BlsPublicKey {
+    pub fn from_bytes(bytes: &[u8]) -> Result<BlsPublicKey> {
+        Ok(BlsPublicKey(bls_signatures::PublicKey::from_bytes(bytes)?))
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
         self.0.as_bytes()
     }
 
-    pub fn verify(&self, message: &[u8], signature: Signature) -> Result<()> {
+    pub fn verify(&self, message: &[u8], signature: BlsSignature) -> Result<()> {
         if !self.0.verify(signature.0, message) {
             return Err(anyhow!("invalid signature"));
         }
@@ -79,16 +86,57 @@ impl PublicKey {
     }
 }
 
-impl Display for PublicKey {
+impl Display for BlsPublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", hex::encode(self.as_bytes()))
     }
 }
 
+impl serde::Serialize for BlsPublicKey {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.as_bytes().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for BlsPublicKey {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+        BlsPublicKey::from_bytes(&bytes)
+            .map_err(|_| de::Error::invalid_value(Unexpected::Bytes(&bytes), &"a public key"))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum BlsOrEcdsaPublicKey {
+    Bls(BlsPublicKey),
+    Ecdsa(VerifyingKey),
+}
+
+impl BlsOrEcdsaPublicKey {
+    pub fn verify(&self, message: &[u8], signature: BlsOrEcdsaSignature) -> Result<()> {
+        let result = match (self, signature) {
+            (BlsOrEcdsaPublicKey::Bls(pubkey), BlsOrEcdsaSignature::Bls(sig)) => {
+                pubkey.verify(message, sig)
+            }
+            (BlsOrEcdsaPublicKey::Ecdsa(pubkey), BlsOrEcdsaSignature::Ecdsa(sig)) => {
+                pubkey.verify(message, &sig).map_err(|e| anyhow!(e))
+            }
+            _ => Err(anyhow!("Mismatch between signature and public key type!")),
+        };
+        result.map_err(|_| anyhow!("Invalid signature"))
+    }
+}
+
 pub fn verify_messages(
-    signature: Signature,
+    signature: BlsSignature,
     messages: &[&[u8]],
-    public_keys: &[PublicKey],
+    public_keys: &[BlsPublicKey],
 ) -> Result<()> {
     let public_keys: Vec<_> = public_keys.iter().map(|p| p.0).collect();
     if !bls_signatures::verify_messages(&signature.0, messages, &public_keys) {
@@ -123,12 +171,12 @@ impl SecretKey {
         Ok(hex::encode(self.0.as_bytes()))
     }
 
-    pub fn sign(&self, message: &[u8]) -> Signature {
-        Signature(self.0.sign(message))
+    pub fn sign(&self, message: &[u8]) -> BlsSignature {
+        BlsSignature(self.0.sign(message))
     }
 
-    pub fn public_key(&self) -> PublicKey {
-        PublicKey(self.0.public_key())
+    pub fn bls_public_key(&self) -> BlsPublicKey {
+        BlsPublicKey(self.0.public_key())
     }
 
     pub fn to_libp2p_keypair(self) -> libp2p::identity::Keypair {

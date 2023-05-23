@@ -7,8 +7,6 @@ use std::{
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 
-use crate::crypto;
-
 #[derive(Debug, Clone, Default, Hash)]
 pub struct State {
     accounts: BTreeMap<Address, Account>,
@@ -69,31 +67,4 @@ pub struct Account {
     pub nonce: u64,
     pub code: Vec<u8>,
     pub storage: BTreeMap<H256, H256>,
-}
-
-/// A transaction body, broadcast before execution and then persisted as part of a block after the transaction is executed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-    pub nonce: u64,
-    pub gas_price: u128,
-    pub gas_limit: u64,
-    pub from_addr: Address,
-    pub to_addr: Address,
-    pub contract_address: Option<Address>,
-    pub amount: u128,
-    pub payload: Vec<u8>,
-}
-
-impl Transaction {
-    pub fn hash(&self) -> crypto::Hash {
-        crypto::Hash::compute(&[
-            &self.nonce.to_be_bytes(),
-            &self.gas_price.to_be_bytes(),
-            &self.gas_limit.to_be_bytes(),
-            &self.from_addr.as_bytes(),
-            &self.to_addr.as_bytes(),
-            &self.amount.to_be_bytes(),
-            &self.payload,
-        ])
-    }
 }
