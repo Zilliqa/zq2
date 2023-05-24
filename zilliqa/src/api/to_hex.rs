@@ -74,9 +74,9 @@ mod tests {
     fn test_as_ref_to_hex() {
         let cases = [
             (vec![], "0x"),
-            (vec![0u8, 0, 0, 0], "0x"),
-            (vec![0, 0, 0, 1], "0x1"),
-            (vec![1, 2, 3, 4], "0x1020304"),
+            (vec![0u8, 0, 0, 0], "0x00000000"),
+            (vec![0, 0, 0, 1], "0x00000001"),
+            (vec![1, 2, 3, 4], "0x01020304"),
         ];
 
         for (val, expected) in cases {
