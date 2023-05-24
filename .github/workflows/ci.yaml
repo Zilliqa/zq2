@@ -1,18 +1,33 @@
 name: ZQ2 CI
 
 on:
-  pull_request:
-    types:
-    - opened
-    - edited
-    - closed
-    - reopened
-    branches:
-      - 'main'
   push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_UNSTABLE_SPARSE_REGISTRY: true
 
 jobs:
-  zq2:
-    uses: Zilliqa/gh-actions-workflows/.github/workflows/ci-rust-app.yml@v1
-    with:
-      dependencies: "protobuf-compiler"
+  check:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install dependencies
+      run: sudo apt install -y protobuf-compiler
+    - uses: actions/checkout@v3
+    # Use Rust nightly so we can use the Cargo sparse registry feature, which greatly speeds up uncached builds (https://blog.rust-lang.org/2022/06/22/sparse-registry-testing.html).
+    - name: Use Rust nightly
+      run: rustup override set nightly && rustup component add clippy rustfmt
+    - uses: Swatinem/rust-cache@v2
+    - name: rustfmt
+      run: cargo fmt --all --check
+    - name: Build
+      run: cargo build --all-targets --all-features
+    - name: Clippy
+      run: cargo clippy --all-targets --all-features
+    - name: Test
+      run: cargo test --all-targets --all-features
