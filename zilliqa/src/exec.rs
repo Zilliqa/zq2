@@ -63,7 +63,7 @@ impl State {
     ) -> Result<(bool, Option<Address>, Vec<Log>)> {
         let context = self.call_context(
             txn.gas_price.into(),
-            txn.from_addr.0,
+            txn.addr_from().0,
             chain_id,
             current_block,
         );
@@ -71,9 +71,9 @@ impl State {
 
         let (exit_reason, contract_address) = if txn.to_addr == Address::DEPLOY_CONTRACT {
             let create = executor.create(
-                txn.from_addr.0,
+                txn.addr_from().0,
                 CreateScheme::Legacy {
-                    caller: txn.from_addr.0,
+                    caller: txn.addr_from().0,
                 },
                 U256::zero(),
                 txn.payload.clone(),
@@ -87,7 +87,7 @@ impl State {
         } else {
             let context = Context {
                 address: txn.to_addr.0,
-                caller: txn.from_addr.0,
+                caller: txn.addr_from().0,
                 apparent_value: U256::zero(),
             };
             let call = executor.call(
@@ -176,7 +176,7 @@ impl State {
             }
         }
 
-        let account = self.get_account_mut(txn.from_addr);
+        let account = self.get_account_mut(txn.addr_from());
         account.nonce += 1;
 
         info!("transaction processed");

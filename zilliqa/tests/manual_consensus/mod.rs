@@ -42,7 +42,7 @@ impl ManualConsensus {
                     .node
                     .lock()
                     .unwrap()
-                    .add_peer(peer_node.peer_id, peer_node.secret_key.bls_public_key())
+                    .add_peer(peer_node.peer_id, peer_node.secret_key.node_public_key())
                     .expect("Failed adding peer");
             }
         }
@@ -128,8 +128,7 @@ impl ManualConsensus {
                     gas_price,
                     gas_limit,
                     signature,
-                    pubkey: _,
-                    from_addr,
+                    public_key: _,
                     to_addr,
                     amount,
                     payload,
@@ -137,7 +136,6 @@ impl ManualConsensus {
                     assert_eq!(nonce, tx.nonce);
                     assert_eq!(gas_price, tx.gas_price);
                     assert_eq!(gas_limit, tx.gas_limit);
-                    assert_eq!(from_addr, tx.from_addr);
                     assert_eq!(to_addr, tx.to_addr);
                     assert_eq!(amount, tx.amount);
                     assert_eq!(payload, tx.payload);

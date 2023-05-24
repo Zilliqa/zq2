@@ -6,11 +6,6 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use generic_array::{
-    sequence::Split,
-    typenum::{U12, U20},
-    GenericArray,
-};
 use jsonrpsee::{
     types::{error::ErrorCode, ErrorObject, Params},
     RpcModule,
@@ -23,7 +18,7 @@ use sha2::Digest;
 use sha3::Keccak256;
 
 use crate::{
-    crypto::{BlsOrEcdsaPublicKey, BlsOrEcdsaSignature, Hash},
+    crypto::{Hash, TransactionPublicKey, TransactionSignature},
     message::Block,
     node::Node,
     state::{Address, Transaction},
@@ -249,7 +244,7 @@ fn get_transaction_inner(hash: Hash, node: &Arc<Mutex<Node>>) -> Result<Option<E
     let transaction = EthTransaction {
         block_hash: H256(block.hash().0),
         block_number: block.view(),
-        from: transaction.from_addr.0,
+        from: transaction.addr_from().0,
         gas: 0,
         gas_price: transaction.gas_price as u64,
         input: transaction.payload.clone(),
@@ -314,7 +309,7 @@ fn get_transaction_receipt(
         transaction_index,
         block_hash,
         block_number,
-        from: transaction.from_addr.0,
+        from: transaction.addr_from().0,
         to: transaction.to_addr.0,
         cumulative_gas_used: 0,
         effective_gas_price: 0,
@@ -394,18 +389,13 @@ fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<Transaction> {
     let signature = Signature::from_scalars(r, s)?;
 
     let verifying_key = VerifyingKey::recover_from_prehash(&hash, &signature, recovery_id)?;
-    // Remove the first byte before hashing - The first byte specifies the encoding tag.
-    let hashed = Keccak256::digest(&verifying_key.to_encoded_point(false).as_bytes()[1..]);
-    let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
-    let from_addr = Address::from_bytes(bytes.into());
 
     Ok(Transaction {
         nonce,
         gas_price,
         gas_limit,
-        signature: Some(BlsOrEcdsaSignature::Ecdsa(signature)),
-        pubkey: Some(BlsOrEcdsaPublicKey::Ecdsa(verifying_key)),
-        from_addr,
+        signature: Some(TransactionSignature::Ecdsa(signature)),
+        public_key: TransactionPublicKey::Ecdsa(verifying_key),
         to_addr: Address::from_slice(&to_addr),
         amount,
         payload,
@@ -460,7 +450,7 @@ mod tests {
         assert_eq!(transaction.amount, 10u128.pow(18));
         assert_eq!(transaction.payload, Vec::<u8>::new());
         assert_eq!(
-            transaction.from_addr,
+            transaction.addr_from(),
             Address(
                 "0x9d8A62f656a8d1615C1294fd71e9CFb3E4855A4F"
                     .parse::<H160>()

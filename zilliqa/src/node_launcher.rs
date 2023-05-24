@@ -10,7 +10,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::{
     api,
     cfg::Config,
-    crypto::{BlsPublicKey, SecretKey},
+    crypto::{NodePublicKey, SecretKey},
     node,
 };
 use anyhow::{anyhow, Result};
@@ -195,7 +195,7 @@ impl NodeLauncher {
         swarm.behaviour_mut().kademlia.put_record(
             Record::new(
                 Multihash::from(peer_id), // TODO: Disambiguate this key?
-                self.secret_key.bls_public_key().as_bytes(),
+                self.secret_key.node_public_key().as_bytes(),
             ),
             Quorum::One,
         )?;
@@ -237,7 +237,7 @@ impl NodeLauncher {
                         ..
                     })) => {
                         let peer_id = PeerId::from_multihash(Multihash::from_bytes(key.as_ref())?).expect("key should be a peer ID");
-                        let public_key = BlsPublicKey::from_bytes(&value)?;
+                        let public_key = NodePublicKey::from_bytes(&value)?;
 
                         self.node.lock().unwrap().add_peer(peer_id, public_key)?;
                     }

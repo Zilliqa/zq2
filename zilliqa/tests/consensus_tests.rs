@@ -7,8 +7,6 @@ use libp2p::PeerId;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use zilliqa::cfg::Config;
-use zilliqa::crypto::BlsOrEcdsaPublicKey;
-use zilliqa::crypto::BlsOrEcdsaSignature;
 use zilliqa::crypto::SecretKey;
 use zilliqa::message::Message;
 use zilliqa::node::Node;
@@ -55,7 +53,7 @@ async fn test_block_production() {
             }
             node.add_peer(
                 key.to_libp2p_keypair().public().to_peer_id(),
-                key.bls_public_key(),
+                key.node_public_key(),
             )
             .unwrap();
         }
@@ -89,23 +87,19 @@ async fn test_manual_block_production() {
 #[tokio::test]
 async fn test_manual_transaction_submission() {
     let mut manual_consensus = ManualConsensus::new();
+    let tx_origin = SecretKey::new().unwrap();
     let tx = zilliqa::state::Transaction {
         nonce: 0,
         gas_price: 0,
         gas_limit: 1,
-        pubkey: None,
+        public_key: tx_origin.tx_ecdsa_public_key(),
         signature: None,
-        from_addr: Address::DEPLOY_CONTRACT,
         to_addr: Address::DEPLOY_CONTRACT,
         amount: 0,
         payload: vec![],
     };
-    let tx_origin = SecretKey::new().unwrap();
     let tx = Transaction {
-        pubkey: Some(BlsOrEcdsaPublicKey::Bls(tx_origin.bls_public_key())),
-        signature: Some(BlsOrEcdsaSignature::Bls(
-            tx_origin.sign(tx.hash().as_bytes()),
-        )),
+        signature: Some(tx_origin.tx_sign_ecdsa(tx.hash().as_bytes())),
         ..tx
     };
     manual_consensus.submit_transaction(tx.clone());
