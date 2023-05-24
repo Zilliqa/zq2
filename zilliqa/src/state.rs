@@ -3,22 +3,57 @@ use std::{
     borrow::Cow,
     collections::{hash_map::DefaultHasher, BTreeMap},
     hash::{Hash, Hasher},
+    str::FromStr,
 };
 
 use anyhow::{anyhow, Result};
-use primitive_types::{H160, H256};
+use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{self, TransactionPublicKey, TransactionSignature};
+use crate::{
+    contracts,
+    crypto::{self, TransactionPublicKey, TransactionSignature},
+};
 
 #[derive(Debug, Clone, Default, Hash)]
 pub struct State {
     accounts: BTreeMap<Address, Account>,
 }
 
+/// Const version of `impl From<u128> for U256`
+const fn u128_to_u256(value: u128) -> U256 {
+    let mut ret = [0; 4];
+    ret[0] = value as u64;
+    ret[1] = (value >> 64) as u64;
+    U256(ret)
+}
+
+const GENESIS: [(Address, U256); 2] = [
+    (
+        Address(H160(
+            *b"\x6f\x1e\xc4\xca\x92\x28\xea\x36\xa1\x4f\x0e\x4e\x33\x6e\x71\xa1\x85\x1d\x67\x9a",
+        )),
+        u128_to_u256(5000 * 10u128.pow(18)),
+    ),
+    (
+        Address(H160(
+            *b"\xa6\x37\x1b\x0e\xb4\x04\xb8\x1f\x28\x5c\x68\xd7\xf8\xa2\x59\x07\x40\xb3\xf1\x2e",
+        )),
+        u128_to_u256(2000 * 10u128.pow(18)),
+    ),
+];
+
 impl State {
-    pub fn new() -> State {
-        Default::default()
+    pub fn new() -> Result<State> {
+        let mut state = State::default();
+
+        state.deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone());
+
+        for (address, balance) in GENESIS {
+            state.set_native_balance(address, balance)?;
+        }
+
+        Ok(state)
     }
 
     // TODO(#85): Fix this implementation. "The internal algorithm is not specified, and so it and its hashes should not be
@@ -48,6 +83,9 @@ impl Address {
     /// Address of the contract which allows you to deploy other contracts.
     pub const DEPLOY_CONTRACT: Address = Address(H160::zero());
 
+    /// Address of the native token ERC-20 contract.
+    pub const NATIVE_TOKEN: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"));
+
     pub fn from_bytes(bytes: [u8; 20]) -> Address {
         Address(bytes.into())
     }
@@ -63,6 +101,14 @@ impl Address {
 
     pub fn as_bytes(&self) -> [u8; 20] {
         *self.0.as_fixed_bytes()
+    }
+}
+
+impl FromStr for Address {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Address(s.parse()?))
     }
 }
 
