@@ -21,7 +21,7 @@ bitvec = { version = "1.0.1", features = ["serde"] }
 bls-signatures = "0.14.0"
 bls12_381 = "0.8.0"
 clap = { version = "4.3.0", features = ["derive"] }
-evm = { version = "0.37.0", features = ["tracing"] }
+evm = { version = "0.39.0", features = ["tracing"] }
 futures = "0.3.28"
 generic-array = "0.14.7"
 hex = { version = "0.4.3", features = ["serde"] }
