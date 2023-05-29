@@ -1,9 +1,6 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
-use std::{
-    sync::{Arc, Mutex, MutexGuard},
-    time::SystemTime,
-};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{anyhow, Result};
 use generic_array::{
@@ -11,12 +8,8 @@ use generic_array::{
     typenum::{U12, U20},
     GenericArray,
 };
-use jsonrpsee::{
-    types::{error::ErrorCode, ErrorObject, Params},
-    RpcModule,
-};
+use jsonrpsee::{types::Params, RpcModule};
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-use opentelemetry::{metrics::Unit, Context, KeyValue};
 use primitive_types::{H160, H256};
 use rlp::{Rlp, RlpStream};
 use sha2::Digest;
@@ -35,67 +28,25 @@ use super::{
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
-    let mut module = RpcModule::new(node);
-    let meter = opentelemetry::global::meter("");
-
-    macro_rules! method {
-        ($name:expr, $method:path) => {{
-            let rpc_server_duration = meter
-                .f64_histogram("rpc.server.duration")
-                .with_unit(Unit::new("ms"))
-                .init();
-            let cx = Context::new();
-            module
-                .register_method($name, move |params, context| {
-                    let mut attributes = vec![
-                        KeyValue::new("rpc.system", "jsonrpc"),
-                        KeyValue::new("rpc.service", "zilliqa.eth"),
-                        KeyValue::new("rpc.method", $name),
-                        KeyValue::new("network.transport", "tcp"),
-                        KeyValue::new("rpc.jsonrpc.version", "2.0"),
-                    ];
-
-                    let start = SystemTime::now();
-                    let result = $method(params, context).map_err(|e| {
-                        tracing::error!(?e);
-                        ErrorObject::owned(
-                            ErrorCode::InternalError.code(),
-                            e.to_string(),
-                            None as Option<String>,
-                        )
-                    });
-                    if let Err(err) = &result {
-                        attributes.push(KeyValue::new("rpc.jsonrpc.error_code", err.code() as i64));
-                    }
-                    rpc_server_duration.record(
-                        &cx,
-                        start.elapsed().map_or(0.0, |d| d.as_secs_f64() * 1000.0),
-                        &attributes,
-                    );
-                    result
-                })
-                .unwrap();
-        }};
-    }
-
-    method!("eth_accounts", accounts);
-    method!("eth_blockNumber", block_number);
-    method!("eth_call", call);
-    method!("eth_chainId", chain_id);
-    method!("eth_estimateGas", estimate_gas);
-    method!("eth_getBalance", get_balance);
-    method!("eth_getCode", get_code);
-    method!("eth_getTransactionCount", get_transaction_count);
-    method!("eth_gasPrice", gas_price);
-    method!("eth_getBlockByNumber", get_block_by_number);
-    method!("eth_getBlockByHash", get_block_by_hash);
-    method!("eth_getTransactionByHash", get_transaction_by_hash);
-    method!("eth_getTransactionReceipt", get_transaction_receipt);
-    method!("eth_sendRawTransaction", send_raw_transaction);
-    method!("net_version", version);
-    method!("web3_clientVersion", client_version);
-
-    module
+    super::declare_module!(
+        node,
+        [
+            ("eth_accounts", accounts),
+            ("eth_blockNumber", block_number),
+            ("eth_call", call),
+            ("eth_chainId", chain_id),
+            ("eth_estimateGas", estimate_gas),
+            ("eth_getBalance", get_balance),
+            ("eth_getCode", get_code),
+            ("eth_getTransactionCount", get_transaction_count),
+            ("eth_gasPrice", gas_price),
+            ("eth_getBlockByNumber", get_block_by_number),
+            ("eth_getBlockByHash", get_block_by_hash),
+            ("eth_getTransactionByHash", get_transaction_by_hash),
+            ("eth_getTransactionReceipt", get_transaction_receipt),
+            ("eth_sendRawTransaction", send_raw_transaction),
+        ],
+    )
 }
 
 fn accounts(_: Params, _: &Arc<Mutex<Node>>) -> Result<[(); 0]> {
@@ -341,15 +292,6 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
     let transaction_hash = H256(node.lock().unwrap().create_transaction(transaction)?.0);
 
     Ok(transaction_hash.to_hex())
-}
-
-fn version(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    Ok(node.lock().unwrap().config.eth_chain_id.to_string())
-}
-
-fn client_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
-    // Format: "<name>/<version>"
-    Ok(concat!("zilliqa2/v", env!("CARGO_PKG_VERSION")))
 }
 
 /// Decode a transaction from its RLP-encoded form.
