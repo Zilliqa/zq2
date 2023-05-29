@@ -105,6 +105,8 @@ pub struct EthTransaction {
     #[serde(serialize_with = "hex")]
     pub gas_price: u64,
     #[serde(serialize_with = "hex")]
+    pub hash: H256,
+    #[serde(serialize_with = "hex")]
     pub input: Vec<u8>,
     #[serde(serialize_with = "hex")]
     pub nonce: u64,

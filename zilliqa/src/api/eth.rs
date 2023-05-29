@@ -252,6 +252,7 @@ fn get_transaction_inner(hash: Hash, node: &Arc<Mutex<Node>>) -> Result<Option<E
         from: transaction.from_addr.0,
         gas: 0,
         gas_price: transaction.gas_price as u64,
+        hash: H256(hash.0),
         input: transaction.payload.clone(),
         nonce: transaction.nonce,
         // `to` should be `None` if `transaction` is a contract creation.
