@@ -163,9 +163,6 @@ impl State {
             }
         }
 
-        let account = self.get_account_mut(txn.from_addr);
-        account.nonce += 1;
-
         info!("transaction processed");
 
         Ok((
