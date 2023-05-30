@@ -1,7 +1,7 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
 use std::{
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
     time::SystemTime,
 };
 
@@ -184,11 +184,10 @@ fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option
             .ok_or_else(|| anyhow!("no 0x prefix"))?;
         let block = u64::from_str_radix(block, 16)?;
 
+        let node = node.lock().unwrap();
         let block = node
-            .lock()
-            .unwrap()
             .get_block_by_view(block)
-            .map(|b| convert_block(node, b, full))
+            .map(|b| convert_block(&node, b, full))
             .transpose()?;
 
         Ok(block)
@@ -200,17 +199,16 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<E
     let hash: H256 = params.next()?;
     let full: bool = params.next()?;
 
+    let node = node.lock().unwrap();
     let block = node
-        .lock()
-        .unwrap()
         .get_block_by_hash(Hash(hash.0))
-        .map(|b| convert_block(node, b, full))
+        .map(|b| convert_block(&node, b, full))
         .transpose()?;
 
     Ok(block)
 }
 
-fn convert_block(node: &Arc<Mutex<Node>>, block: &Block, full: bool) -> Result<EthBlock> {
+fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<EthBlock> {
     if !full {
         Ok(block.into())
     } else {
@@ -236,11 +234,11 @@ fn get_transaction_by_hash(
 ) -> Result<Option<EthTransaction>> {
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
-    get_transaction_inner(hash, node)
+    let node = node.lock().unwrap();
+    get_transaction_inner(hash, &node)
 }
 
-fn get_transaction_inner(hash: Hash, node: &Arc<Mutex<Node>>) -> Result<Option<EthTransaction>> {
-    let node = node.lock().unwrap();
+fn get_transaction_inner(hash: Hash, node: &MutexGuard<Node>) -> Result<Option<EthTransaction>> {
     let Some(transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
     let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
