@@ -20,6 +20,7 @@ use crate::{
     state::{State, Transaction, TransactionReceipt},
 };
 
+#[derive(Debug)]
 struct NewViewVote {
     signatures: Vec<NodeSignature>,
     signers: Vec<u16>,
@@ -35,6 +36,7 @@ pub struct Validator {
     pub weight: u128,
 }
 
+#[derive(Debug)]
 pub struct Consensus {
     secret_key: SecretKey,
     config: Config,
