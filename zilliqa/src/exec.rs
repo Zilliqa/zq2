@@ -55,6 +55,7 @@ impl State {
 
     /// Apply a transaction to the account state. If the transaction is a contract creation, the created contract's
     /// address will be added to the transaction.
+    /// todo: that isn't true?
     pub fn apply_transaction(
         &mut self,
         txn: Transaction,

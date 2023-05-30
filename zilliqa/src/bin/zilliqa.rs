@@ -67,6 +67,12 @@ async fn main() -> Result<()> {
 
     let mut networked_node = NodeLauncher::new(args.secret_key, config)?;
 
+    // qns: - we broadcast TX to self?
+    // need to figure out consensus
+    // think state, mempool should be own classes
+    // No Tx validation happens (this is ok)
+    // should use TX versions maybe
+
     if !args.no_jsonrpc {
         let handle = networked_node.launch_rpc_server().await?;
         tokio::spawn(handle.stopped());
