@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use primitive_types::{H160, H256};
 use serde::{
     de::{self, Unexpected},
@@ -79,7 +81,11 @@ impl From<&message::Block> for EthBlock {
             size: 0,
             gas_limit: 0,
             gas_used: 0,
-            timestamp: 0,
+            timestamp: block
+                .timestamp()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             transactions: block
                 .transactions
                 .iter()
@@ -104,6 +110,8 @@ pub struct EthTransaction {
     pub gas: u64,
     #[serde(serialize_with = "hex")]
     pub gas_price: u64,
+    #[serde(serialize_with = "hex")]
+    pub hash: H256,
     #[serde(serialize_with = "hex")]
     pub input: Vec<u8>,
     #[serde(serialize_with = "hex")]

@@ -20,6 +20,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::state::Address;
 
+/// The signature type used internally in consensus, to e.g. sign block proposals.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NodeSignature(bls_signatures::Signature);
 
@@ -62,11 +63,13 @@ impl<'de> Deserialize<'de> for NodeSignature {
     }
 }
 
+/// The set signatures that are accepted for signing and validating transactions.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum TransactionSignature {
     Ecdsa(EcdsaSignature),
 }
 
+/// The public key type used internally in consensus, alongside `NodeSignature`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NodePublicKey(bls_signatures::PublicKey);
 
@@ -114,6 +117,8 @@ impl<'de> Deserialize<'de> for NodePublicKey {
     }
 }
 
+/// The set of public keys that are accepted for signing and validating transactions, each
+/// corresponding to a variant of `TransactionSignature`.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum TransactionPublicKey {
     Ecdsa(VerifyingKey),
@@ -155,6 +160,9 @@ pub fn verify_messages(
     Ok(())
 }
 
+/// The secret key type used as the basis of all cryptography in the node.
+/// Any of the `NodePublicKey` or `TransactionPublicKey`s, or a libp2p identity, can be derived
+/// from this.
 #[derive(Debug, Clone, Copy)]
 pub struct SecretKey {
     bytes: [u8; 32],

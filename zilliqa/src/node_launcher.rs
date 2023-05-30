@@ -93,8 +93,7 @@ impl NodeLauncher {
         )?;
         let node = Arc::new(Mutex::new(node));
 
-        let mut rpc_module = api::zilliqa::rpc_module(Arc::clone(&node));
-        rpc_module.merge(api::eth::rpc_module(Arc::clone(&node)))?;
+        let rpc_module = api::rpc_module(Arc::clone(&node));
 
         Ok(Self {
             node,
