@@ -1,3 +1,4 @@
+use rlp::RlpStream;
 use std::{
     borrow::Cow,
     collections::{hash_map::DefaultHasher, BTreeMap},
@@ -84,6 +85,7 @@ pub struct Transaction {
     pub to_addr: Address,
     pub amount: u128,
     pub payload: Vec<u8>,
+    pub chain_id: u64,
 }
 
 impl Transaction {
@@ -99,13 +101,38 @@ impl Transaction {
         ])
     }
 
+    /// The digest that is to be used for signing and verification.
+    ///
+    /// - If the `public_key` of the transaction is ECDSA, this follows Ethereum standard.
+    /// The second parameter then distinguishes between EIP155 or legacy signatures.
+    ///
+    /// - ...presumably Zilliqa compatibility is TBA.
+    pub fn signining_hash(&self) -> crypto::Hash {
+        match self.public_key {
+            TransactionPublicKey::Ecdsa(_, use_eip155) => {
+                let mut rlp = RlpStream::new_list(9);
+                rlp.append(&self.nonce)
+                    .append(&self.gas_price)
+                    .append(&self.gas_limit)
+                    .append(&self.to_addr.as_bytes().to_vec())
+                    .append(&self.amount)
+                    .append(&self.payload);
+                if use_eip155 {
+                    rlp.append(&self.chain_id).append(&0u8).append(&0u8);
+                };
+                crypto::Hash::compute(&[&rlp.out()])
+            }
+        }
+    }
+
     pub fn addr_from(&self) -> Address {
         self.public_key.into_addr()
     }
 
     pub fn verify(&self) -> Result<()> {
         if let Some(sig) = self.signature {
-            self.public_key.verify(self.hash().as_bytes(), sig)
+            self.public_key
+                .verify(self.signining_hash().as_bytes(), sig)
         } else {
             Err(anyhow!("Transaction is unsigned"))
         }

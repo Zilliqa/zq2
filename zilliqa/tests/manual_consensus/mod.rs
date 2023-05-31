@@ -132,6 +132,7 @@ impl ManualConsensus {
                     to_addr,
                     amount,
                     payload,
+                    chain_id,
                 }) => {
                     assert_eq!(nonce, tx.nonce);
                     assert_eq!(gas_price, tx.gas_price);
@@ -141,6 +142,7 @@ impl ManualConsensus {
                     assert_eq!(payload, tx.payload);
                     assert_eq!(signature, tx.signature);
                     assert_eq!(payload, tx.payload);
+                    assert_eq!(chain_id, tx.chain_id);
                     assert!(tx.verify().is_ok());
                 }
                 _ => {

@@ -4,11 +4,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
-use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use k256::ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey};
 use primitive_types::{H160, H256};
-use rlp::{Rlp, RlpStream};
-use sha2::Digest;
-use sha3::Keccak256;
+use rlp::Rlp;
 
 use crate::{
     crypto::{Hash, TransactionPublicKey, TransactionSignature},
@@ -302,44 +300,43 @@ fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<Transaction> {
     let r = left_pad_arr(&rlp.val_at::<Vec<_>>(7)?)?;
     let s = left_pad_arr(&rlp.val_at::<Vec<_>>(8)?)?;
 
-    let (recovery_id, reencoded) = if v >= (chain_id * 2) + 35 {
-        let mut rlp = RlpStream::new_list(9);
-        rlp.append(&nonce)
-            .append(&gas_price)
-            .append(&gas_limit)
-            .append(&to_addr)
-            .append(&amount)
-            .append(&payload)
-            .append(&chain_id)
-            .append(&0u8)
-            .append(&0u8);
-        (v - ((chain_id * 2) + 35), rlp.out())
-    } else {
-        let mut rlp = RlpStream::new_list(6);
-        rlp.append(&nonce)
-            .append(&gas_price)
-            .append(&gas_limit)
-            .append(&to_addr)
-            .append(&amount)
-            .append(&payload);
-        (v - 27, rlp.out())
+    let use_eip155 = v >= (chain_id * 2) + 35;
+
+    let unsigned_transaction = Transaction {
+        nonce,
+        gas_price,
+        gas_limit,
+        signature: None,
+        public_key: TransactionPublicKey::Ecdsa(
+            // dummy temp signature to fill the object
+            *SigningKey::from_slice(&[1 as u8; 32])
+                .unwrap()
+                .verifying_key(),
+            use_eip155,
+        ),
+        to_addr: Address::from_slice(&to_addr),
+        amount,
+        payload,
+        chain_id,
     };
-    let hash = Keccak256::digest(reencoded);
+
+    let recovery_id = if use_eip155 {
+        v - ((chain_id * 2) + 35)
+    } else {
+        v - 27
+    };
+    let hash = unsigned_transaction.signining_hash();
     let recovery_id = RecoveryId::from_byte(recovery_id.try_into()?)
         .ok_or_else(|| anyhow!("invalid recovery id: {recovery_id}"))?;
     let signature = Signature::from_scalars(r, s)?;
 
-    let verifying_key = VerifyingKey::recover_from_prehash(&hash, &signature, recovery_id)?;
+    let verifying_key =
+        VerifyingKey::recover_from_prehash(&hash.as_bytes(), &signature, recovery_id)?;
 
     Ok(Transaction {
-        nonce,
-        gas_price,
-        gas_limit,
         signature: Some(TransactionSignature::Ecdsa(signature)),
-        public_key: TransactionPublicKey::Ecdsa(verifying_key),
-        to_addr: Address::from_slice(&to_addr),
-        amount,
-        payload,
+        public_key: TransactionPublicKey::Ecdsa(verifying_key, use_eip155),
+        ..unsigned_transaction
     })
 }
 

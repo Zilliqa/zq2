@@ -121,13 +121,15 @@ impl<'de> Deserialize<'de> for NodePublicKey {
 /// corresponding to a variant of `TransactionSignature`.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum TransactionPublicKey {
-    Ecdsa(VerifyingKey),
+    /// Ethereum-compatible ECDA signatures. The second element determines whether
+    /// it is used for EIP155 compatible signatures (if false, assumes legacy ones).
+    Ecdsa(VerifyingKey, bool),
 }
 
 impl TransactionPublicKey {
     pub fn verify(&self, message: &[u8], signature: TransactionSignature) -> Result<()> {
         let result = match (self, signature) {
-            (TransactionPublicKey::Ecdsa(pubkey), TransactionSignature::Ecdsa(sig)) => {
+            (TransactionPublicKey::Ecdsa(pubkey, _), TransactionSignature::Ecdsa(sig)) => {
                 pubkey.verify(message, &sig).map_err(|e| anyhow!(e))
             }
             #[allow(unreachable_patterns)] // will be necessary with >1 signature types
@@ -138,7 +140,7 @@ impl TransactionPublicKey {
 
     pub fn into_addr(&self) -> Address {
         let bytes = match self {
-            Self::Ecdsa(key) => {
+            Self::Ecdsa(key, _) => {
                 // Remove the first byte before hashing - The first byte specifies the encoding tag.
                 key.to_encoded_point(false).as_bytes()[1..].to_owned()
             }
@@ -224,7 +226,8 @@ impl SecretKey {
     }
 
     pub fn tx_ecdsa_public_key(&self) -> TransactionPublicKey {
-        TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&self.cast_to_ecdsa()))
+        // Default to EIP155 signing
+        TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&self.cast_to_ecdsa()), true)
     }
 
     pub fn tx_sign_ecdsa(&self, message: &[u8]) -> TransactionSignature {
