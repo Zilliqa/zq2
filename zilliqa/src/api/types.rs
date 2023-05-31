@@ -14,6 +14,7 @@ use super::to_hex::ToHex;
 
 #[derive(Clone, Serialize)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum HashOrTransaction {
     Hash(H256),
     Transaction(EthTransaction),

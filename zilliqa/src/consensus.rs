@@ -12,11 +12,12 @@ use tracing::{debug, trace};
 use crate::{
     cfg::Config,
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
+    exec::TransactionApplyResult,
     message::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, NewView, Proposal, QuorumCertificate,
         Vote,
     },
-    state::{Address, Log, State, Transaction, TransactionReceipt},
+    state::{State, Transaction, TransactionReceipt},
 };
 
 struct NewViewVote {
@@ -207,14 +208,12 @@ impl Consensus {
         let proposal_view = block.view();
         if self.check_safe_block(&block) {
             for txn in &transactions {
-                if let Some((success, contract_address, logs)) =
-                    self.apply_transaction(txn.clone(), parent_header)?
-                {
+                if let Some(result) = self.apply_transaction(txn.clone(), parent_header)? {
                     let receipt = TransactionReceipt {
                         block_hash: block.hash(),
-                        success,
-                        contract_address,
-                        logs,
+                        success: result.success,
+                        contract_address: result.contract_address,
+                        logs: result.logs,
                     };
                     self.transaction_receipts.insert(txn.hash(), receipt);
                 }
@@ -242,7 +241,7 @@ impl Consensus {
         &mut self,
         txn: Transaction,
         current_block: BlockHeader,
-    ) -> Result<Option<(bool, Option<Address>, Vec<Log>)>> {
+    ) -> Result<Option<TransactionApplyResult>> {
         // If we have the transaction in the mempool, remove it.
         self.new_transactions.remove(&txn.hash());
 
@@ -319,11 +318,9 @@ impl Consensus {
                     .into_iter()
                     .filter_map(|tx| {
                         let result = self.apply_transaction(tx.clone(), parent_header);
-                        result.transpose().map(|r| {
-                            r.map(|(success, contract_address, logs)| {
-                                (tx.clone(), success, contract_address, logs)
-                            })
-                        })
+                        result
+                            .transpose()
+                            .map(|r| r.map(|r| (tx.clone(), r.success, r.contract_address, r.logs)))
                     })
                     .collect::<Result<_>>()?;
                 let applied_transaction_hashes: Vec<_> = applied_transactions

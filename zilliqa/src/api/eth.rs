@@ -309,7 +309,7 @@ fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<Transaction> {
         signature: None,
         public_key: TransactionPublicKey::Ecdsa(
             // dummy temp signature to fill the object
-            *SigningKey::from_slice(&[1 as u8; 32])
+            *SigningKey::from_slice(&[1_u8; 32])
                 .unwrap()
                 .verifying_key(),
             use_eip155,
@@ -331,7 +331,7 @@ fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<Transaction> {
     let signature = Signature::from_scalars(r, s)?;
 
     let verifying_key =
-        VerifyingKey::recover_from_prehash(&hash.as_bytes(), &signature, recovery_id)?;
+        VerifyingKey::recover_from_prehash(hash.as_bytes(), &signature, recovery_id)?;
 
     Ok(Transaction {
         signature: Some(TransactionSignature::Ecdsa(signature)),
