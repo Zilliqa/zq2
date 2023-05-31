@@ -11,7 +11,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     module.merge(eth::rpc_module(node.clone())).unwrap();
     module.merge(net::rpc_module(node.clone())).unwrap();
     module.merge(web3::rpc_module(node.clone())).unwrap();
-    module.merge(zilliqa::rpc_module(node.clone())).unwrap();
+    module.merge(zilliqa::rpc_module(node)).unwrap();
 
     module
 }
