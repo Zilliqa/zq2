@@ -1,12 +1,15 @@
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::H256;
 
 use crate::{crypto::Hash, node::Node};
 
-use super::types::OtterscanBlockDetails;
+use super::{
+    eth::{get_transaction_inner, get_transaction_receipt_inner},
+    types::{OtterscanBlockDetails, OtterscanBlockTransactions, OtterscanBlockWithTransactions},
+};
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
@@ -15,6 +18,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("ots_getApiLevel", get_otterscan_api_level),
             ("ots_getBlockDetails", get_block_details),
             ("ots_getBlockDetailsByHash", get_block_details_by_hash),
+            ("ots_getBlockTransactions", get_block_transactions),
         ],
     )
 }
@@ -52,4 +56,43 @@ fn get_block_details_by_hash(
         .map(OtterscanBlockDetails::from);
 
     Ok(block)
+}
+
+fn get_block_transactions(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<OtterscanBlockTransactions>> {
+    let mut params = params.sequence();
+    let block_num: u64 = params.next()?;
+    let page_number: usize = params.next()?;
+    let page_size: usize = params.next()?;
+
+    let node = node.lock().unwrap();
+
+    let Some(block) = node.get_block_by_view(block_num) else { return Ok(None); };
+
+    let start = usize::min(page_number * page_size, block.transactions.len());
+    let end = usize::min((page_number + 1) * page_size, block.transactions.len());
+
+    let txn_results = block.transactions[start..end].iter().map(|hash| {
+        // There are some redundant calls between these two functions - We could optimise by combining them.
+        let txn = get_transaction_inner(*hash, &node)?
+            .ok_or_else(|| anyhow!("transaction not found: {hash}"))?;
+        let receipt = get_transaction_receipt_inner(*hash, &node)?
+            .ok_or_else(|| anyhow!("receipt not found: {hash}"))?;
+
+        Ok::<_, anyhow::Error>((txn, receipt))
+    });
+    let (transactions, receipts): (Vec<_>, Vec<_>) =
+        itertools::process_results(txn_results, |iter| iter.unzip())?;
+
+    let full_block = OtterscanBlockWithTransactions {
+        transactions,
+        block: block.into(),
+    };
+
+    Ok(Some(OtterscanBlockTransactions {
+        full_block,
+        receipts,
+    }))
 }
