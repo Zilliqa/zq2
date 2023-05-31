@@ -276,7 +276,7 @@ impl NodeLauncher {
                         eprintln!("*** RECVD REQ RESP: {:?}", rr_event);
 
                         match rr_event {
-                            request_response::Event::Message{message, ..} => {
+                            request_response::Event::Message{message, peer} => {
                                 match message {
                                     request_response::Message::Request {request, channel, ..} => {
                                         eprintln!("*** request: {:?}", request);
@@ -286,8 +286,8 @@ impl NodeLauncher {
 
                                         let message = serde_json::from_slice::<Message>(&request.0).unwrap();
                                         let message_type = message.name();
-                                        //debug!(%source, message_type, "message recieved");
-                                        self.node.lock().unwrap().handle_message(PeerId::random(), message).unwrap();
+                                        debug!(%peer, message_type, "direct message recieved");
+                                        self.node.lock().unwrap().handle_message(peer, message).unwrap();
 
                                         let resp_tmp = vec![0,1,2];
                                         let _ = swarm.behaviour_mut().request_response.send_response(channel, Zq2Response(resp_tmp));
