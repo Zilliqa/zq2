@@ -26,6 +26,26 @@ pub struct CallContext<'a> {
 
 const CONFIG: Config = Config::london();
 
+/// Data returned after applying a [Transaction] to [State].
+pub struct TransactionApplyResult {
+    /// Whether the transaction succeeded and the resulting state changes were persisted.
+    pub success: bool,
+    /// If the transaction was a contract creation, the address of the resulting contract.
+    pub contract_address: Option<Address>,
+    /// The logs emitted by the transaction execution.
+    pub logs: Vec<Log>,
+}
+
+impl TransactionApplyResult {
+    fn failed() -> TransactionApplyResult {
+        TransactionApplyResult {
+            success: false,
+            contract_address: None,
+            logs: vec![],
+        }
+    }
+}
+
 impl State {
     fn call_context(
         &self,
@@ -61,10 +81,10 @@ impl State {
         txn: Transaction,
         chain_id: u64,
         current_block: BlockHeader,
-    ) -> Result<(bool, Option<Address>, Vec<Log>)> {
+    ) -> Result<TransactionApplyResult> {
         let context = self.call_context(
             txn.gas_price.into(),
-            txn.from_addr.0,
+            txn.addr_from().0,
             chain_id,
             current_block,
         );
@@ -72,10 +92,10 @@ impl State {
 
         let (exit_reason, contract_address) = if txn.to_addr == Address::DEPLOY_CONTRACT {
             let address = executor.create_address(CreateScheme::Legacy {
-                caller: txn.from_addr.0,
+                caller: txn.addr_from().0,
             });
             let (exit_reason, _) = executor.transact_create(
-                txn.from_addr.0,
+                txn.addr_from().0,
                 txn.amount.into(),
                 txn.payload.clone(),
                 txn.gas_limit,
@@ -84,7 +104,7 @@ impl State {
             (exit_reason, Some(address))
         } else {
             let (exit_reason, _) = executor.transact_call(
-                txn.from_addr.0,
+                txn.addr_from().0,
                 txn.to_addr.0,
                 txn.amount.into(),
                 txn.payload.clone(),
@@ -97,7 +117,7 @@ impl State {
         match exit_reason {
             ExitReason::Succeed(_) => {}
             ExitReason::Error(_) | ExitReason::Revert(_) => {
-                return Ok((false, None, vec![]));
+                return Ok(TransactionApplyResult::failed());
             }
             ExitReason::Fatal(e) => {
                 return Err(anyhow!("EVM fatal error: {e:?}"));
@@ -164,19 +184,23 @@ impl State {
             }
         }
 
+        let account = self.get_account_mut(txn.addr_from());
+        account.nonce += 1;
+
         info!("transaction processed");
 
-        Ok((
-            true,
-            contract_address.map(Address),
-            logs.into_iter()
+        Ok(TransactionApplyResult {
+            success: true,
+            contract_address: contract_address.map(Address),
+            logs: logs
+                .into_iter()
                 .map(|log| Log {
                     address: Address(log.address),
                     topics: log.topics,
                     data: log.data,
                 })
                 .collect(),
-        ))
+        })
     }
 
     pub fn call_contract(

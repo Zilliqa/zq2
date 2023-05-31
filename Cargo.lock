@@ -1126,7 +1126,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1a467a65c5e759bce6e65eaf91cc29f466cdc57cb65777bd646872a8a1fd4de"
 dependencies = [
  "const-oid",
- "pem-rfc7468",
+ "pem-rfc7468 0.6.0",
  "zeroize",
 ]
 
@@ -1137,6 +1137,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc302fd9b18d66834a6f092d10ea85489c0ca8ad6b7304092135fab171d853cd"
 dependencies = [
  "const-oid",
+ "pem-rfc7468 0.7.0",
  "zeroize",
 ]
 
@@ -1268,6 +1269,7 @@ dependencies = [
  "der 0.7.0",
  "elliptic-curve 0.13.1",
  "rfc6979 0.4.0",
+ "serdect",
  "signature 2.0.0",
 ]
 
@@ -1314,7 +1316,7 @@ dependencies = [
  "generic-array",
  "group 0.12.1",
  "hkdf 0.12.3",
- "pem-rfc7468",
+ "pem-rfc7468 0.6.0",
  "pkcs8 0.9.0",
  "rand_core 0.6.4",
  "sec1 0.3.0",
@@ -1334,9 +1336,11 @@ dependencies = [
  "ff 0.13.0",
  "generic-array",
  "group 0.13.0",
+ "pem-rfc7468 0.7.0",
  "pkcs8 0.10.1",
  "rand_core 0.6.4",
  "sec1 0.7.1",
+ "serdect",
  "subtle",
  "zeroize",
 ]
@@ -2304,6 +2308,7 @@ dependencies = [
  "ecdsa 0.16.0",
  "elliptic-curve 0.13.1",
  "once_cell",
+ "serdect",
  "sha2 0.10.6",
  "signature 2.0.0",
 ]
@@ -3366,6 +3371,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pem-rfc7468"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
+dependencies = [
+ "base64ct",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4127,6 +4141,7 @@ dependencies = [
  "der 0.7.0",
  "generic-array",
  "pkcs8 0.10.1",
+ "serdect",
  "subtle",
  "zeroize",
 ]
@@ -4174,6 +4189,16 @@ version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93107647184f6027e3b7dcb2e11034cf95ffa1e3a682c67951963ac69c1c007d"
 dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "serdect"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a84f14a19e9a014bb9f4512488d9829a68e04ecabffb0f9904cd1ace94598177"
+dependencies = [
+ "base16ct 0.2.0",
  "serde",
 ]
 

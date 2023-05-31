@@ -28,7 +28,7 @@ hex = { version = "0.4.3", features = ["serde"] }
 http = "0.2.9"
 itertools = "0.10.5"
 jsonrpsee = { version = "0.18.2", features = ["server"] }
-k256 = "0.13.1"
+k256 = {version = "0.13.1", features = ["serde", "pem"] }
 libp2p = { version = "0.51.0", features = ["gossipsub", "macros", "tcp", "tokio", "noise", "mplex", "mdns", "request-response", "kad", "identify"] }
 async-std = { version = "1.12", features = ["attributes"] }
 async-trait = "0.1"

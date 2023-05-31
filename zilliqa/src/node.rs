@@ -8,7 +8,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::{
     cfg::Config,
     consensus::Consensus,
-    crypto::{Hash, PublicKey, SecretKey},
+    crypto::{Hash, NodePublicKey, SecretKey},
     message::{Block, BlockRequest, BlockResponse, Message, Proposal},
     state::{Account, Address},
 };
@@ -105,7 +105,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn add_peer(&mut self, peer: PeerId, public_key: PublicKey) -> Result<()> {
+    pub fn add_peer(&mut self, peer: PeerId, public_key: NodePublicKey) -> Result<()> {
         if let Some((leader, vote)) = self.consensus.add_peer(peer, public_key)? {
             self.reset_timeout.send(())?;
             self.send_message(leader, Message::Vote(vote))?;

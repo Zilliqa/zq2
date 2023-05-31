@@ -14,6 +14,7 @@ use super::to_hex::ToHex;
 
 #[derive(Clone, Serialize)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum HashOrTransaction {
     Hash(H256),
     Transaction(EthTransaction),
@@ -94,6 +95,122 @@ impl From<&message::Block> for EthBlock {
             uncles: vec![],
         }
     }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtterscanBlock {
+    #[serde(serialize_with = "hex")]
+    number: u64,
+    #[serde(serialize_with = "hex")]
+    hash: H256,
+    #[serde(serialize_with = "hex")]
+    parent_hash: H256,
+    #[serde(serialize_with = "hex")]
+    nonce: u64,
+    #[serde(serialize_with = "hex")]
+    sha_3_uncles: H256,
+    #[serde(serialize_with = "hex")]
+    transactions_root: H256,
+    #[serde(serialize_with = "hex")]
+    state_root: H256,
+    #[serde(serialize_with = "hex")]
+    receipts_root: H256,
+    #[serde(serialize_with = "hex")]
+    miner: H160,
+    #[serde(serialize_with = "hex")]
+    difficulty: u64,
+    #[serde(serialize_with = "hex")]
+    total_difficulty: u64,
+    #[serde(serialize_with = "hex")]
+    extra_data: Vec<u8>,
+    #[serde(serialize_with = "hex")]
+    size: u64,
+    #[serde(serialize_with = "hex")]
+    gas_limit: u64,
+    #[serde(serialize_with = "hex")]
+    gas_used: u64,
+    #[serde(serialize_with = "hex")]
+    timestamp: u64,
+    #[serde(serialize_with = "hex")]
+    transaction_count: usize,
+    uncles: Vec<H256>,
+    #[serde(serialize_with = "hex")]
+    base_fee_per_gas: u64,
+}
+
+/// A block details object, returned by the Otterscan API.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtterscanBlockDetails {
+    block: OtterscanBlock,
+    issuance: OtterscanBlockIssuance,
+    #[serde(serialize_with = "hex")]
+    total_fees: u64,
+}
+
+impl From<&message::Block> for OtterscanBlockDetails {
+    fn from(block: &message::Block) -> Self {
+        OtterscanBlockDetails {
+            block: block.into(),
+            issuance: OtterscanBlockIssuance {
+                block_reward: 0,
+                uncle_reward: 0,
+                issuance: 0,
+            },
+            total_fees: 0,
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtterscanBlockIssuance {
+    #[serde(serialize_with = "hex")]
+    block_reward: u64,
+    #[serde(serialize_with = "hex")]
+    uncle_reward: u64,
+    #[serde(serialize_with = "hex")]
+    issuance: u64,
+}
+
+impl From<&message::Block> for OtterscanBlock {
+    fn from(block: &message::Block) -> Self {
+        // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
+        OtterscanBlock {
+            number: block.view(),
+            hash: H256(block.hash().0),
+            parent_hash: H256(block.parent_hash().0),
+            nonce: 0,
+            sha_3_uncles: H256::zero(),
+            transactions_root: H256::zero(),
+            state_root: H256::from_low_u64_be(block.state_root_hash()),
+            receipts_root: H256::zero(),
+            miner: H160::zero(),
+            difficulty: 0,
+            total_difficulty: 0,
+            extra_data: vec![],
+            size: 0,
+            gas_limit: 1,
+            gas_used: 0,
+            timestamp: block
+                .timestamp()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            transaction_count: block.transactions.len(),
+            uncles: vec![],
+            base_fee_per_gas: 0,
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtterscanBlockTransactions {
+    #[serde(rename = "fullblock")]
+    pub full_block: EthBlock,
+    pub receipts: Vec<EthTransactionReceipt>,
 }
 
 /// A transaction object, returned by the Ethereum API.
