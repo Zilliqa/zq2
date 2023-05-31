@@ -171,8 +171,6 @@ pub struct SecretKey {
 impl SecretKey {
     /// Generates a random private key.
     pub fn new() -> Result<SecretKey> {
-        // let mut buf: [u8; 32] = [0; 32];
-        // rand_core::OsRng.try_fill_bytes(buf.as_mut_slice())?;
         let bls_temp = bls_signatures::PrivateKey::generate(&mut rand_core::OsRng);
         Self::from_bytes(&bls_temp.as_bytes())
     }
