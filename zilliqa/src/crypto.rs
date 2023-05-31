@@ -169,6 +169,7 @@ pub struct SecretKey {
 }
 
 impl SecretKey {
+    /// Generates a random private key.
     pub fn new() -> Result<SecretKey> {
         // let mut buf: [u8; 32] = [0; 32];
         // rand_core::OsRng.try_fill_bytes(buf.as_mut_slice())?;
@@ -193,6 +194,9 @@ impl SecretKey {
         Ok(bls_signatures::PrivateKey::from_bytes(bytes)?)
     }
 
+    /// Warning: panics if the bytes aren't a valid key for the cast.
+    /// Should only be used on SecretKeys that have been validated using the
+    /// `try_cast_...` method, e.g. during construction.
     fn cast_to_bls(&self) -> bls_signatures::PrivateKey {
         Self::try_cast_to_bls(&self.bytes)
             .expect("Validated private key failed to cast to BLS key type")
@@ -202,6 +206,9 @@ impl SecretKey {
         Ok(k256::ecdsa::SigningKey::from_slice(bytes)?)
     }
 
+    /// Warning: panics if the bytes aren't a valid key for the cast.
+    /// Should only be used on SecretKeys that have been validated using the
+    /// `try_cast_...` method, e.g. during construction.
     fn cast_to_ecdsa(&self) -> k256::ecdsa::SigningKey {
         Self::try_cast_to_ecdsa(&self.bytes)
             .expect("Validated private key failed to cast to ECDSA key type")
