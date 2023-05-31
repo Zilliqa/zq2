@@ -180,15 +180,15 @@ impl Node {
             // We need to 'send' this message to ourselves.
             self.handle_message(peer, message)?;
         } else {
+            eprintln!("Sending direct message to {}", peer);
             self.message_sender.send((peer, message, SendAsBroadcast::No()))?;
         }
         Ok(())
     }
 
     fn broadcast_message(&mut self, message: Message) -> Result<()> {
-        // FIXME: We broadcast everything, so the recipient doesn't matter.
         self.message_sender
-            .send((PeerId::random(), message.clone(), SendAsBroadcast::No()))?;
+            .send((PeerId::random(), message.clone(), SendAsBroadcast::Yes()))?;
         // Also handle it ourselves
         self.handle_message(self.peer_id, message)?;
         Ok(())

@@ -281,8 +281,16 @@ impl NodeLauncher {
                                     request_response::Message::Request {request, channel, ..} => {
                                         eprintln!("*** request: {:?}", request);
 
-                                        let file_tmp = vec![0,1,2];
-                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Zq2Response(file_tmp));
+                                        // Extract data and handle request
+                                        //request.0
+
+                                        let message = serde_json::from_slice::<Message>(&request.0).unwrap();
+                                        let message_type = message.name();
+                                        //debug!(%source, message_type, "message recieved");
+                                        self.node.lock().unwrap().handle_message(PeerId::random(), message).unwrap();
+
+                                        let resp_tmp = vec![0,1,2];
+                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Zq2Response(resp_tmp));
                                     }
                                     request_response::Message::Response {response, ..} => {
                                         eprintln!("*** response: {:?}", response);
@@ -306,10 +314,15 @@ impl NodeLauncher {
                     let message_type = message.name();
                     debug!(%dest, message_type, "sending message");
                     let data = serde_json::to_vec(&message).unwrap();
-                    swarm.behaviour_mut().gossipsub.publish(topic.hash(), data.clone()).unwrap();
 
-                    let request_id = swarm.behaviour_mut().request_response.send_request(&dest, Zq2Request(data));
-                    eprintln!("request id is: {:?}", request_id);
+                    match send_as_broadcast {
+                        SendAsBroadcast::No() => {
+                            let _ = swarm.behaviour_mut().request_response.send_request(&dest, Zq2Request(data));
+                        },
+                        SendAsBroadcast::Yes() => {
+                            swarm.behaviour_mut().gossipsub.publish(topic.hash(), data).unwrap();
+                        },
+                    }
                 },
                 () = &mut sleep => {
                     trace!("timeout elapsed");
