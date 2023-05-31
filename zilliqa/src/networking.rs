@@ -5,38 +5,31 @@ use async_trait::async_trait;
 use libp2p::core::upgrade::{read_length_prefixed, write_length_prefixed, ProtocolName};
 pub use libp2p::request_response::{self, ProtocolSupport, RequestId, ResponseChannel};
 
-#[derive(Debug)]
-pub enum Event {
-    InboundRequest {
-        request: String,
-        channel: ResponseChannel<FileResponse>,
-    },
-}
-
 #[derive(Debug, Clone)]
-pub struct FileExchangeProtocol();
+pub struct Zq2MessageProtocol();
 #[derive(Clone)]
-pub struct FileExchangeCodec();
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileRequest(pub String);
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileResponse(pub Vec<u8>);
+pub struct Zq2MessageCodec();
 
-impl ProtocolName for FileExchangeProtocol {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Zq2Request(pub Vec<u8>);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Zq2Response(pub Vec<u8>);
+
+impl ProtocolName for Zq2MessageProtocol {
     fn protocol_name(&self) -> &[u8] {
-        "/file-exchange/1".as_bytes()
+        "/zq2-message/1".as_bytes()
     }
 }
 
 #[async_trait]
-impl request_response::Codec for FileExchangeCodec {
-    type Protocol = FileExchangeProtocol;
-    type Request = FileRequest;
-    type Response = FileResponse;
+impl request_response::Codec for Zq2MessageCodec {
+    type Protocol = Zq2MessageProtocol;
+    type Request = Zq2Request;
+    type Response = Zq2Response;
 
     async fn read_request<T>(
         &mut self,
-        _: &FileExchangeProtocol,
+        _: &Zq2MessageProtocol,
         io: &mut T,
     ) -> io::Result<Self::Request>
         where
@@ -48,12 +41,12 @@ impl request_response::Codec for FileExchangeCodec {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
 
-        Ok(FileRequest(String::from_utf8(vec).unwrap()))
+        Ok(Zq2Request(vec))
     }
 
     async fn read_response<T>(
         &mut self,
-        _: &FileExchangeProtocol,
+        _: &Zq2MessageProtocol,
         io: &mut T,
     ) -> io::Result<Self::Response>
         where
@@ -65,14 +58,14 @@ impl request_response::Codec for FileExchangeCodec {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
 
-        Ok(FileResponse(vec))
+        Ok(Zq2Response(vec))
     }
 
     async fn write_request<T>(
         &mut self,
-        _: &FileExchangeProtocol,
+        _: &Zq2MessageProtocol,
         io: &mut T,
-        FileRequest(data): FileRequest,
+        Zq2Request(data): Zq2Request,
     ) -> io::Result<()>
         where
             T: AsyncWrite + Unpin + Send,
@@ -85,9 +78,9 @@ impl request_response::Codec for FileExchangeCodec {
 
     async fn write_response<T>(
         &mut self,
-        _: &FileExchangeProtocol,
+        _: &Zq2MessageProtocol,
         io: &mut T,
-        FileResponse(data): FileResponse,
+        Zq2Response(data): Zq2Response,
     ) -> io::Result<()>
         where
             T: AsyncWrite + Unpin + Send,

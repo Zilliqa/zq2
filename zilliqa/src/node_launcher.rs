@@ -60,7 +60,7 @@ struct Args {
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
-    request_response: request_response::Behaviour<FileExchangeCodec>,
+    request_response: request_response::Behaviour<Zq2MessageCodec>,
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
     kademlia: Kademlia<MemoryStore>,
@@ -168,8 +168,8 @@ impl NodeLauncher {
 
         let behaviour = Behaviour {
             request_response: request_response::Behaviour::new(
-                FileExchangeCodec(),
-                iter::once((FileExchangeProtocol(), ProtocolSupport::Full)),
+                Zq2MessageCodec(),
+                iter::once((Zq2MessageProtocol(), ProtocolSupport::Full)),
                 Default::default(),
             ),
             gossipsub: gossipsub::Behaviour::new(
@@ -282,7 +282,7 @@ impl NodeLauncher {
                                         eprintln!("*** request: {:?}", request);
 
                                         let file_tmp = vec![0,1,2];
-                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, FileResponse(file_tmp));
+                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Zq2Response(file_tmp));
                                     }
                                     request_response::Message::Response {response, ..} => {
                                         eprintln!("*** response: {:?}", response);
@@ -292,7 +292,7 @@ impl NodeLauncher {
                             _ => {}
 
                         }
-                    //let request_id = swarm.behaviour_mut().request_response.send_request(&dest, FileRequest("aa.txt".to_string()));
+                    //let request_id = swarm.behaviour_mut().request_response.send_request(&dest, Zq2Request("aa.txt".to_string()));
 
                     },
                     SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(_)) => {},
@@ -306,9 +306,9 @@ impl NodeLauncher {
                     let message_type = message.name();
                     debug!(%dest, message_type, "sending message");
                     let data = serde_json::to_vec(&message).unwrap();
-                    swarm.behaviour_mut().gossipsub.publish(topic.hash(), data).unwrap();
+                    swarm.behaviour_mut().gossipsub.publish(topic.hash(), data.clone()).unwrap();
 
-                    let request_id = swarm.behaviour_mut().request_response.send_request(&dest, FileRequest("aa.txt".to_string()));
+                    let request_id = swarm.behaviour_mut().request_response.send_request(&dest, Zq2Request(data));
                     eprintln!("request id is: {:?}", request_id);
                 },
                 () = &mut sleep => {
