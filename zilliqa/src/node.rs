@@ -17,17 +17,16 @@ use crate::{
 ///
 /// # Transaction Lifecycle
 /// 1. New transactions are created with a call to [`Node::new_transaction()`].
-/// The node gossips the transaction to the network via a [`Message::NewTransaction`] message.
-/// This initial node also stores the transaction hash in `pending_transactions`.
+/// The node gossips the transaction to the network and self via a [`Message::NewTransaction`] message.
+/// This initial node also stores the transaction hash in `new_transactions`.
 ///
 /// 1. When a node recieves a [`NewTransaction`] via [`Node::handle_message()`], it stores it in `new_transactions`.
 /// This contains all transactions which have been receieved, but not yet executed.
 ///
-/// 1. When the initial node is a leader of a block, it adds all transaction hashes in `pending_transactions` to the block.
+/// 2. When the initial node is a leader of a block, it adds all transaction hashes in `new_transactions` to the block.
 ///
-/// 1. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
+/// 3. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
 /// Successfully executed transactions are added to `transactions` so they can be returned via APIs.
-/// todo: pending is not true
 pub struct Node {
     pub config: Config,
     peer_id: PeerId,
@@ -180,8 +179,7 @@ impl Node {
             // We need to 'send' this message to ourselves.
             self.handle_message(peer, message)?;
         } else {
-            eprintln!("Sending direct message to {}", peer);
-            self.message_sender.send((peer, message, SendAsBroadcast::No()))?;
+            self.message_sender.send((peer, message, SendAsBroadcast::Yes()))?;
         }
         Ok(())
     }

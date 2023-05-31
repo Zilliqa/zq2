@@ -7,6 +7,7 @@ use std::{
     iter,
 };
 use tokio::sync::mpsc::UnboundedSender;
+use std::collections::HashMap;
 
 use crate::{
     api,
@@ -35,6 +36,7 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, PeerId, Swarm, Transport,
 };
+
 use node::{Node, SendAsBroadcast};
 use tokio::{
     select,
@@ -44,7 +46,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::message::Message;
 
@@ -78,6 +80,7 @@ pub struct NodeLauncher {
     pub reset_timeout_receiver: UnboundedReceiverStream<()>,
     rpc_launched: bool,
     node_launched: bool,
+    pending_requests: HashMap<RequestId, (PeerId, Vec<u8>)>,
 }
 
 impl NodeLauncher {
@@ -110,6 +113,7 @@ impl NodeLauncher {
             reset_timeout_receiver,
             rpc_launched: false,
             node_launched: false,
+            pending_requests: Default::default(),
         })
     }
 
@@ -262,16 +266,6 @@ impl NodeLauncher {
                         self.node.lock().unwrap().handle_message(source, message).unwrap();
                     }
 
-                    SwarmEvent::ConnectionEstablished { .. } => {},
-                    SwarmEvent::ConnectionClosed { .. } => {},
-                    SwarmEvent::IncomingConnection { .. } => {}
-                    SwarmEvent::IncomingConnectionError { .. } => {},
-                    SwarmEvent::OutgoingConnectionError { .. } => {},
-                    SwarmEvent::BannedPeer { .. } => {},
-                    SwarmEvent::ExpiredListenAddr { .. } => {},
-                    SwarmEvent::ListenerClosed { .. } => {},
-                    SwarmEvent::ListenerError { .. } => {},
-                    SwarmEvent::Dialing { .. } => {},
                     SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(rr_event)) => {
                         match rr_event {
                             request_response::Event::Message{message, peer} => {
@@ -280,15 +274,35 @@ impl NodeLauncher {
                                         let message = serde_json::from_slice::<Message>(&request.0).unwrap();
                                         let message_type = message.name();
                                         debug!(%peer, message_type, "direct message recieved");
+
+                                        let before = Instant::now();
                                         self.node.lock().unwrap().handle_message(peer, message).unwrap();
 
-                                        let resp_tmp = vec![0,1,2];
+                                        eprintln!("Elapsed time: {:.2?}", before.elapsed());
+
+                                        let resp_tmp: Vec<u8> = vec![];
                                         let _ = swarm.behaviour_mut().request_response.send_response(channel, Zq2Response(resp_tmp));
                                     }
                                     request_response::Message::Response {..} => {}
                                 }
                             }
-                            _ => {}
+                            request_response::Event::InboundFailure{peer, request_id, error} => {
+                                error!(%peer, %request_id, %error, "Error with inbound request");
+                            },
+                            request_response::Event::OutboundFailure{peer, request_id, error} => {
+                                error!(%peer, %request_id, %error, "Error with outbound request");
+
+                                // get request id and rebroadcast it
+                                match self.pending_requests.remove(&request_id) {
+                                    Some(value) => {
+                                        swarm.behaviour_mut().gossipsub.publish(topic.hash(), value.1).unwrap();
+                                    }
+                                    None => {
+                                        debug!(%peer, %request_id, "No request ID found when error found!");
+                                    }
+                                }
+                            },
+                            request_response::Event::ResponseSent{..} => {},
                         }
                     },
                     _ => {},
@@ -301,7 +315,8 @@ impl NodeLauncher {
 
                     match send_as_broadcast {
                         SendAsBroadcast::No() => {
-                            let _ = swarm.behaviour_mut().request_response.send_request(&dest, Zq2Request(data));
+                            let request_id = swarm.behaviour_mut().request_response.send_request(&dest, Zq2Request(data.clone()));
+                            self.pending_requests.insert(request_id, (dest, data));
                         },
                         SendAsBroadcast::Yes() => {
                             swarm.behaviour_mut().gossipsub.publish(topic.hash(), data).unwrap();

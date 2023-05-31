@@ -420,6 +420,7 @@ impl Consensus {
                 new_view.view,
                 "storing vote for new view"
             );
+
             // if we are already in the round in which the vote counts and have reached supermajority
             if new_view.view == self.view && supermajority {
                 // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
