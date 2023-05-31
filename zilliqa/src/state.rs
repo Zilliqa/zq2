@@ -107,7 +107,7 @@ impl Transaction {
     /// The second parameter then distinguishes between EIP155 or legacy signatures.
     ///
     /// - ...presumably Zilliqa compatibility is TBA.
-    pub fn signining_hash(&self) -> crypto::Hash {
+    pub fn signing_hash(&self) -> crypto::Hash {
         match self.public_key {
             TransactionPublicKey::Ecdsa(_, use_eip155) => {
                 let mut rlp = RlpStream::new_list(9);
@@ -131,8 +131,7 @@ impl Transaction {
 
     pub fn verify(&self) -> Result<()> {
         if let Some(sig) = self.signature {
-            self.public_key
-                .verify(self.signining_hash().as_bytes(), sig)
+            self.public_key.verify(self.signing_hash().as_bytes(), sig)
         } else {
             Err(anyhow!("Transaction is unsigned"))
         }

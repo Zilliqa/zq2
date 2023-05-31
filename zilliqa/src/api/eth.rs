@@ -309,9 +309,7 @@ fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<Transaction> {
         signature: None,
         public_key: TransactionPublicKey::Ecdsa(
             // dummy temp signature to fill the object
-            *SigningKey::from_slice(&[1_u8; 32])
-                .unwrap()
-                .verifying_key(),
+            *SigningKey::from_slice(&[1_u8; 32]).unwrap().verifying_key(),
             use_eip155,
         ),
         to_addr: Address::from_slice(&to_addr),
@@ -325,7 +323,7 @@ fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<Transaction> {
     } else {
         v - 27
     };
-    let hash = unsigned_transaction.signining_hash();
+    let hash = unsigned_transaction.signing_hash();
     let recovery_id = RecoveryId::from_byte(recovery_id.try_into()?)
         .ok_or_else(|| anyhow!("invalid recovery id: {recovery_id}"))?;
     let signature = Signature::from_scalars(r, s)?;

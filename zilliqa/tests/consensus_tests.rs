@@ -100,7 +100,7 @@ async fn test_manual_transaction_submission() {
         chain_id: 0,
     };
     let tx = Transaction {
-        signature: Some(tx_origin.tx_sign_ecdsa(tx.signining_hash().as_bytes())),
+        signature: Some(tx_origin.tx_sign_ecdsa(tx.signing_hash().as_bytes())),
         ..tx
     };
     manual_consensus.submit_transaction(tx.clone());
