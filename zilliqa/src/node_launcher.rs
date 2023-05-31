@@ -35,7 +35,7 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, PeerId, Swarm, Transport,
 };
-use node::Node;
+use node::{Node, SendAsBroadcast};
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
@@ -72,8 +72,8 @@ pub struct NodeLauncher {
     pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
     pub secret_key: SecretKey,
     pub peer_id: PeerId,
-    pub message_sender: UnboundedSender<(PeerId, Message)>,
-    pub message_receiver: UnboundedReceiverStream<(PeerId, Message)>,
+    pub message_sender: UnboundedSender<(PeerId, Message, SendAsBroadcast)>,
+    pub message_receiver: UnboundedReceiverStream<(PeerId, Message, SendAsBroadcast)>,
     pub reset_timeout_sender: UnboundedSender<()>,
     pub reset_timeout_receiver: UnboundedReceiverStream<()>,
     rpc_launched: bool,
@@ -121,7 +121,7 @@ impl NodeLauncher {
         self.rpc_module.clone()
     }
 
-    pub fn get_message_sender_handle(&self) -> UnboundedSender<(PeerId, Message)> {
+    pub fn get_message_sender_handle(&self) -> UnboundedSender<(PeerId, Message, SendAsBroadcast)> {
         self.message_sender.clone()
     }
 
@@ -302,7 +302,7 @@ impl NodeLauncher {
                     //_ => {}
                 },
                 message = self.message_receiver.next() => {
-                    let (dest, message) = message.expect("message stream should be infinite");
+                    let (dest, message, send_as_broadcast) = message.expect("message stream should be infinite");
                     let message_type = message.name();
                     debug!(%dest, message_type, "sending message");
                     let data = serde_json::to_vec(&message).unwrap();
