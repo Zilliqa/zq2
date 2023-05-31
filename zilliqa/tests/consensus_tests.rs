@@ -97,9 +97,10 @@ async fn test_manual_transaction_submission() {
         to_addr: Address::DEPLOY_CONTRACT,
         amount: 0,
         payload: vec![],
+        chain_id: 0,
     };
     let tx = Transaction {
-        signature: Some(tx_origin.tx_sign_ecdsa(tx.hash().as_bytes())),
+        signature: Some(tx_origin.tx_sign_ecdsa(tx.signing_hash().as_bytes())),
         ..tx
     };
     manual_consensus.submit_transaction(tx.clone());
