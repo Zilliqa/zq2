@@ -4,10 +4,11 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 
-use crate::crypto;
+use crate::crypto::{self, TransactionPublicKey, TransactionSignature};
 
 #[derive(Debug, Clone, Default, Hash)]
 pub struct State {
@@ -77,7 +78,9 @@ pub struct Transaction {
     pub nonce: u64,
     pub gas_price: u128,
     pub gas_limit: u64,
-    pub from_addr: Address,
+    // TODO: rework how unsigned/partially signed transactions are handled, e.g. in tests
+    pub signature: Option<TransactionSignature>,
+    pub public_key: TransactionPublicKey,
     pub to_addr: Address,
     pub amount: u128,
     pub payload: Vec<u8>,
@@ -89,11 +92,23 @@ impl Transaction {
             &self.nonce.to_be_bytes(),
             &self.gas_price.to_be_bytes(),
             &self.gas_limit.to_be_bytes(),
-            &self.from_addr.as_bytes(),
+            &self.addr_from().as_bytes(),
             &self.to_addr.as_bytes(),
             &self.amount.to_be_bytes(),
             &self.payload,
         ])
+    }
+
+    pub fn addr_from(&self) -> Address {
+        self.public_key.into_addr()
+    }
+
+    pub fn verify(&self) -> Result<()> {
+        if let Some(sig) = self.signature {
+            self.public_key.verify(self.hash().as_bytes(), sig)
+        } else {
+            Err(anyhow!("Transaction is unsigned"))
+        }
     }
 }
 

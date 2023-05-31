@@ -11,7 +11,7 @@ use tracing::{debug, trace};
 
 use crate::{
     cfg::Config,
-    crypto::{verify_messages, Hash, PublicKey, SecretKey, Signature},
+    crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
     message::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, NewView, Proposal, QuorumCertificate,
         Vote,
@@ -20,7 +20,7 @@ use crate::{
 };
 
 struct NewViewVote {
-    signatures: Vec<Signature>,
+    signatures: Vec<NodeSignature>,
     signers: Vec<u16>,
     cosigned: BitVec,
     cosigned_weight: u128,
@@ -29,7 +29,7 @@ struct NewViewVote {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Validator {
-    pub public_key: PublicKey,
+    pub public_key: NodePublicKey,
     pub peer_id: PeerId,
     pub weight: u128,
 }
@@ -39,14 +39,14 @@ pub struct Consensus {
     config: Config,
     committee: Vec<Validator>,
     blocks: BTreeMap<Hash, Block>,
-    votes: BTreeMap<Hash, (Vec<Signature>, BitVec, u128)>,
+    votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128)>,
     new_views: BTreeMap<u64, NewViewVote>,
     high_qc: Option<QuorumCertificate>, // none before we receive the first proposal
     view: u64,
     /// The latest finalized block.
     finalized: Hash,
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
-    pending_peers: Vec<(PeerId, PublicKey)>,
+    pending_peers: Vec<(PeerId, NodePublicKey)>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
     new_transactions: BTreeMap<Hash, Transaction>,
     /// Transactions that have been executed and included in a block, and the blocks the are
@@ -60,7 +60,7 @@ pub struct Consensus {
 impl Consensus {
     pub fn new(secret_key: SecretKey, config: Config) -> Self {
         let validator = Validator {
-            public_key: secret_key.public_key(),
+            public_key: secret_key.node_public_key(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             weight: 100,
         };
@@ -112,7 +112,7 @@ impl Consensus {
     pub fn add_peer(
         &mut self,
         peer: PeerId,
-        public_key: PublicKey,
+        public_key: NodePublicKey,
     ) -> Result<Option<(PeerId, Vote)>> {
         if self.pending_peers.contains(&(peer, public_key)) {
             return Ok(None);
@@ -246,6 +246,9 @@ impl Consensus {
         // If we have the transaction in the mempool, remove it.
         self.new_transactions.remove(&txn.hash());
 
+        // Ensure the transaction has a valid signature
+        txn.verify()?;
+
         // If we haven't applied the transaction yet, do so. This ensures we don't execute the transaction twice if we
         // already executed it in the process of proposing this block.
         if let Entry::Vacant(entry) = self.transactions.entry(txn.hash()) {
@@ -267,7 +270,7 @@ impl Consensus {
         let block_view = block.view();
         trace!(block_view, self.view, "handling vote");
         // if we are not the leader of the round in which the vote counts
-        if self.get_leader(block_view + 1).public_key != self.secret_key.public_key() {
+        if self.get_leader(block_view + 1).public_key != self.secret_key.node_public_key() {
             trace!(vote_view = block_view + 1, "skipping vote, not the leader");
             return Ok(None);
         }
@@ -370,7 +373,7 @@ impl Consensus {
 
     pub fn new_view(&mut self, _: PeerId, new_view: NewView) -> Result<Option<Block>> {
         // if we are not the leader of the round in which the vote counts
-        if self.get_leader(new_view.view).public_key != self.secret_key.public_key() {
+        if self.get_leader(new_view.view).public_key != self.secret_key.node_public_key() {
             trace!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
@@ -460,6 +463,7 @@ impl Consensus {
     }
 
     pub fn new_transaction(&mut self, txn: Transaction) -> Result<()> {
+        txn.verify()?; // sanity check
         self.new_transactions.insert(txn.hash(), txn);
 
         Ok(())
@@ -503,13 +507,13 @@ impl Consensus {
         &self,
         view: u64,
         qcs: Vec<QuorumCertificate>,
-        signatures: &[Signature],
+        signatures: &[NodeSignature],
         signers: Vec<u16>,
     ) -> Result<AggregateQc> {
         assert_eq!(qcs.len(), signatures.len());
         assert_eq!(signatures.len(), signers.len());
         Ok(AggregateQc {
-            signature: Signature::aggregate(signatures)?,
+            signature: NodeSignature::aggregate(signatures)?,
             signers,
             view,
             qcs,
@@ -519,12 +523,12 @@ impl Consensus {
     fn qc_from_bits(
         &self,
         block_hash: Hash,
-        signatures: &[Signature],
+        signatures: &[NodeSignature],
         cosigned: BitVec,
     ) -> QuorumCertificate {
         // we've already verified the signatures upon receipt of the responses so there's no need to do it again
         QuorumCertificate {
-            signature: Signature::aggregate(signatures).unwrap(),
+            signature: NodeSignature::aggregate(signatures).unwrap(),
             cosigned,
             block_hash,
         }
@@ -725,7 +729,7 @@ impl Consensus {
     fn index(&self) -> u16 {
         self.committee
             .iter()
-            .find_position(|v| v.public_key == self.secret_key.public_key())
+            .find_position(|v| v.public_key == self.secret_key.node_public_key())
             .expect("node should be in committee")
             .0 as u16
     }

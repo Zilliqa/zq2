@@ -5,7 +5,7 @@ use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    crypto::{Hash, PublicKey, SecretKey, Signature},
+    crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     state::Transaction,
 };
 
@@ -39,7 +39,7 @@ impl Proposal {
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Vote {
     /// A signature on the block_hash.
-    pub signature: Signature,
+    pub signature: NodeSignature,
     pub block_hash: Hash,
     pub index: u16,
 }
@@ -53,7 +53,7 @@ impl Vote {
         }
     }
 
-    pub fn verify(&self, public_key: PublicKey) -> Result<()> {
+    pub fn verify(&self, public_key: NodePublicKey) -> Result<()> {
         public_key.verify(self.block_hash.as_bytes(), self.signature)
     }
 }
@@ -61,7 +61,7 @@ impl Vote {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewView {
     /// A signature on the view, QC hash and validator index.
-    pub signature: Signature,
+    pub signature: NodeSignature,
     pub qc: QuorumCertificate,
     pub view: u64,
     pub index: u16,
@@ -82,7 +82,7 @@ impl NewView {
         }
     }
 
-    pub fn verify(&self, public_key: PublicKey) -> Result<()> {
+    pub fn verify(&self, public_key: NodePublicKey) -> Result<()> {
         let mut message = Vec::new();
         message.extend_from_slice(self.qc.compute_hash().as_bytes());
         message.extend_from_slice(&self.index.to_be_bytes());
@@ -128,15 +128,15 @@ impl Message {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuorumCertificate {
     /// An aggregated signature from `n - f` distinct replicas, built by signing a block hash in a specific view.
-    pub signature: Signature,
+    pub signature: NodeSignature,
     pub cosigned: BitVec,
     pub block_hash: Hash,
 }
 
 impl QuorumCertificate {
-    pub fn new(signatures: &[Signature], cosigned: BitVec, block_hash: Hash) -> Self {
+    pub fn new(signatures: &[NodeSignature], cosigned: BitVec, block_hash: Hash) -> Self {
         QuorumCertificate {
-            signature: Signature::aggregate(signatures).unwrap(),
+            signature: NodeSignature::aggregate(signatures).unwrap(),
             cosigned,
             block_hash,
         }
@@ -154,7 +154,7 @@ impl QuorumCertificate {
 /// A collection of `n - f` [QuorumCertificate]s.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateQc {
-    pub signature: Signature,
+    pub signature: NodeSignature,
     pub signers: Vec<u16>,
     pub view: u64,
     pub qcs: Vec<QuorumCertificate>,
@@ -187,7 +187,7 @@ pub struct BlockHeader {
     pub view: u64, // the proposer's index can be derived from the block's view
     pub hash: Hash,
     pub parent_hash: Hash,
-    pub signature: Signature,
+    pub signature: NodeSignature,
     pub state_root_hash: u64,
     /// The time this block was mined at.
     pub timestamp: SystemTime,
@@ -212,12 +212,12 @@ impl Block {
                 view: 0,
                 hash: Hash::ZERO,
                 parent_hash: Hash::ZERO,
-                signature: Signature::identity(),
+                signature: NodeSignature::identity(),
                 state_root_hash: 0,
                 timestamp: SystemTime::UNIX_EPOCH,
             },
             qc: QuorumCertificate {
-                signature: Signature::identity(),
+                signature: NodeSignature::identity(),
                 cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
                 block_hash: Hash::ZERO,
             },
@@ -290,7 +290,7 @@ impl Block {
         }
     }
 
-    pub fn verify(&self, public_key: PublicKey) -> Result<()> {
+    pub fn verify(&self, public_key: NodePublicKey) -> Result<()> {
         public_key.verify(self.header.hash.as_bytes(), self.header.signature)
     }
 
@@ -306,7 +306,7 @@ impl Block {
         self.header.parent_hash
     }
 
-    pub fn signature(&self) -> Signature {
+    pub fn signature(&self) -> NodeSignature {
         self.header.signature
     }
 
