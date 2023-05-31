@@ -273,17 +273,10 @@ impl NodeLauncher {
                     SwarmEvent::ListenerError { .. } => {},
                     SwarmEvent::Dialing { .. } => {},
                     SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(rr_event)) => {
-                        eprintln!("*** RECVD REQ RESP: {:?}", rr_event);
-
                         match rr_event {
                             request_response::Event::Message{message, peer} => {
                                 match message {
                                     request_response::Message::Request {request, channel, ..} => {
-                                        eprintln!("*** request: {:?}", request);
-
-                                        // Extract data and handle request
-                                        //request.0
-
                                         let message = serde_json::from_slice::<Message>(&request.0).unwrap();
                                         let message_type = message.name();
                                         debug!(%peer, message_type, "direct message recieved");
@@ -292,22 +285,13 @@ impl NodeLauncher {
                                         let resp_tmp = vec![0,1,2];
                                         let _ = swarm.behaviour_mut().request_response.send_response(channel, Zq2Response(resp_tmp));
                                     }
-                                    request_response::Message::Response {response, ..} => {
-                                        eprintln!("*** response: {:?}", response);
-                                    }
+                                    request_response::Message::Response {..} => {}
                                 }
                             }
                             _ => {}
-
                         }
-                    //let request_id = swarm.behaviour_mut().request_response.send_request(&dest, Zq2Request("aa.txt".to_string()));
-
                     },
-                    SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(_)) => {},
-                    SwarmEvent::Behaviour(BehaviourEvent::Kademlia(_)) => {},
-                    SwarmEvent::Behaviour(BehaviourEvent::Identify(_)) => {},
-
-                    //_ => {}
+                    _ => {},
                 },
                 message = self.message_receiver.next() => {
                     let (dest, message, send_as_broadcast) = message.expect("message stream should be infinite");
