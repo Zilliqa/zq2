@@ -1,3 +1,4 @@
+mod erigon;
 pub mod eth;
 mod net;
 mod to_hex;
@@ -8,6 +9,7 @@ pub mod zilliqa;
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = RpcModule::new(node.clone());
 
+    module.merge(erigon::rpc_module(node.clone())).unwrap();
     module.merge(eth::rpc_module(node.clone())).unwrap();
     module.merge(net::rpc_module(node.clone())).unwrap();
     module.merge(web3::rpc_module(node.clone())).unwrap();
