@@ -18,4 +18,8 @@ apt update
 apt -y install nodejs
 node --version
 
+find ./ -name zilliqa
+echo "should be here, right"
+ls ./target/debug/zilliqa
+
 npx hardhat test --network zq2
