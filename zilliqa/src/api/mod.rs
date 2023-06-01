@@ -6,6 +6,7 @@ mod to_hex;
 mod types;
 mod web3;
 pub mod zilliqa;
+use anyhow::anyhow;
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = RpcModule::new(node.clone());

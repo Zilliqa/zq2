@@ -267,10 +267,10 @@ impl Consensus {
         let Ok(block) = self.get_block(&vote.block_hash) else { return Ok(None); }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
         let block_hash = block.hash();
         let block_view = block.view();
-        //trace!(block_view, self.view, "handling vote");
+        trace!(block_view, self.view, "handling vote");
         // if we are not the leader of the round in which the vote counts
         if self.get_leader(block_view + 1).public_key != self.secret_key.node_public_key() {
-            //trace!(vote_view = block_view + 1, "skipping vote, not the leader");
+            trace!(vote_view = block_view + 1, "skipping vote, not the leader");
             return Ok(None);
         }
         // if the vote is too old and does not count anymore

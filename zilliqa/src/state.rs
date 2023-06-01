@@ -133,13 +133,11 @@ impl Transaction {
     }
 
     pub fn verify(&self) -> Result<()> {
-
-        Err(anyhow!("Transaction is unsigned"))
-        //if let Some(sig) = self.signature {
-        //    self.public_key.verify(self.signing_hash().as_bytes(), sig)
-        //} else {
-        //    Err(anyhow!("Transaction is unsigned"))
-        //}
+        if let Some(sig) = self.signature {
+            self.public_key.verify(self.signing_hash().as_bytes(), sig)
+        } else {
+            Err(anyhow!("Transaction is unsigned"))
+        }
     }
 }
 

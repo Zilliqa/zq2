@@ -248,8 +248,8 @@ impl NodeLauncher {
                     })) => {
                         let source = source.expect("message should have a source");
                         let message = serde_json::from_slice::<Message>(&data).unwrap();
-                        //let message_type = message.name();
-                        //debug!(%source, message_type, "message recieved");
+                        let message_type = message.name();
+                        debug!(%source, message_type, "message recieved");
                         self.node.lock().unwrap().handle_message(source, message).unwrap();
                     }
                     _ => {}
