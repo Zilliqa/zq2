@@ -110,7 +110,10 @@ impl Transaction {
     pub fn signing_hash(&self) -> crypto::Hash {
         match self.public_key {
             TransactionPublicKey::Ecdsa(_, use_eip155) => {
-                let mut rlp = RlpStream::new_list(9);
+                let mut rlp = RlpStream::new_list(match use_eip155 {
+                    true => 9,
+                    false => 6,
+                });
                 rlp.append(&self.nonce)
                     .append(&self.gas_price)
                     .append(&self.gas_limit)
