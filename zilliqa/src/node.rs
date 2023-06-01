@@ -5,6 +5,8 @@ use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use tokio::sync::mpsc::UnboundedSender;
 
+use tracing::{error};
+
 use crate::{
     cfg::Config,
     consensus::Consensus,
@@ -89,7 +91,16 @@ impl Node {
                 self.handle_block_response(source, m)?;
             }
             Message::NewTransaction(t) => {
-                self.consensus.new_transaction(t)?;
+
+                match t.verify() {
+                    Ok(_) => {
+                        self.consensus.new_transaction(t)?;
+                    }
+                    Err(e) => {
+                        error!("Received transaction from peer {:?} failed to verify: {}", source, e);
+                        // todo: ban/downrate peer
+                    }
+                }
             }
         }
 
@@ -115,6 +126,13 @@ impl Node {
 
     pub fn create_transaction(&mut self, txn: Transaction) -> Result<Hash> {
         let hash = txn.hash();
+
+        txn.verify()?;
+
+        // Todo: transaction check should:
+        // Check it is well formed + signed
+        // Check nonce greater than current account nonce
+        // Check it is not in the mempool already
 
         // Make sure TX hasn't been seen before
         if self.consensus.seen_tx_already(&hash) {

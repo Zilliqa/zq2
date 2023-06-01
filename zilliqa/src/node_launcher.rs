@@ -257,7 +257,7 @@ impl NodeLauncher {
                 message = self.message_receiver.next() => {
                     let (dest, message) = message.expect("message stream should be infinite");
                     let message_type = message.name();
-                    //debug!(%dest, message_type, "sending message");
+                    debug!(%dest, message_type, "sending message");
                     let data = serde_json::to_vec(&message).unwrap();
 
                     match swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
