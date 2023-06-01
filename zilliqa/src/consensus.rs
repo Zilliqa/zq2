@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use itertools::Itertools;
 use libp2p::PeerId;
-use tracing::{debug, trace};
+use tracing::{debug, trace, info};
 
 use crate::{
     cfg::Config,
@@ -267,10 +267,10 @@ impl Consensus {
         let Ok(block) = self.get_block(&vote.block_hash) else { return Ok(None); }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
         let block_hash = block.hash();
         let block_view = block.view();
-        trace!(block_view, self.view, "handling vote");
+        //trace!(block_view, self.view, "handling vote");
         // if we are not the leader of the round in which the vote counts
         if self.get_leader(block_view + 1).public_key != self.secret_key.node_public_key() {
-            trace!(vote_view = block_view + 1, "skipping vote, not the leader");
+            //trace!(vote_view = block_view + 1, "skipping vote, not the leader");
             return Ok(None);
         }
         // if the vote is too old and does not count anymore
@@ -588,7 +588,7 @@ impl Consensus {
 
     pub fn add_block(&mut self, block: Block) {
         let hash = block.hash();
-        trace!(?hash, "added block");
+        info!(?hash, ?block.header.view, "added block");
         self.blocks.insert(hash, block);
     }
 
@@ -629,6 +629,10 @@ impl Consensus {
 
     pub fn state(&self) -> &State {
         &self.state
+    }
+
+    pub fn seen_tx_already(&self, hash: &Hash) -> bool {
+        self.new_transactions.contains_key(&hash) || self.transactions.contains_key(&hash)
     }
 
     fn get_highest_from_agg<'a>(&self, agg: &'a AggregateQc) -> Result<&'a QuorumCertificate> {

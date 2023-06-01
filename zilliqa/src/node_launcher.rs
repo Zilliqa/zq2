@@ -41,7 +41,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, error};
 
 use crate::message::Message;
 
@@ -248,8 +248,8 @@ impl NodeLauncher {
                     })) => {
                         let source = source.expect("message should have a source");
                         let message = serde_json::from_slice::<Message>(&data).unwrap();
-                        let message_type = message.name();
-                        debug!(%source, message_type, "message recieved");
+                        //let message_type = message.name();
+                        //debug!(%source, message_type, "message recieved");
                         self.node.lock().unwrap().handle_message(source, message).unwrap();
                     }
                     _ => {}
@@ -257,9 +257,15 @@ impl NodeLauncher {
                 message = self.message_receiver.next() => {
                     let (dest, message) = message.expect("message stream should be infinite");
                     let message_type = message.name();
-                    debug!(%dest, message_type, "sending message");
+                    //debug!(%dest, message_type, "sending message");
                     let data = serde_json::to_vec(&message).unwrap();
-                    swarm.behaviour_mut().gossipsub.publish(topic.hash(), data).unwrap();
+
+                    match swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
+                        Ok(_) => {},
+                        Err(e) => {
+                            error!(%e, "failed to publish message");
+                        }
+                    }
                 },
                 () = &mut sleep => {
                     trace!("timeout elapsed");

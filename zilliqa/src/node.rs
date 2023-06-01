@@ -115,6 +115,12 @@ impl Node {
 
     pub fn create_transaction(&mut self, txn: Transaction) -> Result<Hash> {
         let hash = txn.hash();
+
+        // Make sure TX hasn't been seen before
+        if self.consensus.seen_tx_already(&hash) {
+            return Ok(hash);
+        }
+
         self.broadcast_message(Message::NewTransaction(txn))?;
 
         Ok(hash)

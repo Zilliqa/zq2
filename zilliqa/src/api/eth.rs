@@ -290,6 +290,8 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
     let chain_id = node.lock().unwrap().config.eth_chain_id;
     let transaction = transaction_from_rlp(&transaction, chain_id)?;
 
+    transaction.verify()?;
+
     let transaction_hash = H256(node.lock().unwrap().create_transaction(transaction)?.0);
 
     Ok(transaction_hash.to_hex())

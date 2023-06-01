@@ -60,7 +60,12 @@ macro_rules! declare_module {
                     ];
 
                     let start = std::time::SystemTime::now();
-                    let result = $method(params, context).map_err(|e| {
+
+                    let result = std::panic::catch_unwind(|| $method(params, context)).unwrap_or_else(|_| {
+                        Err(anyhow!("Unhandled panic in RPC handler {}", $name))
+                    });
+
+                    let result = result.map_err(|e| {
                         tracing::error!(?e);
                         jsonrpsee::types::ErrorObject::owned(
                             jsonrpsee::types::error::ErrorCode::InternalError.code(),

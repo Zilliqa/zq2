@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use anyhow::anyhow;
+
 use jsonrpsee::{types::Params, RpcModule};
 
 use crate::node::Node;
