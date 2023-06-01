@@ -91,7 +91,7 @@ impl ManualConsensus {
             if i == leader_idx {
                 continue;
             }
-            let (peer_id, msg) = wrapped_node.message_receiver.next().await.unwrap();
+            let (peer_id, msg, _) = wrapped_node.message_receiver.next().await.unwrap();
             assert_eq!(peer_id, leader_id);
             match msg {
                 Message::Vote(Vote {
@@ -121,7 +121,7 @@ impl ManualConsensus {
                 .unwrap()
                 .create_transaction(tx.clone())
                 .unwrap();
-            let (_, msg) = nodes[leader_idx].message_receiver.next().await.unwrap();
+            let (_, msg, _) = nodes[leader_idx].message_receiver.next().await.unwrap();
             match msg.clone() {
                 Message::NewTransaction(Transaction {
                     nonce,
@@ -163,7 +163,7 @@ impl ManualConsensus {
 
         let tx_hashes = transactions.iter().map(|tx| tx.hash()).collect::<Vec<_>>();
 
-        let (_peer_id, proposal_message) = nodes[leader_idx].message_receiver.next().await.unwrap();
+        let (_peer_id, proposal_message, _) = nodes[leader_idx].message_receiver.next().await.unwrap();
         let block = match proposal_message.clone() {
             Message::Proposal(p) => {
                 // TODO: potentially add more assertions on the state here?

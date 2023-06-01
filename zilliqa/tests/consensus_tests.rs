@@ -9,12 +9,12 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use zilliqa::cfg::Config;
 use zilliqa::crypto::SecretKey;
 use zilliqa::message::Message;
-use zilliqa::node::Node;
+use zilliqa::node::{Node, SendAsBroadcast};
 use zilliqa::state::{Address, Transaction};
 
 fn node() -> (
     SecretKey,
-    impl Stream<Item = (PeerId, PeerId, Message)>,
+    impl Stream<Item = (PeerId, PeerId, Message, SendAsBroadcast)>,
     Node,
 ) {
     let secret_key = SecretKey::new().unwrap();
@@ -23,7 +23,7 @@ fn node() -> (
     let message_receiver = UnboundedReceiverStream::new(message_receiver);
     // Augment the `message_receiver` stream to include the sender's `PeerId`.
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
-    let message_receiver = message_receiver.map(move |(dest, message)| (peer_id, dest, message));
+    let message_receiver = message_receiver.map(move |(dest, message, send_as_broadcast)| (peer_id, dest, message, send_as_broadcast));
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     std::mem::forget(reset_timeout_receiver);
 
@@ -63,7 +63,7 @@ async fn test_block_production() {
     // Fail if we don't reach block 10 after 100 messages.
     let mut messages = messages.take(100);
 
-    while let Some((source, _destination, message)) = messages.next().await {
+    while let Some((source, _destination, message, _)) = messages.next().await {
         // Currently, all messages are broadcast, so we replicate that behaviour here.
         for node in nodes.iter_mut() {
             node.handle_message(source, message.clone()).unwrap();
