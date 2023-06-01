@@ -132,11 +132,17 @@ pub struct OtterscanBlock {
     gas_used: u64,
     #[serde(serialize_with = "hex")]
     timestamp: u64,
-    #[serde(serialize_with = "hex")]
     transaction_count: usize,
     uncles: Vec<H256>,
     #[serde(serialize_with = "hex")]
     base_fee_per_gas: u64,
+}
+
+#[derive(Clone, Serialize)]
+pub struct OtterscanBlockWithTransactions {
+    #[serde(flatten)]
+    pub block: OtterscanBlock,
+    pub transactions: Vec<EthTransaction>,
 }
 
 /// A block details object, returned by the Otterscan API.
@@ -209,7 +215,7 @@ impl From<&message::Block> for OtterscanBlock {
 #[serde(rename_all = "camelCase")]
 pub struct OtterscanBlockTransactions {
     #[serde(rename = "fullblock")]
-    pub full_block: EthBlock,
+    pub full_block: OtterscanBlockWithTransactions,
     pub receipts: Vec<EthTransactionReceipt>,
 }
 

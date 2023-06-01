@@ -182,7 +182,10 @@ fn get_transaction_by_hash(
     get_transaction_inner(hash, &node)
 }
 
-fn get_transaction_inner(hash: Hash, node: &MutexGuard<Node>) -> Result<Option<EthTransaction>> {
+pub(super) fn get_transaction_inner(
+    hash: Hash,
+    node: &MutexGuard<Node>,
+) -> Result<Option<EthTransaction>> {
     let Some(transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
     let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
@@ -209,14 +212,10 @@ fn get_transaction_inner(hash: Hash, node: &MutexGuard<Node>) -> Result<Option<E
     Ok(Some(transaction))
 }
 
-fn get_transaction_receipt(
-    params: Params,
-    node: &Arc<Mutex<Node>>,
+pub(super) fn get_transaction_receipt_inner(
+    hash: Hash,
+    node: &MutexGuard<Node>,
 ) -> Result<Option<EthTransactionReceipt>> {
-    let hash: H256 = params.one()?;
-    let hash: Hash = Hash(hash.0);
-
-    let node = node.lock().unwrap();
     let Some(transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
     let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
@@ -272,6 +271,16 @@ fn get_transaction_receipt(
     Ok(Some(receipt))
 }
 
+fn get_transaction_receipt(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<EthTransactionReceipt>> {
+    let hash: H256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+    let node = node.lock().unwrap();
+    get_transaction_receipt_inner(hash, &node)
+}
+
 fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let transaction: String = params.one()?;
     let transaction = transaction
@@ -279,8 +288,7 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
         .ok_or_else(|| anyhow!("no 0x prefix"))?;
     let transaction = hex::decode(transaction)?;
     let chain_id = node.lock().unwrap().config.eth_chain_id;
-    let mut transaction = transaction_from_rlp(&transaction, chain_id)?;
-    transaction.gas_limit = 100000000000000;
+    let transaction = transaction_from_rlp(&transaction, chain_id)?;
 
     let transaction_hash = H256(node.lock().unwrap().create_transaction(transaction)?.0);
 
@@ -393,6 +401,7 @@ mod tests {
                     .unwrap()
             )
         );
+        assert!(transaction.verify().is_ok());
     }
 
     #[test]

@@ -77,10 +77,13 @@ impl State {
     /// address will be added to the transaction.
     pub fn apply_transaction(
         &mut self,
-        txn: Transaction,
+        mut txn: Transaction,
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<TransactionApplyResult> {
+        // Workaround until gas is implemented.
+        txn.gas_limit = 100000000000000;
+
         let context = self.call_context(
             txn.gas_price.into(),
             txn.addr_from().0,
