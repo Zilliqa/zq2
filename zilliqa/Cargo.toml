@@ -6,12 +6,10 @@ edition = "2021"
 [lib]
 name = "zilliqa"
 path = "src/lib.rs"
-test = false
 
 [[bin]]
 name = "zilliqa"
 path = "src/bin/zilliqa.rs"
-test = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
