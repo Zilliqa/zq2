@@ -279,8 +279,7 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
         .ok_or_else(|| anyhow!("no 0x prefix"))?;
     let transaction = hex::decode(transaction)?;
     let chain_id = node.lock().unwrap().config.eth_chain_id;
-    let mut transaction = transaction_from_rlp(&transaction, chain_id).unwrap();
-    transaction.gas_limit = 100000000000000;
+    let transaction = transaction_from_rlp(&transaction, chain_id)?;
 
     let transaction_hash = H256(node.lock().unwrap().create_transaction(transaction)?.0);
 
