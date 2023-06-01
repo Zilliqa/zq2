@@ -393,6 +393,7 @@ mod tests {
                     .unwrap()
             )
         );
+        assert!(transaction.verify().is_ok());
     }
 
     #[test]
