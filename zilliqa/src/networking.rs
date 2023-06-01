@@ -32,8 +32,8 @@ impl request_response::Codec for Zq2MessageCodec {
         _: &Zq2MessageProtocol,
         io: &mut T,
     ) -> io::Result<Self::Request>
-        where
-            T: AsyncRead + Unpin + Send,
+    where
+        T: AsyncRead + Unpin + Send,
     {
         let vec = read_length_prefixed(io, 1_000_000).await?;
 
@@ -49,8 +49,8 @@ impl request_response::Codec for Zq2MessageCodec {
         _: &Zq2MessageProtocol,
         io: &mut T,
     ) -> io::Result<Self::Response>
-        where
-            T: AsyncRead + Unpin + Send,
+    where
+        T: AsyncRead + Unpin + Send,
     {
         let vec = read_length_prefixed(io, 500_000_000).await?; // update transfer maximum
 
@@ -67,8 +67,8 @@ impl request_response::Codec for Zq2MessageCodec {
         io: &mut T,
         Zq2Request(data): Zq2Request,
     ) -> io::Result<()>
-        where
-            T: AsyncWrite + Unpin + Send,
+    where
+        T: AsyncWrite + Unpin + Send,
     {
         write_length_prefixed(io, data).await?;
         io.close().await?;
@@ -82,8 +82,8 @@ impl request_response::Codec for Zq2MessageCodec {
         io: &mut T,
         Zq2Response(data): Zq2Response,
     ) -> io::Result<()>
-        where
-            T: AsyncWrite + Unpin + Send,
+    where
+        T: AsyncWrite + Unpin + Send,
     {
         write_length_prefixed(io, data).await?;
         io.close().await?;

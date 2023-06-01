@@ -1,20 +1,20 @@
 use jsonrpsee::{server::ServerHandle, RpcModule};
+use std::collections::HashMap;
 use std::{
+    iter,
     net::Ipv4Addr,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
-    iter,
 };
 use tokio::sync::mpsc::UnboundedSender;
-use std::collections::HashMap;
 
 use crate::{
     api,
     cfg::Config,
     crypto::{NodePublicKey, SecretKey},
-    node,
     networking::*,
+    node,
 };
 
 use anyhow::{anyhow, Result};

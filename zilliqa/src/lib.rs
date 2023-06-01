@@ -4,7 +4,7 @@ pub mod consensus;
 pub mod crypto;
 mod exec;
 pub mod message;
-pub mod node;
 pub mod networking;
+pub mod node;
 pub mod node_launcher;
 pub mod state;

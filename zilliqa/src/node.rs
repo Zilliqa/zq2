@@ -179,7 +179,8 @@ impl Node {
             // We need to 'send' this message to ourselves.
             self.handle_message(peer, message)?;
         } else {
-            self.message_sender.send((peer, message, SendAsBroadcast::Yes()))?;
+            self.message_sender
+                .send((peer, message, SendAsBroadcast::Yes()))?;
         }
         Ok(())
     }
