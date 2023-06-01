@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use itertools::Itertools;
 use libp2p::PeerId;
-use tracing::{debug, trace, info};
+use tracing::{debug, info, trace};
 
 use crate::{
     cfg::Config,

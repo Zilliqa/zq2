@@ -41,7 +41,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, info, trace, error};
+use tracing::{debug, error, info, trace};
 
 use crate::message::Message;
 

@@ -1,7 +1,7 @@
 //! The Zilliqa API, as documented at <https://dev.zilliqa.com/api/introduction/api-introduction>.
 
-use std::sync::{Arc, Mutex};
 use anyhow::anyhow;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use jsonrpsee::{types::Params, RpcModule};

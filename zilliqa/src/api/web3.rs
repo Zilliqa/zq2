@@ -1,5 +1,5 @@
-use std::sync::{Arc, Mutex};
 use super::*;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use jsonrpsee::{types::Params, RpcModule};

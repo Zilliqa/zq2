@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use tokio::sync::mpsc::UnboundedSender;
 
-use tracing::{error};
+use tracing::error;
 
 use crate::{
     cfg::Config,
@@ -91,13 +91,15 @@ impl Node {
                 self.handle_block_response(source, m)?;
             }
             Message::NewTransaction(t) => {
-
                 match t.verify() {
                     Ok(_) => {
                         self.consensus.new_transaction(t)?;
                     }
                     Err(e) => {
-                        error!("Received transaction from peer {:?} failed to verify: {}", source, e);
+                        error!(
+                            "Received transaction from peer {:?} failed to verify: {}",
+                            source, e
+                        );
                         // todo: ban/downrate peer
                     }
                 }
