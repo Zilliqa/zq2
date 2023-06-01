@@ -5,9 +5,7 @@ use vergen::EmitBuilder;
 // the git commit as an environment variable
 fn main() -> Result<(), Box<dyn Error>> {
     // Emit the instructions
-    EmitBuilder::builder()
-      .all_git()
-      .emit()?;
+    EmitBuilder::builder().all_git().emit()?;
 
     Ok(())
 }
