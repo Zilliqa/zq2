@@ -112,7 +112,7 @@ impl Transaction {
             TransactionPublicKey::Ecdsa(_, use_eip155) => {
                 let mut rlp = RlpStream::new_list(match use_eip155 {
                     true => 9,
-                    false => 6
+                    false => 6,
                 });
                 rlp.append(&self.nonce)
                     .append(&self.gas_price)
