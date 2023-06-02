@@ -33,5 +33,7 @@ pwd
 ls
 
 npm install
-touch scilla-fmt
+echo $PATH
+sudo touch /bin/scilla-fmt
+sudo chmod 755 /bin/scilla-fmt
 npx hardhat test --network zq2
