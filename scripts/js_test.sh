@@ -26,5 +26,6 @@ echo "should be here, right"
 ls ./target/debug/zilliqa
 
 cd -
+pwd
 
 npx hardhat test --network zq2
