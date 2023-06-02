@@ -32,4 +32,5 @@ echo "lets go"
 pwd
 ls
 
+npm install
 npx hardhat test --network zq2
