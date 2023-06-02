@@ -15,7 +15,7 @@ path = "src/bin/zilliqa.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-vergen = { version = "8.0.0", features = ["git", "gitcl"] }
+vergen = { version = "8.2.1", features = ["git", "gitcl"] }
 
 [dependencies]
 anyhow = { version = "1.0.71", features = ["backtrace"] }
