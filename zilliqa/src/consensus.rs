@@ -632,7 +632,7 @@ impl Consensus {
     }
 
     pub fn seen_tx_already(&self, hash: &Hash) -> bool {
-        self.new_transactions.contains_key(&hash) || self.transactions.contains_key(&hash)
+        self.new_transactions.contains_key(hash) || self.transactions.contains_key(hash)
     }
 
     fn get_highest_from_agg<'a>(&self, agg: &'a AggregateQc) -> Result<&'a QuorumCertificate> {
