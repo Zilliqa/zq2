@@ -1,11 +1,12 @@
 //! Manages execution of transactions on state.
 
-use std::{borrow::Cow, time::SystemTime};
+use std::{borrow::Cow, collections::HashSet, time::SystemTime};
 
 use anyhow::{anyhow, Result};
 use evm::{
     backend::{Apply, Backend, Basic},
     executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata},
+    tracing::EventListener,
     Config, CreateScheme, ExitReason,
 };
 use primitive_types::{H160, H256, U256};
@@ -15,6 +16,71 @@ use crate::{
     message::BlockHeader,
     state::{Address, Log, State, Transaction},
 };
+
+#[derive(Default)]
+pub struct TouchedAddressEventListener {
+    pub touched: HashSet<H160>,
+}
+
+impl EventListener for TouchedAddressEventListener {
+    fn event(&mut self, event: evm::tracing::Event<'_>) {
+        match event {
+            evm::tracing::Event::Call {
+                code_address,
+                transfer,
+                ..
+            } => {
+                self.touched.insert(code_address);
+                if let Some(transfer) = transfer {
+                    self.touched.insert(transfer.source);
+                    self.touched.insert(transfer.target); // TODO: Figure out if `transfer.target` is always equal to `code_address`?
+                }
+            }
+            evm::tracing::Event::Create {
+                caller, address, ..
+            } => {
+                self.touched.insert(caller);
+                self.touched.insert(address);
+            }
+            evm::tracing::Event::Suicide {
+                address, target, ..
+            } => {
+                self.touched.insert(address);
+                self.touched.insert(target);
+            }
+            evm::tracing::Event::Exit { .. } => {}
+            evm::tracing::Event::TransactCall {
+                caller, address, ..
+            } => {
+                self.touched.insert(caller);
+                self.touched.insert(address);
+            }
+            evm::tracing::Event::TransactCreate {
+                caller, address, ..
+            } => {
+                self.touched.insert(caller);
+                self.touched.insert(address);
+            }
+            evm::tracing::Event::TransactCreate2 {
+                caller, address, ..
+            } => {
+                self.touched.insert(caller);
+                self.touched.insert(address);
+            }
+            evm::tracing::Event::PrecompileSubcall {
+                code_address,
+                transfer,
+                ..
+            } => {
+                self.touched.insert(code_address);
+                if let Some(transfer) = transfer {
+                    self.touched.insert(transfer.source);
+                    self.touched.insert(transfer.target);
+                }
+            }
+        }
+    }
+}
 
 pub struct CallContext<'a> {
     state: &'a State,
