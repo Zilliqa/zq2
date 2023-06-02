@@ -219,6 +219,16 @@ pub struct OtterscanBlockTransactions {
     pub receipts: Vec<EthTransactionReceipt>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtterscanTransactions {
+    #[serde(rename = "txs")]
+    pub transactions: Vec<EthTransaction>,
+    pub receipts: Vec<EthTransactionReceiptWithTimestamp>,
+    pub first_page: bool,
+    pub last_page: bool,
+}
+
 /// A transaction object, returned by the Ethereum API.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -251,6 +261,14 @@ pub struct EthTransaction {
     pub r: [u8; 32],
     #[serde(serialize_with = "hex")]
     pub s: [u8; 32],
+}
+
+#[derive(Clone, Serialize)]
+pub struct EthTransactionReceiptWithTimestamp {
+    #[serde(flatten)]
+    pub receipt: EthTransactionReceipt,
+    #[serde(serialize_with = "hex")]
+    pub timestamp: u64,
 }
 
 /// A transaction receipt object, returned by the Ethereum API.

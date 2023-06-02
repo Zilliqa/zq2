@@ -172,6 +172,10 @@ impl Node {
         self.consensus.get_transaction_by_hash(hash)
     }
 
+    pub fn get_touched_transactions(&self, address: Address) -> Vec<Hash> {
+        self.consensus.get_touched_transactions(address)
+    }
+
     fn send_message(&mut self, peer: PeerId, message: Message) -> Result<()> {
         if peer == self.peer_id {
             // We need to 'send' this message to ourselves.
