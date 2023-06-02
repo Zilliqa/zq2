@@ -1,5 +1,6 @@
 echo "The CI is running this script."
-cd evm_js_test
+ls
+cd evm_js_tests
 
 # Install dependencies silently on the CI server
 
