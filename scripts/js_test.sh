@@ -33,4 +33,5 @@ pwd
 ls
 
 npm install
+touch scilla-fmt
 npx hardhat test --network zq2
