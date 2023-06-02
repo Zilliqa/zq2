@@ -260,7 +260,7 @@ pub(super) fn get_transaction_receipt_inner(
         to: transaction.to_addr.0,
         cumulative_gas_used: 0,
         effective_gas_price: 0,
-        gas_used: 0,
+        gas_used: 1,
         contract_address: receipt.contract_address.map(|a| a.0),
         logs,
         logs_bloom,
