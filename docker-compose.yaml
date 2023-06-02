@@ -74,3 +74,10 @@ services:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
     ports:
       - "3000:3000"
+
+  otterscan:
+    environment:
+      ERIGON_URL: http://localhost:4201
+    image: otterscan/otterscan:develop
+    ports:
+      - "5100:80"

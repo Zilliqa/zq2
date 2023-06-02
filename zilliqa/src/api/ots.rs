@@ -2,9 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
-use primitive_types::H256;
+use primitive_types::{H160, H256};
+use serde::Deserialize;
 
-use crate::{crypto::Hash, node::Node};
+use crate::{crypto::Hash, node::Node, state::Address};
 
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},
@@ -19,6 +20,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("ots_getBlockDetails", get_block_details),
             ("ots_getBlockDetailsByHash", get_block_details_by_hash),
             ("ots_getBlockTransactions", get_block_transactions),
+            ("ots_hasCode", has_code),
         ],
     )
 }
@@ -95,4 +97,26 @@ fn get_block_transactions(
         full_block,
         receipts,
     }))
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StringOrInteger {
+    String(String),
+    Integer(u64),
+}
+
+fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
+    let mut params = params.sequence();
+    let address: H160 = params.next()?;
+    let _tag: StringOrInteger = params.next()?;
+
+    let empty = node
+        .lock()
+        .unwrap()
+        .get_account(Address(address))?
+        .code
+        .is_empty();
+
+    Ok(!empty)
 }
