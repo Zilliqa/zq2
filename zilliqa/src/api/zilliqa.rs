@@ -21,6 +21,6 @@ fn get_current_mini_epoch(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> 
     Ok(node.lock().unwrap().view().to_string())
 }
 
-fn get_git_commit(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+fn get_git_commit(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(env!("VERGEN_GIT_DESCRIBE").to_string())
 }
