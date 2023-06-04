@@ -33,5 +33,14 @@ jobs:
       run: cargo clippy --all-targets --all-features -- -D warnings
     - name: Test
       run: cargo test --all-targets --all-features
+        #- name: JS test framework
+        #  run: ./scripts/js_test.sh
+
+  e2e:
+    needs: check
+    runs-on: zilliqa/zilliqa:latest
+    steps:
+    - name: Test this.
+      run: cargo test --all-targets --all-features
     - name: JS test framework
       run: ./scripts/js_test.sh
