@@ -137,11 +137,9 @@ impl Node {
         // Check it is not in the mempool already
 
         // Make sure TX hasn't been seen before
-        if self.consensus.seen_tx_already(&hash) {
-            return Ok(hash);
+        if !self.consensus.seen_tx_already(&hash) {
+            self.broadcast_message(Message::NewTransaction(txn))?;
         }
-
-        self.broadcast_message(Message::NewTransaction(txn))?;
 
         Ok(hash)
     }
