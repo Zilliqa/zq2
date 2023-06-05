@@ -1,3 +1,6 @@
 [submodule "evm_js_tests"]
 	path = evm_js_tests
 	url = https://github.com/Zilliqa/evm_js_tests
+[submodule "vendor/openzeppelin-contracts"]
+	path = vendor/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts.git

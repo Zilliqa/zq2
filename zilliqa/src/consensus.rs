@@ -59,14 +59,14 @@ pub struct Consensus {
 }
 
 impl Consensus {
-    pub fn new(secret_key: SecretKey, config: Config) -> Self {
+    pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
         let validator = Validator {
             public_key: secret_key.node_public_key(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             weight: 100,
         };
 
-        Consensus {
+        Ok(Consensus {
             secret_key,
             config,
             committee: vec![validator],
@@ -80,8 +80,8 @@ impl Consensus {
             new_transactions: BTreeMap::new(),
             transactions: BTreeMap::new(),
             transaction_receipts: BTreeMap::new(),
-            state: State::new(),
-        }
+            state: State::new()?,
+        })
     }
 
     fn update_view(&mut self, view: u64) {
