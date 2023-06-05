@@ -52,11 +52,11 @@ jobs:
     - name: lsall
       run: sudo docker cp dummy:/scilla/0 /scilla/
     - name: add scilla to path
-      run: export PATH="/scilla/0/bin:$PATH"
+      run: export PATH="/scilla/0/bin:$PATH" && which scilla-fmt
     - name: lsallplz
-      run: sudo find / -name scilla-fmt;which scilla-fmt
+      run: sudo find / -name scilla-fmt;
     - name: Build
       run: cargo build --all-targets --all-features
     - name: JS test framework
-      run: ./scripts/js_test.sh
+      run: export PATH="/scilla/0/bin:$PATH" && ./scripts/js_test.sh
 
