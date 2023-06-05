@@ -51,8 +51,8 @@ jobs:
       run: ls
     - name: lsall2
       run: docker pull zilliqa/zilliqa:v9.0.4 && docker run -it -d --entrypoint /bin/bash zilliqa/zilliqa:v9.0.4 && docker ps -aqf "name=^zilliqa$" && docker ps
-    - name: thing
-      run: AA=docker ps -aqf "name=^zilliqa$";echo "is $AA"
+        #- name: thing
+      #run: AA=docker ps -aqf "name=^zilliqa$";echo "is $AA"
         # && docker exec -it `docker ps -aqf "name=^zilliqa$"` echo "Hello from container!"
     - name: Do
       run: docker cp zilliqa/zilliqa:v9.0.4:/ ./
