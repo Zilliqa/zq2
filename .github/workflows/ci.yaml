@@ -48,7 +48,7 @@ jobs:
       run: rustup override set nightly && rustup component add clippy rustfmt
     - uses: Swatinem/rust-cache@v2
     - name: lsall
-      run: docker create --name dummy zilliqa/zilliqa:v9.0.4 && docker cp dummy:/ /.
+      run: docker create --name dummy zilliqa/zilliqa:v9.0.4 && docker cp dummy:/ ./
         #- name: lsall2
         #run: docker pull zilliqa/zilliqa:v9.0.4 && docker run -it -d --entrypoint /bin/bash zilliqa/zilliqa:v9.0.4 && docker ps -aqf "name=^zilliqa$" && docker ps
         #- name: thing
