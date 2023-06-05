@@ -3,6 +3,7 @@ use std::borrow::Cow;
 
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
+use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
@@ -47,7 +48,7 @@ impl Node {
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             message_sender,
             reset_timeout,
-            consensus: Consensus::new(secret_key, config),
+            consensus: Consensus::new(secret_key, config)?,
         };
 
         Ok(node)
@@ -145,6 +146,10 @@ impl Node {
 
     pub fn get_account(&self, address: Address) -> Result<Cow<'_, Account>> {
         Ok(self.consensus.state().get_account(address))
+    }
+
+    pub fn get_native_balance(&self, address: Address) -> Result<U256> {
+        self.consensus.state().get_native_balance(address)
     }
 
     pub fn get_latest_block(&self) -> Option<&Block> {

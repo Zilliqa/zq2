@@ -77,9 +77,16 @@ fn estimate_gas(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
     Ok("0x100")
 }
 
-fn get_balance(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
-    // TODO: #70
-    Ok("0xf000000000000000")
+fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let mut params = params.sequence();
+    let address: H160 = params.next()?;
+    let _tag: &str = params.next()?;
+
+    Ok(node
+        .lock()
+        .unwrap()
+        .get_native_balance(Address(address))?
+        .to_hex())
 }
 
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -260,7 +267,7 @@ pub(super) fn get_transaction_receipt_inner(
         to: transaction.to_addr.0,
         cumulative_gas_used: 0,
         effective_gas_price: 0,
-        gas_used: 0,
+        gas_used: 1,
         contract_address: receipt.contract_address.map(|a| a.0),
         logs,
         logs_bloom,
