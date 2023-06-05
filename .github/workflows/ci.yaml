@@ -50,7 +50,7 @@ jobs:
     - name: lsall
       run: ls
     - name: lsall2
-      run: docker pull zilliqa/zilliqa:v9.0.4 && docker exec -i zilliqa/zilliqa:v9.0.4 sh -c 'ls /'
+      run: docker pull zilliqa/zilliqa:v9.0.4 && docker run -i zilliqa/zilliqa:v9.0.4 sh -c 'ls /'
     - name: Do
       run: docker cp -r zilliqa/zilliqa:v9.0.4:/ ./; docker cp zilliqa/zilliqa:v9.0.4:/scilla /.; docker cp zilliqa/zilliqa:v9.0.4:/scilla/0/bin/scilla-checker /.; docker cp zilliqa/zilliqa:v9.0.4:/scilla/0/bin/scilla-server /.
     - name: lsall
