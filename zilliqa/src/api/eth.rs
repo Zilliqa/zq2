@@ -77,9 +77,16 @@ fn estimate_gas(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
     Ok("0x100")
 }
 
-fn get_balance(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
-    // TODO: #70
-    Ok("0xf000000000000000")
+fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let mut params = params.sequence();
+    let address: H160 = params.next()?;
+    let _tag: &str = params.next()?;
+
+    Ok(node
+        .lock()
+        .unwrap()
+        .get_native_balance(Address(address))?
+        .to_hex())
 }
 
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
