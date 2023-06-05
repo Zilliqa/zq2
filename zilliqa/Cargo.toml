@@ -18,7 +18,7 @@ anyhow = { version = "1.0.71", features = ["backtrace"] }
 bitvec = { version = "1.0.1", features = ["serde"] }
 bls-signatures = "0.14.0"
 bls12_381 = "0.8.0"
-clap = { version = "4.3.0", features = ["derive"] }
+clap = { version = "4.3.1", features = ["derive"] }
 evm = { version = "0.39.0", features = ["tracing"] }
 futures = "0.3.28"
 generic-array = "0.14.7"
