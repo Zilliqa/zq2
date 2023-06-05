@@ -48,11 +48,11 @@ jobs:
     - name: lsall
       run: docker create --name dummy zilliqa/zilliqa:v9.0.4
     - name: lsall
-      run: ls /usr && echo $PATH
+      run: sudo mkdir /scilla && sudo mkdir /scilla/0
     - name: lsall
-      run: docker cp dummy:/scilla/0/bin/scilla-fmt /usr/local/bin; docker cp dummy:/scilla/0/bin/scilla-checker /usr/local/bin; docker cp dummy:/scilla/0/bin/scilla-server /usr/local/bin;
+      run: docker cp dummy:/scilla/0 /scilla/0/
     - name: lsallplz
-      run: which scilla-fmt
+      run: sudo find / -name libCryptoUtils.so
     - name: Build
       run: cargo build --all-targets --all-features
     - name: JS test framework
