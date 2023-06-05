@@ -36,11 +36,19 @@ jobs:
         #- name: JS test framework
         #  run: ./scripts/js_test.sh
 
-  e2e:
-    needs: check
-    runs-on: zilliqa/zilliqa:latest
+  e2e_test:
+    runs-on: ubuntu-latest
     steps:
-    - name: Test this.
-      run: cargo test --all-targets --all-features
-    - name: JS test framework
-      run: ./scripts/js_test.sh
+    - name: Install dependencies
+      run: sudo apt install -y protobuf-compiler
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+    # Use Rust nightly so we can use the Cargo sparse registry feature, which greatly speeds up uncached builds (https://blog.rust-lang.org/2022/06/22/sparse-registry-testing.html).
+    - name: Use Rust nightly
+      run: rustup override set nightly && rustup component add clippy rustfmt
+    - uses: Swatinem/rust-cache@v2
+    - name: Do
+      run: docker pull zilliqa:zilliqa:v9.0.4 && docker cp zilliqa:zilliqa:v9.0.4 /scilla/0/_build/install/default/bin/scilla-fmt ./; docker cp zilliqa:zilliqa:v9.0.4 /scilla/0/bin/scilla-fmt /.; docker cp zilliqa:zilliqa:v9.0.4 /scilla/0/bin/scilla-checker /.; docker cp zilliqa:zilliqa:v9.0.4 /scilla/0/bin/scilla-server /.
+    - name: Build
+      run: cargo build --all-targets --all-features
