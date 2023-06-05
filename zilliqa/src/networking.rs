@@ -1,4 +1,4 @@
-use async_std::io;
+use std::io;
 use futures::prelude::*;
 
 use async_trait::async_trait;
@@ -17,7 +17,7 @@ pub struct Zq2Response(pub Vec<u8>);
 
 impl ProtocolName for Zq2MessageProtocol {
     fn protocol_name(&self) -> &[u8] {
-        "/zq2-message/1".as_bytes()
+        b"/zq2-message/1"
     }
 }
 

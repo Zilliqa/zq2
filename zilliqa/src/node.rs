@@ -180,7 +180,7 @@ impl Node {
             self.handle_message(peer, message)?;
         } else {
             self.message_sender
-                .send((peer, message, SendAsBroadcast::Yes()))?;
+                .send((peer, message, SendAsBroadcast::No()))?;
         }
         Ok(())
     }
