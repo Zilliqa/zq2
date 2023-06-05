@@ -1,4 +1,4 @@
-FROM rust:1.69.0-slim-bullseye as builder
+FROM rust:1.70.0-slim-bullseye as builder
 
 RUN apt update -y && \
     apt upgrade -y && \
