@@ -55,7 +55,7 @@ jobs:
       run: AA=docker ps -aqf "name=^zilliqa$";echo "is $AA"
         # && docker exec -it `docker ps -aqf "name=^zilliqa$"` echo "Hello from container!"
     - name: Do
-      run: docker cp -r zilliqa/zilliqa:v9.0.4:/ ./
+      run: docker cp -R zilliqa/zilliqa:v9.0.4:/ ./
         #run: docker cp -r zilliqa/zilliqa:v9.0.4:/ ./; docker cp zilliqa/zilliqa:v9.0.4:/scilla /.; docker cp zilliqa/zilliqa:v9.0.4:/scilla/0/bin/scilla-checker /.; docker cp zilliqa/zilliqa:v9.0.4:/scilla/0/bin/scilla-server /.;
     - name: lsall
       run: ls
