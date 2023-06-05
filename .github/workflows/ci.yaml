@@ -48,7 +48,7 @@ jobs:
       run: rustup override set nightly && rustup component add clippy rustfmt
     - uses: Swatinem/rust-cache@v2
     - name: lsall
-      run: docker create --name dummy zilliqa/zilliqa:v9.0.4 && docker cp dummy:/ ./
+      run: docker create --name dummy zilliqa/zilliqa:v9.0.4 # && docker cp dummy:/ ./
         #- name: lsall2
         #run: docker pull zilliqa/zilliqa:v9.0.4 && docker run -it -d --entrypoint /bin/bash zilliqa/zilliqa:v9.0.4 && docker ps -aqf "name=^zilliqa$" && docker ps
         #- name: thing
@@ -60,6 +60,9 @@ jobs:
     - name: lsall
       run: ls
     - name: lsall
-      run: find ./ -name scilla*
+      run: docker cp dummy:/scilla/0/bin/scilla-fmt /usr/local/bin; docker cp dummy:/scilla/0/bin/scilla-checker /usr/local/bin; docker cp dummy:/scilla/0/bin/scilla-server /usr/local/bin;
+    - name: lsallplz
+      run: which scilla-fmt
     - name: Build
       run: cargo build --all-targets --all-features
+
