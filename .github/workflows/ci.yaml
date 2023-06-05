@@ -52,7 +52,7 @@ jobs:
     - name: lsall2
       run: docker pull zilliqa/zilliqa:v9.0.4 && export XXX=docker run -it -d --entrypoint /bin/bash zilliqa/zilliqa:v9.0.4 && echo $XXX && docker ps && docker exec -it $XXX echo "Hello from container!"
     - name: Do
-      run: docker cp -r zilliqa/zilliqa:v9.0.4:/ ./; docker cp zilliqa/zilliqa:v9.0.4:/scilla /.; docker cp zilliqa/zilliqa:v9.0.4:/scilla/0/bin/scilla-checker /.; docker cp zilliqa/zilliqa:v9.0.4:/scilla/0/bin/scilla-server /.
+      run: docker cp -r zilliqa/zilliqa:v9.0.4:/ ./; docker cp zilliqa/zilliqa:v9.0.4:/scilla /.; docker cp zilliqa/zilliqa:v9.0.4:/scilla/0/bin/scilla-checker /.; docker cp zilliqa/zilliqa:v9.0.4:/scilla/0/bin/scilla-server /.;
     - name: lsall
       run: ls
     - name: lsall
