@@ -30,11 +30,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use zilliqa::{cfg::Config, crypto::SecretKey, message::Message, node::Node};
 
-fn node() -> (
-    SecretKey,
-    BoxStream<'static, (PeerId, PeerId, Message)>,
-    Node,
-) {
+fn node() -> (TestNode, BoxStream<'static, (PeerId, PeerId, Message)>) {
     let secret_key = SecretKey::new().unwrap();
 
     let (message_sender, message_receiver) = mpsc::unbounded_channel();
@@ -47,59 +43,64 @@ fn node() -> (
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     std::mem::forget(reset_timeout_receiver);
 
-    (
+    let node = Node::new(
+        Config::default(),
         secret_key,
-        message_receiver,
-        Node::new(
-            Config::default(),
+        message_sender,
+        reset_timeout_sender,
+    )
+    .unwrap();
+    let node = Arc::new(Mutex::new(node));
+    let rpc_module: RpcModule<Arc<Mutex<Node>>> = zilliqa::api::rpc_module(node.clone());
+
+    (
+        TestNode {
             secret_key,
-            message_sender,
-            reset_timeout_sender,
-        )
-        .unwrap(),
+            inner: node,
+            rpc_module,
+        },
+        message_receiver,
     )
 }
 
+/// A node within a test [Network].
+struct TestNode {
+    secret_key: SecretKey,
+    inner: Arc<Mutex<Node>>,
+    rpc_module: RpcModule<Arc<Mutex<Node>>>,
+}
+
 struct Network {
-    _keys: Vec<SecretKey>,
+    // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
+    // the borrow checker happy.
+    nodes: Vec<TestNode>,
+    /// A stream of messages from each node. The stream items are a tuple of (source, destination, message).
     receivers: Vec<BoxStream<'static, (PeerId, PeerId, Message)>>,
-    nodes: Vec<Arc<Mutex<Node>>>,
-    rpc_modules: Vec<RpcModule<Arc<Mutex<Node>>>>,
 }
 
 impl Network {
     pub fn new(nodes: usize) -> Network {
-        let (keys, receivers, mut nodes): (Vec<_>, Vec<_>, Vec<_>) =
-            (0..nodes).map(|_| node()).multiunzip();
+        let (nodes, receivers): (Vec<_>, Vec<_>) = (0..nodes).map(|_| node()).unzip();
 
-        for (i, node) in nodes.iter_mut().enumerate() {
-            for (j, key) in keys.iter().enumerate() {
-                if i == j {
-                    continue;
+        nodes
+            .iter()
+            .enumerate()
+            .cartesian_product(nodes.iter().enumerate())
+            .for_each(|((i, n1), (j, n2))| {
+                if i != j {
+                    let key = n2.secret_key;
+                    n1.inner
+                        .lock()
+                        .unwrap()
+                        .add_peer(
+                            key.to_libp2p_keypair().public().to_peer_id(),
+                            key.node_public_key(),
+                        )
+                        .unwrap();
                 }
-                node.add_peer(
-                    key.to_libp2p_keypair().public().to_peer_id(),
-                    key.node_public_key(),
-                )
-                .unwrap();
-            }
-        }
+            });
 
-        let (nodes, rpc_modules) = nodes
-            .into_iter()
-            .map(|node| {
-                let node = Arc::new(Mutex::new(node));
-                let rpc_module = zilliqa::api::rpc_module(node.clone());
-                (node, rpc_module)
-            })
-            .unzip();
-
-        Network {
-            _keys: keys,
-            receivers,
-            nodes,
-            rpc_modules,
-        }
+        Network { nodes, receivers }
     }
 
     pub async fn run_for(&mut self, ticks: usize) {
@@ -108,8 +109,9 @@ impl Network {
 
         while let Some((source, _destination, message)) = messages.next().await {
             // Currently, all messages are broadcast, so we replicate that behaviour here.
-            for node in self.nodes.iter_mut() {
-                node.lock()
+            for node in self.nodes.iter() {
+                node.inner
+                    .lock()
                     .unwrap()
                     .handle_message(source, message.clone())
                     .unwrap();
@@ -155,13 +157,13 @@ impl Network {
     }
 
     pub fn node(&self, index: usize) -> MutexGuard<Node> {
-        self.nodes[index].lock().unwrap()
+        self.nodes[index].inner.lock().unwrap()
     }
 
     pub fn provider(&self, index: usize) -> Provider<LocalRpcClient> {
         let client = LocalRpcClient {
             id: Arc::new(AtomicU64::new(0)),
-            rpc_module: self.rpc_modules[index].clone(),
+            rpc_module: self.nodes[index].rpc_module.clone(),
         };
         Provider::new(client)
     }
