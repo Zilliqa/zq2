@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use itertools::Itertools;
 use libp2p::PeerId;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 use crate::{
     cfg::Config,
@@ -590,7 +590,7 @@ impl Consensus {
 
     pub fn add_block(&mut self, block: Block) {
         let hash = block.hash();
-        trace!(?hash, "added block");
+        info!(?hash, ?block.header.view, "added block");
         self.blocks.insert(hash, block);
     }
 
@@ -631,6 +631,10 @@ impl Consensus {
 
     pub fn state(&self) -> &State {
         &self.state
+    }
+
+    pub fn seen_tx_already(&self, hash: &Hash) -> bool {
+        self.new_transactions.contains_key(hash) || self.transactions.contains_key(hash)
     }
 
     fn get_highest_from_agg<'a>(&self, agg: &'a AggregateQc) -> Result<&'a QuorumCertificate> {

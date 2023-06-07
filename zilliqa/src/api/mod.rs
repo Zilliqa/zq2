@@ -6,6 +6,7 @@ mod to_hex;
 mod types;
 mod web3;
 pub mod zilliqa;
+use anyhow::anyhow;
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = RpcModule::new(node.clone());
@@ -60,7 +61,12 @@ macro_rules! declare_module {
                     ];
 
                     let start = std::time::SystemTime::now();
-                    let result = $method(params, context).map_err(|e| {
+
+                    let result = std::panic::catch_unwind(|| $method(params, context)).unwrap_or_else(|_| {
+                        Err(anyhow!("Unhandled panic in RPC handler {}", $name))
+                    });
+
+                    let result = result.map_err(|e| {
                         tracing::error!(?e);
                         jsonrpsee::types::ErrorObject::owned(
                             jsonrpsee::types::error::ErrorCode::InternalError.code(),
