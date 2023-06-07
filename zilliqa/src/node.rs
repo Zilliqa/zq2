@@ -17,7 +17,7 @@ use crate::{
 ///
 /// # Transaction Lifecycle
 /// 1. New transactions are created with a call to [`Node::new_transaction()`].
-/// The node gossips the transaction to the network and self via a [`Message::NewTransaction`] message.
+/// The node gossips the transaction to the network and itself via a [`Message::NewTransaction`] message.
 /// This initial node also stores the transaction hash in `new_transactions`.
 ///
 /// 1. When a node recieves a [`NewTransaction`] via [`Node::handle_message()`], it stores it in `new_transactions`.
