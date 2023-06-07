@@ -299,7 +299,8 @@ impl NodeLauncher {
                                 Err(e) => {
                                     error!(%e, "failed to publish message");
                                 }
-                                },
+                            },
+                        },
                     }
                 },
                 () = &mut sleep => {
