@@ -34,7 +34,7 @@ http = "0.2.9"
 itertools = "0.10.5"
 jsonrpsee = { version = "0.18.2", features = ["server"] }
 k256 = {version = "0.13.1", features = ["serde", "pem"] }
-libp2p = { version = "0.51.0", features = ["gossipsub", "macros", "tcp", "tokio", "noise", "mplex", "mdns", "request-response", "kad", "identify"] }
+libp2p = { version = "0.51.0", features = ["gossipsub", "macros", "tcp", "tokio", "noise", "mplex", "mdns", "request-response", "kad", "identify", "yamux"] }
 async-trait = "0.1.68"
 once_cell = "1.17.1"
 # TODO: Use "0.20.0" when released
