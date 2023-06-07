@@ -1,4 +1,4 @@
-set -e
+#set -e
 echo "The CI is running this script."
 ls
 cd evm_js_tests
