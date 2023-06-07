@@ -24,7 +24,7 @@ fn node() -> (
     // Augment the `message_receiver` stream to include the sender's `PeerId`.
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
     let message_receiver = message_receiver
-        .map(move |(dest, message, send_as_broadcast)| (peer_id, dest, message, send_as_broadcast));
+        .map(move |(dest, message)| (peer_id, dest, message));
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     std::mem::forget(reset_timeout_receiver);
 
@@ -64,7 +64,7 @@ async fn test_block_production() {
     // Fail if we don't reach block 10 after 100 messages.
     let mut messages = messages.take(100);
 
-    while let Some((source, _destination, message, _)) = messages.next().await {
+    while let Some((source, _destination, message)) = messages.next().await {
         // Currently, all messages are broadcast, so we replicate that behaviour here.
         for node in nodes.iter_mut() {
             node.handle_message(source, message.clone()).unwrap();
