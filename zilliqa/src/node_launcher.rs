@@ -37,7 +37,7 @@ use libp2p::{
     tcp, PeerId, Swarm, Transport,
 };
 
-use node::{Node, SendAsBroadcast};
+use node::{Node};
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
@@ -74,8 +74,8 @@ pub struct NodeLauncher {
     pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
     pub secret_key: SecretKey,
     pub peer_id: PeerId,
-    pub message_sender: UnboundedSender<(PeerId, Message, SendAsBroadcast)>,
-    pub message_receiver: UnboundedReceiverStream<(PeerId, Message, SendAsBroadcast)>,
+    pub message_sender: UnboundedSender<(Option<PeerId>, Message)>,
+    pub message_receiver: UnboundedReceiverStream<(Option<PeerId>, Message)>,
     pub reset_timeout_sender: UnboundedSender<()>,
     pub reset_timeout_receiver: UnboundedReceiverStream<()>,
     rpc_launched: bool,
@@ -125,7 +125,7 @@ impl NodeLauncher {
         self.rpc_module.clone()
     }
 
-    pub fn get_message_sender_handle(&self) -> UnboundedSender<(PeerId, Message, SendAsBroadcast)> {
+    pub fn get_message_sender_handle(&self) -> UnboundedSender<(Option<PeerId>, Message)> {
         self.message_sender.clone()
     }
 
@@ -279,7 +279,6 @@ impl NodeLauncher {
                                         let before = Instant::now();
                                         self.node.lock().unwrap().handle_message(peer, message).unwrap();
 
-                                        //let resp_tmp: Vec<u8> = vec![];
                                         let _ = swarm.behaviour_mut().request_response.send_response(channel, Message::EmptyMessage(vec![]));
                                     }
                                     request_response::Message::Response {..} => {}
@@ -307,17 +306,18 @@ impl NodeLauncher {
                     _ => {},
                 },
                 message = self.message_receiver.next() => {
-                    let (dest, message, send_as_broadcast) = message.expect("message stream should be infinite");
+                    let (dest, message) = message.expect("message stream should be infinite");
                     let message_type = message.name();
-                    debug!(%dest, message_type, "sending message");
                     let data = serde_json::to_vec(&message).unwrap();
 
-                    match send_as_broadcast {
-                        SendAsBroadcast::No() => {
+                    match dest {
+                        Some(dest) => {
+                            debug!(%dest, message_type, "sending direct message");
                             let request_id = swarm.behaviour_mut().request_response.send_request(&dest, message);
                             self.pending_requests.insert(request_id, (dest, data));
                         },
-                        SendAsBroadcast::Yes() => {
+                        None => {
+                            debug!(message_type, "sending gossip message");
                             swarm.behaviour_mut().gossipsub.publish(topic.hash(), data).unwrap();
                         },
                     }

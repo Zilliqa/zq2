@@ -30,23 +30,16 @@ use crate::{
 pub struct Node {
     pub config: Config,
     peer_id: PeerId,
-    message_sender: UnboundedSender<(PeerId, Message, SendAsBroadcast)>,
+    message_sender: UnboundedSender<(Option<PeerId>, Message)>,
     reset_timeout: UnboundedSender<()>,
     consensus: Consensus,
-}
-
-// Whether the message should be sent direct or broadcast
-#[derive(Debug, Clone)]
-pub enum SendAsBroadcast {
-    Yes(),
-    No(),
 }
 
 impl Node {
     pub fn new(
         config: Config,
         secret_key: SecretKey,
-        message_sender: UnboundedSender<(PeerId, Message, SendAsBroadcast)>,
+        message_sender: UnboundedSender<(Option<PeerId>, Message)>,
         reset_timeout: UnboundedSender<()>,
     ) -> Result<Node> {
         let node = Node {
@@ -181,14 +174,14 @@ impl Node {
             self.handle_message(peer, message)?;
         } else {
             self.message_sender
-                .send((peer, message, SendAsBroadcast::No()))?;
+                .send((Some(peer), message))?;
         }
         Ok(())
     }
 
     fn broadcast_message(&mut self, message: Message) -> Result<()> {
         self.message_sender
-            .send((PeerId::random(), message.clone(), SendAsBroadcast::Yes()))?;
+            .send((None, message.clone()))?;
         // Also handle it ourselves
         self.handle_message(self.peer_id, message)?;
         Ok(())

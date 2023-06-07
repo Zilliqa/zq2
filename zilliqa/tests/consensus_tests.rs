@@ -9,12 +9,12 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use zilliqa::cfg::Config;
 use zilliqa::crypto::SecretKey;
 use zilliqa::message::Message;
-use zilliqa::node::{Node, SendAsBroadcast};
+use zilliqa::node::{Node};
 use zilliqa::state::{Address, Transaction};
 
 fn node() -> (
     SecretKey,
-    impl Stream<Item = (PeerId, PeerId, Message, SendAsBroadcast)>,
+    impl Stream<Item = (PeerId, Option<PeerId>, Message)>,
     Node,
 ) {
     let secret_key = SecretKey::new().unwrap();
