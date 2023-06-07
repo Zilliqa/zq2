@@ -6,30 +6,30 @@ use libp2p::core::upgrade::{read_length_prefixed, write_length_prefixed, Protoco
 pub use libp2p::request_response::{self, ProtocolSupport, RequestId, ResponseChannel};
 
 #[derive(Debug, Clone)]
-pub struct Zq2MessageProtocol();
+pub struct MessageProtocol();
 #[derive(Clone)]
-pub struct Zq2MessageCodec();
+pub struct MessageCodec();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Zq2Request(pub Vec<u8>);
+pub struct Request(pub Vec<u8>);
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Zq2Response(pub Vec<u8>);
+pub struct Response(pub Vec<u8>);
 
-impl ProtocolName for Zq2MessageProtocol {
+impl ProtocolName for MessageProtocol {
     fn protocol_name(&self) -> &[u8] {
         b"/zq2-message/1"
     }
 }
 
 #[async_trait]
-impl request_response::Codec for Zq2MessageCodec {
-    type Protocol = Zq2MessageProtocol;
-    type Request = Zq2Request;
-    type Response = Zq2Response;
+impl request_response::Codec for MessageCodec {
+    type Protocol = MessageProtocol;
+    type Request = Request;
+    type Response = Response;
 
     async fn read_request<T>(
         &mut self,
-        _: &Zq2MessageProtocol,
+        _: &MessageProtocol,
         io: &mut T,
     ) -> io::Result<Self::Request>
     where
@@ -41,12 +41,12 @@ impl request_response::Codec for Zq2MessageCodec {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
 
-        Ok(Zq2Request(vec))
+        Ok(Request(vec))
     }
 
     async fn read_response<T>(
         &mut self,
-        _: &Zq2MessageProtocol,
+        _: &MessageProtocol,
         io: &mut T,
     ) -> io::Result<Self::Response>
     where
@@ -58,14 +58,14 @@ impl request_response::Codec for Zq2MessageCodec {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
 
-        Ok(Zq2Response(vec))
+        Ok(Response(vec))
     }
 
     async fn write_request<T>(
         &mut self,
-        _: &Zq2MessageProtocol,
+        _: &MessageProtocol,
         io: &mut T,
-        Zq2Request(data): Zq2Request,
+        Request(data): Request,
     ) -> io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,
@@ -78,9 +78,9 @@ impl request_response::Codec for Zq2MessageCodec {
 
     async fn write_response<T>(
         &mut self,
-        _: &Zq2MessageProtocol,
+        _: &MessageProtocol,
         io: &mut T,
-        Zq2Response(data): Zq2Response,
+        Response(data): Response,
     ) -> io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,

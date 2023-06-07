@@ -13,7 +13,7 @@ use crate::{
     api,
     cfg::Config,
     crypto::{NodePublicKey, SecretKey},
-    networking::*,
+    networking::{request_response, MessageCodec, MessageProtocol, Response, Request, ProtocolSupport, RequestId},
     node,
 };
 
@@ -62,7 +62,7 @@ struct Args {
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
-    request_response: request_response::Behaviour<Zq2MessageCodec>,
+    request_response: request_response::Behaviour<MessageCodec>,
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
     kademlia: Kademlia<MemoryStore>,
@@ -80,7 +80,6 @@ pub struct NodeLauncher {
     pub reset_timeout_receiver: UnboundedReceiverStream<()>,
     rpc_launched: bool,
     node_launched: bool,
-    pending_requests: HashMap<RequestId, (PeerId, Vec<u8>)>,
 }
 
 impl NodeLauncher {
@@ -113,7 +112,6 @@ impl NodeLauncher {
             reset_timeout_receiver,
             rpc_launched: false,
             node_launched: false,
-            pending_requests: Default::default(),
         })
     }
 
@@ -172,8 +170,8 @@ impl NodeLauncher {
 
         let behaviour = Behaviour {
             request_response: request_response::Behaviour::new(
-                Zq2MessageCodec(),
-                iter::once((Zq2MessageProtocol(), ProtocolSupport::Full)),
+                MessageCodec(),
+                iter::once((MessageProtocol(), ProtocolSupport::Full)),
                 Default::default(),
             ),
             gossipsub: gossipsub::Behaviour::new(
@@ -266,9 +264,7 @@ impl NodeLauncher {
                         self.node.lock().unwrap().handle_message(source, message).unwrap();
                     }
 
-                    SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(rr_event)) => {
-                        match rr_event {
-                            request_response::Event::Message{message, peer} => {
+                    SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer })) => {
                                 match message {
                                     request_response::Message::Request {request, channel, ..} => {
                                         let message = serde_json::from_slice::<Message>(&request.0).unwrap();
@@ -277,30 +273,12 @@ impl NodeLauncher {
 
                                         self.node.lock().unwrap().handle_message(peer, message).unwrap();
 
-                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Zq2Response(vec![1]));
+                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Response(vec![1]));
                                     }
                                     request_response::Message::Response {..} => {}
                                 }
-                            }
-                            request_response::Event::InboundFailure{peer, request_id, error} => {
-                                error!(%peer, %request_id, %error, "Error with inbound request");
-                            },
-                            request_response::Event::OutboundFailure{peer, request_id, error} => {
-                                error!(%peer, %request_id, %error, "Error with outbound request");
+                    }
 
-                                // get request id and rebroadcast it
-                                match self.pending_requests.remove(&request_id) {
-                                    Some(value) => {
-                                        swarm.behaviour_mut().gossipsub.publish(topic.hash(), value.1).unwrap();
-                                    }
-                                    None => {
-                                        debug!(%peer, %request_id, "No request ID found when error found!");
-                                    }
-                                }
-                            },
-                            request_response::Event::ResponseSent{..} => {},
-                        }
-                    },
                     _ => {},
                 },
                 message = self.message_receiver.next() => {
@@ -311,9 +289,7 @@ impl NodeLauncher {
                     match dest {
                         Some(dest) => {
                             debug!(%dest, message_type, "sending direct message");
-                            let request_id = swarm.behaviour_mut().request_response.send_request(&dest, Zq2Request(data.clone()));
-                            self.pending_requests.insert(request_id, (dest, data));
-                            //swarm.behaviour_mut().gossipsub.publish(topic.hash(), data).unwrap();
+                            let request_id = swarm.behaviour_mut().request_response.send_request(&dest, Request(data.clone()));
                         },
                         None => {
                             debug!(message_type, "sending gossip message");
