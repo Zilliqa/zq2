@@ -28,6 +28,7 @@ use crate::{
 ///
 /// 1. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
 /// Successfully executed transactions are added to `transactions` so they can be returned via APIs.
+#[derive(Debug)]
 pub struct Node {
     pub config: Config,
     peer_id: PeerId,

@@ -63,7 +63,7 @@ impl<'de> Deserialize<'de> for NodeSignature {
 }
 
 /// The set signatures that are accepted for signing and validating transactions.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransactionSignature {
     Ecdsa(EcdsaSignature),
 }
@@ -118,7 +118,7 @@ impl<'de> Deserialize<'de> for NodePublicKey {
 
 /// The set of public keys that are accepted for signing and validating transactions, each
 /// corresponding to a variant of `TransactionSignature`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransactionPublicKey {
     /// Ethereum-compatible ECDA signatures. The second element determines whether
     /// it is used for EIP155 compatible signatures (if false, assumes legacy ones).
