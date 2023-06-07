@@ -2,6 +2,7 @@
 name = "zilliqa"
 version = "0.1.0"
 edition = "2021"
+build = "src/build.rs"
 
 [lib]
 name = "zilliqa"
@@ -14,6 +15,9 @@ path = "src/bin/zilliqa.rs"
 [features]
 # Enable tests which assert contract bytecode is correct and reproducible. Enabled in CI.
 test_contract_bytecode = []
+
+[build-dependencies]
+vergen = { version = "8.2.1", features = ["git", "gitcl"] }
 
 [dependencies]
 anyhow = { version = "1.0.71", features = ["backtrace"] }
