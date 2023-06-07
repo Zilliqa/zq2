@@ -50,7 +50,7 @@ jobs:
     - name: lsall
       run: sudo mkdir -p /scilla/0
     - name: lsall
-      run: sudo docker cp dummy:/scilla/0 /scilla/ && sudo docker cp dummy:/usr/local/lib/libCryptoUtils.so /usr/local/lib/
+      run: sudo docker cp dummy:/scilla/0 /scilla/ && sudo docker cp dummy:/usr/local/lib/ /usr/local/lib/
     - name: add scilla to path
       run: export PATH="/scilla/0/bin:$PATH" && which scilla-fmt
     - name: lsallplz
