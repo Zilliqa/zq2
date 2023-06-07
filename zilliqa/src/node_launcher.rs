@@ -278,9 +278,7 @@ impl NodeLauncher {
                                         let before = Instant::now();
                                         self.node.lock().unwrap().handle_message(peer, message).unwrap();
 
-                                        eprintln!("Elapsed time: {:.2?}", before.elapsed());
-
-                                        let resp_tmp: Vec<u8> = vec![];
+                                        let resp_tmp: Vec<u8> = vec![0];
                                         let _ = swarm.behaviour_mut().request_response.send_response(channel, Zq2Response(resp_tmp));
                                     }
                                     request_response::Message::Response {..} => {}
