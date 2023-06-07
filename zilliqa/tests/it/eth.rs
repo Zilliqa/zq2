@@ -4,7 +4,8 @@ use ethabi::ethereum_types::U64;
 use ethers::{
     prelude::DeploymentTxFactory,
     providers::{Middleware, Provider},
-    types::TransactionRequest,
+    types::{transaction::eip2718::TypedTransaction, TransactionRequest},
+    utils::keccak256,
 };
 use primitive_types::{H160, H256};
 use serde::Serialize;
@@ -126,7 +127,16 @@ async fn send_transaction() {
         .parse()
         .unwrap();
     let tx = TransactionRequest::pay(to, 123);
+
+    // Transform the transaction to its final form, so we can caculate the expected hash.
+    let mut tx: TypedTransaction = tx.into();
+    wallet.fill_transaction(&mut tx, None).await.unwrap();
+    let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
+    let expected_hash = H256::from_slice(&keccak256(tx.rlp_signed(&sig)));
+
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+
+    assert_eq!(hash, expected_hash);
 
     network
         .run_until_async(

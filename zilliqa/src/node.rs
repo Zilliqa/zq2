@@ -1,12 +1,11 @@
-use crate::state::{Transaction, TransactionReceipt};
+use crate::state::{SignedTransaction, TransactionReceipt};
+
 use std::borrow::Cow;
 
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
-
-use tracing::error;
 
 use crate::{
     cfg::Config,
@@ -94,18 +93,7 @@ impl Node {
             }
             Message::RequestResponse => {}
             Message::NewTransaction(t) => {
-                match t.verify() {
-                    Ok(_) => {
-                        self.consensus.new_transaction(t)?;
-                    }
-                    Err(e) => {
-                        error!(
-                            "Received transaction from peer {:?} failed to verify: {}",
-                            source, e
-                        );
-                        // todo: ban/downrate peer
-                    }
-                }
+                self.consensus.new_transaction(t)?;
             }
         }
 
@@ -129,7 +117,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn create_transaction(&mut self, txn: Transaction) -> Result<Hash> {
+    pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
         let hash = txn.hash();
 
         txn.verify()?;
@@ -189,7 +177,7 @@ impl Node {
         self.consensus.get_transaction_receipt(hash)
     }
 
-    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<Transaction> {
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<SignedTransaction> {
         self.consensus.get_transaction_by_hash(hash)
     }
 
