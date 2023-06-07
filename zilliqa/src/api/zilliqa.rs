@@ -1,5 +1,6 @@
 //! The Zilliqa API, as documented at <https://dev.zilliqa.com/api/introduction/api-introduction>.
 
+use anyhow::anyhow;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
