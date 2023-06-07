@@ -9,7 +9,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use zilliqa::cfg::Config;
 use zilliqa::crypto::SecretKey;
 use zilliqa::message::Message;
-use zilliqa::node::{Node};
+use zilliqa::node::Node;
 use zilliqa::state::{Address, Transaction};
 
 fn node() -> (

@@ -13,7 +13,10 @@ use crate::{
     api,
     cfg::Config,
     crypto::{NodePublicKey, SecretKey},
-    networking::{request_response, MessageCodec, MessageProtocol, Response, Request, ProtocolSupport, RequestId},
+    networking::{
+        request_response, MessageCodec, MessageProtocol, ProtocolSupport, Request, RequestId,
+        Response,
+    },
     node,
 };
 
@@ -37,7 +40,7 @@ use libp2p::{
     tcp, PeerId, Swarm, Transport,
 };
 
-use node::{Node};
+use node::Node;
 use tokio::{
     select,
     signal::{self, unix::SignalKind},

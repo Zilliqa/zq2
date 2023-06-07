@@ -1,5 +1,5 @@
-use std::io;
 use futures::prelude::*;
+use std::io;
 
 use async_trait::async_trait;
 use libp2p::core::upgrade::{read_length_prefixed, write_length_prefixed, ProtocolName};

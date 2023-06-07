@@ -172,15 +172,13 @@ impl Node {
             // We need to 'send' this message to ourselves.
             self.handle_message(peer, message)?;
         } else {
-            self.message_sender
-                .send((Some(peer), message))?;
+            self.message_sender.send((Some(peer), message))?;
         }
         Ok(())
     }
 
     fn broadcast_message(&mut self, message: Message) -> Result<()> {
-        self.message_sender
-            .send((None, message.clone()))?;
+        self.message_sender.send((None, message.clone()))?;
         // Also handle it ourselves
         self.handle_message(self.peer_id, message)?;
         Ok(())
