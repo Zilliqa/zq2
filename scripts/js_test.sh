@@ -1,8 +1,17 @@
+set -e
 echo "The CI is running this script."
 ls
 cd evm_js_tests
 git pull
 ls
+
+# Start network early....
+cd zilliqa
+cargo run -- 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 & 2>&1 > out.txt
+cargo run -- 62070b1a3b5b30236e43b4f1bfd617e1af7474635558314d46127a708b9d302e --no-jsonrpc & 2>&1 > out1.txt
+cargo run -- 56d7a450d75c6ba2706ef71da6ca80143ec4971add9c44d7d129a12fa7d3a364 --no-jsonrpc & 2>&1 > out2.txt
+cargo run -- db670cbff28f4b15297d03fafdab8f5303d68b7591bd59e31eaef215dd0f246a --no-jsonrpc & 2>&1 > out3.txt
+cd ../
 
 # Install dependencies silently on the CI server
 
@@ -35,45 +44,16 @@ ls
 npm install
 echo $PATH
 
-#sudo apt-get update \
-#    && apt-get install -y software-properties-common \
-#    && add-apt-repository ppa:avsm/ppa -y \
-#    && apt-get update && apt-get install -y --no-install-recommends \
-#    git \
-#    curl \
-#    wget \
-#    cmake \
-#    build-essential \
-#    m4 \
-#    ocaml \
-#    opam \
-#    pkg-config \
-#    zlib1g-dev \
-#    libgmp-dev \
-#    libffi-dev \
-#    libssl-dev \
-#    libsecp256k1-dev \
-#    libboost-system-dev \
-#    libboost-test-dev \
-#    libboost-dev \
-#    libpcre3-dev \
-#    && rm -rf /var/lib/apt/lists/*
-#
-#export OCAML_VERSION=4.11.2
-#
-## CMake gets installed here
-#export PATH="/root/.local/bin:${PATH}"
-#
-#wget https://github.com/Kitware/CMake/releases/download/v3.19.3/cmake-3.19.3-Linux-x86_64.sh
-#mkdir -p "${HOME}"/.local
-#bash ./cmake-3.19.3-Linux-x86_64.sh --skip-license --prefix="${HOME}"/.local/
-#
-#RUN bash scripts/install_cmake_ubuntu.sh \
-#    && make opamdep-ci \
-#    && echo '. ~/.opam/opam-init/init.sh > /dev/null 2> /dev/null || true ' >> ~/.bashrc \
-#    && eval $(opam env) && \
-#    make
-#
-##sudo touch /bin/scilla-fmt
-##sudo chmod 755 /bin/scilla-fmt
-npx hardhat test --network zq2
+DEBUG=true MOCHA_TIMEOUT=40000 npx hardhat test --bail 2>&1 > npx.out
+
+retVal=$?
+
+pkill -INT zilliqa
+cat npx.out
+if [ $retVal -ne 0 ]; then
+    echo "!!!!!! Error with JS integration test !!!!!!"
+    exit 1
+fi
+
+echo "Success with integration test"
+exit 0
