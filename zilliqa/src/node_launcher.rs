@@ -30,12 +30,12 @@ use libp2p::{
         store::MemoryStore, GetRecordOk, Kademlia, KademliaEvent, PeerRecord, QueryResult, Quorum,
         Record,
     },
-    mdns, mplex,
+    mdns,
     multiaddr::{Multiaddr, Protocol},
     multihash::Multihash,
     noise,
-    swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, PeerId, Swarm, Transport,
+    swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
+    tcp, yamux, PeerId, Transport,
 };
 
 use node::Node;
@@ -47,7 +47,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::message::Message;
 
@@ -165,8 +165,8 @@ impl NodeLauncher {
 
         let transport = tcp::tokio::Transport::new(tcp::Config::default())
             .upgrade(upgrade::Version::V1)
-            .authenticate(noise::NoiseAuthenticated::xx(&key_pair)?)
-            .multiplex(mplex::MplexConfig::new())
+            .authenticate(noise::Config::new(&key_pair)?)
+            .multiplex(yamux::Config::default())
             .boxed();
 
         let behaviour = Behaviour {
@@ -191,7 +191,7 @@ impl NodeLauncher {
             )),
         };
 
-        let mut swarm = Swarm::with_tokio_executor(transport, behaviour, peer_id);
+        let mut swarm = SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id).build();
 
         let mut addr: Multiaddr = "/ip4/0.0.0.0".parse().unwrap();
 
@@ -294,8 +294,12 @@ impl NodeLauncher {
                         },
                         None => {
                             debug!(message_type, "sending gossip message");
-                            swarm.behaviour_mut().gossipsub.publish(topic.hash(), data).unwrap();
-                        },
+                            match swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    error!(%e, "failed to publish message");
+                                }
+                                },
                     }
                 },
                 () = &mut sleep => {

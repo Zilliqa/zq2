@@ -7,19 +7,21 @@ use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use itertools::Itertools;
 use libp2p::PeerId;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 use crate::{
     cfg::Config,
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
+    exec::TouchedAddressEventListener,
     exec::TransactionApplyResult,
     message::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, NewView, Proposal, QuorumCertificate,
         Vote,
     },
-    state::{State, Transaction, TransactionReceipt},
+    state::{Address, State, Transaction, TransactionReceipt},
 };
 
+#[derive(Debug)]
 struct NewViewVote {
     signatures: Vec<NodeSignature>,
     signers: Vec<u16>,
@@ -35,6 +37,7 @@ pub struct Validator {
     pub weight: u128,
 }
 
+#[derive(Debug)]
 pub struct Consensus {
     secret_key: SecretKey,
     config: Config,
@@ -56,17 +59,20 @@ pub struct Consensus {
     transaction_receipts: BTreeMap<Hash, TransactionReceipt>,
     /// The account store.
     state: State,
+    /// An index of address to a list of transaction hashes, for which this address appeared somewhere in the
+    /// transaction trace. The list of transations is ordered by execution order.
+    touched_address_index: BTreeMap<Address, Vec<Hash>>,
 }
 
 impl Consensus {
-    pub fn new(secret_key: SecretKey, config: Config) -> Self {
+    pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
         let validator = Validator {
             public_key: secret_key.node_public_key(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             weight: 100,
         };
 
-        Consensus {
+        Ok(Consensus {
             secret_key,
             config,
             committee: vec![validator],
@@ -80,8 +86,9 @@ impl Consensus {
             new_transactions: BTreeMap::new(),
             transactions: BTreeMap::new(),
             transaction_receipts: BTreeMap::new(),
-            state: State::new(),
-        }
+            state: State::new()?,
+            touched_address_index: BTreeMap::new(),
+        })
     }
 
     fn update_view(&mut self, view: u64) {
@@ -242,25 +249,40 @@ impl Consensus {
         txn: Transaction,
         current_block: BlockHeader,
     ) -> Result<Option<TransactionApplyResult>> {
+        let hash = txn.hash();
+
         // If we have the transaction in the mempool, remove it.
-        self.new_transactions.remove(&txn.hash());
+        self.new_transactions.remove(&hash);
 
         // Ensure the transaction has a valid signature
         txn.verify()?;
 
         // If we haven't applied the transaction yet, do so. This ensures we don't execute the transaction twice if we
         // already executed it in the process of proposing this block.
-        if let Entry::Vacant(entry) = self.transactions.entry(txn.hash()) {
-            let result = self.state.apply_transaction(
-                txn.clone(),
-                self.config.eth_chain_id,
-                current_block,
-            )?;
+        if let Entry::Vacant(entry) = self.transactions.entry(hash) {
+            let mut listener = TouchedAddressEventListener::default();
+            let result = evm::tracing::using(&mut listener, || {
+                self.state
+                    .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
+            })?;
             entry.insert(txn);
+            for address in listener.touched {
+                self.touched_address_index
+                    .entry(Address(address))
+                    .or_default()
+                    .push(hash);
+            }
             Ok(Some(result))
         } else {
             Ok(None)
         }
+    }
+
+    pub fn get_touched_transactions(&self, address: Address) -> Vec<Hash> {
+        self.touched_address_index
+            .get(&address)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn vote(&mut self, _: PeerId, vote: Vote) -> Result<Option<(Block, Vec<Transaction>)>> {
@@ -588,7 +610,7 @@ impl Consensus {
 
     pub fn add_block(&mut self, block: Block) {
         let hash = block.hash();
-        trace!(?hash, "added block");
+        info!(?hash, ?block.header.view, "added block");
         self.blocks.insert(hash, block);
     }
 
@@ -629,6 +651,10 @@ impl Consensus {
 
     pub fn state(&self) -> &State {
         &self.state
+    }
+
+    pub fn seen_tx_already(&self, hash: &Hash) -> bool {
+        self.new_transactions.contains_key(hash) || self.transactions.contains_key(hash)
     }
 
     fn get_highest_from_agg<'a>(&self, agg: &'a AggregateQc) -> Result<&'a QuorumCertificate> {

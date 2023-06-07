@@ -4,13 +4,12 @@
 //! should not care about the implementations. This gives us some confidence that we could replace the implementations
 //! in the future if we wanted to.
 
-use k256::ecdsa::signature::Signer;
 use std::fmt::Display;
 
 use anyhow::{anyhow, Result};
 use bls12_381::G2Affine;
 use bls_signatures::Serialize as BlsSerialize;
-use k256::ecdsa::{signature::Verifier, Signature as EcdsaSignature, VerifyingKey};
+use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
 use rand_core;
 use serde::{
     de::{self, Unexpected},
@@ -64,7 +63,7 @@ impl<'de> Deserialize<'de> for NodeSignature {
 }
 
 /// The set signatures that are accepted for signing and validating transactions.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransactionSignature {
     Ecdsa(EcdsaSignature),
 }
@@ -119,7 +118,7 @@ impl<'de> Deserialize<'de> for NodePublicKey {
 
 /// The set of public keys that are accepted for signing and validating transactions, each
 /// corresponding to a variant of `TransactionSignature`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransactionPublicKey {
     /// Ethereum-compatible ECDA signatures. The second element determines whether
     /// it is used for EIP155 compatible signatures (if false, assumes legacy ones).
@@ -130,7 +129,7 @@ impl TransactionPublicKey {
     pub fn verify(&self, message: &[u8], signature: TransactionSignature) -> Result<()> {
         let result = match (self, signature) {
             (TransactionPublicKey::Ecdsa(pubkey, _), TransactionSignature::Ecdsa(sig)) => {
-                pubkey.verify(message, &sig).map_err(|e| anyhow!(e))
+                pubkey.verify_prehash(message, &sig).map_err(|e| anyhow!(e))
             }
             #[allow(unreachable_patterns)] // will be necessary with >1 signature types
             _ => Err(anyhow!("Mismatch between signature and public key type!")),
@@ -236,15 +235,19 @@ impl SecretKey {
     }
 
     pub fn tx_sign_ecdsa(&self, message: &[u8]) -> TransactionSignature {
-        TransactionSignature::Ecdsa(self.cast_to_ecdsa().sign(message))
+        TransactionSignature::Ecdsa(
+            self.cast_to_ecdsa()
+                .sign_prehash_recoverable(message)
+                .unwrap()
+                .0,
+        )
     }
 
     pub fn to_libp2p_keypair(&self) -> libp2p::identity::Keypair {
-        libp2p::identity::Keypair::Ed25519(
-            libp2p::identity::ed25519::SecretKey::from_bytes(self.bytes)
-                .expect("`SecretKey::from_bytes` returns an `Err` only when the length is not 32, we know the length is 32")
-                .into(),
-        )
+        let keypair: libp2p::identity::ed25519::Keypair = libp2p::identity::ed25519::SecretKey::try_from_bytes(self.bytes)
+            .expect("`SecretKey::from_bytes` returns an `Err` only when the length is not 32, we know the length is 32")
+            .into();
+        keypair.into()
     }
 }
 

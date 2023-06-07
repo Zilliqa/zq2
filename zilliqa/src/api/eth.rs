@@ -77,9 +77,16 @@ fn estimate_gas(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
     Ok("0x100")
 }
 
-fn get_balance(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
-    // TODO: #70
-    Ok("0xf000000000000000")
+fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let mut params = params.sequence();
+    let address: H160 = params.next()?;
+    let _tag: &str = params.next()?;
+
+    Ok(node
+        .lock()
+        .unwrap()
+        .get_native_balance(Address(address))?
+        .to_hex())
 }
 
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -182,7 +189,10 @@ fn get_transaction_by_hash(
     get_transaction_inner(hash, &node)
 }
 
-fn get_transaction_inner(hash: Hash, node: &MutexGuard<Node>) -> Result<Option<EthTransaction>> {
+pub(super) fn get_transaction_inner(
+    hash: Hash,
+    node: &MutexGuard<Node>,
+) -> Result<Option<EthTransaction>> {
     let Some(transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
     let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
@@ -193,14 +203,14 @@ fn get_transaction_inner(hash: Hash, node: &MutexGuard<Node>) -> Result<Option<E
         block_number: block.view(),
         from: transaction.addr_from().0,
         gas: 0,
-        gas_price: transaction.gas_price as u64,
+        gas_price: transaction.gas_price,
         hash: H256(hash.0),
         input: transaction.payload.clone(),
         nonce: transaction.nonce,
         // `to` should be `None` if `transaction` is a contract creation.
         to: (transaction.to_addr != Address::DEPLOY_CONTRACT).then_some(transaction.to_addr.0),
         transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
-        value: transaction.amount as u64,
+        value: transaction.amount,
         v: 0,
         r: [0; 32],
         s: [0; 32],
@@ -209,14 +219,10 @@ fn get_transaction_inner(hash: Hash, node: &MutexGuard<Node>) -> Result<Option<E
     Ok(Some(transaction))
 }
 
-fn get_transaction_receipt(
-    params: Params,
-    node: &Arc<Mutex<Node>>,
+pub(super) fn get_transaction_receipt_inner(
+    hash: Hash,
+    node: &MutexGuard<Node>,
 ) -> Result<Option<EthTransactionReceipt>> {
-    let hash: H256 = params.one()?;
-    let hash: Hash = Hash(hash.0);
-
-    let node = node.lock().unwrap();
     let Some(transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
     let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
@@ -261,7 +267,7 @@ fn get_transaction_receipt(
         to: transaction.to_addr.0,
         cumulative_gas_used: 0,
         effective_gas_price: 0,
-        gas_used: 0,
+        gas_used: 1,
         contract_address: receipt.contract_address.map(|a| a.0),
         logs,
         logs_bloom,
@@ -272,6 +278,16 @@ fn get_transaction_receipt(
     Ok(Some(receipt))
 }
 
+fn get_transaction_receipt(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<EthTransactionReceipt>> {
+    let hash: H256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+    let node = node.lock().unwrap();
+    get_transaction_receipt_inner(hash, &node)
+}
+
 fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let transaction: String = params.one()?;
     let transaction = transaction
@@ -279,8 +295,7 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
         .ok_or_else(|| anyhow!("no 0x prefix"))?;
     let transaction = hex::decode(transaction)?;
     let chain_id = node.lock().unwrap().config.eth_chain_id;
-    let mut transaction = transaction_from_rlp(&transaction, chain_id).unwrap();
-    transaction.gas_limit = 100000000000000;
+    let transaction = transaction_from_rlp(&transaction, chain_id)?;
 
     let transaction_hash = H256(node.lock().unwrap().create_transaction(transaction)?.0);
 
@@ -393,6 +408,7 @@ mod tests {
                     .unwrap()
             )
         );
+        assert!(transaction.verify().is_ok());
     }
 
     #[test]
