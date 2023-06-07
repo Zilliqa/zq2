@@ -12,8 +12,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
         node,
         [
             ("GetCurrentMiniEpoch", get_current_mini_epoch),
-            ("GetVersion", get_git_commit)
-        ]
+            ("GetVersion", get_git_commit),
+        ],
     )
 }
 
