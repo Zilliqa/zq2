@@ -55,8 +55,6 @@ jobs:
       run: export PATH="/scilla/0/bin:$PATH" && which scilla-fmt
     - name: xxx
       run: sudo apt install libsecp256k1-dev
-    - name: Start binaries
-      run: ./scripts/start_network.sh
     - name: JS test framework
       run: export PATH="/scilla/0/bin:$PATH" && ./scripts/js_test.sh
 
