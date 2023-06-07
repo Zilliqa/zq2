@@ -1,4 +1,4 @@
-use primitive_types::{H128, H160, H256, H384, H512, H768};
+use primitive_types::{H128, H160, H256, H384, H512, H768, U128, U256, U512};
 
 /// A version of [hex::ToHex] which is also implemented for integer types. This version also prefixes the produced
 /// string with `"0x"` and omits leading zeroes for quantities (types with fixed lengths).
@@ -63,10 +63,15 @@ int_impl!(u64);
 int_impl!(u128);
 int_impl!(isize);
 int_impl!(usize);
+int_impl!(U128);
+int_impl!(U256);
+int_impl!(U512);
 
 #[cfg(test)]
 mod tests {
     use std::assert_eq;
+
+    use primitive_types::U128;
 
     use super::ToHex;
 
@@ -88,6 +93,20 @@ mod tests {
     #[test]
     fn test_int_to_hex() {
         let cases = [(0, "0x0"), (1, "0x1")];
+
+        for (val, expected) in cases {
+            let actual = val.to_hex();
+            assert_eq!(expected, actual);
+        }
+    }
+
+    #[test]
+    fn test_big_int_to_hex() {
+        let cases = [
+            (U128::zero(), "0x0"),
+            (256.into(), "0x100"),
+            (U128::MAX, "0xffffffffffffffffffffffffffffffff"),
+        ];
 
         for (val, expected) in cases {
             let actual = val.to_hex();

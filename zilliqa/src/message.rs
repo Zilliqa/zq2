@@ -193,6 +193,19 @@ pub struct BlockHeader {
     pub timestamp: SystemTime,
 }
 
+impl BlockHeader {
+    pub fn genesis() -> Self {
+        BlockHeader {
+            view: 0,
+            hash: Hash::ZERO,
+            parent_hash: Hash::ZERO,
+            signature: NodeSignature::identity(),
+            state_root_hash: Hash::ZERO,
+            timestamp: SystemTime::UNIX_EPOCH,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub header: BlockHeader,
@@ -208,14 +221,7 @@ pub struct Block {
 impl Block {
     pub fn genesis(committee_size: usize) -> Block {
         Block {
-            header: BlockHeader {
-                view: 0,
-                hash: Hash::ZERO,
-                parent_hash: Hash::ZERO,
-                signature: NodeSignature::identity(),
-                state_root_hash: Hash::ZERO,
-                timestamp: SystemTime::UNIX_EPOCH,
-            },
+            header: BlockHeader::genesis(),
             qc: QuorumCertificate {
                 signature: NodeSignature::identity(),
                 cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
