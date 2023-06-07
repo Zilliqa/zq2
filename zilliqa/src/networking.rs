@@ -4,6 +4,7 @@ use futures::prelude::*;
 use async_trait::async_trait;
 use libp2p::core::upgrade::{read_length_prefixed, write_length_prefixed, ProtocolName};
 pub use libp2p::request_response::{self, ProtocolSupport, RequestId, ResponseChannel};
+use tracing::error;
 
 #[derive(Debug, Clone)]
 pub struct Zq2MessageProtocol();
@@ -55,6 +56,7 @@ impl request_response::Codec for Zq2MessageCodec {
         let vec = read_length_prefixed(io, 500_000_000).await?; // update transfer maximum
 
         if vec.is_empty() {
+            error!("empty response - in request-response. This causes your connections to drop.");
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
 
