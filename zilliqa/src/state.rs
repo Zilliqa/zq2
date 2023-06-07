@@ -3,22 +3,61 @@ use std::{
     borrow::Cow,
     collections::{hash_map::DefaultHasher, BTreeMap},
     hash::{Hash, Hasher},
+    str::FromStr,
 };
 
 use anyhow::{anyhow, Result};
-use primitive_types::{H160, H256};
+use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{self, TransactionPublicKey, TransactionSignature};
+use crate::{
+    contracts,
+    crypto::{self, TransactionPublicKey, TransactionSignature},
+};
 
 #[derive(Debug, Clone, Default, Hash)]
 pub struct State {
     accounts: BTreeMap<Address, Account>,
 }
 
+/// Const version of `impl From<u128> for U256`
+const fn u128_to_u256(value: u128) -> U256 {
+    let mut ret = [0; 4];
+    ret[0] = value as u64;
+    ret[1] = (value >> 64) as u64;
+    U256(ret)
+}
+
+const GENESIS: [(Address, U256); 2] = [
+    // Address with private key 0000000000000000000000000000000000000000000000000000000000000001
+    (
+        Address(H160(
+            *b"\x7e\x5f\x45\x52\x09\x1a\x69\x12\x5d\x5d\xfc\xb7\xb8\xc2\x65\x90\x29\x39\x5b\xdf",
+        )),
+        u128_to_u256(5000 * 10u128.pow(18)),
+    ),
+    // Address with private key 0000000000000000000000000000000000000000000000000000000000000002
+    (
+        Address(H160(
+            *b"\x2B\x5A\xD5\xc4\x79\x5c\x02\x65\x14\xf8\x31\x7c\x7a\x21\x5E\x21\x8D\xcC\xD6\xcF",
+        )),
+        u128_to_u256(2000 * 10u128.pow(18)),
+    ),
+];
+
 impl State {
-    pub fn new() -> State {
-        Default::default()
+    pub fn new() -> Result<State> {
+        let mut state = State::default();
+
+        state.deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone());
+
+        for (address, balance) in GENESIS {
+            // We don't care about these logs.
+            let mut logs = vec![];
+            state.set_native_balance(&mut logs, address, balance)?;
+        }
+
+        Ok(state)
     }
 
     // TODO(#85): Fix this implementation. "The internal algorithm is not specified, and so it and its hashes should not be
@@ -48,6 +87,9 @@ impl Address {
     /// Address of the contract which allows you to deploy other contracts.
     pub const DEPLOY_CONTRACT: Address = Address(H160::zero());
 
+    /// Address of the native token ERC-20 contract.
+    pub const NATIVE_TOKEN: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"));
+
     pub fn from_bytes(bytes: [u8; 20]) -> Address {
         Address(bytes.into())
     }
@@ -66,6 +108,14 @@ impl Address {
     }
 }
 
+impl FromStr for Address {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Address(s.parse()?))
+    }
+}
+
 #[derive(Debug, Clone, Default, Hash)]
 pub struct Account {
     pub nonce: u64,
@@ -74,7 +124,7 @@ pub struct Account {
 }
 
 /// A transaction body, broadcast before execution and then persisted as part of a block after the transaction is executed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Transaction {
     pub nonce: u64,
     pub gas_price: u128,

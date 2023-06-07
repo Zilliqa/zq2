@@ -3,6 +3,7 @@ use std::borrow::Cow;
 
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
+use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
@@ -27,6 +28,7 @@ use crate::{
 ///
 /// 1. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
 /// Successfully executed transactions are added to `transactions` so they can be returned via APIs.
+#[derive(Debug)]
 pub struct Node {
     pub config: Config,
     peer_id: PeerId,
@@ -47,7 +49,7 @@ impl Node {
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             message_sender,
             reset_timeout,
-            consensus: Consensus::new(secret_key, config),
+            consensus: Consensus::new(secret_key, config)?,
         };
 
         Ok(node)
@@ -145,6 +147,10 @@ impl Node {
 
     pub fn get_account(&self, address: Address) -> Result<Cow<'_, Account>> {
         Ok(self.consensus.state().get_account(address))
+    }
+
+    pub fn get_native_balance(&self, address: Address) -> Result<U256> {
+        self.consensus.state().get_native_balance(address)
     }
 
     pub fn get_latest_block(&self) -> Option<&Block> {
