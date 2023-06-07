@@ -77,9 +77,16 @@ fn estimate_gas(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
     Ok("0x100")
 }
 
-fn get_balance(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
-    // TODO: #70
-    Ok("0xf000000000000000")
+fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let mut params = params.sequence();
+    let address: H160 = params.next()?;
+    let _tag: &str = params.next()?;
+
+    Ok(node
+        .lock()
+        .unwrap()
+        .get_native_balance(Address(address))?
+        .to_hex())
 }
 
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -196,14 +203,14 @@ pub(super) fn get_transaction_inner(
         block_number: block.view(),
         from: transaction.addr_from().0,
         gas: 0,
-        gas_price: transaction.gas_price as u64,
+        gas_price: transaction.gas_price,
         hash: H256(hash.0),
         input: transaction.payload.clone(),
         nonce: transaction.nonce,
         // `to` should be `None` if `transaction` is a contract creation.
         to: (transaction.to_addr != Address::DEPLOY_CONTRACT).then_some(transaction.to_addr.0),
         transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
-        value: transaction.amount as u64,
+        value: transaction.amount,
         v: 0,
         r: [0; 32],
         s: [0; 32],
