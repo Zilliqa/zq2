@@ -1,9 +1,8 @@
+use cita_trie::{Hasher, PatriciaTrie, Trie, DB};
 use rlp::RlpStream;
-use std::{
-    borrow::Cow,
-    collections::{hash_map::DefaultHasher, BTreeMap},
-    hash::{Hash, Hasher},
-};
+use sha3::Digest;
+use sha3::Keccak256;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256};
@@ -11,33 +10,87 @@ use serde::{Deserialize, Serialize};
 
 use crate::crypto::{self, TransactionPublicKey, TransactionSignature};
 
-#[derive(Debug, Clone, Default, Hash)]
-pub struct State {
-    accounts: BTreeMap<Address, Account>,
+#[derive(Debug)]
+pub struct TrieHasher;
+
+impl Hasher for TrieHasher {
+    const LENGTH: usize = 32;
+
+    fn digest(&self, data: &[u8]) -> Vec<u8> {
+        Keccak256::digest(data).to_vec()
+    }
 }
 
-impl State {
-    pub fn new() -> State {
-        Default::default()
+#[derive(Debug)]
+pub struct State<D: DB> {
+    db: Arc<D>,
+    accounts: PatriciaTrie<D, TrieHasher>,
+}
+
+impl<D: DB> State<D> {
+    pub fn new(database: Arc<D>) -> State<D> {
+        Self {
+            db: database.clone(),
+            accounts: PatriciaTrie::new(database, Arc::new(TrieHasher)),
+        }
     }
 
-    // TODO(#85): Fix this implementation. "The internal algorithm is not specified, and so it and its hashes should not be
-    // relied upon over releases."
-    pub fn root_hash(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        self.accounts.hash(&mut hasher);
-        hasher.finish()
+    pub fn from_root(database: Arc<D>, root_hash: crypto::Hash) -> Result<Self> {
+        Ok(Self {
+            db: database.clone(),
+            accounts: PatriciaTrie::from(database, Arc::new(TrieHasher), root_hash.as_bytes())?,
+        })
     }
 
-    pub fn get_account(&self, address: Address) -> Cow<'_, Account> {
-        self.accounts
-            .get(&address)
-            .map(Cow::Borrowed)
-            .unwrap_or(Cow::Owned(Account::default()))
+    pub fn try_clone(&self) -> Result<Self> {
+        Ok(State::from_root(self.db.clone(), self.root_hash()?)?)
     }
 
-    pub fn get_account_mut(&mut self, address: Address) -> &mut Account {
-        self.accounts.entry(address).or_default()
+    pub fn root_hash(&self) -> Result<crypto::Hash> {
+        Ok(crypto::Hash(self.accounts.root()?.as_slice().try_into()?))
+    }
+
+    /// Returns an error on failures to access the state tree, or decode the account; or an empty
+    /// account if one didn't exist yet
+    pub fn try_get_account(&self, address: Address) -> Result<Account<D>> {
+        Ok(self
+            .accounts
+            .get(&Keccak256::digest(address.as_bytes()))?
+            .map(|bytes| bincode::deserialize::<Account<D>>(&bytes))
+            .unwrap_or(Ok(Account::new(self.db)))?)
+    }
+
+    /// Returns a default (empty) account if an existing one cannot be fetched for any reason
+    pub fn get_account(&self, address: Address) -> Account<D> {
+        self.try_get_account(address)
+            .unwrap_or(Account::new(self.db))
+    }
+
+    /// Returns an error if there are any issues accessing the storage trie
+    pub fn try_has_account(&self, address: Address) -> Result<bool> {
+        Ok(self
+            .accounts
+            .contains(&Keccak256::digest(address.as_bytes()))?)
+    }
+
+    /// Returns false if the account cannot be accessed in the storage trie
+    pub fn has_account(&self, address: Address) -> bool {
+        self.try_has_account(address).unwrap_or(false)
+    }
+
+    pub fn save_account(&mut self, address: Address, account: Account<D>) -> Result<()> {
+        Ok(self.accounts.insert(
+            crypto::Hash::compute(&[&address.as_bytes()])
+                .as_bytes()
+                .to_vec(),
+            bincode::serialize(&account)?,
+        )?)
+    }
+
+    pub fn delete_account(&mut self, address: Address) -> Result<bool> {
+        Ok(self
+            .accounts
+            .remove(&Keccak256::digest(address.as_bytes()))?)
     }
 }
 
@@ -66,11 +119,74 @@ impl Address {
     }
 }
 
-#[derive(Debug, Clone, Default, Hash)]
-pub struct Account {
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
+pub struct Account<D: DB> {
     pub nonce: u64,
+    #[serde(with = "serde_bytes")]
     pub code: Vec<u8>,
-    pub storage: BTreeMap<H256, H256>,
+    #[serde(with = "serde_bytes")]
+    pub storage_root: Vec<u8>,
+    #[serde(skip)]
+    #[serde(default = "Option::default")]
+    trie_db: Option<Arc<D>>,
+}
+
+// Derives are dumb and can't derive Option<T>::None when T doesn't implement Default
+// https://github.com/rust-lang/rust/issues/26925
+impl<D: DB> Default for Account<D> {
+    fn default() -> Self {
+        Self {
+            nonce: u64::default(),
+            code: Vec::default(),
+            storage_root: Vec::default(),
+            trie_db: Option::default(),
+        }
+    }
+}
+
+impl<D: DB> Account<D> {
+    pub fn new(db: Arc<D>) -> Self {
+        Self {
+            trie_db: Some(db),
+            ..Self::default()
+        }
+    }
+
+    pub fn storage(&self) -> Result<PatriciaTrie<D, TrieHasher>> {
+        Ok(PatriciaTrie::from(
+            self.trie_db.ok_or(anyhow!("No db available"))?,
+            Arc::new(TrieHasher),
+            &self.storage_root,
+        )?)
+    }
+
+    pub fn get_storage(&self, index: H256) -> H256 {
+        match self.storage().map(|storage| storage.get(&index.as_bytes())) {
+            // from_slice will only panic if vec.len != H256::len_bytes, i.e. 32
+            Ok(Ok(Some(vec))) if vec.len() == 32 => H256::from_slice(&vec),
+            _ => H256::default(),
+        }
+    }
+
+    pub fn set_storage(&self, index: H256, value: H256) -> Result<()> {
+        Ok(self
+            .storage()?
+            .insert(index.as_bytes().to_vec(), value.as_bytes().to_vec())?)
+    }
+
+    pub fn remove_storage(&self, index: H256) -> Result<bool> {
+        Ok(self.storage()?.remove(index.as_bytes())?)
+    }
+
+    pub fn clear_storage(&self) -> Result<()> {
+        // TODO: consider caching the root hash of an empty trie somewhere instead of this
+        Ok(self.storage_root = PatriciaTrie::new(
+            self.trie_db
+                .ok_or(anyhow!("Database not available to load or modify storage!"))?,
+            Arc::new(TrieHasher),
+        )
+        .root().map_err(|_| anyhow!("Failed to create empty root when clearing account storage! This really shouldn't happen."))?)
+    }
 }
 
 /// A transaction body, broadcast before execution and then persisted as part of a block after the transaction is executed.

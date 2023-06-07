@@ -1,7 +1,7 @@
 use crate::state::{Transaction, TransactionReceipt};
-use std::borrow::Cow;
 
 use anyhow::{anyhow, Result};
+use cita_trie::DB;
 use libp2p::PeerId;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -27,27 +27,28 @@ use crate::{
 ///
 /// 1. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
 /// Successfully executed transactions are added to `transactions` so they can be returned via APIs.
-pub struct Node {
+pub struct Node<D: DB> {
     pub config: Config,
     peer_id: PeerId,
     message_sender: UnboundedSender<(PeerId, Message)>,
     reset_timeout: UnboundedSender<()>,
-    consensus: Consensus,
+    consensus: Consensus<D>,
 }
 
-impl Node {
+impl<D: DB> Node<D> {
     pub fn new(
         config: Config,
         secret_key: SecretKey,
         message_sender: UnboundedSender<(PeerId, Message)>,
         reset_timeout: UnboundedSender<()>,
-    ) -> Result<Node> {
+        database: D,
+    ) -> Result<Node<D>> {
         let node = Node {
             config: config.clone(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             message_sender,
             reset_timeout,
-            consensus: Consensus::new(secret_key, config),
+            consensus: Consensus::new(secret_key, config, database),
         };
 
         Ok(node)
@@ -143,7 +144,7 @@ impl Node {
         )
     }
 
-    pub fn get_account(&self, address: Address) -> Result<Cow<'_, Account>> {
+    pub fn get_account(&self, address: Address) -> Result<Account<D>> {
         Ok(self.consensus.state().get_account(address))
     }
 

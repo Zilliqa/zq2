@@ -1,6 +1,7 @@
 //! Manages execution of transactions on state.
 
-use std::{borrow::Cow, time::SystemTime};
+use cita_trie::DB;
+use std::time::SystemTime;
 
 use anyhow::{anyhow, Result};
 use evm::{
@@ -16,8 +17,8 @@ use crate::{
     state::{Address, Log, State, Transaction},
 };
 
-pub struct CallContext<'a> {
-    state: &'a State,
+pub struct CallContext<'a, D: DB> {
+    state: &'a State<D>,
     gas_price: U256,
     origin: H160,
     chain_id: u64,
@@ -46,14 +47,14 @@ impl TransactionApplyResult {
     }
 }
 
-impl State {
+impl<D: DB> State<D> {
     fn call_context(
         &self,
         gas_price: U256,
         origin: H160,
         chain_id: u64,
         current_block: BlockHeader,
-    ) -> CallContext<'_> {
+    ) -> CallContext<'_, D> {
         CallContext {
             state: self,
             gas_price,
@@ -65,9 +66,9 @@ impl State {
 
     fn executor<'a>(
         &'a self,
-        context: &'a CallContext<'a>,
+        context: &'a CallContext<'a, D>,
         gas_limit: u64,
-    ) -> StackExecutor<MemoryStackState<CallContext<'a>>, ()> {
+    ) -> StackExecutor<MemoryStackState<CallContext<'a, D>>, ()> {
         let stack_state_metadata = StackSubstateMetadata::new(gas_limit, &CONFIG);
         let stack_state = MemoryStackState::new(stack_state_metadata, context);
         StackExecutor::new_with_precompiles(stack_state, &CONFIG, &())
@@ -158,7 +159,7 @@ impl State {
                     storage,
                     reset_storage,
                 } => {
-                    let account = self.get_account_mut(Address(address));
+                    let account = self.get_account(Address(address));
 
                     if let Some(code) = code {
                         account.code = code;
@@ -168,26 +169,22 @@ impl State {
                     // TODO(#81): Handle changes in `basic.balance`.
 
                     if reset_storage {
-                        account.storage.clear();
+                        account.clear_storage();
                     }
 
                     for (index, value) in storage {
                         if value.is_zero() {
-                            account.storage.remove(&index);
+                            account.remove_storage(index);
                         } else {
-                            account.storage.insert(index, value);
+                            account.set_storage(index, value);
                         }
                     }
                 }
                 Apply::Delete { address } => {
-                    let account = self.get_account_mut(Address(address));
-                    *account = Default::default();
+                    self.delete_account(Address(address));
                 }
             }
         }
-
-        let account = self.get_account_mut(txn.addr_from());
-        account.nonce += 1;
 
         info!("transaction processed");
 
@@ -230,7 +227,7 @@ impl State {
     }
 }
 
-impl<'a> Backend for CallContext<'a> {
+impl<'a, D: DB> Backend for CallContext<'a, D> {
     fn gas_price(&self) -> U256 {
         self.gas_price
     }
@@ -283,10 +280,7 @@ impl<'a> Backend for CallContext<'a> {
     }
 
     fn exists(&self, address: H160) -> bool {
-        // Ethereum charges extra gas for `CALL`s or `SELFDESTRUCT`s which create new accounts, to discourage the
-        // creation of many addresses and the resulting increase in state size. We can tell if an account exists in our
-        // state by checking whether the response from `State::get_account` is borrowed.
-        matches!(self.state.get_account(Address(address)), Cow::Borrowed(_))
+        self.state.has_account(Address(address))
     }
 
     fn basic(&self, address: H160) -> Basic {
@@ -302,12 +296,7 @@ impl<'a> Backend for CallContext<'a> {
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
-        self.state
-            .get_account(Address(address))
-            .storage
-            .get(&index)
-            .copied()
-            .unwrap_or_default()
+        self.state.get_account(Address(address)).get_storage(index)
     }
 
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {

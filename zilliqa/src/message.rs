@@ -188,7 +188,7 @@ pub struct BlockHeader {
     pub hash: Hash,
     pub parent_hash: Hash,
     pub signature: NodeSignature,
-    pub state_root_hash: u64,
+    pub state_root_hash: Hash,
     /// The time this block was mined at.
     pub timestamp: SystemTime,
 }
@@ -213,7 +213,7 @@ impl Block {
                 hash: Hash::ZERO,
                 parent_hash: Hash::ZERO,
                 signature: NodeSignature::identity(),
-                state_root_hash: 0,
+                state_root_hash: Hash::ZERO,
                 timestamp: SystemTime::UNIX_EPOCH,
             },
             qc: QuorumCertificate {
@@ -231,7 +231,7 @@ impl Block {
         view: u64,
         qc: QuorumCertificate,
         parent_hash: Hash,
-        state_root_hash: u64,
+        state_root_hash: Hash,
         transactions: Vec<Hash>,
         timestamp: SystemTime,
     ) -> Block {
@@ -240,7 +240,7 @@ impl Block {
             qc.compute_hash().as_bytes(),
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
-            &state_root_hash.to_be_bytes(),
+            state_root_hash.as_bytes(),
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {
@@ -264,7 +264,7 @@ impl Block {
         qc: QuorumCertificate,
         agg: AggregateQc,
         parent_hash: Hash,
-        state_root_hash: u64,
+        state_root_hash: Hash,
         timestamp: SystemTime,
     ) -> Block {
         let digest = Hash::compute(&[
@@ -272,7 +272,7 @@ impl Block {
             qc.compute_hash().as_bytes(),
             agg.compute_hash().as_bytes(),
             parent_hash.as_bytes(),
-            &state_root_hash.to_be_bytes(),
+            state_root_hash.as_bytes(),
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {
@@ -310,7 +310,7 @@ impl Block {
         self.header.signature
     }
 
-    pub fn state_root_hash(&self) -> u64 {
+    pub fn state_root_hash(&self) -> Hash {
         self.header.state_root_hash
     }
 

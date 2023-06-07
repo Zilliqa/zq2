@@ -1,3 +1,4 @@
+use cita_trie::MemoryDB;
 use jsonrpsee::{server::ServerHandle, RpcModule};
 use std::{
     net::Ipv4Addr,
@@ -64,8 +65,8 @@ struct Behaviour {
 }
 
 pub struct NodeLauncher {
-    pub node: Arc<Mutex<Node>>,
-    pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
+    pub node: Arc<Mutex<Node<MemoryDB>>>,
+    pub rpc_module: RpcModule<Arc<Mutex<Node<MemoryDB>>>>,
     pub secret_key: SecretKey,
     pub peer_id: PeerId,
     pub message_sender: UnboundedSender<(PeerId, Message)>,
@@ -90,6 +91,7 @@ impl NodeLauncher {
             secret_key,
             message_sender.clone(),
             reset_timeout_sender.clone(),
+            MemoryDB::default(),
         )?;
         let node = Arc::new(Mutex::new(node));
 
@@ -109,11 +111,11 @@ impl NodeLauncher {
         })
     }
 
-    pub fn get_node_handle(&self) -> Arc<Mutex<Node>> {
+    pub fn get_node_handle(&self) -> Arc<Mutex<Node<MemoryDB>>> {
         self.node.clone()
     }
 
-    pub fn get_rpc_server_handle(&self) -> RpcModule<Arc<Mutex<Node>>> {
+    pub fn get_rpc_server_handle(&self) -> RpcModule<Arc<Mutex<Node<MemoryDB>>>> {
         self.rpc_module.clone()
     }
 

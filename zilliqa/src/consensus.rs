@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{
     collections::{btree_map::Entry, BTreeMap},
     time::SystemTime,
@@ -5,6 +6,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
+use cita_trie::DB;
 use itertools::Itertools;
 use libp2p::PeerId;
 use tracing::{debug, trace};
@@ -35,7 +37,7 @@ pub struct Validator {
     pub weight: u128,
 }
 
-pub struct Consensus {
+pub struct Consensus<D: DB> {
     secret_key: SecretKey,
     config: Config,
     committee: Vec<Validator>,
@@ -55,11 +57,11 @@ pub struct Consensus {
     transactions: BTreeMap<Hash, Transaction>,
     transaction_receipts: BTreeMap<Hash, TransactionReceipt>,
     /// The account store.
-    state: State,
+    state: State<D>,
 }
 
-impl Consensus {
-    pub fn new(secret_key: SecretKey, config: Config) -> Self {
+impl<D: DB> Consensus<D> {
+    pub fn new(secret_key: SecretKey, config: Config, database: D) -> Self {
         let validator = Validator {
             public_key: secret_key.node_public_key(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
@@ -80,7 +82,7 @@ impl Consensus {
             new_transactions: BTreeMap::new(),
             transactions: BTreeMap::new(),
             transaction_receipts: BTreeMap::new(),
-            state: State::new(),
+            state: State::new(Arc::new(database)),
         }
     }
 
@@ -218,9 +220,9 @@ impl Consensus {
                     self.transaction_receipts.insert(txn.hash(), receipt);
                 }
             }
-            if self.state.root_hash() != block.state_root_hash() {
+            if self.state.root_hash()? != block.state_root_hash() {
                 return Err(anyhow!(
-                    "state root hash mismatch, expected: {}, actual: {}",
+                    "state root hash mismatch, expected: {:?}, actual: {:?}",
                     block.state_root_hash(),
                     self.state.root_hash()
                 ));
@@ -333,7 +335,7 @@ impl Consensus {
                     self.view,
                     qc,
                     parent_hash,
-                    self.state.root_hash(),
+                    self.state.root_hash()?,
                     applied_transaction_hashes,
                     SystemTime::max(SystemTime::now(), parent_header.timestamp),
                 );
@@ -434,7 +436,7 @@ impl Consensus {
                     high_qc.clone(),
                     agg,
                     parent_hash,
-                    self.state.root_hash(),
+                    self.state.root_hash()?,
                     SystemTime::max(SystemTime::now(), parent.timestamp()),
                 );
                 // as a future improvement, process the proposal before broadcasting it
@@ -627,7 +629,7 @@ impl Consensus {
         self.view
     }
 
-    pub fn state(&self) -> &State {
+    pub fn state(&self) -> &State<D> {
         &self.state
     }
 

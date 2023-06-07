@@ -7,7 +7,7 @@ mod types;
 mod web3;
 pub mod zilliqa;
 
-pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
+pub fn rpc_module<D: DB>(node: Arc<Mutex<Node<D>>>) -> RpcModule<Arc<Mutex<Node<D>>>> {
     let mut module = RpcModule::new(node.clone());
 
     module.merge(erigon::rpc_module(node.clone())).unwrap();
@@ -38,9 +38,10 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
 macro_rules! declare_module {
     (
         $node:expr,
+        $dbtype:ty,
         [ $(($name:expr, $method:expr)),* $(,)? ] $(,)?
     ) => {{
-        let mut module: jsonrpsee::RpcModule<std::sync::Arc<std::sync::Mutex<crate::node::Node>>> = jsonrpsee::RpcModule::new($node);
+        let mut module: jsonrpsee::RpcModule<std::sync::Arc<std::sync::Mutex<crate::node::Node<$dbtype>>>> = jsonrpsee::RpcModule::new($node);
         let meter = opentelemetry::global::meter("");
 
         $(
@@ -85,6 +86,7 @@ macro_rules! declare_module {
     }}
 }
 
+use cita_trie::DB;
 use std::sync::{Arc, Mutex};
 
 use declare_module;

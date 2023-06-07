@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex};
+use cita_trie::DB;
+use std::{
+    marker::PhantomData,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::Result;
 use jsonrpsee::{types::Params, RpcModule};
@@ -7,19 +11,32 @@ use crate::node::Node;
 
 use super::types::EthBlock;
 
-pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
-    super::declare_module!(node, [("erigon_getHeaderByNumber", get_header_by_number)])
+pub fn rpc_module<D: DB>(node: Arc<Mutex<Node<D>>>) -> RpcModule<Arc<Mutex<Node<D>>>> {
+    super::declare_module!(
+        node,
+        D,
+        [("erigon_getHeaderByNumber", ErigonRpc::get_header_by_number)]
+    )
 }
 
-fn get_header_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
-    let block: u64 = params.one()?;
+struct ErigonRpc<'a, D: DB> {
+    phantom_db: PhantomData<&'a D>,
+}
 
-    // Erigon headers are a subset of the full block response. We choose to just return the full block.
-    let header = node
-        .lock()
-        .unwrap()
-        .get_block_by_view(block)
-        .map(EthBlock::from);
+impl<D: DB> ErigonRpc<'_, D> {
+    fn get_header_by_number(
+        params: Params,
+        node: &Arc<Mutex<Node<D>>>,
+    ) -> Result<Option<EthBlock>> {
+        let block: u64 = params.one()?;
 
-    Ok(header)
+        // Erigon headers are a subset of the full block response. We choose to just return the full block.
+        let header = node
+            .lock()
+            .unwrap()
+            .get_block_by_view(block)
+            .map(EthBlock::from);
+
+        Ok(header)
+    }
 }
