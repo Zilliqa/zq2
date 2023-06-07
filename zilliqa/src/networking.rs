@@ -5,16 +5,17 @@ use async_trait::async_trait;
 use libp2p::core::upgrade::{read_length_prefixed, write_length_prefixed, ProtocolName};
 pub use libp2p::request_response::{self, ProtocolSupport, RequestId, ResponseChannel};
 use tracing::error;
+use crate::message::Message;
 
 #[derive(Debug, Clone)]
 pub struct Zq2MessageProtocol();
 #[derive(Clone)]
 pub struct Zq2MessageCodec();
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Zq2Request(pub Vec<u8>);
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Zq2Response(pub Vec<u8>);
+//#[derive(Debug, Clone, PartialEq, Eq)]
+//pub struct Zq2Request(pub Vec<u8>);
+//#[derive(Debug, Clone, PartialEq, Eq)]
+//pub struct Zq2Response(pub Vec<u8>);
 
 impl ProtocolName for Zq2MessageProtocol {
     fn protocol_name(&self) -> &[u8] {
@@ -25,8 +26,8 @@ impl ProtocolName for Zq2MessageProtocol {
 #[async_trait]
 impl request_response::Codec for Zq2MessageCodec {
     type Protocol = Zq2MessageProtocol;
-    type Request = Zq2Request;
-    type Response = Zq2Response;
+    type Request = Message;
+    type Response = Message;
 
     async fn read_request<T>(
         &mut self,
@@ -42,7 +43,7 @@ impl request_response::Codec for Zq2MessageCodec {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
 
-        Ok(Zq2Request(vec))
+        Ok(serde_json::from_slice::<Message>(&vec).unwrap())
     }
 
     async fn read_response<T>(
@@ -60,19 +61,19 @@ impl request_response::Codec for Zq2MessageCodec {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
 
-        Ok(Zq2Response(vec))
+        Ok(serde_json::from_slice::<Message>(&vec).unwrap())
     }
 
     async fn write_request<T>(
         &mut self,
         _: &Zq2MessageProtocol,
         io: &mut T,
-        Zq2Request(data): Zq2Request,
+        data: Message,
     ) -> io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,
     {
-        write_length_prefixed(io, data).await?;
+        write_length_prefixed(io, serde_json::to_vec(&data).unwrap()).await?;
         io.close().await?;
 
         Ok(())
@@ -82,12 +83,12 @@ impl request_response::Codec for Zq2MessageCodec {
         &mut self,
         _: &Zq2MessageProtocol,
         io: &mut T,
-        Zq2Response(data): Zq2Response,
+        data: Message,
     ) -> io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,
     {
-        write_length_prefixed(io, data).await?;
+        write_length_prefixed(io, serde_json::to_vec(&data).unwrap()).await?;
         io.close().await?;
 
         Ok(())

@@ -271,15 +271,16 @@ impl NodeLauncher {
                             request_response::Event::Message{message, peer} => {
                                 match message {
                                     request_response::Message::Request {request, channel, ..} => {
-                                        let message = serde_json::from_slice::<Message>(&request.0).unwrap();
+                                        //let message = serde_json::from_slice::<Message>(&request.0).unwrap();
+                                        let message = request;
                                         let message_type = message.name();
                                         debug!(%peer, message_type, "direct message recieved");
 
                                         let before = Instant::now();
                                         self.node.lock().unwrap().handle_message(peer, message).unwrap();
 
-                                        let resp_tmp: Vec<u8> = vec![];
-                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Zq2Response(resp_tmp));
+                                        //let resp_tmp: Vec<u8> = vec![];
+                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Message::EmptyMessage(vec![]));
                                     }
                                     request_response::Message::Response {..} => {}
                                 }
@@ -313,7 +314,7 @@ impl NodeLauncher {
 
                     match send_as_broadcast {
                         SendAsBroadcast::No() => {
-                            let request_id = swarm.behaviour_mut().request_response.send_request(&dest, Zq2Request(data.clone()));
+                            let request_id = swarm.behaviour_mut().request_response.send_request(&dest, message);
                             self.pending_requests.insert(request_id, (dest, data));
                         },
                         SendAsBroadcast::Yes() => {
