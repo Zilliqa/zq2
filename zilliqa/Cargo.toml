@@ -28,7 +28,6 @@ itertools = "0.10.5"
 jsonrpsee = { version = "0.18.2", features = ["server"] }
 k256 = {version = "0.13.1", features = ["serde", "pem"] }
 libp2p = { version = "0.51.0", features = ["gossipsub", "macros", "tcp", "tokio", "noise", "mplex", "mdns", "request-response", "kad", "identify"] }
-#async-std = { version = "1.12", features = ["attributes"] }
 async-trait = "0.1.68"
 # TODO: Use "0.20.0" when released
 opentelemetry = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "ecf0dda5686dc45470ae02993a4748c289c407de", features = ["metrics", "rt-tokio"] }
