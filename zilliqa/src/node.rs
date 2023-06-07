@@ -91,7 +91,6 @@ impl Node {
             Message::NewTransaction(t) => {
                 self.consensus.new_transaction(t)?;
             }
-            Message::EmptyMessage(_) => {}
         }
 
         Ok(())

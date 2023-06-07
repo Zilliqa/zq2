@@ -271,15 +271,13 @@ impl NodeLauncher {
                             request_response::Event::Message{message, peer} => {
                                 match message {
                                     request_response::Message::Request {request, channel, ..} => {
-                                        //let message = serde_json::from_slice::<Message>(&request.0).unwrap();
-                                        let message = request;
+                                        let message = serde_json::from_slice::<Message>(&request.0).unwrap();
                                         let message_type = message.name();
                                         debug!(%peer, message_type, "direct message recieved");
 
-                                        let before = Instant::now();
                                         self.node.lock().unwrap().handle_message(peer, message).unwrap();
 
-                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Message::EmptyMessage(vec![]));
+                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Zq2Response(vec![1]));
                                     }
                                     request_response::Message::Response {..} => {}
                                 }
@@ -313,8 +311,9 @@ impl NodeLauncher {
                     match dest {
                         Some(dest) => {
                             debug!(%dest, message_type, "sending direct message");
-                            let request_id = swarm.behaviour_mut().request_response.send_request(&dest, message);
+                            let request_id = swarm.behaviour_mut().request_response.send_request(&dest, Zq2Request(data.clone()));
                             self.pending_requests.insert(request_id, (dest, data));
+                            //swarm.behaviour_mut().gossipsub.publish(topic.hash(), data).unwrap();
                         },
                         None => {
                             debug!(message_type, "sending gossip message");
