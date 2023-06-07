@@ -219,6 +219,16 @@ pub struct OtterscanBlockTransactions {
     pub receipts: Vec<EthTransactionReceipt>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtterscanTransactions {
+    #[serde(rename = "txs")]
+    pub transactions: Vec<EthTransaction>,
+    pub receipts: Vec<EthTransactionReceiptWithTimestamp>,
+    pub first_page: bool,
+    pub last_page: bool,
+}
+
 /// A transaction object, returned by the Ethereum API.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -232,7 +242,7 @@ pub struct EthTransaction {
     #[serde(serialize_with = "hex")]
     pub gas: u64,
     #[serde(serialize_with = "hex")]
-    pub gas_price: u64,
+    pub gas_price: u128,
     #[serde(serialize_with = "hex")]
     pub hash: H256,
     #[serde(serialize_with = "hex")]
@@ -244,13 +254,21 @@ pub struct EthTransaction {
     #[serde(serialize_with = "hex")]
     pub transaction_index: u64,
     #[serde(serialize_with = "hex")]
-    pub value: u64,
+    pub value: u128,
     #[serde(serialize_with = "hex")]
     pub v: u8,
     #[serde(serialize_with = "hex")]
     pub r: [u8; 32],
     #[serde(serialize_with = "hex")]
     pub s: [u8; 32],
+}
+
+#[derive(Clone, Serialize)]
+pub struct EthTransactionReceiptWithTimestamp {
+    #[serde(flatten)]
+    pub receipt: EthTransactionReceipt,
+    #[serde(serialize_with = "hex")]
+    pub timestamp: u64,
 }
 
 /// A transaction receipt object, returned by the Ethereum API.
@@ -354,7 +372,7 @@ fn vec_hex<S: Serializer, T: ToHex>(data: &Vec<T>, serializer: S) -> Result<S::O
 }
 
 fn bool_as_int<S: Serializer>(b: &bool, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.serialize_u8(if *b { 1 } else { 0 })
+    serializer.serialize_str(if *b { "0x1" } else { "0x0" })
 }
 
 /// Parameters passed to `eth_call`.

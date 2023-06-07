@@ -124,7 +124,7 @@ pub struct Account {
 }
 
 /// A transaction body, broadcast before execution and then persisted as part of a block after the transaction is executed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Transaction {
     pub nonce: u64,
     pub gas_price: u128,

@@ -6,6 +6,8 @@ use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
 
+use tracing::error;
+
 use crate::{
     cfg::Config,
     consensus::Consensus,
@@ -28,6 +30,7 @@ use crate::{
 ///
 /// 1. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
 /// Successfully executed transactions are added to `transactions` so they can be returned via APIs.
+#[derive(Debug)]
 pub struct Node {
     pub config: Config,
     peer_id: PeerId,
@@ -90,7 +93,18 @@ impl Node {
                 self.handle_block_response(source, m)?;
             }
             Message::NewTransaction(t) => {
-                self.consensus.new_transaction(t)?;
+                match t.verify() {
+                    Ok(_) => {
+                        self.consensus.new_transaction(t)?;
+                    }
+                    Err(e) => {
+                        error!(
+                            "Received transaction from peer {:?} failed to verify: {}",
+                            source, e
+                        );
+                        // todo: ban/downrate peer
+                    }
+                }
             }
         }
 
@@ -116,7 +130,13 @@ impl Node {
 
     pub fn create_transaction(&mut self, txn: Transaction) -> Result<Hash> {
         let hash = txn.hash();
-        self.broadcast_message(Message::NewTransaction(txn))?;
+
+        txn.verify()?;
+
+        // Make sure TX hasn't been seen before
+        if !self.consensus.seen_tx_already(&hash) {
+            self.broadcast_message(Message::NewTransaction(txn))?;
+        }
 
         Ok(hash)
     }
@@ -170,6 +190,10 @@ impl Node {
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<Transaction> {
         self.consensus.get_transaction_by_hash(hash)
+    }
+
+    pub fn get_touched_transactions(&self, address: Address) -> Vec<Hash> {
+        self.consensus.get_touched_transactions(address)
     }
 
     fn send_message(&mut self, peer: PeerId, message: Message) -> Result<()> {
