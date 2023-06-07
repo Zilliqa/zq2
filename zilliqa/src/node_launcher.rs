@@ -1,5 +1,4 @@
 use jsonrpsee::{server::ServerHandle, RpcModule};
-use std::collections::HashMap;
 use std::{
     iter,
     net::Ipv4Addr,
@@ -14,8 +13,7 @@ use crate::{
     cfg::Config,
     crypto::{NodePublicKey, SecretKey},
     networking::{
-        request_response, MessageCodec, MessageProtocol, ProtocolSupport, Request, RequestId,
-        Response,
+        request_response, MessageCodec, MessageProtocol, ProtocolSupport, Request, Response,
     },
     node,
 };
@@ -49,7 +47,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, info, trace};
 
 use crate::message::Message;
 
@@ -292,7 +290,7 @@ impl NodeLauncher {
                     match dest {
                         Some(dest) => {
                             debug!(%dest, message_type, "sending direct message");
-                            let request_id = swarm.behaviour_mut().request_response.send_request(&dest, Request(data.clone()));
+                            let _ = swarm.behaviour_mut().request_response.send_request(&dest, Request(data.clone()));
                         },
                         None => {
                             debug!(message_type, "sending gossip message");
