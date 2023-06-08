@@ -30,7 +30,10 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use zilliqa::{cfg::Config, crypto::SecretKey, message::Message, node::Node};
 
-fn node() -> (TestNode, BoxStream<'static, (PeerId, Option<PeerId>, Message)>) {
+fn node() -> (
+    TestNode,
+    BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
+) {
     let secret_key = SecretKey::new().unwrap();
 
     let (message_sender, message_receiver) = mpsc::unbounded_channel();
@@ -111,7 +114,6 @@ impl Network {
         let mut messages = messages.take(ticks);
 
         while let Some((source, destination, message)) = messages.next().await {
-
             // Respect the destination if it is set and only send it to one
             for node in self.nodes.iter() {
                 if let Some(dest) = destination {
