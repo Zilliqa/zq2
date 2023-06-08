@@ -32,6 +32,8 @@ jobs:
       run: cargo clippy --all-targets --all-features -- -D warnings
     - name: Test
       run: cargo test --all-targets --all-features
+    - name: Verify working directory is clean
+      run: git diff --exit-code
 
   e2e_test:
     runs-on: ubuntu-latest
@@ -57,4 +59,3 @@ jobs:
       run: sudo apt install libsecp256k1-dev
     - name: JS test framework
       run: export PATH="/scilla/0/bin:$PATH" && ./scripts/start_network.sh && ./scripts/js_test.sh
-
