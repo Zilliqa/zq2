@@ -1,8 +1,8 @@
+exit 1
 cd evm_js_tests
 echo $PATH
 echo "now we run the test..."
 
-npm install -g solc
 DEBUG=true MOCHA_TIMEOUT=400000 npx hardhat test
 
 retVal=$?
