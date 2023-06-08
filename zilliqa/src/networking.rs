@@ -5,16 +5,17 @@ use async_trait::async_trait;
 use libp2p::core::upgrade::{read_length_prefixed, write_length_prefixed, ProtocolName};
 pub use libp2p::request_response::{self, ProtocolSupport, RequestId, ResponseChannel};
 use tracing::error;
+use crate::message;
 
 #[derive(Debug, Clone)]
 pub struct MessageProtocol();
 #[derive(Clone)]
 pub struct MessageCodec();
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Request(pub Vec<u8>);
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Response(pub Vec<u8>);
+//#[derive(Debug, Clone, PartialEq, Eq)]
+//pub struct Request(pub Vec<u8>);
+//#[derive(Debug, Clone, PartialEq, Eq)]
+//pub struct Response(pub Vec<u8>);
 
 impl ProtocolName for MessageProtocol {
     fn protocol_name(&self) -> &[u8] {
@@ -25,8 +26,8 @@ impl ProtocolName for MessageProtocol {
 #[async_trait]
 impl request_response::Codec for MessageCodec {
     type Protocol = MessageProtocol;
-    type Request = Request;
-    type Response = Response;
+    type Request = message::Message;
+    type Response = message::Message;
 
     async fn read_request<T>(
         &mut self,
@@ -43,7 +44,7 @@ impl request_response::Codec for MessageCodec {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
 
-        Ok(Request(vec))
+        serde_json::from_slice::<Self::Response>(&vec);
     }
 
     async fn read_response<T>(
@@ -60,18 +61,19 @@ impl request_response::Codec for MessageCodec {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
 
-        Ok(Response(vec))
+        serde_json::from_slice::<Self::Response>(&vec);
     }
 
     async fn write_request<T>(
         &mut self,
         _: &MessageProtocol,
         io: &mut T,
-        Request(data): Request,
+        data: Self::Request,
     ) -> io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,
     {
+        let data = serde_json::to_vec(&data).unwrap();
         write_length_prefixed(io, data).await?;
         io.close().await?;
 
@@ -82,11 +84,12 @@ impl request_response::Codec for MessageCodec {
         &mut self,
         _: &MessageProtocol,
         io: &mut T,
-        Response(data): Response,
+        data: Self::Response,
     ) -> io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,
     {
+        let data = serde_json::to_vec(&data).unwrap();
         write_length_prefixed(io, data).await?;
         io.close().await?;
 

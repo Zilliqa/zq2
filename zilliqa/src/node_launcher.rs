@@ -8,15 +8,9 @@ use std::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{
-    api,
-    cfg::Config,
-    crypto::{NodePublicKey, SecretKey},
-    networking::{
-        request_response, MessageCodec, MessageProtocol, ProtocolSupport, Request, Response,
-    },
-    node,
-};
+use crate::{api, cfg::Config, crypto::{NodePublicKey, SecretKey}, message, networking::{
+    request_response, MessageCodec, MessageProtocol, ProtocolSupport,
+}, node};
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
@@ -268,13 +262,13 @@ impl NodeLauncher {
                     SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer })) => {
                                 match message {
                                     request_response::Message::Request {request, channel, ..} => {
-                                        let message = serde_json::from_slice::<Message>(&request.0).unwrap();
-                                        let message_type = message.name();
-                                        debug!(%peer, message_type, "direct message recieved");
+                                        //let message = serde_json::from_slice::<Message>(&request.0).unwrap();
+                                        //let message_type = message.name();
+                                        debug!(%peer, "direct message recieved");
 
-                                        self.node.lock().unwrap().handle_message(peer, message).unwrap();
+                                        self.node.lock().unwrap().handle_message(peer, request).unwrap();
 
-                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Response(vec![1]));
+                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Message::RequestResponse());
                                     }
                                     request_response::Message::Response {..} => {}
                                 }
@@ -290,7 +284,7 @@ impl NodeLauncher {
                     match dest {
                         Some(dest) => {
                             debug!(%dest, message_type, "sending direct message");
-                            let _ = swarm.behaviour_mut().request_response.send_request(&dest, Request(data.clone()));
+                            let _ = swarm.behaviour_mut().request_response.send_request(&dest, message);
                         },
                         None => {
                             debug!(message_type, "sending gossip message");
