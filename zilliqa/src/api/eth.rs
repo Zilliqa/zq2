@@ -1,12 +1,8 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
-use std::{
-    marker::PhantomData,
-    sync::{Arc, Mutex, MutexGuard},
-};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{anyhow, Result};
-use cita_trie::DB;
 use jsonrpsee::{types::Params, RpcModule};
 use k256::ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey};
 use primitive_types::{H160, H256};
@@ -24,292 +20,286 @@ use super::{
     types::{CallParams, EthBlock, EthTransaction, EthTransactionReceipt, HashOrTransaction, Log},
 };
 
-pub fn rpc_module<D: DB>(node: Arc<Mutex<Node<D>>>) -> RpcModule<Arc<Mutex<Node<D>>>> {
+pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
         node,
-        D,
         [
-            ("eth_accounts", EthRpc::accounts),
-            ("eth_blockNumber", EthRpc::block_number),
-            ("eth_call", EthRpc::call),
-            ("eth_chainId", EthRpc::chain_id),
-            ("eth_estimateGas", EthRpc::estimate_gas),
-            ("eth_getBalance", EthRpc::get_balance),
-            ("eth_getCode", EthRpc::get_code),
-            ("eth_getTransactionCount", EthRpc::get_transaction_count),
-            ("eth_gasPrice", EthRpc::gas_price),
-            ("eth_getBlockByNumber", EthRpc::get_block_by_number),
-            ("eth_getBlockByHash", EthRpc::get_block_by_hash),
-            ("eth_getTransactionByHash", EthRpc::get_transaction_by_hash),
-            ("eth_getTransactionReceipt", EthRpc::get_transaction_receipt),
-            ("eth_sendRawTransaction", EthRpc::send_raw_transaction),
+            ("eth_accounts", accounts),
+            ("eth_blockNumber", block_number),
+            ("eth_call", call),
+            ("eth_chainId", chain_id),
+            ("eth_estimateGas", estimate_gas),
+            ("eth_getBalance", get_balance),
+            ("eth_getCode", get_code),
+            ("eth_getTransactionCount", get_transaction_count),
+            ("eth_gasPrice", gas_price),
+            ("eth_getBlockByNumber", get_block_by_number),
+            ("eth_getBlockByHash", get_block_by_hash),
+            ("eth_getTransactionByHash", get_transaction_by_hash),
+            ("eth_getTransactionReceipt", get_transaction_receipt),
+            ("eth_sendRawTransaction", send_raw_transaction),
         ],
     )
 }
 
-pub(super) struct EthRpc<'a, D: DB> {
-    phantom_db: PhantomData<&'a D>,
+fn accounts(_: Params, _: &Arc<Mutex<Node>>) -> Result<[(); 0]> {
+    Ok([])
 }
-impl<D: DB> EthRpc<'_, D> {
-    fn accounts(_: Params, _: &Arc<Mutex<Node<D>>>) -> Result<[(); 0]> {
-        Ok([])
+
+fn block_number(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    if let Some(block) = node.lock().unwrap().view().checked_sub(1) {
+        Ok(block.to_hex())
+    } else {
+        Err(anyhow!("no blocks"))
     }
+}
 
-    fn block_number(_: Params, node: &Arc<Mutex<Node<D>>>) -> Result<String> {
-        if let Some(block) = node.lock().unwrap().view().checked_sub(1) {
-            Ok(block.to_hex())
-        } else {
-            Err(anyhow!("no blocks"))
-        }
-    }
+fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let mut params = params.sequence();
+    let call_params: CallParams = params.next()?;
+    let _tag: &str = params.next()?;
 
-    fn call(params: Params, node: &Arc<Mutex<Node<D>>>) -> Result<String> {
-        let mut params = params.sequence();
-        let call_params: CallParams = params.next()?;
-        let _tag: &str = params.next()?;
+    let return_value = node.lock().unwrap().call_contract(
+        Address(call_params.from),
+        Address(call_params.to),
+        call_params.data,
+    )?;
 
-        let return_value = node.lock().unwrap().call_contract(
-            Address(call_params.from),
-            Address(call_params.to),
-            call_params.data,
-        )?;
+    Ok(return_value.to_hex())
+}
 
-        Ok(return_value.to_hex())
-    }
+fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok(node.lock().unwrap().config.eth_chain_id.to_hex())
+}
 
-    fn chain_id(_: Params, node: &Arc<Mutex<Node<D>>>) -> Result<String> {
-        Ok(node.lock().unwrap().config.eth_chain_id.to_hex())
-    }
+fn estimate_gas(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
+    // TODO: #69
+    Ok("0x100")
+}
 
-    fn estimate_gas(_: Params, _: &Arc<Mutex<Node<D>>>) -> Result<&'static str> {
-        // TODO: #69
-        Ok("0x100")
-    }
+fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let mut params = params.sequence();
+    let address: H160 = params.next()?;
+    let _tag: &str = params.next()?;
 
-    fn get_balance(params: Params, node: &Arc<Mutex<Node<D>>>) -> Result<String> {
-        let mut params = params.sequence();
-        let address: H160 = params.next()?;
-        let _tag: &str = params.next()?;
+    Ok(node
+        .lock()
+        .unwrap()
+        .get_native_balance(Address(address))?
+        .to_hex())
+}
 
-        Ok(node
-            .lock()
-            .unwrap()
-            .get_native_balance(Address(address))?
-            .to_hex())
-    }
+fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let mut params = params.sequence();
+    let address: H160 = params.next()?;
+    let _tag: &str = params.next()?;
 
-    fn get_code(params: Params, node: &Arc<Mutex<Node<D>>>) -> Result<String> {
-        let mut params = params.sequence();
-        let address: H160 = params.next()?;
-        let _tag: &str = params.next()?;
+    Ok(node
+        .lock()
+        .unwrap()
+        .get_account(Address(address))?
+        .code
+        .to_hex())
+}
 
-        Ok(node
-            .lock()
-            .unwrap()
-            .get_account(Address(address))?
-            .code
-            .to_hex())
-    }
+fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let mut params = params.sequence();
+    let address: H160 = params.next()?;
+    let _tag: &str = params.next()?;
 
-    fn get_transaction_count(params: Params, node: &Arc<Mutex<Node<D>>>) -> Result<String> {
-        let mut params = params.sequence();
-        let address: H160 = params.next()?;
-        let _tag: &str = params.next()?;
+    Ok(node
+        .lock()
+        .unwrap()
+        .get_account(Address(address))?
+        .nonce
+        .to_hex())
+}
 
-        Ok(node
-            .lock()
-            .unwrap()
-            .get_account(Address(address))?
-            .nonce
-            .to_hex())
-    }
+fn gas_price(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
+    // TODO: #71
+    Ok("0x454b7b38e70")
+}
 
-    fn gas_price(_: Params, _: &Arc<Mutex<Node<D>>>) -> Result<&'static str> {
-        // TODO: #71
-        Ok("0x454b7b38e70")
-    }
+fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
+    let mut params = params.sequence();
+    let block: &str = params.next()?;
+    let full: bool = params.next()?;
 
-    fn get_block_by_number(params: Params, node: &Arc<Mutex<Node<D>>>) -> Result<Option<EthBlock>> {
-        let mut params = params.sequence();
-        let block: &str = params.next()?;
-        let full: bool = params.next()?;
+    if block == "latest" {
+        let block = node.lock().unwrap().get_latest_block().map(EthBlock::from);
 
-        if block == "latest" {
-            let block = node.lock().unwrap().get_latest_block().map(EthBlock::from);
-
-            Ok(block)
-        } else {
-            let block = block
-                .strip_prefix("0x")
-                .ok_or_else(|| anyhow!("no 0x prefix"))?;
-            let block = u64::from_str_radix(block, 16)?;
-
-            let node = node.lock().unwrap();
-            let block = node
-                .get_block_by_view(block)
-                .map(|b| Self::convert_block(&node, b, full))
-                .transpose()?;
-
-            Ok(block)
-        }
-    }
-
-    fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node<D>>>) -> Result<Option<EthBlock>> {
-        let mut params = params.sequence();
-        let hash: H256 = params.next()?;
-        let full: bool = params.next()?;
+        Ok(block)
+    } else {
+        let block = block
+            .strip_prefix("0x")
+            .ok_or_else(|| anyhow!("no 0x prefix"))?;
+        let block = u64::from_str_radix(block, 16)?;
 
         let node = node.lock().unwrap();
         let block = node
-            .get_block_by_hash(Hash(hash.0))
-            .map(|b| Self::convert_block(&node, b, full))
+            .get_block_by_view(block)
+            .map(|b| convert_block(&node, b, full))
             .transpose()?;
 
         Ok(block)
     }
+}
 
-    fn convert_block(node: &MutexGuard<Node<D>>, block: &Block, full: bool) -> Result<EthBlock> {
-        if !full {
-            Ok(block.into())
-        } else {
-            let transactions = block
-                .transactions
-                .iter()
-                .map(|h| {
-                    Self::get_transaction_inner(*h, node)?
-                        .ok_or_else(|| anyhow!("missing transaction: {}", h))
-                })
-                .map(|t| Ok(HashOrTransaction::Transaction(t?)))
-                .collect::<Result<_>>()?;
-            Ok(EthBlock {
-                transactions,
-                ..block.into()
+fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
+    let mut params = params.sequence();
+    let hash: H256 = params.next()?;
+    let full: bool = params.next()?;
+
+    let node = node.lock().unwrap();
+    let block = node
+        .get_block_by_hash(Hash(hash.0))
+        .map(|b| convert_block(&node, b, full))
+        .transpose()?;
+
+    Ok(block)
+}
+
+fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<EthBlock> {
+    if !full {
+        Ok(block.into())
+    } else {
+        let transactions = block
+            .transactions
+            .iter()
+            .map(|h| {
+                get_transaction_inner(*h, node)?
+                    .ok_or_else(|| anyhow!("missing transaction: {}", h))
             })
-        }
+            .map(|t| Ok(HashOrTransaction::Transaction(t?)))
+            .collect::<Result<_>>()?;
+        Ok(EthBlock {
+            transactions,
+            ..block.into()
+        })
     }
+}
 
-    fn get_transaction_by_hash(
-        params: Params,
-        node: &Arc<Mutex<Node<D>>>,
-    ) -> Result<Option<EthTransaction>> {
-        let hash: H256 = params.one()?;
-        let hash: Hash = Hash(hash.0);
-        let node = node.lock().unwrap();
-        Self::get_transaction_inner(hash, &node)
-    }
+fn get_transaction_by_hash(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<EthTransaction>> {
+    let hash: H256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+    let node = node.lock().unwrap();
+    get_transaction_inner(hash, &node)
+}
 
-    pub(super) fn get_transaction_inner(
-        hash: Hash,
-        node: &MutexGuard<Node<D>>,
-    ) -> Result<Option<EthTransaction>> {
-        let Some(transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
-        // TODO: Return error if receipt or block does not exist.
-        let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
-        let Some(block) = node.get_block_by_hash(receipt.block_hash) else { return Ok(None); };
+pub(super) fn get_transaction_inner(
+    hash: Hash,
+    node: &MutexGuard<Node>,
+) -> Result<Option<EthTransaction>> {
+    let Some(transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
+    // TODO: Return error if receipt or block does not exist.
+    let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
+    let Some(block) = node.get_block_by_hash(receipt.block_hash) else { return Ok(None); };
 
-        let transaction = EthTransaction {
-            block_hash: H256(block.hash().0),
-            block_number: block.view(),
-            from: transaction.addr_from().0,
-            gas: 0,
-            gas_price: transaction.gas_price,
-            hash: H256(hash.0),
-            input: transaction.payload.clone(),
-            nonce: transaction.nonce,
-            // `to` should be `None` if `transaction` is a contract creation.
-            to: (transaction.to_addr != Address::DEPLOY_CONTRACT).then_some(transaction.to_addr.0),
-            transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
-            value: transaction.amount,
-            v: 0,
-            r: [0; 32],
-            s: [0; 32],
-        };
+    let transaction = EthTransaction {
+        block_hash: H256(block.hash().0),
+        block_number: block.view(),
+        from: transaction.addr_from().0,
+        gas: 0,
+        gas_price: transaction.gas_price,
+        hash: H256(hash.0),
+        input: transaction.payload.clone(),
+        nonce: transaction.nonce,
+        // `to` should be `None` if `transaction` is a contract creation.
+        to: (transaction.to_addr != Address::DEPLOY_CONTRACT).then_some(transaction.to_addr.0),
+        transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
+        value: transaction.amount,
+        v: 0,
+        r: [0; 32],
+        s: [0; 32],
+    };
 
-        Ok(Some(transaction))
-    }
+    Ok(Some(transaction))
+}
 
-    pub(super) fn get_transaction_receipt_inner(
-        hash: Hash,
-        node: &MutexGuard<Node<D>>,
-    ) -> Result<Option<EthTransactionReceipt>> {
-        let Some(transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
-        // TODO: Return error if receipt or block does not exist.
-        let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
-        let Some(block) = node.get_block_by_hash(receipt.block_hash) else { return Ok(None); };
+pub(super) fn get_transaction_receipt_inner(
+    hash: Hash,
+    node: &MutexGuard<Node>,
+) -> Result<Option<EthTransactionReceipt>> {
+    let Some(transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
+    // TODO: Return error if receipt or block does not exist.
+    let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
+    let Some(block) = node.get_block_by_hash(receipt.block_hash) else { return Ok(None); };
 
-        let transaction_hash = H256(hash.0);
-        let transaction_index = block.transactions.iter().position(|t| *t == hash).unwrap() as u64;
-        let block_hash = H256::from_slice(block.hash().as_bytes());
-        let block_number = block.view();
+    let transaction_hash = H256(hash.0);
+    let transaction_index = block.transactions.iter().position(|t| *t == hash).unwrap() as u64;
+    let block_hash = H256::from_slice(block.hash().as_bytes());
+    let block_number = block.view();
 
-        let mut logs_bloom = [0; 256];
+    let mut logs_bloom = [0; 256];
 
-        let logs = receipt
-            .logs
-            .into_iter()
-            .enumerate()
-            .map(|(log_index, log)| {
-                let log = Log {
-                    removed: false,
-                    log_index: log_index as u64,
-                    transaction_index,
-                    transaction_hash,
-                    block_hash,
-                    block_number,
-                    address: log.address.0,
-                    data: log.data,
-                    topics: log.topics,
-                };
+    let logs = receipt
+        .logs
+        .into_iter()
+        .enumerate()
+        .map(|(log_index, log)| {
+            let log = Log {
+                removed: false,
+                log_index: log_index as u64,
+                transaction_index,
+                transaction_hash,
+                block_hash,
+                block_number,
+                address: log.address.0,
+                data: log.data,
+                topics: log.topics,
+            };
 
-                log.bloom(&mut logs_bloom);
+            log.bloom(&mut logs_bloom);
 
-                log
-            })
-            .collect();
+            log
+        })
+        .collect();
 
-        let receipt = EthTransactionReceipt {
-            transaction_hash,
-            transaction_index,
-            block_hash,
-            block_number,
-            from: transaction.addr_from().0,
-            to: transaction.to_addr.0,
-            cumulative_gas_used: 0,
-            effective_gas_price: 0,
-            gas_used: 1,
-            contract_address: receipt.contract_address.map(|a| a.0),
-            logs,
-            logs_bloom,
-            ty: 0,
-            status: receipt.success,
-        };
+    let receipt = EthTransactionReceipt {
+        transaction_hash,
+        transaction_index,
+        block_hash,
+        block_number,
+        from: transaction.addr_from().0,
+        to: transaction.to_addr.0,
+        cumulative_gas_used: 0,
+        effective_gas_price: 0,
+        gas_used: 1,
+        contract_address: receipt.contract_address.map(|a| a.0),
+        logs,
+        logs_bloom,
+        ty: 0,
+        status: receipt.success,
+    };
 
-        Ok(Some(receipt))
-    }
+    Ok(Some(receipt))
+}
 
-    fn get_transaction_receipt(
-        params: Params,
-        node: &Arc<Mutex<Node<D>>>,
-    ) -> Result<Option<EthTransactionReceipt>> {
-        let hash: H256 = params.one()?;
-        let hash: Hash = Hash(hash.0);
-        let node = node.lock().unwrap();
-        Self::get_transaction_receipt_inner(hash, &node)
-    }
+fn get_transaction_receipt(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<EthTransactionReceipt>> {
+    let hash: H256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+    let node = node.lock().unwrap();
+    get_transaction_receipt_inner(hash, &node)
+}
 
-    fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node<D>>>) -> Result<String> {
-        let transaction: String = params.one()?;
-        let transaction = transaction
-            .strip_prefix("0x")
-            .ok_or_else(|| anyhow!("no 0x prefix"))?;
-        let transaction = hex::decode(transaction)?;
-        let chain_id = node.lock().unwrap().config.eth_chain_id;
-        let transaction = transaction_from_rlp(&transaction, chain_id)?;
+fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let transaction: String = params.one()?;
+    let transaction = transaction
+        .strip_prefix("0x")
+        .ok_or_else(|| anyhow!("no 0x prefix"))?;
+    let transaction = hex::decode(transaction)?;
+    let chain_id = node.lock().unwrap().config.eth_chain_id;
+    let transaction = transaction_from_rlp(&transaction, chain_id)?;
 
-        let transaction_hash = H256(node.lock().unwrap().create_transaction(transaction)?.0);
+    let transaction_hash = H256(node.lock().unwrap().create_transaction(transaction)?.0);
 
-        Ok(transaction_hash.to_hex())
-    }
+    Ok(transaction_hash.to_hex())
 }
 
 /// Decode a transaction from its RLP-encoded form.

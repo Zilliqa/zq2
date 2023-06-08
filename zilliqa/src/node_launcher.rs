@@ -65,8 +65,8 @@ struct Behaviour {
 }
 
 pub struct NodeLauncher {
-    pub node: Arc<Mutex<Node<MemoryDB>>>,
-    pub rpc_module: RpcModule<Arc<Mutex<Node<MemoryDB>>>>,
+    pub node: Arc<Mutex<Node>>,
+    pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
     pub secret_key: SecretKey,
     pub peer_id: PeerId,
     pub message_sender: UnboundedSender<(PeerId, Message)>,
@@ -111,11 +111,11 @@ impl NodeLauncher {
         })
     }
 
-    pub fn get_node_handle(&self) -> Arc<Mutex<Node<MemoryDB>>> {
+    pub fn get_node_handle(&self) -> Arc<Mutex<Node>> {
         self.node.clone()
     }
 
-    pub fn get_rpc_server_handle(&self) -> RpcModule<Arc<Mutex<Node<MemoryDB>>>> {
+    pub fn get_rpc_server_handle(&self) -> RpcModule<Arc<Mutex<Node>>> {
         self.rpc_module.clone()
     }
 

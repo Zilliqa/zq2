@@ -1,7 +1,7 @@
 use crate::state::{Transaction, TransactionReceipt};
 
 use anyhow::{anyhow, Result};
-use cita_trie::DB;
+use cita_trie::MemoryDB;
 use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
@@ -31,22 +31,22 @@ use crate::{
 /// 1. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
 /// Successfully executed transactions are added to `transactions` so they can be returned via APIs.
 #[derive(Debug)]
-pub struct Node<D: DB> {
+pub struct Node {
     pub config: Config,
     peer_id: PeerId,
     message_sender: UnboundedSender<(PeerId, Message)>,
     reset_timeout: UnboundedSender<()>,
-    consensus: Consensus<D>,
+    consensus: Consensus<MemoryDB>,
 }
 
-impl<D: DB> Node<D> {
+impl Node {
     pub fn new(
         config: Config,
         secret_key: SecretKey,
         message_sender: UnboundedSender<(PeerId, Message)>,
         reset_timeout: UnboundedSender<()>,
-        database: D,
-    ) -> Result<Node<D>> {
+        database: MemoryDB,
+    ) -> Result<Node> {
         let node = Node {
             config: config.clone(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
@@ -165,7 +165,7 @@ impl<D: DB> Node<D> {
         )
     }
 
-    pub fn get_account(&self, address: Address) -> Result<Account<D>> {
+    pub fn get_account(&self, address: Address) -> Result<Account<MemoryDB>> {
         Ok(self.consensus.state().get_account(address))
     }
 
