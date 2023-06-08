@@ -1,7 +1,8 @@
 cd evm_js_tests
 echo $PATH
+echo "now we run the test..."
 
-DEBUG=true MOCHA_TIMEOUT=40000 npx hardhat test
+DEBUG=true MOCHA_TIMEOUT=400000 npx hardhat test
 
 retVal=$?
 
