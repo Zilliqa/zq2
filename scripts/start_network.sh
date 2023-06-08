@@ -20,6 +20,7 @@ cd ../
 # install dependencies
 sudo apt update
 sudo apt -y install gpg python3 lsb-core curl dirmngr apt-transport-https lsb-release ca-certificates
+
 ## Adding the NodeSource signing key to your keyring...
 curl -s https://deb.nodesource.com/gpgkey/nodesource.gpg.key | gpg --dearmor | tee /usr/share/keyrings/nodesource.gpg >/dev/null
 
