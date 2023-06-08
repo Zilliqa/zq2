@@ -35,12 +35,14 @@ cd -
 
 find ./ -name zilliqa
 echo "should be here, right"
+ps -e | grep zil
 ls ./target/debug/zilliqa
 
 cd -
 echo "lets go"
 pwd
 ls
+cd evm_js_tests
 
 npm install
 echo $PATH
