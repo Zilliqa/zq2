@@ -30,7 +30,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use zilliqa::{cfg::Config, crypto::SecretKey, message::Message, node::Node};
 
-fn node() -> (TestNode, BoxStream<'static, (PeerId, PeerId, Message)>) {
+fn node() -> (TestNode, BoxStream<'static, (PeerId, Option<PeerId>, Message)>) {
     let secret_key = SecretKey::new().unwrap();
 
     let (message_sender, message_receiver) = mpsc::unbounded_channel();
@@ -74,8 +74,9 @@ struct Network {
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
     // the borrow checker happy.
     nodes: Vec<TestNode>,
-    /// A stream of messages from each node. The stream items are a tuple of (source, destination, message).
-    receivers: Vec<BoxStream<'static, (PeerId, PeerId, Message)>>,
+    /// A stream of messages from each node. The stream items are a tuple of (source, Some(destination), message).
+    /// If the destination is `None`, the message is a broadcast.
+    receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, Message)>>,
 }
 
 impl Network {
