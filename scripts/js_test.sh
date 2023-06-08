@@ -48,7 +48,7 @@ cd evm_js_tests
 npm install
 echo $PATH
 
-DEBUG=true MOCHA_TIMEOUT=40000 npx hardhat test --bail
+DEBUG=true MOCHA_TIMEOUT=40000 npx hardhat test
 
 retVal=$?
 
