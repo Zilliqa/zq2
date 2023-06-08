@@ -18,21 +18,28 @@ cd ../
 # Install dependencies silently on the CI server
 
 # install dependencies
-sudo apt update
-sudo apt -y install gpg python3 lsb-core curl dirmngr apt-transport-https lsb-release ca-certificates
+#sudo apt update
+#sudo apt -y install gpg python3 lsb-core curl dirmngr apt-transport-https lsb-release ca-certificates
 
 ## Adding the NodeSource signing key to your keyring...
-curl -s https://deb.nodesource.com/gpgkey/nodesource.gpg.key | gpg --dearmor | tee /usr/share/keyrings/nodesource.gpg >/dev/null
+#curl -s https://deb.nodesource.com/gpgkey/nodesource.gpg.key | gpg --dearmor | tee /usr/share/keyrings/nodesource.gpg >/dev/null
 
 node --version
 
 ## Creating apt sources list file for the NodeSource Node.js 14.x repo...
 
-sudo echo 'deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_14.x jammy main' > /etc/apt/sources.list.d/nodesource.list
-sudo echo 'deb-src [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_14.x jammy main' >> /etc/apt/sources.list.d/nodesource.list
+#sudo echo 'deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_14.x jammy main' > /etc/apt/sources.list.d/nodesource.list
+#sudo echo 'deb-src [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_14.x jammy main' >> /etc/apt/sources.list.d/nodesource.list
+#
+#sudo apt update
+#sudo apt -y install nodejs
+#node --version
 
-sudo apt update
-sudo apt -y install nodejs
+node --version
+
+echo "here we are..."
+nvm install 16.0
+nvm use 16.0
 node --version
 
 exit 1
