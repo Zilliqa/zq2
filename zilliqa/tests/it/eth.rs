@@ -1,7 +1,46 @@
-use ethers::{providers::Middleware, types::TransactionRequest};
-use primitive_types::H160;
+use ethers::{prelude::DeploymentTxFactory, providers::Middleware, types::TransactionRequest};
+use primitive_types::{H160, H256};
 
 use crate::{random_wallet, Network};
+
+use super::deploy_contract;
+
+#[tokio::test]
+async fn get_storage_at() {
+    let mut network = Network::new(4);
+
+    let provider = network.provider(0);
+    let wallet = random_wallet(provider.clone());
+
+    // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
+    let hash = deploy_contract!("contracts/Storage.sol", "Storage", wallet, network);
+
+    let receipt = provider
+        .get_transaction_receipt(hash)
+        .await
+        .unwrap()
+        .unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+
+    let value = provider
+        .get_storage_at(contract_address, H256::zero(), None)
+        .await
+        .unwrap();
+    assert_eq!(value, H256::from_low_u64_be(1234));
+
+    // Calculate the storage position with keccak(LeftPad32(key, 0), LeftPad32(map position, 0))
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&[0; 12]);
+    bytes.extend_from_slice(receipt.from.as_bytes());
+    bytes.extend_from_slice(&[0; 31]);
+    bytes.push(1);
+    let position = H256::from_slice(&ethers::utils::keccak256(bytes));
+    let value = provider
+        .get_storage_at(contract_address, position, None)
+        .await
+        .unwrap();
+    assert_eq!(value, H256::from_low_u64_be(5678));
+}
 
 #[tokio::test]
 async fn send_transaction() {
