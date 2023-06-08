@@ -8,9 +8,13 @@ use std::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{api, cfg::Config, crypto::{NodePublicKey, SecretKey}, message, networking::{
-    request_response, MessageCodec, MessageProtocol, ProtocolSupport,
-}, node};
+use crate::{
+    api,
+    cfg::Config,
+    crypto::{NodePublicKey, SecretKey},
+    networking::{request_response, MessageCodec, MessageProtocol, ProtocolSupport},
+    node,
+};
 
 use anyhow::{anyhow, Result};
 use clap::Parser;

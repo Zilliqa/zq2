@@ -92,6 +92,7 @@ impl Node {
             Message::BlockResponse(m) => {
                 self.handle_block_response(source, m)?;
             }
+            Message::RequestResponse() => {}
             Message::NewTransaction(t) => {
                 match t.verify() {
                     Ok(_) => {

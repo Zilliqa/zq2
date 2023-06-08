@@ -1,11 +1,11 @@
 use futures::prelude::*;
 use std::io;
 
+use crate::message;
 use async_trait::async_trait;
 use libp2p::core::upgrade::{read_length_prefixed, write_length_prefixed, ProtocolName};
 pub use libp2p::request_response::{self, ProtocolSupport, RequestId, ResponseChannel};
 use tracing::error;
-use crate::message;
 
 #[derive(Debug, Clone)]
 pub struct MessageProtocol();
@@ -44,7 +44,7 @@ impl request_response::Codec for MessageCodec {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
 
-        serde_json::from_slice::<Self::Response>(&vec);
+        Ok(serde_json::from_slice::<Self::Response>(&vec).unwrap())
     }
 
     async fn read_response<T>(
@@ -61,7 +61,7 @@ impl request_response::Codec for MessageCodec {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
 
-        serde_json::from_slice::<Self::Response>(&vec);
+        Ok(serde_json::from_slice::<Self::Response>(&vec).unwrap())
     }
 
     async fn write_request<T>(
