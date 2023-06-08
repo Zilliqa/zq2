@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use k256::ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey};
-use primitive_types::{H160, H256};
+use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
 
 use crate::{
@@ -34,6 +34,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_estimateGas", estimate_gas),
             ("eth_getBalance", get_balance),
             ("eth_getCode", get_code),
+            ("eth_getStorageAt", get_storage_at),
             ("eth_getTransactionCount", get_transaction_count),
             ("eth_gasPrice", gas_price),
             ("eth_getBlockByNumber", get_block_by_number),
@@ -106,6 +107,24 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         .get_account(Address(address))?
         .code
         .to_hex())
+}
+
+fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let mut params = params.sequence();
+    let address: H160 = params.next()?;
+    let position: U256 = params.next()?;
+    // TODO: #226
+    let _block_number: BlockNumber = params.next()?;
+
+    let mut position_bytes = [0; 32];
+    position.to_big_endian(&mut position_bytes);
+    let position = H256::from_slice(&position_bytes);
+
+    let node = node.lock().unwrap();
+    let account = node.get_account(Address(address))?;
+    let value = account.storage.get(&position).copied().unwrap_or_default();
+
+    Ok(value.to_hex())
 }
 
 fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {

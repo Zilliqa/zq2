@@ -74,7 +74,7 @@ pub struct EthBlock {
     #[serde(serialize_with = "hex")]
     pub parent_hash: H256,
     #[serde(serialize_with = "hex")]
-    pub nonce: u64,
+    pub nonce: [u8; 8],
     #[serde(serialize_with = "hex")]
     pub sha_3_uncles: H256,
     #[serde(serialize_with = "hex")]
@@ -112,7 +112,7 @@ impl From<&message::Block> for EthBlock {
             number: block.view(),
             hash: H256(block.hash().0),
             parent_hash: H256(block.parent_hash().0),
-            nonce: 0,
+            nonce: [0; 8],
             sha_3_uncles: H256::zero(),
             logs_bloom: [0; 256],
             transactions_root: H256::zero(),
