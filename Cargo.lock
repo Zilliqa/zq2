@@ -6472,6 +6472,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "vergen",
  "ureq",
+ "vergen",
 ]
