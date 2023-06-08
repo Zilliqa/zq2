@@ -1829,6 +1829,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "evm_ds"
+version = "0.1.0"
+
+[[package]]
 name = "eyre"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6445,6 +6449,7 @@ dependencies = [
  "ethabi",
  "ethers",
  "evm",
+ "evm_ds",
  "futures",
  "generic-array",
  "hex",
@@ -6472,6 +6477,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "vergen",
  "ureq",
+ "vergen",
 ]

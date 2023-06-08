@@ -2,6 +2,8 @@
 
 use std::{borrow::Cow, collections::HashSet, time::SystemTime};
 
+use evm_ds::api::hellow;
+
 use anyhow::{anyhow, Result};
 use ethabi::Token;
 use evm::{
@@ -306,6 +308,7 @@ impl State {
                 }
             }
         }
+        hellow();
 
         Ok(())
     }

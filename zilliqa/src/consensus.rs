@@ -610,7 +610,7 @@ impl Consensus {
 
     pub fn add_block(&mut self, block: Block) {
         let hash = block.hash();
-        info!(?hash, ?block.header.view, "added block");
+        debug!(?hash, ?block.header.view, "added block");
         self.blocks.insert(hash, block);
     }
 
