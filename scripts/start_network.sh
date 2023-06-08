@@ -38,6 +38,9 @@ node --version
 node --version
 
 echo "here we are..."
+curl https://raw.githubusercontent.com/creationix/nvm/master/install.sh | bash 
+source ~/.profile
+
 nvm install 16.0
 nvm use 16.0
 node --version
