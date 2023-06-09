@@ -1,7 +1,7 @@
 use crate::state::{Transaction, TransactionReceipt};
 
 use anyhow::{anyhow, Result};
-use cita_trie::MemoryDB;
+use zq_trie::MemoryDB;
 use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
@@ -165,7 +165,7 @@ impl Node {
         )
     }
 
-    pub fn get_account(&self, address: Address) -> Result<Account<MemoryDB>> {
+    pub fn get_account(&self, address: Address) -> Result<Account> {
         Ok(self.consensus.state().get_account(address))
     }
 

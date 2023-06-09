@@ -1,6 +1,6 @@
 //! Manages execution of transactions on state.
 
-use cita_trie::DB;
+use zq_trie::DB;
 use std::{collections::HashSet, time::SystemTime};
 
 use anyhow::{anyhow, Result};
@@ -143,10 +143,10 @@ impl<D: DB> State<D> {
     }
 
     /// Deploy a contract at a fixed address. Used for system contracts which exist at well known addresses.
-    pub fn deploy_fixed_contract(&mut self, address: Address, code: Vec<u8>) {
+    pub fn deploy_fixed_contract(&mut self, address: Address, code: Vec<u8>) -> Result<()> {
         let mut account = self.get_account(address);
         account.code = code;
-        self.save_account(address, account);
+        self.save_account(address, account)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -283,28 +283,27 @@ impl<D: DB> State<D> {
                         self.set_native_balance(logs, address, basic.balance)?;
                     }
 
-                    let account = self.get_account(address);
-
+                    let mut account = self.get_account(address);
                     if let Some(code) = code {
                         account.code = code;
                     }
-
                     account.nonce = basic.nonce.as_u64();
+                    self.save_account(address, account)?;
 
                     if reset_storage {
-                        account.clear_storage();
+                        self.clear_account_storage(address)?;
                     }
 
                     for (index, value) in storage {
                         if value.is_zero() {
-                            account.remove_storage(index);
+                            self.remove_account_storage(address, index)?;
                         } else {
-                            account.set_storage(index, value);
+                            self.set_account_storage(address, index, value)?;
                         }
                     }
                 }
                 Apply::Delete { address } => {
-                    self.delete_account(Address(address));
+                    self.delete_account(Address(address))?;
                 }
             }
         }
@@ -467,7 +466,7 @@ impl<'a, D: DB> Backend for CallContext<'a, D> {
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
-        self.state.get_account(Address(address)).get_storage(index)
+        self.state.get_account_storage(Address(address), index)
     }
 
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {

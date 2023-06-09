@@ -1,4 +1,4 @@
-use cita_trie::MemoryDB;
+use zq_trie::MemoryDB;
 use jsonrpsee::{server::ServerHandle, RpcModule};
 use std::{
     net::Ipv4Addr,

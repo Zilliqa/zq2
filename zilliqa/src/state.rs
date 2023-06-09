@@ -1,7 +1,8 @@
-use cita_trie::{Hasher, PatriciaTrie, Trie, DB};
+use zq_trie::{Hasher, PatriciaTrie, Trie, DB};
 use rlp::RlpStream;
 use sha3::Digest;
 use sha3::Keccak256;
+use std::fmt::Display;
 use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
 
@@ -51,19 +52,20 @@ const GENESIS: [(Address, U256); 2] = [
 ];
 
 #[derive(Debug)]
-pub struct State<D: DB> {
+pub struct State<D: DB + Send + Sync> {
     db: Arc<D>,
     accounts: PatriciaTrie<D, TrieHasher>,
 }
 
-impl<D: DB> State<D> {
+impl<D: DB + Send + Sync> State<D> {
     pub fn new(database: Arc<D>) -> Result<State<D>> {
         let mut state = Self {
             db: database.clone(),
             accounts: PatriciaTrie::new(database, Arc::new(TrieHasher)),
         };
 
-        state.deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone());
+        state
+            .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
 
         for (address, balance) in GENESIS {
             // We don't care about these logs.
@@ -81,28 +83,85 @@ impl<D: DB> State<D> {
         })
     }
 
-    pub fn try_clone(&self) -> Result<Self> {
+    pub fn try_clone(&mut self) -> Result<Self> {
         Ok(State::from_root(self.db.clone(), self.root_hash()?)?)
     }
 
-    pub fn root_hash(&self) -> Result<crypto::Hash> {
+    pub fn root_hash(&mut self) -> Result<crypto::Hash> {
         Ok(crypto::Hash(self.accounts.root()?.as_slice().try_into()?))
     }
 
     /// Returns an error on failures to access the state tree, or decode the account; or an empty
     /// account if one didn't exist yet
-    pub fn try_get_account(&self, address: Address) -> Result<Account<D>> {
+    pub fn try_get_account(&self, address: Address) -> Result<Account> {
         Ok(self
             .accounts
             .get(&Keccak256::digest(address.as_bytes()))?
-            .map(|bytes| bincode::deserialize::<Account<D>>(&bytes))
-            .unwrap_or(Ok(Account::new(self.db)))?)
+            .map(|bytes| bincode::deserialize::<Account>(&bytes))
+            .unwrap_or(Ok(Account::default()))?)
     }
 
     /// Returns a default (empty) account if an existing one cannot be fetched for any reason
-    pub fn get_account(&self, address: Address) -> Account<D> {
-        self.try_get_account(address)
-            .unwrap_or(Account::new(self.db))
+    pub fn get_account(&self, address: Address) -> Account {
+        self.try_get_account(address).unwrap_or(Account::default())
+    }
+
+    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<D, TrieHasher>> {
+        Ok(match self.try_get_account(address)?.storage_root {
+            Some(root) => PatriciaTrie::from(self.db.clone(), Arc::new(TrieHasher), &root)?,
+            None => PatriciaTrie::new(self.db.clone(), Arc::new(TrieHasher)),
+        })
+    }
+
+    /// Returns an error if there are any issues fetching the account from the state trie
+    pub fn try_get_account_storage(&self, address: Address, index: H256) -> Result<H256> {
+        match self.get_account_trie(address)?.get(&index.as_bytes()) {
+            // from_slice will only panic if vec.len != H256::len_bytes, i.e. 32
+            Ok(Some(vec)) if vec.len() == 32 => Ok(H256::from_slice(&vec)),
+            // empty storage location
+            Ok(None) => Ok(H256::zero()),
+            // invalid value in storage
+            Ok(Some(vec)) => Err(anyhow!(
+                "Invalid storage for account {:?} at index {}: expected 32 bytes, got value {:?}",
+                address,
+                index,
+                vec
+            )),
+            // any other error fetching
+            Err(e) => Err(anyhow!(
+                "Failed to fetch storage for account {:?} at index {}: {}",
+                address,
+                index,
+                e
+            )),
+        }
+    }
+
+    /// Returns a default empty value if there are any errors accessing the storage
+    pub fn get_account_storage(&self, address: Address, index: H256) -> H256 {
+        self.try_get_account_storage(address, index)
+            .unwrap_or(H256::default())
+    }
+
+    pub fn set_account_storage(&self, address: Address, index: H256, value: H256) -> Result<()> {
+        Ok(self
+            .get_account_trie(address)?
+            .insert(index.as_bytes().to_vec(), value.as_bytes().to_vec())?)
+    }
+
+    pub fn remove_account_storage(&self, address: Address, index: H256) -> Result<bool> {
+        Ok(self.get_account_trie(address)?.remove(index.as_bytes())?)
+    }
+
+    pub fn clear_account_storage(&mut self, address: Address) -> Result<()> {
+        let account = self.get_account(address);
+        self.save_account(
+            address,
+            Account {
+                storage_root: None,
+                ..account
+            },
+        )
     }
 
     /// Returns an error if there are any issues accessing the storage trie
@@ -117,7 +176,7 @@ impl<D: DB> State<D> {
         self.try_has_account(address).unwrap_or(false)
     }
 
-    pub fn save_account(&mut self, address: Address, account: Account<D>) -> Result<()> {
+    pub fn save_account(&mut self, address: Address, account: Account) -> Result<()> {
         Ok(self.accounts.insert(
             crypto::Hash::compute(&[&address.as_bytes()])
                 .as_bytes()
@@ -161,6 +220,12 @@ impl Address {
     }
 }
 
+impl Display for Address {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 impl FromStr for Address {
     type Err = anyhow::Error;
 
@@ -169,74 +234,13 @@ impl FromStr for Address {
     }
 }
 
-#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
-pub struct Account<D: DB> {
+#[derive(Debug, Clone, Default, Hash, Serialize, Deserialize)]
+pub struct Account {
     pub nonce: u64,
     #[serde(with = "serde_bytes")]
     pub code: Vec<u8>,
     #[serde(with = "serde_bytes")]
-    pub storage_root: Vec<u8>,
-    #[serde(skip)]
-    #[serde(default = "Option::default")]
-    trie_db: Option<Arc<D>>,
-}
-
-// Derives are dumb and can't derive Option<T>::None when T doesn't implement Default
-// https://github.com/rust-lang/rust/issues/26925
-impl<D: DB> Default for Account<D> {
-    fn default() -> Self {
-        Self {
-            nonce: u64::default(),
-            code: Vec::default(),
-            storage_root: Vec::default(),
-            trie_db: Option::default(),
-        }
-    }
-}
-
-impl<D: DB> Account<D> {
-    pub fn new(db: Arc<D>) -> Self {
-        Self {
-            trie_db: Some(db),
-            ..Self::default()
-        }
-    }
-
-    pub fn storage(&self) -> Result<PatriciaTrie<D, TrieHasher>> {
-        Ok(PatriciaTrie::from(
-            self.trie_db.ok_or(anyhow!("No db available"))?,
-            Arc::new(TrieHasher),
-            &self.storage_root,
-        )?)
-    }
-
-    pub fn get_storage(&self, index: H256) -> H256 {
-        match self.storage().map(|storage| storage.get(&index.as_bytes())) {
-            // from_slice will only panic if vec.len != H256::len_bytes, i.e. 32
-            Ok(Ok(Some(vec))) if vec.len() == 32 => H256::from_slice(&vec),
-            _ => H256::default(),
-        }
-    }
-
-    pub fn set_storage(&self, index: H256, value: H256) -> Result<()> {
-        Ok(self
-            .storage()?
-            .insert(index.as_bytes().to_vec(), value.as_bytes().to_vec())?)
-    }
-
-    pub fn remove_storage(&self, index: H256) -> Result<bool> {
-        Ok(self.storage()?.remove(index.as_bytes())?)
-    }
-
-    pub fn clear_storage(&self) -> Result<()> {
-        // TODO: consider caching the root hash of an empty trie somewhere instead of this
-        Ok(self.storage_root = PatriciaTrie::new(
-            self.trie_db
-                .ok_or(anyhow!("Database not available to load or modify storage!"))?,
-            Arc::new(TrieHasher),
-        )
-        .root().map_err(|_| anyhow!("Failed to create empty root when clearing account storage! This really shouldn't happen."))?)
-    }
+    pub storage_root: Option<Vec<u8>>,
 }
 
 /// A transaction body, broadcast before execution and then persisted as part of a block after the transaction is executed.

@@ -12,6 +12,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use zq_trie::MemoryDB;
 use ethers::{
     prelude::SignerMiddleware,
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
@@ -48,6 +49,7 @@ fn node() -> (TestNode, BoxStream<'static, (PeerId, PeerId, Message)>) {
         secret_key,
         message_sender,
         reset_timeout_sender,
+        MemoryDB::new(false),
     )
     .unwrap();
     let node = Arc::new(Mutex::new(node));

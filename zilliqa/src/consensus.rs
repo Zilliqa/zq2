@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
-use cita_trie::DB;
+use zq_trie::DB;
 use itertools::Itertools;
 use libp2p::PeerId;
 use tracing::{debug, info, trace};
@@ -40,7 +40,7 @@ pub struct Validator {
 }
 
 #[derive(Debug)]
-pub struct Consensus<D: DB> {
+pub struct Consensus<D: DB + Send + Sync> {
     secret_key: SecretKey,
     config: Config,
     committee: Vec<Validator>,
@@ -66,7 +66,7 @@ pub struct Consensus<D: DB> {
     touched_address_index: BTreeMap<Address, Vec<Hash>>,
 }
 
-impl<D: DB> Consensus<D> {
+impl<D: DB + Send + Sync> Consensus<D> {
     pub fn new(secret_key: SecretKey, config: Config, database: D) -> Result<Self> {
         let validator = Validator {
             public_key: secret_key.node_public_key(),
@@ -451,6 +451,7 @@ impl<D: DB> Consensus<D> {
                     self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, signers)?;
                 let high_qc = self.get_highest_from_agg(&agg)?;
                 let parent_hash = high_qc.block_hash;
+                let state_root = self.state.root_hash()?;
                 let parent = self.get_block(&parent_hash)?;
                 let proposal = Block::from_agg(
                     self.secret_key,
@@ -458,7 +459,7 @@ impl<D: DB> Consensus<D> {
                     high_qc.clone(),
                     agg,
                     parent_hash,
-                    self.state.root_hash()?,
+                    state_root,
                     SystemTime::max(SystemTime::now(), parent.timestamp()),
                 );
                 // as a future improvement, process the proposal before broadcasting it
