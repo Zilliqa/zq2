@@ -8,8 +8,9 @@ ls
 # Start network early....
 cd ../zilliqa
 cargo build --all-targets
-find ./ -name zilliqa
-find ./ -type f
+find / -name zilliqa
+find ../ -type f
+find ../ -name zilliqa
 ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 > out.txt &
 ./target/debug/zilliqa 62070b1a3b5b30236e43b4f1bfd617e1af7474635558314d46127a708b9d302e --no-jsonrpc > out1.txt &
 ./target/debug/zilliqa 56d7a450d75c6ba2706ef71da6ca80143ec4971add9c44d7d129a12fa7d3a364 --no-jsonrpc > out2.txt &
