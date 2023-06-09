@@ -63,6 +63,10 @@ pwd
 ls
 cd evm_js_tests
 
-npm install -g solc
+#npm install -g solc
+sudo add-apt-repository ppa:ethereum/ethereum
+sudo apt-get update
+sudo apt-get install solc
+
 npm install
 echo $PATH
