@@ -6,10 +6,10 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
-use zq_trie::DB;
 use itertools::Itertools;
 use libp2p::PeerId;
 use tracing::{debug, info, trace};
+use zq_trie::DB;
 
 use crate::{
     cfg::Config,

@@ -1,5 +1,6 @@
 mod consensus;
 mod eth;
+mod web3;
 
 use std::{
     fmt::Debug,
@@ -12,7 +13,6 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use zq_trie::MemoryDB;
 use ethers::{
     prelude::SignerMiddleware,
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
@@ -30,8 +30,12 @@ use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use zilliqa::{cfg::Config, crypto::SecretKey, message::Message, node::Node};
+use zq_trie::MemoryDB;
 
-fn node() -> (TestNode, BoxStream<'static, (PeerId, PeerId, Message)>) {
+fn node() -> (
+    TestNode,
+    BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
+) {
     let secret_key = SecretKey::new().unwrap();
 
     let (message_sender, message_receiver) = mpsc::unbounded_channel();
@@ -57,6 +61,7 @@ fn node() -> (TestNode, BoxStream<'static, (PeerId, PeerId, Message)>) {
 
     (
         TestNode {
+            peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             secret_key,
             inner: node,
             rpc_module,
@@ -68,6 +73,7 @@ fn node() -> (TestNode, BoxStream<'static, (PeerId, PeerId, Message)>) {
 /// A node within a test [Network].
 struct TestNode {
     secret_key: SecretKey,
+    peer_id: PeerId,
     inner: Arc<Mutex<Node>>,
     rpc_module: RpcModule<Arc<Mutex<Node>>>,
 }
@@ -77,7 +83,8 @@ struct Network {
     // the borrow checker happy.
     nodes: Vec<TestNode>,
     /// A stream of messages from each node. The stream items are a tuple of (source, destination, message).
-    receivers: Vec<BoxStream<'static, (PeerId, PeerId, Message)>>,
+    /// If the destination is `None`, the message is a broadcast.
+    receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, Message)>>,
 }
 
 impl Network {
@@ -109,9 +116,21 @@ impl Network {
         let messages = futures::stream::select_all(&mut self.receivers);
         let mut messages = messages.take(ticks);
 
-        while let Some((source, _destination, message)) = messages.next().await {
-            // Currently, all messages are broadcast, so we replicate that behaviour here.
+        while let Some((source, destination, message)) = messages.next().await {
+            // Respect the destination if it is set and only send it to one
             for node in self.nodes.iter() {
+                if let Some(dest) = destination {
+                    if dest == node.peer_id {
+                        node.inner
+                            .lock()
+                            .unwrap()
+                            .handle_message(source, message.clone())
+                            .unwrap();
+                        break;
+                    }
+                    continue;
+                }
+                // Broadcast when no destination is set
                 node.inner
                     .lock()
                     .unwrap()

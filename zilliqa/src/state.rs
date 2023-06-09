@@ -1,10 +1,10 @@
-use zq_trie::{Hasher, PatriciaTrie, Trie, DB};
 use rlp::RlpStream;
 use sha3::Digest;
 use sha3::Keccak256;
 use std::fmt::Display;
 use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
+use zq_trie::{Hasher, PatriciaTrie, Trie, DB};
 
 use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256, U256};

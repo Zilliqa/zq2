@@ -1,19 +1,22 @@
-use zq_trie::MemoryDB;
 use jsonrpsee::{server::ServerHandle, RpcModule};
 use std::{
+    iter,
     net::Ipv4Addr,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::sync::mpsc::UnboundedSender;
+use zq_trie::MemoryDB;
 
 use crate::{
     api,
     cfg::Config,
     crypto::{NodePublicKey, SecretKey},
+    networking::{request_response, MessageCodec, MessageProtocol, ProtocolSupport},
     node,
 };
+
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use http::{header, Method};
@@ -33,6 +36,7 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
     tcp, yamux, PeerId, Transport,
 };
+
 use node::Node;
 use tokio::{
     select,
@@ -58,6 +62,7 @@ struct Args {
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
+    request_response: request_response::Behaviour<MessageCodec>,
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
     kademlia: Kademlia<MemoryStore>,
@@ -69,8 +74,8 @@ pub struct NodeLauncher {
     pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
     pub secret_key: SecretKey,
     pub peer_id: PeerId,
-    pub message_sender: UnboundedSender<(PeerId, Message)>,
-    pub message_receiver: UnboundedReceiverStream<(PeerId, Message)>,
+    pub message_sender: UnboundedSender<(Option<PeerId>, Message)>,
+    pub message_receiver: UnboundedReceiverStream<(Option<PeerId>, Message)>,
     pub reset_timeout_sender: UnboundedSender<()>,
     pub reset_timeout_receiver: UnboundedReceiverStream<()>,
     rpc_launched: bool,
@@ -119,7 +124,7 @@ impl NodeLauncher {
         self.rpc_module.clone()
     }
 
-    pub fn get_message_sender_handle(&self) -> UnboundedSender<(PeerId, Message)> {
+    pub fn get_message_sender_handle(&self) -> UnboundedSender<(Option<PeerId>, Message)> {
         self.message_sender.clone()
     }
 
@@ -165,6 +170,11 @@ impl NodeLauncher {
             .boxed();
 
         let behaviour = Behaviour {
+            request_response: request_response::Behaviour::new(
+                MessageCodec,
+                iter::once((MessageProtocol, ProtocolSupport::Full)),
+                Default::default(),
+            ),
             gossipsub: gossipsub::Behaviour::new(
                 MessageAuthenticity::Signed(key_pair.clone()),
                 gossipsub::ConfigBuilder::default()
@@ -254,19 +264,41 @@ impl NodeLauncher {
                         debug!(%source, message_type, "message recieved");
                         self.node.lock().unwrap().handle_message(source, message).unwrap();
                     }
-                    _ => {}
+
+                    SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer })) => {
+                                match message {
+                                    request_response::Message::Request {request, channel, ..} => {
+                                        debug!(%peer, "direct message received");
+
+                                        self.node.lock().unwrap().handle_message(peer, request).unwrap();
+
+                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Message::RequestResponse);
+                                    }
+                                    request_response::Message::Response {..} => {}
+                                }
+                    }
+
+                    _ => {},
                 },
                 message = self.message_receiver.next() => {
                     let (dest, message) = message.expect("message stream should be infinite");
                     let message_type = message.name();
-                    debug!(%dest, message_type, "sending message");
                     let data = serde_json::to_vec(&message).unwrap();
 
-                    match swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
-                        Ok(_) => {},
-                        Err(e) => {
-                            error!(%e, "failed to publish message");
-                        }
+                    match dest {
+                        Some(dest) => {
+                            debug!(%dest, message_type, "sending direct message");
+                            let _ = swarm.behaviour_mut().request_response.send_request(&dest, message);
+                        },
+                        None => {
+                            debug!(message_type, "sending gossip message");
+                            match swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    error!(%e, "failed to publish message");
+                                }
+                            }
+                        },
                     }
                 },
                 () = &mut sleep => {

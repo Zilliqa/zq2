@@ -1,7 +1,7 @@
 //! Manages execution of transactions on state.
 
-use zq_trie::DB;
 use std::{collections::HashSet, time::SystemTime};
+use zq_trie::DB;
 
 use anyhow::{anyhow, Result};
 use ethabi::Token;

@@ -62,7 +62,7 @@ macro_rules! declare_module {
                     let start = std::time::SystemTime::now();
 
                     let result = std::panic::catch_unwind(|| $method(params, context)).unwrap_or_else(|_| {
-                        Err(anyhow!("Unhandled panic in RPC handler {}", $name))
+                        Err(anyhow::anyhow!("Unhandled panic in RPC handler {}", $name))
                     });
 
                     let result = result.map_err(|e| {
