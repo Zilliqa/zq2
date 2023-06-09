@@ -41,6 +41,9 @@ echo "here we are..."
 curl https://raw.githubusercontent.com/creationix/nvm/master/install.sh | bash 
 source ~/.profile
 
+echo "now switch... "
+export NVM_DIR="$HOME/.nvm"
+
 nvm install 16.0
 nvm use 16.0
 node --version
