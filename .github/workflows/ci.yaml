@@ -52,4 +52,4 @@ jobs:
     - name: Steal from container
       run: sudo mkdir -p /scilla/0 && sudo docker cp dummy:/scilla/0 /scilla/ && sudo docker cp dummy:/usr/local/lib/ /usr/local/
     - name: JS test framework
-      run: export PATH="/scilla/0/bin:$PATH" && ./scripts/start_network.sh
+      run: export PATH="/scilla/0/bin:$PATH" && ./scripts/js_test.sh
