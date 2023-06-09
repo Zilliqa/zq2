@@ -79,7 +79,7 @@ struct Network {
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
     // the borrow checker happy.
     nodes: Vec<TestNode>,
-    /// A stream of messages from each node. The stream items are a tuple of (source, Some(destination), message).
+    /// A stream of messages from each node. The stream items are a tuple of (source, destination, message).
     /// If the destination is `None`, the message is a broadcast.
     receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, Message)>>,
 }

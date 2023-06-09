@@ -8,14 +8,9 @@ pub use libp2p::request_response::{self, ProtocolSupport, RequestId, ResponseCha
 use tracing::error;
 
 #[derive(Debug, Clone)]
-pub struct MessageProtocol();
+pub struct MessageProtocol;
 #[derive(Clone)]
-pub struct MessageCodec();
-
-//#[derive(Debug, Clone, PartialEq, Eq)]
-//pub struct Request(pub Vec<u8>);
-//#[derive(Debug, Clone, PartialEq, Eq)]
-//pub struct Response(pub Vec<u8>);
+pub struct MessageCodec;
 
 impl ProtocolName for MessageProtocol {
     fn protocol_name(&self) -> &[u8] {
@@ -44,7 +39,7 @@ impl request_response::Codec for MessageCodec {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
 
-        Ok(serde_json::from_slice::<Self::Response>(&vec).unwrap())
+        Ok(serde_json::from_slice::<Self::Request>(&vec).unwrap())
     }
 
     async fn read_response<T>(
@@ -55,7 +50,7 @@ impl request_response::Codec for MessageCodec {
     where
         T: AsyncRead + Unpin + Send,
     {
-        let vec = read_length_prefixed(io, 500_000_000).await?; // update transfer maximum
+        let vec = read_length_prefixed(io, 500_000_000).await?;
 
         if vec.is_empty() {
             return Err(io::ErrorKind::UnexpectedEof.into());

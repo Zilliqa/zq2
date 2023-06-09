@@ -266,9 +266,7 @@ impl NodeLauncher {
                     SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer })) => {
                                 match message {
                                     request_response::Message::Request {request, channel, ..} => {
-                                        //let message = serde_json::from_slice::<Message>(&request.0).unwrap();
-                                        //let message_type = message.name();
-                                        debug!(%peer, "direct message recieved");
+                                        debug!(%peer, "direct message received");
 
                                         self.node.lock().unwrap().handle_message(peer, request).unwrap();
 

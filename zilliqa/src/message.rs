@@ -110,7 +110,7 @@ pub enum Message {
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
     NewTransaction(Transaction),
-    RequestResponse(),
+    RequestResponse,
 }
 
 impl Message {
