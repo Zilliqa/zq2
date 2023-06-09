@@ -7,7 +7,7 @@ ls
 
 # Start network early....
 cd ../zilliqa
-cargo build --all-targets
+cargo build --all-targets > /dev/null
 pwd
 #find / -name zilliqa
 #find ../ -type f
@@ -17,6 +17,7 @@ pwd
 ../target/debug/zilliqa 56d7a450d75c6ba2706ef71da6ca80143ec4971add9c44d7d129a12fa7d3a364 --no-jsonrpc > out2.txt &
 ../target/debug/zilliqa db670cbff28f4b15297d03fafdab8f5303d68b7591bd59e31eaef215dd0f246a --no-jsonrpc > out3.txt &
 sleep 10;
+curl -X POST http://localhost:4201 -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":"1","method":"eth_getBalance", "params": ["0x6f1ec4ca9228ea36a14f0e4e336e71a1851d679b", "latest"]}'
 cd ../
 
 # install nvm and switch to desired
@@ -46,9 +47,30 @@ ls
 cd evm_js_tests
 
 #npm install -g solc
-sudo add-apt-repository ppa:ethereum/ethereum
-sudo apt-get update
-sudo apt-get install solc
+sudo add-apt-repository ppa:ethereum/ethereum > /dev/null
+sudo apt-get update > /dev/null
+sudo apt-get install solc > /dev/null
 
-npm install
+npm install > /dev/null
 echo $PATH
+
+echo "now we run the test..."
+
+curl -X POST http://localhost:4201 -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":"1","method":"eth_getBalance", "params": ["0x6f1ec4ca9228ea36a14f0e4e336e71a1851d679b", "latest"]}'
+ps -e | grep zil
+
+
+#npm install
+DEBUG=true MOCHA_TIMEOUT=400000 npx hardhat test --grep "should return a send raw transaction" --bail --network zq2
+
+retVal=$?
+
+pkill -INT zilliqa
+cat npx.out
+if [ $retVal -ne 0 ]; then
+    echo "!!!!!! Error with JS integration test !!!!!!"
+    exit 1
+fi
+
+echo "Success with integration test"
+exit 0
