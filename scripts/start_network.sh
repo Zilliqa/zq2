@@ -63,6 +63,8 @@ pwd
 ls
 cd evm_js_tests
 
+sudo apt install libsecp256k1-dev
+
 #npm install -g solc
 sudo add-apt-repository ppa:ethereum/ethereum
 sudo apt-get update
