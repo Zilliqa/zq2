@@ -34,3 +34,22 @@ jobs:
       run: cargo test --all-targets --all-features
     - name: Verify working directory is clean
       run: git diff --exit-code
+
+  e2e_test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install dependencies
+      run: sudo apt install -y protobuf-compiler
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+    # Use Rust nightly so we can use the Cargo sparse registry feature, which greatly speeds up uncached builds (https://blog.rust-lang.org/2022/06/22/sparse-registry-testing.html).
+    - name: Use Rust nightly
+      run: rustup override set nightly
+    - uses: Swatinem/rust-cache@v2
+    - name: Create docker dummy to steal scilla config from
+      run: docker create --name dummy zilliqa/zilliqa:v9.0.4
+    - name: Steal from container
+      run: sudo mkdir -p /scilla/0 && sudo docker cp dummy:/scilla/0 /scilla/ && sudo docker cp dummy:/usr/local/lib/ /usr/local/
+    - name: JS test framework
+      run: export PATH="/scilla/0/bin:$PATH" && ./scripts/js_test.sh
