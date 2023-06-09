@@ -12,7 +12,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check_build:
+  check:
     runs-on: ubuntu-latest
     steps:
     - name: Install dependencies
@@ -45,13 +45,17 @@ jobs:
         submodules: recursive
     # Use Rust nightly so we can use the Cargo sparse registry feature, which greatly speeds up uncached builds (https://blog.rust-lang.org/2022/06/22/sparse-registry-testing.html).
     - name: Use Rust nightly
-      run: rustup override set nightly
+      run: rustup override set nightly && rustup component add clippy rustfmt
     - uses: Swatinem/rust-cache@v2
-    - name: Create docker temp for getting scilla build
+    - name: xxx
       run: docker create --name dummy zilliqa/zilliqa:v9.0.4
-    - name: Install scilla
-      run: sudo mkdir -p /scilla/0 && sudo docker cp dummy:/scilla/0 /scilla/ && sudo docker cp dummy:/usr/local/lib/ /usr/local/
-    - name: JS test framework start
-      run: ./scripts/start_network.sh
-    - name: JS test framework test
-      run: ./scripts/js_test.sh
+    - name: xxx
+      run: sudo mkdir -p /scilla/0
+    - name: xxx
+      run: sudo docker cp dummy:/scilla/0 /scilla/ && sudo docker cp dummy:/usr/local/lib/ /usr/local/
+    - name: add scilla to path
+      run: export PATH="/scilla/0/bin:$PATH" && which scilla-fmt
+    - name: xxx
+      run: sudo apt install libsecp256k1-dev
+    - name: JS test framework
+      run: export PATH="/scilla/0/bin:$PATH" && ./scripts/start_network.sh && ./scripts/js_test.sh
