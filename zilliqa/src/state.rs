@@ -84,7 +84,7 @@ impl<D: DB + Send + Sync> State<D> {
     }
 
     pub fn try_clone(&mut self) -> Result<Self> {
-        Ok(State::from_root(self.db.clone(), self.root_hash()?)?)
+        State::from_root(self.db.clone(), self.root_hash()?)
     }
 
     pub fn root_hash(&mut self) -> Result<crypto::Hash> {
@@ -115,7 +115,7 @@ impl<D: DB + Send + Sync> State<D> {
 
     /// Returns an error if there are any issues fetching the account from the state trie
     pub fn try_get_account_storage(&self, address: Address, index: H256) -> Result<H256> {
-        match self.get_account_trie(address)?.get(&index.as_bytes()) {
+        match self.get_account_trie(address)?.get(index.as_bytes()) {
             // from_slice will only panic if vec.len != H256::len_bytes, i.e. 32
             Ok(Some(vec)) if vec.len() == 32 => Ok(H256::from_slice(&vec)),
             // empty storage location

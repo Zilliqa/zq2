@@ -462,7 +462,7 @@ impl<'a, D: DB> Backend for CallContext<'a, D> {
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
-        self.state.get_account(Address(address)).code.to_owned()
+        self.state.get_account(Address(address)).code
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
