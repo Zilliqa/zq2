@@ -1,5 +1,6 @@
 mod consensus;
 mod eth;
+mod web3;
 
 use std::{
     fmt::Debug,
