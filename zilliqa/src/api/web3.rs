@@ -1,4 +1,4 @@
-use super::{to_hex::ToHex};
+use super::to_hex::ToHex;
 
 use std::sync::{Arc, Mutex};
 
