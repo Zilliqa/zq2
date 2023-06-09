@@ -10,7 +10,7 @@ use evm_ds::evm::{
     backend::{Apply, Backend, Basic},
     executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata},
     tracing::EventListener,
-    Config, CreateScheme, ExitReason,
+    Config, CreateScheme, ExitReason, Runtime,
 };
 use evm_ds::cps_executor::{CpsExecutor};
 use primitive_types::{H160, H256, U256};
@@ -167,7 +167,7 @@ impl State {
         //let context = self.call_context(gas_price.into(), from_addr.0, chain_id, current_block);
         let context = CallContext::new();
 
-        let runtime = evm::Runtime::new(code, data.clone(), context, &config);
+        let runtime = Runtime::new(payload, data.clone(), context, &config);
         let state = MemoryStackState::new(metadata, &backend);
 
         //let mut executor = self.executor(&context, gas_limit);
