@@ -1,5 +1,3 @@
-use crate::api::eth::get_transaction_inner;
-use crate::api::eth::get_transaction_receipt_inner;
 use std::{
     sync::{Arc, Mutex},
     time::SystemTime,
@@ -12,9 +10,12 @@ use serde::Deserialize;
 
 use crate::{crypto::Hash, node::Node, state::Address};
 
-use super::types::{
-    EthTransaction, EthTransactionReceiptWithTimestamp, OtterscanBlockDetails,
-    OtterscanBlockTransactions, OtterscanBlockWithTransactions, OtterscanTransactions,
+use super::{
+    eth::{get_transaction_inner, get_transaction_receipt_inner},
+    types::{
+        EthTransaction, EthTransactionReceiptWithTimestamp, OtterscanBlockDetails,
+        OtterscanBlockTransactions, OtterscanBlockWithTransactions, OtterscanTransactions,
+    },
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -104,6 +105,13 @@ fn get_block_transactions(
         full_block,
         receipts,
     }))
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StringOrInteger {
+    String(String),
+    Integer(u64),
 }
 
 fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
@@ -237,11 +245,4 @@ fn search_transactions_before(
     }
 
     search_transactions_inner(node, Address(address), block_number, page_size, true)
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum StringOrInteger {
-    String(String),
-    Integer(u64),
 }
