@@ -1,4 +1,3 @@
-exit 1
 cd evm_js_tests
 echo $PATH
 echo "now we run the test..."
