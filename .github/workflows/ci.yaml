@@ -54,4 +54,4 @@ jobs:
     - name: JS test framework start
       run: ./scripts/start_network.sh
     - name: JS test framework test
-      run: export PATH="/scilla/0/bin:$PATH" ./scripts/js_test.sh
+      run: ./scripts/js_test.sh
