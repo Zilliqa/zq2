@@ -169,8 +169,8 @@ impl NodeLauncher {
 
         let behaviour = Behaviour {
             request_response: request_response::Behaviour::new(
-                MessageCodec(),
-                iter::once((MessageProtocol(), ProtocolSupport::Full)),
+                MessageCodec,
+                iter::once((MessageProtocol, ProtocolSupport::Full)),
                 Default::default(),
             ),
             gossipsub: gossipsub::Behaviour::new(
@@ -270,7 +270,7 @@ impl NodeLauncher {
 
                                         self.node.lock().unwrap().handle_message(peer, request).unwrap();
 
-                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Message::RequestResponse());
+                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Message::RequestResponse);
                                     }
                                     request_response::Message::Response {..} => {}
                                 }

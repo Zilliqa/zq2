@@ -122,7 +122,7 @@ impl Message {
             Message::BlockRequest(_) => "BlockRequest",
             Message::BlockResponse(_) => "BlockResponse",
             Message::NewTransaction(_) => "NewTransaction",
-            Message::RequestResponse() => "RequestResponse",
+            Message::RequestResponse => "RequestResponse",
         }
     }
 }
