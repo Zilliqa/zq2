@@ -12,14 +12,11 @@ pwd
 #find / -name zilliqa
 #find ../ -type f
 #find ../ -name zilliqa
-../target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 > zil_log_out.txt &
-../target/debug/zilliqa 62070b1a3b5b30236e43b4f1bfd617e1af7474635558314d46127a708b9d302e --no-jsonrpc > zil_log_out1.txt &
-../target/debug/zilliqa 56d7a450d75c6ba2706ef71da6ca80143ec4971add9c44d7d129a12fa7d3a364 --no-jsonrpc > zil_log_out2.txt &
-../target/debug/zilliqa db670cbff28f4b15297d03fafdab8f5303d68b7591bd59e31eaef215dd0f246a --no-jsonrpc > zil_log_out3.txt &
+../target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 > out.txt &
+../target/debug/zilliqa 62070b1a3b5b30236e43b4f1bfd617e1af7474635558314d46127a708b9d302e --no-jsonrpc > out1.txt &
+../target/debug/zilliqa 56d7a450d75c6ba2706ef71da6ca80143ec4971add9c44d7d129a12fa7d3a364 --no-jsonrpc > out2.txt &
+../target/debug/zilliqa db670cbff28f4b15297d03fafdab8f5303d68b7591bd59e31eaef215dd0f246a --no-jsonrpc > out3.txt &
 sleep 10;
-
-# sanity check
-curl -X POST http://localhost:4201 -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":"1","method":"eth_blockNumber"}'
 cd ../
 
 # install nvm and switch to desired
@@ -49,7 +46,6 @@ ls
 cd evm_js_tests
 
 #npm install -g solc
-sudo apt install libsecp256k1-dev
 sudo add-apt-repository ppa:ethereum/ethereum
 sudo apt-get update
 sudo apt-get install solc
