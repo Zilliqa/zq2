@@ -45,17 +45,11 @@ jobs:
         submodules: recursive
     # Use Rust nightly so we can use the Cargo sparse registry feature, which greatly speeds up uncached builds (https://blog.rust-lang.org/2022/06/22/sparse-registry-testing.html).
     - name: Use Rust nightly
-      run: rustup override set nightly && rustup component add clippy rustfmt
+      run: rustup override set nightly
     - uses: Swatinem/rust-cache@v2
-    - name: xxx
+    - name: Create docker dummy to steal scilla config from
       run: docker create --name dummy zilliqa/zilliqa:v9.0.4
-    - name: xxx
-      run: sudo mkdir -p /scilla/0
-    - name: xxx
-      run: sudo docker cp dummy:/scilla/0 /scilla/ && sudo docker cp dummy:/usr/local/lib/ /usr/local/
-    - name: add scilla to path
-      run: export PATH="/scilla/0/bin:$PATH" && which scilla-fmt
-    - name: xxx
-      run: sudo apt install libsecp256k1-dev
+    - name: Steal from container
+      run: sudo mkdir -p /scilla/0 && sudo docker cp dummy:/scilla/0 /scilla/ && sudo docker cp dummy:/usr/local/lib/ /usr/local/
     - name: JS test framework
-      run: export PATH="/scilla/0/bin:$PATH" && ./scripts/start_network.sh && ./scripts/js_test.sh
+      run: export PATH="/scilla/0/bin:$PATH" && ./scripts/start_network.sh

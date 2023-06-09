@@ -46,10 +46,9 @@ pwd
 ls
 cd evm_js_tests
 
-#npm install -g solc
 sudo add-apt-repository ppa:ethereum/ethereum > /dev/null
 sudo apt-get update > /dev/null
-sudo apt-get install solc > /dev/null
+sudo apt-get install solc libsecp256k1-dev > /dev/null
 
 npm install > /dev/null
 echo $PATH
