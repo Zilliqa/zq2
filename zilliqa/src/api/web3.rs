@@ -1,4 +1,4 @@
-use super::{to_hex::ToHex, *};
+use super::to_hex::ToHex;
 
 use std::sync::{Arc, Mutex};
 
@@ -24,7 +24,7 @@ fn sha3(params: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
     let data: String = params.one()?;
     let data = data
         .strip_prefix("0x")
-        .ok_or_else(|| anyhow!("no 0x prefix"))?;
+        .ok_or_else(|| anyhow::anyhow!("no 0x prefix"))?;
     let data = hex::decode(data)?;
 
     let hashed = Keccak256::digest(data);
