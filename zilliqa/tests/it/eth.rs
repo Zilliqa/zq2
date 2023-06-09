@@ -1,9 +1,82 @@
-use ethers::{prelude::DeploymentTxFactory, providers::Middleware, types::TransactionRequest};
-use primitive_types::{H160, H256};
+use std::fmt::Debug;
 
-use crate::{random_wallet, Network};
+use ethabi::ethereum_types::U64;
+use ethers::{
+    prelude::DeploymentTxFactory,
+    providers::{Middleware, Provider},
+    types::TransactionRequest,
+};
+use primitive_types::{H160, H256};
+use serde::Serialize;
+
+use crate::{random_wallet, LocalRpcClient, Network};
 
 use super::deploy_contract;
+
+#[tokio::test]
+async fn get_block_transaction_count() {
+    let mut network = Network::new(4);
+
+    let provider = network.provider(0);
+    let wallet = random_wallet(provider.clone());
+
+    async fn count_by_number<T: Debug + Serialize + Send + Sync>(
+        provider: &Provider<LocalRpcClient>,
+        number: T,
+    ) -> u64 {
+        provider
+            .request::<_, U64>("eth_getBlockTransactionCountByNumber", [number])
+            .await
+            .unwrap()
+            .as_u64()
+    }
+
+    async fn count_by_hash(provider: &Provider<LocalRpcClient>, hash: H256) -> u64 {
+        provider
+            .request::<_, U64>("eth_getBlockTransactionCountByHash", [hash])
+            .await
+            .unwrap()
+            .as_u64()
+    }
+
+    // Send a transaction.
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    network
+        .run_until_async(
+            |p| async move { p.get_transaction_receipt(hash).await.unwrap().is_some() },
+            10,
+        )
+        .await
+        .unwrap();
+
+    let receipt = provider
+        .get_transaction_receipt(hash)
+        .await
+        .unwrap()
+        .unwrap();
+    let block_hash = receipt.block_hash.unwrap();
+    let block_number = receipt.block_number.unwrap();
+
+    // Check the previous block has a transaction count of zero.
+    let count = count_by_number(&provider, block_number - 1).await;
+    assert_eq!(count, 0);
+
+    // Check this block has a transaction count of one.
+    let count = count_by_number(&provider, block_number).await;
+    assert_eq!(count, 1);
+    let count = count_by_hash(&provider, block_hash).await;
+    assert_eq!(count, 1);
+
+    // The latest block is the one with our transaction, because we stopped running the network after our receipt
+    // appeared. So the latest block should also have a count of one.
+    let count = count_by_number(&provider, "latest").await;
+    assert_eq!(count, 1);
+}
 
 #[tokio::test]
 async fn get_storage_at() {
