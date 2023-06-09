@@ -3,7 +3,7 @@ echo $PATH
 echo "now we run the test..."
 
 #npm install
-DEBUG=true MOCHA_TIMEOUT=400000 npx hardhat test --grep "should return a send raw transaction" --bail
+DEBUG=true MOCHA_TIMEOUT=400000 npx hardhat test --grep "should return a send raw transaction" --bail --network zq2
 
 retVal=$?
 
