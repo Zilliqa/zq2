@@ -2,16 +2,17 @@
 
 use std::{borrow::Cow, collections::HashSet, time::SystemTime};
 
-use evm_ds::api::hellow;
+use evm_ds::call_context::CallContext;
 
 use anyhow::{anyhow, Result};
 use ethabi::Token;
-use evm::{
+use evm_ds::evm::{
     backend::{Apply, Backend, Basic},
     executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata},
     tracing::EventListener,
     Config, CreateScheme, ExitReason,
 };
+use evm_ds::cps_executor::{CpsExecutor};
 use primitive_types::{H160, H256, U256};
 use tracing::info;
 
@@ -27,9 +28,9 @@ pub struct TouchedAddressEventListener {
 }
 
 impl EventListener for TouchedAddressEventListener {
-    fn event(&mut self, event: evm::tracing::Event<'_>) {
+    fn event(&mut self, event: evm_ds::evm::tracing::Event<'_>) {
         match event {
-            evm::tracing::Event::Call {
+            evm_ds::evm::tracing::Event::Call {
                 code_address,
                 transfer,
                 ..
@@ -40,38 +41,38 @@ impl EventListener for TouchedAddressEventListener {
                     self.touched.insert(transfer.target); // TODO: Figure out if `transfer.target` is always equal to `code_address`?
                 }
             }
-            evm::tracing::Event::Create {
+            evm_ds::evm::tracing::Event::Create {
                 caller, address, ..
             } => {
                 self.touched.insert(caller);
                 self.touched.insert(address);
             }
-            evm::tracing::Event::Suicide {
+            evm_ds::evm::tracing::Event::Suicide {
                 address, target, ..
             } => {
                 self.touched.insert(address);
                 self.touched.insert(target);
             }
-            evm::tracing::Event::Exit { .. } => {}
-            evm::tracing::Event::TransactCall {
+            evm_ds::evm::tracing::Event::Exit { .. } => {}
+            evm_ds::evm::tracing::Event::TransactCall {
                 caller, address, ..
             } => {
                 self.touched.insert(caller);
                 self.touched.insert(address);
             }
-            evm::tracing::Event::TransactCreate {
+            evm_ds::evm::tracing::Event::TransactCreate {
                 caller, address, ..
             } => {
                 self.touched.insert(caller);
                 self.touched.insert(address);
             }
-            evm::tracing::Event::TransactCreate2 {
+            evm_ds::evm::tracing::Event::TransactCreate2 {
                 caller, address, ..
             } => {
                 self.touched.insert(caller);
                 self.touched.insert(address);
             }
-            evm::tracing::Event::PrecompileSubcall {
+            evm_ds::evm::tracing::Event::PrecompileSubcall {
                 code_address,
                 transfer,
                 ..
@@ -86,15 +87,16 @@ impl EventListener for TouchedAddressEventListener {
     }
 }
 
-pub struct CallContext<'a> {
-    state: &'a State,
-    gas_price: U256,
-    origin: H160,
-    chain_id: u64,
-    current_block: BlockHeader,
-}
+//pub struct CallContext<'a> {
+//    state: &'a State,
+//    gas_price: U256,
+//    origin: H160,
+//    chain_id: u64,
+//    current_block: BlockHeader,
+//}
 
-const CONFIG: Config = Config::shanghai();
+//const CONFIG: Config = Config::shanghai();
+const CONFIG: Config = Config::london();
 
 /// Data returned after applying a [Transaction] to [State].
 pub struct TransactionApplyResult {
@@ -117,31 +119,33 @@ impl TransactionApplyResult {
 }
 
 impl State {
-    fn call_context(
-        &self,
-        gas_price: U256,
-        origin: H160,
-        chain_id: u64,
-        current_block: BlockHeader,
-    ) -> CallContext<'_> {
-        CallContext {
-            state: self,
-            gas_price,
-            origin,
-            chain_id,
-            current_block,
-        }
-    }
+    //fn call_context(
+    //    &self,
+    //    gas_price: U256,
+    //    origin: H160,
+    //    chain_id: u64,
+    //    current_block: BlockHeader,
+    //) -> CallContext<'_> {
+    //    CallContext {
+    //        state: self,
+    //        gas_price,
+    //        origin,
+    //        chain_id,
+    //        current_block,
+    //    }
+    //}
 
+    /*
     fn executor<'a>(
         &'a self,
-        context: &'a CallContext<'a>,
+        context: &'a CallContext,
         gas_limit: u64,
-    ) -> StackExecutor<MemoryStackState<CallContext<'a>>, ()> {
+    ) -> StackExecutor<MemoryStackState<CallContext>, ()> {
         let stack_state_metadata = StackSubstateMetadata::new(gas_limit, &CONFIG);
         let stack_state = MemoryStackState::new(stack_state_metadata, context);
         StackExecutor::new_with_precompiles(stack_state, &CONFIG, &())
     }
+    */
 
     /// Deploy a contract at a fixed address. Used for system contracts which exist at well known addresses.
     pub fn deploy_fixed_contract(&mut self, address: Address, code: Vec<u8>) {
@@ -160,8 +164,14 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<TransactionApplyResult> {
-        let context = self.call_context(gas_price.into(), from_addr.0, chain_id, current_block);
-        let mut executor = self.executor(&context, gas_limit);
+        //let context = self.call_context(gas_price.into(), from_addr.0, chain_id, current_block);
+        let context = CallContext::new();
+
+        let runtime = evm::Runtime::new(code, data.clone(), context, &config);
+        let state = MemoryStackState::new(metadata, &backend);
+
+        //let mut executor = self.executor(&context, gas_limit);
+        let mut executor = CpsExecutor::new_with_precompiles(state, &config, &precompiles, enable_cps);
 
         let (exit_reason, contract_address) = if to_addr == Address::DEPLOY_CONTRACT {
             let address = executor.create_address(CreateScheme::Legacy {
@@ -390,96 +400,96 @@ impl State {
     }
 }
 
-impl<'a> Backend for CallContext<'a> {
-    fn gas_price(&self) -> U256 {
-        self.gas_price
-    }
-
-    fn origin(&self) -> H160 {
-        self.origin
-    }
-
-    fn block_hash(&self, _: U256) -> H256 {
-        // TODO: Get the hash of one of the 256 most recent blocks.
-        H256::zero()
-    }
-
-    fn block_number(&self) -> U256 {
-        self.current_block.view.into()
-    }
-
-    fn block_coinbase(&self) -> H160 {
-        // TODO: Return something here, probably the proposer of the current block.
-        H160::zero()
-    }
-
-    fn block_timestamp(&self) -> U256 {
-        self.current_block
-            .timestamp
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|duration| duration.as_secs())
-            .unwrap_or_default()
-            .into()
-    }
-
-    fn block_difficulty(&self) -> U256 {
-        0.into()
-    }
-
-    fn block_randomness(&self) -> Option<H256> {
-        None
-    }
-
-    fn block_gas_limit(&self) -> U256 {
-        0.into()
-    }
-
-    fn block_base_fee_per_gas(&self) -> U256 {
-        0.into()
-    }
-
-    fn chain_id(&self) -> U256 {
-        self.chain_id.into()
-    }
-
-    fn exists(&self, address: H160) -> bool {
-        // Ethereum charges extra gas for `CALL`s or `SELFDESTRUCT`s which create new accounts, to discourage the
-        // creation of many addresses and the resulting increase in state size. We can tell if an account exists in our
-        // state by checking whether the response from `State::get_account` is borrowed.
-        matches!(self.state.get_account(Address(address)), Cow::Borrowed(_))
-    }
-
-    fn basic(&self, address: H160) -> Basic {
-        let nonce = self.state.get_account(Address(address)).nonce;
-        // For these accounts, we hardcode the balance we return to the EVM engine as zero. Otherwise, we have an
-        // infinite recursion because getting the native balance of any account requires this method to be called for
-        // these two 'special' accounts.
-        let is_special_account =
-            address == Address::DEPLOY_CONTRACT.0 || address == Address::NATIVE_TOKEN.0;
-        Basic {
-            balance: if is_special_account {
-                0.into()
-            } else {
-                self.state.get_native_balance(Address(address)).unwrap()
-            },
-            nonce: nonce.into(),
-        }
-    }
-
-    fn code(&self, address: H160) -> Vec<u8> {
-        self.state.get_account(Address(address)).code.to_owned()
-    }
-
-    fn storage(&self, address: H160, index: H256) -> H256 {
-        self.state
-            .get_account(Address(address))
-            .storage
-            .get(&index)
-            .copied()
-            .unwrap_or_default()
-    }
-
-    fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
-        Some(self.storage(address, index))
-    }
-}
+//impl<'a> Backend for CallContext<'a> {
+//    fn gas_price(&self) -> U256 {
+//        self.gas_price
+//    }
+//
+//    fn origin(&self) -> H160 {
+//        self.origin
+//    }
+//
+//    fn block_hash(&self, _: U256) -> H256 {
+//        // TODO: Get the hash of one of the 256 most recent blocks.
+//        H256::zero()
+//    }
+//
+//    fn block_number(&self) -> U256 {
+//        self.current_block.view.into()
+//    }
+//
+//    fn block_coinbase(&self) -> H160 {
+//        // TODO: Return something here, probably the proposer of the current block.
+//        H160::zero()
+//    }
+//
+//    fn block_timestamp(&self) -> U256 {
+//        self.current_block
+//            .timestamp
+//            .duration_since(SystemTime::UNIX_EPOCH)
+//            .map(|duration| duration.as_secs())
+//            .unwrap_or_default()
+//            .into()
+//    }
+//
+//    fn block_difficulty(&self) -> U256 {
+//        0.into()
+//    }
+//
+//    fn block_randomness(&self) -> Option<H256> {
+//        None
+//    }
+//
+//    fn block_gas_limit(&self) -> U256 {
+//        0.into()
+//    }
+//
+//    fn block_base_fee_per_gas(&self) -> U256 {
+//        0.into()
+//    }
+//
+//    fn chain_id(&self) -> U256 {
+//        self.chain_id.into()
+//    }
+//
+//    fn exists(&self, address: H160) -> bool {
+//        // Ethereum charges extra gas for `CALL`s or `SELFDESTRUCT`s which create new accounts, to discourage the
+//        // creation of many addresses and the resulting increase in state size. We can tell if an account exists in our
+//        // state by checking whether the response from `State::get_account` is borrowed.
+//        matches!(self.state.get_account(Address(address)), Cow::Borrowed(_))
+//    }
+//
+//    fn basic(&self, address: H160) -> Basic {
+//        let nonce = self.state.get_account(Address(address)).nonce;
+//        // For these accounts, we hardcode the balance we return to the EVM engine as zero. Otherwise, we have an
+//        // infinite recursion because getting the native balance of any account requires this method to be called for
+//        // these two 'special' accounts.
+//        let is_special_account =
+//            address == Address::DEPLOY_CONTRACT.0 || address == Address::NATIVE_TOKEN.0;
+//        Basic {
+//            balance: if is_special_account {
+//                0.into()
+//            } else {
+//                self.state.get_native_balance(Address(address)).unwrap()
+//            },
+//            nonce: nonce.into(),
+//        }
+//    }
+//
+//    fn code(&self, address: H160) -> Vec<u8> {
+//        self.state.get_account(Address(address)).code.to_owned()
+//    }
+//
+//    fn storage(&self, address: H160, index: H256) -> H256 {
+//        self.state
+//            .get_account(Address(address))
+//            .storage
+//            .get(&index)
+//            .copied()
+//            .unwrap_or_default()
+//    }
+//
+//    fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
+//        Some(self.storage(address, index))
+//    }
+//}
