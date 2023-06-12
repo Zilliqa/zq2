@@ -4,6 +4,7 @@ use std::{borrow::Cow, collections::HashSet, time::SystemTime, sync::{Arc, Mutex
 
 use anyhow::{anyhow, Result};
 use ethabi::Token;
+//use ethers::types::spoof::code;
 //use opentelemetry::sdk::metrics::Aggregation::Default;
 use evm_ds::evm::{
     backend::{Apply, Backend, Basic},
@@ -180,8 +181,6 @@ impl State {
         let continuations: Arc<Mutex<Continuations>> = Arc::new(Mutex::new(Continuations::new()));
         let mut logs: Vec<Log> = Default::default(); // todo: this.
 
-        //let backend = self.call_context(U256::zero(), caller.0, chain_id, current_block);
-
         let backend = EvmBackend {
             state: self,
             gas_price: U256::zero(),
@@ -338,6 +337,74 @@ impl State {
         to_addr: Address,
         applys: impl Iterator<Item = &'a evm_ds::protos::Evm::Apply>,
     ) -> Result<()> {
+
+        for apply in applys {
+
+            if apply.has_modify() {
+                let modify = apply.get_modify();
+
+                let address = Address((&modify.address.clone().unwrap()).into());
+                let balance: U256 = (&modify.balance.clone().unwrap()).into();
+                let code = modify.code.clone();
+                let nonce: U256 = (&modify.nonce.clone().unwrap()).into();
+                let storage = modify.storage.clone().into_iter();
+                let reset_storage = modify.reset_storage.clone();
+
+                println!("modify: {:?}", modify);
+
+                // If the `to_addr` was `Address::NATIVE_TOKEN`, then this transaction was a call to the native
+                // token contract. Avoid applying further updates to the native balance in this case, which would
+                // result in an endless recursion.
+                // FIXME: This makes it impossible to charge gas for calls to `Address::NATIVE_TOKEN`.
+                // FIXME: We ignore the change if the balance is zero. According to the SputnikVM example code,
+                // this is the intended implementation. However, that might mean it is impossible to tell the
+                // difference between an account that has been fully drained and an account whose balance has not
+                // been changed. We should investigate if this is really an issue.
+                if to_addr != Address::NATIVE_TOKEN && !balance.is_zero() {
+                    self.set_native_balance(logs, address, balance)?;
+                }
+
+                let account = self.get_account_mut(address);
+
+                account.code = code.to_vec();
+                account.nonce = nonce.as_u64();
+
+                if reset_storage {
+                    account.storage.clear();
+                }
+
+                for item in storage {
+                    //let key : H256 = (item.get_key()).into();
+                    //let value : H256 = (item.get_value()).into();
+                    let key: H256 = H256::from_slice(item.get_key());
+                    let value: H256 = H256::from_slice(item.get_value());
+
+                    if value.is_zero() {
+                        account.storage.remove(&key);
+                    } else {
+                        account.storage.insert(key, value);
+                    }
+                }
+
+            }
+
+            if apply.has_delete() {
+                panic!("Delete not implemented")
+            }
+
+
+            //match apply.apply {
+            //    None => {
+            //        info!("Apply is none for some reason...");
+            //    }
+            //    Some(apply) => {
+            //        println!("apply: {:?}", apply);
+            //        println!("apply: {:?}", apply.get_delete());
+            //        println!("apply: {:?}", apply.get_delete());
+
+            //    }
+            //}
+        }
 
         //for apply in applys {
         //    match apply {
