@@ -218,6 +218,29 @@ impl ScillaBackend {
     }
 }
 
+pub(crate) fn encode_storage(key: H256, value: H256) -> (Bytes, Bytes) {
+    let mut query = ScillaMessage::ProtoScillaQuery::new();
+    query.set_name("_evm_storage".into());
+    query.set_indices(vec![bytes::Bytes::from(format!("{key:X}"))]);
+    query.set_mapdepth(1);
+    let mut val = ScillaMessage::ProtoScillaVal::new();
+    let bval = value.as_bytes().to_vec();
+    val.set_bval(bval.into());
+    (
+        query.write_to_bytes().unwrap().into(),
+        val.write_to_bytes().unwrap().into(),
+    )
+}
+
+pub trait EvmExtras {
+    fn scale_eth_to_zil(eth: U256) -> U256;
+    fn scale_zil_to_eth(zil: U256) -> U256;
+    fn encode_storage(&self, key: H256, value: H256) -> (Bytes, Bytes);
+}
+
+//impl EvmExtras for ScillaBackend {
+//}
+
 impl Backend for ScillaBackend {
     fn gas_price(&self) -> U256 {
         self.extras.get_gas_price().into()

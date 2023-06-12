@@ -1,10 +1,12 @@
 use rlp::RlpStream;
 use std::{
     borrow::Cow,
+    sync::{Arc, Mutex},
     collections::{hash_map::DefaultHasher, BTreeMap},
     hash::{Hash, Hasher},
     str::FromStr,
 };
+
 
 use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256, U256};
@@ -15,7 +17,7 @@ use crate::{
     crypto::{self, TransactionPublicKey, TransactionSignature},
 };
 
-#[derive(Debug, Clone, Default, Hash)]
+#[derive(Debug, Default, Clone, Hash)]
 pub struct State {
     accounts: BTreeMap<Address, Account>,
 }
