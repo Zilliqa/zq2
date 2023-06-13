@@ -224,7 +224,7 @@ where
     pub fn new(db: Arc<D>) -> Self {
         Self {
             root: Node::Empty,
-            root_hash: keccak(&rlp::NULL_RLP.to_vec()),
+            root_hash: keccak(rlp::NULL_RLP),
 
             cache: HashMap::new(),
             passing_keys: HashSet::new(),
@@ -862,7 +862,7 @@ where
         }
     }
 
-    fn decode_node(&self, data: &[u8]) -> TrieResult<Node> {
+    fn decode_node(data: &[u8]) -> TrieResult<Node> {
         let r = Rlp::new(data);
 
         match r.prototype()? {
@@ -874,7 +874,7 @@ where
                 if key.is_leaf() {
                     Ok(Node::from_leaf(key, r.at(1)?.data()?.to_vec()))
                 } else {
-                    let n = self.decode_node(r.at(1)?.as_raw())?;
+                    let n = Self::decode_node(r.at(1)?.as_raw())?;
 
                     Ok(Node::from_extension(key, n))
                 }
@@ -884,7 +884,7 @@ where
                 #[allow(clippy::needless_range_loop)]
                 for i in 0..nodes.len() {
                     let rlp_data = r.at(i)?;
-                    let n = self.decode_node(rlp_data.as_raw())?;
+                    let n = Self::decode_node(rlp_data.as_raw())?;
                     nodes[i] = n;
                 }
 
@@ -915,7 +915,7 @@ where
             .get(key.as_bytes())
             .map_err(|e| TrieError::DB(e.to_string()))?
         {
-            Some(value) => Some(self.decode_node(&value)?),
+            Some(value) => Some(Self::decode_node(&value)?),
             None => None,
         };
         Ok(node)
@@ -1293,7 +1293,7 @@ mod tests {
         }
         trie.root_hash().unwrap();
 
-        let empty_node_key = keccak(&rlp::NULL_RLP);
+        let empty_node_key = keccak(rlp::NULL_RLP);
         let value = trie.db.get(empty_node_key.as_ref()).unwrap().unwrap();
         assert_eq!(value, &rlp::NULL_RLP)
     }

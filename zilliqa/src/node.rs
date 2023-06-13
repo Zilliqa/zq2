@@ -167,7 +167,7 @@ impl Node {
     }
 
     pub fn get_account(&self, address: Address) -> Result<Account> {
-        Ok(self.consensus.state().get_account(address)?)
+        self.consensus.state().get_account(address)
     }
 
     pub fn get_native_balance(&self, address: Address) -> Result<U256> {
