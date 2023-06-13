@@ -195,6 +195,7 @@ impl ScillaBackend {
 
     // Encode key/value pairs for storage in such a way that the Zilliqa node
     // could interpret it without much modification.
+    #[allow(dead_code)]
     pub(crate) fn encode_storage(&self, key: H256, value: H256) -> (Bytes, Bytes) {
         let mut query = ScillaMessage::ProtoScillaQuery::new();
         query.set_name("_evm_storage".into());
@@ -209,6 +210,7 @@ impl ScillaBackend {
         )
     }
 
+    #[allow(dead_code)]
     pub(crate) fn scale_eth_to_zil(&self, eth: U256) -> U256 {
         eth / self.config.zil_scaling_factor
     }

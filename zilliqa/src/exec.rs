@@ -7,26 +7,16 @@ use std::{
     time::SystemTime,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use ethabi::Token;
 use evm_ds::evm::{
-    backend::{Apply, Backend, Basic},
-    executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata},
+    backend::{Backend, Basic},
     tracing::EventListener,
-    Config, CreateScheme, ExitReason, Runtime,
 };
 use evm_ds::protos::Evm::EvmResult;
-use evm_ds::{
-    call_context::CallContext,
-    continuations::Continuations,
-    cps_executor::CpsExecutor,
-    //protos::Evm,
-    evm_server_run::run_evm_impl_direct,
-    protos,
-};
+use evm_ds::{continuations::Continuations, evm_server_run::run_evm_impl_direct};
 use primitive_types::{H160, H256, U256};
-use tracing::field::debug;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use crate::{
     contracts,
@@ -107,9 +97,6 @@ impl EventListener for TouchedAddressEventListener {
 //    current_block: BlockHeader,
 //}
 
-//const CONFIG: Config = Config::shanghai();
-const CONFIG: Config = Config::london(); // todo: this is set in EVM
-
 /// Data returned after applying a [Transaction] to [State].
 pub struct TransactionApplyResult {
     /// Whether the transaction succeeded and the resulting state changes were persisted.
@@ -123,6 +110,7 @@ pub struct TransactionApplyResult {
 }
 
 impl TransactionApplyResult {
+    #[allow(dead_code)]
     fn failed() -> TransactionApplyResult {
         TransactionApplyResult {
             success: false,
@@ -172,7 +160,7 @@ impl State {
         &self,
         from_addr: Address,
         to_addr: Address,
-        gas_price: u128,
+        _gas_price: u128,
         gas_limit: u64,
         amount: u128,
         payload: Vec<u8>,
@@ -190,7 +178,7 @@ impl State {
         let is_static = false;
         let context = "".to_string();
         let continuations: Arc<Mutex<Continuations>> = Arc::new(Mutex::new(Continuations::new()));
-        let mut logs: Vec<Log> = Default::default(); // todo: this.
+        let logs: Vec<Log> = Default::default(); // todo: this.
 
         let backend = EvmBackend {
             state: self,
@@ -566,14 +554,6 @@ impl State {
                 panic!("Failed to set balance with error: {:?}", e);
             }
         }
-
-        //if !result.success {
-        //    return Err(anyhow!(
-        //        "setting native balance failed, this should never happen"
-        //    ));
-        //}
-
-        //Ok(())I
     }
 
     pub fn call_contract(
@@ -731,13 +711,13 @@ impl<'a> Backend for EvmBackend<'a> {
     }
 
     // todo: this.
-    fn code_as_json(&self, address: H160) -> Vec<u8> {
+    fn code_as_json(&self, _address: H160) -> Vec<u8> {
         error!("code_as_json not implemented");
         vec![]
     }
 
     // todo: this.
-    fn substate_as_json(&self, address: H160, vname: &str, indices: &[String]) -> Vec<u8> {
+    fn substate_as_json(&self, _address: H160, _vname: &str, _indices: &[String]) -> Vec<u8> {
         error!("substate_as_json not implemented");
         vec![]
     }

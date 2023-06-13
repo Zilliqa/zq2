@@ -14,7 +14,6 @@ use evm::{
 };
 use primitive_types::{H160, H256, U256};
 
-use crate::scillabackend::ScillaBackend;
 type PrecompileMap = BTreeMap<
     H160,
     fn(

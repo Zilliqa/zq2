@@ -4,7 +4,6 @@ use std::{
     collections::{hash_map::DefaultHasher, BTreeMap},
     hash::{Hash, Hasher},
     str::FromStr,
-    sync::{Arc, Mutex},
 };
 
 use anyhow::{anyhow, Result};
