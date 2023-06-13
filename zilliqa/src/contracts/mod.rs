@@ -65,15 +65,18 @@ mod tests {
     fn native_token() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut solc = Vec::new();
-        let solc_download_path = format!(
-            "https://binaries.soliditylang.org/macos/solc-macos-{SOLC_VERSION}"
-        );
+        let solc_download_path =
+            format!("https://binaries.soliditylang.org/macos/solc-macos-{SOLC_VERSION}");
         let response = ureq::get(&solc_download_path).call().unwrap();
         response.into_reader().read_to_end(&mut solc).unwrap();
 
         let expected_hash = hex::decode(SOLC_HASH).unwrap();
         let actual_hash = Keccak256::digest(&solc);
-        println!("{} {}", hex::encode(&expected_hash), hex::encode(&actual_hash));
+        println!(
+            "{} {}",
+            hex::encode(&expected_hash),
+            hex::encode(&actual_hash)
+        );
         assert_eq!(expected_hash, actual_hash.to_vec());
 
         let solc_path = temp_dir.path().join("solc");

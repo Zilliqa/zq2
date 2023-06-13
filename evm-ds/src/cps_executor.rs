@@ -345,13 +345,9 @@ impl<'a, B: Backend> Handler for CpsExecutor<'a, B> {
         }
     }
 
-    fn get_create_address(
-        &mut self,
-        scheme: CreateScheme,
-    ) -> H160 {
+    fn get_create_address(&mut self, scheme: CreateScheme) -> H160 {
         self.stack_executor.create_address(scheme)
     }
-
 
     /// Invoke a call operation.
     fn call(

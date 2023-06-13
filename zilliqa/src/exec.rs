@@ -1,6 +1,11 @@
 //! Manages execution of transactions on state.
 
-use std::{borrow::Cow, collections::HashSet, time::SystemTime, sync::{Arc, Mutex}};
+use std::{
+    borrow::Cow,
+    collections::HashSet,
+    sync::{Arc, Mutex},
+    time::SystemTime,
+};
 
 use anyhow::{anyhow, Result};
 use ethabi::Token;
@@ -10,15 +15,18 @@ use evm_ds::evm::{
     tracing::EventListener,
     Config, CreateScheme, ExitReason, Runtime,
 };
-use evm_ds::{continuations::Continuations,
-             call_context::CallContext,
-             cps_executor::{CpsExecutor},
-             //protos::Evm,
-             evm_server_run::{run_evm_impl_direct}, protos};
-use primitive_types::{H160, H256, U256};
-use tracing::{debug, error, info};
-use tracing::field::debug;
 use evm_ds::protos::Evm::EvmResult;
+use evm_ds::{
+    call_context::CallContext,
+    continuations::Continuations,
+    cps_executor::CpsExecutor,
+    //protos::Evm,
+    evm_server_run::run_evm_impl_direct,
+    protos,
+};
+use primitive_types::{H160, H256, U256};
+use tracing::field::debug;
+use tracing::{debug, error, info};
 
 use crate::{
     contracts,
@@ -171,7 +179,6 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<(Vec<Log>, EvmResult)> {
-
         // Only allow TX calls for now (fine since ERC20 already deployed manually)
         let code = contracts::native_token::CODE.clone();
         let data = payload;
@@ -344,7 +351,7 @@ impl State {
                 let success = result.exit_reason.unwrap().has_succeed();
 
                 if success {
-                    self.apply_delta( & mut logs, txn.to_addr, result.apply.iter())?;
+                    self.apply_delta(&mut logs, txn.to_addr, result.apply.iter())?;
                 }
 
                 Ok(TransactionApplyResult {
@@ -353,7 +360,7 @@ impl State {
                     contract_address: None,
                     logs,
                 })
-            },
+            }
             Err(e) => {
                 error!("Error applying transaction: {:?}", e);
 
@@ -368,15 +375,13 @@ impl State {
     }
 
     // Apply the changes the EVM is requesting for
-    fn apply_delta<'a> (
+    fn apply_delta<'a>(
         &mut self,
         logs: &mut Vec<Log>,
         to_addr: Address,
         applys: impl Iterator<Item = &'a evm_ds::protos::Evm::Apply>,
     ) -> Result<()> {
-
         for apply in applys {
-
             if apply.has_modify() {
                 let modify = apply.get_modify();
 
@@ -419,7 +424,10 @@ impl State {
                     let value: H256 = H256::from_slice(item.get_value());
 
                     println!("address: {:?}", address);
-                    println!("apply_modify: account: {:?} index: {:?}, value: {:?}", account, index, value);
+                    println!(
+                        "apply_modify: account: {:?} index: {:?}, value: {:?}",
+                        account, index, value
+                    );
 
                     if value.is_zero() {
                         account.storage.remove(&index);
@@ -427,13 +435,11 @@ impl State {
                         account.storage.insert(index, value);
                     }
                 }
-
             }
 
             if apply.has_delete() {
                 panic!("Delete not implemented")
             }
-
 
             //match apply.apply {
             //    None => {
@@ -551,11 +557,11 @@ impl State {
                 logs.extend_from_slice(&lgs);
 
                 if success {
-                    self.apply_delta( logs, Address::NATIVE_TOKEN, result.apply.iter())?;
+                    self.apply_delta(logs, Address::NATIVE_TOKEN, result.apply.iter())?;
                 }
 
                 Ok(())
-            },
+            }
             Err(e) => {
                 panic!("Failed to set balance with error: {:?}", e);
             }
@@ -578,7 +584,6 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<Vec<u8>> {
-
         let result = self.apply_transaction_inner(
             caller,
             contract,
@@ -702,20 +707,26 @@ impl<'a> Backend for EvmBackend<'a> {
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
-
-        let res = self.state
+        let res = self
+            .state
             .get_account(Address(address))
             .storage
             .get(&index)
             .copied()
             .unwrap_or_default();
 
-        debug!("Requesting storage for {:?} at {:?} and is: {:?}", address, index, res);
+        debug!(
+            "Requesting storage for {:?} at {:?} and is: {:?}",
+            address, index, res
+        );
         res
     }
 
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
-        debug!("Requesting original storage for {:?} at {:?}", address, index);
+        debug!(
+            "Requesting original storage for {:?} at {:?}",
+            address, index
+        );
         Some(self.storage(address, index))
     }
 

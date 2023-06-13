@@ -1,12 +1,12 @@
+pub mod call_context;
+pub mod continuations;
 mod convert;
+pub mod cps_executor;
 mod evm_server;
+pub mod evm_server_run;
 mod ipc_connect;
 mod precompiles;
 mod pretty_printer;
-mod scillabackend;
-pub mod call_context;
-pub mod cps_executor;
-pub mod continuations;
-pub mod evm_server_run;
 pub mod protos;
+mod scillabackend;
 pub use evm;

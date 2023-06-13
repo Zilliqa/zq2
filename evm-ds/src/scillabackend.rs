@@ -219,7 +219,10 @@ impl ScillaBackend {
 }
 
 pub(crate) fn encode_storage(key: H256, value: H256) -> (Bytes, Bytes) {
-    (Bytes::copy_from_slice(key.as_bytes()), Bytes::copy_from_slice(value.as_bytes()))
+    (
+        Bytes::copy_from_slice(key.as_bytes()),
+        Bytes::copy_from_slice(value.as_bytes()),
+    )
     //let mut query = ScillaMessage::ProtoScillaQuery::new();
     //query.set_name("_evm_storage".into());
     //query.set_indices(vec![bytes::Bytes::from(format!("{key:X}"))]);

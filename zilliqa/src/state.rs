@@ -1,12 +1,11 @@
 use rlp::RlpStream;
 use std::{
     borrow::Cow,
-    sync::{Arc, Mutex},
     collections::{hash_map::DefaultHasher, BTreeMap},
     hash::{Hash, Hasher},
     str::FromStr,
+    sync::{Arc, Mutex},
 };
-
 
 use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256, U256};

@@ -2,7 +2,6 @@ extern crate protoc_rust;
 use std::path::Path;
 
 fn main() {
-
     let mut scilla_message_proto = "../src/libPersistence/ScillaMessage.proto";
     let mut evm_proto = "../src/libUtils/Evm.proto";
     let mut scilla_message_proto_inc = "../src/libPersistence/";

@@ -4,26 +4,29 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use crate::call_context::{CallContext, LoggingEventListener};
+use evm::backend::Backend;
 use evm::executor::stack::MemoryStackSubstate;
-use evm::{backend::Apply, executor::stack::{MemoryStackState, StackSubstateMetadata}};
+use evm::{
+    backend::Apply,
+    executor::stack::{MemoryStackState, StackSubstateMetadata},
+};
 use evm::{Machine, Runtime};
-use evm::backend::{Backend};
 
 use log::{debug, error, info};
 
 use jsonrpc_core::Result;
 use primitive_types::*;
-use scillabackend::{ScillaBackend, encode_storage};
+use scillabackend::{encode_storage, ScillaBackend};
 
 use crate::continuations::Continuations;
 use crate::cps_executor::{CpsCallInterrupt, CpsCreateInterrupt, CpsExecutor, CpsReason};
 use crate::precompiles::get_precompiles;
 use crate::pretty_printer::log_evm_result;
 use crate::protos::Evm as EvmProto;
-use crate::{scillabackend};
-use protobuf::Message;
 use crate::protos::Evm::EvmResult;
+use crate::scillabackend;
 use crate::scillabackend::EvmExtras;
+use protobuf::Message;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_evm_impl(
@@ -448,7 +451,6 @@ pub fn run_evm_impl_direct(
     tx_trace_enabled: bool,
     tx_trace: String,
 ) -> EvmResult {
-
     debug!(
         "Running EVM: origin: {:?} address: {:?} gas: {:?} value: {:?}  estimate: {:?} is_continuation: {:?}, cps: {:?}, \ntx_trace: {:?}, \ndata: {:02X?}, \ncode: {:02X?}",
         backend.origin(), address, gas_limit, apparent_value,
@@ -457,7 +459,11 @@ pub fn run_evm_impl_direct(
     let data = Rc::new(data);
     // TODO: handle call_l64_after_gas problem: https://zilliqa-jira.atlassian.net/browse/ZIL-5012
     // todo: this needs to be shanghai...
-    let config = evm::Config { estimate, call_l64_after_gas: false, ..evm::Config::london()};
+    let config = evm::Config {
+        estimate,
+        call_l64_after_gas: false,
+        ..evm::Config::london()
+    };
     let context = evm::Context {
         address,
         caller,
@@ -466,30 +472,43 @@ pub fn run_evm_impl_direct(
     let gas_limit = gas_limit * gas_scaling_factor;
     let metadata = StackSubstateMetadata::new(gas_limit, &config);
     // Check if evm should resume from the point it stopped
-    let (feedback_continuation, mut runtime, state) =
-        if let Some(continuation) = node_continuation {
-            let recorded_cont = continuations.lock().unwrap().get_contination(continuation.get_id());
-            if recorded_cont.is_none() {
-                let result = handle_panic(tx_trace, gas_limit, "Continuation not found!");
-                return result;
-            }
-
-            let recorded_cont = recorded_cont.unwrap();
-
-            let machine = Machine::create_from_state(Rc::new(recorded_cont.code), Rc::new(recorded_cont.data),
-                                                     recorded_cont.position, recorded_cont.return_range, recorded_cont.valids,
-                                                     recorded_cont.memory, recorded_cont.stack);
-            let runtime = Runtime::new_from_state(machine, context, &config);
-            let memory_substate = MemoryStackSubstate::from_state(metadata, recorded_cont.logs, recorded_cont.accounts,
-                                                                  recorded_cont.storages, recorded_cont.deletes);
-            let state = MemoryStackState::new_with_substate(memory_substate, &backend);
-            (Some(continuation), runtime, state)
+    let (feedback_continuation, mut runtime, state) = if let Some(continuation) = node_continuation
+    {
+        let recorded_cont = continuations
+            .lock()
+            .unwrap()
+            .get_contination(continuation.get_id());
+        if recorded_cont.is_none() {
+            let result = handle_panic(tx_trace, gas_limit, "Continuation not found!");
+            return result;
         }
-        else {
-            let runtime = evm::Runtime::new(code, data.clone(), context, &config);
-            let state = MemoryStackState::new(metadata, &backend);
-            (None, runtime, state)
-        };
+
+        let recorded_cont = recorded_cont.unwrap();
+
+        let machine = Machine::create_from_state(
+            Rc::new(recorded_cont.code),
+            Rc::new(recorded_cont.data),
+            recorded_cont.position,
+            recorded_cont.return_range,
+            recorded_cont.valids,
+            recorded_cont.memory,
+            recorded_cont.stack,
+        );
+        let runtime = Runtime::new_from_state(machine, context, &config);
+        let memory_substate = MemoryStackSubstate::from_state(
+            metadata,
+            recorded_cont.logs,
+            recorded_cont.accounts,
+            recorded_cont.storages,
+            recorded_cont.deletes,
+        );
+        let state = MemoryStackState::new_with_substate(memory_substate, &backend);
+        (Some(continuation), runtime, state)
+    } else {
+        let runtime = evm::Runtime::new(code, data.clone(), context, &config);
+        let state = MemoryStackState::new(metadata, &backend);
+        (None, runtime, state)
+    };
     // Scale the gas limit.
 
     let precompiles = get_precompiles();
@@ -529,7 +548,9 @@ pub fn run_evm_impl_direct(
     // We are asserting it is safe to unwind, as objects will be dropped after
     // the unwind.
     let executor_result = panic::catch_unwind(AssertUnwindSafe(|| {
-        evm::runtime::tracing::using(&mut listener, || executor.execute(&mut runtime, feedback_continuation))
+        evm::runtime::tracing::using(&mut listener, || {
+            executor.execute(&mut runtime, feedback_continuation)
+        })
     }));
 
     // Scale back remaining gas to Scilla units (no rounding!).
@@ -539,8 +560,10 @@ pub fn run_evm_impl_direct(
     listener.raw_tracer.return_value = hex::encode(runtime.machine().return_value());
     listener.raw_tracer.gas = gas_limit - remaining_gas;
     if (listener.call_tracer.len() > 0) {
-        listener.call_tracer.last_mut().unwrap().gas_used = format!("0x{:x}", gas_limit - remaining_gas);
-        listener.call_tracer.last_mut().unwrap().output = format!("0x{}", hex::encode(runtime.machine().return_value()));
+        listener.call_tracer.last_mut().unwrap().gas_used =
+            format!("0x{:x}", gas_limit - remaining_gas);
+        listener.call_tracer.last_mut().unwrap().output =
+            format!("0x{}", hex::encode(runtime.machine().return_value()));
     }
 
     if let Err(panic) = executor_result {
@@ -561,25 +584,64 @@ pub fn run_evm_impl_direct(
 
             match exit_reason {
                 evm::ExitReason::Revert(_) => {
-                    listener.otter_transaction_error = format!("0x{}", hex::encode(runtime.machine().return_value()));
+                    listener.otter_transaction_error =
+                        format!("0x{}", hex::encode(runtime.machine().return_value()));
                 }
                 _ => {
-                    debug!("Machine: position: {:?}, memory: {:?}, stack: {:?}",
-                           runtime.machine().position(),
-                           &runtime.machine().memory().data().iter().take(128).collect::<Vec<_>>(),
-                           &runtime.machine().stack().data().iter().take(128).collect::<Vec<_>>());
+                    debug!(
+                        "Machine: position: {:?}, memory: {:?}, stack: {:?}",
+                        runtime.machine().position(),
+                        &runtime
+                            .machine()
+                            .memory()
+                            .data()
+                            .iter()
+                            .take(128)
+                            .collect::<Vec<_>>(),
+                        &runtime
+                            .machine()
+                            .stack()
+                            .data()
+                            .iter()
+                            .take(128)
+                            .collect::<Vec<_>>()
+                    );
                 }
             }
 
-            build_exit_result(executor, &runtime, &backend, &listener, &exit_reason, remaining_gas, is_static, continuations)
-        },
+            build_exit_result(
+                executor,
+                &runtime,
+                &backend,
+                &listener,
+                &exit_reason,
+                remaining_gas,
+                is_static,
+                continuations,
+            )
+        }
         CpsReason::CallInterrupt(i) => {
-            let cont_id = continuations.lock().unwrap().create_continuation(runtime.machine_mut(), executor.state().substate());
+            let cont_id = continuations
+                .lock()
+                .unwrap()
+                .create_continuation(runtime.machine_mut(), executor.state().substate());
 
-            build_call_result(executor, &runtime, &backend, i, &listener, remaining_gas, is_static, cont_id)
-        },
+            build_call_result(
+                executor,
+                &runtime,
+                &backend,
+                i,
+                &listener,
+                remaining_gas,
+                is_static,
+                cont_id,
+            )
+        }
         CpsReason::CreateInterrupt(i) => {
-            let cont_id = continuations.lock().unwrap().create_continuation(runtime.machine_mut(), executor.into_state().substate());
+            let cont_id = continuations
+                .lock()
+                .unwrap()
+                .create_continuation(runtime.machine_mut(), executor.into_state().substate());
 
             build_create_result(&runtime, i, &listener, remaining_gas, cont_id)
         }
