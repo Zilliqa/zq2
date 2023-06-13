@@ -20,9 +20,6 @@ jobs:
     - uses: actions/checkout@v3
       with:
         submodules: recursive
-    # Use Rust nightly so we can use the Cargo sparse registry feature, which greatly speeds up uncached builds (https://blog.rust-lang.org/2022/06/22/sparse-registry-testing.html).
-    - name: Use Rust nightly
-      run: rustup override set nightly && rustup component add clippy rustfmt
     - uses: Swatinem/rust-cache@v2
     - name: rustfmt
       run: cargo fmt --all --check
