@@ -219,17 +219,18 @@ impl ScillaBackend {
 }
 
 pub(crate) fn encode_storage(key: H256, value: H256) -> (Bytes, Bytes) {
-    let mut query = ScillaMessage::ProtoScillaQuery::new();
-    query.set_name("_evm_storage".into());
-    query.set_indices(vec![bytes::Bytes::from(format!("{key:X}"))]);
-    query.set_mapdepth(1);
-    let mut val = ScillaMessage::ProtoScillaVal::new();
-    let bval = value.as_bytes().to_vec();
-    val.set_bval(bval.into());
-    (
-        query.write_to_bytes().unwrap().into(),
-        val.write_to_bytes().unwrap().into(),
-    )
+    (Bytes::copy_from_slice(key.as_bytes()), Bytes::copy_from_slice(value.as_bytes()))
+    //let mut query = ScillaMessage::ProtoScillaQuery::new();
+    //query.set_name("_evm_storage".into());
+    //query.set_indices(vec![bytes::Bytes::from(format!("{key:X}"))]);
+    //query.set_mapdepth(1);
+    //let mut val = ScillaMessage::ProtoScillaVal::new();
+    //let bval = value.as_bytes().to_vec();
+    //val.set_bval(bval.into());
+    //(
+    //    query.write_to_bytes().unwrap().into(),
+    //    val.write_to_bytes().unwrap().into(),
+    //)
 }
 
 pub trait EvmExtras {

@@ -6,7 +6,6 @@ members = [
  "evm-ds"
 ]
 
-
 [profile.release]
 # Add debug information to the release build (does NOT reduce the level of optimization!)
 # Makes flamegraphs more readable.

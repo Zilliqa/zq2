@@ -11,6 +11,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::{
     contracts,
@@ -53,11 +54,18 @@ impl State {
 
         state.deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone());
 
+        println!("State before: {:?}", state);
+
         for (address, balance) in GENESIS {
             // We don't care about these logs.
             let mut logs = vec![];
+            info!("Genesis: setting balance of {:?} to {}", address, balance);
             state.set_native_balance(&mut logs, address, balance)?;
+            break;
         }
+
+        println!("State: {:?}", state);
+        println!("State hash 17276446493301211225: {:?}", state.root_hash());
 
         Ok(state)
     }

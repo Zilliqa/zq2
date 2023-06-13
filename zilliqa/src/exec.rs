@@ -18,7 +18,8 @@ use evm_ds::{continuations::Continuations,
              //protos::Evm,
              evm_server_run::{run_evm_impl_direct}, protos};
 use primitive_types::{H160, H256, U256};
-use tracing::info;
+use tracing::{debug, error, info};
+use tracing::field::debug;
 
 use crate::{
     contracts,
@@ -100,12 +101,14 @@ impl EventListener for TouchedAddressEventListener {
 //}
 
 //const CONFIG: Config = Config::shanghai();
-const CONFIG: Config = Config::london();
+const CONFIG: Config = Config::london(); // todo: this is set in EVM
 
 /// Data returned after applying a [Transaction] to [State].
 pub struct TransactionApplyResult {
     /// Whether the transaction succeeded and the resulting state changes were persisted.
     pub success: bool,
+    /// The return value of the TX
+    pub return_value: Vec<u8>,
     /// If the transaction was a contract creation, the address of the resulting contract.
     pub contract_address: Option<Address>,
     /// The logs emitted by the transaction execution.
@@ -116,6 +119,7 @@ impl TransactionApplyResult {
     fn failed() -> TransactionApplyResult {
         TransactionApplyResult {
             success: false,
+            return_value: vec![],
             contract_address: None,
             logs: vec![],
         }
@@ -174,6 +178,7 @@ impl State {
         let data = payload;
         let apparent_value: U256 = amount.into();
         let caller = from_addr;
+        //let caller = to_addr;
         let gas_scaling_factor = 1;
         let estimate = false;
         let is_static = false;
@@ -184,13 +189,13 @@ impl State {
         let backend = EvmBackend {
             state: self,
             gas_price: U256::zero(),
-            origin: caller.0,
+            origin: to_addr.0,
             chain_id,
             current_block,
         };
 
         let result = run_evm_impl_direct(
-            from_addr.0,
+            to_addr.0,
             code,
             data,
             apparent_value,
@@ -209,22 +214,25 @@ impl State {
         );
 
         // Parse out only the applies essentially
-        let applys = result.apply;
+            let applys = result.apply;
 
         //for apply in applys {
         //    println!("apply: {:?}", apply);
         //}
 
-        self.apply_delta(&mut logs, to_addr, applys.iter())?;
+        if !result.exit_reason.unwrap().has_succeed() {
+            error!("Exit reason is failure");
+        }
 
-        //TransactionApplyResult{
-        //    success: result.is_ok(),
-        //    contract_address: None,
-        //    logs: vec![],
-        //}.into_result()
+        if applys.len() == 0 {
+            error!("No applies found");
+        }
+
+        self.apply_delta( & mut logs, to_addr, applys.iter()) ?;
 
         Ok(TransactionApplyResult {
             success: true,
+            return_value: result.return_value.into(),
             contract_address: None,
             logs,
         })
@@ -327,6 +335,7 @@ impl State {
             txn.payload,
             chain_id,
             current_block,
+            false,
         )
     }
 
@@ -343,14 +352,15 @@ impl State {
             if apply.has_modify() {
                 let modify = apply.get_modify();
 
-                let address = Address((&modify.address.clone().unwrap()).into());
-                let balance: U256 = (&modify.balance.clone().unwrap()).into();
+                let address = Address(modify.get_address().into());
+                let balance: U256 = modify.get_balance().into();
                 let code = modify.code.clone();
-                let nonce: U256 = (&modify.nonce.clone().unwrap()).into();
+                let nonce: U256 = modify.get_nonce().into();
                 let storage = modify.storage.clone().into_iter();
                 let reset_storage = modify.reset_storage.clone();
 
-                println!("modify: {:?}", modify);
+                println!("XXX modify: {:?}", address);
+                println!("XXX modify nonce: {:?}", nonce);
 
                 // If the `to_addr` was `Address::NATIVE_TOKEN`, then this transaction was a call to the native
                 // token contract. Avoid applying further updates to the native balance in this case, which would
@@ -366,7 +376,10 @@ impl State {
 
                 let account = self.get_account_mut(address);
 
-                account.code = code.to_vec();
+                // todo: differentiate this from a delete
+                if !code.is_empty() {
+                    account.code = code.to_vec();
+                }
                 account.nonce = nonce.as_u64();
 
                 if reset_storage {
@@ -374,15 +387,16 @@ impl State {
                 }
 
                 for item in storage {
-                    //let key : H256 = (item.get_key()).into();
-                    //let value : H256 = (item.get_value()).into();
-                    let key: H256 = H256::from_slice(item.get_key());
+                    let index: H256 = H256::from_slice(item.get_key());
                     let value: H256 = H256::from_slice(item.get_value());
 
+                    println!("address: {:?}", address);
+                    println!("apply_modify: account: {:?} index: {:?}, value: {:?}", account, index, value);
+
                     if value.is_zero() {
-                        account.storage.remove(&key);
+                        account.storage.remove(&index);
                     } else {
-                        account.storage.insert(key, value);
+                        account.storage.insert(index, value);
                     }
                 }
 
@@ -499,6 +513,7 @@ impl State {
             // some dummy values.
             0,
             BlockHeader::genesis(),
+            false,
         )?;
 
         if !result.success {
@@ -519,7 +534,21 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<Vec<u8>> {
-        Ok(vec![]) // todo: this.
+
+        let result = self.apply_transaction_inner(
+            caller,
+            contract,
+            0,
+            u64::MAX,
+            0,
+            data,
+            chain_id,
+            current_block,
+            true,
+        );
+
+        result.map(|ret| ret.return_value)
+
         //let context = self.call_context(U256::zero(), caller.0, chain_id, current_block);
 
         //if context.code(contract.0).is_empty() {
@@ -551,6 +580,7 @@ impl<'a> Backend for EvmBackend<'a> {
     }
 
     fn origin(&self) -> H160 {
+        debug!("origin: {:?}", self.origin);
         self.origin
     }
 
@@ -598,6 +628,7 @@ impl<'a> Backend for EvmBackend<'a> {
     }
 
     fn exists(&self, address: H160) -> bool {
+        debug!("Checking whether account {:?} exists", address);
         // Ethereum charges extra gas for `CALL`s or `SELFDESTRUCT`s which create new accounts, to discourage the
         // creation of many addresses and the resulting increase in state size. We can tell if an account exists in our
         // state by checking whether the response from `State::get_account` is borrowed.
@@ -605,6 +636,7 @@ impl<'a> Backend for EvmBackend<'a> {
     }
 
     fn basic(&self, address: H160) -> Basic {
+        debug!("Requesting basic info for {:?}", address);
         let nonce = self.state.get_account(Address(address)).nonce;
         // For these accounts, we hardcode the balance we return to the EVM engine as zero. Otherwise, we have an
         // infinite recursion because getting the native balance of any account requires this method to be called for
@@ -622,29 +654,37 @@ impl<'a> Backend for EvmBackend<'a> {
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
+        debug!("Requesting code for {:?}", address);
         self.state.get_account(Address(address)).code.to_owned()
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
-        self.state
+
+        let res = self.state
             .get_account(Address(address))
             .storage
             .get(&index)
             .copied()
-            .unwrap_or_default()
+            .unwrap_or_default();
+
+        debug!("Requesting storage for {:?} at {:?} and is: {:?}", address, index, res);
+        res
     }
 
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
+        debug!("Requesting original storage for {:?} at {:?}", address, index);
         Some(self.storage(address, index))
     }
 
     // todo: this.
     fn code_as_json(&self, address: H160) -> Vec<u8> {
+        error!("code_as_json not implemented");
         vec![]
     }
 
     // todo: this.
     fn substate_as_json(&self, address: H160, vname: &str, indices: &[String]) -> Vec<u8> {
+        error!("substate_as_json not implemented");
         vec![]
     }
 }

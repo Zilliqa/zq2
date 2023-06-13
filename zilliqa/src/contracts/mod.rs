@@ -43,8 +43,11 @@ pub mod native_token {
 #[cfg(test)]
 mod tests {
     // Obtained from https://binaries.soliditylang.org/linux-amd64/list.json.
-    const SOLC_VERSION: &str = "v0.8.20+commit.a1b79de6";
-    const SOLC_HASH: &str = "d68fa7092d5af50c1dca4d6318f8a2470b11a766794814e505e3cc6a587deebb";
+    const SOLC_VERSION: &str = "v0.8.19+commit.7dd6d404";
+    const SOLC_HASH: &str = "8da560f93223e19fbd973f12a29f765869559274aaeed3f795738ac433130ab9";
+
+    //const SOLC_VERSION: &str = "v0.8.20+commit.a1b79de6";
+    //const SOLC_HASH: &str = "d68fa7092d5af50c1dca4d6318f8a2470b11a766794814e505e3cc6a587deebb";
 
     use std::{
         fs::OpenOptions, io::Write, mem, os::unix::prelude::OpenOptionsExt, path::PathBuf,
@@ -58,18 +61,19 @@ mod tests {
     use super::native_token;
 
     #[test]
-    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    //#[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
     fn native_token() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut solc = Vec::new();
         let solc_download_path = format!(
-            "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-{SOLC_VERSION}"
+            "https://binaries.soliditylang.org/macos/solc-macos-{SOLC_VERSION}"
         );
         let response = ureq::get(&solc_download_path).call().unwrap();
         response.into_reader().read_to_end(&mut solc).unwrap();
 
         let expected_hash = hex::decode(SOLC_HASH).unwrap();
         let actual_hash = Keccak256::digest(&solc);
+        println!("{} {}", hex::encode(&expected_hash), hex::encode(&actual_hash));
         assert_eq!(expected_hash, actual_hash.to_vec());
 
         let solc_path = temp_dir.path().join("solc");
