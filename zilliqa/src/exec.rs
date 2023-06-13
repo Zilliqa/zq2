@@ -4,8 +4,6 @@ use std::{borrow::Cow, collections::HashSet, time::SystemTime, sync::{Arc, Mutex
 
 use anyhow::{anyhow, Result};
 use ethabi::Token;
-//use ethers::types::spoof::code;
-//use opentelemetry::sdk::metrics::Aggregation::Default;
 use evm_ds::evm::{
     backend::{Apply, Backend, Basic},
     executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata},
@@ -20,6 +18,7 @@ use evm_ds::{continuations::Continuations,
 use primitive_types::{H160, H256, U256};
 use tracing::{debug, error, info};
 use tracing::field::debug;
+use evm_ds::protos::Evm::EvmResult;
 
 use crate::{
     contracts,
@@ -162,7 +161,7 @@ impl State {
 
     #[allow(clippy::too_many_arguments)]
     fn apply_transaction_inner(
-        &mut self,
+        &self,
         from_addr: Address,
         to_addr: Address,
         gas_price: u128,
@@ -171,7 +170,7 @@ impl State {
         payload: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
-    ) -> Result<TransactionApplyResult> {
+    ) -> Result<(Vec<Log>, EvmResult)> {
 
         // Only allow TX calls for now (fine since ERC20 already deployed manually)
         let code = contracts::native_token::CODE.clone();
@@ -214,28 +213,30 @@ impl State {
         );
 
         // Parse out only the applies essentially
-            let applys = result.apply;
+        //let applys = result.apply;
 
         //for apply in applys {
         //    println!("apply: {:?}", apply);
         //}
 
-        if !result.exit_reason.unwrap().has_succeed() {
-            error!("Exit reason is failure");
-        }
+        //if !result.exit_reason.unwrap().has_succeed() {
+        //    error!("Exit reason is failure");
+        //}
 
-        if applys.len() == 0 {
-            error!("No applies found");
-        }
+        //if result.apply.len() == 0 {
+        //    error!("No applies found");
+        //}
 
-        self.apply_delta( & mut logs, to_addr, applys.iter()) ?;
+        Ok((logs, result))
 
-        Ok(TransactionApplyResult {
-            success: true,
-            return_value: result.return_value.into(),
-            contract_address: None,
-            logs,
-        })
+        //self.apply_delta( & mut logs, to_addr, applys.iter()) ?;
+
+        //Ok(TransactionApplyResult {
+        //    success: true,
+        //    return_value: result.return_value.into(),
+        //    contract_address: None,
+        //    logs,
+        //})
 
         //Err(anyhow!("Not implemented"))
 
@@ -326,7 +327,7 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<TransactionApplyResult> {
-        self.apply_transaction_inner(
+        let result = self.apply_transaction_inner(
             txn.addr_from(),
             txn.to_addr,
             txn.gas_price,
@@ -335,8 +336,35 @@ impl State {
             txn.payload,
             chain_id,
             current_block,
-            false,
-        )
+        );
+
+        match result {
+            Ok((mut logs, result)) => {
+                // Apply the state changes only if success
+                let success = result.exit_reason.unwrap().has_succeed();
+
+                if success {
+                    self.apply_delta( & mut logs, txn.to_addr, result.apply.iter())?;
+                }
+
+                Ok(TransactionApplyResult {
+                    success: success,
+                    return_value: result.return_value.into(),
+                    contract_address: None,
+                    logs,
+                })
+            },
+            Err(e) => {
+                error!("Error applying transaction: {:?}", e);
+
+                Ok(TransactionApplyResult {
+                    success: false,
+                    return_value: Default::default(),
+                    contract_address: None,
+                    logs: Default::default(),
+                })
+            }
+        }
     }
 
     // Apply the changes the EVM is requesting for
@@ -513,17 +541,33 @@ impl State {
             // some dummy values.
             0,
             BlockHeader::genesis(),
-            false,
-        )?;
+        );
 
-        if !result.success {
-            return Err(anyhow!(
-                "setting native balance failed, this should never happen"
-            ));
+        match result {
+            Ok((lgs, result)) => {
+                // Apply the state changes only if success
+                let success = result.exit_reason.unwrap().has_succeed();
+
+                logs.extend_from_slice(&lgs);
+
+                if success {
+                    self.apply_delta( logs, Address::NATIVE_TOKEN, result.apply.iter())?;
+                }
+
+                Ok(())
+            },
+            Err(e) => {
+                panic!("Failed to set balance with error: {:?}", e);
+            }
         }
-        logs.extend_from_slice(&result.logs);
 
-        Ok(())
+        //if !result.success {
+        //    return Err(anyhow!(
+        //        "setting native balance failed, this should never happen"
+        //    ));
+        //}
+
+        //Ok(())I
     }
 
     pub fn call_contract(
@@ -544,10 +588,9 @@ impl State {
             data,
             chain_id,
             current_block,
-            true,
         );
 
-        result.map(|ret| ret.return_value)
+        result.map(|ret| ret.1.return_value.into())
 
         //let context = self.call_context(U256::zero(), caller.0, chain_id, current_block);
 
