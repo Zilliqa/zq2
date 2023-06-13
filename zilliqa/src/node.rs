@@ -1,10 +1,10 @@
 use crate::state::{Transaction, TransactionReceipt};
 
 use anyhow::{anyhow, Result};
+use eth_trie::MemoryDB;
 use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
-use zq_trie::MemoryDB;
 
 use tracing::error;
 
@@ -36,7 +36,7 @@ pub struct Node {
     peer_id: PeerId,
     message_sender: UnboundedSender<(Option<PeerId>, Message)>,
     reset_timeout: UnboundedSender<()>,
-    consensus: Consensus<MemoryDB>,
+    consensus: Consensus,
 }
 
 impl Node {
@@ -167,7 +167,7 @@ impl Node {
     }
 
     pub fn get_account(&self, address: Address) -> Result<Account> {
-        Ok(self.consensus.state().get_account(address))
+        Ok(self.consensus.state().get_account(address)?)
     }
 
     pub fn get_native_balance(&self, address: Address) -> Result<U256> {

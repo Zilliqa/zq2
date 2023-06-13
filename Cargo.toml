@@ -2,7 +2,8 @@
 
 members = [
  "zilliqa",
- "z2"
+ "z2",
+ "eth-trie.rs"
 ]
 
 

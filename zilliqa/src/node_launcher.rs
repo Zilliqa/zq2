@@ -1,3 +1,4 @@
+use eth_trie::MemoryDB;
 use jsonrpsee::{server::ServerHandle, RpcModule};
 use std::{
     iter,
@@ -7,7 +8,6 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc::UnboundedSender;
-use zq_trie::MemoryDB;
 
 use crate::{
     api,

@@ -1,10 +1,11 @@
+use eth_trie::MemoryDB;
+use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use rlp::RlpStream;
 use sha3::Digest;
 use sha3::Keccak256;
 use std::fmt::Display;
 use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
-use zq_trie::{Hasher, PatriciaTrie, Trie, DB};
 
 use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256, U256};
@@ -14,17 +15,6 @@ use crate::{
     contracts,
     crypto::{self, TransactionPublicKey, TransactionSignature},
 };
-
-#[derive(Debug)]
-pub struct TrieHasher;
-
-impl Hasher for TrieHasher {
-    const LENGTH: usize = 32;
-
-    fn digest(&self, data: &[u8]) -> Vec<u8> {
-        Keccak256::digest(data).to_vec()
-    }
-}
 
 /// Const version of `impl From<u128> for U256`
 const fn u128_to_u256(value: u128) -> U256 {
@@ -52,16 +42,16 @@ const GENESIS: [(Address, U256); 2] = [
 ];
 
 #[derive(Debug)]
-pub struct State<D: DB + Send + Sync> {
-    db: Arc<D>,
-    accounts: PatriciaTrie<D, TrieHasher>,
+pub struct State {
+    db: Arc<MemoryDB>,
+    accounts: PatriciaTrie<MemoryDB>,
 }
 
-impl<D: DB + Send + Sync> State<D> {
-    pub fn new(database: Arc<D>) -> Result<State<D>> {
+impl State {
+    pub fn new(database: Arc<MemoryDB>) -> Result<State> {
         let mut state = Self {
             db: database.clone(),
-            accounts: PatriciaTrie::new(database, Arc::new(TrieHasher)),
+            accounts: PatriciaTrie::new(database),
         };
 
         state
@@ -76,24 +66,28 @@ impl<D: DB + Send + Sync> State<D> {
         Ok(state)
     }
 
-    pub fn from_root(database: Arc<D>, root_hash: crypto::Hash) -> Result<Self> {
-        Ok(Self {
-            db: database.clone(),
-            accounts: PatriciaTrie::from(database, Arc::new(TrieHasher), root_hash.as_bytes())?,
-        })
+    pub fn at_root(&self, root_hash: H256) -> Self {
+        let db = self.db.clone();
+        Self {
+            db,
+            accounts: self.accounts.at_root(root_hash),
+        }
     }
 
     pub fn try_clone(&mut self) -> Result<Self> {
-        State::from_root(self.db.clone(), self.root_hash()?)
+        let root_hash = self.accounts.root_hash()?;
+        Ok(self.at_root(root_hash))
     }
 
     pub fn root_hash(&mut self) -> Result<crypto::Hash> {
-        Ok(crypto::Hash(self.accounts.root()?.as_slice().try_into()?))
+        Ok(crypto::Hash(
+            self.accounts.root_hash()?.as_bytes().try_into()?,
+        ))
     }
 
     /// Returns an error on failures to access the state tree, or decode the account; or an empty
     /// account if one didn't exist yet
-    pub fn try_get_account(&self, address: Address) -> Result<Account> {
+    pub fn get_account(&self, address: Address) -> Result<Account> {
         Ok(self
             .accounts
             .get(&Keccak256::digest(address.as_bytes()))?
@@ -101,20 +95,21 @@ impl<D: DB + Send + Sync> State<D> {
             .unwrap_or(Ok(Account::default()))?)
     }
 
-    /// Returns a default (empty) account if an existing one cannot be fetched for any reason
-    pub fn get_account(&self, address: Address) -> Account {
-        self.try_get_account(address).unwrap_or(Account::default())
+    /// Panics if account cannot be read.
+    pub fn must_get_account(&self, address: Address) -> Account {
+        self.get_account(address)
+            .expect("Failed to read account {address:?} from state storage")
     }
 
-    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<D, TrieHasher>> {
-        Ok(match self.try_get_account(address)?.storage_root {
-            Some(root) => PatriciaTrie::from(self.db.clone(), Arc::new(TrieHasher), &root)?,
-            None => PatriciaTrie::new(self.db.clone(), Arc::new(TrieHasher)),
+    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<MemoryDB>> {
+        Ok(match self.get_account(address)?.storage_root {
+            Some(root) => PatriciaTrie::new(self.db.clone()).at_root(root),
+            None => PatriciaTrie::new(self.db.clone()),
         })
     }
 
     /// Returns an error if there are any issues fetching the account from the state trie
-    pub fn try_get_account_storage(&self, address: Address, index: H256) -> Result<H256> {
+    pub fn get_account_storage(&self, address: Address, index: H256) -> Result<H256> {
         match self.get_account_trie(address)?.get(index.as_bytes()) {
             // from_slice will only panic if vec.len != H256::len_bytes, i.e. 32
             Ok(Some(vec)) if vec.len() == 32 => Ok(H256::from_slice(&vec)),
@@ -122,31 +117,26 @@ impl<D: DB + Send + Sync> State<D> {
             Ok(None) => Ok(H256::zero()),
             // invalid value in storage
             Ok(Some(vec)) => Err(anyhow!(
-                "Invalid storage for account {:?} at index {}: expected 32 bytes, got value {:?}",
-                address,
-                index,
-                vec
+                "Invalid storage for account {address:?} at index {index}: expected 32 bytes, got value {vec:?}"
             )),
             // any other error fetching
             Err(e) => Err(anyhow!(
-                "Failed to fetch storage for account {:?} at index {}: {}",
-                address,
-                index,
-                e
+                "Failed to fetch storage for account {address:?} at index {index}: {e}",
             )),
         }
     }
 
-    /// Returns a default empty value if there are any errors accessing the storage
-    pub fn get_account_storage(&self, address: Address, index: H256) -> H256 {
-        self.try_get_account_storage(address, index)
-            .unwrap_or(H256::default())
+    /// Panics if account or storage cannot be read.
+    pub fn must_get_account_storage(&self, address: Address, index: H256) -> H256 {
+        self.get_account_storage(address, index).expect(
+            "Failed to read storage index {index} for account {address:?} from state storage",
+        )
     }
 
     pub fn set_account_storage(&self, address: Address, index: H256, value: H256) -> Result<()> {
         Ok(self
             .get_account_trie(address)?
-            .insert(index.as_bytes().to_vec(), value.as_bytes().to_vec())?)
+            .insert(index.as_bytes(), value.as_bytes())?)
     }
 
     pub fn remove_account_storage(&self, address: Address, index: H256) -> Result<bool> {
@@ -154,7 +144,7 @@ impl<D: DB + Send + Sync> State<D> {
     }
 
     pub fn clear_account_storage(&mut self, address: Address) -> Result<()> {
-        let account = self.get_account(address);
+        let account = self.get_account(address)?;
         self.save_account(
             address,
             Account {
@@ -178,10 +168,8 @@ impl<D: DB + Send + Sync> State<D> {
 
     pub fn save_account(&mut self, address: Address, account: Account) -> Result<()> {
         Ok(self.accounts.insert(
-            crypto::Hash::compute(&[&address.as_bytes()])
-                .as_bytes()
-                .to_vec(),
-            bincode::serialize(&account)?,
+            crypto::Hash::compute(&[&address.as_bytes()]).as_bytes(),
+            &bincode::serialize(&account)?,
         )?)
     }
 
@@ -239,8 +227,7 @@ pub struct Account {
     pub nonce: u64,
     #[serde(with = "serde_bytes")]
     pub code: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    pub storage_root: Option<Vec<u8>>,
+    pub storage_root: Option<H256>,
 }
 
 /// A transaction body, broadcast before execution and then persisted as part of a block after the transaction is executed.

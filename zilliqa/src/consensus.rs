@@ -1,3 +1,4 @@
+use eth_trie::MemoryDB;
 use std::sync::Arc;
 use std::{
     collections::{btree_map::Entry, BTreeMap},
@@ -9,7 +10,6 @@ use bitvec::bitvec;
 use itertools::Itertools;
 use libp2p::PeerId;
 use tracing::{debug, info, trace};
-use zq_trie::DB;
 
 use crate::{
     cfg::Config,
@@ -40,7 +40,7 @@ pub struct Validator {
 }
 
 #[derive(Debug)]
-pub struct Consensus<D: DB + Send + Sync> {
+pub struct Consensus {
     secret_key: SecretKey,
     config: Config,
     committee: Vec<Validator>,
@@ -60,14 +60,14 @@ pub struct Consensus<D: DB + Send + Sync> {
     transactions: BTreeMap<Hash, Transaction>,
     transaction_receipts: BTreeMap<Hash, TransactionReceipt>,
     /// The account store.
-    state: State<D>,
+    state: State,
     /// An index of address to a list of transaction hashes, for which this address appeared somewhere in the
     /// transaction trace. The list of transations is ordered by execution order.
     touched_address_index: BTreeMap<Address, Vec<Hash>>,
 }
 
-impl<D: DB + Send + Sync> Consensus<D> {
-    pub fn new(secret_key: SecretKey, config: Config, database: D) -> Result<Self> {
+impl Consensus {
+    pub fn new(secret_key: SecretKey, config: Config, database: MemoryDB) -> Result<Self> {
         let validator = Validator {
             public_key: secret_key.node_public_key(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
@@ -652,7 +652,7 @@ impl<D: DB + Send + Sync> Consensus<D> {
         self.view
     }
 
-    pub fn state(&self) -> &State<D> {
+    pub fn state(&self) -> &State {
         &self.state
     }
 

@@ -1,7 +1,6 @@
 //! Manages execution of transactions on state.
 
 use std::{collections::HashSet, time::SystemTime};
-use zq_trie::DB;
 
 use anyhow::{anyhow, Result};
 use ethabi::Token;
@@ -85,8 +84,8 @@ impl EventListener for TouchedAddressEventListener {
     }
 }
 
-pub struct CallContext<'a, D: DB> {
-    state: &'a State<D>,
+pub struct CallContext<'a> {
+    state: &'a State,
     gas_price: U256,
     origin: H160,
     chain_id: u64,
@@ -115,14 +114,14 @@ impl TransactionApplyResult {
     }
 }
 
-impl<D: DB> State<D> {
+impl State {
     fn call_context(
         &self,
         gas_price: U256,
         origin: H160,
         chain_id: u64,
         current_block: BlockHeader,
-    ) -> CallContext<'_, D> {
+    ) -> CallContext<'_> {
         CallContext {
             state: self,
             gas_price,
@@ -134,9 +133,9 @@ impl<D: DB> State<D> {
 
     fn executor<'a>(
         &'a self,
-        context: &'a CallContext<'a, D>,
+        context: &'a CallContext<'a>,
         gas_limit: u64,
-    ) -> StackExecutor<MemoryStackState<CallContext<'a, D>>, ()> {
+    ) -> StackExecutor<MemoryStackState<CallContext<'a>>, ()> {
         let stack_state_metadata = StackSubstateMetadata::new(gas_limit, &CONFIG);
         let stack_state = MemoryStackState::new(stack_state_metadata, context);
         StackExecutor::new_with_precompiles(stack_state, &CONFIG, &())
@@ -144,7 +143,7 @@ impl<D: DB> State<D> {
 
     /// Deploy a contract at a fixed address. Used for system contracts which exist at well known addresses.
     pub fn deploy_fixed_contract(&mut self, address: Address, code: Vec<u8>) -> Result<()> {
-        let mut account = self.get_account(address);
+        let mut account = self.get_account(address)?;
         account.code = code;
         self.save_account(address, account)
     }
@@ -283,7 +282,7 @@ impl<D: DB> State<D> {
                         self.set_native_balance(logs, address, basic.balance)?;
                     }
 
-                    let mut account = self.get_account(address);
+                    let mut account = self.get_account(address)?;
                     if let Some(code) = code {
                         account.code = code;
                     }
@@ -388,7 +387,7 @@ impl<D: DB> State<D> {
     }
 }
 
-impl<'a, D: DB> Backend for CallContext<'a, D> {
+impl<'a> Backend for CallContext<'a> {
     fn gas_price(&self) -> U256 {
         self.gas_price
     }
@@ -445,7 +444,7 @@ impl<'a, D: DB> Backend for CallContext<'a, D> {
     }
 
     fn basic(&self, address: H160) -> Basic {
-        let nonce = self.state.get_account(Address(address)).nonce;
+        let nonce = self.state.must_get_account(Address(address)).nonce;
         // For these accounts, we hardcode the balance we return to the EVM engine as zero. Otherwise, we have an
         // infinite recursion because getting the native balance of any account requires this method to be called for
         // these two 'special' accounts.
@@ -462,11 +461,11 @@ impl<'a, D: DB> Backend for CallContext<'a, D> {
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
-        self.state.get_account(Address(address)).code
+        self.state.must_get_account(Address(address)).code
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
-        self.state.get_account_storage(Address(address), index)
+        self.state.must_get_account_storage(Address(address), index)
     }
 
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
