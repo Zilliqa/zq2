@@ -24,3 +24,11 @@ Automated bootstrap of a 4 nodes Zilliqa 2.0 aka zq2 network.
 ```
 docker-compose up
 ````
+
+## Testing
+
+The tests can be run with `cargo test`.
+Most tests create an in-memory network of nodes, with the libp2p networking layer stubbed out and send API requests to
+the network.
+
+Some tests involve compiling Solidity code, so a `solc` installation is required. The path is determined as documented in [ethers::solc::Solc](https://docs.rs/ethers/latest/ethers/solc/struct.Solc.html).
