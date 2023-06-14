@@ -9,14 +9,13 @@ use std::{
 use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
-use tracing::info;
 
 use crate::{
     contracts,
     crypto::{self, TransactionPublicKey, TransactionSignature},
 };
 
-#[derive(Debug, Default, Clone, Hash)]
+#[derive(Debug, Clone, Default, Hash)]
 pub struct State {
     accounts: BTreeMap<Address, Account>,
 }
@@ -55,7 +54,6 @@ impl State {
         for (address, balance) in GENESIS {
             // We don't care about these logs.
             let mut logs = vec![];
-            info!("Genesis: setting balance of {:?} to {}", address, balance);
             state.set_native_balance(&mut logs, address, balance)?;
         }
 

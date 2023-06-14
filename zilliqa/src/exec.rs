@@ -136,7 +136,6 @@ impl State {
         let data = payload;
         let apparent_value: U256 = amount.into();
         let caller = from_addr;
-        //let caller = to_addr;
         let gas_scaling_factor = 1;
         let estimate = false;
         let is_static = false;
