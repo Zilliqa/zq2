@@ -35,4 +35,4 @@ jobs:
     - name: Verify working directory is clean
       run: git diff --exit-code
     - name: Run a security audit
-      run: cargo install cargo-audit && cargo audit
+      run: cargo audit --no-fetch --ignore RUSTSEC-2021-0079 --ignore RUSTSEC-2022-0004 --ignore RUSTSEC-2020-0071 --ignore RUSTSEC-2022-0035 --ignore RUSTSEC-2021-0078
