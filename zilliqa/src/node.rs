@@ -20,21 +20,21 @@ use crate::{
 ///
 /// # Transaction Lifecycle
 /// 1. New transactions are created with a call to [`Node::new_transaction()`].
-/// The node gossips the transaction to the network via a [`Message::NewTransaction`] message.
-/// This initial node also stores the transaction hash in `pending_transactions`.
+/// The node gossips the transaction to the network and itself via a [`Message::NewTransaction`] message.
+/// This initial node also stores the transaction hash in `new_transactions`.
 ///
 /// 1. When a node recieves a [`NewTransaction`] via [`Node::handle_message()`], it stores it in `new_transactions`.
 /// This contains all transactions which have been receieved, but not yet executed.
 ///
-/// 1. When the initial node is a leader of a block, it adds all transaction hashes in `pending_transactions` to the block.
+/// 2. When the initial node is a leader of a block, it adds all transaction hashes in `new_transactions` to the block.
 ///
-/// 1. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
+/// 3. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
 /// Successfully executed transactions are added to `transactions` so they can be returned via APIs.
 #[derive(Debug)]
 pub struct Node {
     pub config: Config,
     peer_id: PeerId,
-    message_sender: UnboundedSender<(PeerId, Message)>,
+    message_sender: UnboundedSender<(Option<PeerId>, Message)>,
     reset_timeout: UnboundedSender<()>,
     consensus: Consensus,
 }
@@ -43,7 +43,7 @@ impl Node {
     pub fn new(
         config: Config,
         secret_key: SecretKey,
-        message_sender: UnboundedSender<(PeerId, Message)>,
+        message_sender: UnboundedSender<(Option<PeerId>, Message)>,
         reset_timeout: UnboundedSender<()>,
     ) -> Result<Node> {
         let node = Node {
@@ -92,6 +92,7 @@ impl Node {
             Message::BlockResponse(m) => {
                 self.handle_block_response(source, m)?;
             }
+            Message::RequestResponse => {}
             Message::NewTransaction(t) => {
                 match t.verify() {
                     Ok(_) => {
@@ -201,15 +202,13 @@ impl Node {
             // We need to 'send' this message to ourselves.
             self.handle_message(peer, message)?;
         } else {
-            self.message_sender.send((peer, message))?;
+            self.message_sender.send((Some(peer), message))?;
         }
         Ok(())
     }
 
     fn broadcast_message(&mut self, message: Message) -> Result<()> {
-        // FIXME: We broadcast everything, so the recipient doesn't matter.
-        self.message_sender
-            .send((PeerId::random(), message.clone()))?;
+        self.message_sender.send((None, message.clone()))?;
         // Also handle it ourselves
         self.handle_message(self.peer_id, message)?;
         Ok(())
