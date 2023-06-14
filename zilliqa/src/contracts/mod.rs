@@ -40,6 +40,7 @@ pub mod native_token {
 /// files and checking the result is the same. This means we can keep the compiled source code in-tree, while also
 /// asserting in CI that the compiled source code is genuine. The tests only run when the `test_contract_bytecode`
 /// feature is enabled.
+#[cfg(not(target_os = "macos"))]
 #[cfg(test)]
 mod tests {
     // Obtained from https://binaries.soliditylang.org/linux-amd64/list.json.
