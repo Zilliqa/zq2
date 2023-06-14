@@ -16,7 +16,7 @@ use evm_ds::evm::{
 use evm_ds::protos::Evm::EvmResult;
 use evm_ds::{continuations::Continuations, evm_server_run::run_evm_impl_direct};
 use primitive_types::{H160, H256, U256};
-use tracing::{trace, error};
+use tracing::{error, trace};
 
 use crate::{
     contracts,
@@ -114,7 +114,6 @@ impl TransactionApplyResult {
 }
 
 impl State {
-
     /// Deploy a contract at a fixed address. Used for system contracts which exist at well known addresses.
     pub fn deploy_fixed_contract(&mut self, address: Address, code: Vec<u8>) {
         self.get_account_mut(address).code = code;
@@ -472,7 +471,9 @@ impl<'a> Backend for EvmBackend<'a> {
 
         trace!(
             "EVM request: Requesting storage for {:?} at {:?} and is: {:?}",
-            address, index, res
+            address,
+            index,
+            res
         );
         res
     }
@@ -480,7 +481,8 @@ impl<'a> Backend for EvmBackend<'a> {
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
         trace!(
             "EVM request: Requesting original storage for {:?} at {:?}",
-            address, index
+            address,
+            index
         );
         Some(self.storage(address, index))
     }

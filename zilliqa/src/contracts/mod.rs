@@ -62,8 +62,9 @@ mod tests {
     fn native_token() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut solc = Vec::new();
-        let solc_download_path =
-            format!("https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-{SOLC_VERSION}");
+        let solc_download_path = format!(
+            "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-{SOLC_VERSION}"
+        );
         let response = ureq::get(&solc_download_path).call().unwrap();
         response.into_reader().read_to_end(&mut solc).unwrap();
 
