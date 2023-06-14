@@ -34,3 +34,7 @@ jobs:
       run: cargo test --all-targets --all-features
     - name: Verify working directory is clean
       run: git diff --exit-code
+
+  security_audit:
+    - name: Run a security audit
+      run: cargo install cargo-audit && cargo audit
