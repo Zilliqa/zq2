@@ -59,7 +59,6 @@ impl State {
             let mut logs = vec![];
             info!("Genesis: setting balance of {:?} to {}", address, balance);
             state.set_native_balance(&mut logs, address, balance)?;
-            break;
         }
 
         println!("State: {:?}", state);

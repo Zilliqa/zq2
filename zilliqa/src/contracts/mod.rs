@@ -75,7 +75,7 @@ mod tests {
         println!(
             "{} {}",
             hex::encode(&expected_hash),
-            hex::encode(&actual_hash)
+            hex::encode(actual_hash)
         );
         assert_eq!(expected_hash, actual_hash.to_vec());
 

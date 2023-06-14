@@ -343,7 +343,7 @@ impl State {
                 }
 
                 Ok(TransactionApplyResult {
-                    success: success,
+                    success,
                     return_value: result.return_value.into(),
                     contract_address: None,
                     logs,
@@ -378,7 +378,7 @@ impl State {
                 let code = modify.code.clone();
                 let nonce: U256 = modify.get_nonce().into();
                 let storage = modify.storage.clone().into_iter();
-                let reset_storage = modify.reset_storage.clone();
+                let reset_storage = modify.reset_storage;
 
                 println!("XXX modify: {:?}", address);
                 println!("XXX modify nonce: {:?}", nonce);
