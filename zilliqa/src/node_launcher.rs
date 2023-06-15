@@ -2,7 +2,6 @@ use jsonrpsee::{server::ServerHandle, RpcModule};
 use std::{
     iter,
     net::Ipv4Addr,
-    path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -17,7 +16,6 @@ use crate::{
 };
 
 use anyhow::{anyhow, Result};
-use clap::Parser;
 use http::{header, Method};
 use libp2p::{
     core::upgrade,
@@ -48,16 +46,6 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{debug, error, info, trace};
 
 use crate::message::Message;
-
-#[derive(Parser, Debug)]
-struct Args {
-    #[arg(value_parser = SecretKey::from_hex)]
-    secret_key: SecretKey,
-    #[clap(long, short, default_value = "config.toml")]
-    config_file: PathBuf,
-    #[clap(long, default_value = "false")]
-    no_jsonrpc: bool,
-}
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {

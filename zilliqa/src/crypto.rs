@@ -6,7 +6,7 @@
 
 use std::fmt::Display;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Error, Result};
 use bls12_381::G2Affine;
 use bls_signatures::Serialize as BlsSerialize;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
@@ -164,9 +164,29 @@ pub fn verify_messages(
 /// The secret key type used as the basis of all cryptography in the node.
 /// Any of the `NodePublicKey` or `TransactionPublicKey`s, or a libp2p identity, can be derived
 /// from this.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct SecretKey {
     bytes: [u8; 32],
+}
+
+impl TryFrom<String> for SecretKey {
+    type Error = Error;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::from_hex(&value)
+    }
+}
+
+impl From<SecretKey> for String {
+    fn from(value: SecretKey) -> Self {
+        value.to_hex()
+    }
+}
+
+impl Display for SecretKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&Into::<String>::into(*self))
+    }
 }
 
 impl SecretKey {
@@ -217,8 +237,8 @@ impl SecretKey {
         Ok(self.bytes.to_vec())
     }
 
-    pub fn to_hex(&self) -> Result<String> {
-        Ok(hex::encode(self.bytes))
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.bytes)
     }
 
     pub fn sign(&self, message: &[u8]) -> NodeSignature {

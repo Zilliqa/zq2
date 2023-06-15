@@ -1,7 +1,7 @@
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 use libp2p::{
     gossipsub, identify,
@@ -12,17 +12,20 @@ use libp2p::{
 use opentelemetry::runtime;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use tokio::time::Duration;
+use twelf::{config, Layer};
 
 use zilliqa::{cfg::Config, crypto::SecretKey, node_launcher::NodeLauncher};
 
+#[config]
 #[derive(Parser, Debug)]
 struct Args {
-    #[arg(value_parser = SecretKey::from_hex)]
+    #[clap(value_parser = SecretKey::from_hex)]
     secret_key: SecretKey,
     #[clap(long, short, default_value = "config.toml")]
     config_file: PathBuf,
-    #[clap(long, default_value = "false")]
-    no_jsonrpc: bool,
+    #[serde(flatten)]
+    #[clap(flatten)]
+    config: Config,
 }
 
 #[derive(NetworkBehaviour)]
@@ -37,16 +40,33 @@ struct Behaviour {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
-    let args = Args::parse();
+    // let args = Args::parse();
+    let args = Args::command().get_matches();
+    // TODO: override config path through env variable?
+    let config_path = args.get_one::<PathBuf>("config_file");
+    println!("Args parsed; config path: {config_path:?}");
 
-    let config = if args.config_file.exists() {
-        fs::read_to_string(&args.config_file)?
-    } else {
-        // If the configuration file doesn't exist, we can still construct a default configuration file by parsing an
-        // empty TOML document.
-        String::new()
-    };
-    let config: Config = toml::from_str(&config)?;
+    let mut layers: Vec<Layer> = vec![];
+    layers.push(Layer::Clap(args.clone()));
+    if let Some(path) = config_path {
+        if path.exists() {
+            layers.push(Layer::Toml(path.clone()));
+            println!("Pushing config file layer");
+        } else {
+            println!("Skipping toml layer...");
+        }
+    }
+    std::env::set_var("ZQ2_ETH_CHAIN_ID", "4000");
+    layers.push(Layer::Env(Some("ZQ2_".to_string())));
+    // layers.push(Layer::Env(None));
+
+    println!("Layers set up");
+    let args = Args::with_layers(&layers)?;
+
+    println!("{args:?}");
+    return Ok(());
+
+    let config = args.config;
 
     let p2p_port = config.p2p_port;
     if let Some(endpoint) = &config.otlp_collector_endpoint {
@@ -67,7 +87,7 @@ async fn main() -> Result<()> {
 
     let mut networked_node = NodeLauncher::new(args.secret_key, config)?;
 
-    if !args.no_jsonrpc {
+    if !config.disable_json_rpc {
         let handle = networked_node.launch_rpc_server().await?;
         tokio::spawn(handle.stopped());
     }

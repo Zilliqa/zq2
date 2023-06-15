@@ -200,7 +200,7 @@ impl Consensus {
             .timestamp()
             .elapsed()
             .unwrap_or_else(|err| err.duration());
-        if difference > self.config.allowed_timestamp_skew {
+        if difference.as_secs() > self.config.allowed_timestamp_skew {
             return Err(anyhow!(
                 "timestamp difference greater than allowed skew: {difference:?}"
             ));
