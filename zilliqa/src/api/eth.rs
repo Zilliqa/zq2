@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use k256::ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey};
-use primitive_types::{H160, H256};
+use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
 
 use crate::{
@@ -17,7 +17,10 @@ use crate::{
 
 use super::{
     to_hex::ToHex,
-    types::{CallParams, EthBlock, EthTransaction, EthTransactionReceipt, HashOrTransaction, Log},
+    types::{
+        BlockNumber, CallParams, EthBlock, EthTransaction, EthTransactionReceipt,
+        HashOrTransaction, Log,
+    },
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -31,6 +34,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_estimateGas", estimate_gas),
             ("eth_getBalance", get_balance),
             ("eth_getCode", get_code),
+            ("eth_getStorageAt", get_storage_at),
             ("eth_getTransactionCount", get_transaction_count),
             ("eth_gasPrice", gas_price),
             ("eth_getBlockByNumber", get_block_by_number),
@@ -57,7 +61,8 @@ fn block_number(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
-    let _tag: &str = params.next()?;
+    // TODO: #226
+    let _block_number: BlockNumber = params.next()?;
 
     let return_value = node.lock().unwrap().call_contract(
         Address(call_params.from),
@@ -80,7 +85,8 @@ fn estimate_gas(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
-    let _tag: &str = params.next()?;
+    // TODO: #226
+    let _block_number: BlockNumber = params.next()?;
 
     Ok(node
         .lock()
@@ -92,7 +98,8 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
-    let _tag: &str = params.next()?;
+    // TODO: #226
+    let _block_number: BlockNumber = params.next()?;
 
     Ok(node
         .lock()
@@ -102,10 +109,29 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         .to_hex())
 }
 
+fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let mut params = params.sequence();
+    let address: H160 = params.next()?;
+    let position: U256 = params.next()?;
+    // TODO: #226
+    let _block_number: BlockNumber = params.next()?;
+
+    let mut position_bytes = [0; 32];
+    position.to_big_endian(&mut position_bytes);
+    let position = H256::from_slice(&position_bytes);
+
+    let node = node.lock().unwrap();
+    let account = node.get_account(Address(address))?;
+    let value = account.storage.get(&position).copied().unwrap_or_default();
+
+    Ok(value.to_hex())
+}
+
 fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
-    let _tag: &str = params.next()?;
+    // TODO: #226
+    let _block_number: BlockNumber = params.next()?;
 
     Ok(node
         .lock()
@@ -122,27 +148,22 @@ fn gas_price(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
 
 fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
     let mut params = params.sequence();
-    let block: &str = params.next()?;
+    let block_number: BlockNumber = params.next()?;
     let full: bool = params.next()?;
 
-    if block == "latest" {
-        let block = node.lock().unwrap().get_latest_block().map(EthBlock::from);
+    let node = node.lock().unwrap();
+    let block = match block_number {
+        BlockNumber::Number(number) => node.get_block_by_view(number),
+        BlockNumber::Earliest => node.get_block_by_view(0),
+        BlockNumber::Latest => node.get_latest_block(),
+        _ => {
+            return Err(anyhow!("unsupported block number: {block_number:?}"));
+        }
+    };
 
-        Ok(block)
-    } else {
-        let block = block
-            .strip_prefix("0x")
-            .ok_or_else(|| anyhow!("no 0x prefix"))?;
-        let block = u64::from_str_radix(block, 16)?;
+    let block = block.map(|b| convert_block(&node, b, full)).transpose()?;
 
-        let node = node.lock().unwrap();
-        let block = node
-            .get_block_by_view(block)
-            .map(|b| convert_block(&node, b, full))
-            .transpose()?;
-
-        Ok(block)
-    }
+    Ok(block)
 }
 
 fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
