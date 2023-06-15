@@ -39,6 +39,14 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_gasPrice", gas_price),
             ("eth_getBlockByNumber", get_block_by_number),
             ("eth_getBlockByHash", get_block_by_hash),
+            (
+                "eth_getBlockTransactionCountByHash",
+                get_block_transaction_count_by_hash
+            ),
+            (
+                "eth_getBlockTransactionCountByNumber",
+                get_block_transaction_count_by_number
+            ),
             ("eth_getTransactionByHash", get_transaction_by_hash),
             ("eth_getTransactionReceipt", get_transaction_receipt),
             ("eth_sendRawTransaction", send_raw_transaction),
@@ -198,6 +206,37 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<E
             ..block.into()
         })
     }
+}
+
+fn get_block_transaction_count_by_hash(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<String>> {
+    let hash: H256 = params.one()?;
+
+    let node = node.lock().unwrap();
+    let block = node.get_block_by_hash(Hash(hash.0));
+
+    Ok(block.map(|b| b.transactions.len().to_hex()))
+}
+
+fn get_block_transaction_count_by_number(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<String>> {
+    let block_number: BlockNumber = params.one()?;
+
+    let node = node.lock().unwrap();
+    let block = match block_number {
+        BlockNumber::Number(number) => node.get_block_by_view(number),
+        BlockNumber::Earliest => node.get_block_by_view(0),
+        BlockNumber::Latest => node.get_latest_block(),
+        _ => {
+            return Err(anyhow!("unsupported block number: {block_number:?}"));
+        }
+    };
+
+    Ok(block.map(|b| b.transactions.len().to_hex()))
 }
 
 fn get_transaction_by_hash(
