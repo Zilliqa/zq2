@@ -128,8 +128,7 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let position = H256::from_slice(&position_bytes);
 
     let node = node.lock().unwrap();
-    let account = node.get_account(Address(address))?;
-    let value = account.storage.get(&position).copied().unwrap_or_default();
+    let value = node.get_account_storage(Address(address), position)?;
 
     Ok(value.to_hex())
 }

@@ -1,3 +1,4 @@
+use eth_trie::MemoryDB;
 use jsonrpsee::{server::ServerHandle, RpcModule};
 use std::{
     iter,
@@ -95,6 +96,7 @@ impl NodeLauncher {
             secret_key,
             message_sender.clone(),
             reset_timeout_sender.clone(),
+            MemoryDB::default(),
         )?;
         let node = Arc::new(Mutex::new(node));
 

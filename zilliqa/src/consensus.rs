@@ -1,3 +1,5 @@
+use eth_trie::MemoryDB;
+use std::sync::Arc;
 use std::{
     collections::{btree_map::Entry, BTreeMap},
     time::SystemTime,
@@ -65,7 +67,7 @@ pub struct Consensus {
 }
 
 impl Consensus {
-    pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
+    pub fn new(secret_key: SecretKey, config: Config, database: MemoryDB) -> Result<Self> {
         let validator = Validator {
             public_key: secret_key.node_public_key(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
@@ -86,7 +88,7 @@ impl Consensus {
             new_transactions: BTreeMap::new(),
             transactions: BTreeMap::new(),
             transaction_receipts: BTreeMap::new(),
-            state: State::new()?,
+            state: State::new(Arc::new(database))?,
             touched_address_index: BTreeMap::new(),
         })
     }
@@ -225,9 +227,9 @@ impl Consensus {
                     self.transaction_receipts.insert(txn.hash(), receipt);
                 }
             }
-            if self.state.root_hash() != block.state_root_hash() {
+            if self.state.root_hash()? != block.state_root_hash() {
                 return Err(anyhow!(
-                    "state root hash mismatch, expected: {}, actual: {}",
+                    "state root hash mismatch, expected: {:?}, actual: {:?}",
                     block.state_root_hash(),
                     self.state.root_hash()
                 ));
@@ -363,7 +365,7 @@ impl Consensus {
                     self.view,
                     qc,
                     parent_hash,
-                    self.state.root_hash(),
+                    self.state.root_hash()?,
                     applied_transaction_hashes,
                     SystemTime::max(SystemTime::now(), parent_header.timestamp),
                 );
@@ -457,6 +459,7 @@ impl Consensus {
                     self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, signers)?;
                 let high_qc = self.get_highest_from_agg(&agg)?;
                 let parent_hash = high_qc.block_hash;
+                let state_root = self.state.root_hash()?;
                 let parent = self.get_block(&parent_hash)?;
                 let proposal = Block::from_agg(
                     self.secret_key,
@@ -464,7 +467,7 @@ impl Consensus {
                     high_qc.clone(),
                     agg,
                     parent_hash,
-                    self.state.root_hash(),
+                    state_root,
                     SystemTime::max(SystemTime::now(), parent.timestamp()),
                 );
                 // as a future improvement, process the proposal before broadcasting it
