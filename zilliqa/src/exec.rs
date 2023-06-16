@@ -14,7 +14,7 @@ use evm_ds::evm::{
     tracing::EventListener,
 };
 use evm_ds::protos::Evm::EvmResult;
-use evm_ds::{continuations::Continuations, evm_server_run::run_evm_impl_direct};
+use evm_ds::{continuations::Continuations, evm_server_run::{run_evm_impl_direct, calculate_contract_address}};
 use primitive_types::{H160, H256, U256};
 use tracing::{error, trace};
 
@@ -130,47 +130,71 @@ impl State {
         payload: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
-    ) -> Result<(Vec<Log>, EvmResult)> {
-        // Only allow TX calls for now (fine since ERC20 already deployed manually)
-        let code = contracts::native_token::CODE.clone();
-        let data = payload;
+    ) -> Result<(Vec<Log>, EvmResult, Option<H160>)> {
+
+        println!("Caller: {:?}", from_addr);
+        println!("Calling: {:?}", to_addr);
+
         let apparent_value: U256 = amount.into();
-        let caller = from_addr;
+        let mut caller = from_addr;
         let gas_scaling_factor = 1;
         let estimate = false;
         let is_static = false;
         let context = "".to_string();
         let continuations: Arc<Mutex<Continuations>> = Arc::new(Mutex::new(Continuations::new()));
         let logs: Vec<Log> = Default::default(); // todo: this.
+        let account = self.get_account(to_addr);
+        let mut to = to_addr.0;
 
-        let backend = EvmBackend {
+        let mut code: Vec<u8> = account.code.clone();
+        let mut data: Vec<u8> = payload;
+
+        let mut backend = EvmBackend {
             state: self,
             gas_price: U256::zero(),
-            origin: to_addr.0,
+            //origin: tyypo_addr.0,
+            origin: caller.0,
             chain_id,
             current_block,
         };
 
+        if Address::is_balance_transfer(from_addr, to_addr) {
+            code = contracts::native_token::CODE.clone();
+        }
+
+        if Address::is_contract_creation(from_addr, to_addr) {
+            println!("XXOXOXXOXOXXOXOXXOXOXXOXOXXOXOXXOXOXOOOOOOOOXOXOContract XXOXOXXOXOXXOXOXXOXOXXOXOXXOXOXXOXOXOOOOOOOOXOXO");
+            code = data;
+            data = vec![];
+            to = calculate_contract_address(from_addr.0, & backend);
+        }
+
         let result = run_evm_impl_direct(
-            to_addr.0,
+            to,
             code,
             data,
             apparent_value,
             gas_limit,
             caller.0,
-            backend,
+            &backend,
             gas_scaling_factor,
             estimate,
             is_static,
             context,
             None,
             continuations,
-            false,
+            true,
             false,
             "".to_string(),
         );
 
-        Ok((logs, result))
+        if Address::is_contract_creation(from_addr, to_addr) {
+            println!("Contract creation: {:?}", result);
+
+            return Ok((logs, result, Some(calculate_contract_address(from_addr.0, backend))));
+        }
+
+        Ok((logs, result, None))
     }
 
     /// Apply a transaction to the account state. If the transaction is a contract creation, the created contract's
@@ -193,18 +217,28 @@ impl State {
         );
 
         match result {
-            Ok((mut logs, result)) => {
+            Ok((mut logs, result, contract_addr)) => {
                 // Apply the state changes only if success
-                let success = result.exit_reason.unwrap().has_succeed();
+                let success = result.exit_reason.clone().unwrap().has_succeed();
 
                 if success {
-                    self.apply_delta(&mut logs, txn.to_addr, result.apply.iter())?;
+
+                    if let Some(contract_addr) = contract_addr {
+                        println!("Deploying contract at: {:?}", contract_addr);
+                        println!("With code: {:?}", result.return_value.clone());
+                        println!("With result: {:?}", result);
+                        self.get_account_mut(Address(contract_addr)).code = result.return_value.clone().to_vec();
+
+                        self.apply_delta(&mut logs, Address(contract_addr), result.apply.iter())?;
+                    } else {
+                        self.apply_delta(&mut logs, txn.to_addr, result.apply.iter())?;
+                    }
                 }
 
                 Ok(TransactionApplyResult {
                     success,
                     return_value: result.return_value.into(),
-                    contract_address: None,
+                    contract_address: contract_addr.map(|addr| Address(addr)),
                     logs,
                 })
             }
@@ -266,6 +300,11 @@ impl State {
                 for item in storage {
                     let index: H256 = H256::from_slice(item.get_key());
                     let value: H256 = H256::from_slice(item.get_value());
+                    println!("Address: {:?}", address);
+                    println!(
+                        "Applying storage change: {:?} -> {:?}",
+                        index, value
+                    );
 
                     if value.is_zero() {
                         account.storage.remove(&index);
@@ -326,7 +365,7 @@ impl State {
         );
 
         match result {
-            Ok((lgs, result)) => {
+            Ok((lgs, result, contract_addr)) => {
                 // Apply the state changes only if success
                 let success = result.exit_reason.unwrap().has_succeed();
 

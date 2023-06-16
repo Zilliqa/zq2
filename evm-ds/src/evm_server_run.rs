@@ -8,10 +8,7 @@ use serde::{Deserialize, Serialize};
 //use ::call_context::LoggingEventListener;
 use evm::backend::Backend;
 use evm::executor::stack::MemoryStackSubstate;
-use evm::{
-    backend::Apply,
-    executor::stack::{MemoryStackState, StackSubstateMetadata},
-};
+use evm::{backend::Apply, CreateScheme, executor::stack::{MemoryStackState, StackSubstateMetadata}, Handler};
 use evm::{Machine, Runtime};
 
 use log::{debug, error, info};
@@ -181,6 +178,7 @@ pub async fn run_evm_impl(
             },
             CpsReason::CreateInterrupt(i) => {
                 let cont_id = continuations.lock().unwrap().create_continuation(runtime.machine_mut(), executor.into_state().substate());
+                println!("******* Create interrupt: {:?}", 9);
 
                 build_create_result(&runtime, i, &listener, remaining_gas, cont_id)
             }
@@ -433,6 +431,24 @@ fn handle_panic(trace: String, remaining_gas: u64, reason: &str) -> EvmProto::Ev
     result
 }
 
+// Convenience fn to hide the evm internals and just
+// let you calculate contract address as easily as possible
+pub fn calculate_contract_address(address: H160, backend: impl Backend) -> H160 {
+
+    let config = evm::Config {
+        estimate: false,
+        call_l64_after_gas: false,
+        ..evm::Config::london()
+    };
+
+    let metadata = StackSubstateMetadata::new(1, &config);
+    let state = MemoryStackState::new(metadata, &backend);
+    let precompiles = get_precompiles();
+
+    let mut executor = CpsExecutor::new_with_precompiles(state, &config, &precompiles, true);
+    executor.get_create_address(CreateScheme::Legacy { caller: address })
+}
+
 #[allow(clippy::too_many_arguments, dead_code)]
 pub fn run_evm_impl_direct(
     address: H160,
@@ -452,7 +468,7 @@ pub fn run_evm_impl_direct(
     tx_trace_enabled: bool,
     tx_trace: String,
 ) -> EvmResult {
-    debug!(
+    println!(
         "Running EVM: origin: {:?} address: {:?} gas: {:?} value: {:?}  estimate: {:?} is_continuation: {:?}, cps: {:?}, \ntx_trace: {:?}, \ndata: {:02X?}, \ncode: {:02X?}",
         backend.origin(), address, gas_limit, apparent_value,
         estimate, node_continuation.is_none(), enable_cps, tx_trace, data, code);
@@ -648,7 +664,7 @@ pub fn run_evm_impl_direct(
         }
     };
 
-    info!(
+    println!(
         "EVM execution summary: context: {:?}, origin: {:?} address: {:?} gas: {:?} value: {:?}, data: {:?}, estimate: {:?}, cps: {:?}, result: {}, returnVal: {}",
         evm_context, backend.origin(), address, gas_limit, apparent_value,
         hex::encode(data.deref()),

@@ -90,6 +90,14 @@ impl Address {
     /// Address of the native token ERC-20 contract.
     pub const NATIVE_TOKEN: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"));
 
+    pub fn is_balance_transfer(from: Address, to: Address) -> bool {
+        from == Address::DEPLOY_CONTRACT && to == Address::NATIVE_TOKEN
+    }
+
+    pub fn is_contract_creation(from: Address, to: Address) -> bool {
+        from != Address::DEPLOY_CONTRACT && to == Address(H160::zero())
+    }
+
     pub fn from_bytes(bytes: [u8; 20]) -> Address {
         Address(bytes.into())
     }
