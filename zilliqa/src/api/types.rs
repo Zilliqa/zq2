@@ -299,7 +299,7 @@ pub struct EthTransaction {
     #[serde(serialize_with = "hex")]
     pub value: u128,
     #[serde(serialize_with = "hex")]
-    pub v: u8,
+    pub v: u64,
     #[serde(serialize_with = "hex")]
     pub r: [u8; 32],
     #[serde(serialize_with = "hex")]

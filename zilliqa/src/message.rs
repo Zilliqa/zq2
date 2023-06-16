@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
-    state::Transaction,
+    state::SignedTransaction,
 };
 
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
@@ -19,11 +19,11 @@ pub struct Proposal {
     pub header: BlockHeader,
     pub qc: QuorumCertificate,
     pub agg: Option<AggregateQc>,
-    pub transactions: Vec<Transaction>,
+    pub transactions: Vec<SignedTransaction>,
 }
 
 impl Proposal {
-    pub fn into_parts(self) -> (Block, Vec<Transaction>) {
+    pub fn into_parts(self) -> (Block, Vec<SignedTransaction>) {
         (
             Block {
                 header: self.header,
@@ -109,7 +109,7 @@ pub enum Message {
     NewView(NewView),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
-    NewTransaction(Transaction),
+    NewTransaction(SignedTransaction),
     RequestResponse,
 }
 
