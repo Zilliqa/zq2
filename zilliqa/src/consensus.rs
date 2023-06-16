@@ -1,3 +1,5 @@
+use eth_trie::MemoryDB;
+use std::sync::Arc;
 use std::{
     collections::{btree_map::Entry, BTreeMap},
     time::SystemTime,
@@ -18,7 +20,7 @@ use crate::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, NewView, Proposal, QuorumCertificate,
         Vote,
     },
-    state::{Address, State, Transaction, TransactionReceipt},
+    state::{Address, SignedTransaction, State, TransactionReceipt},
 };
 
 #[derive(Debug)]
@@ -52,10 +54,10 @@ pub struct Consensus {
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<(PeerId, NodePublicKey)>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
-    new_transactions: BTreeMap<Hash, Transaction>,
+    new_transactions: BTreeMap<Hash, SignedTransaction>,
     /// Transactions that have been executed and included in a block, and the blocks the are
     /// included in.
-    transactions: BTreeMap<Hash, Transaction>,
+    transactions: BTreeMap<Hash, SignedTransaction>,
     transaction_receipts: BTreeMap<Hash, TransactionReceipt>,
     /// The account store.
     state: State,
@@ -65,7 +67,7 @@ pub struct Consensus {
 }
 
 impl Consensus {
-    pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
+    pub fn new(secret_key: SecretKey, config: Config, database: MemoryDB) -> Result<Self> {
         let validator = Validator {
             public_key: secret_key.node_public_key(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
@@ -86,7 +88,7 @@ impl Consensus {
             new_transactions: BTreeMap::new(),
             transactions: BTreeMap::new(),
             transaction_receipts: BTreeMap::new(),
-            state: State::new()?,
+            state: State::new(Arc::new(database))?,
             touched_address_index: BTreeMap::new(),
         })
     }
@@ -225,9 +227,9 @@ impl Consensus {
                     self.transaction_receipts.insert(txn.hash(), receipt);
                 }
             }
-            if self.state.root_hash() != block.state_root_hash() {
+            if self.state.root_hash()? != block.state_root_hash() {
                 return Err(anyhow!(
-                    "state root hash mismatch, expected: {}, actual: {}",
+                    "state root hash mismatch, expected: {:?}, actual: {:?}",
                     block.state_root_hash(),
                     self.state.root_hash()
                 ));
@@ -246,7 +248,7 @@ impl Consensus {
 
     pub fn apply_transaction(
         &mut self,
-        txn: Transaction,
+        txn: SignedTransaction,
         current_block: BlockHeader,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash();
@@ -262,8 +264,12 @@ impl Consensus {
         if let Entry::Vacant(entry) = self.transactions.entry(hash) {
             let mut listener = TouchedAddressEventListener::default();
             let result = evm::tracing::using(&mut listener, || {
-                self.state
-                    .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
+                self.state.apply_transaction(
+                    txn.transaction.clone(),
+                    txn.from_addr,
+                    self.config.eth_chain_id,
+                    current_block,
+                )
             })?;
             entry.insert(txn);
             for address in listener.touched {
@@ -285,7 +291,11 @@ impl Consensus {
             .unwrap_or_default()
     }
 
-    pub fn vote(&mut self, _: PeerId, vote: Vote) -> Result<Option<(Block, Vec<Transaction>)>> {
+    pub fn vote(
+        &mut self,
+        _: PeerId,
+        vote: Vote,
+    ) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
         let Ok(block) = self.get_block(&vote.block_hash) else { return Ok(None); }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
         let block_hash = block.hash();
         let block_view = block.view();
@@ -355,7 +365,7 @@ impl Consensus {
                     self.view,
                     qc,
                     parent_hash,
-                    self.state.root_hash(),
+                    self.state.root_hash()?,
                     applied_transaction_hashes,
                     SystemTime::max(SystemTime::now(), parent_header.timestamp),
                 );
@@ -449,6 +459,7 @@ impl Consensus {
                     self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, signers)?;
                 let high_qc = self.get_highest_from_agg(&agg)?;
                 let parent_hash = high_qc.block_hash;
+                let state_root = self.state.root_hash()?;
                 let parent = self.get_block(&parent_hash)?;
                 let proposal = Block::from_agg(
                     self.secret_key,
@@ -456,7 +467,7 @@ impl Consensus {
                     high_qc.clone(),
                     agg,
                     parent_hash,
-                    self.state.root_hash(),
+                    state_root,
                     SystemTime::max(SystemTime::now(), parent.timestamp()),
                 );
                 // as a future improvement, process the proposal before broadcasting it
@@ -481,14 +492,14 @@ impl Consensus {
         Ok(None)
     }
 
-    pub fn new_transaction(&mut self, txn: Transaction) -> Result<()> {
+    pub fn new_transaction(&mut self, txn: SignedTransaction) -> Result<()> {
         txn.verify()?; // sanity check
         self.new_transactions.insert(txn.hash(), txn);
 
         Ok(())
     }
 
-    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<Transaction> {
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<SignedTransaction> {
         Some(self.transactions.get(&hash)?.clone())
     }
 

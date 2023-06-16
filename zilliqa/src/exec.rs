@@ -1,6 +1,6 @@
 //! Manages execution of transactions on state.
 
-use std::{borrow::Cow, collections::HashSet, time::SystemTime};
+use std::{collections::HashSet, time::SystemTime};
 
 use anyhow::{anyhow, Result};
 use ethabi::Token;
@@ -142,8 +142,10 @@ impl State {
     }
 
     /// Deploy a contract at a fixed address. Used for system contracts which exist at well known addresses.
-    pub fn deploy_fixed_contract(&mut self, address: Address, code: Vec<u8>) {
-        self.get_account_mut(address).code = code;
+    pub fn deploy_fixed_contract(&mut self, address: Address, code: Vec<u8>) -> Result<()> {
+        let mut account = self.get_account(address)?;
+        account.code = code;
+        self.save_account(address, account)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -236,11 +238,12 @@ impl State {
     pub fn apply_transaction(
         &mut self,
         txn: Transaction,
+        from_addr: Address,
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<TransactionApplyResult> {
         self.apply_transaction_inner(
-            txn.addr_from(),
+            from_addr,
             txn.to_addr,
             txn.gas_price,
             100000000000000, // Workaround until gas is implemented.
@@ -280,29 +283,27 @@ impl State {
                         self.set_native_balance(logs, address, basic.balance)?;
                     }
 
-                    let account = self.get_account_mut(address);
-
+                    let mut account = self.get_account(address)?;
                     if let Some(code) = code {
                         account.code = code;
                     }
-
                     account.nonce = basic.nonce.as_u64();
+                    self.save_account(address, account)?;
 
                     if reset_storage {
-                        account.storage.clear();
+                        self.clear_account_storage(address)?;
                     }
 
                     for (index, value) in storage {
                         if value.is_zero() {
-                            account.storage.remove(&index);
+                            self.remove_account_storage(address, index)?;
                         } else {
-                            account.storage.insert(index, value);
+                            self.set_account_storage(address, index, value)?;
                         }
                     }
                 }
                 Apply::Delete { address } => {
-                    let account = self.get_account_mut(Address(address));
-                    *account = Default::default();
+                    self.delete_account(Address(address))?;
                 }
             }
         }
@@ -440,14 +441,11 @@ impl<'a> Backend for CallContext<'a> {
     }
 
     fn exists(&self, address: H160) -> bool {
-        // Ethereum charges extra gas for `CALL`s or `SELFDESTRUCT`s which create new accounts, to discourage the
-        // creation of many addresses and the resulting increase in state size. We can tell if an account exists in our
-        // state by checking whether the response from `State::get_account` is borrowed.
-        matches!(self.state.get_account(Address(address)), Cow::Borrowed(_))
+        self.state.has_account(Address(address))
     }
 
     fn basic(&self, address: H160) -> Basic {
-        let nonce = self.state.get_account(Address(address)).nonce;
+        let nonce = self.state.must_get_account(Address(address)).nonce;
         // For these accounts, we hardcode the balance we return to the EVM engine as zero. Otherwise, we have an
         // infinite recursion because getting the native balance of any account requires this method to be called for
         // these two 'special' accounts.
@@ -464,16 +462,11 @@ impl<'a> Backend for CallContext<'a> {
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
-        self.state.get_account(Address(address)).code.to_owned()
+        self.state.must_get_account(Address(address)).code
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
-        self.state
-            .get_account(Address(address))
-            .storage
-            .get(&index)
-            .copied()
-            .unwrap_or_default()
+        self.state.must_get_account_storage(Address(address), index)
     }
 
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
