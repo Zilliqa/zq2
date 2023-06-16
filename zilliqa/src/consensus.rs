@@ -20,7 +20,7 @@ use crate::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, NewView, Proposal, QuorumCertificate,
         Vote,
     },
-    state::{Address, State, Transaction, TransactionReceipt},
+    state::{Address, SignedTransaction, State, TransactionReceipt},
 };
 
 #[derive(Debug)]
@@ -54,10 +54,10 @@ pub struct Consensus {
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<(PeerId, NodePublicKey)>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
-    new_transactions: BTreeMap<Hash, Transaction>,
+    new_transactions: BTreeMap<Hash, SignedTransaction>,
     /// Transactions that have been executed and included in a block, and the blocks the are
     /// included in.
-    transactions: BTreeMap<Hash, Transaction>,
+    transactions: BTreeMap<Hash, SignedTransaction>,
     transaction_receipts: BTreeMap<Hash, TransactionReceipt>,
     /// The account store.
     state: State,
@@ -248,7 +248,7 @@ impl Consensus {
 
     pub fn apply_transaction(
         &mut self,
-        txn: Transaction,
+        txn: SignedTransaction,
         current_block: BlockHeader,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash();
@@ -264,8 +264,12 @@ impl Consensus {
         if let Entry::Vacant(entry) = self.transactions.entry(hash) {
             let mut listener = TouchedAddressEventListener::default();
             let result = evm::tracing::using(&mut listener, || {
-                self.state
-                    .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
+                self.state.apply_transaction(
+                    txn.transaction.clone(),
+                    txn.from_addr,
+                    self.config.eth_chain_id,
+                    current_block,
+                )
             })?;
             entry.insert(txn);
             for address in listener.touched {
@@ -287,7 +291,11 @@ impl Consensus {
             .unwrap_or_default()
     }
 
-    pub fn vote(&mut self, _: PeerId, vote: Vote) -> Result<Option<(Block, Vec<Transaction>)>> {
+    pub fn vote(
+        &mut self,
+        _: PeerId,
+        vote: Vote,
+    ) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
         let Ok(block) = self.get_block(&vote.block_hash) else { return Ok(None); }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
         let block_hash = block.hash();
         let block_view = block.view();
@@ -484,14 +492,14 @@ impl Consensus {
         Ok(None)
     }
 
-    pub fn new_transaction(&mut self, txn: Transaction) -> Result<()> {
+    pub fn new_transaction(&mut self, txn: SignedTransaction) -> Result<()> {
         txn.verify()?; // sanity check
         self.new_transactions.insert(txn.hash(), txn);
 
         Ok(())
     }
 
-    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<Transaction> {
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<SignedTransaction> {
         Some(self.transactions.get(&hash)?.clone())
     }
 

@@ -198,6 +198,50 @@ pub fn random_wallet(
     SignerMiddleware::new(provider, wallet)
 }
 
+/// A helper macro to deploy a contract. Provide the relative path containing the contract, the name of the contract, a
+/// wallet and the network. This will include the contract source in the test binary and compile the contract at
+/// runtime.
+macro_rules! deploy_contract {
+    ($path:expr, $contract:expr, $wallet:ident, $network:ident) => {{
+        // Include the contract source directly in the binary.
+        let contract_source = include_bytes!($path);
+
+        // Write the contract source to a file, so `solc` can compile it.
+        let mut contract_file = tempfile::Builder::new().suffix(".sol").tempfile().unwrap();
+        std::io::Write::write_all(&mut contract_file, contract_source).unwrap();
+
+        // Compile the contract.
+        let out = ethers::solc::Solc::default()
+            .compile_source(contract_file.path())
+            .unwrap();
+        let contract = out
+            .get(contract_file.path().to_str().unwrap(), $contract)
+            .unwrap();
+        let abi = contract.abi.unwrap().clone();
+        let bytecode = contract.bytecode().unwrap().clone();
+
+        // Deploy the contract.
+        let factory = DeploymentTxFactory::new(abi, bytecode, $wallet.clone());
+        let deployment_tx = factory.deploy(()).unwrap().tx;
+        let hash = $wallet
+            .send_transaction(deployment_tx, None)
+            .await
+            .unwrap()
+            .tx_hash();
+
+        $network
+            .run_until_async(
+                |p| async move { p.get_transaction_receipt(hash).await.unwrap().is_some() },
+                10,
+            )
+            .await
+            .unwrap();
+
+        hash
+    }};
+}
+use deploy_contract;
+
 /// An implementation of [JsonRpcClient] which sends requests directly to an [RpcModule], without making any network
 /// calls.
 #[derive(Debug, Clone)]

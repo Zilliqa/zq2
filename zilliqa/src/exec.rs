@@ -238,11 +238,12 @@ impl State {
     pub fn apply_transaction(
         &mut self,
         txn: Transaction,
+        from_addr: Address,
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<TransactionApplyResult> {
         self.apply_transaction_inner(
-            txn.addr_from(),
+            from_addr,
             txn.to_addr,
             txn.gas_price,
             100000000000000, // Workaround until gas is implemented.
