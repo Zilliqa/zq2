@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use anyhow::Result;
-use clap::{CommandFactory, Parser};
+use clap::Parser;
 
 use libp2p::{
     gossipsub, identify,
@@ -14,11 +14,7 @@ use opentelemetry::runtime;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use tokio::time::Duration;
 
-use zilliqa::{
-    cfg::{Config, ConfigOpt},
-    crypto::SecretKey,
-    node_launcher::NodeLauncher,
-};
+use zilliqa::{cfg::Config, crypto::SecretKey, node_launcher::NodeLauncher};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -27,7 +23,7 @@ struct Args {
     #[clap(long, short, default_value = "config.toml")]
     config_file: PathBuf,
     #[clap(flatten)]
-    config: ConfigOpt,
+    config: Config,
 }
 
 #[derive(NetworkBehaviour)]
@@ -43,22 +39,18 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
-    println!("Args parsed; config path: {:?}", args.config_file);
 
+    // Parses the config file (if any); serde fills any missing values with Default::default()
     let toml_config = if args.config_file.exists() {
-        println!("Parsing toml file");
-        toml::from_str::<ConfigOpt>(&fs::read_to_string(&args.config_file)?)?
+        toml::from_str::<Config>(&fs::read_to_string(&args.config_file)?)?
     } else {
-        println!("Skipping toml file");
-        ConfigOpt::default()
+        Config::default()
     };
 
-    println!("{args:?}");
+    // Merge any remaining default values from clap with the values from either the toml file or
+    // Default::default()
     let mut config = args.config;
     config.merge(toml_config);
-
-    println!("{config:?}");
-    return Ok(());
 
     let p2p_port = config.p2p_port;
     if let Some(endpoint) = &config.otlp_collector_endpoint {
@@ -77,7 +69,7 @@ async fn main() -> Result<()> {
             .build()?;
     };
 
-    let mut networked_node = NodeLauncher::new(args.secret_key, config)?;
+    let mut networked_node = NodeLauncher::new(args.secret_key, config.clone())?;
 
     if !config.disable_json_rpc {
         let handle = networked_node.launch_rpc_server().await?;

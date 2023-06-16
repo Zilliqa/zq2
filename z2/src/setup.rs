@@ -40,8 +40,7 @@ impl Setup {
 }
 
 pub fn generate_secret_key_hex() -> Result<String> {
-    crypto::SecretKey::new()
+    Ok(crypto::SecretKey::new()
         .map_err(|err| eyre!(Box::new(err)))?
-        .to_hex()
-        .map_err(|err| eyre!(Box::new(err)))
+        .to_hex())
 }
