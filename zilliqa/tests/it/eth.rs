@@ -1,6 +1,10 @@
-use ethers::{prelude::{DeploymentTxFactory, CompilerInput}, providers::Middleware, types::TransactionRequest};
 use ethers::abi::FunctionExt;
-use ethers::solc::{EvmVersion};
+use ethers::solc::EvmVersion;
+use ethers::{
+    prelude::{CompilerInput, DeploymentTxFactory},
+    providers::Middleware,
+    types::TransactionRequest,
+};
 use primitive_types::{H160, H256};
 
 use crate::{random_wallet, Network};
@@ -17,10 +21,7 @@ async fn get_storage_at() {
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
     let hash = {
         let contract_source = b"// SPDX-License-Identifier: UNLICENSED\npragma solidity ^0.8.19;\ncontract Storage {\n    uint pos0;\n    mapping(address => uint) pos1;\n    constructor() {\n        pos0 = 1234;\n        pos1[msg.sender] = 5678;\n    }\n}\n";
-        let mut contract_file = tempfile::Builder::new()
-            .suffix(".sol")
-            .tempfile()
-            .unwrap();
+        let mut contract_file = tempfile::Builder::new().suffix(".sol").tempfile().unwrap();
         std::io::Write::write_all(&mut contract_file, contract_source).unwrap();
         let sc = ethers::solc::Solc::default();
         println!("sc args: {:?}", sc.args);
@@ -51,9 +52,7 @@ async fn get_storage_at() {
             .tx_hash();
         network
             .run_until_async(
-                |p| async move {
-                    p.get_transaction_receipt(hash).await.unwrap().is_some()
-                },
+                |p| async move { p.get_transaction_receipt(hash).await.unwrap().is_some() },
                 10,
             )
             .await
@@ -127,7 +126,12 @@ async fn eth_call() {
     let wallet = random_wallet(provider.clone());
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
-    let (hash, abi) = deploy_contract!("contracts/SimpleContract.sol", "SimpleContract", wallet, network);
+    let (hash, abi) = deploy_contract!(
+        "contracts/SimpleContract.sol",
+        "SimpleContract",
+        wallet,
+        network
+    );
 
     let getter = abi.function("getInt256").unwrap();
     println!("getter: {:?}", getter);
@@ -138,7 +142,6 @@ async fn eth_call() {
 
     // Print the selector of the getter
     println!("getter: {:?}", getter.selector());
-
 
     let receipt = provider
         .get_transaction_receipt(hash)
@@ -153,10 +156,7 @@ async fn eth_call() {
     tx.data = Some(getter.selector().into());
     //let tx = TypedTransaction::new(tx, None);
 
-    let value = provider
-        .call(&tx.into(), None)
-        .await
-        .unwrap();
+    let value = provider.call(&tx.into(), None).await.unwrap();
 
     assert_eq!(H256::from_slice(value.as_ref()), H256::from_low_u64_be(99));
 }

@@ -8,7 +8,11 @@ use serde::{Deserialize, Serialize};
 //use ::call_context::LoggingEventListener;
 use evm::backend::Backend;
 use evm::executor::stack::MemoryStackSubstate;
-use evm::{backend::Apply, CreateScheme, executor::stack::{MemoryStackState, StackSubstateMetadata}, Handler};
+use evm::{
+    backend::Apply,
+    executor::stack::{MemoryStackState, StackSubstateMetadata},
+    CreateScheme, Handler,
+};
 use evm::{Machine, Runtime};
 
 use log::{debug, error, info};
@@ -433,8 +437,8 @@ fn handle_panic(trace: String, remaining_gas: u64, reason: &str) -> EvmProto::Ev
 
 // Convenience fn to hide the evm internals and just
 // let you calculate contract address as easily as possible
+#[allow(dead_code)]
 pub fn calculate_contract_address(address: H160, backend: impl Backend) -> H160 {
-
     let config = evm::Config {
         estimate: false,
         call_l64_after_gas: false,

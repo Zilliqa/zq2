@@ -297,7 +297,6 @@ macro_rules! deploy_contract {
 //    }};
 //}
 
-
 use deploy_contract;
 
 /// An implementation of [JsonRpcClient] which sends requests directly to an [RpcModule], without making any network
