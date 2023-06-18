@@ -210,16 +210,8 @@ macro_rules! deploy_contract {
         let mut contract_file = tempfile::Builder::new().suffix(".sol").tempfile().unwrap();
         std::io::Write::write_all(&mut contract_file, contract_source).unwrap();
 
-        //// Compile the contract.
-        //let out = ethers::solc::Solc::default()
-        //    .compile_source(contract_file.path())
-        //    .unwrap();
-
         let sc = ethers::solc::Solc::default();
-        //println!("sc args: {:?}", sc.args);
-        //sc.args
 
-        //let compiler_input = CompilerInput::new(contract_file.path().as_ref()).unwrap();
         let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
         let compiler_input = compiler_input.first_mut().unwrap();
         compiler_input.settings.evm_version = Some(EvmVersion::Paris);
@@ -253,51 +245,6 @@ macro_rules! deploy_contract {
         (hash, abi_ret)
     }};
 }
-
-//macro_rules! contract_abi {
-//    ($path:expr, $contract:expr, $wallet:ident, $network:ident) => {{
-//        // Include the contract source directly in the binary.
-//        let contract_source = include_bytes!($path);
-//
-//        // Write the contract source to a file, so `solc` can compile it.
-//        let mut contract_file = tempfile::Builder::new().suffix(".sol").tempfile().unwrap();
-//        std::io::Write::write_all(&mut contract_file, contract_source).unwrap();
-//
-//        let sc = ethers::solc::Solc::default();
-//
-//        //let compiler_input = CompilerInput::new(contract_file.path().as_ref()).unwrap();
-//        let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
-//        let mut compiler_input = compiler_input.first_mut().unwrap();
-//        compiler_input.settings.evm_version = Some(EvmVersion::Paris);
-//
-//        let out = sc.compile::<CompilerInput>(compiler_input).unwrap();
-//
-//        let contract = out
-//            .get(contract_file.path().to_str().unwrap(), $contract)
-//            .unwrap();
-//        let abi = contract.abi.unwrap().clone();
-//        let bytecode = contract.bytecode().unwrap().clone();
-//
-//        // Deploy the contract.
-//        let factory = DeploymentTxFactory::new(abi, bytecode, $wallet.clone());
-//        let deployment_tx = factory.deploy(()).unwrap().tx;
-//        let hash = $wallet
-//            .send_transaction(deployment_tx, None)
-//            .await
-//            .unwrap()
-//            .tx_hash();
-//
-//        $network
-//            .run_until_async(
-//                |p| async move { p.get_transaction_receipt(hash).await.unwrap().is_some() },
-//                10,
-//            )
-//            .await
-//            .unwrap();
-//
-//        hash
-//    }};
-//}
 
 use deploy_contract;
 

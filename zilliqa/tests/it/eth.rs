@@ -115,7 +115,6 @@ async fn get_storage_at() {
         .get_storage_at(contract_address, position, None)
         .await
         .unwrap();
-    println!("value: {:?}", value);
     assert_eq!(value, H256::from_low_u64_be(5678));
 }
 
@@ -174,14 +173,6 @@ async fn eth_call() {
     );
 
     let getter = abi.function("getInt256").unwrap();
-    println!("getter: {:?}", getter);
-    println!("getter: {:?}", getter.signature());
-    println!("getter: {:?}", getter.inputs);
-    println!("getter: {:?}", getter.abi_signature());
-    println!("getter: {:?}", getter.short_signature());
-
-    // Print the selector of the getter
-    println!("getter: {:?}", getter.selector());
 
     let receipt = provider
         .get_transaction_receipt(hash)
@@ -190,11 +181,9 @@ async fn eth_call() {
         .unwrap();
     let contract_address = receipt.contract_address.unwrap();
 
-    //let tx = TransactionRequest::call(contract_address, getter.selector(), None);
     let mut tx = TransactionRequest::new();
     tx.to = Some(contract_address.into());
     tx.data = Some(getter.selector().into());
-    //let tx = TypedTransaction::new(tx, None);
 
     let value = provider.call(&tx.into(), None).await.unwrap();
 
