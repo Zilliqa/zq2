@@ -116,7 +116,7 @@ impl From<&message::Block> for EthBlock {
             sha_3_uncles: H256::zero(),
             logs_bloom: [0; 256],
             transactions_root: H256::zero(),
-            state_root: H256::from_low_u64_be(block.state_root_hash()),
+            state_root: H256(block.state_root_hash().0),
             receipts_root: H256::zero(),
             miner: H160::zero(),
             difficulty: 0,
@@ -233,7 +233,7 @@ impl From<&message::Block> for OtterscanBlock {
             nonce: 0,
             sha_3_uncles: H256::zero(),
             transactions_root: H256::zero(),
-            state_root: H256::from_low_u64_be(block.state_root_hash()),
+            state_root: H256(block.state_root_hash().0),
             receipts_root: H256::zero(),
             miner: H160::zero(),
             difficulty: 0,
@@ -299,7 +299,7 @@ pub struct EthTransaction {
     #[serde(serialize_with = "hex")]
     pub value: u128,
     #[serde(serialize_with = "hex")]
-    pub v: u8,
+    pub v: u64,
     #[serde(serialize_with = "hex")]
     pub r: [u8; 32],
     #[serde(serialize_with = "hex")]

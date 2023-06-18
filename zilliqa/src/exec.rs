@@ -26,6 +26,7 @@ use crate::{
     message::BlockHeader,
     state::{Address, Log, State, Transaction},
 };
+use crate::state::SignedTransaction;
 
 #[derive(Default)]
 pub struct TouchedAddressEventListener {
@@ -118,8 +119,10 @@ impl TransactionApplyResult {
 
 impl State {
     /// Deploy a contract at a fixed address. Used for system contracts which exist at well known addresses.
-    pub fn deploy_fixed_contract(&mut self, address: Address, code: Vec<u8>) {
-        self.get_account_mut(address).code = code;
+    pub fn deploy_fixed_contract(&mut self, address: Address, code: Vec<u8>) -> Result<()> {
+        let mut account = self.get_account(address)?;
+        account.code = code;
+        self.save_account(address, account)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -207,7 +210,8 @@ impl State {
     /// address will be added to the transaction.
     pub fn apply_transaction(
         &mut self,
-        txn: Transaction,
+        txn: SignedTransaction,
+        from_addr: Address,
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<TransactionApplyResult> {
@@ -293,7 +297,6 @@ impl State {
 
                 let account = self.get_account_mut(address);
 
-                // todo: differentiate this from a delete
                 if !code.is_empty() {
                     account.code = code.to_vec();
                 }

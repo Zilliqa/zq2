@@ -3,7 +3,8 @@
 members = [
  "zilliqa",
  "z2",
- "evm-ds"
+ "evm-ds",
+ "eth-trie.rs"
 ]
 
 [profile.release]
