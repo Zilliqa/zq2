@@ -115,7 +115,7 @@ impl State {
 
     /// Returns an error if there are any issues fetching the account from the state trie
     pub fn get_account_storage(&self, address: Address, index: H256) -> Result<H256> {
-        match self.get_account_trie(address)?.get(index.as_bytes()) {
+        let res = match self.get_account_trie(address)?.get(index.as_bytes()) {
             // from_slice will only panic if vec.len != H256::len_bytes, i.e. 32
             Ok(Some(vec)) if vec.len() == 32 => Ok(H256::from_slice(&vec)),
             // empty storage location
@@ -128,7 +128,14 @@ impl State {
             Err(e) => Err(anyhow!(
                 "Failed to fetch storage for account {address:?} at index {index}: {e}",
             )),
-        }
+        };
+
+        println!(
+            "############ get_account_storage({:?}, {:?}) -> {:?}",
+            address, index, res
+        );
+
+        res
     }
 
     /// Panics if account or storage cannot be read.
@@ -144,6 +151,11 @@ impl State {
         index: H256,
         value: H256,
     ) -> Result<()> {
+        println!(
+            "############ set_account_storage({:?}, {:?}) -> {:?}",
+            address, index, value
+        );
+
         let mut account = self.get_account(address)?;
         let mut trie = self.get_account_trie(address)?;
         trie.insert(index.as_bytes(), value.as_bytes())?;

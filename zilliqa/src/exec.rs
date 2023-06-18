@@ -1,7 +1,6 @@
 //! Manages execution of transactions on state.
 
 use std::{
-    borrow::Cow,
     collections::HashSet,
     sync::{Arc, Mutex},
     time::SystemTime,
@@ -21,12 +20,12 @@ use evm_ds::{
 use primitive_types::{H160, H256, U256};
 use tracing::{error, trace};
 
+use crate::state::SignedTransaction;
 use crate::{
     contracts,
     message::BlockHeader,
-    state::{Address, Log, State, Transaction},
+    state::{Address, Log, State},
 };
-use crate::state::SignedTransaction;
 
 #[derive(Default)]
 pub struct TouchedAddressEventListener {
@@ -148,16 +147,15 @@ impl State {
         let context = "".to_string();
         let continuations: Arc<Mutex<Continuations>> = Arc::new(Mutex::new(Continuations::new()));
         let logs: Vec<Log> = Default::default(); // todo: this.
-        let account = self.get_account(to_addr);
+        let account = self.get_account(to_addr).unwrap_or_default();
         let mut to = to_addr.0;
 
-        let mut code: Vec<u8> = account.code.clone();
+        let mut code: Vec<u8> = account.code;
         let mut data: Vec<u8> = payload;
 
         let backend = EvmBackend {
             state: self,
             gas_price: U256::zero(),
-            //origin: tyypo_addr.0,
             origin: caller.0,
             chain_id,
             current_block,
@@ -211,17 +209,16 @@ impl State {
     pub fn apply_transaction(
         &mut self,
         txn: SignedTransaction,
-        from_addr: Address,
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<TransactionApplyResult> {
         let result = self.apply_transaction_inner(
-            txn.addr_from(),
-            txn.to_addr,
-            txn.gas_price,
+            txn.from_addr,
+            txn.transaction.to_addr,
+            txn.transaction.gas_price,
             100000000000000, // Workaround until gas is implemented.
-            txn.amount,
-            txn.payload,
+            txn.transaction.amount,
+            txn.transaction.payload,
             chain_id,
             current_block,
         );
@@ -236,12 +233,14 @@ impl State {
                         println!("Deploying contract at: {:?}", contract_addr);
                         println!("With code: {:?}", result.return_value.clone());
                         println!("With result: {:?}", result);
-                        self.get_account_mut(Address(contract_addr)).code =
-                            result.return_value.clone().to_vec();
+
+                        let mut acct = self.get_account(Address(contract_addr)).unwrap_or_default();
+                        acct.code = result.return_value.clone().to_vec();
+                        self.save_account(Address(contract_addr), acct)?;
 
                         self.apply_delta(&mut logs, Address(contract_addr), result.apply.iter())?;
                     } else {
-                        self.apply_delta(&mut logs, txn.to_addr, result.apply.iter())?;
+                        self.apply_delta(&mut logs, txn.transaction.to_addr, result.apply.iter())?;
                     }
                 }
 
@@ -279,7 +278,7 @@ impl State {
                 let address = Address(modify.get_address().into());
                 let balance: U256 = modify.get_balance().into();
                 let code = modify.code.clone();
-                let nonce: U256 = modify.get_nonce().into();
+                let _nonce: U256 = modify.get_nonce().into();
                 let storage = modify.storage.clone().into_iter();
                 let reset_storage = modify.reset_storage;
 
@@ -295,16 +294,17 @@ impl State {
                     self.set_native_balance(logs, address, balance)?;
                 }
 
-                let account = self.get_account_mut(address);
+                let mut account = self.get_account(address).unwrap_or_default();
 
                 if !code.is_empty() {
                     account.code = code.to_vec();
                 }
-                account.nonce = nonce.as_u64();
 
                 if reset_storage {
-                    account.storage.clear();
+                    self.clear_account_storage(address)?;
                 }
+
+                self.save_account(address, account)?;
 
                 for item in storage {
                     let index: H256 = H256::from_slice(item.get_key());
@@ -313,9 +313,9 @@ impl State {
                     println!("Applying storage change: {:?} -> {:?}", index, value);
 
                     if value.is_zero() {
-                        account.storage.remove(&index);
+                        self.remove_account_storage(address, index)?;
                     } else {
-                        account.storage.insert(index, value);
+                        self.set_account_storage(address, index, value)?;
                     }
                 }
             }
@@ -476,14 +476,13 @@ impl<'a> Backend for EvmBackend<'a> {
     fn exists(&self, address: H160) -> bool {
         trace!("EVM request: Checking whether account {:?} exists", address);
         // Ethereum charges extra gas for `CALL`s or `SELFDESTRUCT`s which create new accounts, to discourage the
-        // creation of many addresses and the resulting increase in state size. We can tell if an account exists in our
-        // state by checking whether the response from `State::get_account` is borrowed.
-        matches!(self.state.get_account(Address(address)), Cow::Borrowed(_))
+        // creation of many addresses and the resulting increase in state size.
+        self.state.has_account(Address(address))
     }
 
     fn basic(&self, address: H160) -> Basic {
         trace!("EVM request: Requesting basic info for {:?}", address);
-        let nonce = self.state.get_account(Address(address)).nonce;
+        let nonce = self.state.must_get_account(Address(address)).nonce;
         // For these accounts, we hardcode the balance we return to the EVM engine as zero. Otherwise, we have an
         // infinite recursion because getting the native balance of any account requires this method to be called for
         // these two 'special' accounts.
@@ -501,17 +500,11 @@ impl<'a> Backend for EvmBackend<'a> {
 
     fn code(&self, address: H160) -> Vec<u8> {
         trace!("EVM request: Requesting code for {:?}", address);
-        self.state.get_account(Address(address)).code.to_owned()
+        self.state.must_get_account(Address(address)).code
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
-        let res = self
-            .state
-            .get_account(Address(address))
-            .storage
-            .get(&index)
-            .copied()
-            .unwrap_or_default();
+        let res = self.state.must_get_account_storage(Address(address), index);
 
         trace!(
             "EVM request: Requesting storage for {:?} at {:?} and is: {:?}",

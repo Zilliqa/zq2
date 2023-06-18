@@ -263,9 +263,10 @@ impl Consensus {
         // already executed it in the process of proposing this block.
         if let Entry::Vacant(entry) = self.transactions.entry(hash) {
             let mut listener = TouchedAddressEventListener::default();
-            let result =
+            let result = evm_ds::evm::tracing::using(&mut listener, || {
                 self.state
-                    .apply_transaction(txn.clone(), txn.from_addr, self.config.eth_chain_id, current_block);
+                    .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
+            })?;
 
             entry.insert(txn);
             for address in listener.touched {
@@ -274,9 +275,9 @@ impl Consensus {
                     .or_default()
                     .push(hash);
             }
-            Ok(Some(result?))
+            Ok(Some(result))
         } else {
-            None
+            Ok(None)
         }
     }
 

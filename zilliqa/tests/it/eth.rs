@@ -1,19 +1,14 @@
+use ethabi::ethereum_types::U64;
 use ethers::abi::FunctionExt;
 use ethers::solc::EvmVersion;
 use ethers::{
     prelude::{CompilerInput, DeploymentTxFactory},
-    providers::Middleware,
-    types::TransactionRequest,
+    providers::{Middleware, Provider},
+    types::{transaction::eip2718::TypedTransaction, TransactionRequest},
+    utils::keccak256,
 };
 use std::fmt::Debug;
 
-//use ethabi::ethereum_types::U64;
-//use ethers::{
-//    prelude::DeploymentTxFactory,
-//    providers::{Middleware, Provider},
-//    types::{transaction::eip2718::TypedTransaction, TransactionRequest},
-//    utils::keccak256,
-//};
 use primitive_types::{H160, H256};
 use serde::Serialize;
 
