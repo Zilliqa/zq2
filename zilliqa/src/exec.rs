@@ -136,19 +136,17 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<(Vec<Log>, EvmResult, Option<H160>)> {
-        println!("Caller: {:?}", from_addr);
-        println!("Calling: {:?}", to_addr);
-
         let apparent_value: U256 = amount.into();
         let caller = from_addr;
         let gas_scaling_factor = 1;
         let estimate = false;
         let is_static = false;
         let context = "".to_string();
-        let continuations: Arc<Mutex<Continuations>> = Arc::new(Mutex::new(Continuations::new()));
-        let logs: Vec<Log> = Default::default(); // todo: this.
+        let continuations: Arc<Mutex<Continuations>> = Default::default();
+        let logs: Vec<Log> = Default::default();
         let account = self.get_account(to_addr).unwrap_or_default();
         let mut to = to_addr.0;
+        let mut created_contract_addr: Option<H160> = None;
 
         let mut code: Vec<u8> = account.code;
         let mut data: Vec<u8> = payload;
@@ -166,10 +164,10 @@ impl State {
         }
 
         if Address::is_contract_creation(from_addr, to_addr) {
-            println!("XXOXOXXOXOXXOXOXXOXOXXOXOXXOXOXXOXOXOOOOOOOOXOXOContract XXOXOXXOXOXXOXOXXOXOXXOXOXXOXOXXOXOXOOOOOOOOXOXO");
             code = data;
             data = vec![];
             to = calculate_contract_address(from_addr.0, &backend);
+            created_contract_addr = Some(to);
         }
 
         let result = run_evm_impl_direct(
@@ -191,21 +189,10 @@ impl State {
             "".to_string(),
         );
 
-        if Address::is_contract_creation(from_addr, to_addr) {
-            println!("Contract creation: {:?}", result);
-
-            return Ok((
-                logs,
-                result,
-                Some(calculate_contract_address(from_addr.0, backend)),
-            ));
-        }
-
-        Ok((logs, result, None))
+        Ok((logs, result, created_contract_addr))
     }
 
-    /// Apply a transaction to the account state. If the transaction is a contract creation, the created contract's
-    /// address will be added to the transaction.
+    /// Apply a transaction to the account state.
     pub fn apply_transaction(
         &mut self,
         txn: SignedTransaction,
@@ -230,19 +217,19 @@ impl State {
 
                 if success {
                     if let Some(contract_addr) = contract_addr {
-                        println!("Deploying contract at: {:?}", contract_addr);
-                        println!("With code: {:?}", result.return_value.clone());
-                        println!("With result: {:?}", result);
-
                         let mut acct = self.get_account(Address(contract_addr)).unwrap_or_default();
                         acct.code = result.return_value.clone().to_vec();
                         self.save_account(Address(contract_addr), acct)?;
-
-                        self.apply_delta(&mut logs, Address(contract_addr), result.apply.iter())?;
-                    } else {
-                        self.apply_delta(&mut logs, txn.transaction.to_addr, result.apply.iter())?;
                     }
+
+                    self.apply_delta(&mut logs, txn.transaction.to_addr, result.apply.iter())?;
                 }
+
+                // Note that success can be false, the tx won't apply changes, but the nonce increases
+                // and we get the return value (which will indicate the error)
+                let mut acct = self.get_account(txn.from_addr).unwrap();
+                acct.nonce = acct.nonce.checked_add(1).unwrap();
+                self.save_account(txn.from_addr, acct)?;
 
                 Ok(TransactionApplyResult {
                     success,
@@ -309,8 +296,6 @@ impl State {
                 for item in storage {
                     let index: H256 = H256::from_slice(item.get_key());
                     let value: H256 = H256::from_slice(item.get_value());
-                    println!("Address: {:?}", address);
-                    println!("Applying storage change: {:?} -> {:?}", index, value);
 
                     if value.is_zero() {
                         self.remove_account_storage(address, index)?;
@@ -321,7 +306,13 @@ impl State {
             }
 
             if apply.has_delete() {
-                panic!("Delete not implemented")
+                let delete = apply.get_delete();
+
+                let address = Address(delete.get_address().into());
+
+                let mut account = self.get_account(address).unwrap_or_default();
+                account.code = vec![];
+                self.save_account(address, account)?;
             }
         }
 

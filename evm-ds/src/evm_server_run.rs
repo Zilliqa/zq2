@@ -182,7 +182,6 @@ pub async fn run_evm_impl(
             },
             CpsReason::CreateInterrupt(i) => {
                 let cont_id = continuations.lock().unwrap().create_continuation(runtime.machine_mut(), executor.into_state().substate());
-                println!("******* Create interrupt: {:?}", 9);
 
                 build_create_result(&runtime, i, &listener, remaining_gas, cont_id)
             }
@@ -472,7 +471,7 @@ pub fn run_evm_impl_direct(
     tx_trace_enabled: bool,
     tx_trace: String,
 ) -> EvmResult {
-    println!(
+    info!(
         "Running EVM: origin: {:?} address: {:?} gas: {:?} value: {:?}  estimate: {:?} is_continuation: {:?}, cps: {:?}, \ntx_trace: {:?}, \ndata: {:02X?}, \ncode: {:02X?}",
         backend.origin(), address, gas_limit, apparent_value,
         estimate, node_continuation.is_none(), enable_cps, tx_trace, data, code);
@@ -668,13 +667,12 @@ pub fn run_evm_impl_direct(
         }
     };
 
-    println!(
+    info!(
         "EVM execution summary: context: {:?}, origin: {:?} address: {:?} gas: {:?} value: {:?}, data: {:?}, estimate: {:?}, cps: {:?}, result: {}, returnVal: {}",
         evm_context, backend.origin(), address, gas_limit, apparent_value,
         hex::encode(data.deref()),
         estimate, enable_cps, log_evm_result(&result), hex::encode(runtime.machine().return_value()));
 
-    //Ok(base64::encode(result.write_to_bytes().unwrap()))
     result
 }
 
