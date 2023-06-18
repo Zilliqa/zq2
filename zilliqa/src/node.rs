@@ -152,6 +152,9 @@ impl Node {
         contract: Address,
         data: Vec<u8>,
     ) -> Result<Vec<u8>> {
+
+        println!("call contract: {:?} {:?} {:?}", caller, contract, data);
+
         let current_block = self
             .get_latest_block()
             .ok_or_else(|| anyhow!("no blocks"))?

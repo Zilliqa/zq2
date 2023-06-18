@@ -136,7 +136,7 @@ impl State {
         println!("Calling: {:?}", to_addr);
 
         let apparent_value: U256 = amount.into();
-        let mut caller = from_addr;
+        let caller = from_addr;
         let gas_scaling_factor = 1;
         let estimate = false;
         let is_static = false;
@@ -149,7 +149,7 @@ impl State {
         let mut code: Vec<u8> = account.code.clone();
         let mut data: Vec<u8> = payload;
 
-        let mut backend = EvmBackend {
+        let backend = EvmBackend {
             state: self,
             gas_price: U256::zero(),
             //origin: tyypo_addr.0,
@@ -365,7 +365,7 @@ impl State {
         );
 
         match result {
-            Ok((lgs, result, contract_addr)) => {
+            Ok((lgs, result, _)) => {
                 // Apply the state changes only if success
                 let success = result.exit_reason.unwrap().has_succeed();
 

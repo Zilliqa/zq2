@@ -1,5 +1,6 @@
 use ethers::{prelude::{DeploymentTxFactory, CompilerInput}, providers::Middleware, types::TransactionRequest};
-use ethers::solc::{CompilerOutput, EvmVersion};
+use ethers::abi::FunctionExt;
+use ethers::solc::{EvmVersion};
 use primitive_types::{H160, H256};
 
 use crate::{random_wallet, Network};
@@ -23,11 +24,12 @@ async fn get_storage_at() {
         std::io::Write::write_all(&mut contract_file, contract_source).unwrap();
         let sc = ethers::solc::Solc::default();
         println!("sc args: {:?}", sc.args);
+        //let aa = ethers::abi::Contract::
         //sc.args
 
         //let compiler_input = CompilerInput::new(contract_file.path().as_ref()).unwrap();
         let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
-        let mut compiler_input = compiler_input.first_mut().unwrap();
+        let compiler_input = compiler_input.first_mut().unwrap();
         compiler_input.settings.evm_version = Some(EvmVersion::Paris);
 
         let out = sc.compile::<CompilerInput>(compiler_input).unwrap();
@@ -115,4 +117,46 @@ async fn send_transaction() {
         .unwrap();
 
     assert_eq!(receipt.to.unwrap(), to);
+}
+
+#[tokio::test]
+async fn eth_call() {
+    let mut network = Network::new(4);
+
+    let provider = network.provider(0);
+    let wallet = random_wallet(provider.clone());
+
+    // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
+    let (hash, abi) = deploy_contract!("contracts/SimpleContract.sol", "SimpleContract", wallet, network);
+
+    let getter = abi.function("getInt256").unwrap();
+    println!("getter: {:?}", getter);
+    println!("getter: {:?}", getter.signature());
+    println!("getter: {:?}", getter.inputs);
+    println!("getter: {:?}", getter.abi_signature());
+    println!("getter: {:?}", getter.short_signature());
+
+    // Print the selector of the getter
+    println!("getter: {:?}", getter.selector());
+
+
+    let receipt = provider
+        .get_transaction_receipt(hash)
+        .await
+        .unwrap()
+        .unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+
+    //let tx = TransactionRequest::call(contract_address, getter.selector(), None);
+    let mut tx = TransactionRequest::new();
+    tx.to = Some(contract_address.into());
+    tx.data = Some(getter.selector().into());
+    //let tx = TypedTransaction::new(tx, None);
+
+    let value = provider
+        .call(&tx.into(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(H256::from_slice(value.as_ref()), H256::from_low_u64_be(99));
 }
