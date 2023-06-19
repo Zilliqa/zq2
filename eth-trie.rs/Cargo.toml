@@ -22,7 +22,7 @@ rlp = "0.5.1"
 rand = "0.8.3"
 hex = "0.4.2"
 criterion = "0.3.5"
-ethereum-types = "0.13.1"
+ethereum-types = "0.14.1"
 uuid = { version = "0.8.2", features = ["serde", "v4"] }
 
 [[bench]]
