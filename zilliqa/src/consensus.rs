@@ -1,5 +1,3 @@
-use eth_trie::MemoryDB;
-use std::sync::Arc;
 use std::{
     collections::{btree_map::Entry, BTreeMap},
     time::SystemTime,
@@ -22,6 +20,8 @@ use crate::{
     },
     state::{Address, SignedTransaction, State, TransactionReceipt},
 };
+
+const STATE_TRIE_TREE_ID: &[u8] = b"state_trie";
 
 #[derive(Debug)]
 struct NewViewVote {
@@ -67,7 +67,12 @@ pub struct Consensus {
 }
 
 impl Consensus {
-    pub fn new(secret_key: SecretKey, config: Config, database: MemoryDB) -> Result<Self> {
+    pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
+        let db = match &config.data_dir {
+            Some(path) => sled::open(path)?,
+            None => sled::Config::new().temporary(true).open()?,
+        };
+
         let validator = Validator {
             public_key: secret_key.node_public_key(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
@@ -88,7 +93,7 @@ impl Consensus {
             new_transactions: BTreeMap::new(),
             transactions: BTreeMap::new(),
             transaction_receipts: BTreeMap::new(),
-            state: State::new(Arc::new(database))?,
+            state: State::new(db.open_tree(STATE_TRIE_TREE_ID)?)?,
             touched_address_index: BTreeMap::new(),
         })
     }

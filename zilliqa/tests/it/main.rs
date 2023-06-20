@@ -13,7 +13,6 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use eth_trie::MemoryDB;
 use ethers::{
     prelude::SignerMiddleware,
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
@@ -49,11 +48,13 @@ fn node() -> (
     std::mem::forget(reset_timeout_receiver);
 
     let node = Node::new(
-        Config::default(),
+        Config {
+            data_dir: None,
+            ..Config::default()
+        },
         secret_key,
         message_sender,
         reset_timeout_sender,
-        MemoryDB::new(true),
     )
     .unwrap();
     let node = Arc::new(Mutex::new(node));

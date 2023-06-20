@@ -2,7 +2,6 @@ use crate::state::{SignedTransaction, TransactionReceipt};
 use primitive_types::H256;
 
 use anyhow::{anyhow, Result};
-use eth_trie::MemoryDB;
 use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
@@ -44,14 +43,13 @@ impl Node {
         secret_key: SecretKey,
         message_sender: UnboundedSender<(Option<PeerId>, Message)>,
         reset_timeout: UnboundedSender<()>,
-        database: MemoryDB,
     ) -> Result<Node> {
         let node = Node {
             config: config.clone(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             message_sender,
             reset_timeout,
-            consensus: Consensus::new(secret_key, config, database)?,
+            consensus: Consensus::new(secret_key, config)?,
         };
 
         Ok(node)

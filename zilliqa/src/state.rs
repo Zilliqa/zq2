@@ -1,4 +1,4 @@
-use eth_trie::{EthTrie as PatriciaTrie, MemoryDB, Trie};
+use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use generic_array::{
     sequence::Split,
     typenum::{U12, U20},
@@ -7,6 +7,7 @@ use generic_array::{
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
+use sled::Tree;
 use std::fmt::Display;
 use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
@@ -15,7 +16,7 @@ use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 
-use crate::{contracts, crypto};
+use crate::{contracts, crypto, db::SledDb};
 
 /// Const version of `impl From<u128> for U256`
 const fn u128_to_u256(value: u128) -> U256 {
@@ -44,15 +45,16 @@ const GENESIS: [(Address, U256); 2] = [
 
 #[derive(Debug)]
 pub struct State {
-    db: Arc<MemoryDB>,
-    accounts: PatriciaTrie<MemoryDB>,
+    db: Arc<SledDb>,
+    accounts: PatriciaTrie<SledDb>,
 }
 
 impl State {
-    pub fn new(database: Arc<MemoryDB>) -> Result<State> {
+    pub fn new(database: Tree) -> Result<State> {
+        let db = Arc::new(SledDb::new(database));
         let mut state = Self {
-            db: database.clone(),
-            accounts: PatriciaTrie::new(database),
+            db: db.clone(),
+            accounts: PatriciaTrie::new(db),
         };
 
         state
@@ -106,7 +108,7 @@ impl State {
     }
 
     /// If using this to modify the account, ensure save_account gets called
-    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<MemoryDB>> {
+    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<SledDb>> {
         Ok(match self.get_account(address)?.storage_root {
             Some(root) => PatriciaTrie::new(self.db.clone()).at_root(root),
             None => PatriciaTrie::new(self.db.clone()),

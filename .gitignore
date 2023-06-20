@@ -13,3 +13,6 @@
 *~
 \.#*
 \#*
+
+# Default development datadir
+zq2data
