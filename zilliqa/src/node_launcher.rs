@@ -267,12 +267,10 @@ impl NodeLauncher {
 
                     SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer })) => {
                                 match message {
-                                    request_response::Message::Request {request, channel, ..} => {
+                                    request_response::Message::Request { request, .. } => {
                                         debug!(%peer, "direct message received");
 
                                         self.node.lock().unwrap().handle_message(peer, request).unwrap();
-
-                                        let _ = swarm.behaviour_mut().request_response.send_response(channel, Message::RequestResponse);
                                     }
                                     request_response::Message::Response {..} => {}
                                 }
