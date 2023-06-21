@@ -96,6 +96,19 @@ impl State {
         ))
     }
 
+    /// Canonical method to obtain trie key for an account node
+    fn account_key(address: Address) -> Vec<u8> {
+        Keccak256::digest(address.as_bytes()).to_vec()
+    }
+
+    /// Canonical method to obtain trie key for an account's storage trie's storage node
+    fn account_storage_key(address: Address, index: H256) -> Vec<u8> {
+        let mut h = Keccak256::new();
+        h.update(address.as_bytes());
+        h.update(index.as_bytes());
+        h.finalize().to_vec()
+    }
+
     /// Fetch an Account struct.
     /// Note: use get_account_storage to obtain a specific storage value.
     /// If modifying a raw account, ensure you call save_account afterwards.
@@ -104,7 +117,7 @@ impl State {
     pub fn get_account(&self, address: Address) -> Result<Account> {
         Ok(self
             .accounts
-            .get(&Keccak256::digest(address.as_bytes()))?
+            .get(&Self::account_key(address))?
             .map(|bytes| bincode::deserialize::<Account>(&bytes))
             .unwrap_or(Ok(Account::default()))?)
     }
@@ -125,7 +138,7 @@ impl State {
 
     /// Returns an error if there are any issues fetching the account from the state trie
     pub fn get_account_storage(&self, address: Address, index: H256) -> Result<H256> {
-        match self.get_account_trie(address)?.get(index.as_bytes()) {
+        match self.get_account_trie(address)?.get(&Self::account_storage_key(address, index)) {
             // from_slice will only panic if vec.len != H256::len_bytes, i.e. 32
             Ok(Some(vec)) if vec.len() == 32 => Ok(H256::from_slice(&vec)),
             // empty storage location
@@ -156,7 +169,7 @@ impl State {
     ) -> Result<()> {
         let mut account = self.get_account(address)?;
         let mut trie = self.get_account_trie(address)?;
-        trie.insert(index.as_bytes(), value.as_bytes())?;
+        trie.insert(&Self::account_storage_key(address, index), value.as_bytes())?;
         account.storage_root = Some(trie.root_hash()?);
         self.save_account(address, account)?;
 
@@ -166,7 +179,7 @@ impl State {
     pub fn remove_account_storage(&mut self, address: Address, index: H256) -> Result<bool> {
         let mut account = self.get_account(address)?;
         let mut trie = self.get_account_trie(address)?;
-        let ret = trie.remove(index.as_bytes())?;
+        let ret = trie.remove(&Self::account_storage_key(address, index))?;
         account.storage_root = Some(trie.root_hash()?);
         self.save_account(address, account)?;
 
@@ -186,9 +199,7 @@ impl State {
 
     /// Returns an error if there are any issues accessing the storage trie
     pub fn try_has_account(&self, address: Address) -> Result<bool> {
-        Ok(self
-            .accounts
-            .contains(&Keccak256::digest(address.as_bytes()))?)
+        Ok(self.accounts.contains(&Self::account_key(address))?)
     }
 
     /// Returns false if the account cannot be accessed in the storage trie
@@ -197,16 +208,13 @@ impl State {
     }
 
     pub fn save_account(&mut self, address: Address, account: Account) -> Result<()> {
-        Ok(self.accounts.insert(
-            crypto::Hash::compute(&[&address.as_bytes()]).as_bytes(),
-            &bincode::serialize(&account)?,
-        )?)
+        Ok(self
+            .accounts
+            .insert(&Self::account_key(address), &bincode::serialize(&account)?)?)
     }
 
     pub fn delete_account(&mut self, address: Address) -> Result<bool> {
-        Ok(self
-            .accounts
-            .remove(&Keccak256::digest(address.as_bytes()))?)
+        Ok(self.accounts.remove(&Self::account_key(address))?)
     }
 }
 

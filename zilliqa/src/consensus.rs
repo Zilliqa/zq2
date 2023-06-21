@@ -1,3 +1,4 @@
+use primitive_types::H256;
 use std::{
     collections::{btree_map::Entry, BTreeMap},
     time::SystemTime,
@@ -7,6 +8,7 @@ use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use itertools::Itertools;
 use libp2p::PeerId;
+use sled::Tree;
 use tracing::{debug, info, trace};
 
 use crate::{
@@ -21,7 +23,12 @@ use crate::{
     state::{Address, SignedTransaction, State, TransactionReceipt},
 };
 
-const STATE_TRIE_TREE_ID: &[u8] = b"state_trie";
+// database tree names
+const STATE_TRIE_TREE: &[u8] = b"state_trie";
+const BLOCK_HEADERS_TREE: &[u8] = b"block_headers_tree";
+
+// single keys stored in default tree in DB
+const LATEST_KNOWN_BLOCK: &[u8] = b"latest_known_block";
 
 #[derive(Debug)]
 struct NewViewVote {
@@ -44,7 +51,8 @@ pub struct Consensus {
     secret_key: SecretKey,
     config: Config,
     committee: Vec<Validator>,
-    blocks: BTreeMap<Hash, Block>,
+    block_headers: Tree,
+    blocks: BTreeMap<Hash, Block>, // TODO: move to Sled
     votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128)>,
     new_views: BTreeMap<u64, NewViewVote>,
     high_qc: Option<QuorumCertificate>, // none before we receive the first proposal
@@ -57,8 +65,8 @@ pub struct Consensus {
     new_transactions: BTreeMap<Hash, SignedTransaction>,
     /// Transactions that have been executed and included in a block, and the blocks the are
     /// included in.
-    transactions: BTreeMap<Hash, SignedTransaction>,
-    transaction_receipts: BTreeMap<Hash, TransactionReceipt>,
+    transactions: BTreeMap<Hash, SignedTransaction>, // TODO: move to Sled
+    transaction_receipts: BTreeMap<Hash, TransactionReceipt>, // TODO: move to Sled
     /// The account store.
     state: State,
     /// An index of address to a list of transaction hashes, for which this address appeared somewhere in the
@@ -68,21 +76,37 @@ pub struct Consensus {
 
 impl Consensus {
     pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
-        let db = match &config.data_dir {
-            Some(path) => sled::open(path)?,
-            None => sled::Config::new().temporary(true).open()?,
-        };
-
         let validator = Validator {
             public_key: secret_key.node_public_key(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             weight: 100,
         };
 
+        let db = match &config.data_dir {
+            Some(path) => sled::open(path)?,
+            None => sled::Config::new().temporary(true).open()?,
+        };
+
+        let block_headers = db.open_tree(BLOCK_HEADERS_TREE)?;
+        let state_trie = db.open_tree(STATE_TRIE_TREE)?;
+
+        let state = if let Some(ivec) = db.get(LATEST_KNOWN_BLOCK)? {
+            let latest_known_block_hash = bincode::deserialize::<Hash>(&ivec)?;
+            let latest_known_block_header = block_headers
+                .get(latest_known_block_hash.as_bytes())?
+                .ok_or(anyhow!("No header found for latest recorded block hash"))?;
+            let latest_state_hash =
+                bincode::deserialize::<BlockHeader>(&latest_known_block_header)?.state_root_hash;
+            State::new_from_root(state_trie, H256(latest_state_hash.0))
+        } else {
+            State::new_genesis(state_trie)?
+        };
+
         Ok(Consensus {
             secret_key,
             config,
             committee: vec![validator],
+            block_headers,
             blocks: BTreeMap::new(),
             votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
@@ -93,7 +117,7 @@ impl Consensus {
             new_transactions: BTreeMap::new(),
             transactions: BTreeMap::new(),
             transaction_receipts: BTreeMap::new(),
-            state: State::new_genesis(db.open_tree(STATE_TRIE_TREE_ID)?)?,
+            state,
             touched_address_index: BTreeMap::new(),
         })
     }
@@ -142,7 +166,7 @@ impl Consensus {
         if self.pending_peers.len() >= 3 && self.view == 0 {
             let genesis = Block::genesis(self.committee.len());
             self.high_qc = Some(genesis.qc.clone());
-            self.add_block(genesis.clone());
+            self.add_block(genesis.clone())?;
             self.update_view(1);
             let vote = self.vote_from_block(&genesis);
             let leader = self.get_leader(self.view).peer_id;
@@ -216,7 +240,7 @@ impl Consensus {
         // retrieve the highest among the aggregated qcs and check if it equals the block's qc
         let proposal_high_qc = self.get_high_qc_from_block(&block)?;
 
-        self.add_block(block.clone());
+        self.add_block(block.clone())?;
         self.update_high_qc_and_view(block.agg.is_some(), proposal_high_qc.clone())?;
 
         let proposal_view = block.view();
@@ -624,10 +648,13 @@ impl Consensus {
         }
     }
 
-    pub fn add_block(&mut self, block: Block) {
+    pub fn add_block(&mut self, block: Block) -> Result<()> {
         let hash = block.hash();
         info!(?hash, ?block.header.view, "added block");
+        self.block_headers
+            .insert(hash.as_bytes(), bincode::serialize(&block.header)?)?;
         self.blocks.insert(hash, block);
+        Ok(())
     }
 
     fn vote_from_block(&self, block: &Block) -> Vote {

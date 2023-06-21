@@ -219,7 +219,7 @@ impl Node {
     }
 
     fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
-        self.consensus.add_block(response.block);
+        self.consensus.add_block(response.block)?;
 
         Ok(())
     }
