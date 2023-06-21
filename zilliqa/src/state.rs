@@ -50,7 +50,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(database: Tree) -> Result<State> {
+    pub fn new_genesis(database: Tree) -> Result<State> {
         let db = Arc::new(SledDb::new(database));
         let mut state = Self {
             db: db.clone(),
@@ -67,6 +67,14 @@ impl State {
         }
 
         Ok(state)
+    }
+
+    pub fn new_from_root(database: Tree, root_hash: H256) -> Self {
+        let db = Arc::new(SledDb::new(database));
+        Self {
+            db: db.clone(),
+            accounts: PatriciaTrie::new(db).at_root(root_hash),
+        }
     }
 
     pub fn at_root(&self, root_hash: H256) -> Self {

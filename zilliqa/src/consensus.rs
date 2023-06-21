@@ -93,7 +93,7 @@ impl Consensus {
             new_transactions: BTreeMap::new(),
             transactions: BTreeMap::new(),
             transaction_receipts: BTreeMap::new(),
-            state: State::new(db.open_tree(STATE_TRIE_TREE_ID)?)?,
+            state: State::new_genesis(db.open_tree(STATE_TRIE_TREE_ID)?)?,
             touched_address_index: BTreeMap::new(),
         })
     }
