@@ -81,3 +81,5 @@ services:
     image: otterscan/otterscan:develop
     ports:
       - "5100:80"
+    # Fast shutdown - Don't gracefully close open connections.
+    stop_signal: SIGKILL
