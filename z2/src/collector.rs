@@ -50,7 +50,6 @@ impl Collector {
                 .iter_mut()
                 .filter_map(|x| {
                     if let Some(handle) = x.join_handle.take() {
-                        println!("X");
                         Some(handle)
                     } else {
                         None

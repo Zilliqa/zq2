@@ -357,7 +357,7 @@ pub fn run_evm_impl_direct(
     tx_trace_enabled: bool,
     tx_trace: String,
 ) -> EvmResult {
-    info!(
+    debug!(
         "Running EVM: origin: {:?} address: {:?} gas: {:?} value: {:?}  estimate: {:?} is_continuation: {:?}, cps: {:?}, \ntx_trace: {:?}, \ndata: {:02X?}, \ncode: {:02X?}",
         backend.origin(), address, gas_limit, apparent_value,
         estimate, node_continuation.is_none(), enable_cps, tx_trace, data, code);
@@ -492,6 +492,7 @@ pub fn run_evm_impl_direct(
                 evm::ExitReason::Revert(_) => {
                     listener.otter_transaction_error =
                         format!("0x{}", hex::encode(runtime.machine().return_value()));
+                    info!("Tx reverted: {:?}", runtime.machine().return_value());
                 }
                 _ => {
                     debug!(
@@ -553,7 +554,7 @@ pub fn run_evm_impl_direct(
         }
     };
 
-    info!(
+    debug!(
         "EVM execution summary: context: {:?}, origin: {:?} address: {:?} gas: {:?} value: {:?}, data: {:?}, estimate: {:?}, cps: {:?}, result: {}, returnVal: {}",
         evm_context, backend.origin(), address, gas_limit, apparent_value,
         hex::encode(data.deref()),

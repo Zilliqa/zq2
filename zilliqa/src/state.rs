@@ -10,6 +10,8 @@ use sha3::{Digest, Keccak256};
 use std::fmt::Display;
 use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
+use std::convert::TryInto;
+use once_cell::sync::Lazy;
 
 use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256, U256};
@@ -25,22 +27,33 @@ const fn u128_to_u256(value: u128) -> U256 {
     U256(ret)
 }
 
-const GENESIS: [(Address, U256); 2] = [
-    // Address with private key 0000000000000000000000000000000000000000000000000000000000000001
+static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
+    vec![
     (
         Address(H160(
-            *b"\x7e\x5f\x45\x52\x09\x1a\x69\x12\x5d\x5d\xfc\xb7\xb8\xc2\x65\x90\x29\x39\x5b\xdf",
+            hex::decode("f0cb24ac66ba7375bf9b9c4fa91e208d9eaabd2e").unwrap().try_into().unwrap()
         )),
         u128_to_u256(5000 * 10u128.pow(18)),
     ),
-    // Address with private key 0000000000000000000000000000000000000000000000000000000000000002
     (
         Address(H160(
-            *b"\x2B\x5A\xD5\xc4\x79\x5c\x02\x65\x14\xf8\x31\x7c\x7a\x21\x5E\x21\x8D\xcC\xD6\xcF",
+            hex::decode("cf671756a8238cbeb19bcb4d77fc9091e2fce1a3").unwrap().try_into().unwrap()
         )),
-        u128_to_u256(2000 * 10u128.pow(18)),
+        u128_to_u256(5000 * 10u128.pow(18)),
     ),
-];
+    (
+        Address(H160(
+            hex::decode("05a321d0b9541ca08d7e32315ca186cc67a1602c").unwrap().try_into().unwrap()
+        )),
+        u128_to_u256(5000 * 10u128.pow(18)),
+    ),
+    (
+        Address(H160(
+            hex::decode("6e2cf2789c5b705e0990c05ca959b5001c70ba87").unwrap().try_into().unwrap()
+        )),
+        u128_to_u256(5000 * 10u128.pow(18)),
+    ),
+]});
 
 #[derive(Debug)]
 pub struct State {
@@ -58,10 +71,11 @@ impl State {
         state
             .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
 
-        for (address, balance) in GENESIS {
+        for (address, balance) in GENESIS.iter() {
             // We don't care about these logs.
             let mut logs = vec![];
-            state.set_native_balance(&mut logs, address, balance)?;
+            println!("Setting balance for {:?}", address);
+            state.set_native_balance(&mut logs, *address, *balance)?;
         }
 
         Ok(state)
