@@ -92,6 +92,7 @@ impl Node {
             Message::BlockResponse(m) => {
                 self.handle_block_response(source, m)?;
             }
+            Message::RequestResponse => {}
             Message::NewTransaction(t) => {
                 self.consensus.new_transaction(t)?;
             }

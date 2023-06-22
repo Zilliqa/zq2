@@ -110,6 +110,7 @@ pub enum Message {
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
     NewTransaction(SignedTransaction),
+    RequestResponse,
 }
 
 impl Message {
@@ -121,6 +122,7 @@ impl Message {
             Message::BlockRequest(_) => "BlockRequest",
             Message::BlockResponse(_) => "BlockResponse",
             Message::NewTransaction(_) => "NewTransaction",
+            Message::RequestResponse => "RequestResponse",
         }
     }
 }
