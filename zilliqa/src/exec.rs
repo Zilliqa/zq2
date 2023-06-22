@@ -177,8 +177,9 @@ impl State {
             apparent_value,
             gas_limit,
             caller.0,
-            &backend,
             gas_scaling_factor,
+            1,
+            &backend,
             estimate,
             is_static,
             context,
@@ -187,6 +188,7 @@ impl State {
             true,
             false,
             "".to_string(),
+            false,
         );
 
         Ok((logs, result, created_contract_addr))
