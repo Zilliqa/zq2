@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use itertools::Itertools;
 use libp2p::PeerId;
-use sled::Tree;
+use sled::{Db, Tree};
 use tracing::{debug, info, trace};
 
 use crate::{
@@ -69,6 +69,8 @@ pub struct Consensus {
     transaction_receipts: BTreeMap<Hash, TransactionReceipt>, // TODO: move to Sled
     /// The account store.
     state: State,
+    /// The persistence database
+    db: Db,
     /// An index of address to a list of transaction hashes, for which this address appeared somewhere in the
     /// transaction trace. The list of transations is ordered by execution order.
     touched_address_index: BTreeMap<Address, Vec<Hash>>,
@@ -90,17 +92,24 @@ impl Consensus {
         let block_headers = db.open_tree(BLOCK_HEADERS_TREE)?;
         let state_trie = db.open_tree(STATE_TRIE_TREE)?;
 
-        let state = if let Some(ivec) = db.get(LATEST_KNOWN_BLOCK)? {
-            let latest_known_block_hash = bincode::deserialize::<Hash>(&ivec)?;
-            let latest_known_block_header = block_headers
-                .get(latest_known_block_hash.as_bytes())?
+        let latest_block_header = if let Some(ivec) = db.get(LATEST_KNOWN_BLOCK)? {
+            let latest_block_hash = bincode::deserialize::<Hash>(&ivec)?;
+            let latest_block_header = block_headers
+                .get(latest_block_hash.as_bytes())?
                 .ok_or(anyhow!("No header found for latest recorded block hash"))?;
-            let latest_state_hash =
-                bincode::deserialize::<BlockHeader>(&latest_known_block_header)?.state_root_hash;
-            State::new_from_root(state_trie, H256(latest_state_hash.0))
+            Some(bincode::deserialize::<BlockHeader>(&latest_block_header)?)
+        } else {
+            None
+        };
+
+        let state = if let Some(header) = latest_block_header {
+            State::new_from_root(state_trie, H256(header.hash.0))
         } else {
             State::new_genesis(state_trie)?
         };
+
+        let latest_block_header = latest_block_header.unwrap_or(BlockHeader::genesis());
+        info!("Loading BLOCK STATE height {}", latest_block_header.view);
 
         Ok(Consensus {
             secret_key,
@@ -111,13 +120,14 @@ impl Consensus {
             votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
             high_qc: None,
-            view: 0,
-            finalized: Hash::ZERO,
+            view: latest_block_header.view,
+            finalized: latest_block_header.hash,
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
             transactions: BTreeMap::new(),
             transaction_receipts: BTreeMap::new(),
             state,
+            db,
             touched_address_index: BTreeMap::new(),
         })
     }
@@ -243,8 +253,7 @@ impl Consensus {
         self.add_block(block.clone())?;
         self.update_high_qc_and_view(block.agg.is_some(), proposal_high_qc.clone())?;
 
-        let proposal_view = block.view();
-        if self.check_safe_block(&block) {
+        if self.check_safe_block(&block)? {
             for txn in &transactions {
                 if let Some(result) = self.apply_transaction(txn.clone(), parent_header)? {
                     let receipt = TransactionReceipt {
@@ -602,8 +611,8 @@ impl Consensus {
         Ok(current.hash() == ancestor.hash())
     }
 
-    fn check_safe_block(&mut self, proposal: &Block) -> bool {
-        let Ok(qc_block) = self.get_block(&proposal.qc.block_hash) else { return false; };
+    fn check_safe_block(&mut self, proposal: &Block) -> Result<bool> {
+        let Ok(qc_block) = self.get_block(&proposal.qc.block_hash) else { return Ok(false); };
         // We don't vote on blocks older than our view
         let not_outdated = proposal.view() >= self.view;
         match proposal.agg {
@@ -611,41 +620,44 @@ impl Consensus {
             Some(_) => match self.block_extends_from(proposal, qc_block) {
                 Ok(true) => {
                     let block_hash = proposal.hash();
-                    self.check_and_commit(block_hash);
-                    not_outdated
+                    self.check_and_commit(block_hash)?;
+                    Ok(not_outdated)
                 }
-                Ok(false) | Err(_) => false,
+                Ok(false) | Err(_) => Ok(false),
             },
             None => {
                 if proposal.view() == qc_block.view() + 1 {
-                    self.check_and_commit(proposal.hash());
-                    not_outdated
+                    self.check_and_commit(proposal.hash())?;
+                    Ok(not_outdated)
                 } else {
-                    false
+                    Ok(false)
                 }
             }
         }
     }
 
-    fn check_and_commit(&mut self, proposal_hash: Hash) {
-        let Ok(proposal) = self.get_block(&proposal_hash) else { return; };
-        let Ok(prev_1) = self.get_block(&proposal.qc.block_hash) else { return; };
-        let Ok(prev_2) = self.get_block(&prev_1.qc.block_hash) else { return; };
+    fn check_and_commit(&mut self, proposal_hash: Hash) -> Result<()> {
+        let Ok(proposal) = self.get_block(&proposal_hash) else { return Ok(()); };
+        let Ok(prev_1) = self.get_block(&proposal.qc.block_hash) else { return Ok(()); };
+        let Ok(prev_2) = self.get_block(&prev_1.qc.block_hash) else { return Ok(()); };
 
         if prev_1.view() == prev_2.view() + 1 {
             let committed_block = prev_2;
-            let Ok(finalized_block) = self.get_block(&self.finalized) else { return; };
+            let Ok(finalized_block) = self.get_block(&self.finalized) else { return Ok(()); };
             let mut current = committed_block;
             // commit blocks back to the last finalized block
             while current.view() > finalized_block.view() {
-                let Ok(new) = self.get_block(&current.parent_hash()) else { return; };
+                let Ok(new) = self.get_block(&current.parent_hash()) else { return Ok(()); };
                 current = new;
             }
             if current.hash() == self.finalized {
+                self.db
+                    .insert(LATEST_KNOWN_BLOCK, bincode::serialize(&self.finalized)?)?;
                 self.finalized = committed_block.hash();
                 // discard blocks that can't be committed anymore
             }
-        }
+        };
+        Ok(())
     }
 
     pub fn add_block(&mut self, block: Block) -> Result<()> {
