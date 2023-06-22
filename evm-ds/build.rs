@@ -29,7 +29,7 @@ fn main() {
 
     protoc_rust::Codegen::new()
         .out_dir("src/protos")
-        .inputs([evm_proto.to_string()])
+        .inputs([evm_proto])
         .include(evm_proto_inc)
         .customize(protoc_rust::Customize {
             carllerche_bytes_for_bytes: Some(true),
