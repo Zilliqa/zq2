@@ -5,13 +5,13 @@ use generic_array::{
     GenericArray,
 };
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use once_cell::sync::Lazy;
 use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
+use std::convert::TryInto;
 use std::fmt::Display;
 use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
-use std::convert::TryInto;
-use once_cell::sync::Lazy;
 
 use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256, U256};
@@ -29,31 +29,44 @@ const fn u128_to_u256(value: u128) -> U256 {
 
 static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
     vec![
-    (
-        Address(H160(
-            hex::decode("f0cb24ac66ba7375bf9b9c4fa91e208d9eaabd2e").unwrap().try_into().unwrap()
-        )),
-        u128_to_u256(5000 * 10u128.pow(18)),
-    ),
-    (
-        Address(H160(
-            hex::decode("cf671756a8238cbeb19bcb4d77fc9091e2fce1a3").unwrap().try_into().unwrap()
-        )),
-        u128_to_u256(5000 * 10u128.pow(18)),
-    ),
-    (
-        Address(H160(
-            hex::decode("05a321d0b9541ca08d7e32315ca186cc67a1602c").unwrap().try_into().unwrap()
-        )),
-        u128_to_u256(5000 * 10u128.pow(18)),
-    ),
-    (
-        Address(H160(
-            hex::decode("6e2cf2789c5b705e0990c05ca959b5001c70ba87").unwrap().try_into().unwrap()
-        )),
-        u128_to_u256(5000 * 10u128.pow(18)),
-    ),
-]});
+        (
+            Address(H160(
+                hex::decode("f0cb24ac66ba7375bf9b9c4fa91e208d9eaabd2e")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            )),
+            u128_to_u256(5000 * 10u128.pow(18)),
+        ),
+        (
+            Address(H160(
+                hex::decode("cf671756a8238cbeb19bcb4d77fc9091e2fce1a3")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            )),
+            u128_to_u256(5000 * 10u128.pow(18)),
+        ),
+        (
+            Address(H160(
+                hex::decode("05a321d0b9541ca08d7e32315ca186cc67a1602c")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            )),
+            u128_to_u256(5000 * 10u128.pow(18)),
+        ),
+        (
+            Address(H160(
+                hex::decode("6e2cf2789c5b705e0990c05ca959b5001c70ba87")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            )),
+            u128_to_u256(5000 * 10u128.pow(18)),
+        ),
+    ]
+});
 
 #[derive(Debug)]
 pub struct State {
