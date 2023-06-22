@@ -17,7 +17,8 @@ bytes = "1.1.0"
 clap = { version = "3.1.6", features = ["derive"] }
 ethabi = "18.0.0"
 ethereum = "0.12.0"
-evm = { git = "https://github.com/Zilliqa/evm", branch = "precompile-backend-plus-otter", features = ["tracing"] }
+evm = { git = "https://github.com/Zilliqa/evm", rev = "ef7a9d1476f15660aad98dec5275beae016e83e4", features = ["tracing"] }
+ethers = "2.0.7"
 futures = { version = "0.3.21", features = ["executor", "thread-pool"] }
 hex = "0.4"
 jsonrpc-client-transports = "18.0.0"

@@ -523,6 +523,11 @@ impl<'a> Backend for EvmBackend<'a> {
         vec![]
     }
 
+    fn init_data_as_json(&self, _address: H160) -> Vec<u8> {
+        error!("init_data_as_json not implemented");
+        vec![]
+    }
+
     // todo: this.
     fn substate_as_json(&self, _address: H160, _vname: &str, _indices: &[String]) -> Vec<u8> {
         error!("substate_as_json not implemented");
