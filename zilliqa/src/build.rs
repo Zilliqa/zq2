@@ -8,4 +8,5 @@ fn main() -> Result<(), Box<dyn Error>> {
     EmitBuilder::builder().all_git().emit()?;
 
     Ok(())
+
 }
