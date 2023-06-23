@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
+use serde_json::json;
 
 use crate::{
     crypto::Hash,
@@ -49,6 +50,13 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_getTransactionByHash", get_transaction_by_hash),
             ("eth_getTransactionReceipt", get_transaction_receipt),
             ("eth_sendRawTransaction", send_raw_transaction),
+            ("eth_getUncleCountByBlockHash", get_uncle_count),
+            ("eth_getUncleCountByBlockNumber", get_uncle_count),
+            ("eth_getUncleByBlockHashAndIndex", get_uncle),
+            ("eth_getUncleByBlockNumberAndIndex", get_uncle),
+            ("eth_mining", eth_mining),
+            ("eth_protocolVersion", eth_protocol_version),
+            ("eth_syncing", eth_syncing),
         ],
     )
 }
@@ -369,6 +377,27 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
 
     Ok(transaction_hash.to_hex())
 }
+
+fn get_uncle_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok("0x0".to_string())
+}
+
+fn get_uncle(_: Params, _: &Arc<Mutex<Node>>) -> Result<Option<String>> {
+    Ok(None)
+}
+
+fn eth_mining(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
+    Ok(false)
+}
+
+fn eth_protocol_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok("0x41".to_string())
+}
+
+fn eth_syncing(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
+    Ok(false)
+}
+
 
 /// Decode a transaction from its RLP-encoded form.
 fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<SignedTransaction> {

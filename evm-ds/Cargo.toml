@@ -44,6 +44,7 @@ sha2 = "0.10.6"
 sha3 = "0.10.1"
 tokio = { version = "1.17", features = ["full"] }
 witnet-bn = "0.4.5"
+tracing = "0.1.37"
 
 [build-dependencies]
 protoc-rust = "2"

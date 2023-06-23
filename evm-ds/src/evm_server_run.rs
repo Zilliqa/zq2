@@ -12,8 +12,8 @@ use evm::{
 };
 use evm::{Machine, Runtime};
 use serde::{Deserialize, Serialize};
-
-use log::{debug, error, info};
+use log::{debug, error};
+use tracing::{info};
 
 use jsonrpc_core::Result;
 use primitive_types::*;
@@ -357,7 +357,7 @@ pub fn run_evm_impl_direct(
     tx_trace_enabled: bool,
     tx_trace: String,
 ) -> EvmResult {
-    debug!(
+    println!(
         "Running EVM: origin: {:?} address: {:?} gas: {:?} value: {:?}  estimate: {:?} is_continuation: {:?}, cps: {:?}, \ntx_trace: {:?}, \ndata: {:02X?}, \ncode: {:02X?}",
         backend.origin(), address, gas_limit, apparent_value,
         estimate, node_continuation.is_none(), enable_cps, tx_trace, data, code);
@@ -554,7 +554,7 @@ pub fn run_evm_impl_direct(
         }
     };
 
-    debug!(
+    println!(
         "EVM execution summary: context: {:?}, origin: {:?} address: {:?} gas: {:?} value: {:?}, data: {:?}, estimate: {:?}, cps: {:?}, result: {}, returnVal: {}",
         evm_context, backend.origin(), address, gas_limit, apparent_value,
         hex::encode(data.deref()),

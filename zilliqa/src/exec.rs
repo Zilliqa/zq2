@@ -200,6 +200,9 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<TransactionApplyResult> {
+
+        println!("apply_transaction");
+
         let result = self.apply_transaction_inner(
             txn.from_addr,
             txn.transaction.to_addr,
@@ -389,6 +392,9 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<Vec<u8>> {
+
+        println!("call_contract: caller: {:?}, contract: {:?}, data: {:?}, chain_id: {:?}, current_block: {:?}", caller, contract, data, chain_id, current_block);
+
         let result = self.apply_transaction_inner(
             caller,
             contract,

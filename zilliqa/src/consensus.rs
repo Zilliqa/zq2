@@ -237,7 +237,7 @@ impl Consensus {
             // TODO: Download blocks up to `proposal_view - 1`.
             self.update_view(proposal_view + 1);
             let leader = self.get_leader(self.view).peer_id;
-            trace!(proposal_view, "voting for block");
+            //trace!(proposal_view, "voting for block");
             let vote = self.vote_from_block(&block);
 
             Ok(Some((leader, vote)))
@@ -252,6 +252,8 @@ impl Consensus {
         current_block: BlockHeader,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash();
+
+        println!("apply_transaction: {:?}", hash);
 
         // If we have the transaction in the mempool, remove it.
         self.new_transactions.remove(&hash);
@@ -296,10 +298,10 @@ impl Consensus {
         let Ok(block) = self.get_block(&vote.block_hash) else { return Ok(None); }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
         let block_hash = block.hash();
         let block_view = block.view();
-        trace!(block_view, self.view, "handling vote");
+        //trace!(block_view, self.view, "handling vote");
         // if we are not the leader of the round in which the vote counts
         if self.get_leader(block_view + 1).public_key != self.secret_key.node_public_key() {
-            trace!(vote_view = block_view + 1, "skipping vote, not the leader");
+            //trace!(vote_view = block_view + 1, "skipping vote, not the leader");
             return Ok(None);
         }
         // if the vote is too old and does not count anymore
@@ -327,13 +329,13 @@ impl Consensus {
             cosigned_weight += sender.weight;
 
             supermajority = cosigned_weight * 3 > self.committee_weight() * 2;
-            trace!(
-                cosigned_weight,
-                supermajority,
-                self.view,
-                vote_view = block_view + 1,
-                "storing vote"
-            );
+            //trace!(
+            //    cosigned_weight,
+            //    supermajority,
+            //    self.view,
+            //    vote_view = block_view + 1,
+            //    "storing vote"
+            //);
             // if we are already in the round in which the vote counts and have reached supermajority
             if block_view + 1 == self.view && supermajority {
                 let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
@@ -383,7 +385,7 @@ impl Consensus {
                     .collect();
 
                 // as a future improvement, process the proposal before broadcasting it
-                trace!("vote successful");
+                //trace!("vote successful");
                 return Ok(Some((proposal, applied_transactions)));
                 // we don't want to keep the collected votes if we proposed a new block
                 // we should remove the collected votes if we couldn't reach supermajority within the view
@@ -400,7 +402,7 @@ impl Consensus {
     pub fn new_view(&mut self, _: PeerId, new_view: NewView) -> Result<Option<Block>> {
         // if we are not the leader of the round in which the vote counts
         if self.get_leader(new_view.view).public_key != self.secret_key.node_public_key() {
-            trace!(new_view.view, "skipping new view, not the leader");
+            //trace!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
         // if the vote is too old and does not count anymore
@@ -441,14 +443,14 @@ impl Consensus {
             qcs.push(new_view.qc);
             supermajority = cosigned_weight * 3 > self.committee_weight() * 2;
             let num_signers = signers.len();
-            trace!(
-                num_signers,
-                cosigned_weight,
-                supermajority,
-                self.view,
-                new_view.view,
-                "storing vote for new view"
-            );
+            //trace!(
+            //    num_signers,
+            //    cosigned_weight,
+            //    supermajority,
+            //    self.view,
+            //    new_view.view,
+            //    "storing vote for new view"
+            //);
             // if we are already in the round in which the vote counts and have reached supermajority
             if new_view.view == self.view && supermajority {
                 // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
@@ -490,6 +492,7 @@ impl Consensus {
     }
 
     pub fn new_transaction(&mut self, txn: SignedTransaction) -> Result<()> {
+        debug!("added new transaction");
         txn.verify()?; // sanity check
         self.new_transactions.insert(txn.hash(), txn);
 
@@ -618,7 +621,7 @@ impl Consensus {
 
     pub fn add_block(&mut self, block: Block) {
         let hash = block.hash();
-        debug!(?hash, ?block.header.view, "added block");
+        //debug!(?hash, ?block.header.view, "added block");
         self.blocks.insert(hash, block);
     }
 

@@ -126,6 +126,8 @@ impl Node {
         // Make sure TX hasn't been seen before
         if !self.consensus.seen_tx_already(&hash) {
             self.broadcast_message(Message::NewTransaction(txn))?;
+        } else {
+            println!("TX already seen: {}", hash);
         }
 
         Ok(hash)

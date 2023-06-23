@@ -261,14 +261,14 @@ impl NodeLauncher {
                         let source = source.expect("message should have a source");
                         let message = serde_json::from_slice::<Message>(&data).unwrap();
                         let message_type = message.name();
-                        debug!(%source, message_type, "message recieved");
+                        //debug!(%source, message_type, "message recieved");
                         self.node.lock().unwrap().handle_message(source, message).unwrap();
                     }
 
                     SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer })) => {
                                 match message {
                                     request_response::Message::Request {request, channel, ..} => {
-                                        debug!(%peer, "direct message received");
+                                        //debug!(%peer, "direct message received");
 
                                         self.node.lock().unwrap().handle_message(peer, request).unwrap();
 
@@ -287,11 +287,11 @@ impl NodeLauncher {
 
                     match dest {
                         Some(dest) => {
-                            debug!(%dest, message_type, "sending direct message");
+                            //debug!(%dest, message_type, "sending direct message");
                             let _ = swarm.behaviour_mut().request_response.send_request(&dest, message);
                         },
                         None => {
-                            debug!(message_type, "sending gossip message");
+                            //debug!(message_type, "sending gossip message");
                             match swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
                                 Ok(_) => {},
                                 Err(e) => {
@@ -308,7 +308,7 @@ impl NodeLauncher {
                 },
                 r = self.reset_timeout_receiver.next() => {
                     let () = r.expect("reset timeout stream should be infinite");
-                    trace!("timeout reset");
+                    //trace!("timeout reset");
                     sleep.as_mut().reset(Instant::now() + Duration::from_secs(5));
                 },
                 _ = terminate.recv() => { break; },
