@@ -47,7 +47,8 @@ fn get_block_details(
     let block = node
         .lock()
         .unwrap()
-        .get_block_by_view(block)
+        .get_block_by_view(block)?
+        .as_ref()
         .map(OtterscanBlockDetails::from);
 
     Ok(block)
@@ -62,7 +63,8 @@ fn get_block_details_by_hash(
     let block = node
         .lock()
         .unwrap()
-        .get_block_by_hash(Hash(block_hash.0))
+        .get_block_by_hash(Hash(block_hash.0))?
+        .as_ref()
         .map(OtterscanBlockDetails::from);
 
     Ok(block)
@@ -79,7 +81,7 @@ fn get_block_transactions(
 
     let node = node.lock().unwrap();
 
-    let Some(block) = node.get_block_by_view(block_num) else { return Ok(None); };
+    let Some(block) = node.get_block_by_view(block_num)? else { return Ok(None); };
 
     let start = usize::min(page_number * page_size, block.transactions.len());
     let end = usize::min((page_number + 1) * page_size, block.transactions.len());
@@ -98,7 +100,7 @@ fn get_block_transactions(
 
     let full_block = OtterscanBlockWithTransactions {
         transactions,
-        block: block.into(),
+        block: (&block).into(),
     };
 
     Ok(Some(OtterscanBlockTransactions {
@@ -176,7 +178,7 @@ fn search_transactions_inner(
         let timestamp = node
             .lock()
             .unwrap()
-            .get_block_by_hash(Hash(txn.block_hash.0))
+            .get_block_by_hash(Hash(txn.block_hash.0))?
             .unwrap()
             .timestamp();
 

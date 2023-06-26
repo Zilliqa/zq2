@@ -24,11 +24,18 @@ use crate::{
 };
 
 // database tree names
+/// Key: trie hash; value: trie node
 const STATE_TRIE_TREE: &[u8] = b"state_trie";
+/// Key: block hash; value: block header
 const BLOCK_HEADERS_TREE: &[u8] = b"block_headers_tree";
+/// Key: block number (on the finalized branch); value: block hash
+const FINALISED_BLOCK_NUMBERS_TREE: &[u8] = b"finalised_block_numbers_tree";
+/// Key: block hash; value: entire block
+const BLOCKS_TREE: &[u8] = b"blocks_tree";
 
 // single keys stored in default tree in DB
 const LATEST_KNOWN_BLOCK: &[u8] = b"latest_known_block";
+const LATEST_KNOWN_VIEW: &[u8] = b"latest_known_view";
 
 #[derive(Debug)]
 struct NewViewVote {
@@ -52,7 +59,8 @@ pub struct Consensus {
     config: Config,
     committee: Vec<Validator>,
     block_headers: Tree,
-    blocks: BTreeMap<Hash, Block>, // TODO: move to Sled
+    canonical_block_numbers: Tree,
+    blocks: Tree,
     votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128)>,
     new_views: BTreeMap<u64, NewViewVote>,
     high_qc: Option<QuorumCertificate>, // none before we receive the first proposal
@@ -90,6 +98,8 @@ impl Consensus {
         };
 
         let block_headers = db.open_tree(BLOCK_HEADERS_TREE)?;
+        let canonical_block_numbers = db.open_tree(FINALISED_BLOCK_NUMBERS_TREE)?;
+        let blocks = db.open_tree(BLOCKS_TREE)?;
         let state_trie = db.open_tree(STATE_TRIE_TREE)?;
 
         let latest_block_header = if let Some(ivec) = db.get(LATEST_KNOWN_BLOCK)? {
@@ -116,7 +126,8 @@ impl Consensus {
             config,
             committee: vec![validator],
             block_headers,
-            blocks: BTreeMap::new(),
+            canonical_block_numbers,
+            blocks,
             votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
             high_qc: None,
@@ -202,6 +213,7 @@ impl Consensus {
     }
 
     pub fn proposal(&mut self, proposal: Proposal) -> Result<Option<(PeerId, Vote)>> {
+        println!("      proposal, got proposal {}", proposal.header.view);
         let (block, transactions) = proposal.into_parts();
 
         // derive the sender from the proposal's view
@@ -253,7 +265,9 @@ impl Consensus {
         self.add_block(block.clone())?;
         self.update_high_qc_and_view(block.agg.is_some(), proposal_high_qc.clone())?;
 
-        if self.check_safe_block(&block)? {
+        let block_state_root = block.state_root_hash();
+        println!("      proposal, running check_safe_block");
+        if self.check_safe_block(block.clone())? {
             for txn in &transactions {
                 if let Some(result) = self.apply_transaction(txn.clone(), parent_header)? {
                     let receipt = TransactionReceipt {
@@ -265,10 +279,10 @@ impl Consensus {
                     self.transaction_receipts.insert(txn.hash(), receipt);
                 }
             }
-            if self.state.root_hash()? != block.state_root_hash() {
+            if self.state.root_hash()? != block_state_root {
                 return Err(anyhow!(
                     "state root hash mismatch, expected: {:?}, actual: {:?}",
-                    block.state_root_hash(),
+                    block_state_root,
                     self.state.root_hash()
                 ));
             }
@@ -550,10 +564,12 @@ impl Consensus {
         from_agg: bool,
         new_high_qc: QuorumCertificate,
     ) -> Result<()> {
-        let Some(new_high_qc_block) = self.blocks.get(&new_high_qc.block_hash) else {
+        let Some(new_high_qc_block) = self.blocks.get(new_high_qc.block_hash.0)?
+            else {
             // We don't set high_qc to a qc if we don't have its block.
             return Ok(());
         };
+        let new_high_qc_block = bincode::deserialize::<Block>(&new_high_qc_block)?;
         match &self.high_qc {
             None => {
                 self.high_qc = Some(new_high_qc);
@@ -602,7 +618,7 @@ impl Consensus {
         }
     }
 
-    fn block_extends_from(&self, block: &Block, ancestor: &Block) -> Result<bool> {
+    fn block_extends_from(&self, block: Block, ancestor: &Block) -> Result<bool> {
         // todo: the block extends from another block through a chain of parent hashes and not qcs
         let mut current = block;
         while current.view() > ancestor.view() {
@@ -611,15 +627,16 @@ impl Consensus {
         Ok(current.hash() == ancestor.hash())
     }
 
-    fn check_safe_block(&mut self, proposal: &Block) -> Result<bool> {
+    fn check_safe_block(&mut self, proposal: Block) -> Result<bool> {
         let Ok(qc_block) = self.get_block(&proposal.qc.block_hash) else { return Ok(false); };
         // We don't vote on blocks older than our view
         let not_outdated = proposal.view() >= self.view;
+        let proposal_hash = proposal.hash();
         match proposal.agg {
             // we check elsewhere that qc is the highest among the qcs in the agg
-            Some(_) => match self.block_extends_from(proposal, qc_block) {
+            Some(_) => match self.block_extends_from(proposal, &qc_block) {
                 Ok(true) => {
-                    let block_hash = proposal.hash();
+                    let block_hash = proposal_hash;
                     self.check_and_commit(block_hash)?;
                     Ok(not_outdated)
                 }
@@ -637,13 +654,17 @@ impl Consensus {
     }
 
     fn check_and_commit(&mut self, proposal_hash: Hash) -> Result<()> {
+        println!("        check_and_commit: {proposal_hash:?}");
         let Ok(proposal) = self.get_block(&proposal_hash) else { return Ok(()); };
         let Ok(prev_1) = self.get_block(&proposal.qc.block_hash) else { return Ok(()); };
         let Ok(prev_2) = self.get_block(&prev_1.qc.block_hash) else { return Ok(()); };
+        println!("        check_and_commit, got up to prev_2 (at height: {})", prev_2.view());
 
         if prev_1.view() == prev_2.view() + 1 {
             let committed_block = prev_2;
             let Ok(finalized_block) = self.get_block(&self.finalized) else { return Ok(()); };
+            let committed_hash = committed_block.hash();
+            let committed_view = committed_block.view();
             let mut current = committed_block;
             // commit blocks back to the last finalized block
             while current.view() > finalized_block.view() {
@@ -651,9 +672,13 @@ impl Consensus {
                 current = new;
             }
             if current.hash() == self.finalized {
-                self.db
-                    .insert(LATEST_KNOWN_BLOCK, bincode::serialize(&self.finalized)?)?;
-                self.finalized = committed_block.hash();
+                self.finalized = committed_hash;
+                let serialized_hash = bincode::serialize(&self.finalized)?;
+                println!("        check_and_commit, writing view {committed_view}");
+                self.db.insert(LATEST_KNOWN_BLOCK, serialized_hash.clone())?;
+                self.db.insert(LATEST_KNOWN_VIEW, bincode::serialize(&committed_view)?)?;
+                self.canonical_block_numbers
+                    .insert(committed_view.to_be_bytes(), serialized_hash)?;
                 // discard blocks that can't be committed anymore
             }
         };
@@ -665,7 +690,7 @@ impl Consensus {
         info!(?hash, ?block.header.view, "added block");
         self.block_headers
             .insert(hash.as_bytes(), bincode::serialize(&block.header)?)?;
-        self.blocks.insert(hash, block);
+        self.blocks.insert(hash.0, bincode::serialize(&block)?)?;
         Ok(())
     }
 
@@ -689,15 +714,36 @@ impl Consensus {
         Ok(&block.qc)
     }
 
-    pub fn get_block(&self, key: &Hash) -> Result<&Block> {
-        self.blocks
-            .get(key)
-            .ok_or_else(|| anyhow!("block not found: {key:?}"))
+    pub fn get_block(&self, key: &Hash) -> Result<Block> {
+        self.maybe_get_block(key)?
+            .ok_or(anyhow!("Block {key} not found"))
     }
 
-    pub fn get_block_by_view(&self, view: u64) -> Option<&Block> {
-        // TODO: Inefficient - Use an index.
-        self.blocks.values().find(|b| b.view() == view)
+    pub fn maybe_get_block(&self, key: &Hash) -> Result<Option<Block>> {
+        let encoded = self.blocks.get(key.0)?;
+        if let Some(encoded) = encoded {
+            Ok(Some(bincode::deserialize::<Block>(&encoded)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
+        println!("    Getitng BLOCK by view {view}...");
+        let block_hash = self.canonical_block_numbers.get(view.to_be_bytes())?;
+        println!("    Block hash: {block_hash:?}");
+        if let Some(ivec) = block_hash {
+            let block_hash = bincode::deserialize::<Hash>(&ivec)?;
+            println!("    Parsed block hash: {block_hash}");
+            let block = self
+                .blocks
+                .get(block_hash.0)?
+                .ok_or(anyhow!("Block not found for hash {}", block_hash))?;
+            println!("    Raw block: {block:?}");
+            Ok(Some(bincode::deserialize::<Block>(&block)?))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn view(&self) -> u64 {

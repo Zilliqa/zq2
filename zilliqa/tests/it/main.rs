@@ -143,12 +143,21 @@ impl Network {
 
     pub async fn run_until(
         &mut self,
+        condition: impl FnMut(&Network) -> bool,
+        timeout: usize,
+    ) -> Result<()> {
+        self.run_until_rec(condition, timeout, timeout).await
+    }
+
+    async fn run_until_rec(
+        &mut self,
         mut condition: impl FnMut(&Network) -> bool,
         mut timeout: usize,
+        orig_timeout: usize
     ) -> Result<()> {
         while !condition(self) {
             if timeout == 0 {
-                return Err(anyhow!("condition was still false after {timeout} ticks"));
+                return Err(anyhow!("condition was still false after {orig_timeout} ticks"));
             }
 
             self.run_for(1).await;

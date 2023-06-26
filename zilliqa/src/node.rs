@@ -140,7 +140,7 @@ impl Node {
         data: Vec<u8>,
     ) -> Result<Vec<u8>> {
         let current_block = self
-            .get_latest_block()
+            .get_latest_block()?
             .ok_or_else(|| anyhow!("no blocks"))?
             .header;
         self.consensus.state().call_contract(
@@ -164,16 +164,16 @@ impl Node {
         self.consensus.state().get_native_balance(address)
     }
 
-    pub fn get_latest_block(&self) -> Option<&Block> {
+    pub fn get_latest_block(&self) -> Result<Option<Block>> {
         self.get_block_by_view(self.consensus.view().saturating_sub(1))
     }
 
-    pub fn get_block_by_view(&self, view: u64) -> Option<&Block> {
+    pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
         self.consensus.get_block_by_view(view)
     }
 
-    pub fn get_block_by_hash(&self, hash: Hash) -> Option<&Block> {
-        self.consensus.get_block(&hash).ok()
+    pub fn get_block_by_hash(&self, hash: Hash) -> Result<Option<Block>> {
+        self.consensus.maybe_get_block(&hash)
     }
 
     pub fn get_transaction_receipt(&self, hash: Hash) -> Option<TransactionReceipt> {
@@ -211,7 +211,7 @@ impl Node {
         self.send_message(
             source,
             Message::BlockResponse(BlockResponse {
-                block: block.clone(),
+                block,
             }),
         )?;
 
