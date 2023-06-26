@@ -2,6 +2,7 @@
 
 members = [
  "zilliqa",
+ "zilliqa-macros",
  "z2",
  "eth-trie.rs"
 ]

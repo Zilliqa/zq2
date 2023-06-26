@@ -281,7 +281,20 @@ impl SignedTransaction {
                     .append(&txn.amount)
                     .append(&txn.payload);
                 if use_eip155 {
-                    rlp.append(&v).append(&r.as_slice()).append(&s.as_slice());
+                    fn strip_leading_zeroes(bytes: &[u8]) -> &[u8] {
+                        // If `bytes` is all zeroes, default to `bytes.len() - 2`. This is because zeroes should be
+                        // encoded as `[0]`.
+                        let first_non_zero = bytes
+                            .iter()
+                            .position(|b| *b != 0)
+                            .unwrap_or(bytes.len() - 2);
+
+                        &bytes[first_non_zero..]
+                    }
+
+                    rlp.append(&v)
+                        .append(&strip_leading_zeroes(r.as_slice()))
+                        .append(&strip_leading_zeroes(s.as_slice()));
                 };
 
                 crypto::Hash(Keccak256::digest(rlp.out()).into())
@@ -344,19 +357,6 @@ pub enum SigningInfo {
         s: [u8; 32],
         chain_id: u64,
     },
-}
-
-impl SigningInfo {
-    pub fn hash(&self) -> crypto::Hash {
-        match self {
-            SigningInfo::Eth {
-                v,
-                r,
-                s,
-                chain_id: _,
-            } => crypto::Hash::compute(&[&v.to_be_bytes(), r.as_slice(), s.as_slice()]),
-        }
-    }
 }
 
 /// A transaction body, broadcast before execution and then persisted as part of a block after the transaction is executed.

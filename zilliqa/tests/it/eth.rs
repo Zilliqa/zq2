@@ -10,16 +10,12 @@ use ethers::{
 use primitive_types::{H160, H256};
 use serde::Serialize;
 
-use crate::{random_wallet, LocalRpcClient, Network};
+use crate::{deploy_contract, LocalRpcClient, Network};
 
-use super::deploy_contract;
-
-#[tokio::test]
-async fn get_block_transaction_count() {
-    let mut network = Network::new(4);
-
+#[zilliqa_macros::test]
+async fn get_block_transaction_count(mut network: Network<'_>) {
     let provider = network.provider(0);
-    let wallet = random_wallet(provider.clone());
+    let wallet = network.random_wallet(0);
 
     async fn count_by_number<T: Debug + Serialize + Send + Sync>(
         provider: &Provider<LocalRpcClient>,
@@ -50,7 +46,7 @@ async fn get_block_transaction_count() {
     network
         .run_until_async(
             |p| async move { p.get_transaction_receipt(hash).await.unwrap().is_some() },
-            10,
+            100,
         )
         .await
         .unwrap();
@@ -79,12 +75,10 @@ async fn get_block_transaction_count() {
     assert_eq!(count, 1);
 }
 
-#[tokio::test]
-async fn get_storage_at() {
-    let mut network = Network::new(4);
-
+#[zilliqa_macros::test]
+async fn get_storage_at(mut network: Network<'_>) {
     let provider = network.provider(0);
-    let wallet = random_wallet(provider.clone());
+    let wallet = network.random_wallet(0);
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
     let hash = deploy_contract!("contracts/Storage.sol", "Storage", wallet, network);
@@ -116,12 +110,10 @@ async fn get_storage_at() {
     assert_eq!(value, H256::from_low_u64_be(5678));
 }
 
-#[tokio::test]
-async fn send_transaction() {
-    let mut network = Network::new(4);
-
+#[zilliqa_macros::test]
+async fn send_transaction(mut network: Network<'_>) {
     let provider = network.provider(0);
-    let wallet = random_wallet(provider.clone());
+    let wallet = network.random_wallet(0);
 
     let to: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
@@ -131,6 +123,7 @@ async fn send_transaction() {
     // Transform the transaction to its final form, so we can caculate the expected hash.
     let mut tx: TypedTransaction = tx.into();
     wallet.fill_transaction(&mut tx, None).await.unwrap();
+    println!("{tx:?}");
     let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
     let expected_hash = H256::from_slice(&keccak256(tx.rlp_signed(&sig)));
 
@@ -141,7 +134,7 @@ async fn send_transaction() {
     network
         .run_until_async(
             |p| async move { p.get_transaction_receipt(hash).await.unwrap().is_some() },
-            10,
+            100,
         )
         .await
         .unwrap();

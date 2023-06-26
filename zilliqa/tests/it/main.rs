@@ -19,7 +19,7 @@ use ethers::{
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::{LocalWallet, Signer},
 };
-use futures::{stream::BoxStream, Future, StreamExt};
+use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
 use itertools::Itertools;
 use jsonrpsee::{
     types::{Id, RequestSer, Response, ResponsePayload},
@@ -27,17 +27,22 @@ use jsonrpsee::{
 };
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
+use rand::Rng;
+use rand_chacha::ChaCha8Rng;
+use rand_core::CryptoRng;
 use serde::{de::DeserializeOwned, Serialize};
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use zilliqa::{cfg::Config, crypto::SecretKey, message::Message, node::Node};
 
-fn node() -> (
+fn node<R: Rng + CryptoRng>(
+    _rng: &mut R,
+    secret_key: SecretKey,
+    index: usize,
+) -> (
     TestNode,
     BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
 ) {
-    let secret_key = SecretKey::new().unwrap();
-
     let (message_sender, message_receiver) = mpsc::unbounded_channel();
     let message_receiver = UnboundedReceiverStream::new(message_receiver);
     // Augment the `message_receiver` stream to include the sender's `PeerId`.
@@ -61,6 +66,7 @@ fn node() -> (
 
     (
         TestNode {
+            index,
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             secret_key,
             inner: node,
@@ -72,24 +78,42 @@ fn node() -> (
 
 /// A node within a test [Network].
 struct TestNode {
+    index: usize,
     secret_key: SecretKey,
     peer_id: PeerId,
     inner: Arc<Mutex<Node>>,
+    #[allow(dead_code)]
     rpc_module: RpcModule<Arc<Mutex<Node>>>,
 }
 
-struct Network {
+struct Network<'r> {
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
     // the borrow checker happy.
     nodes: Vec<TestNode>,
     /// A stream of messages from each node. The stream items are a tuple of (source, destination, message).
     /// If the destination is `None`, the message is a broadcast.
     receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, Message)>>,
+    resend_message: UnboundedSender<(PeerId, Option<PeerId>, Message)>,
+    rng: &'r mut ChaCha8Rng,
 }
 
-impl Network {
-    pub fn new(nodes: usize) -> Network {
-        let (nodes, receivers): (Vec<_>, Vec<_>) = (0..nodes).map(|_| node()).unzip();
+impl<'r> Network<'r> {
+    pub fn new(rng: &mut ChaCha8Rng, nodes: usize) -> Network {
+        let mut keys: Vec<_> = (0..nodes)
+            .map(|_| SecretKey::new_from_rng(rng).unwrap())
+            .collect();
+        // Sort the keys in the same order as they will occur in the consensus committee. This means node indices line
+        // up with indices in the committee, making logs easier to read.
+        keys.sort_unstable_by_key(|key| key.to_libp2p_keypair().public().to_peer_id());
+        let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
+            .into_iter()
+            .enumerate()
+            .map(|(i, key)| node(rng, key, i))
+            .unzip();
+
+        for node in &nodes {
+            println!("Node {}: {}", node.index, node.peer_id);
+        }
 
         nodes
             .iter()
@@ -109,28 +133,79 @@ impl Network {
                 }
             });
 
-        Network { nodes, receivers }
+        let (resend_message, receive_resend_message) =
+            mpsc::unbounded_channel::<(PeerId, Option<PeerId>, Message)>();
+        let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
+        receivers.push(receive_resend_message);
+
+        Network {
+            nodes,
+            receivers,
+            resend_message,
+            rng,
+        }
     }
 
-    pub async fn run_for(&mut self, ticks: usize) {
-        let messages = futures::stream::select_all(&mut self.receivers);
-        let mut messages = messages.take(ticks);
-
-        while let Some((source, destination, message)) = messages.next().await {
-            // Respect the destination if it is set and only send it to one
-            for node in self.nodes.iter() {
-                if let Some(dest) = destination {
-                    if dest == node.peer_id {
-                        node.inner
-                            .lock()
-                            .unwrap()
-                            .handle_message(source, message.clone())
-                            .unwrap();
+    pub async fn tick(&mut self) {
+        // Take all the currently ready messages from the stream.
+        let mut messages = Vec::new();
+        for (_i, receiver) in self.receivers.iter_mut().enumerate() {
+            loop {
+                // Poll the receiver with `unconstrained` to ensure it won't be pre-empted. This makes sure we always
+                // get an item if it has been sent. It does not lead to starvation, because we evaluate the returned
+                // future with `.now_or_never()` which instantly returns `None` if the future is not ready.
+                match tokio::task::unconstrained(receiver.next()).now_or_never() {
+                    Some(Some(message)) => {
+                        messages.push(message);
+                    }
+                    Some(None) => {
+                        unreachable!("stream was terminated, this should be impossible");
+                    }
+                    None => {
                         break;
                     }
-                    continue;
                 }
-                // Broadcast when no destination is set
+            }
+        }
+
+        println!(
+            "{} possible messages to send ({:?})",
+            messages.len(),
+            messages
+                .iter()
+                .map(|(s, d, m)| format_message(&self.nodes, *s, *d, m))
+                .collect::<Vec<_>>()
+        );
+
+        if messages.is_empty() {
+            return;
+        }
+        // Pick a random message
+        let index = self.rng.gen_range(0..messages.len());
+        let (source, destination, message) = messages.swap_remove(index);
+        // Requeue the other messages
+        for message in messages {
+            self.resend_message.send(message).unwrap();
+        }
+
+        println!(
+            "{}",
+            format_message(&self.nodes, source, destination, &message)
+        );
+
+        if let Some(destination) = destination {
+            let node = self
+                .nodes
+                .iter()
+                .find(|n| n.peer_id == destination)
+                .unwrap();
+            node.inner
+                .lock()
+                .unwrap()
+                .handle_message(source, message)
+                .unwrap();
+        } else {
+            for node in &self.nodes {
                 node.inner
                     .lock()
                     .unwrap()
@@ -150,7 +225,7 @@ impl Network {
                 return Err(anyhow!("condition was still false after {timeout} ticks"));
             }
 
-            self.run_for(1).await;
+            self.tick().await;
 
             timeout -= 1;
         }
@@ -169,7 +244,7 @@ impl Network {
                 return Err(anyhow!("condition was still false after {timeout} ticks"));
             }
 
-            self.run_for(1).await;
+            self.tick().await;
 
             timeout -= 1;
         }
@@ -188,14 +263,34 @@ impl Network {
         };
         Provider::new(client)
     }
+
+    pub fn random_wallet(
+        &mut self,
+        index: usize,
+    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+        let wallet: LocalWallet = SigningKey::random(self.rng).into();
+        let wallet = wallet.with_chain_id(0x8001u64);
+        SignerMiddleware::new(self.provider(index), wallet)
+    }
 }
 
-pub fn random_wallet(
-    provider: Provider<LocalRpcClient>,
-) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
-    let wallet: LocalWallet = SigningKey::random(&mut rand::thread_rng()).into();
-    let wallet = wallet.with_chain_id(0x8001u64);
-    SignerMiddleware::new(provider, wallet)
+fn format_message(
+    nodes: &[TestNode],
+    source: PeerId,
+    destination: Option<PeerId>,
+    message: &Message,
+) -> String {
+    let source_index = nodes.iter().find(|n| n.peer_id == source).unwrap().index;
+    if let Some(destination) = destination {
+        let destination_index = nodes
+            .iter()
+            .find(|n| n.peer_id == destination)
+            .unwrap()
+            .index;
+        format!("{source_index} -> {destination_index}: {}", message.name())
+    } else {
+        format!("{source_index} -> *: {}", message.name())
+    }
 }
 
 /// A helper macro to deploy a contract. Provide the relative path containing the contract, the name of the contract, a
@@ -232,7 +327,7 @@ macro_rules! deploy_contract {
         $network
             .run_until_async(
                 |p| async move { p.get_transaction_receipt(hash).await.unwrap().is_some() },
-                10,
+                100,
             )
             .await
             .unwrap();
@@ -240,7 +335,7 @@ macro_rules! deploy_contract {
         hash
     }};
 }
-use deploy_contract;
+pub(crate) use deploy_contract;
 
 /// An implementation of [JsonRpcClient] which sends requests directly to an [RpcModule], without making any network
 /// calls.
