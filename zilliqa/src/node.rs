@@ -208,12 +208,7 @@ impl Node {
     fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
         let block = self.consensus.get_block(&request.hash)?;
 
-        self.send_message(
-            source,
-            Message::BlockResponse(BlockResponse {
-                block,
-            }),
-        )?;
+        self.send_message(source, Message::BlockResponse(BlockResponse { block }))?;
 
         Ok(())
     }

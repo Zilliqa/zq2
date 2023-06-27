@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::SystemTime, fmt::Display};
+use std::{fmt::Display, str::FromStr, time::SystemTime};
 
 use anyhow::anyhow;
 use primitive_types::{H160, H256};
@@ -33,14 +33,18 @@ pub enum BlockNumber {
 
 impl Display for BlockNumber {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            Self::Number(num) => num.to_string(),
-            Self::Earliest => "earliest".to_string(),
-            Self::Latest => "latest".to_string(),
-            Self::Safe => "safe".to_string(),
-            Self::Finalized => "finalized".to_string(),
-            Self::Pending => "pending".to_string()
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Number(num) => num.to_string(),
+                Self::Earliest => "earliest".to_string(),
+                Self::Latest => "latest".to_string(),
+                Self::Safe => "safe".to_string(),
+                Self::Finalized => "finalized".to_string(),
+                Self::Pending => "pending".to_string(),
+            }
+        )
     }
 }
 
