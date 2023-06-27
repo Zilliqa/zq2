@@ -1,9 +1,8 @@
 use crate::Network;
 
-#[tokio::test]
-async fn sha3() {
-    let network = Network::new(4);
-    let provider = network.provider(0);
+#[zilliqa_macros::test]
+async fn sha3(mut network: Network<'_>) {
+    let provider = network.provider();
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#web3_sha3
     let result: String = provider
