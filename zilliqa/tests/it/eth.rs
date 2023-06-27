@@ -65,10 +65,11 @@ async fn get_block_transaction_count() {
         .await
         .unwrap()
         .unwrap();
+    println!("unwrapped receipt: {receipt:?}");
     let block_hash = receipt.block_hash.unwrap();
+    println!("hash is {block_hash}");
     let block_number = receipt.block_number.unwrap();
-
-    println!("unwrapped receipt, hash is {block_hash} and number is {block_number}");
+    println!("number is {block_number}");
 
     // Check the previous block has a transaction count of zero.
     let count = count_by_number(&provider, block_number - 1).await;

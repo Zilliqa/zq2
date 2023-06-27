@@ -114,6 +114,7 @@ impl Network {
     }
 
     pub async fn run_for(&mut self, ticks: usize) {
+        println!("...running {ticks} ticks...");
         let messages = futures::stream::select_all(&mut self.receivers);
         let mut messages = messages.take(ticks);
 
@@ -153,11 +154,13 @@ impl Network {
         &mut self,
         mut condition: impl FnMut(&Network) -> bool,
         mut timeout: usize,
-        orig_timeout: usize
+        orig_timeout: usize,
     ) -> Result<()> {
         while !condition(self) {
             if timeout == 0 {
-                return Err(anyhow!("condition was still false after {orig_timeout} ticks"));
+                return Err(anyhow!(
+                    "condition was still false after {orig_timeout} ticks"
+                ));
             }
 
             self.run_for(1).await;
