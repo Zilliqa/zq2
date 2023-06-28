@@ -290,7 +290,7 @@ fn format_message(
 /// wallet and the network. This will include the contract source in the test binary and compile the contract at
 /// runtime.
 macro_rules! deploy_contract {
-    ($path:expr, $contract:expr, $wallet:ident, $provider:ident, $network:ident $(,)?) => {{
+    ($path:expr, $contract:expr, $wallet:ident, $network:ident $(,)?) => {{
         // Include the contract source directly in the binary.
         let contract_source = include_bytes!($path);
 
@@ -310,28 +310,33 @@ macro_rules! deploy_contract {
 
         // Deploy the contract.
         let factory = DeploymentTxFactory::new(abi, bytecode, $wallet.clone());
-        let deployment_tx = factory.deploy(()).unwrap().tx;
-        let hash = $wallet
-            .send_transaction(deployment_tx, None)
-            .await
-            .unwrap()
-            .tx_hash();
+        let deployer = factory.deploy(()).unwrap();
+        let abi = deployer.abi().clone();
+        {
+            use ethers::providers::Middleware;
 
-        $network
-            .run_until_async(
-                || async {
-                    $provider
-                        .get_transaction_receipt(hash)
-                        .await
-                        .unwrap()
-                        .is_some()
-                },
-                50,
-            )
-            .await
-            .unwrap();
+            let hash = $wallet
+                .send_transaction(deployer.tx, None)
+                .await
+                .unwrap()
+                .tx_hash();
 
-        hash
+            $network
+                .run_until_async(
+                    || async {
+                        $wallet
+                            .get_transaction_receipt(hash)
+                            .await
+                            .unwrap()
+                            .is_some()
+                    },
+                    50,
+                )
+                .await
+                .unwrap();
+
+            (hash, abi)
+        }
     }};
 }
 pub(crate) use deploy_contract;

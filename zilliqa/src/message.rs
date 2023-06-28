@@ -3,6 +3,7 @@ use std::time::SystemTime;
 use anyhow::Result;
 use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Keccak256};
 
 use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
@@ -202,10 +203,20 @@ impl BlockHeader {
             hash: Hash::ZERO,
             parent_hash: Hash::ZERO,
             signature: NodeSignature::identity(),
-            state_root_hash: Hash::ZERO,
+            state_root_hash: Hash(Keccak256::digest(rlp::NULL_RLP).into()),
             timestamp: SystemTime::UNIX_EPOCH,
         }
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum BlockNumber {
+    Number(u64),
+    Earliest,
+    Latest,
+    Safe,
+    Finalized,
+    Pending,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

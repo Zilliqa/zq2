@@ -9,7 +9,7 @@ use serde::{
 };
 use sha3::{Digest, Keccak256};
 
-use crate::message;
+use crate::message::{self, BlockNumber};
 
 use super::to_hex::ToHex;
 
@@ -19,16 +19,6 @@ use super::to_hex::ToHex;
 pub enum HashOrTransaction {
     Hash(H256),
     Transaction(EthTransaction),
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum BlockNumber {
-    Number(u64),
-    Earliest,
-    Latest,
-    Safe,
-    Finalized,
-    Pending,
 }
 
 impl<'de> Deserialize<'de> for BlockNumber {
