@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use hashbrown::{HashMap, HashSet};
-use keccak_hash::{keccak, H256};
+use keccak_hash::{keccak, H256, KECCAK_NULL_RLP};
 use log::warn;
 use rlp::{Prototype, Rlp, RlpStream};
 
@@ -224,7 +224,7 @@ where
     pub fn new(db: Arc<D>) -> Self {
         Self {
             root: Node::Empty,
-            root_hash: keccak(rlp::NULL_RLP),
+            root_hash: KECCAK_NULL_RLP,
 
             cache: HashMap::new(),
             passing_keys: HashSet::new(),
@@ -930,7 +930,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
 
-    use keccak_hash::{keccak, H256};
+    use keccak_hash::{H256, KECCAK_NULL_RLP};
 
     use super::{EthTrie, Trie};
     use crate::db::{MemoryDB, DB};
@@ -1293,7 +1293,7 @@ mod tests {
         }
         trie.root_hash().unwrap();
 
-        let empty_node_key = keccak(rlp::NULL_RLP);
+        let empty_node_key = KECCAK_NULL_RLP;
         let value = trie.db.get(empty_node_key.as_ref()).unwrap().unwrap();
         assert_eq!(value, &rlp::NULL_RLP)
     }
