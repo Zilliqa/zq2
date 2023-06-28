@@ -1,8 +1,6 @@
 use ethabi::ethereum_types::U64;
 use ethers::abi::FunctionExt;
-use ethers::solc::EvmVersion;
 use ethers::{
-    prelude::{CompilerInput, DeploymentTxFactory},
     providers::{Middleware, Provider},
     types::{transaction::eip2718::TypedTransaction, BlockId, BlockNumber, TransactionRequest},
     utils::keccak256,

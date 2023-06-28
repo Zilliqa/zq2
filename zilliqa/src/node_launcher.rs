@@ -96,7 +96,7 @@ impl NodeLauncher {
             secret_key,
             message_sender.clone(),
             reset_timeout_sender.clone(),
-            MemoryDB::default(),
+            MemoryDB::new(false),
         )?;
         let node = Arc::new(Mutex::new(node));
 

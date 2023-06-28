@@ -1,5 +1,6 @@
 mod consensus;
 mod eth;
+mod ots;
 mod web3;
 
 use std::{
@@ -56,7 +57,7 @@ fn node(
         secret_key,
         message_sender,
         reset_timeout_sender,
-        MemoryDB::new(true),
+        MemoryDB::new(false),
     )
     .unwrap();
     let node = Arc::new(Mutex::new(node));
@@ -299,11 +300,13 @@ macro_rules! deploy_contract {
 
         let sc = ethers::solc::Solc::default();
 
-        let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
+        let mut compiler_input = ethers::solc::CompilerInput::new(contract_file.path()).unwrap();
         let compiler_input = compiler_input.first_mut().unwrap();
-        compiler_input.settings.evm_version = Some(EvmVersion::Paris);
+        compiler_input.settings.evm_version = Some(ethers::solc::EvmVersion::Paris);
 
-        let out = sc.compile::<CompilerInput>(compiler_input).unwrap();
+        let out = sc
+            .compile::<ethers::solc::CompilerInput>(compiler_input)
+            .unwrap();
 
         let contract = out
             .get(contract_file.path().to_str().unwrap(), $contract)
@@ -312,7 +315,7 @@ macro_rules! deploy_contract {
         let bytecode = contract.bytecode().unwrap().clone();
 
         // Deploy the contract.
-        let factory = DeploymentTxFactory::new(abi, bytecode, $wallet.clone());
+        let factory = ethers::contract::DeploymentTxFactory::new(abi, bytecode, $wallet.clone());
         let deployer = factory.deploy(()).unwrap();
         let abi = deployer.abi().clone();
         {

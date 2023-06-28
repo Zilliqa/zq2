@@ -262,6 +262,18 @@ pub struct OtterscanTransactions {
     pub last_page: bool,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtterscanContractCreator {
+    /// The tx hash of the transaction which created the contract.
+    pub hash: H256,
+    /// The address who directly created the contract. Note that for simple transactions that directly deploy a
+    /// contract this corresponds to the EOA in the from field of the transaction. For deployer contracts, i.e., the
+    /// contract is created as a result of a method call, this corresponds to the address of the contract who created
+    /// it.
+    pub creator: H160,
+}
+
 /// A transaction object, returned by the Ethereum API.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

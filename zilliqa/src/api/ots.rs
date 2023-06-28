@@ -4,17 +4,22 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+use evm_ds::evm::{
+    self,
+    tracing::{Event, EventListener},
+};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
 use serde::Deserialize;
 
-use crate::{crypto::Hash, node::Node, state::Address};
+use crate::{crypto::Hash, message::BlockNumber, node::Node, state::Address};
 
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},
     types::{
         EthTransaction, EthTransactionReceiptWithTimestamp, OtterscanBlockDetails,
-        OtterscanBlockTransactions, OtterscanBlockWithTransactions, OtterscanTransactions,
+        OtterscanBlockTransactions, OtterscanBlockWithTransactions, OtterscanContractCreator,
+        OtterscanTransactions,
     },
 };
 
@@ -26,6 +31,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("ots_getBlockDetails", get_block_details),
             ("ots_getBlockDetailsByHash", get_block_details_by_hash),
             ("ots_getBlockTransactions", get_block_transactions),
+            ("ots_getContractCreator", get_contract_creator),
             ("ots_hasCode", has_code),
             ("ots_searchTransactionsAfter", search_transactions_after),
             ("ots_searchTransactionsBefore", search_transactions_before),
@@ -105,6 +111,87 @@ fn get_block_transactions(
         full_block,
         receipts,
     }))
+}
+
+/// An [EventListener] which records the creator of a contract.
+#[derive(Default)]
+pub struct ContractCreatorListener {
+    pub contract: H160,
+    pub creator: Option<H160>,
+}
+
+impl EventListener for ContractCreatorListener {
+    fn event(&mut self, event: Event<'_>) {
+        match event {
+            Event::Create {
+                caller, address, ..
+            } if address == self.contract => {
+                self.creator = Some(caller);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn get_contract_creator(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<OtterscanContractCreator>> {
+    let address: H160 = params.one()?;
+    let address = Address(address);
+
+    let touched = node.lock().unwrap().get_touched_transactions(address);
+
+    // Perform a linear search over each transaction which touched this address. Replay each one to try and find the
+    // transaction which created it. In the future if this is slow, we should consider a smarter search strategy or
+    // another index.
+    for txn_hash in touched {
+        let receipt = node
+            .lock()
+            .unwrap()
+            .get_transaction_receipt(txn_hash)
+            .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
+
+        let txn = node
+            .lock()
+            .unwrap()
+            .get_transaction_by_hash(txn_hash)
+            .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
+
+        // Find the view in which this contract was executed. It is one less than the block in the receipt.
+        let view = node
+            .lock()
+            .unwrap()
+            .get_block_by_hash(receipt.block_hash)
+            .ok_or_else(|| anyhow!("block not found"))?
+            .view()
+            - 1;
+
+        let mut listener = ContractCreatorListener {
+            contract: address.0,
+            creator: None,
+        };
+
+        // Replay the creation transaction to work out the creator. This is important for contracts which are
+        // created by other contracts, for which the creator is not the same as `txn.from_addr`.
+        evm::tracing::using(&mut listener, || {
+            node.lock().unwrap().call_contract(
+                BlockNumber::Number(view),
+                txn.from_addr,
+                txn.transaction.to_addr,
+                txn.transaction.payload,
+            )
+        })?;
+
+        if let Some(creator) = listener.creator {
+            return Ok(Some(OtterscanContractCreator {
+                hash: H256(txn_hash.0),
+                creator,
+            }));
+        }
+    }
+
+    Ok(None)
 }
 
 #[derive(Deserialize)]
