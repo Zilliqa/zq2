@@ -163,4 +163,5 @@ async fn send_transaction(mut network: Network<'_>) {
         .unwrap();
 
     assert_eq!(receipt.to.unwrap(), to);
+    assert_eq!(receipt.from, wallet.address());
 }

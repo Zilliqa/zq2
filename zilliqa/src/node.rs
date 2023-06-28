@@ -137,8 +137,8 @@ impl Node {
 
     pub fn call_contract(
         &self,
-        caller: Address,
-        contract: Address,
+        from_addr: Address,
+        to_addr: Option<Address>,
         data: Vec<u8>,
     ) -> Result<Vec<u8>> {
         let current_block = self
@@ -146,8 +146,8 @@ impl Node {
             .ok_or_else(|| anyhow!("no blocks"))?
             .header;
         self.consensus.state().call_contract(
-            caller,
-            contract,
+            from_addr,
+            to_addr,
             data,
             self.config.eth_chain_id,
             current_block,
