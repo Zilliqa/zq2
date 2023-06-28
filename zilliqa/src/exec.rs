@@ -375,12 +375,14 @@ impl State {
     ) -> Result<Vec<u8>> {
         let context = self.call_context(U256::zero(), from_addr.0, chain_id, current_block);
 
-        let Some(to_addr) = to_addr else { return Ok(vec![]); };
-
         let mut executor = self.executor(&context, u64::MAX);
 
-        let (reason, data) =
-            executor.transact_call(from_addr.0, to_addr.0, 0.into(), data, u64::MAX, vec![]);
+        let (reason, data) = if let Some(to_addr) = to_addr {
+            executor.transact_call(from_addr.0, to_addr.0, 0.into(), data, u64::MAX, vec![])
+        } else {
+            executor.transact_create(from_addr.0, 0.into(), data, u64::MAX, vec![])
+        };
+
         match reason {
             ExitReason::Succeed(_) | ExitReason::Revert(_) | ExitReason::Error(_) => Ok(data),
             ExitReason::Fatal(e) => Err(anyhow!("EVM fatal error: {e:?}")),
