@@ -101,8 +101,9 @@ impl State {
 
     /// As get_account, but panics if account cannot be read.
     pub fn must_get_account(&self, address: Address) -> Account {
-        self.get_account(address)
-            .expect("Failed to read account {address:?} from state storage")
+        self.get_account(address).unwrap_or_else(|e| {
+            panic!("Failed to read account {address:?} from state storage: {e:?}")
+        })
     }
 
     /// If using this to modify the account, ensure save_account gets called
