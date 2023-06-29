@@ -223,7 +223,6 @@ fn get_block_transaction_count_by_number(
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<String>> {
     let block_number: BlockNumber = params.one()?;
-    println!("  Getitng tx count by number: {block_number}...");
 
     let node = node.lock().unwrap();
     let block = match block_number {
@@ -252,9 +251,9 @@ pub(super) fn get_transaction_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
 ) -> Result<Option<EthTransaction>> {
-    let Some(signed_transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
-    let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
+    let Some(receipt) = node.get_transaction_receipt(hash)? else { return Ok(None); };
     let Some(block) = node.get_block_by_hash(receipt.block_hash)? else { return Ok(None); };
 
     let transaction = signed_transaction.transaction;
@@ -291,9 +290,9 @@ pub(super) fn get_transaction_receipt_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
 ) -> Result<Option<EthTransactionReceipt>> {
-    let Some(signed_transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
-    let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
+    let Some(receipt) = node.get_transaction_receipt(hash)? else { return Ok(None); };
     let Some(block) = node.get_block_by_hash(receipt.block_hash)? else { return Ok(None); };
 
     let transaction_hash = H256(hash.0);

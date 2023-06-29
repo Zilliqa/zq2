@@ -122,7 +122,7 @@ impl Node {
         txn.verify()?;
 
         // Make sure TX hasn't been seen before
-        if !self.consensus.seen_tx_already(&hash) {
+        if !self.consensus.seen_tx_already(&hash)? {
             self.broadcast_message(Message::NewTransaction(txn))?;
         }
 
@@ -176,15 +176,15 @@ impl Node {
         self.consensus.maybe_get_block(&hash)
     }
 
-    pub fn get_transaction_receipt(&self, hash: Hash) -> Option<TransactionReceipt> {
+    pub fn get_transaction_receipt(&self, hash: Hash) -> Result<Option<TransactionReceipt>> {
         self.consensus.get_transaction_receipt(hash)
     }
 
-    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<SignedTransaction> {
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<SignedTransaction>> {
         self.consensus.get_transaction_by_hash(hash)
     }
 
-    pub fn get_touched_transactions(&self, address: Address) -> Vec<Hash> {
+    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
         self.consensus.get_touched_transactions(address)
     }
 

@@ -138,7 +138,7 @@ fn search_transactions_inner(
     page_size: usize,
     reverse: bool,
 ) -> Result<OtterscanTransactions> {
-    let mut touched = node.lock().unwrap().get_touched_transactions(address);
+    let mut touched = node.lock().unwrap().get_touched_transactions(address)?;
 
     // If searching in reverse, we should start with the most recent transaction and work backwards.
     if reverse {

@@ -1,8 +1,5 @@
 use primitive_types::H256;
-use std::{
-    collections::{btree_map::Entry, BTreeMap},
-    time::SystemTime,
-};
+use std::{collections::BTreeMap, time::SystemTime};
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
@@ -30,8 +27,14 @@ const STATE_TRIE_TREE: &[u8] = b"state_trie";
 const BLOCK_HEADERS_TREE: &[u8] = b"block_headers_tree";
 /// Key: block number (on the finalized branch); value: block hash
 const CANONICAL_BLOCK_NUMBERS_TREE: &[u8] = b"canonical_block_numbers_tree";
-/// Key: block hash; value: entire block
+/// Key: block hash; value: entire block (with hashes for transactions)
 const BLOCKS_TREE: &[u8] = b"blocks_tree";
+/// Key: transaction hash; value: transaction data
+const TXS_TREE: &[u8] = b"txs_tree";
+/// Key: tx hash; value: receipt for it
+const RECEIPTS_TREE: &[u8] = b"receipts_tree";
+/// Key: address; value: Vec<tx hash where this address was touched>
+const ADDR_TOUCHED_INDEX: &[u8] = b"addresses_touched_index";
 
 // single keys stored in default tree in DB
 /// value: block hash
@@ -75,15 +78,15 @@ pub struct Consensus {
     new_transactions: BTreeMap<Hash, SignedTransaction>,
     /// Transactions that have been executed and included in a block, and the blocks the are
     /// included in.
-    transactions: BTreeMap<Hash, SignedTransaction>, // TODO: move to Sled
-    transaction_receipts: BTreeMap<Hash, TransactionReceipt>, // TODO: move to Sled
+    transactions: Tree,
+    transaction_receipts: Tree,
     /// The account store.
     state: State,
     /// The persistence database
     db: Db,
     /// An index of address to a list of transaction hashes, for which this address appeared somewhere in the
     /// transaction trace. The list of transations is ordered by execution order.
-    touched_address_index: BTreeMap<Address, Vec<Hash>>,
+    touched_address_index: Tree,
 }
 
 impl Consensus {
@@ -100,8 +103,6 @@ impl Consensus {
         };
 
         let block_headers = db.open_tree(BLOCK_HEADERS_TREE)?;
-        let canonical_block_numbers = db.open_tree(CANONICAL_BLOCK_NUMBERS_TREE)?;
-        let blocks = db.open_tree(BLOCKS_TREE)?;
         let state_trie = db.open_tree(STATE_TRIE_TREE)?;
 
         let latest_block_header = if let Some(ivec) = db.get(LATEST_FINIALIZED_BLOCK_HASH)? {
@@ -123,13 +124,26 @@ impl Consensus {
         let latest_block_header = latest_block_header.unwrap_or(BlockHeader::genesis());
         info!("Loading state at height {}", latest_block_header.view);
 
+        let touched_address_index = db.open_tree(ADDR_TOUCHED_INDEX)?;
+        touched_address_index.set_merge_operator(|_k, old_value, additional_value| {
+            // We unwrap all errors as we assume that the serialization should always be correct.
+            // TODO: maybe use a smarter packing rather than calling bincode twice every time?
+            let mut vec = if let Some(old_value) = old_value {
+                bincode::deserialize::<Vec<Hash>>(old_value).unwrap()
+            } else {
+                vec![]
+            };
+            vec.push(Hash(additional_value.try_into().unwrap()));
+            Some(bincode::serialize(&vec).unwrap())
+        });
+
         Ok(Consensus {
             secret_key,
             config,
             committee: vec![validator],
             block_headers,
-            canonical_block_numbers,
-            blocks,
+            canonical_block_numbers: db.open_tree(CANONICAL_BLOCK_NUMBERS_TREE)?,
+            blocks: db.open_tree(BLOCKS_TREE)?,
             votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
             high_qc: None,
@@ -137,11 +151,11 @@ impl Consensus {
             finalized: latest_block_header.hash,
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
-            transactions: BTreeMap::new(),
-            transaction_receipts: BTreeMap::new(),
+            transactions: db.open_tree(TXS_TREE)?,
+            transaction_receipts: db.open_tree(RECEIPTS_TREE)?,
             state,
             db,
-            touched_address_index: BTreeMap::new(),
+            touched_address_index,
         })
     }
 
@@ -280,7 +294,8 @@ impl Consensus {
                         contract_address: result.contract_address,
                         logs: result.logs,
                     };
-                    self.transaction_receipts.insert(txn.hash(), receipt);
+                    self.transaction_receipts
+                        .insert(txn.hash().0, bincode::serialize(&receipt)?)?;
                 }
             }
             if self.state.root_hash()? != block_state_root {
@@ -318,7 +333,7 @@ impl Consensus {
 
         // If we haven't applied the transaction yet, do so. This ensures we don't execute the transaction twice if we
         // already executed it in the process of proposing this block.
-        if let Entry::Vacant(entry) = self.transactions.entry(hash) {
+        if !self.transactions.contains_key(hash.0)? {
             let mut listener = TouchedAddressEventListener::default();
             let result = evm::tracing::using(&mut listener, || {
                 self.state.apply_transaction(
@@ -328,12 +343,10 @@ impl Consensus {
                     current_block,
                 )
             })?;
-            entry.insert(txn);
+            self.transactions
+                .insert(hash.0, bincode::serialize(&txn)?)?;
             for address in listener.touched {
-                self.touched_address_index
-                    .entry(Address(address))
-                    .or_default()
-                    .push(hash);
+                self.touched_address_index.merge(address.0, hash.0)?;
             }
             Ok(Some(result))
         } else {
@@ -341,11 +354,12 @@ impl Consensus {
         }
     }
 
-    pub fn get_touched_transactions(&self, address: Address) -> Vec<Hash> {
+    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
         self.touched_address_index
-            .get(&address)
-            .cloned()
-            .unwrap_or_default()
+            .get(address.0)?
+            .map(|encoded| Ok(bincode::deserialize::<Vec<Hash>>(&encoded)?))
+            .transpose()
+            .map(|opt| opt.unwrap_or_default())
     }
 
     pub fn vote(
@@ -427,20 +441,24 @@ impl Consensus {
                     SystemTime::max(SystemTime::now(), parent_header.timestamp),
                 );
 
-                let applied_transactions: Vec<_> = applied_transactions
+                let applied_transactions: Result<Vec<_>> = applied_transactions
                     .into_iter()
                     .map(|(tx, success, contract_address, logs)| {
-                        self.transactions.insert(tx.hash(), tx.clone());
+                        self.transactions
+                            .insert(tx.hash().0, bincode::serialize(&tx)?)?;
                         let receipt = TransactionReceipt {
                             block_hash: proposal.hash(),
                             success,
                             contract_address,
                             logs,
                         };
-                        self.transaction_receipts.insert(tx.hash(), receipt);
-                        tx
+                        self.transaction_receipts
+                            .insert(tx.hash().0, bincode::serialize(&receipt)?)?;
+                        Ok(tx)
                     })
                     .collect();
+
+                let applied_transactions = applied_transactions?;
 
                 // as a future improvement, process the proposal before broadcasting it
                 trace!("vote successful");
@@ -556,12 +574,18 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<SignedTransaction> {
-        Some(self.transactions.get(&hash)?.clone())
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<SignedTransaction>> {
+        self.transactions
+            .get(hash.0)?
+            .map(|encoded| Ok(bincode::deserialize::<SignedTransaction>(&encoded)?))
+            .transpose()
     }
 
-    pub fn get_transaction_receipt(&self, hash: Hash) -> Option<TransactionReceipt> {
-        Some(self.transaction_receipts.get(&hash)?.clone())
+    pub fn get_transaction_receipt(&self, hash: Hash) -> Result<Option<TransactionReceipt>> {
+        self.transaction_receipts
+            .get(hash.0)?
+            .map(|encoded| Ok(bincode::deserialize::<TransactionReceipt>(&encoded)?))
+            .transpose()
     }
 
     fn save_highest_view(&self, block_hash: Hash, view: u64) -> Result<()> {
@@ -729,12 +753,10 @@ impl Consensus {
     }
 
     pub fn maybe_get_block(&self, key: &Hash) -> Result<Option<Block>> {
-        let encoded = self.blocks.get(key.0)?;
-        if let Some(encoded) = encoded {
-            Ok(Some(bincode::deserialize::<Block>(&encoded)?))
-        } else {
-            Ok(None)
-        }
+        self.blocks
+            .get(key.0)?
+            .map(|encoded| Ok(bincode::deserialize::<Block>(&encoded)?))
+            .transpose()
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
@@ -759,8 +781,8 @@ impl Consensus {
         &self.state
     }
 
-    pub fn seen_tx_already(&self, hash: &Hash) -> bool {
-        self.new_transactions.contains_key(hash) || self.transactions.contains_key(hash)
+    pub fn seen_tx_already(&self, hash: &Hash) -> Result<bool> {
+        Ok(self.new_transactions.contains_key(hash) || self.transactions.contains_key(hash.0)?)
     }
 
     fn get_highest_from_agg<'a>(&self, agg: &'a AggregateQc) -> Result<&'a QuorumCertificate> {

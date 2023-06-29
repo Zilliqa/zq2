@@ -31,6 +31,7 @@ use rand_chacha::ChaCha8Rng;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tracing::trace;
 use zilliqa::{cfg::Config, crypto::SecretKey, message::Message, node::Node};
 
 fn node(
@@ -166,7 +167,7 @@ impl<'r> Network<'r> {
             }
         }
 
-        println!(
+        trace!(
             "{} possible messages to send ({:?})",
             messages.len(),
             messages
@@ -186,7 +187,7 @@ impl<'r> Network<'r> {
             self.resend_message.send(message).unwrap();
         }
 
-        println!(
+        trace!(
             "{}",
             format_message(&self.nodes, source, destination, &message)
         );
