@@ -73,7 +73,7 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     let return_value = node.lock().unwrap().call_contract(
         Address(call_params.from),
-        Address(call_params.to),
+        call_params.to.map(Address),
         call_params.data,
     )?;
 
@@ -274,8 +274,7 @@ pub(super) fn get_transaction_inner(
         hash: H256(hash.0),
         input: transaction.payload.clone(),
         nonce: transaction.nonce,
-        // `to` should be `None` if `transaction` is a contract creation.
-        to: (transaction.to_addr != Address::DEPLOY_CONTRACT).then_some(transaction.to_addr.0),
+        to: transaction.to_addr.map(|a| a.0),
         transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
         value: transaction.amount,
         v,
@@ -332,7 +331,7 @@ pub(super) fn get_transaction_receipt_inner(
         block_hash,
         block_number,
         from: signed_transaction.from_addr.0,
-        to: transaction.to_addr.0,
+        to: transaction.to_addr.map(|a| a.0),
         cumulative_gas_used: 0,
         effective_gas_price: 0,
         gas_used: 1,
@@ -389,7 +388,7 @@ fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<SignedTransaction
         nonce,
         gas_price,
         gas_limit,
-        to_addr: Address::from_slice(&to_addr),
+        to_addr: (!to_addr.is_empty()).then_some(Address::from_slice(&to_addr)),
         amount,
         payload,
     };
@@ -436,7 +435,7 @@ mod tests {
         assert_eq!(tx.gas_price, 20 * 10u128.pow(9));
         assert_eq!(tx.gas_limit, 21000u64);
         assert_eq!(
-            tx.to_addr,
+            tx.to_addr.unwrap(),
             Address(
                 "0x3535353535353535353535353535353535353535"
                     .parse::<H160>()
