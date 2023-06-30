@@ -85,6 +85,7 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
         provider: &Provider<LocalRpcClient>,
         number: T,
     ) -> u64 {
+        println!("Getting COUNT by NUMER {number:?}");
         provider
             .request::<_, U64>("eth_getBlockTransactionCountByNumber", [number])
             .await
@@ -93,13 +94,19 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
     }
 
     async fn count_by_hash(provider: &Provider<LocalRpcClient>, hash: H256) -> u64 {
+        println!("Getting COUNT by HASG {hash}");
         provider
             .request::<_, U64>("eth_getBlockTransactionCountByHash", [hash])
             .await
             .unwrap()
             .as_u64()
     }
+    network
+        .run_until(|n| n.node().view() > 1, 50)
+        .await
+        .unwrap();
 
+    println!("SENDING the tx...");
     // Send a transaction.
     let hash = wallet
         .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
@@ -107,6 +114,7 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
         .unwrap()
         .tx_hash();
 
+    println!("SNET! now waiting....");
     network
         .run_until_async(
             || async {
@@ -120,6 +128,7 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
         )
         .await
         .unwrap();
+    println!("GOt RECEOT!");
 
     let receipt = provider
         .get_transaction_receipt(hash)

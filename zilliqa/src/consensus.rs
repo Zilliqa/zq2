@@ -1,4 +1,5 @@
 use eth_trie::MemoryDB;
+use primitive_types::H256;
 use std::sync::Arc;
 use std::{
     collections::{btree_map::Entry, BTreeMap},
@@ -662,6 +663,17 @@ impl Consensus {
 
     pub fn state(&self) -> &State {
         &self.state
+    }
+
+    pub fn state_at(&self, view: u64) -> Option<State> {
+        let root_hash = self.get_block_by_view(view)?.state_root_hash();
+        println!("Getting state at height {view}, with root hash {root_hash}");
+        Some(self.state.at_root(H256(root_hash.0)))
+    }
+
+    pub fn try_get_state_at(&self, view: u64) -> Result<State> {
+        self.state_at(view)
+            .ok_or_else(|| anyhow!("No block at height {view}"))
     }
 
     pub fn seen_tx_already(&self, hash: &Hash) -> bool {
