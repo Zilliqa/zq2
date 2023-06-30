@@ -123,6 +123,11 @@ impl Node {
 
         txn.verify()?;
 
+        if hash.to_string() == "bc542288235806bff2c322dc7706b2d41e930997b5af37657a454e889a4bc456" {
+            println!("TX hash: {}", hash);
+            //panic!("xxx")
+        }
+
         // Make sure TX hasn't been seen before
         if !self.consensus.seen_tx_already(&hash) {
             self.broadcast_message(Message::NewTransaction(txn))?;

@@ -7,10 +7,12 @@ build = "src/build.rs"
 [lib]
 name = "zilliqa"
 path = "src/lib.rs"
+build = "src/build.rs"
 
 [[bin]]
 name = "zilliqa"
 path = "src/bin/zilliqa.rs"
+build = "src/build.rs"
 
 [features]
 # Enable tests which assert contract bytecode is correct and reproducible. Enabled in CI.

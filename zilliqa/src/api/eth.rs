@@ -6,7 +6,6 @@ use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
-use serde_json::json;
 
 use crate::{
     crypto::Hash,
@@ -54,7 +53,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_getUncleCountByBlockNumber", get_uncle_count),
             ("eth_getUncleByBlockHashAndIndex", get_uncle),
             ("eth_getUncleByBlockNumberAndIndex", get_uncle),
-            ("eth_mining", eth_mining),
+            ("eth_miningy", eth_mining),
             ("eth_protocolVersion", eth_protocol_version),
             ("eth_syncing", eth_syncing),
         ],
