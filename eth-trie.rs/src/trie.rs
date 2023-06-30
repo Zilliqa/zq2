@@ -411,6 +411,7 @@ where
         let partial = &path.offset(path_index);
         match source_node {
             Node::Empty => Ok(None),
+            Node::Hash(hash_node) if hash_node.hash == KECCAK_NULL_RLP => Ok(None),
             Node::Leaf(leaf) => {
                 if &leaf.key == partial {
                     Ok(Some(leaf.value.clone()))
