@@ -105,7 +105,6 @@ pub struct TransactionApplyResult {
 }
 
 impl TransactionApplyResult {
-    #[allow(dead_code)]
     fn failed() -> TransactionApplyResult {
         TransactionApplyResult {
             success: false,
