@@ -9,17 +9,14 @@ use rlp::Rlp;
 
 use crate::{
     crypto::Hash,
-    message::Block,
+    message::{Block, BlockNumber},
     node::Node,
     state::{Address, SignedTransaction, SigningInfo, Transaction},
 };
 
 use super::{
     to_hex::ToHex,
-    types::{
-        BlockNumber, CallParams, EthBlock, EthTransaction, EthTransactionReceipt,
-        HashOrTransaction, Log,
-    },
+    types::{CallParams, EthBlock, EthTransaction, EthTransactionReceipt, HashOrTransaction, Log},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -68,10 +65,10 @@ fn block_number(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
-    // TODO: #226
-    let _block_number: BlockNumber = params.next()?;
+    let block_number: BlockNumber = params.next()?;
 
     let return_value = node.lock().unwrap().call_contract(
+        block_number,
         Address(call_params.from),
         call_params.to.map(Address),
         call_params.data,
