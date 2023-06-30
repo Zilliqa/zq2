@@ -164,7 +164,6 @@ async fn eth_call() {
     let provider = network.provider(0);
     let wallet = random_wallet(provider.clone());
 
-    // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
     let (hash, abi) = deploy_contract!(
         "contracts/SimpleContract.sol",
         "SimpleContract",
