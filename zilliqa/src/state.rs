@@ -124,8 +124,9 @@ impl State {
 
     /// As get_account, but panics if account cannot be read.
     pub fn must_get_account(&self, address: Address) -> Account {
-        self.get_account(address)
-            .expect("Failed to read account {address:?} from state storage")
+        self.get_account(address).unwrap_or_else(|e| {
+            panic!("Failed to read account {address:?} from state storage: {e:?}")
+        })
     }
 
     /// If using this to modify the account, ensure save_account gets called
@@ -222,8 +223,7 @@ impl State {
 pub struct Address(pub H160);
 
 impl Address {
-    /// Address of the contract which allows you to deploy other contracts.
-    pub const DEPLOY_CONTRACT: Address = Address(H160::zero());
+    pub const ZERO: Address = Address(H160::zero());
 
     /// Address of the native token ERC-20 contract.
     pub const NATIVE_TOKEN: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"));
@@ -295,7 +295,11 @@ impl SignedTransaction {
                 rlp.append(&txn.nonce)
                     .append(&txn.gas_price)
                     .append(&txn.gas_limit)
-                    .append(&txn.to_addr.as_bytes().to_vec())
+                    .append(
+                        &txn.to_addr
+                            .map(|a| a.as_bytes().to_vec())
+                            .unwrap_or_default(),
+                    )
                     .append(&txn.amount)
                     .append(&txn.payload);
                 if use_eip155 {
@@ -338,7 +342,11 @@ fn verify(txn: &Transaction, signing_info: &SigningInfo) -> Result<Address> {
             rlp.append(&txn.nonce)
                 .append(&txn.gas_price)
                 .append(&txn.gas_limit)
-                .append(&txn.to_addr.as_bytes().to_vec())
+                .append(
+                    &txn.to_addr
+                        .map(|a| a.as_bytes().to_vec())
+                        .unwrap_or_default(),
+                )
                 .append(&txn.amount)
                 .append(&txn.payload);
             if use_eip155 {
@@ -383,7 +391,7 @@ pub struct Transaction {
     pub nonce: u64,
     pub gas_price: u128,
     pub gas_limit: u64,
-    pub to_addr: Address,
+    pub to_addr: Option<Address>,
     pub amount: u128,
     pub payload: Vec<u8>,
 }

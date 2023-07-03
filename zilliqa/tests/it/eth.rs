@@ -4,7 +4,7 @@ use ethabi::ethereum_types::U64;
 use ethers::{
     prelude::DeploymentTxFactory,
     providers::{Middleware, Provider},
-    types::{transaction::eip2718::TypedTransaction, TransactionRequest},
+    types::{transaction::eip2718::TypedTransaction, BlockId, BlockNumber, TransactionRequest},
     utils::keccak256,
 };
 use primitive_types::{H160, H256};
@@ -12,6 +12,70 @@ use serde::Serialize;
 use zilliqa::crypto::SecretKey;
 
 use crate::{deploy_contract, node, LocalRpcClient, Network};
+
+#[zilliqa_macros::test]
+async fn call(mut network: Network<'_>) {
+    let wallet = network.random_wallet();
+
+    let (hash, abi) = deploy_contract!("contracts/CallMe.sol", "CallMe", wallet, network);
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+
+    let function = abi.function("currentBlock").unwrap();
+    let call_tx = TransactionRequest::new()
+        .to(receipt.contract_address.unwrap())
+        .data(function.encode_input(&[]).unwrap());
+
+    // Query the current block number with an `eth_call`.
+    let response = wallet.call(&call_tx.clone().into(), None).await.unwrap();
+    let block_number = function.decode_output(&response).unwrap()[0]
+        .clone()
+        .into_uint()
+        .unwrap()
+        .as_u64();
+
+    // Verify it is correct.
+    let expected_block_number = wallet.get_block_number().await.unwrap().as_u64();
+    assert_eq!(block_number, expected_block_number);
+
+    // Advance the network to the next block.
+    network
+        .run_until_async(
+            || async { wallet.get_block_number().await.unwrap().as_u64() > block_number },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Query the current block number with an `eth_call`.
+    let response = wallet.call(&call_tx.clone().into(), None).await.unwrap();
+    let new_block_number = function.decode_output(&response).unwrap()[0]
+        .clone()
+        .into_uint()
+        .unwrap()
+        .as_u64();
+
+    // Verify it is correct.
+    let expected_block_number = wallet.get_block_number().await.unwrap().as_u64();
+    assert_eq!(new_block_number, expected_block_number);
+
+    // Query the block number at the old block with an `eth_call`.
+    let response = wallet
+        .call(
+            &call_tx.clone().into(),
+            Some(BlockId::Number(BlockNumber::Number(block_number.into()))),
+        )
+        .await
+        .unwrap();
+    let old_block_number = function.decode_output(&response).unwrap()[0]
+        .clone()
+        .into_uint()
+        .unwrap()
+        .as_u64();
+
+    // Verify it used the state from the old block.
+    assert_eq!(old_block_number, block_number);
+}
 
 #[zilliqa_macros::test]
 async fn get_block_transaction_count(mut network: Network<'_>) {
@@ -106,26 +170,15 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
 
 #[zilliqa_macros::test]
 async fn get_storage_at(mut network: Network<'_>) {
-    let provider = network.provider();
     let wallet = network.random_wallet();
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
-    let hash = deploy_contract!(
-        "contracts/Storage.sol",
-        "Storage",
-        wallet,
-        provider,
-        network,
-    );
+    let (hash, _) = deploy_contract!("contracts/Storage.sol", "Storage", wallet, network);
 
-    let receipt = provider
-        .get_transaction_receipt(hash)
-        .await
-        .unwrap()
-        .unwrap();
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let contract_address = receipt.contract_address.unwrap();
 
-    let value = provider
+    let value = wallet
         .get_storage_at(contract_address, H256::zero(), None)
         .await
         .unwrap();
@@ -138,7 +191,7 @@ async fn get_storage_at(mut network: Network<'_>) {
     bytes.extend_from_slice(&[0; 31]);
     bytes.push(1);
     let position = H256::from_slice(&ethers::utils::keccak256(bytes));
-    let value = provider
+    let value = wallet
         .get_storage_at(contract_address, position, None)
         .await
         .unwrap();
@@ -186,4 +239,5 @@ async fn send_transaction(mut network: Network<'_>) {
         .unwrap();
 
     assert_eq!(receipt.to.unwrap(), to);
+    assert_eq!(receipt.from, wallet.address());
 }

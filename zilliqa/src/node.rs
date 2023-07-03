@@ -1,4 +1,7 @@
-use crate::state::{SignedTransaction, TransactionReceipt};
+use crate::{
+    message::BlockNumber,
+    state::{SignedTransaction, TransactionReceipt},
+};
 use primitive_types::H256;
 
 use anyhow::{anyhow, Result};
@@ -137,22 +140,36 @@ impl Node {
         self.consensus.view()
     }
 
+    fn get_view(&self, block_number: BlockNumber) -> u64 {
+        match block_number {
+            BlockNumber::Number(n) => n,
+            BlockNumber::Earliest => 0,
+            BlockNumber::Latest => self.view() - 1,
+            _ => todo!(),
+        }
+    }
+
     pub fn call_contract(
         &self,
-        caller: Address,
-        contract: Address,
+        block_number: BlockNumber,
+        from_addr: Address,
+        to_addr: Option<Address>,
         data: Vec<u8>,
     ) -> Result<Vec<u8>> {
-        let current_block = self
-            .get_latest_block()?
-            .ok_or_else(|| anyhow!("no blocks"))?
-            .header;
-        self.consensus.state().call_contract(
-            caller,
-            contract,
+        let block = self
+            .get_block_by_view(self.get_view(block_number))?
+            .ok_or_else(|| anyhow!("block not found"))?;
+        let state = self
+            .consensus
+            .state()
+            .at_root(H256(block.state_root_hash().0));
+
+        state.call_contract(
+            from_addr,
+            to_addr,
             data,
             self.config.eth_chain_id,
-            current_block,
+            block.header,
         )
     }
 
