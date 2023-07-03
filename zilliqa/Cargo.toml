@@ -16,7 +16,7 @@ path = "src/bin/zilliqa.rs"
 test_contract_bytecode = []
 
 [build-dependencies]
-vergen = { version = "8.2.1", features = ["git", "gitcl"] }
+vergen = { version = "8.2.3", features = ["git", "gitcl"] }
 
 [dependencies]
 anyhow = { version = "1.0.71", features = ["backtrace"] }
