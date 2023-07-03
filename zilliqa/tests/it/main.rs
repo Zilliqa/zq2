@@ -1,5 +1,6 @@
 mod consensus;
 mod eth;
+mod persistence;
 mod web3;
 
 use std::{
@@ -29,6 +30,7 @@ use libp2p::PeerId;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
 use serde::{de::DeserializeOwned, Serialize};
+use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::trace;
@@ -37,6 +39,7 @@ use zilliqa::{cfg::Config, crypto::SecretKey, message::Message, node::Node};
 fn node(
     secret_key: SecretKey,
     index: usize,
+    datadir: TempDir,
 ) -> (
     TestNode,
     BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
@@ -53,7 +56,7 @@ fn node(
 
     let node = Node::new(
         Config {
-            data_dir: None,
+            data_dir: Some(datadir.path().to_str().unwrap().to_string()),
             ..Config::default()
         },
         secret_key,
@@ -63,6 +66,10 @@ fn node(
     .unwrap();
     let node = Arc::new(Mutex::new(node));
     let rpc_module: RpcModule<Arc<Mutex<Node>>> = zilliqa::api::rpc_module(node.clone());
+    let rpc_client = Provider::new(LocalRpcClient {
+        id: Arc::new(AtomicU64::new(0)),
+        rpc_module: rpc_module.clone(),
+    });
 
     (
         TestNode {
@@ -70,7 +77,8 @@ fn node(
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             secret_key,
             inner: node,
-            rpc_module,
+            dir: datadir,
+            rpc_client,
         },
         message_receiver,
     )
@@ -82,7 +90,8 @@ struct TestNode {
     secret_key: SecretKey,
     peer_id: PeerId,
     inner: Arc<Mutex<Node>>,
-    rpc_module: RpcModule<Arc<Mutex<Node>>>,
+    dir: TempDir,
+    rpc_client: Provider<LocalRpcClient>,
 }
 
 struct Network<'r> {
@@ -107,7 +116,7 @@ impl<'r> Network<'r> {
         let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
-            .map(|(i, key)| node(key, i))
+            .map(|(i, key)| node(key, i, tempfile::tempdir().unwrap()))
             .unzip();
 
         for node in &nodes {
@@ -263,12 +272,16 @@ impl<'r> Network<'r> {
         self.nodes.choose(self.rng).unwrap().inner.lock().unwrap()
     }
 
+    pub fn remove_node(&mut self) -> TestNode {
+        let idx = self.rng.gen_range(0..self.nodes.len());
+        self.receivers.remove(idx);
+        self.nodes.remove(idx)
+        // node.inner.lock().unwrap().flush_to_disk().unwrap();
+        // node.dir
+    }
+
     pub fn provider(&mut self) -> Provider<LocalRpcClient> {
-        let client = LocalRpcClient {
-            id: Arc::new(AtomicU64::new(0)),
-            rpc_module: self.nodes.choose(self.rng).unwrap().rpc_module.clone(),
-        };
-        Provider::new(client)
+        self.nodes.choose(self.rng).unwrap().rpc_client.clone()
     }
 
     pub fn random_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {

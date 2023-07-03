@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, thread, time::Duration};
 
 use ethabi::ethereum_types::U64;
 use ethers::{
@@ -9,8 +9,9 @@ use ethers::{
 };
 use primitive_types::{H160, H256};
 use serde::Serialize;
+use zilliqa::crypto::SecretKey;
 
-use crate::{deploy_contract, LocalRpcClient, Network};
+use crate::{deploy_contract, node, LocalRpcClient, Network};
 
 #[zilliqa_macros::test]
 async fn get_block_transaction_count(mut network: Network<'_>) {
@@ -67,7 +68,6 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
         .await
         .unwrap()
         .unwrap();
-    println!("unwrapped receipt: {receipt:?}");
     let block_hash = receipt.block_hash.unwrap();
     println!("hash is {block_hash}");
     let block_number = receipt.block_number.unwrap();
@@ -86,6 +86,21 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
     // The latest block is the one with our transaction, because we stopped running the network after our receipt
     // appeared. So the latest block should also have a count of one.
     let count = count_by_number(&provider, "latest").await;
+    assert_eq!(count, 1);
+
+    // network.run_until(|n| n.node().view() >= 3, 50); // finalize the block so it gets saved
+
+    println!("Killing node...");
+    let dir = network.remove_node().dir;
+    thread::sleep(Duration::from_secs(3));
+    let (newnode, _) = node(SecretKey::new().unwrap(), 0, dir);
+    println!("Made new node!");
+    let newprovider = newnode.rpc_client;
+    println!(
+        "Trying out new node! It's got view {}",
+        newnode.inner.lock().unwrap().view()
+    );
+    let count = count_by_hash(&newprovider, block_hash).await;
     assert_eq!(count, 1);
 }
 

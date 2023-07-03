@@ -97,6 +97,11 @@ impl Consensus {
             weight: 100,
         };
 
+        println!(
+            "Construcing consensus and open DB at path {:?}",
+            config.data_dir
+        );
+
         let db = match &config.data_dir {
             Some(path) => sled::open(path)?,
             None => sled::Config::new().temporary(true).open()?,
@@ -122,7 +127,7 @@ impl Consensus {
         };
 
         let latest_block_header = latest_block_header.unwrap_or(BlockHeader::genesis());
-        info!("Loading state at height {}", latest_block_header.view);
+        println!("Loading state at height {}", latest_block_header.view);
 
         let touched_address_index = db.open_tree(ADDR_TOUCHED_INDEX)?;
         touched_address_index.set_merge_operator(|_k, old_value, additional_value| {
@@ -157,6 +162,16 @@ impl Consensus {
             db,
             touched_address_index,
         })
+    }
+
+    pub fn flush_to_disk(&self) -> Result<()> {
+        self.db.flush()?;
+        self.block_headers.flush()?;
+        self.canonical_block_numbers.flush()?;
+        self.blocks.flush()?;
+        self.transactions.flush()?;
+        self.transaction_receipts.flush()?;
+        Ok(())
     }
 
     fn update_view(&mut self, view: u64) {
@@ -208,6 +223,8 @@ impl Consensus {
             // treat genesis as finalized
             self.db
                 .insert(LATEST_FINIALIZED_BLOCK_HASH, &genesis.hash().0)?;
+            self.finalized = genesis.hash();
+            println!("Setting finalized to genesis");
             self.update_view(1);
             let vote = self.vote_from_block(&genesis);
             let leader = self.get_leader(self.view).peer_id;
@@ -695,8 +712,22 @@ impl Consensus {
 
     fn check_and_commit(&mut self, proposal_hash: Hash) -> Result<()> {
         let Ok(proposal) = self.get_block(&proposal_hash) else { return Ok(()); };
+        println!(
+            "Got proposal w/ hash {} from proposal_hash {proposal_hash}",
+            proposal.hash()
+        );
         let Ok(prev_1) = self.get_block(&proposal.qc.block_hash) else { return Ok(()); };
+        println!(
+            "Got prev_1 w/ hash {} from proposal qc hash {}",
+            prev_1.hash(),
+            proposal.qc.block_hash
+        );
         let Ok(prev_2) = self.get_block(&prev_1.qc.block_hash) else { return Ok(()); };
+        println!(
+            "Got prev_2 w/ hash {} from prev_1 qc hash {}",
+            prev_2.hash(),
+            prev_1.qc.block_hash
+        );
 
         if prev_1.view() == prev_2.view() + 1 {
             let committed_block = prev_2;
@@ -709,6 +740,7 @@ impl Consensus {
                 current = new;
             }
             if current.hash() == self.finalized {
+                println!("Setting finalized to {committed_hash}");
                 self.finalized = committed_hash;
                 self.db
                     .insert(LATEST_FINIALIZED_BLOCK_HASH, &committed_hash.0)?;
@@ -719,6 +751,7 @@ impl Consensus {
     }
 
     pub fn add_block(&mut self, block: Block) -> Result<()> {
+        println!("### ADDING block with hash {}", block.hash());
         let hash = block.hash();
         info!(?hash, ?block.header.view, "added block");
         self.block_headers
@@ -753,6 +786,7 @@ impl Consensus {
     }
 
     pub fn maybe_get_block(&self, key: &Hash) -> Result<Option<Block>> {
+        println!("Getting block with hash {key}");
         self.blocks
             .get(key.0)?
             .map(|encoded| Ok(bincode::deserialize::<Block>(&encoded)?))
@@ -775,6 +809,23 @@ impl Consensus {
 
     pub fn view(&self) -> u64 {
         self.view
+    }
+
+    pub fn finalized_view(&self) -> Result<u64> {
+        Ok(bincode::deserialize::<BlockHeader>(
+            &self
+                .block_headers
+                .get(self.finalized.as_bytes())?
+                .expect(&format!(
+                    "No block found for header {}, this should not be possible. DB error.",
+                    self.finalized,
+                )),
+        )?
+        .view)
+    }
+
+    pub fn finalized(&self) -> Hash {
+        self.finalized
     }
 
     pub fn state(&self) -> &State {

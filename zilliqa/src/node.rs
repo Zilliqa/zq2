@@ -55,6 +55,10 @@ impl Node {
         Ok(node)
     }
 
+    pub fn flush_to_disk(&self) -> Result<()> {
+        self.consensus.flush_to_disk()
+    }
+
     // TODO: Multithreading - `&mut self` -> `&self`
     pub fn handle_message(&mut self, source: PeerId, message: Message) -> Result<()> {
         match message {
@@ -166,6 +170,10 @@ impl Node {
 
     pub fn get_latest_block(&self) -> Result<Option<Block>> {
         self.get_block_by_view(self.consensus.view().saturating_sub(1))
+    }
+
+    pub fn get_finalized_height(&self) -> Result<u64> {
+        self.consensus.finalized_view()
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
