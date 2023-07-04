@@ -120,7 +120,7 @@ impl<'r> Network<'r> {
             .unzip();
 
         for node in &nodes {
-            println!("Node {}: {}", node.index, node.peer_id);
+            trace!("Node {}: {}", node.index, node.peer_id);
         }
 
         nodes
@@ -276,8 +276,6 @@ impl<'r> Network<'r> {
         let idx = self.rng.gen_range(0..self.nodes.len());
         self.receivers.remove(idx);
         self.nodes.remove(idx)
-        // node.inner.lock().unwrap().flush_to_disk().unwrap();
-        // node.dir
     }
 
     pub fn provider(&mut self) -> Provider<LocalRpcClient> {

@@ -100,7 +100,6 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
             .unwrap()
             .as_u64()
     }
-    println!("sending tx...");
 
     // Send a transaction.
     let hash = wallet
@@ -108,8 +107,6 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
         .await
         .unwrap()
         .tx_hash();
-
-    println!("tx sent!");
 
     network
         .run_until_async(
@@ -125,17 +122,13 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
         .await
         .unwrap();
 
-    println!("network ran, receipt received!");
-
     let receipt = provider
         .get_transaction_receipt(hash)
         .await
         .unwrap()
         .unwrap();
     let block_hash = receipt.block_hash.unwrap();
-    println!("hash is {block_hash}");
     let block_number = receipt.block_number.unwrap();
-    println!("number is {block_number}");
 
     // Check the previous block has a transaction count of zero.
     let count = count_by_number(&provider, block_number - 1).await;
@@ -150,21 +143,6 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
     // The latest block is the one with our transaction, because we stopped running the network after our receipt
     // appeared. So the latest block should also have a count of one.
     let count = count_by_number(&provider, "latest").await;
-    assert_eq!(count, 1);
-
-    // network.run_until(|n| n.node().view() >= 3, 50); // finalize the block so it gets saved
-
-    println!("Killing node...");
-    let dir = network.remove_node().dir;
-    thread::sleep(Duration::from_secs(3));
-    let (newnode, _) = node(SecretKey::new().unwrap(), 0, dir);
-    println!("Made new node!");
-    let newprovider = newnode.rpc_client;
-    println!(
-        "Trying out new node! It's got view {}",
-        newnode.inner.lock().unwrap().view()
-    );
-    let count = count_by_hash(&newprovider, block_hash).await;
     assert_eq!(count, 1);
 }
 

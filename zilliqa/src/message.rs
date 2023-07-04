@@ -1,5 +1,7 @@
-use std::time::SystemTime;
+use serde::Deserializer;
+use std::{fmt::Display, str::FromStr, time::SystemTime};
 
+use anyhow::anyhow;
 use anyhow::Result;
 use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Serialize};
@@ -197,10 +199,14 @@ pub struct BlockHeader {
 }
 
 impl BlockHeader {
+    pub fn genesis_hash() -> Hash {
+        Hash::compute(&[&(0 as u64).to_be_bytes(), Hash::ZERO.as_bytes()])
+    }
+
     pub fn genesis() -> Self {
         BlockHeader {
             view: 0,
-            hash: Hash::ZERO,
+            hash: Self::genesis_hash(),
             parent_hash: Hash::ZERO,
             signature: NodeSignature::identity(),
             state_root_hash: Hash(Keccak256::digest(rlp::NULL_RLP).into()),
@@ -217,6 +223,55 @@ pub enum BlockNumber {
     Safe,
     Finalized,
     Pending,
+}
+
+impl Display for BlockNumber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Number(num) => num.to_string(),
+                Self::Earliest => "earliest".to_string(),
+                Self::Latest => "latest".to_string(),
+                Self::Safe => "safe".to_string(),
+                Self::Finalized => "finalized".to_string(),
+                Self::Pending => "pending".to_string(),
+            }
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for BlockNumber {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: String = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl FromStr for BlockNumber {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "earliest" => Ok(BlockNumber::Earliest),
+            "latest" => Ok(BlockNumber::Latest),
+            "safe" => Ok(BlockNumber::Safe),
+            "finalized" => Ok(BlockNumber::Finalized),
+            "pending" => Ok(BlockNumber::Pending),
+            number => {
+                if let Some(number) = number.strip_prefix("0x") {
+                    let number = u64::from_str_radix(number, 16)?;
+                    Ok(BlockNumber::Number(number))
+                } else {
+                    Err(anyhow!("invalid block number: {s}"))
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,7 +293,7 @@ impl Block {
             qc: QuorumCertificate {
                 signature: NodeSignature::identity(),
                 cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
-                block_hash: Hash::ZERO,
+                block_hash: BlockHeader::genesis_hash(),
             },
             agg: None,
             transactions: vec![],

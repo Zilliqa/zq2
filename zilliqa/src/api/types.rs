@@ -1,6 +1,3 @@
-use std::{fmt::Display, str::FromStr, time::SystemTime};
-
-use anyhow::anyhow;
 use primitive_types::{H160, H256};
 use serde::{
     de::{self, Unexpected},
@@ -8,8 +5,9 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 use sha3::{Digest, Keccak256};
+use std::time::SystemTime;
 
-use crate::message::{self, BlockNumber};
+use crate::message;
 
 use super::to_hex::ToHex;
 
@@ -19,65 +17,6 @@ use super::to_hex::ToHex;
 pub enum HashOrTransaction {
     Hash(H256),
     Transaction(EthTransaction),
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum BlockNumber {
-    Number(u64),
-    Earliest,
-    Latest,
-    Safe,
-    Finalized,
-    Pending,
-}
-
-impl Display for BlockNumber {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Number(num) => num.to_string(),
-                Self::Earliest => "earliest".to_string(),
-                Self::Latest => "latest".to_string(),
-                Self::Safe => "safe".to_string(),
-                Self::Finalized => "finalized".to_string(),
-                Self::Pending => "pending".to_string(),
-            }
-        )
-    }
-}
-
-impl<'de> Deserialize<'de> for BlockNumber {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: String = String::deserialize(deserializer)?;
-        s.parse().map_err(serde::de::Error::custom)
-    }
-}
-
-impl FromStr for BlockNumber {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "earliest" => Ok(BlockNumber::Earliest),
-            "latest" => Ok(BlockNumber::Latest),
-            "safe" => Ok(BlockNumber::Safe),
-            "finalized" => Ok(BlockNumber::Finalized),
-            "pending" => Ok(BlockNumber::Pending),
-            number => {
-                if let Some(number) = number.strip_prefix("0x") {
-                    let number = u64::from_str_radix(number, 16)?;
-                    Ok(BlockNumber::Number(number))
-                } else {
-                    Err(anyhow!("invalid block number: {s}"))
-                }
-            }
-        }
-    }
 }
 
 /// A block object, returned by the Ethereum API.
