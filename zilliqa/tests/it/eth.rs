@@ -17,7 +17,7 @@ use serde::Serialize;
 use crate::{deploy_contract, LocalRpcClient, Network};
 
 #[zilliqa_macros::test]
-async fn call(mut network: Network<'_>) {
+async fn call_block_number(mut network: Network<'_>) {
         let wallet = network.random_wallet();
 
         let (hash, abi) = deploy_contract!("contracts/CallMe.sol", "CallMe", wallet, network);
