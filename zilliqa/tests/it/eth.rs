@@ -74,7 +74,6 @@ async fn call(mut network: Network<'_>) {
 
 #[zilliqa_macros::test]
 async fn get_block_transaction_count(mut network: Network<'_>) {
-    //let provider = network.provider();
     let wallet = network.random_wallet();
 
     // Send a transaction.

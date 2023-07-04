@@ -264,15 +264,6 @@ impl<'r> Network<'r> {
 
         SignerMiddleware::new(provider, wallet)
     }
-
-    //// Not public - use the wallet as a provider
-    //fn provider(&mut self) -> Provider<LocalRpcClient> {
-    //    let client = LocalRpcClient {
-    //        id: Arc::new(AtomicU64::new(0)),
-    //        rpc_module: self.nodes.choose(self.rng).unwrap().rpc_module.clone(),
-    //    };
-    //    Provider::new(client)
-    //}
 }
 
 fn format_message(
