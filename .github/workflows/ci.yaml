@@ -30,7 +30,7 @@ jobs:
     - name: Clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
     - name: Test
-      run: cargo test --all-targets --all-features
+      run: cargo clean && cargo test --all-targets --all-features
     - name: Verify working directory is clean
       run: git diff --exit-code
     - name: Run a security audit
