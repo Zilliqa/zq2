@@ -1,11 +1,11 @@
 use ethabi::ethereum_types::U64;
-//use ethers::abi::FunctionExt;
+use ethers::abi::FunctionExt;
 use ethers::solc::EvmVersion;
 use ethers::{
     prelude::{CompilerInput, DeploymentTxFactory},
     providers::{Middleware, Provider},
     types::{
-        transaction::eip2718::TypedTransaction, /*BlockId, BlockNumber,*/ TransactionRequest,
+        transaction::eip2718::TypedTransaction, BlockId, BlockNumber, TransactionRequest,
     },
     utils::keccak256,
 };
@@ -16,69 +16,69 @@ use serde::Serialize;
 
 use crate::{deploy_contract, LocalRpcClient, Network};
 
-//#[zilliqa_macros::test]
-//async fn call(mut network: Network<'_>) {
-//        let wallet = network.random_wallet();
-//
-//        let (hash, abi) = deploy_contract!("contracts/CallMe.sol", "CallMe", wallet, network);
-//
-//        let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
-//
-//        let function = abi.function("currentBlock").unwrap();
-//        let call_tx = TransactionRequest::new()
-//            .to(receipt.contract_address.unwrap())
-//            .data(function.encode_input(&[]).unwrap());
-//
-//        // Query the current block number with an `eth_call`.
-//        let response = wallet.call(&call_tx.clone().into(), None).await.unwrap();
-//        let block_number = function.decode_output(&response).unwrap()[0]
-//            .clone()
-//            .into_uint()
-//            .unwrap()
-//            .as_u64();
-//
-//        // Verify it is correct.
-//        let expected_block_number = wallet.get_block_number().await.unwrap().as_u64();
-//        assert_eq!(block_number, expected_block_number);
-//
-//        // Advance the network to the next block.
-//        network
-//            .run_until_async(
-//                || async { wallet.get_block_number().await.unwrap().as_u64() > block_number },
-//                50,
-//            )
-//            .await
-//            .unwrap();
-//
-//        // Query the current block number with an `eth_call`.
-//        let response = wallet.call(&call_tx.clone().into(), None).await.unwrap();
-//        let new_block_number = function.decode_output(&response).unwrap()[0]
-//            .clone()
-//            .into_uint()
-//            .unwrap()
-//            .as_u64();
-//
-//        // Verify it is correct.
-//        let expected_block_number = wallet.get_block_number().await.unwrap().as_u64();
-//        assert_eq!(new_block_number, expected_block_number);
-//
-//        // Query the block number at the old block with an `eth_call`.
-//        let response = wallet
-//            .call(
-//                &call_tx.clone().into(),
-//                Some(BlockId::Number(BlockNumber::Number(block_number.into()))),
-//            )
-//            .await
-//            .unwrap();
-//        let old_block_number = function.decode_output(&response).unwrap()[0]
-//            .clone()
-//            .into_uint()
-//            .unwrap()
-//            .as_u64();
-//
-//        // Verify it used the state from the old block.
-//        assert_eq!(old_block_number, block_number);
-//}
+#[zilliqa_macros::test]
+async fn call(mut network: Network<'_>) {
+        let wallet = network.random_wallet();
+
+        let (hash, abi) = deploy_contract!("contracts/CallMe.sol", "CallMe", wallet, network);
+
+        let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+
+        let function = abi.function("currentBlock").unwrap();
+        let call_tx = TransactionRequest::new()
+            .to(receipt.contract_address.unwrap())
+            .data(function.encode_input(&[]).unwrap());
+
+        // Query the current block number with an `eth_call`.
+        let response = wallet.call(&call_tx.clone().into(), None).await.unwrap();
+        let block_number = function.decode_output(&response).unwrap()[0]
+            .clone()
+            .into_uint()
+            .unwrap()
+            .as_u64();
+
+        // Verify it is correct.
+        let expected_block_number = wallet.get_block_number().await.unwrap().as_u64();
+        assert_eq!(block_number, expected_block_number);
+
+        // Advance the network to the next block.
+        network
+            .run_until_async(
+                || async { wallet.get_block_number().await.unwrap().as_u64() > block_number },
+                50,
+            )
+            .await
+            .unwrap();
+
+        // Query the current block number with an `eth_call`.
+        let response = wallet.call(&call_tx.clone().into(), None).await.unwrap();
+        let new_block_number = function.decode_output(&response).unwrap()[0]
+            .clone()
+            .into_uint()
+            .unwrap()
+            .as_u64();
+
+        // Verify it is correct.
+        let expected_block_number = wallet.get_block_number().await.unwrap().as_u64();
+        assert_eq!(new_block_number, expected_block_number);
+
+        // Query the block number at the old block with an `eth_call`.
+        let response = wallet
+            .call(
+                &call_tx.clone().into(),
+                Some(BlockId::Number(BlockNumber::Number(block_number.into()))),
+            )
+            .await
+            .unwrap();
+        let old_block_number = function.decode_output(&response).unwrap()[0]
+            .clone()
+            .into_uint()
+            .unwrap()
+            .as_u64();
+
+        // Verify it used the state from the old block.
+        assert_eq!(old_block_number, block_number);
+}
 
 #[zilliqa_macros::test]
 async fn get_block_transaction_count(mut network: Network<'_>) {
@@ -228,30 +228,49 @@ async fn eth_call() {
     let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(1);
     let mut network = Network::new(&mut rng, 4);
 
-    let _provider = network.provider();
+    let provider = network.provider();
     let wallet = network.random_wallet();
 
-    let (_hash, abi) = deploy_contract!(
+    let (hash, abi) = deploy_contract!(
         "contracts/SetGetContractValue.sol",
         "SetGetContractValue",
         wallet,
         network
     );
 
-    let _getter = abi.function("getInt256").unwrap();
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
 
-    //        let receipt = provider
-    //            .get_transaction_receipt(hash)
-    //            .await
-    //            .unwrap()
-    //            .unwrap();
-    //        let contract_address = receipt.contract_address.unwrap();
-    //
-    //        let mut tx = TransactionRequest::new();
-    //        tx.to = Some(contract_address.into());
-    //        tx.data = Some(getter.selector().into());
-    //
-    //        let value = provider.call(&tx.into(), None).await.unwrap();
-    //
-    //        assert_eq!(H256::from_slice(value.as_ref()), H256::from_low_u64_be(99));
+    println!("hash: {:?}", hash);
+
+    let getter = abi.function("getInt256").unwrap();
+
+    let receipt = provider
+        .get_transaction_receipt(hash)
+        .await;
+
+    assert!(receipt.is_ok());
+    //assert!(receipt.unwrap().is_some());
+    let receipt = receipt.unwrap().unwrap();
+
+    let contract_address = receipt.contract_address.unwrap();
+
+    let mut tx = TransactionRequest::new();
+    tx.to = Some(contract_address.into());
+    tx.data = Some(getter.selector().into());
+
+    let value = provider.call(&tx.into(), None).await.unwrap();
+
+    assert_eq!(H256::from_slice(value.as_ref()), H256::from_low_u64_be(99));
 }
