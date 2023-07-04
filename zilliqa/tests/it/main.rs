@@ -252,22 +252,27 @@ impl<'r> Network<'r> {
         self.nodes.choose(self.rng).unwrap().inner.lock().unwrap()
     }
 
-    pub fn provider(&mut self) -> Provider<LocalRpcClient> {
+    pub fn random_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+        let wallet: LocalWallet = SigningKey::random(self.rng).into();
+        let wallet = wallet.with_chain_id(0x8001u64);
+
         let client = LocalRpcClient {
             id: Arc::new(AtomicU64::new(0)),
             rpc_module: self.nodes.choose(self.rng).unwrap().rpc_module.clone(),
         };
-        Provider::new(client)
-    }
+        let provider = Provider::new(client);
 
-    pub fn random_wallet(
-        &mut self,
-        provider: Provider<LocalRpcClient>,
-    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
-        let wallet: LocalWallet = SigningKey::random(self.rng).into();
-        let wallet = wallet.with_chain_id(0x8001u64);
         SignerMiddleware::new(provider, wallet)
     }
+
+    //// Not public - use the wallet as a provider
+    //fn provider(&mut self) -> Provider<LocalRpcClient> {
+    //    let client = LocalRpcClient {
+    //        id: Arc::new(AtomicU64::new(0)),
+    //        rpc_module: self.nodes.choose(self.rng).unwrap().rpc_module.clone(),
+    //    };
+    //    Provider::new(client)
+    //}
 }
 
 fn format_message(

@@ -1,21 +1,16 @@
-use std::fmt::Debug;
-
-use ethabi::ethereum_types::U64;
 use ethers::{
     prelude::DeploymentTxFactory,
-    providers::{Middleware, Provider},
+    providers::Middleware,
     types::{transaction::eip2718::TypedTransaction, BlockId, BlockNumber, TransactionRequest},
     utils::keccak256,
 };
 use primitive_types::{H160, H256};
-use serde::Serialize;
 
-use crate::{deploy_contract, LocalRpcClient, Network};
+use crate::{deploy_contract, Network};
 
 #[zilliqa_macros::test]
 async fn call(mut network: Network<'_>) {
-    let provider = network.provider();
-    let wallet = network.random_wallet(provider);
+    let wallet = network.random_wallet();
 
     let (hash, abi) = deploy_contract!("contracts/CallMe.sol", "CallMe", wallet, network);
 
@@ -79,27 +74,28 @@ async fn call(mut network: Network<'_>) {
 
 #[zilliqa_macros::test]
 async fn get_block_transaction_count(mut network: Network<'_>) {
-    let provider = network.provider();
-    let wallet = network.random_wallet(provider.clone());
+    //let provider = network.provider();
+    let wallet = network.random_wallet();
 
-    async fn count_by_number<T: Debug + Serialize + Send + Sync>(
-        provider: &Provider<LocalRpcClient>,
-        number: T,
-    ) -> u64 {
-        provider
-            .request::<_, U64>("eth_getBlockTransactionCountByNumber", [number])
-            .await
-            .unwrap()
-            .as_u64()
-    }
+    //async fn count_by_number<T: Debug + Serialize + Send + Sync>(
+    //    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+    //    number: T,
+    //) -> u64 {
+    //    wallet.
+    //    wallet
+    //        .request::<_, U64>("eth_getBlockTransactionCountByNumber", [number])
+    //        .await
+    //        .unwrap()
+    //        .as_u64()
+    //}
 
-    async fn count_by_hash(provider: &Provider<LocalRpcClient>, hash: H256) -> u64 {
-        provider
-            .request::<_, U64>("eth_getBlockTransactionCountByHash", [hash])
-            .await
-            .unwrap()
-            .as_u64()
-    }
+    //async fn count_by_hash(wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>, hash: H256) -> u64 {
+    //    wallet
+    //        .request::<_, U64>("eth_getBlockTransactionCountByHash", [hash])
+    //        .await
+    //        .unwrap()
+    //        .as_u64()
+    //}
 
     // Send a transaction.
     let hash = wallet
@@ -111,7 +107,7 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
     network
         .run_until_async(
             || async {
-                provider
+                wallet
                     .get_transaction_receipt(hash)
                     .await
                     .unwrap()
@@ -122,34 +118,34 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
         .await
         .unwrap();
 
-    let receipt = provider
-        .get_transaction_receipt(hash)
-        .await
-        .unwrap()
-        .unwrap();
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let block_hash = receipt.block_hash.unwrap();
     let block_number = receipt.block_number.unwrap();
 
     // Check the previous block has a transaction count of zero.
-    let count = count_by_number(&provider, block_number - 1).await;
+    //let count = count_by_number(&wallet, block_number - 1).await;
+    let count = wallet.get_block_with_txs(block_number - 1).await;
+    let count = count.unwrap().unwrap().transactions.len();
     assert_eq!(count, 0);
 
     // Check this block has a transaction count of one.
-    let count = count_by_number(&provider, block_number).await;
+    let count = wallet.get_block_with_txs(block_number).await;
+    let count = count.unwrap().unwrap().transactions.len();
     assert_eq!(count, 1);
-    let count = count_by_hash(&provider, block_hash).await;
+    let count = wallet.get_block_with_txs(block_hash).await;
+    let count = count.unwrap().unwrap().transactions.len();
     assert_eq!(count, 1);
 
     // The latest block is the one with our transaction, because we stopped running the network after our receipt
     // appeared. So the latest block should also have a count of one.
-    let count = count_by_number(&provider, "latest").await;
+    let count = wallet.get_block_with_txs(BlockNumber::Latest).await;
+    let count = count.unwrap().unwrap().transactions.len();
     assert_eq!(count, 1);
 }
 
 #[zilliqa_macros::test]
 async fn get_storage_at(mut network: Network<'_>) {
-    let provider = network.provider();
-    let wallet = network.random_wallet(provider);
+    let wallet = network.random_wallet();
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
     let (hash, _) = deploy_contract!("contracts/Storage.sol", "Storage", wallet, network);
@@ -179,8 +175,7 @@ async fn get_storage_at(mut network: Network<'_>) {
 
 #[zilliqa_macros::test]
 async fn send_transaction(mut network: Network<'_>) {
-    let provider = network.provider();
-    let wallet = network.random_wallet(provider.clone());
+    let wallet = network.random_wallet();
 
     let to: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
@@ -200,7 +195,7 @@ async fn send_transaction(mut network: Network<'_>) {
     network
         .run_until_async(
             || async {
-                provider
+                wallet
                     .get_transaction_receipt(hash)
                     .await
                     .unwrap()
@@ -211,11 +206,7 @@ async fn send_transaction(mut network: Network<'_>) {
         .await
         .unwrap();
 
-    let receipt = provider
-        .get_transaction_receipt(hash)
-        .await
-        .unwrap()
-        .unwrap();
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
 
     assert_eq!(receipt.to.unwrap(), to);
     assert_eq!(receipt.from, wallet.address());
