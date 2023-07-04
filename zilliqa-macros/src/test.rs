@@ -17,8 +17,8 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
     input.sig.ident = inner_name.clone();
 
     quote! {
-        #[tokio::test(flavor = "multi_thread")]
-        async fn #test_name() {
+        #[test]
+        fn #test_name() {
             // The original test function
             #input
 
@@ -33,27 +33,31 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                 rand::Rng::sample_iter(rand::thread_rng(), rand::distributions::Standard).take(samples).collect()
             };
 
-            let mut set = tokio::task::JoinSet::new();
+            let rt = crate::get_runtime();
 
-            for seed in seeds {
-                set.spawn(async move {
-                    // Set up a tracing subscriber, so we can see logs from failed test cases.
-                    let subscriber = tracing_subscriber::fmt()
-                        .with_ansi(false)
-                        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env());
-                    let _guard = tracing_subscriber::util::SubscriberInitExt::set_default(subscriber);
+            rt.block_on(async {
+                let mut set = tokio::task::JoinSet::new();
 
-                    println!("Reproduce this test run by setting ZQ_TEST_RNG_SEED={seed}");
-                    let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
-                    let network = crate::Network::new(&mut rng, 4);
-                    // Call the original test function
-                    #inner_name(network).await;
-                });
-            }
+                for seed in seeds {
+                    set.spawn(async move {
+                        // Set up a tracing subscriber, so we can see logs from failed test cases.
+                        let subscriber = tracing_subscriber::fmt()
+                            .with_ansi(false)
+                            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env());
+                        let _guard = tracing_subscriber::util::SubscriberInitExt::set_default(subscriber);
 
-            while let Some(result) = set.join_next().await {
-                let () = result.unwrap();
-            }
+                        println!("Reproduce this test run by setting ZQ_TEST_RNG_SEED={seed}");
+                        let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
+                        let network = crate::Network::new(&mut rng, 4);
+                        // Call the original test function
+                        #inner_name(network).await;
+                    });
+                }
+
+                while let Some(result) = set.join_next().await {
+                    let () = result.unwrap();
+                }
+            });
         }
     }
 }

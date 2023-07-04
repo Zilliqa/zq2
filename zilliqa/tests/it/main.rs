@@ -7,7 +7,7 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex, MutexGuard, OnceLock,
     },
 };
 
@@ -30,9 +30,22 @@ use libp2p::PeerId;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
 use serde::{de::DeserializeOwned, Serialize};
-use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::{
+    runtime::Runtime,
+    sync::mpsc::{self, UnboundedSender},
+};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use zilliqa::{cfg::Config, crypto::SecretKey, message::Message, node::Node};
+
+static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
+pub fn get_runtime() -> &'static Runtime {
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .build()
+            .expect("failed to build Tokio runtime")
+    })
+}
 
 fn node(
     secret_key: SecretKey,
