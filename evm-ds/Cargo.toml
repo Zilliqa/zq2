@@ -23,7 +23,6 @@ futures = { version = "0.3.21", features = ["executor", "thread-pool"] }
 hex = "0.4"
 libsecp256k1 = "0.7.0"
 log = "0.4.16"
-log4rs = { version = "1.1.1", features = ["all_components", "gzip"] }
 num-bigint = "0.4"
 num-integer = "0.1.45"
 parity-tokio-ipc = "0.9"
