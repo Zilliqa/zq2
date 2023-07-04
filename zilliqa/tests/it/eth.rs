@@ -165,8 +165,8 @@ async fn eth_call() {
     let wallet = random_wallet(provider.clone());
 
     let (hash, abi) = deploy_contract!(
-        "contracts/SimpleContract.sol",
-        "SimpleContract",
+        "contracts/SetGetContractValue.sol",
+        "SetGetContractValue",
         wallet,
         network
     );

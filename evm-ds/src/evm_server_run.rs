@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use std::ops::Deref;
 use std::panic::{self, AssertUnwindSafe};
 use std::rc::Rc;
@@ -13,9 +14,7 @@ use evm::{
 use evm::{Machine, Runtime};
 use log::{debug, error, info};
 
-use jsonrpc_core::Result;
 use primitive_types::*;
-use scillabackend::{encode_storage, scale_eth_to_zil, ScillaBackend};
 
 use crate::continuations::Continuations;
 use crate::cps_executor::{CpsCallInterrupt, CpsCreateInterrupt, CpsExecutor, CpsReason};
@@ -23,59 +22,7 @@ use crate::precompiles::get_precompiles;
 use crate::pretty_printer::log_evm_result;
 use crate::protos::Evm as EvmProto;
 use crate::protos::Evm::EvmResult;
-use crate::scillabackend;
 use crate::tracing_logging::{CallContext, LoggingEventListener};
-use protobuf::Message;
-
-#[allow(clippy::too_many_arguments)]
-pub async fn run_evm_impl(
-    address: H160,
-    code: Vec<u8>,
-    data: Vec<u8>,
-    apparent_value: U256,
-    gas_limit: u64,
-    caller: H160,
-    backend: ScillaBackend,
-    gas_scaling_factor: u64,
-    estimate: bool,
-    is_static: bool,
-    evm_context: String,
-    node_continuation: Option<EvmProto::Continuation>,
-    continuations: Arc<Mutex<Continuations>>,
-    enable_cps: bool,
-    tx_trace_enabled: bool,
-    tx_trace: String,
-) -> Result<String> {
-    // We must spawn a separate blocking task (on a blocking thread), because by default a JSONRPC
-    // method runs as a non-blocking thread under a tokio runtime, and creating a new runtime
-    // cannot be done. And we'll need a new runtime that we can safely drop on a handled
-    // panic. (Using the parent runtime and dropping on stack unwind will mess up the parent runtime).
-    tokio::task::spawn_blocking(move || {
-        let result = run_evm_impl_direct(
-            address,
-            code,
-            data,
-            apparent_value,
-            gas_limit,
-            caller,
-            gas_scaling_factor,
-            Some(backend.config.zil_scaling_factor),
-            backend,
-            estimate,
-            is_static,
-            evm_context,
-            node_continuation,
-            continuations,
-            enable_cps,
-            tx_trace_enabled,
-            tx_trace,
-        );
-
-        Ok(base64::encode(result.write_to_bytes().unwrap()))
-    })
-    .await
-    .unwrap()
-}
 
 #[allow(clippy::too_many_arguments)]
 fn build_exit_result<B: Backend>(
@@ -115,7 +62,6 @@ fn build_exit_result<B: Backend>(
                         modify.set_address(address.into());
                         if let Some(scaling) = scaling_factor {
                             modify.set_balance(scale_eth_to_zil(basic.balance, scaling).into());
-                            // todo
                         }
                         modify.set_nonce(basic.nonce.into());
                         if let Some(code) = code {
@@ -336,96 +282,99 @@ pub fn calculate_contract_address(address: H160, backend: impl Backend) -> H160 
     executor.get_create_address(CreateScheme::Legacy { caller: address })
 }
 
-#[allow(clippy::too_many_arguments, dead_code)]
-pub fn run_evm_impl_direct(
-    address: H160,
-    code: Vec<u8>,
-    data: Vec<u8>,
-    apparent_value: U256,
-    gas_limit: u64,
-    caller: H160,
-    gas_scaling_factor: u64,
-    scaling_factor: Option<u64>,
-    backend: impl Backend,
-    estimate: bool,
-    is_static: bool,
-    evm_context: String,
-    node_continuation: Option<EvmProto::Continuation>,
-    continuations: Arc<Mutex<Continuations>>,
-    enable_cps: bool,
-    tx_trace_enabled: bool,
-    tx_trace: String,
-) -> EvmResult {
+pub struct EvmCallArgs<B> {
+    pub address: H160,
+    pub code: Vec<u8>,
+    pub data: Vec<u8>,
+    pub apparent_value: U256,
+    pub gas_limit: u64,
+    pub caller: H160,
+    pub gas_scaling_factor: u64,
+    pub scaling_factor: Option<u64>,
+    pub backend: B,
+    pub estimate: bool,
+    pub is_static: bool,
+    pub evm_context: String,
+    pub node_continuation: Option<EvmProto::Continuation>,
+    pub continuations: Arc<Mutex<Continuations>>,
+    pub enable_cps: bool,
+    pub tx_trace_enabled: bool,
+    pub tx_trace: String,
+}
+
+pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
     debug!(
         "Running EVM: origin: {:?} address: {:?} gas: {:?} value: {:?}  estimate: {:?} is_continuation: {:?}, cps: {:?}, \ntx_trace: {:?}, \ndata: {:02X?}, \ncode: {:02X?}",
-        backend.origin(), address, gas_limit, apparent_value,
-        estimate, node_continuation.is_none(), enable_cps, tx_trace, data, code);
-    let code = Rc::new(code);
-    let data = Rc::new(data);
+        args.backend.origin(), args.address, args.gas_limit, args.apparent_value,
+        args.estimate, args.node_continuation.is_none(), args.enable_cps, args.tx_trace, args.data, args.code);
+    let code = Rc::new(args.code);
+    let data = Rc::new(args.data);
     // TODO: handle call_l64_after_gas problem: https://zilliqa-jira.atlassian.net/browse/ZIL-5012
     // todo: this needs to be shanghai...
     let config = evm::Config {
-        estimate,
+        estimate: args.estimate,
         call_l64_after_gas: false,
         ..evm::Config::london()
     };
     let context = evm::Context {
-        address,
-        caller,
-        apparent_value,
+        address: args.address,
+        caller: args.caller,
+        apparent_value: args.apparent_value,
     };
-    let gas_limit = gas_limit * gas_scaling_factor;
+    let gas_limit = args.gas_limit * args.gas_scaling_factor;
     let metadata = StackSubstateMetadata::new(gas_limit, &config);
     // Check if evm should resume from the point it stopped
-    let (feedback_continuation, mut runtime, state) = if let Some(continuation) = node_continuation
-    {
-        let recorded_cont = continuations
-            .lock()
-            .unwrap()
-            .get_contination(continuation.get_id());
-        if recorded_cont.is_none() {
-            let result = handle_panic(tx_trace, gas_limit, "Continuation not found!");
-            return result;
-        }
+    let (feedback_continuation, mut runtime, state) =
+        if let Some(continuation) = args.node_continuation {
+            let recorded_cont = args
+                .continuations
+                .lock()
+                .unwrap()
+                .get_contination(continuation.get_id());
+            if recorded_cont.is_none() {
+                let result = handle_panic(args.tx_trace, gas_limit, "Continuation not found!");
+                return result;
+            }
 
-        let recorded_cont = recorded_cont.unwrap();
+            let recorded_cont = recorded_cont.unwrap();
 
-        let machine = Machine::create_from_state(
-            Rc::new(recorded_cont.code),
-            Rc::new(recorded_cont.data),
-            recorded_cont.position,
-            recorded_cont.return_range,
-            recorded_cont.valids,
-            recorded_cont.memory,
-            recorded_cont.stack,
-        );
-        let runtime = Runtime::new_from_state(machine, context, &config);
-        let memory_substate = MemoryStackSubstate::from_state(
-            metadata,
-            recorded_cont.logs,
-            recorded_cont.accounts,
-            recorded_cont.storages,
-            recorded_cont.deletes,
-        );
-        let state = MemoryStackState::new_with_substate(memory_substate, &backend);
-        (Some(continuation), runtime, state)
-    } else {
-        let runtime = evm::Runtime::new(code, data.clone(), context, &config);
-        let state = MemoryStackState::new(metadata, &backend);
-        (None, runtime, state)
-    };
+            let machine = Machine::create_from_state(
+                Rc::new(recorded_cont.code),
+                Rc::new(recorded_cont.data),
+                recorded_cont.position,
+                recorded_cont.return_range,
+                recorded_cont.valids,
+                recorded_cont.memory,
+                recorded_cont.stack,
+            );
+            let runtime = Runtime::new_from_state(machine, context, &config);
+            let memory_substate = MemoryStackSubstate::from_state(
+                metadata,
+                recorded_cont.logs,
+                recorded_cont.accounts,
+                recorded_cont.storages,
+                recorded_cont.deletes,
+            );
+            let state = MemoryStackState::new_with_substate(memory_substate, &args.backend);
+            (Some(continuation), runtime, state)
+        } else {
+            let runtime = evm::Runtime::new(code, data.clone(), context, &config);
+            let state = MemoryStackState::new(metadata, &args.backend);
+            (None, runtime, state)
+        };
     // Scale the gas limit.
 
     let precompiles = get_precompiles();
 
-    let mut executor = CpsExecutor::new_with_precompiles(state, &config, &precompiles, enable_cps);
+    let mut executor =
+        CpsExecutor::new_with_precompiles(state, &config, &precompiles, args.enable_cps);
 
     let mut listener;
 
-    if tx_trace.is_empty() {
-        listener = LoggingEventListener::new(tx_trace_enabled);
+    if args.tx_trace.is_empty() {
+        listener = LoggingEventListener::new(args.tx_trace_enabled);
     } else {
-        listener = serde_json::from_str(&tx_trace).unwrap()
+        listener = serde_json::from_str(&args.tx_trace).unwrap()
     }
 
     // If there is no continuation, we need to push our call context on,
@@ -433,16 +382,18 @@ pub fn run_evm_impl_direct(
     if feedback_continuation.is_none() {
         let mut call = CallContext::new();
         call.call_type = "CALL".to_string();
+        let apparent_value = args.apparent_value;
         call.value = format!("0x{apparent_value}");
         call.gas = format!("0x{gas_limit:x}"); // Gas provided for call
         call.input = format!("0x{}", hex::encode(data.deref()));
 
         if listener.call_tracer.is_empty() {
-            call.from = format!("{:?}", backend.origin());
+            call.from = format!("{:?}", args.backend.origin());
         } else {
             call.from = listener.call_tracer.last().unwrap().to.clone();
         }
 
+        let address = args.address;
         call.to = format!("{address:?}");
         listener.push_call(call);
     }
@@ -459,7 +410,7 @@ pub fn run_evm_impl_direct(
     }));
 
     // Scale back remaining gas to Scilla units (no rounding!).
-    let remaining_gas = executor.gas() / gas_scaling_factor;
+    let remaining_gas = executor.gas() / args.gas_scaling_factor;
 
     // Update the traces
     listener.raw_tracer.return_value = hex::encode(runtime.machine().return_value());
@@ -521,13 +472,14 @@ pub fn run_evm_impl_direct(
                 &listener,
                 &exit_reason,
                 remaining_gas,
-                is_static,
-                continuations,
-                scaling_factor,
+                args.is_static,
+                args.continuations,
+                args.scaling_factor,
             )
         }
         CpsReason::CallInterrupt(i) => {
-            let cont_id = continuations
+            let cont_id = args
+                .continuations
                 .lock()
                 .unwrap()
                 .create_continuation(runtime.machine_mut(), executor.state().substate());
@@ -538,13 +490,14 @@ pub fn run_evm_impl_direct(
                 i,
                 &listener,
                 remaining_gas,
-                is_static,
+                args.is_static,
                 cont_id,
-                scaling_factor,
+                args.scaling_factor,
             )
         }
         CpsReason::CreateInterrupt(i) => {
-            let cont_id = continuations
+            let cont_id = args
+                .continuations
                 .lock()
                 .unwrap()
                 .create_continuation(runtime.machine_mut(), executor.into_state().substate());
@@ -555,9 +508,20 @@ pub fn run_evm_impl_direct(
 
     debug!(
         "EVM execution summary: context: {:?}, origin: {:?} address: {:?} gas: {:?} value: {:?}, data: {:?}, estimate: {:?}, cps: {:?}, result: {}, returnVal: {}",
-        evm_context, backend.origin(), address, gas_limit, apparent_value,
+        args.evm_context, args.backend.origin(), args.address, args.gas_limit, args.apparent_value,
         hex::encode(data.deref()),
-        estimate, enable_cps, log_evm_result(&result), hex::encode(runtime.machine().return_value()));
+        args.estimate, args.enable_cps, log_evm_result(&result), hex::encode(runtime.machine().return_value()));
 
     result
+}
+
+pub(crate) fn scale_eth_to_zil(eth: U256, zil_scaling_factor: u64) -> U256 {
+    eth / zil_scaling_factor
+}
+
+pub(crate) fn encode_storage(key: H256, value: H256, _: bool) -> (Bytes, Bytes) {
+    (
+        Bytes::copy_from_slice(key.as_bytes()),
+        Bytes::copy_from_slice(value.as_bytes()),
+    )
 }

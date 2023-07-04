@@ -192,23 +192,6 @@ impl ScillaBackend {
             Err(_) => Ok(None),
         }
     }
-
-    // Encode key/value pairs for storage in such a way that the Zilliqa node
-    // could interpret it without much modification.
-    #[allow(dead_code)]
-    pub(crate) fn encode_storage(&self, key: H256, value: H256) -> (Bytes, Bytes) {
-        let mut query = ScillaMessage::ProtoScillaQuery::new();
-        query.set_name("_evm_storage".into());
-        query.set_indices(vec![bytes::Bytes::from(format!("{key:X}"))]);
-        query.set_mapdepth(1);
-        let mut val = ScillaMessage::ProtoScillaVal::new();
-        let bval = value.as_bytes().to_vec();
-        val.set_bval(bval.into());
-        (
-            query.write_to_bytes().unwrap().into(),
-            val.write_to_bytes().unwrap().into(),
-        )
-    }
 }
 
 #[allow(dead_code)]

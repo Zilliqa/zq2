@@ -21,12 +21,6 @@ evm = { git = "https://github.com/Zilliqa/evm", rev = "ef7a9d1476f15660aad98dec5
 ethers = "2.0.7"
 futures = { version = "0.3.21", features = ["executor", "thread-pool"] }
 hex = "0.4"
-jsonrpc-client-transports = "18.0.0"
-jsonrpc-core = "18.0.0"
-jsonrpc-core-client = { version = "18.0.0", features = ["ipc"] }
-jsonrpc-http-server = "18.0.0"
-jsonrpc-ipc-server = "18.0.0"
-jsonrpc-server-utils = "18.0.0"
 libsecp256k1 = "0.7.0"
 log = "0.4.16"
 log4rs = { version = "1.1.1", features = ["all_components", "gzip"] }

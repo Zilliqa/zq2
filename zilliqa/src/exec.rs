@@ -12,6 +12,7 @@ use evm_ds::evm::{
     backend::{Backend, Basic},
     tracing::EventListener,
 };
+use evm_ds::evm_server_run::EvmCallArgs;
 use evm_ds::protos::Evm::EvmResult;
 use evm_ds::{
     continuations::Continuations,
@@ -96,23 +97,10 @@ impl EventListener for TouchedAddressEventListener {
 pub struct TransactionApplyResult {
     /// Whether the transaction succeeded and the resulting state changes were persisted.
     pub success: bool,
-    /// The return value of the TX
-    pub return_value: Vec<u8>,
     /// If the transaction was a contract creation, the address of the resulting contract.
     pub contract_address: Option<Address>,
     /// The logs emitted by the transaction execution.
     pub logs: Vec<Log>,
-}
-
-impl TransactionApplyResult {
-    fn failed() -> TransactionApplyResult {
-        TransactionApplyResult {
-            success: false,
-            return_value: vec![],
-            contract_address: None,
-            logs: vec![],
-        }
-    }
 }
 
 impl State {
@@ -169,25 +157,25 @@ impl State {
             created_contract_addr = Some(to);
         }
 
-        let result = run_evm_impl_direct(
-            to,
+        let result = run_evm_impl_direct(EvmCallArgs {
+            address: to,
             code,
             data,
             apparent_value,
             gas_limit,
-            caller.0,
+            caller: caller.0,
             gas_scaling_factor,
-            None,
-            &backend,
+            scaling_factor: None,
+            backend: &backend,
             estimate,
             is_static,
-            context,
-            None,
+            evm_context: context,
+            node_continuation: None,
             continuations,
-            true,
-            false,
-            "".to_string(),
-        );
+            enable_cps: true,
+            tx_trace_enabled: false,
+            tx_trace: "".to_string(),
+        });
 
         Ok((logs, result, created_contract_addr))
     }
@@ -233,7 +221,6 @@ impl State {
 
                 Ok(TransactionApplyResult {
                     success,
-                    return_value: result.return_value.into(),
                     contract_address: contract_addr.map(Address),
                     logs,
                 })
@@ -243,7 +230,6 @@ impl State {
 
                 Ok(TransactionApplyResult {
                     success: false,
-                    return_value: Default::default(),
                     contract_address: None,
                     logs: Default::default(),
                 })
