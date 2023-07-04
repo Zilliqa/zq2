@@ -260,7 +260,10 @@ impl<'r> Network<'r> {
         Provider::new(client)
     }
 
-    pub fn random_wallet(&mut self, provider: Provider<LocalRpcClient>) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+    pub fn random_wallet(
+        &mut self,
+        provider: Provider<LocalRpcClient>,
+    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
         let wallet: LocalWallet = SigningKey::random(self.rng).into();
         let wallet = wallet.with_chain_id(0x8001u64);
         SignerMiddleware::new(provider, wallet)
