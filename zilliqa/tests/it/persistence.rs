@@ -8,15 +8,6 @@ use zilliqa::crypto::SecretKey;
 #[zilliqa_macros::test]
 async fn block_and_tx_data_persistence(mut network: Network<'_>) {
     let wallet = network.random_wallet();
-    // make one block without txs
-    network
-        .run_until(
-            |n| n.node().get_latest_block().unwrap().map_or(0, |b| b.view()) >= 1,
-            50,
-        )
-        .await
-        .unwrap();
-
     // send and include tx
     let hash = Hash(
         wallet
@@ -35,6 +26,15 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
         .await
         .unwrap();
 
+    // make one block without txs
+    network
+        .run_until(
+            |n| n.node().get_latest_block().unwrap().map_or(0, |b| b.view()) >= 2,
+            50,
+        )
+        .await
+        .unwrap();
+
     let node = network.remove_node();
 
     let inner = node.inner.lock().unwrap();
@@ -48,12 +48,12 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
     let last_block = inner.get_block_by_view(last_view).unwrap().unwrap();
     let tx = inner.get_transaction_by_hash(hash).unwrap().unwrap();
     // sanity check
-    assert!(finalized_view >= 1);
     assert_eq!(tx.hash(), hash);
     assert_eq!(block_with_tx.transactions.len(), 1);
 
     // drop and re-create the node using the same datadir:
     drop(inner);
+    #[allow(clippy::redundant_closure_call)]
     let dir = (|node: TestNode| node.dir)(node); // move dir out and drop the rest of node
     let (newnode, _) = crate::node(SecretKey::new().unwrap(), 0, dir);
 

@@ -3,18 +3,18 @@ use std::io;
 
 use crate::message;
 use async_trait::async_trait;
-use libp2p::core::upgrade::{read_length_prefixed, write_length_prefixed, ProtocolName};
+use libp2p::core::upgrade::{read_length_prefixed, write_length_prefixed};
 pub use libp2p::request_response::{self, ProtocolSupport, RequestId, ResponseChannel};
 use tracing::error;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MessageProtocol;
-#[derive(Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MessageCodec;
 
-impl ProtocolName for MessageProtocol {
-    fn protocol_name(&self) -> &[u8] {
-        b"/zq2-message/1"
+impl AsRef<str> for MessageProtocol {
+    fn as_ref(&self) -> &str {
+        "/zq2-message/1"
     }
 }
 

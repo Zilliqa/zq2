@@ -200,7 +200,7 @@ pub struct BlockHeader {
 
 impl BlockHeader {
     pub fn genesis_hash() -> Hash {
-        Hash::compute(&[&(0 as u64).to_be_bytes(), Hash::ZERO.as_bytes()])
+        Hash::compute(&[&0_u64.to_be_bytes(), Hash::ZERO.as_bytes()])
     }
 
     pub fn genesis() -> Self {

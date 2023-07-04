@@ -1,4 +1,4 @@
-use std::{fmt::Debug, thread, time::Duration};
+use std::fmt::Debug;
 
 use ethabi::ethereum_types::U64;
 use ethers::{
@@ -9,9 +9,8 @@ use ethers::{
 };
 use primitive_types::{H160, H256};
 use serde::Serialize;
-use zilliqa::crypto::SecretKey;
 
-use crate::{deploy_contract, node, LocalRpcClient, Network};
+use crate::{deploy_contract, LocalRpcClient, Network};
 
 #[zilliqa_macros::test]
 async fn call(mut network: Network<'_>) {

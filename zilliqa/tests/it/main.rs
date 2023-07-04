@@ -68,7 +68,7 @@ fn node(
     let rpc_module: RpcModule<Arc<Mutex<Node>>> = zilliqa::api::rpc_module(node.clone());
     let rpc_client = Provider::new(LocalRpcClient {
         id: Arc::new(AtomicU64::new(0)),
-        rpc_module: rpc_module.clone(),
+        rpc_module,
     });
 
     (
