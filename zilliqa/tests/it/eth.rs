@@ -77,26 +77,6 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
     //let provider = network.provider();
     let wallet = network.random_wallet();
 
-    //async fn count_by_number<T: Debug + Serialize + Send + Sync>(
-    //    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-    //    number: T,
-    //) -> u64 {
-    //    wallet.
-    //    wallet
-    //        .request::<_, U64>("eth_getBlockTransactionCountByNumber", [number])
-    //        .await
-    //        .unwrap()
-    //        .as_u64()
-    //}
-
-    //async fn count_by_hash(wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>, hash: H256) -> u64 {
-    //    wallet
-    //        .request::<_, U64>("eth_getBlockTransactionCountByHash", [hash])
-    //        .await
-    //        .unwrap()
-    //        .as_u64()
-    //}
-
     // Send a transaction.
     let hash = wallet
         .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
