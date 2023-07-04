@@ -170,7 +170,8 @@ impl NodeLauncher {
             .boxed();
 
         let behaviour = Behaviour {
-            request_response: request_response::Behaviour::new(
+            // TODO: Consider replacing with [request_response::json::Behaviour].
+            request_response: request_response::Behaviour::with_codec(
                 MessageCodec,
                 iter::once((MessageProtocol, ProtocolSupport::Full)),
                 Default::default(),

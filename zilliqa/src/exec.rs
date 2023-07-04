@@ -115,7 +115,7 @@ impl State {
     fn apply_transaction_inner(
         &self,
         from_addr: Address,
-        to_addr: Address,
+        to_addr: Option<Address>,
         _gas_price: u128,
         gas_limit: u64,
         amount: u128,
@@ -131,8 +131,10 @@ impl State {
         let context = "".to_string();
         let continuations: Arc<Mutex<Continuations>> = Default::default();
         let logs: Vec<Log> = Default::default();
-        let account = self.get_account(to_addr).unwrap_or_default();
-        let mut to = to_addr.0;
+        let account = self
+            .get_account(to_addr.unwrap_or(Address::ZERO))
+            .unwrap_or_default();
+        let mut to = to_addr.unwrap_or(Address::ZERO).0;
         let mut created_contract_addr: Option<H160> = None;
 
         let mut code: Vec<u8> = account.code;
@@ -146,11 +148,12 @@ impl State {
             current_block,
         };
 
-        if Address::is_balance_transfer(from_addr, to_addr) {
+        if Address::is_balance_transfer(Address(to)) {
             code = contracts::native_token::CODE.clone();
         }
 
-        if Address::is_contract_creation(from_addr, to_addr) {
+        // If is contract creation
+        if to_addr.is_none() {
             code = data;
             data = vec![];
             to = calculate_contract_address(from_addr.0, &backend);
@@ -241,7 +244,7 @@ impl State {
     fn apply_delta<'a>(
         &mut self,
         logs: &mut Vec<Log>,
-        to_addr: Address,
+        to_addr: Option<Address>,
         applys: impl Iterator<Item = &'a evm_ds::protos::Evm::Apply>,
     ) -> Result<()> {
         for apply in applys {
@@ -263,8 +266,10 @@ impl State {
                 // this is the intended implementation. However, that might mean it is impossible to tell the
                 // difference between an account that has been fully drained and an account whose balance has not
                 // been changed. We should investigate if this is really an issue.
-                if to_addr != Address::NATIVE_TOKEN && !balance.is_zero() {
-                    self.set_native_balance(logs, address, balance)?;
+                if let Some(to_addr) = to_addr {
+                    if to_addr != Address::NATIVE_TOKEN && !balance.is_zero() {
+                        self.set_native_balance(logs, address, balance)?;
+                    }
                 }
 
                 let mut account = self.get_account(address).unwrap_or_default();
@@ -311,8 +316,8 @@ impl State {
             .unwrap();
 
         let balance = self.call_contract(
-            Address::DEPLOY_CONTRACT,
-            Address::NATIVE_TOKEN,
+            Address::ZERO,
+            Some(Address::NATIVE_TOKEN),
             data,
             // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
             // dummy values.
@@ -335,8 +340,8 @@ impl State {
             .unwrap();
 
         let result = self.apply_transaction_inner(
-            Address::DEPLOY_CONTRACT,
-            Address::NATIVE_TOKEN,
+            Address::ZERO,
+            Some(Address::NATIVE_TOKEN),
             u128::MAX,
             u64::MAX,
             0,
@@ -355,7 +360,7 @@ impl State {
                 logs.extend_from_slice(&lgs);
 
                 if success {
-                    self.apply_delta(logs, Address::NATIVE_TOKEN, result.apply.iter())?;
+                    self.apply_delta(logs, Some(Address::NATIVE_TOKEN), result.apply.iter())?;
                 }
 
                 Ok(())
@@ -368,15 +373,15 @@ impl State {
 
     pub fn call_contract(
         &self,
-        caller: Address,
-        contract: Address,
+        from_addr: Address,
+        to_addr: Option<Address>,
         data: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<Vec<u8>> {
         let result = self.apply_transaction_inner(
-            caller,
-            contract,
+            from_addr,
+            to_addr,
             0,
             u64::MAX,
             0,
@@ -463,8 +468,7 @@ impl<'a> Backend for EvmBackend<'a> {
         // For these accounts, we hardcode the balance we return to the EVM engine as zero. Otherwise, we have an
         // infinite recursion because getting the native balance of any account requires this method to be called for
         // these two 'special' accounts.
-        let is_special_account =
-            address == Address::DEPLOY_CONTRACT.0 || address == Address::NATIVE_TOKEN.0;
+        let is_special_account = address == Address::ZERO.0 || address == Address::NATIVE_TOKEN.0;
         Basic {
             balance: if is_special_account {
                 0.into()

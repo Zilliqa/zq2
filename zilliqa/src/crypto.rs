@@ -176,6 +176,11 @@ impl SecretKey {
         Self::from_bytes(&bls_temp.as_bytes())
     }
 
+    pub fn new_from_rng<R: rand::Rng + rand::CryptoRng>(rng: &mut R) -> Result<SecretKey> {
+        let bls = bls_signatures::PrivateKey::generate(rng);
+        Self::from_bytes(&bls.as_bytes())
+    }
+
     pub fn from_bytes(bytes: &[u8]) -> Result<SecretKey> {
         let bytes: [u8; 32] = bytes.try_into()?;
         // ensure the key is valid for all representations

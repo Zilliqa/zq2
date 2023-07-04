@@ -9,7 +9,7 @@ use serde::{
 };
 use sha3::{Digest, Keccak256};
 
-use crate::message;
+use crate::message::{self, BlockNumber};
 
 use super::to_hex::ToHex;
 
@@ -19,16 +19,6 @@ use super::to_hex::ToHex;
 pub enum HashOrTransaction {
     Hash(H256),
     Transaction(EthTransaction),
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum BlockNumber {
-    Number(u64),
-    Earliest,
-    Latest,
-    Safe,
-    Finalized,
-    Pending,
 }
 
 impl<'de> Deserialize<'de> for BlockNumber {
@@ -328,8 +318,8 @@ pub struct EthTransactionReceipt {
     pub block_number: u64,
     #[serde(serialize_with = "hex")]
     pub from: H160,
-    #[serde(serialize_with = "hex")]
-    pub to: H160,
+    #[serde(serialize_with = "option_hex")]
+    pub to: Option<H160>,
     #[serde(serialize_with = "hex")]
     pub cumulative_gas_used: u64,
     #[serde(serialize_with = "hex")]
@@ -423,11 +413,7 @@ fn bool_as_int<S: Serializer>(b: &bool, serializer: S) -> Result<S::Ok, S::Error
 pub struct CallParams {
     #[serde(default)]
     pub from: H160,
-    // The documentation states that the `to` field is required, but some clients (notably Ethers.js) omit it for
-    // contract creations, where the `to` address is zero. Therefore, we default to the zero address if `to` is
-    // omitted.
-    #[serde(default)]
-    pub to: H160,
+    pub to: Option<H160>,
     #[serde(deserialize_with = "deserialize_data")]
     pub data: Vec<u8>,
 }
