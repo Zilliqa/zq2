@@ -7,6 +7,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, BlockId, BlockNumber, TransactionRequest},
     utils::keccak256,
 };
+use futures::FutureExt;
 use primitive_types::{H160, H256};
 use serde::Serialize;
 
@@ -85,7 +86,6 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
         provider: &Provider<LocalRpcClient>,
         number: T,
     ) -> u64 {
-        println!("Getting COUNT by NUMER {number:?}");
         provider
             .request::<_, U64>("eth_getBlockTransactionCountByNumber", [number])
             .await
@@ -94,7 +94,6 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
     }
 
     async fn count_by_hash(provider: &Provider<LocalRpcClient>, hash: H256) -> u64 {
-        println!("Getting COUNT by HASG {hash}");
         provider
             .request::<_, U64>("eth_getBlockTransactionCountByHash", [hash])
             .await
@@ -106,7 +105,6 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
         .await
         .unwrap();
 
-    println!("SENDING the tx...");
     // Send a transaction.
     let hash = wallet
         .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
@@ -114,7 +112,6 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
         .unwrap()
         .tx_hash();
 
-    println!("SNET! now waiting....");
     network
         .run_until_async(
             || async {
@@ -128,7 +125,6 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
         )
         .await
         .unwrap();
-    println!("GOt RECEOT!");
 
     let receipt = provider
         .get_transaction_receipt(hash)
@@ -159,7 +155,7 @@ async fn get_storage_at(mut network: Network<'_>) {
     let wallet = network.random_wallet();
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
-    let (hash, _) = deploy_contract!("contracts/Storage.sol", "Storage", wallet, network);
+    let (hash, abi) = deploy_contract!("contracts/Storage.sol", "Storage", wallet, network);
 
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let contract_address = receipt.contract_address.unwrap();
@@ -182,6 +178,45 @@ async fn get_storage_at(mut network: Network<'_>) {
         .await
         .unwrap();
     assert_eq!(value, H256::from_low_u64_be(5678));
+
+    // Save the current block number
+    let old_block_number = wallet.get_block_number().await.unwrap().as_u64();
+
+    // Modify the contract state.
+    let function = abi.function("update").unwrap();
+    let call_tx = TransactionRequest::new()
+        .to(receipt.contract_address.unwrap())
+        .data(function.encode_input(&[]).unwrap());
+    let pending_tx = wallet.send_transaction(call_tx, None).await.unwrap();
+    // Advance the network to the next block.
+    network
+        .run_until_async(
+            || async { wallet.get_block_number().await.unwrap().as_u64() > old_block_number },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // let _a = pending_tx.now_or_never().unwrap().unwrap().unwrap();
+
+    let value = wallet
+        .get_storage_at(contract_address, H256::zero(), None)
+        .await
+        .unwrap();
+    assert_eq!(value, H256::from_low_u64_be(9876));
+    println!("Update happened properly!");
+
+    let value = wallet
+        .get_storage_at(
+            contract_address,
+            H256::zero(),
+            Some(BlockId::Number(BlockNumber::Number(
+                old_block_number.into(),
+            ))),
+        )
+        .await
+        .unwrap();
+    assert_eq!(value, H256::from_low_u64_be(1234));
 }
 
 #[zilliqa_macros::test]
