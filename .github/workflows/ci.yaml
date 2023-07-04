@@ -34,4 +34,4 @@ jobs:
     - name: Verify working directory is clean
       run: git diff --exit-code
     - name: Run a security audit
-      run: cargo audit --no-fetch
+      run: cargo audit
