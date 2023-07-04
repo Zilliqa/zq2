@@ -14,7 +14,8 @@ use crate::{deploy_contract, LocalRpcClient, Network};
 
 #[zilliqa_macros::test]
 async fn call(mut network: Network<'_>) {
-    let wallet = network.random_wallet();
+    let provider = network.provider();
+    let wallet = network.random_wallet(provider);
 
     let (hash, abi) = deploy_contract!("contracts/CallMe.sol", "CallMe", wallet, network);
 
@@ -79,7 +80,7 @@ async fn call(mut network: Network<'_>) {
 #[zilliqa_macros::test]
 async fn get_block_transaction_count(mut network: Network<'_>) {
     let provider = network.provider();
-    let wallet = network.random_wallet();
+    let wallet = network.random_wallet(provider.clone());
 
     async fn count_by_number<T: Debug + Serialize + Send + Sync>(
         provider: &Provider<LocalRpcClient>,
@@ -147,7 +148,8 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
 
 #[zilliqa_macros::test]
 async fn get_storage_at(mut network: Network<'_>) {
-    let wallet = network.random_wallet();
+    let provider = network.provider();
+    let wallet = network.random_wallet(provider);
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
     let (hash, _) = deploy_contract!("contracts/Storage.sol", "Storage", wallet, network);
@@ -178,7 +180,7 @@ async fn get_storage_at(mut network: Network<'_>) {
 #[zilliqa_macros::test]
 async fn send_transaction(mut network: Network<'_>) {
     let provider = network.provider();
-    let wallet = network.random_wallet();
+    let wallet = network.random_wallet(provider.clone());
 
     let to: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
