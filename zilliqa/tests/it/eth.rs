@@ -4,9 +4,7 @@ use ethers::solc::EvmVersion;
 use ethers::{
     prelude::{CompilerInput, DeploymentTxFactory},
     providers::{Middleware, Provider},
-    types::{
-        transaction::eip2718::TypedTransaction, BlockId, BlockNumber, TransactionRequest,
-    },
+    types::{transaction::eip2718::TypedTransaction, BlockId, BlockNumber, TransactionRequest},
     utils::keccak256,
 };
 use std::fmt::Debug;
@@ -18,66 +16,66 @@ use crate::{deploy_contract, LocalRpcClient, Network};
 
 #[zilliqa_macros::test]
 async fn call_block_number(mut network: Network<'_>) {
-        let wallet = network.random_wallet();
+    let wallet = network.random_wallet();
 
-        let (hash, abi) = deploy_contract!("contracts/CallMe.sol", "CallMe", wallet, network);
+    let (hash, abi) = deploy_contract!("contracts/CallMe.sol", "CallMe", wallet, network);
 
-        let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
 
-        let function = abi.function("currentBlock").unwrap();
-        let call_tx = TransactionRequest::new()
-            .to(receipt.contract_address.unwrap())
-            .data(function.encode_input(&[]).unwrap());
+    let function = abi.function("currentBlock").unwrap();
+    let call_tx = TransactionRequest::new()
+        .to(receipt.contract_address.unwrap())
+        .data(function.encode_input(&[]).unwrap());
 
-        // Query the current block number with an `eth_call`.
-        let response = wallet.call(&call_tx.clone().into(), None).await.unwrap();
-        let block_number = function.decode_output(&response).unwrap()[0]
-            .clone()
-            .into_uint()
-            .unwrap()
-            .as_u64();
+    // Query the current block number with an `eth_call`.
+    let response = wallet.call(&call_tx.clone().into(), None).await.unwrap();
+    let block_number = function.decode_output(&response).unwrap()[0]
+        .clone()
+        .into_uint()
+        .unwrap()
+        .as_u64();
 
-        // Verify it is correct.
-        let expected_block_number = wallet.get_block_number().await.unwrap().as_u64();
-        assert_eq!(block_number, expected_block_number);
+    // Verify it is correct.
+    let expected_block_number = wallet.get_block_number().await.unwrap().as_u64();
+    assert_eq!(block_number, expected_block_number);
 
-        // Advance the network to the next block.
-        network
-            .run_until_async(
-                || async { wallet.get_block_number().await.unwrap().as_u64() > block_number },
-                50,
-            )
-            .await
-            .unwrap();
+    // Advance the network to the next block.
+    network
+        .run_until_async(
+            || async { wallet.get_block_number().await.unwrap().as_u64() > block_number },
+            50,
+        )
+        .await
+        .unwrap();
 
-        // Query the current block number with an `eth_call`.
-        let response = wallet.call(&call_tx.clone().into(), None).await.unwrap();
-        let new_block_number = function.decode_output(&response).unwrap()[0]
-            .clone()
-            .into_uint()
-            .unwrap()
-            .as_u64();
+    // Query the current block number with an `eth_call`.
+    let response = wallet.call(&call_tx.clone().into(), None).await.unwrap();
+    let new_block_number = function.decode_output(&response).unwrap()[0]
+        .clone()
+        .into_uint()
+        .unwrap()
+        .as_u64();
 
-        // Verify it is correct.
-        let expected_block_number = wallet.get_block_number().await.unwrap().as_u64();
-        assert_eq!(new_block_number, expected_block_number);
+    // Verify it is correct.
+    let expected_block_number = wallet.get_block_number().await.unwrap().as_u64();
+    assert_eq!(new_block_number, expected_block_number);
 
-        // Query the block number at the old block with an `eth_call`.
-        let response = wallet
-            .call(
-                &call_tx.clone().into(),
-                Some(BlockId::Number(BlockNumber::Number(block_number.into()))),
-            )
-            .await
-            .unwrap();
-        let old_block_number = function.decode_output(&response).unwrap()[0]
-            .clone()
-            .into_uint()
-            .unwrap()
-            .as_u64();
+    // Query the block number at the old block with an `eth_call`.
+    let response = wallet
+        .call(
+            &call_tx.clone().into(),
+            Some(BlockId::Number(BlockNumber::Number(block_number.into()))),
+        )
+        .await
+        .unwrap();
+    let old_block_number = function.decode_output(&response).unwrap()[0]
+        .clone()
+        .into_uint()
+        .unwrap()
+        .as_u64();
 
-        // Verify it used the state from the old block.
-        assert_eq!(old_block_number, block_number);
+    // Verify it used the state from the old block.
+    assert_eq!(old_block_number, block_number);
 }
 
 #[zilliqa_macros::test]
@@ -256,9 +254,7 @@ async fn eth_call() {
 
     let getter = abi.function("getInt256").unwrap();
 
-    let receipt = provider
-        .get_transaction_receipt(hash)
-        .await;
+    let receipt = provider.get_transaction_receipt(hash).await;
 
     assert!(receipt.is_ok());
     //assert!(receipt.unwrap().is_some());
