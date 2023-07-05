@@ -300,10 +300,7 @@ impl State {
                 let delete = apply.get_delete();
 
                 let address = Address(delete.get_address().into());
-
-                let mut account = self.get_account(address).unwrap_or_default();
-                account.code = vec![];
-                self.save_account(address, account)?;
+                self.delete_account(address)?;
             }
         }
 

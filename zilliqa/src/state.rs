@@ -87,7 +87,6 @@ impl State {
         for (address, balance) in GENESIS.iter() {
             // We don't care about these logs.
             let mut logs = vec![];
-            println!("Setting balance for {:?}", address);
             state.set_native_balance(&mut logs, *address, *balance)?;
         }
 
