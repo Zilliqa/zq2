@@ -31,7 +31,7 @@ static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
     vec![
         (
             Address(H160(
-                hex::decode("f0cb24ac66ba7375bf9b9c4fa91e208d9eaabd2e")
+                hex::decode("0000000000000000000000000000000000000001")
                     .unwrap()
                     .try_into()
                     .unwrap(),
@@ -40,7 +40,7 @@ static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
         ),
         (
             Address(H160(
-                hex::decode("cf671756a8238cbeb19bcb4d77fc9091e2fce1a3")
+                hex::decode("0000000000000000000000000000000000000002")
                     .unwrap()
                     .try_into()
                     .unwrap(),
@@ -49,7 +49,7 @@ static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
         ),
         (
             Address(H160(
-                hex::decode("05a321d0b9541ca08d7e32315ca186cc67a1602c")
+                hex::decode("0000000000000000000000000000000000000003")
                     .unwrap()
                     .try_into()
                     .unwrap(),
@@ -58,7 +58,7 @@ static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
         ),
         (
             Address(H160(
-                hex::decode("6e2cf2789c5b705e0990c05ca959b5001c70ba87")
+                hex::decode("0000000000000000000000000000000000000004")
                     .unwrap()
                     .try_into()
                     .unwrap(),
