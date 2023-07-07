@@ -40,6 +40,15 @@ pub struct Node {
     consensus: Consensus,
 }
 
+impl Drop for Node {
+    fn drop(&mut self) {
+        println!(
+            "  [NODE] dropping node with path {:?}",
+            self.config.data_dir
+        );
+    }
+}
+
 impl Node {
     pub fn new(
         config: Config,
@@ -58,20 +67,19 @@ impl Node {
         Ok(node)
     }
 
-    pub fn flush_to_disk(&self) -> Result<()> {
-        self.consensus.flush_to_disk()
-    }
-
     // TODO: Multithreading - `&mut self` -> `&self`
     pub fn handle_message(&mut self, source: PeerId, message: Message) -> Result<()> {
         match message {
             Message::Proposal(m) => {
+                println!(" --> handle_message: Proposal");
                 if let Some((leader, vote)) = self.consensus.proposal(m)? {
                     self.reset_timeout.send(())?;
                     self.send_message(leader, Message::Vote(vote))?;
                 }
+                println!(" --> handle_message: Proposal OVER");
             }
             Message::Vote(m) => {
+                println!(" --> handle_message: Vote");
                 if let Some((block, transactions)) = self.consensus.vote(source, m)? {
                     self.broadcast_message(Message::Proposal(Proposal {
                         header: block.header,
@@ -80,8 +88,10 @@ impl Node {
                         transactions,
                     }))?;
                 }
+                println!(" --> handle_message: Vote OVER");
             }
             Message::NewView(m) => {
+                println!(" --> handle_message: NewView");
                 if let Some(block) = self.consensus.new_view(source, m)? {
                     self.broadcast_message(Message::Proposal(Proposal {
                         header: block.header,
@@ -90,15 +100,21 @@ impl Node {
                         transactions: vec![],
                     }))?;
                 }
+                println!(" --> handle_message: NewView OVER");
             }
             Message::BlockRequest(m) => {
+                println!(" --> handle_message: aa");
                 self.handle_block_request(source, m)?;
             }
             Message::BlockResponse(m) => {
+                println!(" --> handle_message: bb");
                 self.handle_block_response(source, m)?;
             }
-            Message::RequestResponse => {}
+            Message::RequestResponse => {
+                println!(" --> handle_message: dd");
+            }
             Message::NewTransaction(t) => {
+                println!(" --> handle_message: cc");
                 self.consensus.new_transaction(t)?;
             }
         }
@@ -147,6 +163,10 @@ impl Node {
             BlockNumber::Latest => self.view() - 1,
             _ => todo!(),
         }
+    }
+
+    pub fn peer_id(&self) -> PeerId {
+        self.peer_id
     }
 
     pub fn call_contract(

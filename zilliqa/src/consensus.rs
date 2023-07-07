@@ -89,6 +89,15 @@ pub struct Consensus {
     touched_address_index: Tree,
 }
 
+impl Drop for Consensus {
+    fn drop(&mut self) {
+        println!(
+            "    [CONSENSUS] Dropping consensus that has file path {:?}",
+            self.config.data_dir
+        );
+    }
+}
+
 impl Consensus {
     pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
         let validator = Validator {
@@ -159,16 +168,6 @@ impl Consensus {
             db,
             touched_address_index,
         })
-    }
-
-    pub fn flush_to_disk(&self) -> Result<()> {
-        self.db.flush()?;
-        self.block_headers.flush()?;
-        self.canonical_block_numbers.flush()?;
-        self.blocks.flush()?;
-        self.transactions.flush()?;
-        self.transaction_receipts.flush()?;
-        Ok(())
     }
 
     fn update_view(&mut self, view: u64) {

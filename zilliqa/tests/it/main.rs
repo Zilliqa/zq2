@@ -73,25 +73,54 @@ fn node(
 
     (
         TestNode {
+            _marker0: MarkerDropper(0),
+            _marker1: MarkerDropper(1),
+            _marker2: MarkerDropper(2),
+            _marker3: MarkerDropper(3),
             index,
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             secret_key,
             inner: node,
-            dir: datadir,
+            dir: Some(datadir),
             rpc_client,
         },
         message_receiver,
     )
 }
 
+struct MarkerDropper(u8);
+
+impl Drop for MarkerDropper {
+    fn drop(&mut self) {
+        println!(
+            "  [MarkerDropper] dropping a markerdropper number {}...",
+            self.0
+        );
+    }
+}
+
 /// A node within a test [Network].
 struct TestNode {
+    _marker0: MarkerDropper,
     index: usize,
     secret_key: SecretKey,
     peer_id: PeerId,
-    inner: Arc<Mutex<Node>>,
-    dir: TempDir,
+    _marker1: MarkerDropper,
     rpc_client: Provider<LocalRpcClient>,
+    _marker2: MarkerDropper,
+    inner: Arc<Mutex<Node>>,
+    _marker3: MarkerDropper,
+    dir: Option<TempDir>,
+}
+
+impl Drop for TestNode {
+    fn drop(&mut self) {
+        println!(
+            "[TEST NODE] Dropping test node with dir {:?}, also inner_node has {} references",
+            self.dir.as_ref().map(|p| p.path().to_string_lossy()),
+            Arc::strong_count(&self.inner)
+        );
+    }
 }
 
 struct Network<'r> {
@@ -103,6 +132,12 @@ struct Network<'r> {
     receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, Message)>>,
     resend_message: UnboundedSender<(PeerId, Option<PeerId>, Message)>,
     rng: &'r mut ChaCha8Rng,
+}
+
+impl Drop for Network<'_> {
+    fn drop(&mut self) {
+        println!("<[NETWORK] Dropping network!");
+    }
 }
 
 impl<'r> Network<'r> {
@@ -120,7 +155,12 @@ impl<'r> Network<'r> {
             .unzip();
 
         for node in &nodes {
-            trace!("Node {}: {}", node.index, node.peer_id);
+            trace!(
+                "Node {}: {} (dir: {})",
+                node.index,
+                node.peer_id,
+                node.dir.as_ref().unwrap().path().to_string_lossy(),
+            );
         }
 
         nodes
@@ -272,10 +312,11 @@ impl<'r> Network<'r> {
         self.nodes.choose(self.rng).unwrap().inner.lock().unwrap()
     }
 
-    pub fn remove_node(&mut self) -> TestNode {
+    pub fn remove_node(&mut self) -> TempDir {
         let idx = self.rng.gen_range(0..self.nodes.len());
         self.receivers.remove(idx);
-        self.nodes.remove(idx)
+        let mut node = self.nodes.remove(idx);
+        node.dir.take().unwrap()
     }
 
     pub fn provider(&mut self) -> Provider<LocalRpcClient> {
