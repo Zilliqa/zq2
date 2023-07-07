@@ -221,11 +221,8 @@ async fn send_transaction(mut network: Network<'_>) {
     assert_eq!(receipt.from, wallet.address());
 }
 
-#[tokio::test]
-async fn eth_call() {
-    let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(1);
-    let mut network = Network::new(&mut rng, 4);
-
+#[zilliqa_macros::test]
+async fn eth_call(mut network: Network<'_>) {
     let provider = network.provider();
     let wallet = network.random_wallet();
 
