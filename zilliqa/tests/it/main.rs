@@ -36,14 +36,17 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::trace;
 use zilliqa::{cfg::Config, crypto::SecretKey, message::Message, node::Node};
 
+// allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
+// type
+#[allow(clippy::type_complexity)]
 fn node(
     secret_key: SecretKey,
     index: usize,
     datadir: TempDir,
-) -> (
+) -> Result<(
     TestNode,
     BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
-) {
+)> {
     let (message_sender, message_receiver) = mpsc::unbounded_channel();
     let message_receiver = UnboundedReceiverStream::new(message_receiver);
     // Augment the `message_receiver` stream to include the sender's `PeerId`.
@@ -62,8 +65,7 @@ fn node(
         secret_key,
         message_sender,
         reset_timeout_sender,
-    )
-    .unwrap();
+    )?;
     let node = Arc::new(Mutex::new(node));
     let rpc_module: RpcModule<Arc<Mutex<Node>>> = zilliqa::api::rpc_module(node.clone());
     let rpc_client = Provider::new(LocalRpcClient {
@@ -71,12 +73,8 @@ fn node(
         rpc_module,
     });
 
-    (
+    Ok((
         TestNode {
-            _marker0: MarkerDropper(0),
-            _marker1: MarkerDropper(1),
-            _marker2: MarkerDropper(2),
-            _marker3: MarkerDropper(3),
             index,
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             secret_key,
@@ -85,42 +83,17 @@ fn node(
             rpc_client,
         },
         message_receiver,
-    )
-}
-
-struct MarkerDropper(u8);
-
-impl Drop for MarkerDropper {
-    fn drop(&mut self) {
-        println!(
-            "  [MarkerDropper] dropping a markerdropper number {}...",
-            self.0
-        );
-    }
+    ))
 }
 
 /// A node within a test [Network].
 struct TestNode {
-    _marker0: MarkerDropper,
     index: usize,
     secret_key: SecretKey,
     peer_id: PeerId,
-    _marker1: MarkerDropper,
     rpc_client: Provider<LocalRpcClient>,
-    _marker2: MarkerDropper,
     inner: Arc<Mutex<Node>>,
-    _marker3: MarkerDropper,
     dir: Option<TempDir>,
-}
-
-impl Drop for TestNode {
-    fn drop(&mut self) {
-        println!(
-            "[TEST NODE] Dropping test node with dir {:?}, also inner_node has {} references",
-            self.dir.as_ref().map(|p| p.path().to_string_lossy()),
-            Arc::strong_count(&self.inner)
-        );
-    }
 }
 
 struct Network<'r> {
@@ -132,16 +105,13 @@ struct Network<'r> {
     receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, Message)>>,
     resend_message: UnboundedSender<(PeerId, Option<PeerId>, Message)>,
     rng: &'r mut ChaCha8Rng,
-}
-
-impl Drop for Network<'_> {
-    fn drop(&mut self) {
-        println!("<[NETWORK] Dropping network!");
-    }
+    /// The seed input for the node - because rng.get_seed() returns a different, internal
+    /// representation
+    seed: u64,
 }
 
 impl<'r> Network<'r> {
-    pub fn new(rng: &mut ChaCha8Rng, nodes: usize) -> Network {
+    pub fn new(rng: &mut ChaCha8Rng, nodes: usize, seed: u64) -> Network {
         let mut keys: Vec<_> = (0..nodes)
             .map(|_| SecretKey::new_from_rng(rng).unwrap())
             .collect();
@@ -151,7 +121,7 @@ impl<'r> Network<'r> {
         let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
-            .map(|(i, key)| node(key, i, tempfile::tempdir().unwrap()))
+            .map(|(i, key)| node(key, i, tempfile::tempdir().unwrap()).unwrap())
             .unzip();
 
         for node in &nodes {
@@ -191,6 +161,7 @@ impl<'r> Network<'r> {
             receivers,
             resend_message,
             rng,
+            seed,
         }
     }
 
@@ -312,11 +283,10 @@ impl<'r> Network<'r> {
         self.nodes.choose(self.rng).unwrap().inner.lock().unwrap()
     }
 
-    pub fn remove_node(&mut self) -> TempDir {
+    pub fn remove_node(&mut self) -> TestNode {
         let idx = self.rng.gen_range(0..self.nodes.len());
         self.receivers.remove(idx);
-        let mut node = self.nodes.remove(idx);
-        node.dir.take().unwrap()
+        self.nodes.remove(idx)
     }
 
     pub fn provider(&mut self) -> Provider<LocalRpcClient> {

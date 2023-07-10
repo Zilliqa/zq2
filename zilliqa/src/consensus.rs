@@ -89,15 +89,6 @@ pub struct Consensus {
     touched_address_index: Tree,
 }
 
-impl Drop for Consensus {
-    fn drop(&mut self) {
-        println!(
-            "    [CONSENSUS] Dropping consensus that has file path {:?}",
-            self.config.data_dir
-        );
-    }
-}
-
 impl Consensus {
     pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
         let validator = Validator {
