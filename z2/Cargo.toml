@@ -23,7 +23,7 @@ clap = { version = "4.3.11", features = ["derive"] }
 eyre = "0.6.8"
 futures = "0.3.28"
 rand_core = "0.6.4"
-serde = { version="1.0.165", features = [ "derive" ] }
+serde = { version="1.0.168", features = [ "derive" ] }
 tokio = { version = "1.29.1", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process"] }
 tokio-stream = "0.1.14"
 zilliqa = { path = "../zilliqa" }
