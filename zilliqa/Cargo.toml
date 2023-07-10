@@ -20,7 +20,7 @@ vergen = { version = "8.2.1", features = ["git", "gitcl"] }
 
 [dependencies]
 anyhow = { version = "1.0.71", features = ["backtrace"] }
-async-trait = "0.1.69"
+async-trait = "0.1.71"
 bitvec = { version = "1.0.1", features = ["serde"] }
 bls-signatures = "0.14.0"
 bls12_381 = "0.8.0"
@@ -60,7 +60,7 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 zilliqa-macros = { path = "../zilliqa-macros" }
 
 [dev-dependencies]
-async-trait = "0.1.69"
+async-trait = "0.1.71"
 ethers = { version = "2.0.7", default-features = false, features = ["ethers-solc", "legacy"] }
 rand_chacha = "0.3.1"
 tempfile = "3.6.0"
