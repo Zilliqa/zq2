@@ -20,7 +20,7 @@ vergen = { version = "8.2.4", features = ["git", "gitcl"] }
 
 [dependencies]
 anyhow = { version = "1.0.71", features = ["backtrace"] }
-async-trait = "0.1.71"
+async-trait = "0.1.69"
 bincode = "1.3.3"
 bitvec = { version = "1.0.1", features = ["serde"] }
 bls-signatures = "0.14.0"
