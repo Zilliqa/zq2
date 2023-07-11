@@ -12,7 +12,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::{
     api,
     cfg::Config,
-    crypto::{NodePublicKey, SecretKey},
+    crypto::SecretKey,
     networking::{request_response, MessageCodec, MessageProtocol, ProtocolSupport},
     node,
 };
@@ -24,14 +24,8 @@ use libp2p::{
     core::upgrade,
     futures::StreamExt,
     gossipsub::{self, IdentTopic, MessageAuthenticity},
-    identify,
-    kad::{
-        store::MemoryStore, GetRecordOk, Kademlia, KademliaEvent, PeerRecord, QueryResult, Quorum,
-        Record,
-    },
-    mdns,
+    identify, mdns,
     multiaddr::{Multiaddr, Protocol},
-    multihash::Multihash,
     noise,
     swarm::{dial_opts::DialOpts, NetworkBehaviour, SwarmBuilder, SwarmEvent},
     tcp, yamux, PeerId, Transport,
@@ -65,7 +59,6 @@ struct Behaviour {
     request_response: request_response::Behaviour<MessageCodec>,
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
-    kademlia: Kademlia<MemoryStore>,
     identify: identify::Behaviour,
 }
 
@@ -189,7 +182,6 @@ impl NodeLauncher {
             )
             .map_err(|e| anyhow!(e))?,
             mdns: mdns::Behaviour::new(Default::default(), peer_id)?,
-            kademlia: Kademlia::new(peer_id, MemoryStore::new(peer_id)),
             identify: identify::Behaviour::new(identify::Config::new(
                 "/ipfs/id/1.0.0".to_owned(),
                 key_pair.public(),
@@ -215,20 +207,13 @@ impl NodeLauncher {
         let topic = IdentTopic::new("topic");
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
 
-        // Store our public key in the DHT, indexed by our peer ID.
-        swarm.behaviour_mut().kademlia.put_record(
-            Record::new(
-                Multihash::from(peer_id), // TODO: Disambiguate this key?
-                self.secret_key.node_public_key().as_bytes(),
-            ),
-            Quorum::One,
-        )?;
-
         let mut terminate = signal::unix::signal(SignalKind::terminate())?;
         let sleep = time::sleep(self.consensus_timeout);
         tokio::pin!(sleep);
 
         self.node_launched = true;
+
+        let mut joined = false;
 
         loop {
             select! {
@@ -237,37 +222,33 @@ impl NodeLauncher {
                         info!(%address, "started listening");
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
-                        for (peer, address) in list {
+                        for (peer, _) in list {
+                            info!(%peer, "adding peer");
                             swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
-                            swarm.behaviour_mut().kademlia.add_address(&peer, address);
-                            swarm.behaviour_mut().kademlia.get_record(Multihash::from(peer).into());
+
+                            //if !joined && swarm.behaviour().gossipsub.all_peers().count() >= 3 {
+                            //    self.message_sender.send((None, Message::JoinCommittee(self.secret_key.node_public_key()))).unwrap();
+                            //    joined = true;
+                            //}
                         }
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
-                        for (peer, address) in list {
+                        for (peer, _) in list {
                             swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer);
-                            swarm.behaviour_mut().kademlia.remove_address(&peer, &address);
                         }
                     }
-                    SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info: identify::Info { listen_addrs, observed_addr, .. }})) => {
-                        for address in listen_addrs {
-                            swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-                            swarm.behaviour_mut().kademlia.add_address(&peer_id, address);
-                            swarm.behaviour_mut().kademlia.get_record(Multihash::from(peer_id).into());
-                        }
+                    SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, .. }, .. })) => {
+                        //info!(%peer_id, "adding peer");
+                        //swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                         // Mark the address observed for us by the external peer as confirmed.
                         // TODO: We shouldn't trust this, instead we should confirm our own address manually or using
                         // `libp2p-autonat`.
                         swarm.add_external_address(observed_addr);
-                    }
-                    SwarmEvent::Behaviour(BehaviourEvent::Kademlia(KademliaEvent::OutboundQueryProgressed {
-                        result: QueryResult::GetRecord(Ok(GetRecordOk::FoundRecord(PeerRecord { record: Record { key, value, .. }, .. }))),
-                        ..
-                    })) => {
-                        let peer_id = PeerId::from_multihash(Multihash::from_bytes(key.as_ref())?).expect("key should be a peer ID");
-                        let public_key = NodePublicKey::from_bytes(&value)?;
 
-                        self.node.lock().unwrap().add_peer(peer_id, public_key)?;
+                        //if !joined && swarm.behaviour().gossipsub.all_peers().count() >= 3 {
+                        //    self.message_sender.send((None, Message::JoinCommittee(self.secret_key.node_public_key()))).unwrap();
+                        //    joined = true;
+                        //}
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
                         message: gossipsub::Message {
@@ -278,14 +259,17 @@ impl NodeLauncher {
                         let source = source.expect("message should have a source");
                         let message = serde_json::from_slice::<Message>(&data).unwrap();
                         let message_type = message.name();
-                        debug!(%source, message_type, "message recieved");
+                        let to = self.peer_id;
+                        debug!(%source, %to, message_type, "broadcast recieved");
                         self.node.lock().unwrap().handle_message(source, message).unwrap();
                     }
 
                     SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer })) => {
                                 match message {
                                     request_response::Message::Request {request, channel, ..} => {
-                                        debug!(%peer, "direct message received");
+                                        let to = self.peer_id;
+                                        let message_type = request.name();
+                                        debug!(%peer, %to, message_type, "message received");
 
                                         self.node.lock().unwrap().handle_message(peer, request).unwrap();
 
@@ -301,26 +285,38 @@ impl NodeLauncher {
                     let (dest, message) = message.expect("message stream should be infinite");
                     let message_type = message.name();
                     let data = serde_json::to_vec(&message).unwrap();
+                    let from = self.peer_id;
 
                     match dest {
                         Some(dest) => {
-                            debug!(%dest, message_type, "sending direct message");
-                            let _ = swarm.behaviour_mut().request_response.send_request(&dest, message);
+                            debug!(%from, %dest, message_type, "sending message");
+                            if from == dest {
+                                self.node.lock().unwrap().handle_message(from, message).unwrap();
+                            } else {
+                                let _ = swarm.behaviour_mut().request_response.send_request(&dest, message);
+                            }
                         },
                         None => {
-                            debug!(message_type, "sending gossip message");
+                            debug!(%from, message_type, "broadcasting");
                             match swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
                                 Ok(_) => {},
                                 Err(e) => {
                                     error!(%e, "failed to publish message");
                                 }
                             }
+                            // Also broadcast the message to ourselves.
+                            self.node.lock().unwrap().handle_message(from, message).unwrap();
                         },
                     }
                 },
                 () = &mut sleep => {
                     trace!("timeout elapsed");
-                    self.node.lock().unwrap().handle_timeout().unwrap();
+                    if !joined {
+                        self.message_sender.send((None, Message::JoinCommittee(self.secret_key.node_public_key()))).unwrap();
+                        joined = true;
+                    } else {
+                        self.node.lock().unwrap().handle_timeout().unwrap();
+                    }
                     sleep.as_mut().reset(Instant::now() + self.consensus_timeout);
                 },
                 r = self.reset_timeout_receiver.next() => {

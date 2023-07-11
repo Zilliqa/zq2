@@ -1,5 +1,6 @@
 use eyre::Result;
 use futures::future::JoinAll;
+use std::path::Path;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -29,6 +30,7 @@ impl Process {
     pub async fn spawn(
         index: usize,
         key: &str,
+        config_file: &Path,
         rpc: bool,
         channel: &mpsc::Sender<Message>,
     ) -> Result<Process> {
@@ -37,6 +39,8 @@ impl Process {
         if !rpc {
             cmd.arg("--no-jsonrpc");
         }
+        cmd.arg("--config-file");
+        cmd.arg(config_file);
         cmd.stdout(Stdio::piped());
         let mut child = cmd
             .spawn()

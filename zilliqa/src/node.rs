@@ -9,6 +9,7 @@ use eth_trie::MemoryDB;
 use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::debug;
 
 use crate::{
     cfg::Config,
@@ -52,16 +53,19 @@ impl Node {
         let node = Node {
             config: config.clone(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
-            message_sender,
+            message_sender: message_sender.clone(),
             reset_timeout,
-            consensus: Consensus::new(secret_key, config, database)?,
+            consensus: Consensus::new(secret_key, config, database, message_sender)?,
         };
 
         Ok(node)
     }
 
     // TODO: Multithreading - `&mut self` -> `&self`
-    pub fn handle_message(&mut self, source: PeerId, message: Message) -> Result<()> {
+    pub fn handle_message(&mut self, from: PeerId, message: Message) -> Result<()> {
+        let to = self.peer_id;
+        let message_name = message.name();
+        tracing::debug!(%from, %to, %message_name, "handling message");
         match message {
             Message::Proposal(m) => {
                 if let Some((leader, vote)) = self.consensus.proposal(m)? {
@@ -70,34 +74,30 @@ impl Node {
                 }
             }
             Message::Vote(m) => {
-                if let Some((block, transactions)) = self.consensus.vote(source, m)? {
-                    self.broadcast_message(Message::Proposal(Proposal {
-                        header: block.header,
-                        qc: block.qc,
-                        agg: block.agg,
+                if let Some((block, transactions)) = self.consensus.vote(m)? {
+                    self.broadcast_message(Message::Proposal(Proposal::from_parts(
+                        block,
                         transactions,
-                    }))?;
+                    )))?;
                 }
             }
             Message::NewView(m) => {
-                if let Some(block) = self.consensus.new_view(source, m)? {
-                    self.broadcast_message(Message::Proposal(Proposal {
-                        header: block.header,
-                        qc: block.qc,
-                        agg: block.agg,
-                        transactions: vec![],
-                    }))?;
+                if let Some(block) = self.consensus.new_view(from, m)? {
+                    self.broadcast_message(Message::Proposal(Proposal::from_parts(block, vec![])))?;
                 }
             }
             Message::BlockRequest(m) => {
-                self.handle_block_request(source, m)?;
+                self.handle_block_request(from, m)?;
             }
             Message::BlockResponse(m) => {
-                self.handle_block_response(source, m)?;
+                self.handle_block_response(from, m)?;
             }
             Message::RequestResponse => {}
             Message::NewTransaction(t) => {
                 self.consensus.new_transaction(t)?;
+            }
+            Message::JoinCommittee(public_key) => {
+                self.add_peer(from, public_key)?;
             }
         }
 
@@ -105,17 +105,21 @@ impl Node {
     }
 
     pub fn handle_timeout(&mut self) -> Result<()> {
-        if let Some((leader, new_view)) = self.consensus.timeout()? {
-            self.send_message(leader, Message::NewView(new_view))?;
-        }
+        let (leader, new_view) = self.consensus.timeout()?;
+
+        self.send_message(leader, Message::NewView(new_view))?;
 
         Ok(())
     }
 
     pub fn add_peer(&mut self, peer: PeerId, public_key: NodePublicKey) -> Result<()> {
-        if let Some((leader, vote)) = self.consensus.add_peer(peer, public_key)? {
+        if let Some((dest, message)) = self.consensus.add_peer(peer, public_key)? {
             self.reset_timeout.send(())?;
-            self.send_message(leader, Message::Vote(vote))?;
+            if let Some(dest) = dest {
+                self.send_message(dest, message)?;
+            } else {
+                self.broadcast_message(message)?;
+            }
         }
 
         Ok(())
@@ -211,7 +215,7 @@ impl Node {
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Option<&Block> {
-        self.consensus.get_block_by_view(view)
+        self.consensus.get_block_by_view(view).ok()
     }
 
     pub fn get_block_by_hash(&self, hash: Hash) -> Option<&Block> {
@@ -231,24 +235,33 @@ impl Node {
     }
 
     fn send_message(&mut self, peer: PeerId, message: Message) -> Result<()> {
-        if peer == self.peer_id {
-            // We need to 'send' this message to ourselves.
-            self.handle_message(peer, message)?;
-        } else {
-            self.message_sender.send((Some(peer), message))?;
-        }
+        tracing::debug!(
+            "sending {} from {} to {}",
+            message.name(),
+            self.peer_id,
+            peer
+        );
+        self.message_sender.send((Some(peer), message))?;
         Ok(())
     }
 
     fn broadcast_message(&mut self, message: Message) -> Result<()> {
-        self.message_sender.send((None, message.clone()))?;
+        self.message_sender.send((None, message))?;
         // Also handle it ourselves
-        self.handle_message(self.peer_id, message)?;
+        //tracing::debug!("broadcasting to self");
+        //self.handle_message(self.peer_id, message)?;
         Ok(())
     }
 
     fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
-        let block = self.consensus.get_block(&request.hash)?;
+        let block = match request.0 {
+            crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
+            crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view),
+        };
+        let Ok(block) = block else {
+            debug!("ignoring block request for unknown block: {:?}", request.0);
+            return Ok(());
+        };
 
         self.send_message(
             source,
@@ -261,7 +274,7 @@ impl Node {
     }
 
     fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
-        self.consensus.add_block(response.block);
+        self.consensus.receive_block(response.block)?;
 
         Ok(())
     }
