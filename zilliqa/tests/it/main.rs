@@ -331,10 +331,14 @@ macro_rules! deploy_contract {
         let mut contract_file = tempfile::Builder::new().suffix(".sol").tempfile().unwrap();
         std::io::Write::write_all(&mut contract_file, contract_source).unwrap();
 
-        // Compile the contract.
-        let out = ethers::solc::Solc::default()
-            .compile_source(contract_file.path())
-            .unwrap();
+        let sc = ethers::solc::Solc::default();
+
+        let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
+        let compiler_input = compiler_input.first_mut().unwrap();
+        compiler_input.settings.evm_version = Some(EvmVersion::Paris);
+
+        let out = sc.compile::<CompilerInput>(compiler_input).unwrap();
+
         let contract = out
             .get(contract_file.path().to_str().unwrap(), $contract)
             .unwrap();

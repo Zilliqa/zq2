@@ -338,13 +338,9 @@ impl Consensus {
         // already executed it in the process of proposing this block.
         if !self.transactions.contains_key(hash.0)? {
             let mut listener = TouchedAddressEventListener::default();
-            let result = evm::tracing::using(&mut listener, || {
-                self.state.apply_transaction(
-                    txn.transaction.clone(),
-                    txn.from_addr,
-                    self.config.eth_chain_id,
-                    current_block,
-                )
+            let result = evm_ds::evm::tracing::using(&mut listener, || {
+                self.state
+                    .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
             })?;
             self.transactions
                 .insert(hash.0, bincode::serialize(&txn)?)?;

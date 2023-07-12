@@ -235,12 +235,16 @@ impl NodeLauncher {
                             swarm.behaviour_mut().kademlia.remove_address(&peer, &address);
                         }
                     }
-                    SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info: identify::Info { listen_addrs, .. }})) => {
+                    SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info: identify::Info { listen_addrs, observed_addr, .. }})) => {
                         for address in listen_addrs {
                             swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                             swarm.behaviour_mut().kademlia.add_address(&peer_id, address);
                             swarm.behaviour_mut().kademlia.get_record(Multihash::from(peer_id).into());
                         }
+                        // Mark the address observed for us by the external peer as confirmed.
+                        // TODO: We shouldn't trust this, instead we should confirm our own address manually or using
+                        // `libp2p-autonat`.
+                        swarm.add_external_address(observed_addr);
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Kademlia(KademliaEvent::OutboundQueryProgressed {
                         result: QueryResult::GetRecord(Ok(GetRecordOk::FoundRecord(PeerRecord { record: Record { key, value, .. }, .. }))),
