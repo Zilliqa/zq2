@@ -17,6 +17,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+    - name: Clear some disk space
+      run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /home/runner/work/_temp/
     - name: Install dependencies
       run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y protobuf-compiler solc
     - uses: actions/checkout@v3
@@ -27,6 +29,8 @@ jobs:
       run: cargo fmt --all --check
     - name: Build
       run: cargo build --all-targets --all-features
+    - name: Run a security audit
+      run: cargo audit
     - name: Clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
     - name: Test

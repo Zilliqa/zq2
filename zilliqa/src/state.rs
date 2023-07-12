@@ -5,8 +5,10 @@ use generic_array::{
     GenericArray,
 };
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use once_cell::sync::Lazy;
 use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
+use std::convert::TryInto;
 use std::fmt::Display;
 use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
@@ -25,22 +27,48 @@ const fn u128_to_u256(value: u128) -> U256 {
     U256(ret)
 }
 
-const GENESIS: [(Address, U256); 2] = [
-    // Address with private key 0000000000000000000000000000000000000000000000000000000000000001
-    (
-        Address(H160(
-            *b"\x7e\x5f\x45\x52\x09\x1a\x69\x12\x5d\x5d\xfc\xb7\xb8\xc2\x65\x90\x29\x39\x5b\xdf",
-        )),
-        u128_to_u256(5000 * 10u128.pow(18)),
-    ),
-    // Address with private key 0000000000000000000000000000000000000000000000000000000000000002
-    (
-        Address(H160(
-            *b"\x2B\x5A\xD5\xc4\x79\x5c\x02\x65\x14\xf8\x31\x7c\x7a\x21\x5E\x21\x8D\xcC\xD6\xcF",
-        )),
-        u128_to_u256(2000 * 10u128.pow(18)),
-    ),
-];
+static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
+    // Address with private key  0000000000000000000000000000000000000000000000000000000000000001
+    // then ...0002 etc
+    vec![
+        (
+            Address(H160(
+                hex::decode("7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            )),
+            u128_to_u256(5000 * 10u128.pow(18)),
+        ),
+        (
+            Address(H160(
+                hex::decode("2B5AD5c4795c026514f8317c7a215E218DcCD6cF")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            )),
+            u128_to_u256(5000 * 10u128.pow(18)),
+        ),
+        (
+            Address(H160(
+                hex::decode("6813Eb9362372EEF6200f3b1dbC3f819671cBA69")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            )),
+            u128_to_u256(5000 * 10u128.pow(18)),
+        ),
+        (
+            Address(H160(
+                hex::decode("1efF47bc3a10a45D4B230B5d10E37751FE6AA718")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            )),
+            u128_to_u256(5000 * 10u128.pow(18)),
+        ),
+    ]
+});
 
 #[derive(Debug)]
 pub struct State {
@@ -58,10 +86,10 @@ impl State {
         state
             .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
 
-        for (address, balance) in GENESIS {
+        for (address, balance) in GENESIS.iter() {
             // We don't care about these logs.
             let mut logs = vec![];
-            state.set_native_balance(&mut logs, address, balance)?;
+            state.set_native_balance(&mut logs, *address, *balance)?;
         }
 
         Ok(state)
@@ -209,6 +237,10 @@ impl Address {
 
     /// Address of the native token ERC-20 contract.
     pub const NATIVE_TOKEN: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"));
+
+    pub fn is_balance_transfer(to: Address) -> bool {
+        to == Address::NATIVE_TOKEN
+    }
 
     pub fn from_bytes(bytes: [u8; 20]) -> Address {
         Address(bytes.into())
