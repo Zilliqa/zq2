@@ -28,10 +28,12 @@ const fn u128_to_u256(value: u128) -> U256 {
 }
 
 static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
+    // Address with private key  0000000000000000000000000000000000000000000000000000000000000001
+    // then ...0002 etc
     vec![
         (
             Address(H160(
-                hex::decode("0000000000000000000000000000000000000001")
+                hex::decode("7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
                     .unwrap()
                     .try_into()
                     .unwrap(),
@@ -40,7 +42,7 @@ static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
         ),
         (
             Address(H160(
-                hex::decode("0000000000000000000000000000000000000002")
+                hex::decode("2B5AD5c4795c026514f8317c7a215E218DcCD6cF")
                     .unwrap()
                     .try_into()
                     .unwrap(),
@@ -49,7 +51,7 @@ static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
         ),
         (
             Address(H160(
-                hex::decode("0000000000000000000000000000000000000003")
+                hex::decode("6813Eb9362372EEF6200f3b1dbC3f819671cBA69")
                     .unwrap()
                     .try_into()
                     .unwrap(),
@@ -58,7 +60,7 @@ static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
         ),
         (
             Address(H160(
-                hex::decode("0000000000000000000000000000000000000004")
+                hex::decode("1efF47bc3a10a45D4B230B5d10E37751FE6AA718")
                     .unwrap()
                     .try_into()
                     .unwrap(),
