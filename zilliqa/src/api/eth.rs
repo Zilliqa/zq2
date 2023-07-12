@@ -4,15 +4,14 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
-use k256::ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey};
-use primitive_types::{H160, H256};
+use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
 
 use crate::{
-    crypto::{Hash, TransactionPublicKey, TransactionSignature},
-    message::Block,
+    crypto::Hash,
+    message::{Block, BlockNumber},
     node::Node,
-    state::{Address, Transaction},
+    state::{Address, SignedTransaction, SigningInfo, Transaction},
 };
 
 use super::{
@@ -31,10 +30,19 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_estimateGas", estimate_gas),
             ("eth_getBalance", get_balance),
             ("eth_getCode", get_code),
+            ("eth_getStorageAt", get_storage_at),
             ("eth_getTransactionCount", get_transaction_count),
             ("eth_gasPrice", gas_price),
             ("eth_getBlockByNumber", get_block_by_number),
             ("eth_getBlockByHash", get_block_by_hash),
+            (
+                "eth_getBlockTransactionCountByHash",
+                get_block_transaction_count_by_hash
+            ),
+            (
+                "eth_getBlockTransactionCountByNumber",
+                get_block_transaction_count_by_number
+            ),
             ("eth_getTransactionByHash", get_transaction_by_hash),
             ("eth_getTransactionReceipt", get_transaction_receipt),
             ("eth_sendRawTransaction", send_raw_transaction),
@@ -57,11 +65,12 @@ fn block_number(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
-    let _tag: &str = params.next()?;
+    let block_number: BlockNumber = params.next()?;
 
     let return_value = node.lock().unwrap().call_contract(
+        block_number,
         Address(call_params.from),
-        Address(call_params.to),
+        call_params.to.map(Address),
         call_params.data,
     )?;
 
@@ -80,7 +89,8 @@ fn estimate_gas(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
-    let _tag: &str = params.next()?;
+    // TODO: #226
+    let _block_number: BlockNumber = params.next()?;
 
     Ok(node
         .lock()
@@ -92,7 +102,8 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
-    let _tag: &str = params.next()?;
+    // TODO: #226
+    let _block_number: BlockNumber = params.next()?;
 
     Ok(node
         .lock()
@@ -102,10 +113,28 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         .to_hex())
 }
 
+fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let mut params = params.sequence();
+    let address: H160 = params.next()?;
+    let position: U256 = params.next()?;
+    // TODO: #226
+    let _block_number: BlockNumber = params.next()?;
+
+    let mut position_bytes = [0; 32];
+    position.to_big_endian(&mut position_bytes);
+    let position = H256::from_slice(&position_bytes);
+
+    let node = node.lock().unwrap();
+    let value = node.get_account_storage(Address(address), position)?;
+
+    Ok(value.to_hex())
+}
+
 fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
-    let _tag: &str = params.next()?;
+    // TODO: #226
+    let _block_number: BlockNumber = params.next()?;
 
     Ok(node
         .lock()
@@ -122,27 +151,22 @@ fn gas_price(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
 
 fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
     let mut params = params.sequence();
-    let block: &str = params.next()?;
+    let block_number: BlockNumber = params.next()?;
     let full: bool = params.next()?;
 
-    if block == "latest" {
-        let block = node.lock().unwrap().get_latest_block().map(EthBlock::from);
+    let node = node.lock().unwrap();
+    let block = match block_number {
+        BlockNumber::Number(number) => node.get_block_by_view(number),
+        BlockNumber::Earliest => node.get_block_by_view(0),
+        BlockNumber::Latest => node.get_latest_block(),
+        _ => {
+            return Err(anyhow!("unsupported block number: {block_number:?}"));
+        }
+    };
 
-        Ok(block)
-    } else {
-        let block = block
-            .strip_prefix("0x")
-            .ok_or_else(|| anyhow!("no 0x prefix"))?;
-        let block = u64::from_str_radix(block, 16)?;
+    let block = block.map(|b| convert_block(&node, b, full)).transpose()?;
 
-        let node = node.lock().unwrap();
-        let block = node
-            .get_block_by_view(block)
-            .map(|b| convert_block(&node, b, full))
-            .transpose()?;
-
-        Ok(block)
-    }
+    Ok(block)
 }
 
 fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
@@ -179,6 +203,37 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<E
     }
 }
 
+fn get_block_transaction_count_by_hash(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<String>> {
+    let hash: H256 = params.one()?;
+
+    let node = node.lock().unwrap();
+    let block = node.get_block_by_hash(Hash(hash.0));
+
+    Ok(block.map(|b| b.transactions.len().to_hex()))
+}
+
+fn get_block_transaction_count_by_number(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<String>> {
+    let block_number: BlockNumber = params.one()?;
+
+    let node = node.lock().unwrap();
+    let block = match block_number {
+        BlockNumber::Number(number) => node.get_block_by_view(number),
+        BlockNumber::Earliest => node.get_block_by_view(0),
+        BlockNumber::Latest => node.get_latest_block(),
+        _ => {
+            return Err(anyhow!("unsupported block number: {block_number:?}"));
+        }
+    };
+
+    Ok(block.map(|b| b.transactions.len().to_hex()))
+}
+
 fn get_transaction_by_hash(
     params: Params,
     node: &Arc<Mutex<Node>>,
@@ -193,27 +248,35 @@ pub(super) fn get_transaction_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
 ) -> Result<Option<EthTransaction>> {
-    let Some(transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
     let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
     let Some(block) = node.get_block_by_hash(receipt.block_hash) else { return Ok(None); };
 
+    let transaction = signed_transaction.transaction;
+    let (v, r, s) = match signed_transaction.signing_info {
+        SigningInfo::Eth {
+            v,
+            r,
+            s,
+            chain_id: _,
+        } => (v, r, s),
+    };
     let transaction = EthTransaction {
         block_hash: H256(block.hash().0),
         block_number: block.view(),
-        from: transaction.addr_from().0,
+        from: signed_transaction.from_addr.0,
         gas: 0,
         gas_price: transaction.gas_price,
         hash: H256(hash.0),
         input: transaction.payload.clone(),
         nonce: transaction.nonce,
-        // `to` should be `None` if `transaction` is a contract creation.
-        to: (transaction.to_addr != Address::DEPLOY_CONTRACT).then_some(transaction.to_addr.0),
+        to: transaction.to_addr.map(|a| a.0),
         transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
         value: transaction.amount,
-        v: 0,
-        r: [0; 32],
-        s: [0; 32],
+        v,
+        r,
+        s,
     };
 
     Ok(Some(transaction))
@@ -223,7 +286,7 @@ pub(super) fn get_transaction_receipt_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
 ) -> Result<Option<EthTransactionReceipt>> {
-    let Some(transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
     let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
     let Some(block) = node.get_block_by_hash(receipt.block_hash) else { return Ok(None); };
@@ -258,13 +321,14 @@ pub(super) fn get_transaction_receipt_inner(
         })
         .collect();
 
+    let transaction = signed_transaction.transaction;
     let receipt = EthTransactionReceipt {
         transaction_hash,
         transaction_index,
         block_hash,
         block_number,
-        from: transaction.addr_from().0,
-        to: transaction.to_addr.0,
+        from: signed_transaction.from_addr.0,
+        to: transaction.to_addr.map(|a| a.0),
         cumulative_gas_used: 0,
         effective_gas_price: 0,
         gas_used: 1,
@@ -303,11 +367,11 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
 }
 
 /// Decode a transaction from its RLP-encoded form.
-fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<Transaction> {
+fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<SignedTransaction> {
     let rlp = Rlp::new(bytes);
     let nonce = rlp.val_at(0)?;
     let gas_price = rlp.val_at(1)?;
-    let gas_limit: u64 = rlp.val_at(2)?;
+    let gas_limit = rlp.val_at(2)?;
     let to_addr = rlp.val_at::<Vec<u8>>(3)?;
     let amount = rlp.val_at(4)?;
     let payload = rlp.val_at(5)?;
@@ -315,42 +379,18 @@ fn transaction_from_rlp(bytes: &[u8], chain_id: u64) -> Result<Transaction> {
     let r = left_pad_arr(&rlp.val_at::<Vec<_>>(7)?)?;
     let s = left_pad_arr(&rlp.val_at::<Vec<_>>(8)?)?;
 
-    let use_eip155 = v >= (chain_id * 2) + 35;
+    let signing_info = SigningInfo::Eth { v, r, s, chain_id };
 
-    let unsigned_transaction = Transaction {
+    let transaction = Transaction {
         nonce,
         gas_price,
         gas_limit,
-        signature: None,
-        public_key: TransactionPublicKey::Ecdsa(
-            // dummy temp signature to fill the object
-            *SigningKey::from_slice(&[1_u8; 32]).unwrap().verifying_key(),
-            use_eip155,
-        ),
-        to_addr: Address::from_slice(&to_addr),
+        to_addr: (!to_addr.is_empty()).then_some(Address::from_slice(&to_addr)),
         amount,
         payload,
-        chain_id,
     };
 
-    let recovery_id = if use_eip155 {
-        v - ((chain_id * 2) + 35)
-    } else {
-        v - 27
-    };
-    let hash = unsigned_transaction.signing_hash();
-    let recovery_id = RecoveryId::from_byte(recovery_id.try_into()?)
-        .ok_or_else(|| anyhow!("invalid recovery id: {recovery_id}"))?;
-    let signature = Signature::from_scalars(r, s)?;
-
-    let verifying_key =
-        VerifyingKey::recover_from_prehash(hash.as_bytes(), &signature, recovery_id)?;
-
-    Ok(Transaction {
-        signature: Some(TransactionSignature::Ecdsa(signature)),
-        public_key: TransactionPublicKey::Ecdsa(verifying_key, use_eip155),
-        ..unsigned_transaction
-    })
+    SignedTransaction::new(transaction, signing_info)
 }
 
 fn left_pad_arr<const N: usize>(v: &[u8]) -> Result<[u8; N]> {
@@ -386,29 +426,30 @@ mod tests {
     fn test_transaction_from_rlp() {
         // From https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md#example
         let transaction = hex::decode("f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83").unwrap();
-        let transaction = transaction_from_rlp(&transaction, 1).unwrap();
-        assert_eq!(transaction.nonce, 9);
-        assert_eq!(transaction.gas_price, 20 * 10u128.pow(9));
-        assert_eq!(transaction.gas_limit, 21000u64);
+        let signed_tx = transaction_from_rlp(&transaction, 1).unwrap();
+        let tx = &signed_tx.transaction;
+        assert_eq!(tx.nonce, 9);
+        assert_eq!(tx.gas_price, 20 * 10u128.pow(9));
+        assert_eq!(tx.gas_limit, 21000u64);
         assert_eq!(
-            transaction.to_addr,
+            tx.to_addr.unwrap(),
             Address(
                 "0x3535353535353535353535353535353535353535"
                     .parse::<H160>()
                     .unwrap()
             )
         );
-        assert_eq!(transaction.amount, 10u128.pow(18));
-        assert_eq!(transaction.payload, Vec::<u8>::new());
+        assert_eq!(tx.amount, 10u128.pow(18));
+        assert_eq!(tx.payload, Vec::<u8>::new());
         assert_eq!(
-            transaction.addr_from(),
+            signed_tx.from_addr,
             Address(
                 "0x9d8A62f656a8d1615C1294fd71e9CFb3E4855A4F"
                     .parse::<H160>()
                     .unwrap()
             )
         );
-        assert!(transaction.verify().is_ok());
+        assert!(signed_tx.verify().is_ok());
     }
 
     #[test]

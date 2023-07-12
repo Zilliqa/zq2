@@ -1,12 +1,14 @@
-use crate::state::{Transaction, TransactionReceipt};
-use std::borrow::Cow;
+use crate::{
+    message::BlockNumber,
+    state::{SignedTransaction, TransactionReceipt},
+};
+use primitive_types::H256;
 
 use anyhow::{anyhow, Result};
+use eth_trie::MemoryDB;
 use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
-
-use tracing::error;
 
 use crate::{
     cfg::Config,
@@ -20,21 +22,21 @@ use crate::{
 ///
 /// # Transaction Lifecycle
 /// 1. New transactions are created with a call to [`Node::new_transaction()`].
-/// The node gossips the transaction to the network via a [`Message::NewTransaction`] message.
-/// This initial node also stores the transaction hash in `pending_transactions`.
+/// The node gossips the transaction to the network and itself via a [`Message::NewTransaction`] message.
+/// This initial node also stores the transaction hash in `new_transactions`.
 ///
 /// 1. When a node recieves a [`NewTransaction`] via [`Node::handle_message()`], it stores it in `new_transactions`.
 /// This contains all transactions which have been receieved, but not yet executed.
 ///
-/// 1. When the initial node is a leader of a block, it adds all transaction hashes in `pending_transactions` to the block.
+/// 2. When the initial node is a leader of a block, it adds all transaction hashes in `new_transactions` to the block.
 ///
-/// 1. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
+/// 3. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
 /// Successfully executed transactions are added to `transactions` so they can be returned via APIs.
 #[derive(Debug)]
 pub struct Node {
     pub config: Config,
     peer_id: PeerId,
-    message_sender: UnboundedSender<(PeerId, Message)>,
+    message_sender: UnboundedSender<(Option<PeerId>, Message)>,
     reset_timeout: UnboundedSender<()>,
     consensus: Consensus,
 }
@@ -43,15 +45,16 @@ impl Node {
     pub fn new(
         config: Config,
         secret_key: SecretKey,
-        message_sender: UnboundedSender<(PeerId, Message)>,
+        message_sender: UnboundedSender<(Option<PeerId>, Message)>,
         reset_timeout: UnboundedSender<()>,
+        database: MemoryDB,
     ) -> Result<Node> {
         let node = Node {
             config: config.clone(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             message_sender,
             reset_timeout,
-            consensus: Consensus::new(secret_key, config)?,
+            consensus: Consensus::new(secret_key, config, database)?,
         };
 
         Ok(node)
@@ -92,19 +95,9 @@ impl Node {
             Message::BlockResponse(m) => {
                 self.handle_block_response(source, m)?;
             }
+            Message::RequestResponse => {}
             Message::NewTransaction(t) => {
-                match t.verify() {
-                    Ok(_) => {
-                        self.consensus.new_transaction(t)?;
-                    }
-                    Err(e) => {
-                        error!(
-                            "Received transaction from peer {:?} failed to verify: {}",
-                            source, e
-                        );
-                        // todo: ban/downrate peer
-                    }
-                }
+                self.consensus.new_transaction(t)?;
             }
         }
 
@@ -128,7 +121,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn create_transaction(&mut self, txn: Transaction) -> Result<Hash> {
+    pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
         let hash = txn.hash();
 
         txn.verify()?;
@@ -145,27 +138,45 @@ impl Node {
         self.consensus.view()
     }
 
+    fn get_view(&self, block_number: BlockNumber) -> u64 {
+        match block_number {
+            BlockNumber::Number(n) => n,
+            BlockNumber::Earliest => 0,
+            BlockNumber::Latest => self.view() - 1,
+            _ => todo!(),
+        }
+    }
+
     pub fn call_contract(
         &self,
-        caller: Address,
-        contract: Address,
+        block_number: BlockNumber,
+        from_addr: Address,
+        to_addr: Option<Address>,
         data: Vec<u8>,
     ) -> Result<Vec<u8>> {
-        let current_block = self
-            .get_latest_block()
-            .ok_or_else(|| anyhow!("no blocks"))?
-            .header;
-        self.consensus.state().call_contract(
-            caller,
-            contract,
+        let block = self
+            .get_block_by_view(self.get_view(block_number))
+            .ok_or_else(|| anyhow!("block not found"))?;
+        let state = self
+            .consensus
+            .state()
+            .at_root(H256(block.state_root_hash().0));
+
+        state.call_contract(
+            from_addr,
+            to_addr,
             data,
             self.config.eth_chain_id,
-            current_block,
+            block.header,
         )
     }
 
-    pub fn get_account(&self, address: Address) -> Result<Cow<'_, Account>> {
-        Ok(self.consensus.state().get_account(address))
+    pub fn get_account(&self, address: Address) -> Result<Account> {
+        self.consensus.state().get_account(address)
+    }
+
+    pub fn get_account_storage(&self, address: Address, index: H256) -> Result<H256> {
+        self.consensus.state().get_account_storage(address, index)
     }
 
     pub fn get_native_balance(&self, address: Address) -> Result<U256> {
@@ -188,7 +199,7 @@ impl Node {
         self.consensus.get_transaction_receipt(hash)
     }
 
-    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<Transaction> {
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<SignedTransaction> {
         self.consensus.get_transaction_by_hash(hash)
     }
 
@@ -201,15 +212,13 @@ impl Node {
             // We need to 'send' this message to ourselves.
             self.handle_message(peer, message)?;
         } else {
-            self.message_sender.send((peer, message))?;
+            self.message_sender.send((Some(peer), message))?;
         }
         Ok(())
     }
 
     fn broadcast_message(&mut self, message: Message) -> Result<()> {
-        // FIXME: We broadcast everything, so the recipient doesn't matter.
-        self.message_sender
-            .send((PeerId::random(), message.clone()))?;
+        self.message_sender.send((None, message.clone()))?;
         // Also handle it ourselves
         self.handle_message(self.peer_id, message)?;
         Ok(())

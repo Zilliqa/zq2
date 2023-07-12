@@ -1,0 +1,20 @@
+appenders:
+  stderr:
+    kind: console
+    target: stderr
+
+  filelog:
+    kind: file
+    path: "/tmp/evm.log"
+    encoder:
+      pattern: "{d} {l} - {m}{n}"
+
+root:
+  level: info
+  appenders:
+    - stderr
+    - filelog
+
+loggers:
+  evm_ds:
+    level: debug

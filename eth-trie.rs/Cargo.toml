@@ -1,0 +1,30 @@
+[package]
+name = "eth_trie"
+version = "0.1.0"
+authors = ["Jason Carver <ut96caarrs@snkmail.com>"]
+description = "Ethereum-compatible Merkle-Patricia Trie."
+license = "Apache-2.0"
+edition = "2018"
+readme = "README.md"
+keywords = ["patricia", "mpt", "evm", "trie", "ethereum"]
+repository = "https://github.com/carver/eth-trie.rs"
+homepage = "https://github.com/carver/eth-trie.rs"
+documentation = "https://docs.rs/eth_trie"
+
+[dependencies]
+hashbrown = "0.14.0"
+keccak-hash = "0.10.0"
+log = "0.4.19"
+parking_lot = "0.12.1"
+rlp = "0.5.2"
+
+[dev-dependencies]
+rand = "0.8.5"
+hex = "0.4.3"
+criterion = "0.5.1"
+ethereum-types = "0.14.1"
+uuid = { version = "1.3.4", features = ["serde", "v4"] }
+
+[[bench]]
+name = "trie"
+harness = false

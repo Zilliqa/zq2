@@ -10,24 +10,27 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Run a decent number of samples for our randomized
+  ZQ_TEST_SAMPLES: 100
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+    - name: Clear some disk space
+      run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /home/runner/work/_temp/
     - name: Install dependencies
-      run: sudo apt install -y protobuf-compiler
+      run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y protobuf-compiler solc
     - uses: actions/checkout@v3
       with:
         submodules: recursive
-    # Use Rust nightly so we can use the Cargo sparse registry feature, which greatly speeds up uncached builds (https://blog.rust-lang.org/2022/06/22/sparse-registry-testing.html).
-    - name: Use Rust nightly
-      run: rustup override set nightly && rustup component add clippy rustfmt
     - uses: Swatinem/rust-cache@v2
     - name: rustfmt
       run: cargo fmt --all --check
     - name: Build
       run: cargo build --all-targets --all-features
+    - name: Run a security audit
+      run: cargo audit
     - name: Clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
     - name: Test

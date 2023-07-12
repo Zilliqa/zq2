@@ -1,8 +1,7 @@
 use super::to_hex::ToHex;
-
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use sha3::{Digest, Keccak256};
 
@@ -24,7 +23,7 @@ fn sha3(params: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
     let data: String = params.one()?;
     let data = data
         .strip_prefix("0x")
-        .ok_or_else(|| anyhow::anyhow!("no 0x prefix"))?;
+        .ok_or_else(|| anyhow!("no 0x prefix"))?;
     let data = hex::decode(data)?;
 
     let hashed = Keccak256::digest(data);
