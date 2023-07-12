@@ -4,9 +4,9 @@ members = [
  "zilliqa",
  "zilliqa-macros",
  "z2",
+ "evm-ds",
  "eth-trie.rs"
 ]
-
 
 [profile.release]
 # Add debug information to the release build (does NOT reduce the level of optimization!)

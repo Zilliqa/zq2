@@ -48,14 +48,7 @@ impl Collector {
         futures::future::join_all(
             self.runners
                 .iter_mut()
-                .filter_map(|x| {
-                    if let Some(handle) = x.join_handle.take() {
-                        println!("X");
-                        Some(handle)
-                    } else {
-                        None
-                    }
-                })
+                .filter_map(|x| x.join_handle.take())
                 .collect::<Vec<JoinAll<tokio::task::JoinHandle<()>>>>(),
         )
         .await;
