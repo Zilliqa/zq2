@@ -279,24 +279,31 @@ impl<'r> Network<'r> {
         Ok(())
     }
 
-    pub fn node(&mut self) -> MutexGuard<Node> {
+    pub fn random_index(&mut self) -> usize {
+        self.rng.gen_range(0..self.nodes.len())
+    }
+
+    pub fn get_node(&self, index: usize) -> MutexGuard<Node> {
+        self.nodes[index].inner.lock().unwrap()
+    }
+
+    pub fn random_node(&mut self) -> MutexGuard<Node> {
         self.nodes.choose(self.rng).unwrap().inner.lock().unwrap()
     }
 
-    pub fn remove_node(&mut self) -> TestNode {
-        let idx = self.rng.gen_range(0..self.nodes.len());
+    pub fn remove_node(&mut self, idx: usize) -> TestNode {
         self.receivers.remove(idx);
         self.nodes.remove(idx)
     }
 
-    pub fn provider(&mut self) -> Provider<LocalRpcClient> {
+    pub fn random_provider(&mut self) -> Provider<LocalRpcClient> {
         self.nodes.choose(self.rng).unwrap().rpc_client.clone()
     }
 
     pub fn random_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
         let wallet: LocalWallet = SigningKey::random(self.rng).into();
         let wallet = wallet.with_chain_id(0x8001u64);
-        SignerMiddleware::new(self.provider(), wallet)
+        SignerMiddleware::new(self.random_provider(), wallet)
     }
 }
 

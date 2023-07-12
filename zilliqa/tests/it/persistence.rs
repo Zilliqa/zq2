@@ -19,25 +19,30 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
             .0,
     );
 
-    let mut receipt = None;
+    let index = network.random_index();
+
     network
         .run_until(
             |n| {
-                receipt = n.node().get_transaction_receipt(hash).unwrap();
-                receipt.is_some()
+                n.get_node(index)
+                    .get_transaction_receipt(hash)
+                    .unwrap()
+                    .is_some()
             },
             50,
         )
         .await
         .unwrap();
-    let receipt = receipt.unwrap();
 
     // make one block without txs
     network
         .run_until(
             |n| {
-                let node = n.node(); // change RNG
-                let block = node.get_latest_block().unwrap().map_or(0, |b| b.view());
+                let block = n
+                    .get_node(index)
+                    .get_latest_block()
+                    .unwrap()
+                    .map_or(0, |b| b.view());
                 block >= 3
             },
             50,
@@ -45,12 +50,12 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
         .await
         .unwrap();
 
-    let node = network.remove_node();
+    let node = network.remove_node(index);
     // let node_dir = network.remove_node();
 
     let inner = node.inner.lock().unwrap();
     let last_view = inner.view() - 1;
-    // let receipt = inner.get_transaction_receipt(hash).unwrap().unwrap();
+    let receipt = inner.get_transaction_receipt(hash).unwrap().unwrap();
     let finalized_view = inner.get_finalized_height().unwrap();
     let block_with_tx = inner
         .get_block_by_hash(receipt.block_hash)

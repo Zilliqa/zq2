@@ -2,7 +2,7 @@ use crate::Network;
 
 #[zilliqa_macros::test]
 async fn sha3(mut network: Network<'_>) {
-    let provider = network.provider();
+    let provider = network.random_provider();
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#web3_sha3
     let result: String = provider

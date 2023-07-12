@@ -80,7 +80,7 @@ async fn call_block_number(mut network: Network<'_>) {
 
 #[zilliqa_macros::test]
 async fn get_block_transaction_count(mut network: Network<'_>) {
-    let provider = network.provider();
+    let provider = network.random_provider();
     let wallet = network.random_wallet();
 
     async fn count_by_number<T: Debug + Serialize + Send + Sync>(
@@ -179,7 +179,7 @@ async fn get_storage_at(mut network: Network<'_>) {
 
 #[zilliqa_macros::test]
 async fn send_transaction(mut network: Network<'_>) {
-    let provider = network.provider();
+    let provider = network.random_provider();
     let wallet = network.random_wallet();
 
     let to: H160 = "0x00000000000000000000000000000000deadbeef"
@@ -223,7 +223,7 @@ async fn send_transaction(mut network: Network<'_>) {
 
 #[zilliqa_macros::test]
 async fn eth_call(mut network: Network<'_>) {
-    let provider = network.provider();
+    let provider = network.random_provider();
     let wallet = network.random_wallet();
 
     let (hash, abi) = deploy_contract!(
