@@ -246,7 +246,6 @@ async fn eth_call(mut network: Network<'_>) {
     let receipt = wallet.get_transaction_receipt(hash).await;
 
     assert!(receipt.is_ok());
-    assert!(receipt.unwrap().is_some());
     let receipt = receipt.unwrap().unwrap();
 
     let contract_address = receipt.contract_address.unwrap();
