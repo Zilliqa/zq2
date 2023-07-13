@@ -38,7 +38,9 @@ impl Process {
             cmd.arg("--no-jsonrpc");
         }
         cmd.stdout(Stdio::piped());
-        let mut child = cmd.spawn().expect("Failed to spawn - have you built zilliqa?");
+        let mut child = cmd
+            .spawn()
+            .expect("Failed to spawn - have you built zilliqa?");
         let stdout = child.stdout.take().expect("No handle to stdout");
         let mut stdout_reader = BufReader::new(stdout).lines();
         let tx_1 = channel.clone();

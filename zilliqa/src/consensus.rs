@@ -9,7 +9,7 @@ use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use itertools::Itertools;
 use libp2p::PeerId;
-use tracing::{debug, trace, info};
+use tracing::{debug, trace};
 
 use crate::{
     cfg::Config,
@@ -618,8 +618,7 @@ impl Consensus {
 
     pub fn add_block(&mut self, block: Block) {
         let hash = block.hash();
-        info!(?hash, ?block.header.view, "added block");
-        println!("added block: {} {}", hash, block.header.view);
+        debug!(?hash, ?block.header.view, "added block");
         self.blocks.insert(hash, block);
     }
 
