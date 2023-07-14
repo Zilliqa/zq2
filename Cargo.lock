@@ -1853,7 +1853,6 @@ dependencies = [
  "futures",
  "hex",
  "libsecp256k1",
- "log",
  "num-bigint",
  "num-integer",
  "parity-tokio-ipc",
@@ -1868,6 +1867,7 @@ dependencies = [
  "sha2 0.10.7",
  "sha3",
  "tokio",
+ "tracing",
  "witnet-bn",
 ]
 
