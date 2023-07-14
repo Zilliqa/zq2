@@ -9,7 +9,7 @@ use evm::{
     executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType},
     Context, ExitError, ExitSucceed,
 };
-use witnet_bn::{AffineG1, AffineG2, FieldError, Fq, Fq2, Fr, Group, Gt, G1, G2};
+use substrate_bn::{AffineG1, AffineG2, FieldError, Fq, Fq2, Fr, Group, Gt, G1, G2};
 
 const ADD_COST: u64 = 150;
 const MUL_COST: u64 = 6000;
@@ -136,7 +136,7 @@ pub(crate) fn ec_pairing(
         .collect();
     let points = points?;
 
-    let pairing = witnet_bn::pairing_batch(&points);
+    let pairing = substrate_bn::pairing_batch(&points);
 
     // Encode output.
     let mut output = [0; 32];
