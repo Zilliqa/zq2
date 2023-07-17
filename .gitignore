@@ -16,3 +16,5 @@
 
 # Default development datadir
 zq2data
+# Default z2 config and datadir paths
+z2_node_*

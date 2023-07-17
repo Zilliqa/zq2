@@ -5,6 +5,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
+use crate::setup::Setup;
+
 pub struct Process {
     pub index: usize,
     pub join_handle: Option<JoinAll<tokio::task::JoinHandle<()>>>,
@@ -34,6 +36,8 @@ impl Process {
     ) -> Result<Process> {
         let mut cmd = Command::new("target/debug/zilliqa");
         cmd.arg(key);
+        cmd.arg("--config-file");
+        cmd.arg(Setup::config_path(index));
         if !rpc {
             cmd.arg("--no-jsonrpc");
         }
