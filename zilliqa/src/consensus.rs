@@ -664,7 +664,6 @@ impl Consensus {
 
     pub fn state_at(&self, view: u64) -> Option<State> {
         let root_hash = self.get_block_by_view(view)?.state_root_hash();
-        println!("Getting state at height {view}, with root hash {root_hash}");
         Some(self.state.at_root(H256(root_hash.0)))
     }
 

@@ -152,6 +152,60 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
 }
 
 #[zilliqa_macros::test]
+async fn get_account_transaction_count(mut network: Network<'_>) {
+    let wallet = network.random_wallet();
+    let provider = wallet.provider();
+
+    async fn count_at_block(provider: &Provider<LocalRpcClient>, params: (H160, U64)) -> u64 {
+        provider
+            .request::<_, U64>("eth_getTransactionCount", params)
+            .await
+            .unwrap()
+            .as_u64()
+    }
+
+    network
+        .run_until(|n| n.node().view() > 1, 50)
+        .await
+        .unwrap();
+
+    // Send a transaction.
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    let receipt = provider
+        .get_transaction_receipt(hash)
+        .await
+        .unwrap()
+        .unwrap();
+    let block_number = receipt.block_number.unwrap();
+
+    // Check the wallet has a transaction count of one.
+    let count = count_at_block(provider, (wallet.address(), block_number)).await;
+    assert_eq!(count, 1);
+
+    // Check the wallet has a transaction count of zero at the previous block
+    let count = count_at_block(provider, (wallet.address(), block_number - 1)).await;
+    assert_eq!(count, 0);
+}
+#[zilliqa_macros::test]
 async fn get_storage_at(mut network: Network<'_>) {
     let wallet = network.random_wallet();
 
