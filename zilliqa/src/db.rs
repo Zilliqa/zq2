@@ -23,8 +23,8 @@ impl DB for SledDb {
         Ok(())
     }
 
-    fn remove(&self, key: &[u8]) -> Result<(), Self::Error> {
-        self.db.remove(key)?;
+    fn remove(&self, _key: &[u8]) -> Result<(), Self::Error> {
+        // we keep old state to function as an archive node, therefore no-op
         Ok(())
     }
 
