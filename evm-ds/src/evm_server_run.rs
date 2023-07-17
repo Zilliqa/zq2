@@ -12,7 +12,7 @@ use evm::{
     CreateScheme, Handler,
 };
 use evm::{Machine, Runtime};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 use primitive_types::*;
 
@@ -303,10 +303,19 @@ pub struct EvmCallArgs<B> {
 }
 
 pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
-    debug!(
-        "Running EVM: origin: {:?} address: {:?} gas: {:?} value: {:?}  estimate: {:?} is_continuation: {:?}, cps: {:?}, \ntx_trace: {:?}, \ndata: {:02X?}, \ncode: {:02X?}",
-        args.backend.origin(), args.address, args.gas_limit, args.apparent_value,
-        args.estimate, args.node_continuation.is_none(), args.enable_cps, args.tx_trace, args.data, args.code);
+    trace!(
+        origin = ?args.backend.origin(),
+        address = ?args.address,
+        gas_limit = ?args.gas_limit,
+        value = ?args.apparent_value,
+        estimate = args.estimate,
+        is_continuation = args.node_continuation.is_some(),
+        cps = args.enable_cps,
+        tx_trace = args.tx_trace,
+        data = hex::encode(&args.data),
+        code = hex::encode(&args.code),
+        "running EVM",
+    );
     let code = Rc::new(args.code);
     let data = Rc::new(args.data);
     // TODO: handle call_l64_after_gas problem: https://zilliqa-jira.atlassian.net/browse/ZIL-5012
@@ -445,23 +454,11 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
                     info!("Tx reverted: {:?}", runtime.machine().return_value());
                 }
                 _ => {
-                    debug!(
-                        "Machine: position: {:?}, memory: {:?}, stack: {:?}",
-                        runtime.machine().position(),
-                        &runtime
-                            .machine()
-                            .memory()
-                            .data()
-                            .iter()
-                            .take(128)
-                            .collect::<Vec<_>>(),
-                        &runtime
-                            .machine()
-                            .stack()
-                            .data()
-                            .iter()
-                            .take(128)
-                            .collect::<Vec<_>>()
+                    trace!(
+                        position = ?runtime.machine().position(),
+                        memory = hex::encode(runtime.machine().memory().data()),
+                        stack = ?runtime.machine().stack().data(),
+                        "machine exited",
                     );
                 }
             }
@@ -506,11 +503,19 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
         }
     };
 
-    debug!(
-        "EVM execution summary: context: {:?}, origin: {:?} address: {:?} gas: {:?} value: {:?}, data: {:?}, estimate: {:?}, cps: {:?}, result: {}, returnVal: {}",
-        args.evm_context, args.backend.origin(), args.address, args.gas_limit, args.apparent_value,
-        hex::encode(data.deref()),
-        args.estimate, args.enable_cps, log_evm_result(&result), hex::encode(runtime.machine().return_value()));
+    trace!(
+        context = ?args.evm_context,
+        origin = ?args.backend.origin(),
+        address = ?args.address,
+        gas_limit = args.gas_limit,
+        value = ?args.apparent_value,
+        data = hex::encode(data.deref()),
+        estimate = args.estimate,
+        cps = args.enable_cps,
+        result = log_evm_result(&result),
+        return_value = hex::encode(runtime.machine().return_value()),
+        "execution completed",
+    );
 
     result
 }
