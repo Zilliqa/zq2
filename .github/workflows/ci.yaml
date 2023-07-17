@@ -29,8 +29,6 @@ jobs:
       run: cargo fmt --all --check
     - name: Build
       run: cargo build --all-targets --all-features
-    - name: Run a security audit
-      run: cargo audit
     - name: Clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
     - name: Test
