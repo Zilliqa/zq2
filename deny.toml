@@ -1,0 +1,37 @@
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-unknown-linux-gnu" },
+    { triple = "x86_64-unknown-linux-musl" },
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-apple-darwin" },
+]
+
+all-features = true
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    # While MPL-2.0 is strictly a copyleft license, it is not 'viral'. The license only requires that modifications be
+    # licensed under the MPL. New files, which are part of a larger work are not considered as modifications, unlike
+    # (for example) the GPL. See Q1 and Q11 from the FAQ: https://www.mozilla.org/en-US/MPL/2.0/FAQ/.
+    "MPL-2.0",
+    "OpenSSL",
+    "Unicode-DFS-2016",
+    "Unlicense",
+]
+# We have an explicit allowlist for licenses, so the extra warning for copyleft licenses is unnecessary.
+copyleft = "allow"
+
+# See https://github.com/briansmith/ring/issues/1487#issuecomment-1102733762.
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [
+    { path = "LICENSE", hash = 0xbd0eed23 }
+]
