@@ -2,11 +2,9 @@ echo "The CI is running this script."
 
 # Start network early.
 pwd
-#cd zilliqa
 cargo build --all-targets > /dev/null 2>&1
 ./target/debug/z2 internal run > /tmp/zil_log_out.txt &
-sleep 5;
-#cd ../
+sleep 10;
 
 # Pull submodule
 cd evm_js_tests
