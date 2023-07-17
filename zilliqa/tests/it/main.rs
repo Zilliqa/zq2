@@ -56,7 +56,7 @@ fn node(
         secret_key,
         message_sender,
         reset_timeout_sender,
-        MemoryDB::new(true),
+        MemoryDB::new(false),
     )
     .unwrap();
     let node = Arc::new(Mutex::new(node));
@@ -252,18 +252,17 @@ impl<'r> Network<'r> {
         self.nodes.choose(self.rng).unwrap().inner.lock().unwrap()
     }
 
-    pub fn provider(&mut self) -> Provider<LocalRpcClient> {
+    pub fn random_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+        let wallet: LocalWallet = SigningKey::random(self.rng).into();
+        let wallet = wallet.with_chain_id(0x8001u64);
+
         let client = LocalRpcClient {
             id: Arc::new(AtomicU64::new(0)),
             rpc_module: self.nodes.choose(self.rng).unwrap().rpc_module.clone(),
         };
-        Provider::new(client)
-    }
+        let provider = Provider::new(client);
 
-    pub fn random_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
-        let wallet: LocalWallet = SigningKey::random(self.rng).into();
-        let wallet = wallet.with_chain_id(0x8001u64);
-        SignerMiddleware::new(self.provider(), wallet)
+        SignerMiddleware::new(provider, wallet)
     }
 }
 
@@ -298,10 +297,14 @@ macro_rules! deploy_contract {
         let mut contract_file = tempfile::Builder::new().suffix(".sol").tempfile().unwrap();
         std::io::Write::write_all(&mut contract_file, contract_source).unwrap();
 
-        // Compile the contract.
-        let out = ethers::solc::Solc::default()
-            .compile_source(contract_file.path())
-            .unwrap();
+        let sc = ethers::solc::Solc::default();
+
+        let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
+        let compiler_input = compiler_input.first_mut().unwrap();
+        compiler_input.settings.evm_version = Some(EvmVersion::Paris);
+
+        let out = sc.compile::<CompilerInput>(compiler_input).unwrap();
+
         let contract = out
             .get(contract_file.path().to_str().unwrap(), $contract)
             .unwrap();

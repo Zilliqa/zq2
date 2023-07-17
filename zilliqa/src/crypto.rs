@@ -183,10 +183,12 @@ impl SecretKey {
 
     pub fn from_bytes(bytes: &[u8]) -> Result<SecretKey> {
         let bytes: [u8; 32] = bytes.try_into()?;
-        // ensure the key is valid for all representations
-        Self::try_cast_to_bls(&bytes)?;
-        Self::try_cast_to_ecdsa(&bytes)?;
-        Ok(Self { bytes })
+
+        if bytes == [0; 32] {
+            return Err(anyhow!("bytes are all zero"));
+        }
+
+        Ok(SecretKey { bytes })
     }
 
     pub fn from_hex(s: &str) -> Result<SecretKey> {
@@ -194,28 +196,17 @@ impl SecretKey {
         Self::from_bytes(&bytes_vec)
     }
 
-    fn try_cast_to_bls(bytes: &[u8; 32]) -> Result<bls_signatures::PrivateKey> {
-        Ok(bls_signatures::PrivateKey::from_bytes(bytes)?)
+    fn as_bls(&self) -> bls_signatures::PrivateKey {
+        bls_signatures::PrivateKey::new(self.bytes)
     }
 
-    /// Warning: panics if the bytes aren't a valid key for the cast.
-    /// Should only be used on SecretKeys that have been validated using the
-    /// `try_cast_...` method, e.g. during construction.
-    fn cast_to_bls(&self) -> bls_signatures::PrivateKey {
-        Self::try_cast_to_bls(&self.bytes)
-            .expect("Validated private key failed to cast to BLS key type")
-    }
-
-    fn try_cast_to_ecdsa(bytes: &[u8; 32]) -> Result<k256::ecdsa::SigningKey> {
-        Ok(k256::ecdsa::SigningKey::from_slice(bytes)?)
-    }
-
-    /// Warning: panics if the bytes aren't a valid key for the cast.
-    /// Should only be used on SecretKeys that have been validated using the
-    /// `try_cast_...` method, e.g. during construction.
-    fn cast_to_ecdsa(&self) -> k256::ecdsa::SigningKey {
-        Self::try_cast_to_ecdsa(&self.bytes)
-            .expect("Validated private key failed to cast to ECDSA key type")
+    fn as_ecdsa(&self) -> k256::ecdsa::SigningKey {
+        // `SigningKey::from_bytes` can fail for two reasons:
+        // 1. The bytes represent a zero integer. However, we validate this is not the case on construction.
+        // 2. The bytes represent an integer less than the curve's modulus. However for ECDSA, the curve's order is
+        //    equal to its modulus, so this is impossible.
+        // Therefore, it is safe to unwrap here.
+        k256::ecdsa::SigningKey::from_bytes(&self.bytes.into()).unwrap()
     }
 
     pub fn as_bytes(&self) -> Result<Vec<u8>> {
@@ -227,25 +218,20 @@ impl SecretKey {
     }
 
     pub fn sign(&self, message: &[u8]) -> NodeSignature {
-        NodeSignature(self.cast_to_bls().sign(message))
+        NodeSignature(self.as_bls().sign(message))
     }
 
     pub fn node_public_key(&self) -> NodePublicKey {
-        NodePublicKey(self.cast_to_bls().public_key())
+        NodePublicKey(self.as_bls().public_key())
     }
 
     pub fn tx_ecdsa_public_key(&self) -> TransactionPublicKey {
         // Default to EIP155 signing
-        TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&self.cast_to_ecdsa()), true)
+        TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&self.as_ecdsa()), true)
     }
 
     pub fn tx_sign_ecdsa(&self, message: &[u8]) -> TransactionSignature {
-        TransactionSignature::Ecdsa(
-            self.cast_to_ecdsa()
-                .sign_prehash_recoverable(message)
-                .unwrap()
-                .0,
-        )
+        TransactionSignature::Ecdsa(self.as_ecdsa().sign_prehash_recoverable(message).unwrap().0)
     }
 
     pub fn to_libp2p_keypair(&self) -> libp2p::identity::Keypair {

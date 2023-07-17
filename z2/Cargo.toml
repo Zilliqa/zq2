@@ -2,6 +2,7 @@
 name = "z2"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0 OR MIT"
 
 # This is a bit dodgy and should really be a top-level member of the workspace, but
 # it's not big enough yet - we should promote it if it ever gets large enough
@@ -19,11 +20,11 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4.3.10", features = ["derive"] }
+clap = { version = "4.3.12", features = ["derive"] }
 eyre = "0.6.8"
 futures = "0.3.28"
 rand_core = "0.6.4"
-serde = { version="1.0.165", features = [ "derive" ] }
+serde = { version="1.0.171", features = [ "derive" ] }
 tokio = { version = "1.29.1", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process"] }
 tokio-stream = "0.1.14"
 zilliqa = { path = "../zilliqa" }

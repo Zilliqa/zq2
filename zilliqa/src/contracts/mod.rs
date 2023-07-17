@@ -40,11 +40,12 @@ pub mod native_token {
 /// files and checking the result is the same. This means we can keep the compiled source code in-tree, while also
 /// asserting in CI that the compiled source code is genuine. The tests only run when the `test_contract_bytecode`
 /// feature is enabled.
+#[cfg(target_os = "linux")]
 #[cfg(test)]
 mod tests {
     // Obtained from https://binaries.soliditylang.org/linux-amd64/list.json.
-    const SOLC_VERSION: &str = "v0.8.20+commit.a1b79de6";
-    const SOLC_HASH: &str = "d68fa7092d5af50c1dca4d6318f8a2470b11a766794814e505e3cc6a587deebb";
+    const SOLC_VERSION: &str = "v0.8.19+commit.7dd6d404";
+    const SOLC_HASH: &str = "8da560f93223e19fbd973f12a29f765869559274aaeed3f795738ac433130ab9";
 
     use std::{
         fs::OpenOptions, io::Write, mem, os::unix::prelude::OpenOptionsExt, path::PathBuf,
