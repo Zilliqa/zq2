@@ -28,7 +28,6 @@ impl DB for SledDb {
         Ok(())
     }
 
-    // TODO: potentially remove flush() from eth-trie's trait?
     /// eth-trie.rs provides a way to cache reads and writes and periodically flush them.
     /// We delegate this to Sled and implement flush() as a no-op.
     fn flush(&self) -> Result<(), Self::Error> {

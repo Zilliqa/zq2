@@ -38,7 +38,7 @@ const ADDR_TOUCHED_INDEX: &[u8] = b"addresses_touched_index";
 
 // single keys stored in default tree in DB
 /// value: block hash
-const LATEST_FINIALIZED_BLOCK_HASH: &[u8] = b"latest_finalized_block_hash";
+const LATEST_FINALIZED_BLOCK_HASH: &[u8] = b"latest_finalized_block_hash";
 /// value: view number
 const LATEST_KNOWN_VIEW: &[u8] = b"latest_known_view";
 
@@ -107,7 +107,7 @@ impl Consensus {
         let block_headers = db.open_tree(BLOCK_HEADERS_TREE)?;
         let state_trie = db.open_tree(STATE_TRIE_TREE)?;
 
-        let latest_block_header = if let Some(ivec) = db.get(LATEST_FINIALIZED_BLOCK_HASH)? {
+        let latest_block_header = if let Some(ivec) = db.get(LATEST_FINALIZED_BLOCK_HASH)? {
             let latest_block_hash = bincode::deserialize::<Hash>(&ivec)?;
             let latest_block_header = block_headers
                 .get(latest_block_hash.as_bytes())?
@@ -209,7 +209,7 @@ impl Consensus {
             self.save_highest_view(genesis.hash(), genesis.view())?;
             // treat genesis as finalized
             self.db
-                .insert(LATEST_FINIALIZED_BLOCK_HASH, &genesis.hash().0)?;
+                .insert(LATEST_FINALIZED_BLOCK_HASH, &genesis.hash().0)?;
             self.finalized = genesis.hash();
             self.update_view(1);
             let vote = self.vote_from_block(&genesis);
@@ -710,7 +710,7 @@ impl Consensus {
             if current.hash() == self.finalized {
                 self.finalized = committed_hash;
                 self.db
-                    .insert(LATEST_FINIALIZED_BLOCK_HASH, &committed_hash.0)?;
+                    .insert(LATEST_FINALIZED_BLOCK_HASH, &committed_hash.0)?;
                 // discard blocks that can't be committed anymore
             }
         };
