@@ -12,7 +12,7 @@ use evm::{
     CreateScheme, Handler,
 };
 use evm::{Machine, Runtime};
-use log::{debug, error, info};
+use tracing::{debug, error, info};
 
 use primitive_types::*;
 
