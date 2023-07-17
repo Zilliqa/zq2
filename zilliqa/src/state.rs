@@ -16,6 +16,7 @@ use std::{hash::Hash, str::FromStr};
 use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::{contracts, crypto};
 
@@ -89,6 +90,7 @@ impl State {
         for (address, balance) in GENESIS.iter() {
             // We don't care about these logs.
             let mut logs = vec![];
+            info!("Setting balance for {} to {}", address, balance);
             state.set_native_balance(&mut logs, *address, *balance)?;
         }
 

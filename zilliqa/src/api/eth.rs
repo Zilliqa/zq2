@@ -46,6 +46,13 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_getTransactionByHash", get_transaction_by_hash),
             ("eth_getTransactionReceipt", get_transaction_receipt),
             ("eth_sendRawTransaction", send_raw_transaction),
+            ("eth_getUncleCountByBlockHash", get_uncle_count),
+            ("eth_getUncleCountByBlockNumber", get_uncle_count),
+            ("eth_getUncleByBlockHashAndIndex", get_uncle),
+            ("eth_getUncleByBlockNumberAndIndex", get_uncle),
+            ("eth_mining", mining),
+            ("eth_protocolVersion", protocol_version),
+            ("eth_syncing", syncing),
         ],
     )
 }
@@ -411,6 +418,27 @@ fn left_pad_arr<const N: usize>(v: &[u8]) -> Result<[u8; N]> {
     let start = arr.len() - v.len();
     arr[start..].copy_from_slice(v);
     Ok(arr)
+}
+
+// These are no-ops basically
+fn get_uncle_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok("0x0".to_string())
+}
+
+fn get_uncle(_: Params, _: &Arc<Mutex<Node>>) -> Result<Option<String>> {
+    Ok(None)
+}
+
+fn mining(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
+    Ok(false)
+}
+
+fn protocol_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok("0x41".to_string())
+}
+
+fn syncing(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
+    Ok(false)
 }
 
 #[cfg(test)]
