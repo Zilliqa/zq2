@@ -19,7 +19,7 @@ test_contract_bytecode = []
 vergen = { version = "8.2.4", features = ["git", "gitcl"] }
 
 [dependencies]
-anyhow = { version = "1.0.71", features = ["backtrace"] }
+anyhow = { version = "1.0.72", features = ["backtrace"] }
 async-trait = "0.1.71"
 bincode = "1.3.3"
 bitvec = { version = "1.0.1", features = ["serde"] }
