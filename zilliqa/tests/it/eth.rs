@@ -80,8 +80,8 @@ async fn call_block_number(mut network: Network<'_>) {
 
 #[zilliqa_macros::test]
 async fn get_block_transaction_count(mut network: Network<'_>) {
-    let provider = network.random_provider();
     let wallet = network.random_wallet();
+    let provider = wallet.provider();
 
     async fn count_by_number<T: Debug + Serialize + Send + Sync>(
         provider: &Provider<LocalRpcClient>,
@@ -132,18 +132,18 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
     let block_number = receipt.block_number.unwrap();
 
     // Check the previous block has a transaction count of zero.
-    let count = count_by_number(&provider, block_number - 1).await;
+    let count = count_by_number(provider, block_number - 1).await;
     assert_eq!(count, 0);
 
     // Check this block has a transaction count of one.
-    let count = count_by_number(&provider, block_number).await;
+    let count = count_by_number(provider, block_number).await;
     assert_eq!(count, 1);
-    let count = count_by_hash(&provider, block_hash).await;
+    let count = count_by_hash(provider, block_hash).await;
     assert_eq!(count, 1);
 
     // The latest block is the one with our transaction, because we stopped running the network after our receipt
     // appeared. So the latest block should also have a count of one.
-    let count = count_by_number(&provider, "latest").await;
+    let count = count_by_number(provider, "latest").await;
     assert_eq!(count, 1);
 }
 
@@ -179,7 +179,6 @@ async fn get_storage_at(mut network: Network<'_>) {
 
 #[zilliqa_macros::test]
 async fn send_transaction(mut network: Network<'_>) {
-    let provider = network.random_provider();
     let wallet = network.random_wallet();
 
     let to: H160 = "0x00000000000000000000000000000000deadbeef"
@@ -200,7 +199,7 @@ async fn send_transaction(mut network: Network<'_>) {
     network
         .run_until_async(
             || async {
-                provider
+                wallet
                     .get_transaction_receipt(hash)
                     .await
                     .unwrap()
@@ -211,11 +210,7 @@ async fn send_transaction(mut network: Network<'_>) {
         .await
         .unwrap();
 
-    let receipt = provider
-        .get_transaction_receipt(hash)
-        .await
-        .unwrap()
-        .unwrap();
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
 
     assert_eq!(receipt.to.unwrap(), to);
     assert_eq!(receipt.from, wallet.address());
@@ -223,7 +218,6 @@ async fn send_transaction(mut network: Network<'_>) {
 
 #[zilliqa_macros::test]
 async fn eth_call(mut network: Network<'_>) {
-    let provider = network.random_provider();
     let wallet = network.random_wallet();
 
     let (hash, abi) = deploy_contract!(
@@ -236,7 +230,7 @@ async fn eth_call(mut network: Network<'_>) {
     network
         .run_until_async(
             || async {
-                provider
+                wallet
                     .get_transaction_receipt(hash)
                     .await
                     .unwrap()
@@ -247,14 +241,11 @@ async fn eth_call(mut network: Network<'_>) {
         .await
         .unwrap();
 
-    println!("hash: {:?}", hash);
-
     let getter = abi.function("getInt256").unwrap();
 
-    let receipt = provider.get_transaction_receipt(hash).await;
+    let receipt = wallet.get_transaction_receipt(hash).await;
 
     assert!(receipt.is_ok());
-    //assert!(receipt.unwrap().is_some());
     let receipt = receipt.unwrap().unwrap();
 
     let contract_address = receipt.contract_address.unwrap();
@@ -263,7 +254,7 @@ async fn eth_call(mut network: Network<'_>) {
     tx.to = Some(contract_address.into());
     tx.data = Some(getter.selector().into());
 
-    let value = provider.call(&tx.into(), None).await.unwrap();
+    let value = wallet.call(&tx.into(), None).await.unwrap();
 
     assert_eq!(H256::from_slice(value.as_ref()), H256::from_low_u64_be(99));
 }

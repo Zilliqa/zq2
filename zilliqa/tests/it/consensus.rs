@@ -5,7 +5,8 @@ async fn block_production(mut network: Network<'_>) {
     network
         .run_until(
             |n| {
-                n.random_node()
+                let index = n.random_index();
+                n.get_node(index)
                     .get_latest_block()
                     .unwrap()
                     .map_or(0, |b| b.view())

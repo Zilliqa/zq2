@@ -68,10 +68,6 @@ fn node(
     )?;
     let node = Arc::new(Mutex::new(node));
     let rpc_module: RpcModule<Arc<Mutex<Node>>> = zilliqa::api::rpc_module(node.clone());
-    let rpc_client = Provider::new(LocalRpcClient {
-        id: Arc::new(AtomicU64::new(0)),
-        rpc_module,
-    });
 
     Ok((
         TestNode {
@@ -80,7 +76,7 @@ fn node(
             secret_key,
             inner: node,
             dir: Some(datadir),
-            rpc_client,
+            rpc_module,
         },
         message_receiver,
     ))
@@ -91,7 +87,7 @@ struct TestNode {
     index: usize,
     secret_key: SecretKey,
     peer_id: PeerId,
-    rpc_client: Provider<LocalRpcClient>,
+    rpc_module: RpcModule<Arc<Mutex<Node>>>,
     inner: Arc<Mutex<Node>>,
     dir: Option<TempDir>,
 }
@@ -287,23 +283,22 @@ impl<'r> Network<'r> {
         self.nodes[index].inner.lock().unwrap()
     }
 
-    pub fn random_node(&mut self) -> MutexGuard<Node> {
-        self.nodes.choose(self.rng).unwrap().inner.lock().unwrap()
-    }
-
     pub fn remove_node(&mut self, idx: usize) -> TestNode {
         self.receivers.remove(idx);
         self.nodes.remove(idx)
     }
 
-    pub fn random_provider(&mut self) -> Provider<LocalRpcClient> {
-        self.nodes.choose(self.rng).unwrap().rpc_client.clone()
-    }
-
     pub fn random_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
         let wallet: LocalWallet = SigningKey::random(self.rng).into();
         let wallet = wallet.with_chain_id(0x8001u64);
-        SignerMiddleware::new(self.random_provider(), wallet)
+
+        let client = LocalRpcClient {
+            id: Arc::new(AtomicU64::new(0)),
+            rpc_module: self.nodes.choose(self.rng).unwrap().rpc_module.clone(),
+        };
+        let provider = Provider::new(client);
+
+        SignerMiddleware::new(provider, wallet)
     }
 }
 

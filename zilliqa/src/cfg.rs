@@ -14,7 +14,7 @@ pub struct Config {
     pub otlp_collector_endpoint: Option<String>,
     /// The maximum duration between a recieved block's timestamp and the current time. Defaults to 10 seconds.
     pub allowed_timestamp_skew: Duration,
-    /// The location of persistance data. If not set, uses a temporary path.
+    /// The location of persistence data. If not set, uses a temporary path.
     pub data_dir: Option<String>,
 }
 

@@ -51,7 +51,6 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
         .unwrap();
 
     let node = network.remove_node(index);
-    // let node_dir = network.remove_node();
 
     let inner = node.inner.lock().unwrap();
     let last_view = inner.view() - 1;
