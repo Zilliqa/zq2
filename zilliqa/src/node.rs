@@ -143,7 +143,7 @@ impl Node {
             BlockNumber::Number(n) => n,
             BlockNumber::Earliest => 0,
             BlockNumber::Latest => self.get_chain_tip(),
-            _ => todo!(),
+            _ => self.get_chain_tip(),
         }
     }
 
