@@ -239,14 +239,24 @@ async fn get_storage_at(mut network: Network<'_>) {
 
     // Modify the contract state.
     let function = abi.function("update").unwrap();
-    let call_tx = TransactionRequest::new()
+    let update_tx = TransactionRequest::new()
         .to(receipt.contract_address.unwrap())
         .data(function.encode_input(&[]).unwrap());
-    wallet.send_transaction(call_tx, None).await.unwrap();
+    let update_tx_hash = wallet
+        .send_transaction(update_tx, None)
+        .await
+        .unwrap()
+        .tx_hash();
     // Advance the network to the next block.
     network
         .run_until_async(
-            || async { wallet.get_block_number().await.unwrap().as_u64() > old_block_number },
+            || async {
+                wallet
+                    .get_transaction_receipt(update_tx_hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
             50,
         )
         .await
@@ -257,8 +267,9 @@ async fn get_storage_at(mut network: Network<'_>) {
         .get_storage_at(contract_address, H256::zero(), None)
         .await
         .unwrap();
+    println!("Expecting value to be {}", H256::from_low_u64_be(9876));
+    println!("Getting whatever the fuck {} is", value.to_low_u64_be());
     assert_eq!(value, H256::from_low_u64_be(9876));
-    println!("Update happened properly!");
 
     // verify that the state at the old block can still be fetched correctly
     let value = wallet
