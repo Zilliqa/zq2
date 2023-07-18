@@ -205,6 +205,7 @@ async fn get_account_transaction_count(mut network: Network<'_>) {
     let count = count_at_block(provider, (wallet.address(), block_number - 1)).await;
     assert_eq!(count, 0);
 }
+
 #[zilliqa_macros::test]
 async fn get_storage_at(mut network: Network<'_>) {
     let wallet = network.random_wallet();

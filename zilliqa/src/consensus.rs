@@ -136,7 +136,7 @@ impl Consensus {
         // Before we have at least 3 other nodes (not including ourselves) there is no point trying to propose blocks,
         // because the supermajority condition is impossible to achieve.
         if self.pending_peers.len() >= 3 && self.view == 0 {
-            let genesis = Block::genesis(self.committee.len());
+            let genesis = Block::genesis(self.committee.len(), self.state.root_hash()?);
             self.high_qc = Some(genesis.qc.clone());
             self.add_block(genesis.clone());
             self.update_view(1);
