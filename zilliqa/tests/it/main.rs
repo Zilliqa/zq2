@@ -9,6 +9,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex, MutexGuard,
     },
+    time::Duration,
 };
 
 use anyhow::{anyhow, Result};
@@ -135,6 +136,9 @@ impl<'r> Network<'r> {
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
+        // Pause time so we can control it.
+        zilliqa::time::pause_at_epoch();
+
         Network {
             nodes,
             receivers,
@@ -144,6 +148,9 @@ impl<'r> Network<'r> {
     }
 
     pub async fn tick(&mut self) {
+        // Advance time.
+        zilliqa::time::advance(Duration::from_millis(1));
+
         // Take all the currently ready messages from the stream.
         let mut messages = Vec::new();
         for (_i, receiver) in self.receivers.iter_mut().enumerate() {

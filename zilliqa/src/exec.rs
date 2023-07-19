@@ -3,7 +3,6 @@
 use std::{
     collections::HashSet,
     sync::{Arc, Mutex},
-    time::SystemTime,
 };
 
 use anyhow::Result;
@@ -26,6 +25,7 @@ use crate::{
     contracts,
     message::BlockHeader,
     state::{Address, Log, State},
+    time::SystemTime,
 };
 
 #[derive(Default)]
