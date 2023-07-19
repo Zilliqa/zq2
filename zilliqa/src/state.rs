@@ -219,7 +219,7 @@ impl State {
 
     pub fn save_account(&mut self, address: Address, account: Account) -> Result<()> {
         Ok(self.accounts.insert(
-            crypto::Hash::compute(&[&address.as_bytes()]).as_bytes(),
+            crypto::Hash::compute([address.as_bytes()]).as_bytes(),
             &bincode::serialize(&account)?,
         )?)
     }
