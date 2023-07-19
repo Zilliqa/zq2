@@ -143,7 +143,7 @@ impl Node {
             BlockNumber::Number(n) => n,
             BlockNumber::Earliest => 0,
             BlockNumber::Latest => self.get_chain_tip(),
-            BlockNumber::Pending => self.get_chain_tip(), // user latest for now
+            BlockNumber::Pending => self.get_chain_tip(), // use latest for now
             BlockNumber::Finalized => self.get_chain_tip().saturating_sub(2),
             BlockNumber::Safe => self.get_chain_tip().saturating_sub(2), // same as finalized
         }
