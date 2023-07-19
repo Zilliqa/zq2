@@ -14,6 +14,8 @@ pub struct Config {
     pub otlp_collector_endpoint: Option<String>,
     /// The maximum duration between a recieved block's timestamp and the current time. Defaults to 10 seconds.
     pub allowed_timestamp_skew: Duration,
+    /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
+    pub consensus_timeout: Duration,
 }
 
 impl Default for Config {
@@ -24,6 +26,7 @@ impl Default for Config {
             eth_chain_id: 1 + 0x8000,
             otlp_collector_endpoint: None,
             allowed_timestamp_skew: Duration::from_secs(10),
+            consensus_timeout: Duration::from_secs(5),
         }
     }
 }
