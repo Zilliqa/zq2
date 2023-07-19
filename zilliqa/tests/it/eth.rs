@@ -101,6 +101,10 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
             .unwrap()
             .as_u64()
     }
+    network
+        .run_until(|n| n.node().view() > 1, 50)
+        .await
+        .unwrap();
 
     // Send a transaction.
     let hash = wallet
@@ -148,11 +152,66 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
 }
 
 #[zilliqa_macros::test]
+async fn get_account_transaction_count(mut network: Network<'_>) {
+    let wallet = network.random_wallet();
+    let provider = wallet.provider();
+
+    async fn count_at_block(provider: &Provider<LocalRpcClient>, params: (H160, U64)) -> u64 {
+        provider
+            .request::<_, U64>("eth_getTransactionCount", params)
+            .await
+            .unwrap()
+            .as_u64()
+    }
+
+    network
+        .run_until(|n| n.node().view() > 1, 50)
+        .await
+        .unwrap();
+
+    // Send a transaction.
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    let receipt = provider
+        .get_transaction_receipt(hash)
+        .await
+        .unwrap()
+        .unwrap();
+    let block_number = receipt.block_number.unwrap();
+
+    // Check the wallet has a transaction count of one.
+    let count = count_at_block(provider, (wallet.address(), block_number)).await;
+    assert_eq!(count, 1);
+
+    // Check the wallet has a transaction count of zero at the previous block
+    let count = count_at_block(provider, (wallet.address(), block_number - 1)).await;
+    assert_eq!(count, 0);
+}
+
+#[zilliqa_macros::test]
 async fn get_storage_at(mut network: Network<'_>) {
     let wallet = network.random_wallet();
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
-    let (hash, _) = deploy_contract!("contracts/Storage.sol", "Storage", wallet, network);
+    let (hash, abi) = deploy_contract!("contracts/Storage.sol", "Storage", wallet, network);
 
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let contract_address = receipt.contract_address.unwrap();
@@ -175,6 +234,56 @@ async fn get_storage_at(mut network: Network<'_>) {
         .await
         .unwrap();
     assert_eq!(value, H256::from_low_u64_be(5678));
+
+    // Save the current block number
+    let old_block_number = wallet.get_block_number().await.unwrap().as_u64();
+
+    // Modify the contract state.
+    let function = abi.function("update").unwrap();
+    let update_tx = TransactionRequest::new()
+        .to(receipt.contract_address.unwrap())
+        .data(function.encode_input(&[]).unwrap());
+    let update_tx_hash = wallet
+        .send_transaction(update_tx, None)
+        .await
+        .unwrap()
+        .tx_hash();
+    // Advance the network to the next block.
+    network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_transaction_receipt(update_tx_hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // verify the new state
+    let value = wallet
+        .get_storage_at(contract_address, H256::zero(), None)
+        .await
+        .unwrap();
+    println!("Expecting value to be {}", H256::from_low_u64_be(9876));
+    println!("Getting whatever the fuck {} is", value.to_low_u64_be());
+    assert_eq!(value, H256::from_low_u64_be(9876));
+
+    // verify that the state at the old block can still be fetched correctly
+    let value = wallet
+        .get_storage_at(
+            contract_address,
+            H256::zero(),
+            Some(BlockId::Number(BlockNumber::Number(
+                old_block_number.into(),
+            ))),
+        )
+        .await
+        .unwrap();
+    assert_eq!(value, H256::from_low_u64_be(1234));
 }
 
 #[zilliqa_macros::test]

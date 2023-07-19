@@ -319,7 +319,7 @@ impl State {
             // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
             // dummy values.
             0,
-            BlockHeader::genesis(),
+            BlockHeader::default(),
         )?;
         let balance = U256::from_big_endian(&balance);
 
@@ -346,7 +346,7 @@ impl State {
             // The chain ID and current block are not accessed when the native balance is updated, so we just pass in
             // some dummy values.
             0,
-            BlockHeader::genesis(),
+            BlockHeader::default(),
         );
 
         match result {

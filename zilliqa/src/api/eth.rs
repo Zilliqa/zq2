@@ -96,26 +96,24 @@ fn estimate_gas(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
-    // TODO: #226
-    let _block_number: BlockNumber = params.next()?;
+    let block_number: BlockNumber = params.next()?;
 
     Ok(node
         .lock()
         .unwrap()
-        .get_native_balance(Address(address))?
+        .get_native_balance(Address(address), block_number)?
         .to_hex())
 }
 
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
-    // TODO: #226
-    let _block_number: BlockNumber = params.next()?;
+    let block_number: BlockNumber = params.next()?;
 
     Ok(node
         .lock()
         .unwrap()
-        .get_account(Address(address))?
+        .get_account(Address(address), block_number)?
         .code
         .to_hex())
 }
@@ -124,15 +122,16 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let position: U256 = params.next()?;
-    // TODO: #226
-    let _block_number: BlockNumber = params.next()?;
+    let block_number: BlockNumber = params.next()?;
 
     let mut position_bytes = [0; 32];
     position.to_big_endian(&mut position_bytes);
     let position = H256::from_slice(&position_bytes);
 
-    let node = node.lock().unwrap();
-    let value = node.get_account_storage(Address(address), position)?;
+    let value =
+        node.lock()
+            .unwrap()
+            .get_account_storage(Address(address), position, block_number)?;
 
     Ok(value.to_hex())
 }
@@ -140,13 +139,12 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
-    // TODO: #226
-    let _block_number: BlockNumber = params.next()?;
+    let block_number: BlockNumber = params.next()?;
 
     Ok(node
         .lock()
         .unwrap()
-        .get_account(Address(address))?
+        .get_account(Address(address), block_number)?
         .nonce
         .to_hex())
 }
@@ -162,14 +160,7 @@ fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option
     let full: bool = params.next()?;
 
     let node = node.lock().unwrap();
-    let block = match block_number {
-        BlockNumber::Number(number) => node.get_block_by_view(number),
-        BlockNumber::Earliest => node.get_block_by_view(0),
-        BlockNumber::Latest => node.get_latest_block(),
-        _ => {
-            return Err(anyhow!("unsupported block number: {block_number:?}"));
-        }
-    };
+    let block = node.get_block_by_number(block_number);
 
     let block = block.map(|b| convert_block(&node, b, full)).transpose()?;
 

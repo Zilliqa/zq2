@@ -56,7 +56,7 @@ fn node(
         secret_key,
         message_sender,
         reset_timeout_sender,
-        MemoryDB::new(true),
+        MemoryDB::new(false),
     )
     .unwrap();
     let node = Arc::new(Mutex::new(node));
