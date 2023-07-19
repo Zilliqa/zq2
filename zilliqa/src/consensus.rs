@@ -39,8 +39,6 @@ const ADDR_TOUCHED_INDEX: &[u8] = b"addresses_touched_index";
 // single keys stored in default tree in DB
 /// value: block hash
 const LATEST_FINALIZED_BLOCK_HASH: &[u8] = b"latest_finalized_block_hash";
-/// value: view number
-const LATEST_KNOWN_VIEW: &[u8] = b"latest_known_view";
 
 #[derive(Debug)]
 struct NewViewVote {
@@ -588,8 +586,6 @@ impl Consensus {
     }
 
     fn save_highest_view(&self, block_hash: Hash, view: u64) -> Result<()> {
-        self.db
-            .insert(LATEST_KNOWN_VIEW, bincode::serialize(&view)?)?;
         self.canonical_block_numbers
             .insert(view.to_be_bytes(), &block_hash.0)?;
         Ok(())

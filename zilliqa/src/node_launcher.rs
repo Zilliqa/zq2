@@ -79,6 +79,7 @@ pub struct NodeLauncher {
     pub reset_timeout_receiver: UnboundedReceiverStream<()>,
     rpc_launched: bool,
     node_launched: bool,
+    consensus_timeout: Duration,
 }
 
 impl NodeLauncher {
@@ -91,7 +92,7 @@ impl NodeLauncher {
         let peer_id = PeerId::from(secret_key.to_libp2p_keypair().public());
 
         let node = Node::new(
-            config,
+            config.clone(),
             secret_key,
             message_sender.clone(),
             reset_timeout_sender.clone(),
@@ -111,6 +112,7 @@ impl NodeLauncher {
             reset_timeout_receiver,
             rpc_launched: false,
             node_launched: false,
+            consensus_timeout: config.consensus_timeout,
         })
     }
 
@@ -211,7 +213,7 @@ impl NodeLauncher {
         )?;
 
         let mut terminate = signal::unix::signal(SignalKind::terminate())?;
-        let sleep = time::sleep(Duration::from_secs(5));
+        let sleep = time::sleep(self.consensus_timeout);
         tokio::pin!(sleep);
 
         self.node_launched = true;
@@ -307,12 +309,12 @@ impl NodeLauncher {
                 () = &mut sleep => {
                     trace!("timeout elapsed");
                     self.node.lock().unwrap().handle_timeout().unwrap();
-                    sleep.as_mut().reset(Instant::now() + Duration::from_secs(5));
+                    sleep.as_mut().reset(Instant::now() + self.consensus_timeout);
                 },
                 r = self.reset_timeout_receiver.next() => {
                     let () = r.expect("reset timeout stream should be infinite");
                     trace!("timeout reset");
-                    sleep.as_mut().reset(Instant::now() + Duration::from_secs(5));
+                    sleep.as_mut().reset(Instant::now() + self.consensus_timeout);
                 },
                 _ = terminate.recv() => { break; },
                 _ = signal::ctrl_c() => { break; },

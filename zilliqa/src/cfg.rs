@@ -16,6 +16,8 @@ pub struct Config {
     pub allowed_timestamp_skew: Duration,
     /// The location of persistence data. If not set, uses a temporary path.
     pub data_dir: Option<String>,
+    /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
+    pub consensus_timeout: Duration,
 }
 
 impl Default for Config {
@@ -27,6 +29,7 @@ impl Default for Config {
             otlp_collector_endpoint: None,
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: Some("zq2data".to_string()),
+            consensus_timeout: Duration::from_secs(5),
         }
     }
 }
