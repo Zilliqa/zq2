@@ -139,6 +139,14 @@ pub struct QuorumCertificate {
 }
 
 impl QuorumCertificate {
+    pub fn genesis(committee_size: usize) -> Self {
+        Self {
+            signature: NodeSignature::identity(),
+            cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
+            block_hash: BlockHeader::genesis_hash(),
+        }
+    }
+
     pub fn new(signatures: &[NodeSignature], cosigned: BitVec, block_hash: Hash) -> Self {
         QuorumCertificate {
             signature: NodeSignature::aggregate(signatures).unwrap(),
@@ -203,10 +211,24 @@ impl BlockHeader {
         Hash::compute(&[&0_u64.to_be_bytes(), Hash::ZERO.as_bytes()])
     }
 
-    pub fn genesis() -> Self {
-        BlockHeader {
+    pub fn genesis(state_root_hash: Hash) -> Self {
+        Self {
             view: 0,
-            hash: Self::genesis_hash(),
+            hash: BlockHeader::genesis_hash(),
+            parent_hash: Hash::ZERO,
+            signature: NodeSignature::identity(),
+            state_root_hash,
+            timestamp: SystemTime::UNIX_EPOCH,
+        }
+    }
+}
+
+impl Default for BlockHeader {
+    /// Not suitable for use as a real block header.
+    fn default() -> Self {
+        Self {
+            view: 0,
+            hash: Hash::ZERO,
             parent_hash: Hash::ZERO,
             signature: NodeSignature::identity(),
             state_root_hash: Hash(Keccak256::digest(rlp::NULL_RLP).into()),
@@ -287,14 +309,11 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn genesis(committee_size: usize) -> Block {
+    pub fn genesis(committee_size: usize, state_root_hash: Hash) -> Block {
+        let qc = QuorumCertificate::genesis(committee_size);
         Block {
-            header: BlockHeader::genesis(),
-            qc: QuorumCertificate {
-                signature: NodeSignature::identity(),
-                cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
-                block_hash: BlockHeader::genesis_hash(),
-            },
+            header: BlockHeader::genesis(state_root_hash),
+            qc,
             agg: None,
             transactions: vec![],
         }

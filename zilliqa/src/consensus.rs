@@ -115,13 +115,14 @@ impl Consensus {
             None
         };
 
-        let state = if let Some(header) = latest_block_header {
-            State::new_from_root(state_trie, H256(header.hash.0))
+        let mut state = if let Some(header) = latest_block_header {
+            State::new_from_root(state_trie, H256(header.state_root_hash.0))
         } else {
             State::new_genesis(state_trie)?
         };
 
-        let latest_block_header = latest_block_header.unwrap_or(BlockHeader::genesis());
+        let latest_block_header =
+            latest_block_header.unwrap_or(BlockHeader::genesis(state.root_hash()?));
         trace!("Loading state at height {}", latest_block_header.view);
 
         let touched_address_index = db.open_tree(ADDR_TOUCHED_INDEX)?;
@@ -201,7 +202,7 @@ impl Consensus {
         // Before we have at least 3 other nodes (not including ourselves) there is no point trying to propose blocks,
         // because the supermajority condition is impossible to achieve.
         if self.pending_peers.len() >= 3 && self.view == 0 {
-            let genesis = Block::genesis(self.committee.len());
+            let genesis = Block::genesis(self.committee.len(), self.state.root_hash()?);
             self.high_qc = Some(genesis.qc.clone());
             self.add_block(genesis.clone())?;
             self.save_highest_view(genesis.hash(), genesis.view())?;
@@ -793,6 +794,17 @@ impl Consensus {
 
     pub fn state(&self) -> &State {
         &self.state
+    }
+
+    pub fn state_at(&self, view: u64) -> Result<Option<State>> {
+        Ok(self
+            .get_block_by_view(view)?
+            .map(|block| self.state.at_root(H256(block.state_root_hash().0))))
+    }
+
+    pub fn try_get_state_at(&self, view: u64) -> Result<State> {
+        self.state_at(view)?
+            .ok_or_else(|| anyhow!("No block at height {view}"))
     }
 
     pub fn seen_tx_already(&self, hash: &Hash) -> Result<bool> {

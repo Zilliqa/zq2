@@ -140,8 +140,10 @@ impl Node {
         match block_number {
             BlockNumber::Number(n) => n,
             BlockNumber::Earliest => 0,
-            BlockNumber::Latest => self.view() - 1,
-            _ => todo!(),
+            BlockNumber::Latest => self.get_chain_tip(),
+            BlockNumber::Pending => self.get_chain_tip(), // use latest for now
+            BlockNumber::Finalized => self.get_chain_tip().saturating_sub(2),
+            BlockNumber::Safe => self.get_chain_tip().saturating_sub(2), // same as finalized
         }
     }
 
@@ -156,6 +158,8 @@ impl Node {
         to_addr: Option<Address>,
         data: Vec<u8>,
     ) -> Result<Vec<u8>> {
+        // TODO: optimise this to get header directly once persistance is merged
+        // (which will provide a header index)
         let block = self
             .get_block_by_view(self.get_view(block_number))?
             .ok_or_else(|| anyhow!("block not found"))?;
@@ -173,20 +177,39 @@ impl Node {
         )
     }
 
-    pub fn get_account(&self, address: Address) -> Result<Account> {
-        self.consensus.state().get_account(address)
+    pub fn get_chain_tip(&self) -> u64 {
+        self.consensus.view().saturating_sub(1)
     }
 
-    pub fn get_account_storage(&self, address: Address, index: H256) -> Result<H256> {
-        self.consensus.state().get_account_storage(address, index)
+    pub fn get_account(&self, address: Address, block_number: BlockNumber) -> Result<Account> {
+        self.consensus
+            .try_get_state_at(self.get_view(block_number))?
+            .get_account(address)
     }
 
-    pub fn get_native_balance(&self, address: Address) -> Result<U256> {
-        self.consensus.state().get_native_balance(address)
+    pub fn get_account_storage(
+        &self,
+        address: Address,
+        index: H256,
+        block_number: BlockNumber,
+    ) -> Result<H256> {
+        self.consensus
+            .try_get_state_at(self.get_view(block_number))?
+            .get_account_storage(address, index)
+    }
+
+    pub fn get_native_balance(&self, address: Address, block_number: BlockNumber) -> Result<U256> {
+        self.consensus
+            .try_get_state_at(self.get_view(block_number))?
+            .get_native_balance(address)
     }
 
     pub fn get_latest_block(&self) -> Result<Option<Block>> {
-        self.get_block_by_view(self.consensus.view().saturating_sub(1))
+        self.get_block_by_view(self.get_chain_tip())
+    }
+
+    pub fn get_block_by_number(&self, block_number: BlockNumber) -> Result<Option<Block>> {
+        self.get_block_by_view(self.get_view(block_number))
     }
 
     pub fn get_finalized_height(&self) -> Result<u64> {
