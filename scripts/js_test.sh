@@ -30,7 +30,7 @@ sudo apt-get install solc libsecp256k1-dev > /dev/null 2>&1
 npm install > /dev/null 2>&1
 
 # Run tests
-npx hardhat test
+npx hardhat test --parallel
 
 retVal=$?
 
