@@ -1,5 +1,3 @@
-use std::time::SystemTime;
-
 use anyhow::Result;
 use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Serialize};
@@ -8,6 +6,7 @@ use sha3::{Digest, Keccak256};
 use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     state::SignedTransaction,
+    time::SystemTime,
 };
 
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
@@ -137,6 +136,14 @@ pub struct QuorumCertificate {
 }
 
 impl QuorumCertificate {
+    pub fn genesis(committee_size: usize) -> Self {
+        Self {
+            signature: NodeSignature::identity(),
+            cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
+            block_hash: Hash::ZERO,
+        }
+    }
+
     pub fn new(signatures: &[NodeSignature], cosigned: BitVec, block_hash: Hash) -> Self {
         QuorumCertificate {
             signature: NodeSignature::aggregate(signatures).unwrap(),
@@ -196,9 +203,10 @@ pub struct BlockHeader {
     pub timestamp: SystemTime,
 }
 
-impl BlockHeader {
-    pub fn genesis() -> Self {
-        BlockHeader {
+impl Default for BlockHeader {
+    /// Not suitable for use as a real block header.
+    fn default() -> Self {
+        Self {
             view: 0,
             hash: Hash::ZERO,
             parent_hash: Hash::ZERO,
@@ -232,14 +240,19 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn genesis(committee_size: usize) -> Block {
+    pub fn genesis(committee_size: usize, state_root_hash: Hash) -> Block {
+        let qc = QuorumCertificate::genesis(committee_size);
+        let parent_hash = Hash::ZERO;
         Block {
-            header: BlockHeader::genesis(),
-            qc: QuorumCertificate {
+            header: BlockHeader {
+                view: 0,
+                hash: Hash::ZERO,
+                parent_hash,
                 signature: NodeSignature::identity(),
-                cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
-                block_hash: Hash::ZERO,
+                state_root_hash,
+                timestamp: SystemTime::UNIX_EPOCH,
             },
+            qc,
             agg: None,
             transactions: vec![],
         }

@@ -1,14 +1,10 @@
-use std::{
-    sync::{Arc, Mutex},
-    time::SystemTime,
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
-use serde::Deserialize;
 
-use crate::{crypto::Hash, node::Node, state::Address};
+use crate::{crypto::Hash, message::BlockNumber, node::Node, state::Address, time::SystemTime};
 
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},
@@ -107,22 +103,15 @@ fn get_block_transactions(
     }))
 }
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum StringOrInteger {
-    String(String),
-    Integer(u64),
-}
-
 fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
-    let _tag: StringOrInteger = params.next()?;
+    let block_number: BlockNumber = params.next()?;
 
     let empty = node
         .lock()
         .unwrap()
-        .get_account(Address(address))?
+        .get_account(Address(address), block_number)?
         .code
         .is_empty();
 

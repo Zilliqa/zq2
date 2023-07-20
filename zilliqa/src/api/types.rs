@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::SystemTime};
+use std::str::FromStr;
 
 use anyhow::anyhow;
 use primitive_types::{H160, H256};
@@ -9,7 +9,10 @@ use serde::{
 };
 use sha3::{Digest, Keccak256};
 
-use crate::message::{self, BlockNumber};
+use crate::{
+    message::{self, BlockNumber},
+    time::SystemTime,
+};
 
 use super::to_hex::ToHex;
 
