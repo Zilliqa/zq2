@@ -241,9 +241,6 @@ fn get_transaction_by_hash(
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
     let node = node.lock().unwrap();
-    println!("get_transaction_by_hash: {:?}", hash);
-
-    //let Some(signed_transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
 
     get_transaction_inner(hash, &node)
 }
@@ -254,15 +251,14 @@ pub(super) fn get_transaction_inner(
 ) -> Result<Option<EthTransaction>> {
     let Some(signed_transaction) = node.get_transaction_by_hash(hash) else { println!("no tx found: {:?}", hash); return Ok(None); };
 
-    //let receipt = ;
-    //let block = node.get_block_by_hash(receipt.block_hash);
-
     let block = if let Some(receipt) = node.get_transaction_receipt(hash) {
         node.get_block_by_hash(receipt.block_hash)
     } else {
         None
     };
 
+    // If the transaction is not in a block, we don't know the block number, hash, or the transaction index.
+    // So it should be null
     let block_details = if let Some(block) = block {
         (Some(block.hash().0.into()), Some(block.view()), Some(block.transactions.iter().position(|t| *t == hash).unwrap() as u64))
     } else {

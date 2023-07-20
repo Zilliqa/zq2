@@ -125,7 +125,6 @@ impl Node {
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
         let hash = txn.hash();
 
-        // Print we have seen TX
         info!("Seen new TX: {}", hash);
 
         txn.verify()?;
