@@ -153,7 +153,7 @@ impl QuorumCertificate {
     }
 
     pub fn compute_hash(&self) -> Hash {
-        Hash::compute(&[
+        Hash::compute([
             &self.signature.to_bytes(),
             &self.cosigned.clone().into_vec(), // FIXME: What does this do when `self.cosigned.len() % 8 != 0`?
             self.block_hash.as_bytes(),
@@ -173,7 +173,7 @@ pub struct AggregateQc {
 impl AggregateQc {
     pub fn compute_hash(&self) -> Hash {
         let hashes: Vec<_> = self.qcs.iter().map(|qc| qc.compute_hash()).collect();
-        Hash::compute(&[
+        Hash::compute([
             &self.signature.to_bytes(),
             &self
                 .signers
@@ -181,7 +181,7 @@ impl AggregateQc {
                 .flat_map(|signer| signer.to_be_bytes())
                 .collect::<Vec<_>>(),
             Hash::compute(
-                &hashes
+                hashes
                     .iter()
                     .map(|hash| hash.as_bytes())
                     .collect::<Vec<_>>(),
@@ -267,7 +267,7 @@ impl Block {
         transactions: Vec<Hash>,
         timestamp: SystemTime,
     ) -> Block {
-        let digest = Hash::compute(&[
+        let digest = Hash::compute([
             &view.to_be_bytes(),
             qc.compute_hash().as_bytes(),
             // hash of agg missing here intentionally
@@ -299,7 +299,7 @@ impl Block {
         state_root_hash: Hash,
         timestamp: SystemTime,
     ) -> Block {
-        let digest = Hash::compute(&[
+        let digest = Hash::compute([
             &view.to_be_bytes(),
             qc.compute_hash().as_bytes(),
             agg.compute_hash().as_bytes(),
