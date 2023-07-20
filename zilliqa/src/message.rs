@@ -1,5 +1,3 @@
-use std::time::SystemTime;
-
 use anyhow::Result;
 use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Serialize};
@@ -8,6 +6,7 @@ use sha3::{Digest, Keccak256};
 use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     state::SignedTransaction,
+    time::SystemTime,
 };
 
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
