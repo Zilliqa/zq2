@@ -1,5 +1,5 @@
 use primitive_types::H256;
-use std::{collections::BTreeMap, time::SystemTime};
+use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
@@ -18,6 +18,7 @@ use crate::{
         Vote,
     },
     state::{Address, SignedTransaction, State, TransactionReceipt},
+    time::SystemTime,
 };
 
 // database tree names

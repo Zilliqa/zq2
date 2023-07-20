@@ -1,14 +1,10 @@
-use crate::message::BlockNumber;
-use std::{
-    sync::{Arc, Mutex},
-    time::SystemTime,
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
 
-use crate::{crypto::Hash, node::Node, state::Address};
+use crate::{crypto::Hash, message::BlockNumber, node::Node, state::Address, time::SystemTime};
 
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},

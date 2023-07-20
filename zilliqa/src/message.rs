@@ -1,5 +1,5 @@
 use serde::Deserializer;
-use std::{fmt::Display, str::FromStr, time::SystemTime};
+use std::{fmt::Display, str::FromStr};
 
 use anyhow::anyhow;
 use anyhow::Result;
@@ -10,6 +10,7 @@ use sha3::{Digest, Keccak256};
 use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     state::SignedTransaction,
+    time::SystemTime,
 };
 
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;

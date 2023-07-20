@@ -5,9 +5,8 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 use sha3::{Digest, Keccak256};
-use std::time::SystemTime;
 
-use crate::message;
+use crate::{message, time::SystemTime};
 
 use super::to_hex::ToHex;
 
