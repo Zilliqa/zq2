@@ -156,7 +156,7 @@ fn search_transactions_inner(
         let txn: EthTransaction = get_transaction_inner(hash, &node.lock().unwrap())
             .unwrap()
             .unwrap();
-        let txn_block_number = txn.block_number;
+        let txn_block_number = txn.block_number.unwrap_or_default();
 
         let cmp = if !reverse {
             PartialOrd::le
@@ -176,7 +176,7 @@ fn search_transactions_inner(
         let timestamp = node
             .lock()
             .unwrap()
-            .get_block_by_hash(Hash(txn.block_hash.0))
+            .get_block_by_hash(Hash(txn.block_hash.unwrap_or_default().0))
             .unwrap()
             .timestamp();
 

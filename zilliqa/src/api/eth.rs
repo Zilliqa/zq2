@@ -53,6 +53,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_mining", mining),
             ("eth_protocolVersion", protocol_version),
             ("eth_syncing", syncing),
+            ("net_peerCount", net_peer_count),
+            ("net_listening", net_listening),
         ],
     )
 }
@@ -248,6 +250,10 @@ fn get_transaction_by_hash(
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
     let node = node.lock().unwrap();
+    println!("get_transaction_by_hash: {:?}", hash);
+
+    //let Some(signed_transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
+
     get_transaction_inner(hash, &node)
 }
 
@@ -255,10 +261,22 @@ pub(super) fn get_transaction_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
 ) -> Result<Option<EthTransaction>> {
-    let Some(signed_transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
-    // TODO: Return error if receipt or block does not exist.
-    let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
-    let Some(block) = node.get_block_by_hash(receipt.block_hash) else { return Ok(None); };
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash) else { println!("no tx found: {:?}", hash); return Ok(None); };
+
+    //let receipt = ;
+    //let block = node.get_block_by_hash(receipt.block_hash);
+
+    let block = if let Some(receipt) = node.get_transaction_receipt(hash) {
+        node.get_block_by_hash(receipt.block_hash)
+    } else {
+        None
+    };
+
+    let block_details = if let Some(block) = block {
+        (Some(block.hash().0.into()), Some(block.view()), Some(block.transactions.iter().position(|t| *t == hash).unwrap() as u64))
+    } else {
+        (None, None, None)
+    };
 
     let transaction = signed_transaction.transaction;
     let (v, r, s) = match signed_transaction.signing_info {
@@ -270,8 +288,8 @@ pub(super) fn get_transaction_inner(
         } => (v, r, s),
     };
     let transaction = EthTransaction {
-        block_hash: H256(block.hash().0),
-        block_number: block.view(),
+        block_hash: block_details.0,
+        block_number: block_details.1,
         from: signed_transaction.from_addr.0,
         gas: 0,
         gas_price: transaction.gas_price,
@@ -279,7 +297,7 @@ pub(super) fn get_transaction_inner(
         input: transaction.payload.clone(),
         nonce: transaction.nonce,
         to: transaction.to_addr.map(|a| a.0),
-        transaction_index: block.transactions.iter().position(|t| *t == hash).unwrap() as u64,
+        transaction_index: block_details.2,
         value: transaction.amount,
         v,
         r,
@@ -439,6 +457,14 @@ fn protocol_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
 
 fn syncing(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
     Ok(false)
+}
+
+fn net_peer_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok("0x0".to_string())
+}
+
+fn net_listening(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
+    Ok(true)
 }
 
 #[cfg(test)]

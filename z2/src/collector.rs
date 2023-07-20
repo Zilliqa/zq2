@@ -3,6 +3,7 @@ use eyre::Result;
 use futures::future::JoinAll;
 use std::vec::Vec;
 use tokio::sync::mpsc;
+use std::{thread, time::Duration};
 
 pub struct Collector {
     pub runners: Vec<runner::Process>,

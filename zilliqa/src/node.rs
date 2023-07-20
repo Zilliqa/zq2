@@ -9,6 +9,7 @@ use eth_trie::MemoryDB;
 use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::{error, trace, info};
 
 use crate::{
     cfg::Config,
@@ -123,6 +124,9 @@ impl Node {
 
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
         let hash = txn.hash();
+
+        // Print we have seen TX
+        info!("Seen new TX: {}", hash);
 
         txn.verify()?;
 

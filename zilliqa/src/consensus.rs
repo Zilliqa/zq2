@@ -9,7 +9,7 @@ use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use itertools::Itertools;
 use libp2p::PeerId;
-use tracing::{debug, trace};
+use tracing::{debug, trace, info};
 
 use crate::{
     cfg::Config,
@@ -497,7 +497,23 @@ impl Consensus {
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<SignedTransaction> {
-        Some(self.transactions.get(&hash)?.clone())
+       self.transactions.get(&hash).or(self.new_transactions.get(&hash)).cloned()
+//        println!("adsfdsfds here we go");
+//
+//        let zz = self.transactions.get(&hash);
+//        println!("adsfdsfds here we go0");
+//        let yy = self.new_transactions.get(&hash);
+//        println!("adsfdsfds here we go1");
+//
+//        let xx = zz.or(yy);
+//
+//        if xx.is_none() {
+//            println!("get_transaction_by_hash is none {:?}", self.transactions);
+//            println!("get_transaction_by_hash is none2 {:?}", self.new_transactions);
+//        } else {
+//            println!("get_transaction_by_hash is not none {:?}", xx);
+//        }
+//        xx.cloned()
     }
 
     pub fn get_transaction_receipt(&self, hash: Hash) -> Option<TransactionReceipt> {
@@ -618,7 +634,7 @@ impl Consensus {
 
     pub fn add_block(&mut self, block: Block) {
         let hash = block.hash();
-        debug!(?hash, ?block.header.view, "added block");
+        info!(?hash, ?block.header.view, "added block");
         self.blocks.insert(hash, block);
     }
 

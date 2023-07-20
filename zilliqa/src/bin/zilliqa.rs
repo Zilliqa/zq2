@@ -2,6 +2,7 @@ use std::{fs, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
+use rand::Rng;
 
 use libp2p::{
     gossipsub, identify,
@@ -35,6 +36,7 @@ struct Behaviour {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
