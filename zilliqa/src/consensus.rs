@@ -166,6 +166,18 @@ impl Consensus {
 
         // derive the sender from the proposal's view
         let sender = self.get_leader(block.view());
+
+        // Loop the committee members and check if we can verify with them
+        if(block.verify(sender.public_key).is_err()) {
+            println!("block is: {:?}", block);
+            println!("committee is: {:?}", &self.committee.len());
+
+            for val in &self.committee {
+                println!("Verifying with {:?} is {:?}", val.peer_id, block.verify(val.public_key).is_ok());
+            }
+        }
+
+
         // verify the sender's signature on the proposal
         block.verify(sender.public_key)?;
         // in the future check if we already have another block with the same view as proposal, which means that the sender equivocates; also figure out who voted for both of these blocks and thus equivocated
@@ -307,6 +319,12 @@ impl Consensus {
         }
         // verify the sender's signature on block_hash
         let sender = self.get_member(vote.index);
+
+        println!("new view sender: {:?}", sender);
+        println!("vote index: {:?}", vote.index);
+        println!("new view committee : {:?}", self.committee);
+        println!("new view committee size: {:?}", self.committee.len());
+        println!("sender pub key: {:?}", sender.public_key);
         vote.verify(sender.public_key)?;
 
         let (mut signatures, mut cosigned, mut cosigned_weight) =
@@ -408,6 +426,10 @@ impl Consensus {
         }
         // verify the sender's signature on the block hash
         let sender = self.get_member(new_view.index);
+        println!("new view sender: {:?}", sender);
+        println!("new view index: {:?}", new_view.index);
+        println!("new view committee : {:?}", self.committee);
+        println!("new view committee size: {:?}", self.committee.len());
         new_view.verify(sender.public_key)?;
 
         // check if the sender's qc is higher than our high_qc or even higher than our view

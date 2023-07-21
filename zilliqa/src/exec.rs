@@ -489,21 +489,21 @@ impl<'a> Backend for EvmBackend<'a> {
     fn storage(&self, address: H160, index: H256) -> H256 {
         let res = self.state.must_get_account_storage(Address(address), index);
 
-        trace!(
-            "EVM request: Requesting storage for {:?} at {:?} and is: {:?}",
-            address,
-            index,
-            res
-        );
+        //trace!(
+        //    "EVM request: Requesting storage for {:?} at {:?} and is: {:?}",
+        //    address,
+        //    index,
+        //    res
+        //);
         res
     }
 
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
-        trace!(
-            "EVM request: Requesting original storage for {:?} at {:?}",
-            address,
-            index
-        );
+        //trace!(
+        //    "EVM request: Requesting original storage for {:?} at {:?}",
+        //    address,
+        //    index
+        //);
         Some(self.storage(address, index))
     }
 

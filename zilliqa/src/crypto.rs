@@ -5,6 +5,7 @@
 //! in the future if we wanted to.
 
 use std::fmt::Display;
+use std::backtrace::Backtrace;
 
 use anyhow::{anyhow, Result};
 use bls12_381::G2Affine;
@@ -82,8 +83,14 @@ impl NodePublicKey {
     }
 
     pub fn verify(&self, message: &[u8], signature: NodeSignature) -> Result<()> {
+        println!("we will try verify and we are {:?}", self);
+
         if !self.0.verify(signature.0, message) {
-            return Err(anyhow!("invalid signature"));
+
+            println!("we failed and we are {:?}", self);
+            println!("backtraceeeee {:?} and {:?}", signature.0, message);
+            println!("{:?}", Backtrace::force_capture());
+            return Err(anyhow!("invalid signature (node public key)!"));
         }
 
         Ok(())
@@ -134,7 +141,7 @@ impl TransactionPublicKey {
             #[allow(unreachable_patterns)] // will be necessary with >1 signature types
             _ => Err(anyhow!("Mismatch between signature and public key type!")),
         };
-        result.map_err(|_| anyhow!("Invalid signature"))
+        result.map_err(|_| anyhow!("Invalid signature (transaction public key)!"))
     }
 
     pub fn into_addr(&self) -> Address {
@@ -155,7 +162,7 @@ pub fn verify_messages(
 ) -> Result<()> {
     let public_keys: Vec<_> = public_keys.iter().map(|p| p.0).collect();
     if !bls_signatures::verify_messages(&signature.0, messages, &public_keys) {
-        return Err(anyhow!("invalid signature"));
+        return Err(anyhow!("invalid signature (verifying message)!"));
     }
 
     Ok(())

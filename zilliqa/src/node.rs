@@ -63,6 +63,7 @@ impl Node {
 
     // TODO: Multithreading - `&mut self` -> `&self`
     pub fn handle_message(&mut self, source: PeerId, message: Message) -> Result<()> {
+        //println!("handle_message: {:?}", message);
         match message {
             Message::Proposal(m) => {
                 if let Some((leader, vote)) = self.consensus.proposal(m)? {
