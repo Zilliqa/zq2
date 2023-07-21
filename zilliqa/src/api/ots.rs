@@ -147,14 +147,14 @@ fn search_transactions_inner(
         let txn: EthTransaction = get_transaction_inner(hash, &node.lock().unwrap())
             .unwrap()
             .unwrap();
-        let txn_block_number = txn.block_number.unwrap_or_default();
+        let txn_block_number = txn.block_number;
 
         let cmp = if !reverse {
             PartialOrd::le
         } else {
             PartialOrd::ge
         };
-        if cmp(&txn_block_number, &block_number) {
+        if txn_block_number.is_none() || cmp(&txn_block_number.unwrap(), &block_number) {
             continue;
         }
 
