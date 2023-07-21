@@ -13,14 +13,8 @@ members = [
 # Makes flamegraphs more readable.
 # https://doc.rust-lang.org/cargo/reference/manifest.html#the-profile-sections
 debug = true
+lto = "thin"
 
 [profile.release-stripped]
 inherits = "release"
-lto = "thin"
-debug = false
-
-[profile.release-lto]
-inherits = "release"
-# Enable "thin" LTO to reduce both the compilation time and the binary size.
-# See: https://doc.rust-lang.org/cargo/reference/profiles.html#lto
-lto = "thin"
+strip = true
