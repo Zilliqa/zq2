@@ -37,7 +37,6 @@ jobs:
       run: git diff --exit-code
 
   e2e_test:
-    if: needs.e2e_test_gate.outputs.status == 'failure'
     runs-on: ubuntu-latest
     steps:
     - name: Install dependencies
