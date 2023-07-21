@@ -575,7 +575,7 @@ impl Consensus {
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<SignedTransaction>> {
         if let Some(txn) = self.new_transactions.get(&hash) {
-            return Ok(Some(txn));
+            return Ok(Some(txn.clone()));
         }
 
         self.transactions
