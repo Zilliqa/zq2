@@ -123,7 +123,7 @@ impl Node {
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
         let hash = txn.hash();
 
-        info!("Seen new TX: {}", hash);
+        info!(?hash, "seen new txn");
 
         txn.verify()?;
 
