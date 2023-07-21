@@ -191,7 +191,7 @@ impl State {
         current_block: BlockHeader,
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash();
-        info!("Executing TX: {}", hash);
+        info!(?hash, "executing txn");
 
         let result = self.apply_transaction_inner(
             txn.from_addr,
