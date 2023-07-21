@@ -249,7 +249,7 @@ pub(super) fn get_transaction_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
 ) -> Result<Option<EthTransaction>> {
-    let Some(signed_transaction) = node.get_transaction_by_hash(hash) else { println!("no tx found: {:?}", hash); return Ok(None); };
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash) else {  return Ok(None); };
 
     let block = if let Some(receipt) = node.get_transaction_receipt(hash) {
         node.get_block_by_hash(receipt.block_hash)
@@ -259,11 +259,11 @@ pub(super) fn get_transaction_inner(
 
     // If the transaction is not in a block, we don't know the block number, hash, or the transaction index.
     // So it should be null
-    let block_details = if let Some(block) = block {
-        (Some(block.hash().0.into()), Some(block.view()), Some(block.transactions.iter().position(|t| *t == hash).unwrap() as u64))
-    } else {
-        (None, None, None)
-    };
+    //let block_details = if let Some(block) = block {
+    //    (Some(block.hash().0.into()), Some(block.view()), Some(block.transactions.iter().position(|t| *t == hash).unwrap() as u64))
+    //} else {
+    //    (None, None, None)
+    //};
 
     let transaction = signed_transaction.transaction;
     let (v, r, s) = match signed_transaction.signing_info {
@@ -275,8 +275,8 @@ pub(super) fn get_transaction_inner(
         } => (v, r, s),
     };
     let transaction = EthTransaction {
-        block_hash: block_details.0,
-        block_number: block_details.1,
+        block_hash: block.map(|b| b.hash().0.into()),
+        block_number: block.map(|b| b.view()),
         from: signed_transaction.from_addr.0,
         gas: 0,
         gas_price: transaction.gas_price,
@@ -284,7 +284,7 @@ pub(super) fn get_transaction_inner(
         input: transaction.payload.clone(),
         nonce: transaction.nonce,
         to: transaction.to_addr.map(|a| a.0),
-        transaction_index: block_details.2,
+        transaction_index: block.map(|b| b.transactions.iter().position(|t| *t == hash).unwrap() as u64),
         value: transaction.amount,
         v,
         r,
