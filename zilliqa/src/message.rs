@@ -1,3 +1,7 @@
+use serde::Deserializer;
+use std::{fmt::Display, str::FromStr};
+
+use anyhow::anyhow;
 use anyhow::Result;
 use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Serialize};
@@ -143,7 +147,7 @@ impl QuorumCertificate {
         Self {
             signature: NodeSignature::identity(),
             cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
-            block_hash: Hash::ZERO,
+            block_hash: BlockHeader::genesis_hash(),
         }
     }
 
@@ -206,6 +210,23 @@ pub struct BlockHeader {
     pub timestamp: SystemTime,
 }
 
+impl BlockHeader {
+    pub fn genesis_hash() -> Hash {
+        Hash::compute([&0_u64.to_be_bytes(), Hash::ZERO.as_bytes()])
+    }
+
+    pub fn genesis(state_root_hash: Hash) -> Self {
+        Self {
+            view: 0,
+            hash: BlockHeader::genesis_hash(),
+            parent_hash: Hash::ZERO,
+            signature: NodeSignature::identity(),
+            state_root_hash,
+            timestamp: SystemTime::UNIX_EPOCH,
+        }
+    }
+}
+
 impl Default for BlockHeader {
     /// Not suitable for use as a real block header.
     fn default() -> Self {
@@ -230,6 +251,55 @@ pub enum BlockNumber {
     Pending,
 }
 
+impl Display for BlockNumber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Number(num) => num.to_string(),
+                Self::Earliest => "earliest".to_string(),
+                Self::Latest => "latest".to_string(),
+                Self::Safe => "safe".to_string(),
+                Self::Finalized => "finalized".to_string(),
+                Self::Pending => "pending".to_string(),
+            }
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for BlockNumber {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: String = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl FromStr for BlockNumber {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "earliest" => Ok(BlockNumber::Earliest),
+            "latest" => Ok(BlockNumber::Latest),
+            "safe" => Ok(BlockNumber::Safe),
+            "finalized" => Ok(BlockNumber::Finalized),
+            "pending" => Ok(BlockNumber::Pending),
+            number => {
+                if let Some(number) = number.strip_prefix("0x") {
+                    let number = u64::from_str_radix(number, 16)?;
+                    Ok(BlockNumber::Number(number))
+                } else {
+                    Err(anyhow!("invalid block number: {s}"))
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub header: BlockHeader,
@@ -245,16 +315,8 @@ pub struct Block {
 impl Block {
     pub fn genesis(committee_size: usize, state_root_hash: Hash) -> Block {
         let qc = QuorumCertificate::genesis(committee_size);
-        let parent_hash = Hash::ZERO;
         Block {
-            header: BlockHeader {
-                view: 0,
-                hash: Hash::ZERO,
-                parent_hash,
-                signature: NodeSignature::identity(),
-                state_root_hash,
-                timestamp: SystemTime::UNIX_EPOCH,
-            },
+            header: BlockHeader::genesis(state_root_hash),
             qc,
             agg: None,
             transactions: vec![],

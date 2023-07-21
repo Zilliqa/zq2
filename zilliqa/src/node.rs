@@ -5,7 +5,6 @@ use crate::{
 use primitive_types::H256;
 
 use anyhow::{anyhow, Result};
-use eth_trie::MemoryDB;
 use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
@@ -48,14 +47,13 @@ impl Node {
         secret_key: SecretKey,
         message_sender: UnboundedSender<(Option<PeerId>, Message)>,
         reset_timeout: UnboundedSender<()>,
-        database: MemoryDB,
     ) -> Result<Node> {
         let node = Node {
             config: config.clone(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             message_sender,
             reset_timeout,
-            consensus: Consensus::new(secret_key, config, database)?,
+            consensus: Consensus::new(secret_key, config)?,
         };
 
         Ok(node)
@@ -130,7 +128,7 @@ impl Node {
         txn.verify()?;
 
         // Make sure TX hasn't been seen before
-        if !self.consensus.seen_tx_already(&hash) {
+        if !self.consensus.seen_tx_already(&hash)? {
             self.broadcast_message(Message::NewTransaction(txn))?;
         }
 
@@ -152,6 +150,10 @@ impl Node {
         }
     }
 
+    pub fn peer_id(&self) -> PeerId {
+        self.peer_id
+    }
+
     pub fn call_contract(
         &self,
         block_number: BlockNumber,
@@ -162,7 +164,7 @@ impl Node {
         // TODO: optimise this to get header directly once persistance is merged
         // (which will provide a header index)
         let block = self
-            .get_block_by_view(self.get_view(block_number))
+            .get_block_by_view(self.get_view(block_number))?
             .ok_or_else(|| anyhow!("block not found"))?;
         let state = self
             .consensus
@@ -205,31 +207,35 @@ impl Node {
             .get_native_balance(address)
     }
 
-    pub fn get_latest_block(&self) -> Option<&Block> {
+    pub fn get_latest_block(&self) -> Result<Option<Block>> {
         self.get_block_by_view(self.get_chain_tip())
     }
 
-    pub fn get_block_by_number(&self, block_number: BlockNumber) -> Option<&Block> {
+    pub fn get_block_by_number(&self, block_number: BlockNumber) -> Result<Option<Block>> {
         self.get_block_by_view(self.get_view(block_number))
     }
 
-    pub fn get_block_by_view(&self, view: u64) -> Option<&Block> {
+    pub fn get_finalized_height(&self) -> Result<u64> {
+        self.consensus.finalized_view()
+    }
+
+    pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
         self.consensus.get_block_by_view(view)
     }
 
-    pub fn get_block_by_hash(&self, hash: Hash) -> Option<&Block> {
-        self.consensus.get_block(&hash).ok()
+    pub fn get_block_by_hash(&self, hash: Hash) -> Result<Option<Block>> {
+        self.consensus.maybe_get_block(&hash)
     }
 
-    pub fn get_transaction_receipt(&self, hash: Hash) -> Option<TransactionReceipt> {
+    pub fn get_transaction_receipt(&self, hash: Hash) -> Result<Option<TransactionReceipt>> {
         self.consensus.get_transaction_receipt(hash)
     }
 
-    pub fn get_transaction_by_hash(&self, hash: Hash) -> Option<SignedTransaction> {
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<SignedTransaction>> {
         self.consensus.get_transaction_by_hash(hash)
     }
 
-    pub fn get_touched_transactions(&self, address: Address) -> Vec<Hash> {
+    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
         self.consensus.get_touched_transactions(address)
     }
 
@@ -253,18 +259,13 @@ impl Node {
     fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
         let block = self.consensus.get_block(&request.hash)?;
 
-        self.send_message(
-            source,
-            Message::BlockResponse(BlockResponse {
-                block: block.clone(),
-            }),
-        )?;
+        self.send_message(source, Message::BlockResponse(BlockResponse { block }))?;
 
         Ok(())
     }
 
     fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
-        self.consensus.add_block(response.block);
+        self.consensus.add_block(response.block)?;
 
         Ok(())
     }
