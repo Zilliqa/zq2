@@ -18,7 +18,8 @@ fn get_header_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Optio
     let header = node
         .lock()
         .unwrap()
-        .get_block_by_view(block)
+        .get_block_by_view(block)?
+        .as_ref()
         .map(EthBlock::from);
 
     Ok(header)

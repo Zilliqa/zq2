@@ -1,4 +1,4 @@
-use eth_trie::{EthTrie as PatriciaTrie, MemoryDB, Trie};
+use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use generic_array::{
     sequence::Split,
     typenum::{U12, U20},
@@ -8,6 +8,7 @@ use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use once_cell::sync::Lazy;
 use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
+use sled::Tree;
 use std::convert::TryInto;
 use std::fmt::Display;
 use std::sync::Arc;
@@ -18,7 +19,7 @@ use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::{contracts, crypto};
+use crate::{contracts, crypto, db::SledDb};
 
 /// Const version of `impl From<u128> for U256`
 const fn u128_to_u256(value: u128) -> U256 {
@@ -73,15 +74,16 @@ static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
 
 #[derive(Debug)]
 pub struct State {
-    db: Arc<MemoryDB>,
-    accounts: PatriciaTrie<MemoryDB>,
+    db: Arc<SledDb>,
+    accounts: PatriciaTrie<SledDb>,
 }
 
 impl State {
-    pub fn new(database: Arc<MemoryDB>) -> Result<State> {
+    pub fn new_genesis(database: Tree) -> Result<State> {
+        let db = Arc::new(SledDb::new(database));
         let mut state = Self {
-            db: database.clone(),
-            accounts: PatriciaTrie::new(database),
+            db: db.clone(),
+            accounts: PatriciaTrie::new(db),
         };
 
         state
@@ -95,6 +97,14 @@ impl State {
         }
 
         Ok(state)
+    }
+
+    pub fn new_from_root(database: Tree, root_hash: H256) -> Self {
+        let db = Arc::new(SledDb::new(database));
+        Self {
+            db: db.clone(),
+            accounts: PatriciaTrie::new(db).at_root(root_hash),
+        }
     }
 
     pub fn at_root(&self, root_hash: H256) -> Self {
@@ -116,6 +126,19 @@ impl State {
         ))
     }
 
+    /// Canonical method to obtain trie key for an account node
+    fn account_key(address: Address) -> Vec<u8> {
+        Keccak256::digest(address.as_bytes()).to_vec()
+    }
+
+    /// Canonical method to obtain trie key for an account's storage trie's storage node
+    fn account_storage_key(address: Address, index: H256) -> Vec<u8> {
+        let mut h = Keccak256::new();
+        h.update(address.as_bytes());
+        h.update(index.as_bytes());
+        h.finalize().to_vec()
+    }
+
     /// Fetch an Account struct.
     /// Note: use get_account_storage to obtain a specific storage value.
     /// If modifying a raw account, ensure you call save_account afterwards.
@@ -124,7 +147,7 @@ impl State {
     pub fn get_account(&self, address: Address) -> Result<Account> {
         Ok(self
             .accounts
-            .get(&Keccak256::digest(address.as_bytes()))?
+            .get(&Self::account_key(address))?
             .map(|bytes| bincode::deserialize::<Account>(&bytes))
             .unwrap_or(Ok(Account::default()))?)
     }
@@ -137,7 +160,7 @@ impl State {
     }
 
     /// If using this to modify the account, ensure save_account gets called
-    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<MemoryDB>> {
+    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<SledDb>> {
         Ok(match self.get_account(address)?.storage_root {
             Some(root) => PatriciaTrie::new(self.db.clone()).at_root(root),
             None => PatriciaTrie::new(self.db.clone()),
@@ -146,7 +169,7 @@ impl State {
 
     /// Returns an error if there are any issues fetching the account from the state trie
     pub fn get_account_storage(&self, address: Address, index: H256) -> Result<H256> {
-        match self.get_account_trie(address)?.get(index.as_bytes()) {
+        match self.get_account_trie(address)?.get(&Self::account_storage_key(address, index)) {
             // from_slice will only panic if vec.len != H256::len_bytes, i.e. 32
             Ok(Some(vec)) if vec.len() == 32 => Ok(H256::from_slice(&vec)),
             // empty storage location
@@ -177,7 +200,7 @@ impl State {
     ) -> Result<()> {
         let mut account = self.get_account(address)?;
         let mut trie = self.get_account_trie(address)?;
-        trie.insert(index.as_bytes(), value.as_bytes())?;
+        trie.insert(&Self::account_storage_key(address, index), value.as_bytes())?;
         account.storage_root = Some(trie.root_hash()?);
         self.save_account(address, account)?;
 
@@ -187,7 +210,7 @@ impl State {
     pub fn remove_account_storage(&mut self, address: Address, index: H256) -> Result<bool> {
         let mut account = self.get_account(address)?;
         let mut trie = self.get_account_trie(address)?;
-        let ret = trie.remove(index.as_bytes())?;
+        let ret = trie.remove(&Self::account_storage_key(address, index))?;
         account.storage_root = Some(trie.root_hash()?);
         self.save_account(address, account)?;
 
@@ -207,9 +230,7 @@ impl State {
 
     /// Returns an error if there are any issues accessing the storage trie
     pub fn try_has_account(&self, address: Address) -> Result<bool> {
-        Ok(self
-            .accounts
-            .contains(&Keccak256::digest(address.as_bytes()))?)
+        Ok(self.accounts.contains(&Self::account_key(address))?)
     }
 
     /// Returns false if the account cannot be accessed in the storage trie
@@ -218,16 +239,13 @@ impl State {
     }
 
     pub fn save_account(&mut self, address: Address, account: Account) -> Result<()> {
-        Ok(self.accounts.insert(
-            crypto::Hash::compute([address.as_bytes()]).as_bytes(),
-            &bincode::serialize(&account)?,
-        )?)
+        Ok(self
+            .accounts
+            .insert(&Self::account_key(address), &bincode::serialize(&account)?)?)
     }
 
     pub fn delete_account(&mut self, address: Address) -> Result<bool> {
-        Ok(self
-            .accounts
-            .remove(&Keccak256::digest(address.as_bytes()))?)
+        Ok(self.accounts.remove(&Self::account_key(address))?)
     }
 }
 

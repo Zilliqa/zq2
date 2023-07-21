@@ -1,5 +1,6 @@
 mod consensus;
 mod eth;
+mod persistence;
 mod web3;
 
 use std::{
@@ -14,7 +15,6 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use eth_trie::MemoryDB;
 use ethers::{
     prelude::SignerMiddleware,
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
@@ -31,17 +31,23 @@ use libp2p::PeerId;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
 use serde::{de::DeserializeOwned, Serialize};
+use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tracing::trace;
 use zilliqa::{cfg::Config, crypto::SecretKey, message::Message, node::Node};
 
+// allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
+// type
+#[allow(clippy::type_complexity)]
 fn node(
     secret_key: SecretKey,
     index: usize,
-) -> (
+    datadir: TempDir,
+) -> Result<(
     TestNode,
     BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
-) {
+)> {
     let (message_sender, message_receiver) = mpsc::unbounded_channel();
     let message_receiver = UnboundedReceiverStream::new(message_receiver);
     // Augment the `message_receiver` stream to include the sender's `PeerId`.
@@ -53,26 +59,28 @@ fn node(
     std::mem::forget(reset_timeout_receiver);
 
     let node = Node::new(
-        Config::default(),
+        Config {
+            data_dir: Some(datadir.path().to_str().unwrap().to_string()),
+            ..Config::default()
+        },
         secret_key,
         message_sender,
         reset_timeout_sender,
-        MemoryDB::new(false),
-    )
-    .unwrap();
+    )?;
     let node = Arc::new(Mutex::new(node));
     let rpc_module: RpcModule<Arc<Mutex<Node>>> = zilliqa::api::rpc_module(node.clone());
 
-    (
+    Ok((
         TestNode {
             index,
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             secret_key,
             inner: node,
+            dir: Some(datadir),
             rpc_module,
         },
         message_receiver,
-    )
+    ))
 }
 
 /// A node within a test [Network].
@@ -80,8 +88,9 @@ struct TestNode {
     index: usize,
     secret_key: SecretKey,
     peer_id: PeerId,
-    inner: Arc<Mutex<Node>>,
     rpc_module: RpcModule<Arc<Mutex<Node>>>,
+    inner: Arc<Mutex<Node>>,
+    dir: Option<TempDir>,
 }
 
 struct Network<'r> {
@@ -93,10 +102,13 @@ struct Network<'r> {
     receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, Message)>>,
     resend_message: UnboundedSender<(PeerId, Option<PeerId>, Message)>,
     rng: &'r mut ChaCha8Rng,
+    /// The seed input for the node - because rng.get_seed() returns a different, internal
+    /// representation
+    seed: u64,
 }
 
 impl<'r> Network<'r> {
-    pub fn new(rng: &mut ChaCha8Rng, nodes: usize) -> Network {
+    pub fn new(rng: &mut ChaCha8Rng, nodes: usize, seed: u64) -> Network {
         let mut keys: Vec<_> = (0..nodes)
             .map(|_| SecretKey::new_from_rng(rng).unwrap())
             .collect();
@@ -106,11 +118,16 @@ impl<'r> Network<'r> {
         let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
-            .map(|(i, key)| node(key, i))
+            .map(|(i, key)| node(key, i, tempfile::tempdir().unwrap()).unwrap())
             .unzip();
 
         for node in &nodes {
-            println!("Node {}: {}", node.index, node.peer_id);
+            trace!(
+                "Node {}: {} (dir: {})",
+                node.index,
+                node.peer_id,
+                node.dir.as_ref().unwrap().path().to_string_lossy(),
+            );
         }
 
         nodes
@@ -144,6 +161,7 @@ impl<'r> Network<'r> {
             receivers,
             resend_message,
             rng,
+            seed,
         }
     }
 
@@ -172,7 +190,7 @@ impl<'r> Network<'r> {
             }
         }
 
-        println!(
+        trace!(
             "{} possible messages to send ({:?})",
             messages.len(),
             messages
@@ -192,7 +210,7 @@ impl<'r> Network<'r> {
             self.resend_message.send(message).unwrap();
         }
 
-        println!(
+        trace!(
             "{}",
             format_message(&self.nodes, source, destination, &message)
         );
@@ -221,16 +239,25 @@ impl<'r> Network<'r> {
 
     pub async fn run_until(
         &mut self,
+        condition: impl FnMut(&mut Network) -> bool,
+        timeout: usize,
+    ) -> Result<()> {
+        self.run_until_rec(condition, timeout, timeout).await
+    }
+
+    async fn run_until_rec(
+        &mut self,
         mut condition: impl FnMut(&mut Network) -> bool,
         mut timeout: usize,
+        orig_timeout: usize,
     ) -> Result<()> {
         while !condition(self) {
             if timeout == 0 {
-                return Err(anyhow!("condition was still false after {timeout} ticks"));
+                return Err(anyhow!(
+                    "condition was still false after {orig_timeout} ticks"
+                ));
             }
-
             self.tick().await;
-
             timeout -= 1;
         }
 
@@ -255,8 +282,17 @@ impl<'r> Network<'r> {
         Ok(())
     }
 
-    pub fn node(&mut self) -> MutexGuard<Node> {
-        self.nodes.choose(self.rng).unwrap().inner.lock().unwrap()
+    pub fn random_index(&mut self) -> usize {
+        self.rng.gen_range(0..self.nodes.len())
+    }
+
+    pub fn get_node(&self, index: usize) -> MutexGuard<Node> {
+        self.nodes[index].inner.lock().unwrap()
+    }
+
+    pub fn remove_node(&mut self, idx: usize) -> TestNode {
+        self.receivers.remove(idx);
+        self.nodes.remove(idx)
     }
 
     pub fn random_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {

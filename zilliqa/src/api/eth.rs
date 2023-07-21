@@ -160,9 +160,9 @@ fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option
     let full: bool = params.next()?;
 
     let node = node.lock().unwrap();
-    let block = node.get_block_by_number(block_number);
+    let block = node.get_block_by_number(block_number)?;
 
-    let block = block.map(|b| convert_block(&node, b, full)).transpose()?;
+    let block = block.map(|b| convert_block(&node, &b, full)).transpose()?;
 
     Ok(block)
 }
@@ -174,8 +174,8 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<E
 
     let node = node.lock().unwrap();
     let block = node
-        .get_block_by_hash(Hash(hash.0))
-        .map(|b| convert_block(&node, b, full))
+        .get_block_by_hash(Hash(hash.0))?
+        .map(|b| convert_block(&node, &b, full))
         .transpose()?;
 
     Ok(block)
@@ -208,7 +208,7 @@ fn get_block_transaction_count_by_hash(
     let hash: H256 = params.one()?;
 
     let node = node.lock().unwrap();
-    let block = node.get_block_by_hash(Hash(hash.0));
+    let block = node.get_block_by_hash(Hash(hash.0))?;
 
     Ok(block.map(|b| b.transactions.len().to_hex()))
 }
@@ -221,9 +221,9 @@ fn get_block_transaction_count_by_number(
 
     let node = node.lock().unwrap();
     let block = match block_number {
-        BlockNumber::Number(number) => node.get_block_by_view(number),
-        BlockNumber::Earliest => node.get_block_by_view(0),
-        BlockNumber::Latest => node.get_latest_block(),
+        BlockNumber::Number(number) => node.get_block_by_view(number)?,
+        BlockNumber::Earliest => node.get_block_by_view(0)?,
+        BlockNumber::Latest => node.get_latest_block()?,
         _ => {
             return Err(anyhow!("unsupported block number: {block_number:?}"));
         }
@@ -246,10 +246,10 @@ pub(super) fn get_transaction_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
 ) -> Result<Option<EthTransaction>> {
-    let Some(signed_transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
-    let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
-    let Some(block) = node.get_block_by_hash(receipt.block_hash) else { return Ok(None); };
+    let Some(receipt) = node.get_transaction_receipt(hash)? else { return Ok(None); };
+    let Some(block) = node.get_block_by_hash(receipt.block_hash)? else { return Ok(None); };
 
     let transaction = signed_transaction.transaction;
     let (v, r, s) = match signed_transaction.signing_info {
@@ -284,10 +284,10 @@ pub(super) fn get_transaction_receipt_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
 ) -> Result<Option<EthTransactionReceipt>> {
-    let Some(signed_transaction) = node.get_transaction_by_hash(hash) else { return Ok(None); };
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
-    let Some(receipt) = node.get_transaction_receipt(hash) else { return Ok(None); };
-    let Some(block) = node.get_block_by_hash(receipt.block_hash) else { return Ok(None); };
+    let Some(receipt) = node.get_transaction_receipt(hash)? else { return Ok(None); };
+    let Some(block) = node.get_block_by_hash(receipt.block_hash)? else { return Ok(None); };
 
     let transaction_hash = H256(hash.0);
     let transaction_index = block.transactions.iter().position(|t| *t == hash).unwrap() as u64;

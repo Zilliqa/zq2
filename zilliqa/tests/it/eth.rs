@@ -102,7 +102,10 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
             .as_u64()
     }
     network
-        .run_until(|n| n.node().view() > 1, 50)
+        .run_until_async(
+            || async { wallet.get_block_number().await.unwrap().as_u64() > 1 },
+            50,
+        )
         .await
         .unwrap();
 
@@ -165,7 +168,10 @@ async fn get_account_transaction_count(mut network: Network<'_>) {
     }
 
     network
-        .run_until(|n| n.node().view() > 1, 50)
+        .run_until_async(
+            || async { wallet.get_block_number().await.unwrap().as_u64() > 1 },
+            50,
+        )
         .await
         .unwrap();
 
@@ -268,8 +274,6 @@ async fn get_storage_at(mut network: Network<'_>) {
         .get_storage_at(contract_address, H256::zero(), None)
         .await
         .unwrap();
-    println!("Expecting value to be {}", H256::from_low_u64_be(9876));
-    println!("Getting whatever the fuck {} is", value.to_low_u64_be());
     assert_eq!(value, H256::from_low_u64_be(9876));
 
     // verify that the state at the old block can still be fetched correctly
