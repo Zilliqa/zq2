@@ -32,7 +32,7 @@ use libp2p::{
     multiaddr::{Multiaddr, Protocol},
     multihash::Multihash,
     noise,
-    swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
+    swarm::{dial_opts::DialOpts, NetworkBehaviour, SwarmBuilder, SwarmEvent},
     tcp, yamux, PeerId, Transport,
 };
 
@@ -80,6 +80,7 @@ pub struct NodeLauncher {
     rpc_launched: bool,
     node_launched: bool,
     consensus_timeout: Duration,
+    bootstrap_address: Option<Multiaddr>,
 }
 
 impl NodeLauncher {
@@ -113,6 +114,7 @@ impl NodeLauncher {
             rpc_launched: false,
             node_launched: false,
             consensus_timeout: config.consensus_timeout,
+            bootstrap_address: config.bootstrap_address,
         })
     }
 
@@ -199,6 +201,14 @@ impl NodeLauncher {
         addr.push(Protocol::Tcp(p2p_port));
 
         swarm.listen_on(addr)?;
+
+        if let Some(bootstrap_address) = &self.bootstrap_address {
+            swarm.dial(
+                DialOpts::unknown_peer_id()
+                    .address(bootstrap_address.clone())
+                    .build(),
+            )?;
+        }
 
         let topic = IdentTopic::new("topic");
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;

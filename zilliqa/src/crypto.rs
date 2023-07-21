@@ -253,10 +253,10 @@ impl Hash {
         &self.0
     }
 
-    pub fn compute(preimages: &[&[u8]]) -> Hash {
+    pub fn compute<T: AsRef<[S]>, S: AsRef<[u8]>>(preimages: T) -> Hash {
         let mut hasher = Keccak256::new();
-        for preimage in preimages {
-            hasher.update(preimage);
+        for preimage in preimages.as_ref() {
+            hasher.update(preimage.as_ref());
         }
         Self(hasher.finalize().into())
     }

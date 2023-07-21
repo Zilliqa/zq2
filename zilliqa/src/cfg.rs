@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use libp2p::Multiaddr;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -18,6 +19,9 @@ pub struct Config {
     pub data_dir: Option<String>,
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     pub consensus_timeout: Duration,
+    /// The address of another node to dial when this node starts. To join the network, a node must know about at least
+    /// one other existing node in the network.
+    pub bootstrap_address: Option<Multiaddr>,
 }
 
 impl Default for Config {
@@ -30,6 +34,7 @@ impl Default for Config {
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: Some("zq2data".to_string()),
             consensus_timeout: Duration::from_secs(5),
+            bootstrap_address: None,
         }
     }
 }
