@@ -167,7 +167,7 @@ fn search_transactions_inner(
         let timestamp = node
             .lock()
             .unwrap()
-            .get_block_by_hash(Hash(txn.block_hash.unwrap_or_default().0))
+            .get_block_by_hash(Hash(txn.block_hash.unwrap_or_default().0))?
             .unwrap()
             .timestamp();
 

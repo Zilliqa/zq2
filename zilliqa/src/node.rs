@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{error, trace, info};
+use tracing::{info};
 
 use crate::{
     cfg::Config,

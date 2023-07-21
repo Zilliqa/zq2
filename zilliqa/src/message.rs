@@ -58,9 +58,6 @@ impl Vote {
     }
 
     pub fn verify(&self, public_key: NodePublicKey) -> Result<()> {
-
-        println!("Vote::verify SIGNATURE: {:?}", self.signature);
-
         public_key.verify(self.block_hash.as_bytes(), self.signature)
     }
 }
@@ -340,9 +337,6 @@ impl Block {
             state_root_hash.as_bytes(),
         ]);
         let signature = secret_key.sign(digest.as_bytes());
-
-        println!("signing block, view: {:?} digest: {:?} signature: {:?}", view, digest, signature);
-
         Block {
             header: BlockHeader {
                 view,
@@ -375,9 +369,6 @@ impl Block {
             state_root_hash.as_bytes(),
         ]);
         let signature = secret_key.sign(digest.as_bytes());
-
-        println!("signing block2, view: {:?} digest: {:?} signature: {:?}", view, digest, signature);
-
         Block {
             header: BlockHeader {
                 view,
@@ -394,9 +385,6 @@ impl Block {
     }
 
     pub fn verify(&self, public_key: NodePublicKey) -> Result<()> {
-
-        println!("Verifying block: num: {:?} hash: {:?} sig: {:?} pubkey: {:?}", self.header.view, self.header.hash.as_bytes(), self.header.signature, public_key);
-
         public_key.verify(self.header.hash.as_bytes(), self.header.signature)
     }
 

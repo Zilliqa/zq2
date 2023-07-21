@@ -249,10 +249,11 @@ pub(super) fn get_transaction_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
 ) -> Result<Option<EthTransaction>> {
-    let Some(signed_transaction) = node.get_transaction_by_hash(hash) else {  return Ok(None); };
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else {  return Ok(None); };
 
-    let block = if let Some(receipt) = node.get_transaction_receipt(hash) {
-        node.get_block_by_hash(receipt.block_hash)
+    // The block can either be null or some based on whether the tx has executed yet
+    let block = if let Some(receipt) = node.get_transaction_receipt(hash)? {
+        node.get_block_by_hash(receipt.block_hash)?
     } else {
         None
     };
@@ -267,8 +268,8 @@ pub(super) fn get_transaction_inner(
         } => (v, r, s),
     };
     let transaction = EthTransaction {
-        block_hash: block.map(|b| b.hash().0.into()),
-        block_number: block.map(|b| b.view()),
+        block_hash: block.as_ref().map(|b| b.hash().0.into()),
+        block_number: block.as_ref().map(|b| b.view()),
         from: signed_transaction.from_addr.0,
         gas: 0,
         gas_price: transaction.gas_price,
