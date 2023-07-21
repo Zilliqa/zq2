@@ -257,14 +257,6 @@ pub(super) fn get_transaction_inner(
         None
     };
 
-    // If the transaction is not in a block, we don't know the block number, hash, or the transaction index.
-    // So it should be null
-    //let block_details = if let Some(block) = block {
-    //    (Some(block.hash().0.into()), Some(block.view()), Some(block.transactions.iter().position(|t| *t == hash).unwrap() as u64))
-    //} else {
-    //    (None, None, None)
-    //};
-
     let transaction = signed_transaction.transaction;
     let (v, r, s) = match signed_transaction.signing_info {
         SigningInfo::Eth {
