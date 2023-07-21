@@ -277,7 +277,8 @@ pub(super) fn get_transaction_inner(
         input: transaction.payload.clone(),
         nonce: transaction.nonce,
         to: transaction.to_addr.map(|a| a.0),
-        transaction_index: block.map(|b| b.transactions.iter().position(|t| *t == hash).unwrap() as u64),
+        transaction_index: block
+            .map(|b| b.transactions.iter().position(|t| *t == hash).unwrap() as u64),
         value: transaction.amount,
         v,
         r,

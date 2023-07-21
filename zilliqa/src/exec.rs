@@ -18,7 +18,7 @@ use evm_ds::{
     evm_server_run::{calculate_contract_address, run_evm_impl_direct},
 };
 use primitive_types::{H160, H256, U256};
-use tracing::{error, trace, info};
+use tracing::{error, info, trace};
 
 use crate::state::SignedTransaction;
 use crate::{
@@ -190,7 +190,6 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<TransactionApplyResult> {
-
         let hash = txn.hash();
         info!("Executing TX: {}", hash);
 
