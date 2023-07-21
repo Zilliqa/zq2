@@ -2,7 +2,6 @@ use std::{fs, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
-use rand::Rng;
 
 use libp2p::{
     gossipsub, identify,
