@@ -32,7 +32,7 @@ impl Default for Config {
             eth_chain_id: 1 + 0x8000,
             otlp_collector_endpoint: None,
             allowed_timestamp_skew: Duration::from_secs(10),
-            data_dir: Some("zq2data".to_string()),
+            data_dir: None,
             consensus_timeout: Duration::from_secs(5),
             bootstrap_address: None,
         }

@@ -231,10 +231,10 @@ pub struct OtterscanTransactions {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EthTransaction {
-    #[serde(serialize_with = "hex")]
-    pub block_hash: H256,
-    #[serde(serialize_with = "hex")]
-    pub block_number: u64,
+    #[serde(serialize_with = "option_hex")]
+    pub block_hash: Option<H256>,
+    #[serde(serialize_with = "option_hex")]
+    pub block_number: Option<u64>,
     #[serde(serialize_with = "hex")]
     pub from: H160,
     #[serde(serialize_with = "hex")]
@@ -249,8 +249,8 @@ pub struct EthTransaction {
     pub nonce: u64,
     #[serde(serialize_with = "option_hex")]
     pub to: Option<H160>,
-    #[serde(serialize_with = "hex")]
-    pub transaction_index: u64,
+    #[serde(serialize_with = "option_hex")]
+    pub transaction_index: Option<u64>,
     #[serde(serialize_with = "hex")]
     pub value: u128,
     #[serde(serialize_with = "hex")]

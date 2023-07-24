@@ -67,11 +67,16 @@ macro_rules! declare_module {
 
                     let result = result.map_err(|e| {
                         tracing::error!(?e);
-                        jsonrpsee::types::ErrorObject::owned(
-                            jsonrpsee::types::error::ErrorCode::InternalError.code(),
-                            e.to_string(),
-                            None as Option<String>,
-                        )
+                        // If the error is already an `ErrorObjectOwned`, we can just return that. Otherwise, wrap it
+                        // with an `InternalError` code.
+                        match e.downcast::<jsonrpsee::types::ErrorObjectOwned>() {
+                            Ok(e) => e,
+                            Err(e) => jsonrpsee::types::ErrorObject::owned(
+                                jsonrpsee::types::error::ErrorCode::InternalError.code(),
+                                e.to_string(),
+                                None as Option<String>,
+                            )
+                        }
                     });
                     if let Err(err) = &result {
                         attributes.push(opentelemetry::KeyValue::new("rpc.jsonrpc.error_code", err.code() as i64));

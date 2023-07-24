@@ -8,6 +8,7 @@ use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::info;
 
 use crate::{
     cfg::Config,
@@ -121,6 +122,8 @@ impl Node {
 
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
         let hash = txn.hash();
+
+        info!(?hash, "seen new txn");
 
         txn.verify()?;
 
