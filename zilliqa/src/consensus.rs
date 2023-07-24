@@ -763,7 +763,7 @@ impl Consensus {
                     .transpose();
                 if block.as_ref().is_ok_and(|b| b.is_some()) {
                     cache_borrow.put(
-                        key.clone(),
+                        *key,
                         block.as_ref().unwrap().as_ref().unwrap().clone(), // pretty!
                     );
                 }
