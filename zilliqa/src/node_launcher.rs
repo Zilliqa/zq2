@@ -150,10 +150,9 @@ impl NodeLauncher {
             .set_middleware(middleware)
             .build((Ipv4Addr::UNSPECIFIED, port))
             .await?;
-        Ok(server.start(self.rpc_module.clone()).map(|res| {
-            self.rpc_launched = true;
-            res
-        })?)
+        let handle = server.start(self.rpc_module.clone());
+        self.rpc_launched = true;
+        Ok(handle)
     }
 
     pub async fn start_p2p_node(&mut self, p2p_port: u16) -> Result<()> {
