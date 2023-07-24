@@ -43,7 +43,7 @@ use zilliqa::{cfg::Config, crypto::SecretKey, message::Message, node::Node};
 fn node(
     secret_key: SecretKey,
     index: usize,
-    datadir: TempDir,
+    datadir: Option<TempDir>,
 ) -> Result<(
     TestNode,
     BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
@@ -60,7 +60,9 @@ fn node(
 
     let node = Node::new(
         Config {
-            data_dir: Some(datadir.path().to_str().unwrap().to_string()),
+            data_dir: datadir
+                .as_ref()
+                .map(|d| d.path().to_str().unwrap().to_string()),
             ..Config::default()
         },
         secret_key,
@@ -76,7 +78,7 @@ fn node(
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             secret_key,
             inner: node,
-            dir: Some(datadir),
+            dir: datadir,
             rpc_module,
         },
         message_receiver,
@@ -118,7 +120,7 @@ impl<'r> Network<'r> {
         let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
-            .map(|(i, key)| node(key, i, tempfile::tempdir().unwrap()).unwrap())
+            .map(|(i, key)| node(key, i, Some(tempfile::tempdir().unwrap())).unwrap())
             .unzip();
 
         for node in &nodes {

@@ -1,10 +1,11 @@
 use primitive_types::H256;
-use std::collections::BTreeMap;
+use std::{cell::RefCell, collections::BTreeMap, num::NonZeroUsize};
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use itertools::Itertools;
 use libp2p::PeerId;
+use lru::LruCache;
 use sled::{Db, Tree};
 use tracing::{debug, trace};
 
@@ -86,6 +87,7 @@ pub struct Consensus {
     /// An index of address to a list of transaction hashes, for which this address appeared somewhere in the
     /// transaction trace. The list of transations is ordered by execution order.
     touched_address_index: Tree,
+    block_cache: RefCell<LruCache<Hash, Block>>,
 }
 
 impl Consensus {
@@ -158,6 +160,7 @@ impl Consensus {
             state,
             db,
             touched_address_index,
+            block_cache: RefCell::new(LruCache::new(NonZeroUsize::new(5).unwrap())),
         })
     }
 
@@ -603,12 +606,11 @@ impl Consensus {
         new_high_qc: QuorumCertificate,
     ) -> Result<()> {
         let new_high_qc_block_hash = new_high_qc.block_hash;
-        let Some(new_high_qc_block) = self.blocks.get(new_high_qc_block_hash.0)?
+        let Some(new_high_qc_block) = self.maybe_get_block(&new_high_qc_block_hash)?
             else {
             // We don't set high_qc to a qc if we don't have its block.
             return Ok(());
         };
-        let new_high_qc_block = bincode::deserialize::<Block>(&new_high_qc_block)?;
         match &self.high_qc {
             None => {
                 self.high_qc = Some(new_high_qc);
@@ -754,10 +756,24 @@ impl Consensus {
     }
 
     pub fn maybe_get_block(&self, key: &Hash) -> Result<Option<Block>> {
-        self.blocks
-            .get(key.0)?
-            .map(|encoded| Ok(bincode::deserialize::<Block>(&encoded)?))
-            .transpose()
+        let mut cache_borrow = self.block_cache.borrow_mut();
+        match cache_borrow.get(key) {
+            Some(block) => Ok(Some(block.clone())),
+            None => {
+                let block = self
+                    .blocks
+                    .get(key.0)?
+                    .map(|encoded| Ok(bincode::deserialize::<Block>(&encoded)?))
+                    .transpose();
+                if block.as_ref().is_ok_and(|b| b.is_some()) {
+                    cache_borrow.put(
+                        *key,
+                        block.as_ref().unwrap().as_ref().unwrap().clone(), // pretty!
+                    );
+                }
+                block
+            }
+        }
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {

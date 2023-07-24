@@ -18,3 +18,7 @@
 zq2data
 # Default z2 config and datadir paths
 z2_node_*
+
+# Profiling
+*.svg
+perf.*

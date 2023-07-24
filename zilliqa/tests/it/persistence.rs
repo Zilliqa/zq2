@@ -70,7 +70,7 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
     drop(inner);
     #[allow(clippy::redundant_closure_call)]
     let dir = (|mut node: TestNode| node.dir.take())(node).unwrap(); // move dir out and drop the rest of node
-    let result = crate::node(SecretKey::new().unwrap(), 0, dir);
+    let result = crate::node(SecretKey::new().unwrap(), 0, Some(dir));
 
     // Sometimes, the dropping Arc<Node> (by dropping the TestNode above) does not actually drop
     // the underlying Node. See: https://github.com/Zilliqa/zq2/issues/299
