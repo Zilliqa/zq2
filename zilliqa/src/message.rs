@@ -270,8 +270,31 @@ impl<'de> Deserialize<'de> for BlockNumber {
     where
         D: Deserializer<'de>,
     {
-        let s: String = String::deserialize(deserializer)?;
-        s.parse().map_err(serde::de::Error::custom)
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = BlockNumber;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(formatter, "a non-negative integer or a string")
+            }
+
+            fn visit_u64<E>(self, val: u64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(BlockNumber::Number(val))
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                v.parse().map_err(serde::de::Error::custom)
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
     }
 }
 
