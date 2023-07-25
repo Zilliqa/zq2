@@ -130,7 +130,7 @@ impl State {
         let is_static = false;
         let context = "".to_string();
         let continuations: Arc<Mutex<Continuations>> = Default::default();
-        let logs: Vec<Log> = Default::default();
+        //let logs: Vec<Log> = Default::default();
         let account = self
             .get_account(to_addr.unwrap_or(Address::ZERO))
             .unwrap_or_default();
@@ -180,7 +180,13 @@ impl State {
             tx_trace: "".to_string(),
         });
 
-        Ok((logs, result, created_contract_addr))
+        //let logs = result.logs.clone();
+
+        println!("Returning result: {:?}", result);
+        //println!("Returning logs: {:?}", logs);
+
+        //Ok((logs, result, created_contract_addr))
+        Ok((result.logs.clone().into_iter().map(|l| l.into()).collect(), result, created_contract_addr))
     }
 
     /// Apply a transaction to the account state.
@@ -216,7 +222,7 @@ impl State {
                         self.save_account(Address(contract_addr), acct)?;
                     }
 
-                    self.apply_delta(&mut logs, txn.transaction.to_addr, result.apply.iter())?;
+                    self.apply_delta( txn.transaction.to_addr, result.apply.iter())?;
                 }
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
@@ -247,7 +253,6 @@ impl State {
     // Apply the changes the EVM is requesting for
     fn apply_delta<'a>(
         &mut self,
-        logs: &mut Vec<Log>,
         to_addr: Option<Address>,
         applys: impl Iterator<Item = &'a evm_ds::protos::Evm::Apply>,
     ) -> Result<()> {
@@ -272,7 +277,7 @@ impl State {
                 // been changed. We should investigate if this is really an issue.
                 if let Some(to_addr) = to_addr {
                     if to_addr != Address::NATIVE_TOKEN && !balance.is_zero() {
-                        self.set_native_balance(logs, address, balance)?;
+                        self.set_native_balance(address, balance)?;
                     }
                 }
 
@@ -332,7 +337,6 @@ impl State {
 
     pub fn set_native_balance(
         &mut self,
-        logs: &mut Vec<Log>,
         address: Address,
         amount: U256,
     ) -> Result<()> {
@@ -358,10 +362,8 @@ impl State {
                 // Apply the state changes only if success
                 let success = result.exit_reason.unwrap().has_succeed();
 
-                logs.extend_from_slice(&lgs);
-
                 if success {
-                    self.apply_delta(logs, Some(Address::NATIVE_TOKEN), result.apply.iter())?;
+                    self.apply_delta( Some(Address::NATIVE_TOKEN), result.apply.iter())?;
                 }
 
                 Ok(())

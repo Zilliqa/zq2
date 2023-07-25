@@ -18,6 +18,7 @@ use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 use tracing::info;
+use evm_ds::protos::Evm::EvmLog;
 
 use crate::{contracts, crypto, db::SledDb};
 
@@ -90,10 +91,8 @@ impl State {
             .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
 
         for (address, balance) in GENESIS.iter() {
-            // We don't care about these logs.
-            let mut logs = vec![];
             info!("Setting balance for {} to {}", address, balance);
-            state.set_native_balance(&mut logs, *address, *balance)?;
+            state.set_native_balance(*address, *balance)?;
         }
 
         Ok(state)
@@ -115,9 +114,23 @@ impl State {
         }
     }
 
+    pub fn set_to_root(& mut self, root_hash: H256) {
+        self.accounts = self.accounts.at_root(root_hash);
+        //let db = self.db.clone();
+        //Self {
+        //    db,
+        //    accounts: self.accounts.at_root(root_hash),
+        //}
+    }
+
     pub fn try_clone(&mut self) -> Result<Self> {
         let root_hash = self.accounts.root_hash()?;
         Ok(self.at_root(root_hash))
+    }
+
+    // todo: make sure to change this
+    pub fn rooty(&mut self) -> Result<H256> {
+        Ok(self.accounts.root_hash()?)
     }
 
     pub fn root_hash(&mut self) -> Result<crypto::Hash> {
@@ -444,4 +457,14 @@ pub struct Log {
     pub address: Address,
     pub topics: Vec<H256>,
     pub data: Vec<u8>,
+}
+
+impl From<EvmLog> for Log {
+    fn from(item: EvmLog) -> Self {
+        Log{
+            address: Address(item.get_address().into()),
+            topics: item.get_topics().iter().map(|t| t.into()).collect(),
+            data: item.get_data().to_vec()
+        }
+    }
 }
