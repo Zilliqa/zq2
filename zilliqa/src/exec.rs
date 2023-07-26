@@ -12,12 +12,13 @@ use evm_ds::evm::{
     tracing::EventListener,
 };
 use evm_ds::evm_server_run::EvmCallArgs;
-use evm_ds::protos::Evm::EvmResult;
+use evm_ds::protos::Evm::{Continuation, EvmResult};
 use evm_ds::{
     continuations::Continuations,
     evm_server_run::{calculate_contract_address, run_evm_impl_direct},
 };
 use primitive_types::{H160, H256, U256};
+use crate::evm_backend::EvmBackend;
 use tracing::{error, info, trace};
 
 use crate::state::SignedTransaction;
@@ -140,13 +141,13 @@ impl State {
         let mut code: Vec<u8> = account.code;
         let mut data: Vec<u8> = payload;
 
-        let backend = EvmBackend {
-            state: self,
-            gas_price: U256::zero(),
-            origin: caller.0,
-            chain_id,
-            current_block,
-        };
+        let mut backend = EvmBackend::new(
+            self,
+             U256::zero(),
+             caller.0,
+             chain_id,
+             current_block,
+        );
 
         if Address::is_balance_transfer(Address(to)) {
             code = contracts::native_token::CODE.clone();
@@ -160,33 +161,49 @@ impl State {
             created_contract_addr = Some(to);
         }
 
-        let result = run_evm_impl_direct(EvmCallArgs {
-            address: to,
-            code,
-            data,
-            apparent_value,
-            gas_limit,
-            caller: caller.0,
-            gas_scaling_factor,
-            scaling_factor: None,
-            backend: &backend,
-            estimate,
-            is_static,
-            evm_context: context,
-            node_continuation: None,
-            continuations,
-            enable_cps: true,
-            tx_trace_enabled: false,
-            tx_trace: "".to_string(),
-        });
+        let mut continuation_stack = vec![];
+        let mut result;
 
-        //let logs = result.logs.clone();
+        // Set the first continuation as our current context and then loop while there is still
+        // a continuation, pushing onto the stack when there are more continuations
+        loop {
 
-        println!("Returning result: {:?}", result);
-        //println!("Returning logs: {:?}", logs);
+            let node_continuation = continuation_stack.pop();
 
-        //Ok((logs, result, created_contract_addr))
-        Ok((result.logs.clone().into_iter().map(|l| l.into()).collect(), result, created_contract_addr))
+            result = run_evm_impl_direct(EvmCallArgs {
+                address: to,
+                code: code.clone(),
+                data: data.clone(),
+                apparent_value,
+                gas_limit,
+                caller: caller.0,
+                gas_scaling_factor,
+                scaling_factor: None,
+                backend: &backend,
+                estimate,
+                is_static,
+                evm_context: context.clone(),
+                node_continuation,
+                continuations: continuations.clone(),
+                enable_cps: true,
+                tx_trace_enabled: false,
+                tx_trace: "".to_string(),
+            });
+
+            // Apply the results to the backend so they can be used in the next continuation
+
+            println!("We are applying update: {:?}", result);
+            backend.apply_update(to_addr, result.apply.iter());
+
+            if continuation_stack.is_empty() {
+                break;
+            }
+        }
+
+        let mut backend_result = backend.get_result();
+        backend_result.exit_reason = result.exit_reason.clone();
+
+        Ok((result.logs.clone().into_iter().map(|l| l.into()).collect(), backend_result, created_contract_addr))
     }
 
     /// Apply a transaction to the account state.
@@ -394,134 +411,5 @@ impl State {
         );
 
         result.map(|ret| ret.1.return_value.into())
-    }
-}
-
-pub struct EvmBackend<'a> {
-    state: &'a State,
-    gas_price: U256,
-    origin: H160,
-    chain_id: u64,
-    current_block: BlockHeader,
-}
-
-impl<'a> Backend for EvmBackend<'a> {
-    fn gas_price(&self) -> U256 {
-        self.gas_price
-    }
-
-    fn origin(&self) -> H160 {
-        trace!("EVM request: origin: {:?}", self.origin);
-        self.origin
-    }
-
-    fn block_hash(&self, _: U256) -> H256 {
-        // TODO: Get the hash of one of the 256 most recent blocks.
-        H256::zero()
-    }
-
-    fn block_number(&self) -> U256 {
-        self.current_block.view.into()
-    }
-
-    fn block_coinbase(&self) -> H160 {
-        // TODO: Return something here, probably the proposer of the current block.
-        H160::zero()
-    }
-
-    fn block_timestamp(&self) -> U256 {
-        self.current_block
-            .timestamp
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|duration| duration.as_secs())
-            .unwrap_or_default()
-            .into()
-    }
-
-    fn block_difficulty(&self) -> U256 {
-        0.into()
-    }
-
-    //fn block_randomness(&self) -> Option<H256> { // Put note for PR
-    //    None
-    //}
-
-    fn block_gas_limit(&self) -> U256 {
-        0.into()
-    }
-
-    fn block_base_fee_per_gas(&self) -> U256 {
-        0.into()
-    }
-
-    fn chain_id(&self) -> U256 {
-        self.chain_id.into()
-    }
-
-    fn exists(&self, address: H160) -> bool {
-        trace!("EVM request: Checking whether account {:?} exists", address);
-        // Ethereum charges extra gas for `CALL`s or `SELFDESTRUCT`s which create new accounts, to discourage the
-        // creation of many addresses and the resulting increase in state size.
-        self.state.has_account(Address(address))
-    }
-
-    fn basic(&self, address: H160) -> Basic {
-        trace!("EVM request: Requesting basic info for {:?}", address);
-        let nonce = self.state.must_get_account(Address(address)).nonce;
-        // For these accounts, we hardcode the balance we return to the EVM engine as zero. Otherwise, we have an
-        // infinite recursion because getting the native balance of any account requires this method to be called for
-        // these two 'special' accounts.
-        let is_special_account = address == Address::ZERO.0 || address == Address::NATIVE_TOKEN.0;
-        Basic {
-            balance: if is_special_account {
-                0.into()
-            } else {
-                self.state.get_native_balance(Address(address)).unwrap()
-            },
-            nonce: nonce.into(),
-        }
-    }
-
-    fn code(&self, address: H160) -> Vec<u8> {
-        trace!("EVM request: Requesting code for {:?}", address);
-        self.state.must_get_account(Address(address)).code
-    }
-
-    fn storage(&self, address: H160, index: H256) -> H256 {
-        let res = self.state.must_get_account_storage(Address(address), index);
-
-        trace!(
-            "EVM request: Requesting storage for {:?} at {:?} and is: {:?}",
-            address,
-            index,
-            res
-        );
-        res
-    }
-
-    fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
-        trace!(
-            "EVM request: Requesting original storage for {:?} at {:?}",
-            address,
-            index
-        );
-        Some(self.storage(address, index))
-    }
-
-    // todo: this.
-    fn code_as_json(&self, _address: H160) -> Vec<u8> {
-        error!("code_as_json not implemented");
-        vec![]
-    }
-
-    fn init_data_as_json(&self, _address: H160) -> Vec<u8> {
-        error!("init_data_as_json not implemented");
-        vec![]
-    }
-
-    // todo: this.
-    fn substate_as_json(&self, _address: H160, _vname: &str, _indices: &[String]) -> Vec<u8> {
-        error!("substate_as_json not implemented");
-        vec![]
     }
 }

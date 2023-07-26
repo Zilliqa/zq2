@@ -468,3 +468,11 @@ impl From<EvmLog> for Log {
         }
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionDelta {
+    pub address: Address,
+    pub topics: Vec<H256>,
+    pub data: Vec<u8>,
+}
+

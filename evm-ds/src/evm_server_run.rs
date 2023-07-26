@@ -524,7 +524,7 @@ pub(crate) fn scale_eth_to_zil(eth: U256, zil_scaling_factor: u64) -> U256 {
     eth / zil_scaling_factor
 }
 
-pub(crate) fn encode_storage(key: H256, value: H256, _: bool) -> (Bytes, Bytes) {
+pub fn encode_storage(key: H256, value: H256, _: bool) -> (Bytes, Bytes) {
     (
         Bytes::copy_from_slice(key.as_bytes()),
         Bytes::copy_from_slice(value.as_bytes()),

@@ -5,6 +5,7 @@ mod contracts;
 pub mod crypto;
 mod db;
 mod exec;
+mod evm_backend;
 pub mod message;
 pub mod networking;
 pub mod node;
