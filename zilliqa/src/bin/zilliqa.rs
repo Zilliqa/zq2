@@ -11,7 +11,7 @@ use libp2p::{
 };
 use opentelemetry::runtime;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
-use tokio::time::Duration;
+use tokio::{task::JoinSet, time::Duration};
 
 use zilliqa::{cfg::Config, crypto::SecretKey, node_launcher::NodeLauncher};
 
@@ -48,7 +48,6 @@ async fn main() -> Result<()> {
     };
     let config: Config = toml::from_str(&config)?;
 
-    let p2p_port = config.p2p_port;
     if let Some(endpoint) = &config.otlp_collector_endpoint {
         let export_config = ExportConfig {
             endpoint: endpoint.clone(),
@@ -65,12 +64,38 @@ async fn main() -> Result<()> {
             .build()?;
     };
 
-    let mut networked_node = NodeLauncher::new(args.secret_key, config)?;
+    // TODO: proper multi-node config!!
+    // let mut shard_config = config.clone();
+    // // shard_config.p2p_port += 1;
+    // shard_config.json_rpc_port += 1;
+    // shard_config.eth_chain_id += 1;
 
+    println!("a");
+    let mut main_shard_node = NodeLauncher::new(args.secret_key, config)?;
+    // let mut shard_node = NodeLauncher::new(args.secret_key, shard_config)?;
+
+    println!("b");
     if !args.no_jsonrpc {
-        let handle = networked_node.launch_rpc_server().await?;
+        let handle = main_shard_node.launch_rpc_server().await?;
         tokio::spawn(handle.stopped());
+
+        // println!("c");
+        // let handle = shard_node.launch_rpc_server().await?;
+        // tokio::spawn(handle.stopped());
+        // println!("d");
     }
 
-    networked_node.start_p2p_node(p2p_port).await
+    let mut task_set = JoinSet::new();
+    task_set.spawn(async move { main_shard_node.start_p2p_node().await });
+    println!("e");
+    // task_set.spawn(async move { shard_node.start_p2p_node().await });
+    println!("f");
+    while let Some(res) = task_set.join_next().await {
+        println!("__g");
+        println!("{:?}", res);
+        res??;
+        println!("__g1");
+    }
+    println!("h");
+    Ok(())
 }

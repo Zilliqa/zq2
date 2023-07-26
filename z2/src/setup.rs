@@ -66,7 +66,7 @@ impl Setup {
 
     pub async fn run(&mut self) -> Result<()> {
         // Generate a collector
-        self.ensure_config_files_exist()?;
+        // self.ensure_config_files_exist()?;
         self.collector = Some(collector::Collector::new(&self.secret_keys).await?);
         if let Some(mut c) = self.collector.take() {
             c.complete().await?;

@@ -1,10 +1,10 @@
 use jsonrpsee::{server::ServerHandle, RpcModule};
 use std::{
+    fmt::Display,
     iter,
     net::Ipv4Addr,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -79,8 +79,7 @@ pub struct NodeLauncher {
     pub reset_timeout_receiver: UnboundedReceiverStream<()>,
     rpc_launched: bool,
     node_launched: bool,
-    consensus_timeout: Duration,
-    bootstrap_address: Option<Multiaddr>,
+    config: Config,
 }
 
 impl NodeLauncher {
@@ -113,8 +112,7 @@ impl NodeLauncher {
             reset_timeout_receiver,
             rpc_launched: false,
             node_launched: false,
-            consensus_timeout: config.consensus_timeout,
-            bootstrap_address: config.bootstrap_address,
+            config,
         })
     }
 
@@ -156,7 +154,16 @@ impl NodeLauncher {
         })?)
     }
 
-    pub async fn start_p2p_node(&mut self, p2p_port: u16) -> Result<()> {
+    fn doprint<T>(main: bool, msg: T)
+    where
+        T: AsRef<str> + Display,
+    {
+        println!("on {}: {msg}", if main { "main" } else { "shard " });
+    }
+
+    pub async fn start_p2p_node(&mut self) -> Result<()> {
+        let is_main = self.config.json_rpc_port == 4201;
+        Self::doprint(is_main, "init started");
         if self.node_launched {
             return Err(anyhow!("Node already running!"));
         }
@@ -198,19 +205,25 @@ impl NodeLauncher {
 
         let mut addr: Multiaddr = "/ip4/0.0.0.0".parse().unwrap();
 
-        addr.push(Protocol::Tcp(p2p_port));
+        addr.push(Protocol::Tcp(self.config.p2p_port));
 
+        Self::doprint(
+            is_main,
+            format!("init ended. starting listen on {addr:?}..."),
+        );
         swarm.listen_on(addr)?;
+        Self::doprint(is_main, "listen started");
 
-        if let Some(bootstrap_address) = &self.bootstrap_address {
+        if let Some(bootstrap_address) = &self.config.bootstrap_address {
             swarm.dial(
                 DialOpts::unknown_peer_id()
                     .address(bootstrap_address.clone())
                     .build(),
             )?;
         }
+        Self::doprint(is_main, "bootstraps dialled");
 
-        let topic = IdentTopic::new("topic");
+        let topic = IdentTopic::new(format!("z2shard{}", self.config.eth_chain_id));
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
 
         // Store our public key in the DHT, indexed by our peer ID.
@@ -222,11 +235,13 @@ impl NodeLauncher {
             Quorum::One,
         )?;
 
+        Self::doprint(is_main, "gossipsub and kademlia started");
         let mut terminate = signal::unix::signal(SignalKind::terminate())?;
-        let sleep = time::sleep(self.consensus_timeout);
+        let sleep = time::sleep(self.config.consensus_timeout);
         tokio::pin!(sleep);
 
         self.node_launched = true;
+        Self::doprint(is_main, "node is launched");
 
         loop {
             select! {
@@ -319,12 +334,12 @@ impl NodeLauncher {
                 () = &mut sleep => {
                     trace!("timeout elapsed");
                     self.node.lock().unwrap().handle_timeout().unwrap();
-                    sleep.as_mut().reset(Instant::now() + self.consensus_timeout);
+                    sleep.as_mut().reset(Instant::now() + self.config.consensus_timeout);
                 },
                 r = self.reset_timeout_receiver.next() => {
                     let () = r.expect("reset timeout stream should be infinite");
                     trace!("timeout reset");
-                    sleep.as_mut().reset(Instant::now() + self.consensus_timeout);
+                    sleep.as_mut().reset(Instant::now() + self.config.consensus_timeout);
                 },
                 _ = terminate.recv() => { break; },
                 _ = signal::ctrl_c() => { break; },

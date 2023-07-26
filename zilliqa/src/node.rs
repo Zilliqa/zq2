@@ -180,6 +180,10 @@ impl Node {
         )
     }
 
+    pub fn get_chain_id(&self) -> u64 {
+        self.config.eth_chain_id // using eth as a universal ID for now
+    }
+
     pub fn get_chain_tip(&self) -> u64 {
         self.consensus.view().saturating_sub(1)
     }
