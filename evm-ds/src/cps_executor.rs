@@ -90,6 +90,9 @@ impl<'a, B: Backend> CpsExecutor<'a, B> {
                 )));
             }
         }
+
+        //runtime.machine.step()
+
         match runtime.run(self) {
             Capture::Exit(s) => CpsReason::NormalExit(s),
             Capture::Trap(t) => match t {

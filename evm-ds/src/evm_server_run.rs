@@ -267,7 +267,7 @@ fn handle_panic(trace: String, remaining_gas: u64, reason: &str) -> EvmProto::Ev
 // Convenience fn to hide the evm internals and just
 // let you calculate contract address as easily as possible
 #[allow(dead_code)]
-pub fn calculate_contract_address(address: H160, backend: impl Backend) -> H160 {
+pub fn calculate_contract_address(address: H160, backend: &impl Backend) -> H160 {
     let config = evm::Config {
         estimate: false,
         call_l64_after_gas: false,
@@ -282,7 +282,8 @@ pub fn calculate_contract_address(address: H160, backend: impl Backend) -> H160 
     executor.get_create_address(CreateScheme::Legacy { caller: address })
 }
 
-pub struct EvmCallArgs<B> {
+#[derive(Clone, Debug)]
+pub struct EvmCallArgs {
     pub address: H160,
     pub code: Vec<u8>,
     pub data: Vec<u8>,
@@ -291,7 +292,6 @@ pub struct EvmCallArgs<B> {
     pub caller: H160,
     pub gas_scaling_factor: u64,
     pub scaling_factor: Option<u64>,
-    pub backend: B,
     pub estimate: bool,
     pub is_static: bool,
     pub evm_context: String,
@@ -302,9 +302,9 @@ pub struct EvmCallArgs<B> {
     pub tx_trace: String,
 }
 
-pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
+pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs, backend: &B) -> EvmResult {
     trace!(
-        origin = ?args.backend.origin(),
+        origin = ?backend.origin(),
         address = ?args.address,
         gas_limit = ?args.gas_limit,
         value = ?args.apparent_value,
@@ -341,7 +341,9 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
                 .unwrap()
                 .get_contination(continuation.get_id());
             if recorded_cont.is_none() {
-                let result = handle_panic(args.tx_trace, gas_limit, "Continuation not found!");
+                let result = handle_panic(args.tx_trace,
+                                          gas_limit,
+                                          format!("Continuation not found! Id: {:?}", continuation.get_id()).as_str());
                 return result;
             }
 
@@ -364,11 +366,11 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
                 recorded_cont.storages,
                 recorded_cont.deletes,
             );
-            let state = MemoryStackState::new_with_substate(memory_substate, &args.backend);
+            let state = MemoryStackState::new_with_substate(memory_substate, &backend);
             (Some(continuation), runtime, state)
         } else {
             let runtime = evm::Runtime::new(code, data.clone(), context, &config);
-            let state = MemoryStackState::new(metadata, &args.backend);
+            let state = MemoryStackState::new(metadata, &backend);
             (None, runtime, state)
         };
     // Scale the gas limit.
@@ -397,7 +399,7 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
         call.input = format!("0x{}", hex::encode(data.deref()));
 
         if listener.call_tracer.is_empty() {
-            call.from = format!("{:?}", args.backend.origin());
+            call.from = format!("{:?}", backend.origin());
         } else {
             call.from = listener.call_tracer.last().unwrap().to.clone();
         }
@@ -505,7 +507,7 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
 
     trace!(
         context = ?args.evm_context,
-        origin = ?args.backend.origin(),
+        origin = ?backend.origin(),
         address = ?args.address,
         gas_limit = args.gas_limit,
         value = ?args.apparent_value,

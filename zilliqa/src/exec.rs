@@ -12,7 +12,7 @@ use evm_ds::evm::{
     tracing::EventListener,
 };
 use evm_ds::evm_server_run::EvmCallArgs;
-use evm_ds::protos::Evm::{Continuation, EvmResult};
+use evm_ds::protos::Evm::{Continuation, EvmResult, ExitReason_Trap_Kind, Continuation_Type, TrapData_oneof_data, Continuation_Call};
 use evm_ds::{
     continuations::Continuations,
     evm_server_run::{calculate_contract_address, run_evm_impl_direct},
@@ -123,7 +123,9 @@ impl State {
         payload: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
+        //backend: EvmBackend,
     ) -> Result<(Vec<Log>, EvmResult, Option<H160>)> {
+        self.mutex.lock();
         let apparent_value: U256 = amount.into();
         let caller = from_addr;
         let gas_scaling_factor = 1;
@@ -141,6 +143,11 @@ impl State {
         let mut code: Vec<u8> = account.code;
         let mut data: Vec<u8> = payload;
 
+        //backend.gas_price = U256::zero();
+        //backend.origin = caller.0;k
+        //backend.chain_id = 0;
+        //backend.current_block = BlockHeader::default();
+
         let mut backend = EvmBackend::new(
             self,
              U256::zero(),
@@ -149,7 +156,10 @@ impl State {
              current_block,
         );
 
+        //let mut backend = backend.unwrap_or(&mut backend_default);
+
         if Address::is_balance_transfer(Address(to)) {
+            // todo: can probably remove this.
             code = contracts::native_token::CODE.clone();
         }
 
@@ -161,47 +171,178 @@ impl State {
             created_contract_addr = Some(to);
         }
 
-        let mut continuation_stack = vec![];
+        let mut continuation_stack: Vec<EvmCallArgs> = vec![EvmCallArgs {
+                address: to,
+                code: code.clone(),
+                data: data.clone(),
+                apparent_value: U256::zero(),
+                gas_limit,
+                caller: caller.0,
+                gas_scaling_factor,
+                scaling_factor: None,
+                estimate,
+                is_static,
+                evm_context: context.clone(),
+                node_continuation: None,
+                continuations: continuations.clone(),
+                enable_cps: true,
+                tx_trace_enabled: false,
+                tx_trace: "".to_string(),
+            }];
         let mut result;
 
         // Set the first continuation as our current context and then loop while there is still
         // a continuation, pushing onto the stack when there are more continuations
         loop {
 
-            let node_continuation = continuation_stack.pop();
+            println!("start loop. Continuations: {:?}", continuation_stack.len());
 
-            result = run_evm_impl_direct(EvmCallArgs {
-                address: to,
-                code: code.clone(),
-                data: data.clone(),
-                apparent_value,
-                gas_limit,
-                caller: caller.0,
-                gas_scaling_factor,
-                scaling_factor: None,
-                backend: &backend,
-                estimate,
-                is_static,
-                evm_context: context.clone(),
-                node_continuation,
-                continuations: continuations.clone(),
-                enable_cps: true,
-                tx_trace_enabled: false,
-                tx_trace: "".to_string(),
-            });
+            if continuation_stack.len() > 20 {
+                panic!("We have too many continuations here");
+            }
+
+            let mut call_args = continuation_stack.pop().unwrap();
+
+            println!("continuation arg is: {:?}", call_args.node_continuation);
+
+            if call_args.node_continuation.is_some() {
+                println!("continuation arg is: {:?}", call_args.node_continuation.clone().unwrap());
+            }
+
+            println!("Call args are: {:?}", call_args);
+
+            backend.origin = call_args.caller; // todo: refactor
+            result = run_evm_impl_direct(call_args.clone(), &backend);
 
             // Apply the results to the backend so they can be used in the next continuation
-
             println!("We are applying update: {:?}", result);
             backend.apply_update(to_addr, result.apply.iter());
+
+            if result.exit_reason.clone().unwrap().has_trap() {
+                println!("We have encountered a trap here...");
+                //println!("{:?}", continuations);
+                let mut cont = Continuation::new();
+                cont.set_id(continuations.lock().unwrap().last_created());
+
+                match result.get_trap_data().data.clone().unwrap() {
+                    TrapData_oneof_data::create(create) => { todo!("create trap")}
+                    TrapData_oneof_data::call(call) => {
+
+                        //let trap_data = result.trap_data.unwrap().get_call();
+                        //let callee_address = trap_data.callee_address.unwrap();
+                        //let transfer = trap_data.transfer;
+                        //let target_gas = trap_data.target_gas;
+                        //let is_static = trap_data.is_static;
+                        //let is_precompile = trap_data.is_precompile;
+
+                        //let feedback_type = match result.exit_reason.clone().unwrap().get_trap().kind {
+                        //    ExitReason_Trap_Kind::CALL =>  {Continuation_Type::CALL}
+                        //    ExitReason_Trap_Kind::CREATE =>  {Continuation_Type::CREATE}
+                        //    ExitReason_Trap_Kind::UNKNOWN =>  {panic!("unknown trap")}
+                        //};
+                        cont.set_feedback_type(Continuation_Type::CALL);
+
+                        //let mut cont = Continuation_Call::new();
+                        let mut xx = Continuation_Call::new();
+                        xx.set_memory_offset(call.memory_offset.clone().unwrap());
+                        xx.set_offset_len(call.offset_len.clone().unwrap());
+                        cont.set_calldata(xx);
+
+                        println!("By the way, here is some stuff: {:?} {:?}", call.memory_offset, call.offset_len);
+
+                        call_args.node_continuation = Some(cont); // todo: move this.
+
+                        let call_data_next = call.clone().get_call_data().to_vec();
+                        let call_addr: H160 =  call.get_callee_address().into();
+                        let value : U256 = call.get_transfer().get_value().into();
+
+                        let call_args_shim : Option<EvmCallArgs> = if !value.is_zero() {
+
+                            println!("************************ inserting a mother trucking shim yo {:?} {:?}", call_addr, value);
+
+                            let balance_data = contracts::native_token::SET_BALANCE
+                                .encode_input(&[Token::Address(call_addr), Token::Uint(value)])
+                                .unwrap();
+
+                            Some(EvmCallArgs{
+                                caller: Address::ZERO.0,
+                                address: Address::NATIVE_TOKEN.0,
+                                code: contracts::native_token::CODE.clone(),
+                                data: balance_data,
+                                gas_limit: u64::MAX,
+                                tx_trace: Default::default(),
+                                continuations: continuations.clone(),
+                                node_continuation: None,
+                                evm_context: Default::default(),
+                                ..call_args})
+                        } else {
+                            None
+                        };
+
+                        // Fetch the code from the backend
+                        let code_next = backend.code(call_addr);
+
+                        // Set up the next continuation, adjust the relevant parameters
+                        let mut call_args_next =
+                            EvmCallArgs{
+                                address: call_addr,
+                                code: code_next,
+                                data: call_data_next,
+                                tx_trace: Default::default(),
+                                continuations: continuations.clone(),
+                                node_continuation: None,
+                                evm_context: Default::default(),
+                                ..call_args};
+                        //call_args_next.0.data = result.return_value.clone().to_vec();
+
+                        println!("We are pushing a new continuation onto the stack(!!)");
+
+                        // This is the paused execution, push it back
+                        continuation_stack.push(call_args);
+
+                        // Now push on the context we want to execute
+                        continuation_stack.push(call_args_next);
+
+                        // If we want to insert a shim, do it here so as to execute first
+                        // (shim will increase balance of address)
+                        if let Some(call_args_shim) = call_args_shim {
+                            println!("We are pushing a shim on, too!");
+                            continuation_stack.push(call_args_shim);
+                        }
+
+                    }
+                }
+            } else if result.get_exit_reason().has_succeed() && !continuation_stack.is_empty() && !backend.origin.is_zero()  {
+                // We need to let the continuation prior know the return result
+                let prior = continuation_stack.last_mut().unwrap();
+                //prior.node_continuation.as_mut().unwrap().set_calldata(
+                //    Continuation_Call{data: result.return_value.clone(),
+                //        memory_offset: result.return_value.,
+                //        offset_len: result.offset_len});
+
+                //println!("btw, here is some stuff from ret: {:?} {:?}", result.memory_offset, result.offset_len);
+
+                println!("we did succeed");
+
+                let old_calldata = prior.node_continuation.as_mut().unwrap().take_calldata();
+
+                prior.node_continuation.as_mut().unwrap().set_calldata(Continuation_Call{data: result.return_value.clone(), ..old_calldata});
+                prior.node_continuation.as_mut().unwrap().set_succeeded(true);
+                prior.node_continuation.as_mut().unwrap().set_logs(result.get_logs().into());
+
+                //prior.node_continuation.as_mut().unwrap().set_feedback_type(Continuation_Type::CALL);
+            }
 
             if continuation_stack.is_empty() {
                 break;
             }
         }
 
+        println!("We have finished the loop");
+
         let mut backend_result = backend.get_result();
         backend_result.exit_reason = result.exit_reason.clone();
+        backend_result.return_value = result.return_value.clone();
 
         Ok((result.logs.clone().into_iter().map(|l| l.into()).collect(), backend_result, created_contract_addr))
     }
@@ -225,6 +366,7 @@ impl State {
             txn.transaction.payload,
             chain_id,
             current_block,
+            //EvmBackend{state: self, origin: txn.from_addr.0, gas_price: U256::zero(), current_block: BlockHeader::default(), account_storage_cached: Default::default(), chain_id: 0},
         );
 
         match result {
@@ -294,6 +436,7 @@ impl State {
                 // been changed. We should investigate if this is really an issue.
                 if let Some(to_addr) = to_addr {
                     if to_addr != Address::NATIVE_TOKEN && !balance.is_zero() {
+                        println!("XXXXXXXXXXXXXXXXXXXXXXXX avoiding recursion here????");
                         self.set_native_balance(address, balance)?;
                     }
                 }
@@ -338,6 +481,8 @@ impl State {
             .encode_input(&[Token::Address(address.0)])
             .unwrap();
 
+        println!("making request for native balance!");
+
         let balance = self.call_contract(
             Address::ZERO,
             Some(Address::NATIVE_TOKEN),
@@ -348,6 +493,8 @@ impl State {
             BlockHeader::default(),
         )?;
         let balance = U256::from_big_endian(&balance);
+
+        println!("making request for native balance! Result: {:?}", balance);
 
         Ok(balance)
     }
@@ -372,6 +519,7 @@ impl State {
             // some dummy values.
             0,
             BlockHeader::default(),
+            //EvmBackend{state: self, origin: Address::ZERO.0, gas_price: U256::zero(), current_block: BlockHeader::default(), account_storage_cached: Default::default(), chain_id: 0},
         );
 
         match result {
@@ -408,6 +556,7 @@ impl State {
             data,
             chain_id,
             current_block,
+            //EvmBackend{state: self, origin: from_addr.0, gas_price: U256::zero(), current_block: BlockHeader::default(), account_storage_cached: Default::default(), chain_id: 0},
         );
 
         result.map(|ret| ret.1.return_value.into())

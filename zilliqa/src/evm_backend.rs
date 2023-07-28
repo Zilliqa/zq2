@@ -138,7 +138,7 @@ impl<'a> EvmBackend<'a> {
     }
 
     // Get the deltas from all of the operations so far
-    pub fn get_result(&self) -> EvmResult {
+    pub fn get_result(self) -> EvmResult {
         let mut ret = EvmResult::new();
 
         let applys = ret.mut_apply();

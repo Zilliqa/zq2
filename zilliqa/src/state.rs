@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
 
 use anyhow::{anyhow, Result};
+use futures::lock::Mutex;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -77,6 +78,7 @@ static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
 pub struct State {
     db: Arc<SledDb>,
     accounts: PatriciaTrie<SledDb>,
+    pub mutex: Arc<Mutex<u64>>,
 }
 
 impl State {
@@ -85,13 +87,15 @@ impl State {
         let mut state = Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
+            mutex: Default::default(),
         };
 
         state
             .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
 
         for (address, balance) in GENESIS.iter() {
-            info!("Setting balance for {} to {}", address, balance);
+            info!("");
+            info!("\n\nSetting balance for {} to {}", address, balance);
             state.set_native_balance(*address, *balance)?;
         }
 
@@ -103,6 +107,7 @@ impl State {
         Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db).at_root(root_hash),
+            mutex: Default::default(),
         }
     }
 
@@ -111,6 +116,7 @@ impl State {
         Self {
             db,
             accounts: self.accounts.at_root(root_hash),
+            mutex: Default::default(),
         }
     }
 

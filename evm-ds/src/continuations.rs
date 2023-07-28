@@ -10,6 +10,7 @@ use evm::{
 };
 use primitive_types::{H160, H256, U256};
 
+#[derive(Debug)]
 pub struct Continuation {
     pub data: Vec<u8>,
     pub code: Vec<u8>,
@@ -24,6 +25,7 @@ pub struct Continuation {
     pub deletes: BTreeSet<H160>,
 }
 
+#[derive(Debug)]
 pub struct Continuations {
     storage: HashMap<u64, Continuation>,
     next_continuation_id: u64,
@@ -41,6 +43,12 @@ impl Continuations {
             storage: HashMap::new(),
             next_continuation_id: 0,
         }
+    }
+
+    pub fn last_created(&self) -> u64 {
+        //println!("last created: {:?}", self.next_continuation_id - 1);
+        //println!("all created: {:?}", self.storage);
+        self.next_continuation_id
     }
 
     pub fn create_continuation(
