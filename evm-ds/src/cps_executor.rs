@@ -113,31 +113,33 @@ impl<'a, B: Backend> CpsExecutor<'a, B> {
             runtime.machine_mut().stack_mut().pop()?;
 
             // Re-create the logs based on feedback passed
-            for log in feedback.get_logs() {
-                let address: H160 = H160::from(log.get_address());
-                let data: Vec<u8> = log.get_data().to_vec();
-                let mut topics: Vec<H256> = vec![];
+            // todo: no clone.
+            for log in feedback.logs.iter() {
+                let address: H160 = log.address;
+                let data: Vec<u8> = log.data.clone();
+                let topics = log.topics.clone();
+                //let mut topics: Vec<H256> = vec![];
 
-                for topic in log.get_topics() {
-                    topics.push(topic.into());
-                }
+                //for topic in log.topics {
+                //    topics.push(topic.into());
+                //}
 
                 self.stack_executor.log(address, topics, data)?;
             }
 
-            if feedback.get_feedback_type() == EvmProto::Continuation_Type::CREATE {
-                let eth_address = H160::from(feedback.get_address());
+            if feedback.feedback_type ==  EvmProto::Type::Create {
+                let eth_address = feedback.get_address();
                 runtime.machine_mut().stack_mut().push(eth_address.into())?;
             } else {
-                *runtime.return_data_buffer() = Vec::from(feedback.get_calldata().get_data());
-                let offset_len: U256 = U256::from(feedback.get_calldata().get_offset_len());
+                *runtime.return_data_buffer() = feedback.get_calldata().data.clone();
+                let offset_len: U256 = U256::from(feedback.get_calldata().offset_len);
                 let target_len = min(offset_len, U256::from(runtime.return_data_buffer().len()));
                 if feedback.succeeded {
                     match runtime.machine_mut().memory_mut().copy_large(
-                        U256::from(feedback.get_calldata().get_memory_offset()),
+                        U256::from(feedback.get_calldata().memory_offset),
                         U256::zero(),
                         target_len,
-                        feedback.get_calldata().get_data(),
+                        feedback.get_calldata().data.as_slice(),
                     ) {
                         Ok(()) => {
                             let mut value = H256::default();
@@ -154,10 +156,10 @@ impl<'a, B: Backend> CpsExecutor<'a, B> {
                     }
                 } else {
                     let _ = runtime.machine_mut().memory_mut().copy_large(
-                        U256::from(feedback.get_calldata().get_memory_offset()),
+                        U256::from(feedback.get_calldata().memory_offset),
                         U256::zero(),
                         target_len,
-                        feedback.get_calldata().get_data(),
+                        feedback.get_calldata().data.as_slice(),
                     );
                     let mut value = H256::default();
                     let zero = U256::zero();

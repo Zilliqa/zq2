@@ -3,13 +3,12 @@
 use std::collections::HashMap;
 //use evm_ds::protos::Evm::Apply_Modify;
 //use evm_ds::protos::*;
-use evm_ds::protos::Evm::EvmResult;
+use evm_ds::protos::Evm::{Apply, EvmResult, Storage};
 use evm_ds::protos::Evm;
 //use bytes::Bytes;
 
 use evm_ds::{
     evm::backend::{Backend, Basic},
-    evm_server_run::{encode_storage},
 };
 
 //use crate::protos::{Evm as EvmProto};
@@ -39,7 +38,7 @@ use tracing::{error, info, trace};
 use crate::{
     contracts,
     message::BlockHeader,
-    state::{Address, Account, Log, State},
+    state::{Address, Account, State},
     time::SystemTime,
 };
 
@@ -71,67 +70,81 @@ impl<'a> EvmBackend<'a> {
         }
     }
 
-    pub fn apply_update<'b>(
+    pub fn apply_update(
         &mut self,
         to_addr: Option<Address>,
-        applys: impl Iterator<Item = &'b evm_ds::protos::Evm::Apply>,
+        //applys: impl Iterator<Item = evm_ds::protos::Evm::Apply>,
+        applys: Vec<evm_ds::protos::Evm::Apply>,
     )  {
         for apply in applys {
 
-            if apply.has_modify() {
-                let modify = apply.get_modify();
-
-                let address = Address(modify.get_address().into());
-                let balance: U256 = modify.get_balance().into();
-                let code = modify.code.clone();
-                let _nonce: U256 = modify.get_nonce().into();
-                let storage = modify.storage.clone().into_iter();
-                let reset_storage = modify.reset_storage;
-
-                println!("We are modifying: {:?} {:?}", address, balance);
-
-                if !balance.is_zero() {
-                    println!("XXXXXXXXXXXXXXXXYYYYYYYYYYYYYY balance was zero(!!!!)");
+            match apply {
+                Apply::Delete { address } => {
+                    panic!("Delete not implemented");
                 }
+                Apply::Modify {
+                    address,
+                    balance,
+                    nonce,
+                    code,
+                    storage,
+                    reset_storage,
+                } => {
+
+                    let address = Address(address);
+                    //let address = Address(modify.get_address().into());
+                    //let balance: U256 = modify.get_balance().into();
+                    //let code = modify.code.clone();
+                    //let _nonce: U256 = modify.get_nonce().into();
+                    //let storage = modify.storage.clone().into_iter();
+                    //let reset_storage = modify.reset_storage;
+
+                    println!("We are modifying: {:?} {:?}", address, balance);
+
+                    if !balance.is_zero() {
+                        println!("XXXXXXXXXXXXXXXXYYYYYYYYYYYYYY balance was zero(!!!!)");
+                    }
 
 
-                //if !code.is_empty() {
-                //    account.code = code.to_vec();
-                //}
+                    //if !code.is_empty() {
+                    //    account.code = code.to_vec();
+                    //}
 
-                if reset_storage {
-                    todo!("clear_account_storage");
-                }
+                    if reset_storage {
+                        todo!("clear_account_storage");
+                    }
 
-                // Get or create the element in the cache, the account will be
-                // reflected but the storage will not.
-                if !self.account_storage_cached.contains_key(&address) {
-                    let account = self.state.get_account(address).unwrap_or_default();
-                    //let mut storage = HashMap::new();
-                    //map.insert();
-                    self.account_storage_cached.insert(address, (account, HashMap::new()));
-                }
+                    // Get or create the element in the cache, the account will be
+                    // reflected but the storage will not.
+                    if !self.account_storage_cached.contains_key(&address) {
+                        let account = self.state.get_account(address).unwrap_or_default();
+                        //let mut storage = HashMap::new();
+                        //map.insert();
+                        self.account_storage_cached.insert(address, (account, HashMap::new()));
+                    }
 
-                let mut cache = self.account_storage_cached.get_mut(&address).unwrap();
-                let mut account_cached = &mut cache.0;
-                let mut storage_cached = &mut cache.1;
+                    let mut cache = self.account_storage_cached.get_mut(&address).unwrap();
+                    let mut account_cached = &mut cache.0;
+                    let mut storage_cached = &mut cache.1;
 
-                if !code.is_empty() {
-                    println!("We are actually inserting code here");
-                    account_cached.code = code.to_vec();
-                }
+                    if !code.is_empty() {
+                        println!("We are actually inserting code here");
+                        account_cached.code = code.to_vec();
+                    }
 
-                //self.save_account(address, account)?;
-                //self.account_overrides.insert(address, account);
+                    //self.save_account(address, account)?;
+                    //self.account_overrides.insert(address, account);
 
-                for item in storage {
-                    let index: H256 = H256::from_slice(item.get_key());
-                    let value: H256 = H256::from_slice(item.get_value());
+                    for item in storage {
+                        //let index: H256 = H256::from_slice(item.get_key());
+                        //let value: H256 = H256::from_slice(item.get_value());
 
-                    //let stor = self.I//storage_cached.get_mut(&address);
-                    storage_cached.insert(index, value);
+                        //let stor = self.I//storage_cached.get_mut(&address);
+                        storage_cached.insert(item.key, item.value);
+                    }
                 }
             }
+
             // todo: delete.
         }
 
@@ -139,39 +152,52 @@ impl<'a> EvmBackend<'a> {
 
     // Get the deltas from all of the operations so far
     pub fn get_result(self) -> EvmResult {
-        let mut ret = EvmResult::new();
+        //let mut ret = EvmResult::new();
 
-        let applys = ret.mut_apply();
+        let mut applys : Vec<Apply> = vec![];
 
         for (addr, (acct, stor)) in self.account_storage_cached.into_iter() {
 
             println!("Looping: {:?} {:?} {:?}", addr, acct, stor);
-            //apply.set_modify()
-            let mut apply = evm_ds::protos::Evm::Apply::new();
-            let mut modify = Evm::Apply_Modify::new();
-            modify.set_address(addr.0.into());
-            //modify.set_balance(acct.balance.into());
-            modify.set_code(acct.code.into());
 
-            //if (stor.empty()) {
-            //    modify.set_reset_storage(reset_storage);
-            //}
+            applys.push(Apply::Modify{
+                address: addr.0,
+                balance: U256::zero(),
+                nonce: U256::zero(),
+                code: acct.code,
+                storage: stor.into_iter().map(|(key, value)| Storage{key, value}).collect(),
+                reset_storage: false, // todo: this.
+            });
+
+            ////apply.set_modify()
+            //let mut apply = evm_ds::protos::Evm::Apply::new();
+            //let mut modify = Evm::Apply_Modify::new();
+            //modify.set_address(addr.0.into());
+            ////modify.set_balance(acct.balance.into());
+            //modify.set_code(acct.code.into());
+
+            ////if (stor.empty()) {
+            ////    modify.set_reset_storage(reset_storage);
+            ////}
 
 
-            let storage_proto = stor
-                .into_iter()
-                //.map(|(k, v)| (Bytes::copy_from_slice(k.as_bytes()), Bytes::copy_from_slice(v.as_bytes())))
-                .map(|(k, v)| encode_storage(k, v, true).into())
-                .collect();
-            modify.set_storage(storage_proto);
-            apply.set_modify(modify);
+            //let storage_proto = stor
+            //    .into_iter()
+            //    //.map(|(k, v)| (Bytes::copy_from_slice(k.as_bytes()), Bytes::copy_from_slice(v.as_bytes())))
+            //    .map(|(k, v)| encode_storage(k, v, true).into())
+            //    .collect();
+            //modify.set_storage(storage_proto);
+            //apply.set_modify(modify);
 
-            applys.push(apply);
+            //applys.push(apply);
         }
+        let ret = EvmResult {
+            apply: applys,
+            ..Default::default()
+        };
         println!("We are returning update: {:?}", ret);
         ret
     }
-
 }
 
 impl<'a> Backend for EvmBackend<'a> {

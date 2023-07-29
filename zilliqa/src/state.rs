@@ -19,7 +19,7 @@ use futures::lock::Mutex;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 use tracing::info;
-use evm_ds::protos::Evm::EvmLog;
+use evm_ds::protos::Evm::Log;
 
 use crate::{contracts, crypto, db::SledDb};
 
@@ -458,22 +458,22 @@ pub struct TransactionReceipt {
     pub logs: Vec<Log>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Log {
-    pub address: Address,
-    pub topics: Vec<H256>,
-    pub data: Vec<u8>,
-}
+//#[derive(Debug, Clone, Serialize, Deserialize)]
+//pub struct Log {
+//    pub address: Address,
+//    pub topics: Vec<H256>,
+//    pub data: Vec<u8>,
+//}
 
-impl From<EvmLog> for Log {
-    fn from(item: EvmLog) -> Self {
-        Log{
-            address: Address(item.get_address().into()),
-            topics: item.get_topics().iter().map(|t| t.into()).collect(),
-            data: item.get_data().to_vec()
-        }
-    }
-}
+//impl From<EvmLog> for Log {
+//    fn from(item: EvmLog) -> Self {
+//        Log{
+//            address: Address(item.get_address().into()),
+//            topics: item.get_topics().iter().map(|t| t.into()).collect(),
+//            data: item.get_data().to_vec()
+//        }
+//    }
+//}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionDelta {

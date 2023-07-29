@@ -9,7 +9,7 @@ base64 = "0.21.2"
 byteorder = "1.4.3"
 bytes = "1.4.0"
 ethabi = "18.0.0"
-ethereum = "0.14.0"
+ethereum = { version = "0.14.0", features = ["with-serde"] }
 evm = { git = "https://github.com/Zilliqa/evm", rev = "ef7a9d1476f15660aad98dec5275beae016e83e4", features = ["tracing"] }
 ethers = "2.0.8"
 hex = "0.4.3"

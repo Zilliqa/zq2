@@ -12,7 +12,7 @@ use evm_ds::evm::{
     tracing::EventListener,
 };
 use evm_ds::evm_server_run::EvmCallArgs;
-use evm_ds::protos::Evm::{Continuation, EvmResult, ExitReason_Trap_Kind, Continuation_Type, TrapData_oneof_data, Continuation_Call};
+use evm_ds::protos::Evm::*;
 use evm_ds::{
     continuations::Continuations,
     evm_server_run::{calculate_contract_address, run_evm_impl_direct},
@@ -25,7 +25,7 @@ use crate::state::SignedTransaction;
 use crate::{
     contracts,
     message::BlockHeader,
-    state::{Address, Log, State},
+    state::{Address, State},
     time::SystemTime,
 };
 
@@ -216,17 +216,18 @@ impl State {
 
             // Apply the results to the backend so they can be used in the next continuation
             println!("We are applying update: {:?}", result);
-            backend.apply_update(to_addr, result.apply.iter());
+            backend.apply_update(to_addr, result.take_apply());
 
-            if result.exit_reason.clone().unwrap().has_trap() {
+            if result.has_trap() {
                 println!("We have encountered a trap here...");
                 //println!("{:?}", continuations);
-                let mut cont = Continuation::new();
-                cont.set_id(continuations.lock().unwrap().last_created());
+                let mut cont = Continuation::new(continuations.lock().unwrap().last_created());
+                //cont.set_id();
 
-                match result.get_trap_data().data.clone().unwrap() {
-                    TrapData_oneof_data::create(create) => { todo!("create trap")}
-                    TrapData_oneof_data::call(call) => {
+                match result.trap_data.unwrap() {
+                    //TrapData_oneof_data::create(create) => { todo!("create trap")}
+                    TrapData::Create(_) => { panic!("create trap not implemented")}
+                    TrapData::Call(call) => {
 
                         //let trap_data = result.trap_data.unwrap().get_call();
                         //let callee_address = trap_data.callee_address.unwrap();
@@ -240,21 +241,31 @@ impl State {
                         //    ExitReason_Trap_Kind::CREATE =>  {Continuation_Type::CREATE}
                         //    ExitReason_Trap_Kind::UNKNOWN =>  {panic!("unknown trap")}
                         //};
-                        cont.set_feedback_type(Continuation_Type::CALL);
+                        //cont.set_feedback_type(Continuation_Type::CALL);
+                        cont.feedback_type = Type::Call;
 
                         //let mut cont = Continuation_Call::new();
-                        let mut xx = Continuation_Call::new();
-                        xx.set_memory_offset(call.memory_offset.clone().unwrap());
-                        xx.set_offset_len(call.offset_len.clone().unwrap());
-                        cont.set_calldata(xx);
+                        //let mut xx = Continuation_Call::new();
+                        //xx.set_memory_offset(call.memory_offset.clone().unwrap());
+                        //xx.set_offset_len(call.offset_len.clone().unwrap());
+                        //cont.set_calldata(xx);
+
+                        cont.feedback_data = Some(FeedbackData::CallData(Call{data: Vec::new(), memory_offset: call.memory_offset, offset_len: call.offset_len}));
 
                         println!("By the way, here is some stuff: {:?} {:?}", call.memory_offset, call.offset_len);
 
                         call_args.node_continuation = Some(cont); // todo: move this.
 
-                        let call_data_next = call.clone().get_call_data().to_vec();
-                        let call_addr: H160 =  call.get_callee_address().into();
-                        let value : U256 = call.get_transfer().get_value().into();
+                        //let call_data_next = call.clone().get_call_data().to_vec();
+                        //let call_addr: H160 =  call.get_callee_address().into();
+                        //let value : U256 = call.get_transfer().get_value().into();
+                        let call_data_next = call.call_data;
+                        let call_addr: H160 =  call.callee_address;
+                        let value : U256 = if let Some(transfer) = call.transfer {
+                            transfer.value
+                        } else {
+                            U256::zero()
+                        };
 
                         let call_args_shim : Option<EvmCallArgs> = if !value.is_zero() {
 
@@ -312,7 +323,7 @@ impl State {
 
                     }
                 }
-            } else if result.get_exit_reason().has_succeed() && !continuation_stack.is_empty() && !backend.origin.is_zero()  {
+            } else if result.succeeded() && !continuation_stack.is_empty() && !backend.origin.is_zero()  {
                 // We need to let the continuation prior know the return result
                 let prior = continuation_stack.last_mut().unwrap();
                 //prior.node_continuation.as_mut().unwrap().set_calldata(
@@ -324,11 +335,15 @@ impl State {
 
                 println!("we did succeed");
 
-                let old_calldata = prior.node_continuation.as_mut().unwrap().take_calldata();
+                //let old_calldata = prior.node_continuation.as_mut().unwrap().take_calldata();
+                //prior.node_continuation.as_mut().unwrap().set_calldata(Continuation_Call{data: result.return_value.clone(), ..old_calldata});
+                //prior.node_continuation.as_mut().unwrap().set_succeeded(true);
+                //prior.node_continuation.as_mut().unwrap().set_logs(result.get_logs().into());
 
-                prior.node_continuation.as_mut().unwrap().set_calldata(Continuation_Call{data: result.return_value.clone(), ..old_calldata});
-                prior.node_continuation.as_mut().unwrap().set_succeeded(true);
-                prior.node_continuation.as_mut().unwrap().set_logs(result.get_logs().into());
+                let old_calldata = prior.node_continuation.as_mut().unwrap().get_calldata();
+                prior.node_continuation.as_mut().unwrap().feedback_data = Some(FeedbackData::CallData(Call{data: result.return_value.clone(), ..*old_calldata}));
+                prior.node_continuation.as_mut().unwrap().succeeded = true;
+                prior.node_continuation.as_mut().unwrap().logs = result.logs.clone();
 
                 //prior.node_continuation.as_mut().unwrap().set_feedback_type(Continuation_Type::CALL);
             }
@@ -341,10 +356,11 @@ impl State {
         println!("We have finished the loop");
 
         let mut backend_result = backend.get_result();
-        backend_result.exit_reason = result.exit_reason.clone();
-        backend_result.return_value = result.return_value.clone();
+        backend_result.exit_reason = result.exit_reason;
+        backend_result.return_value = result.return_value;
 
-        Ok((result.logs.clone().into_iter().map(|l| l.into()).collect(), backend_result, created_contract_addr))
+        //Ok((result.logs.clone().into_iter().map(|l| l.into()).collect(), backend_result, created_contract_addr))
+        Ok((result.logs, backend_result, created_contract_addr))
     }
 
     /// Apply a transaction to the account state.
@@ -372,7 +388,7 @@ impl State {
         match result {
             Ok((mut logs, result, contract_addr)) => {
                 // Apply the state changes only if success
-                let success = result.exit_reason.clone().unwrap().has_succeed();
+                let success = result.succeeded();
 
                 if success {
                     if let Some(contract_addr) = contract_addr {
@@ -381,7 +397,7 @@ impl State {
                         self.save_account(Address(contract_addr), acct)?;
                     }
 
-                    self.apply_delta( txn.transaction.to_addr, result.apply.iter())?;
+                    self.apply_delta( txn.transaction.to_addr, result.apply)?;
                 }
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
@@ -413,64 +429,74 @@ impl State {
     fn apply_delta<'a>(
         &mut self,
         to_addr: Option<Address>,
-        applys: impl Iterator<Item = &'a evm_ds::protos::Evm::Apply>,
+        applys: Vec<evm_ds::protos::Evm::Apply>,
     ) -> Result<()> {
+
         for apply in applys {
-            if apply.has_modify() {
-                let modify = apply.get_modify();
+            match apply {
+                Apply::Delete{..} => {
+                    panic!("We have a delete here");
+                }
+                Apply::Modify{address, balance, nonce, code, storage, reset_storage} => {
+//                    let address = Address(modify.get_address().into());
+//                    let balance: U256 = modify.get_balance().into();
+//                    let code = modify.code.clone();
+//                    let _nonce: U256 = modify.get_nonce().into();
+//                    let storage = modify.storage.clone().into_iter();
+//                    let reset_storage = modify.reset_storage;
+                    let address = Address(address);
 
-                let address = Address(modify.get_address().into());
-                let balance: U256 = modify.get_balance().into();
-                let code = modify.code.clone();
-                let _nonce: U256 = modify.get_nonce().into();
-                let storage = modify.storage.clone().into_iter();
-                let reset_storage = modify.reset_storage;
-
-                // If the `to_addr` was `Address::NATIVE_TOKEN`, then this transaction was a call to the native
-                // token contract. Avoid applying further updates to the native balance in this case, which would
-                // result in an endless recursion.
-                // FIXME: This makes it impossible to charge gas for calls to `Address::NATIVE_TOKEN`.
-                // FIXME: We ignore the change if the balance is zero. According to the SputnikVM example code,
-                // this is the intended implementation. However, that might mean it is impossible to tell the
-                // difference between an account that has been fully drained and an account whose balance has not
-                // been changed. We should investigate if this is really an issue.
-                if let Some(to_addr) = to_addr {
-                    if to_addr != Address::NATIVE_TOKEN && !balance.is_zero() {
-                        println!("XXXXXXXXXXXXXXXXXXXXXXXX avoiding recursion here????");
-                        self.set_native_balance(address, balance)?;
+                    // If the `to_addr` was `Address::NATIVE_TOKEN`, then this transaction was a call to the native
+                    // token contract. Avoid applying further updates to the native balance in this case, which would
+                    // result in an endless recursion.
+                    // FIXME: This makes it impossible to charge gas for calls to `Address::NATIVE_TOKEN`.
+                    // FIXME: We ignore the change if the balance is zero. According to the SputnikVM example code,
+                    // this is the intended implementation. However, that might mean it is impossible to tell the
+                    // difference between an account that has been fully drained and an account whose balance has not
+                    // been changed. We should investigate if this is really an issue.
+                    if let Some(to_addr) = to_addr {
+                        if to_addr != Address::NATIVE_TOKEN && !balance.is_zero() {
+                            println!("XXXXXXXXXXXXXXXXXXXXXXXX avoiding recursion here????");
+                            self.set_native_balance(address, balance)?;
+                        }
                     }
-                }
 
-                let mut account = self.get_account(address).unwrap_or_default();
+                    let mut account = self.get_account(address).unwrap_or_default();
 
-                if !code.is_empty() {
-                    account.code = code.to_vec();
-                }
+                    if !code.is_empty() {
+                        account.code = code.to_vec();
+                    }
 
-                if reset_storage {
-                    self.clear_account_storage(address)?;
-                }
+                    if reset_storage {
+                        self.clear_account_storage(address)?;
+                    }
 
-                self.save_account(address, account)?;
+                    self.save_account(address, account)?;
 
-                for item in storage {
-                    let index: H256 = H256::from_slice(item.get_key());
-                    let value: H256 = H256::from_slice(item.get_value());
+                    for item in storage {
+                        //let index: H256 = H256::from_slice(item.get_key());
+                        //let value: H256 = H256::from_slice(item.get_value());
 
-                    if value.is_zero() {
-                        self.remove_account_storage(address, index)?;
-                    } else {
-                        self.set_account_storage(address, index, value)?;
+                        if item.value.is_zero() {
+                            self.remove_account_storage(address, item.key)?;
+                        } else {
+                            self.set_account_storage(address, item.key, item.value)?;
+                        }
                     }
                 }
             }
 
-            if apply.has_delete() {
-                let delete = apply.get_delete();
+            //if apply.has_modify() {
+            //    let modify = apply.get_modify();
 
-                let address = Address(delete.get_address().into());
-                self.delete_account(address)?;
-            }
+            //}
+
+            //if apply.has_delete() {
+            //    let delete = apply.get_delete();
+
+            //    let address = Address(delete.get_address().into());
+            //    self.delete_account(address)?;
+            //}
         }
 
         Ok(())
@@ -525,10 +551,10 @@ impl State {
         match result {
             Ok((lgs, result, _)) => {
                 // Apply the state changes only if success
-                let success = result.exit_reason.unwrap().has_succeed();
+                let success = result.succeeded();
 
                 if success {
-                    self.apply_delta( Some(Address::NATIVE_TOKEN), result.apply.iter())?;
+                    self.apply_delta( Some(Address::NATIVE_TOKEN), result.apply)?;
                 }
 
                 Ok(())
