@@ -2,6 +2,8 @@ mod consensus;
 mod eth;
 mod persistence;
 mod web3;
+use std::env;
+use std::path::PathBuf;
 
 use std::{
     fmt::Debug,
@@ -15,8 +17,11 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+
 use ethers::{
-    prelude::SignerMiddleware,
+    types::H256,
+    abi::Contract,
+    prelude::{DeploymentTxFactory, CompilerInput, SignerMiddleware, Wallet, EvmVersion},
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::{LocalWallet, Signer},
 };
@@ -346,9 +351,15 @@ macro_rules! deploy_contract {
 
         let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
         let compiler_input = compiler_input.first_mut().unwrap();
-        compiler_input.settings.evm_version = Some(EvmVersion::Paris);
+        compiler_input.settings.evm_version = Some(EvmVersion::Shanghai);
 
-        let out = sc.compile::<CompilerInput>(compiler_input).unwrap();
+        let out = sc.compile::<CompilerInput>(compiler_input).unwrap_or_else(|e| {
+            panic!(
+                "failed to compile contract {}: {}",
+                $contract,
+                e.to_string()
+            )
+        });
 
         let contract = out
             .get(contract_file.path().to_str().unwrap(), $contract)
@@ -387,7 +398,77 @@ macro_rules! deploy_contract {
         }
     }};
 }
+
+async fn  deploy_contractX(path: &str, contract: &str, wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>, network: &mut Network<'_>) -> (H256, Contract) {
+    // Include the contract source directly in the binary.
+    //let contract_source = include_bytes!(path.to_string());
+
+    let mut full_path = env::current_dir().unwrap();
+    full_path.push(path);
+
+    println!("full_path: {:?}", full_path);
+    println!("path: {:?}", path);
+
+    let contract_source = std::fs::read(full_path).unwrap();
+
+    // Write the contract source to a file, so `solc` can compile it.
+    let mut contract_file = tempfile::Builder::new().suffix(".sol").tempfile().unwrap();
+    std::io::Write::write_all(&mut contract_file, &contract_source).unwrap();
+
+    let sc = ethers::solc::Solc::default();
+
+    let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
+    let compiler_input = compiler_input.first_mut().unwrap();
+    compiler_input.settings.evm_version = Some(EvmVersion::Paris);
+
+    let out = sc.compile::<CompilerInput>(compiler_input).unwrap_or_else(|e| {
+        panic!(
+            "failed to compile contract {}: {}",
+            contract,
+            e.to_string()
+        );
+    });
+
+    let contract = out
+        .get(contract_file.path().to_str().unwrap(), contract)
+        .unwrap();
+    let abi = contract.abi.unwrap().clone();
+    let bytecode = contract.bytecode().unwrap().clone();
+
+    // Deploy the contract.
+    let factory = DeploymentTxFactory::new(abi, bytecode, wallet.clone());
+    let deployer = factory.deploy(()).unwrap();
+    let abi = deployer.abi().clone();
+    {
+        use ethers::providers::Middleware;
+
+        let hash = wallet
+            .send_transaction(deployer.tx, None)
+            .await
+            .unwrap()
+            .tx_hash();
+
+        network
+            .run_until_async(
+                || async {
+                    wallet
+                        .get_transaction_receipt(hash)
+                        .await
+                        .unwrap()
+                        .is_some()
+                },
+                50,
+            )
+            .await
+            .unwrap();
+
+        (hash, abi)
+    }
+}
+
+
 pub(crate) use deploy_contract;
+//pub(crate) use deploy_contractX;
 
 /// An implementation of [JsonRpcClient] which sends requests directly to an [RpcModule], without making any network
 /// calls.
