@@ -46,8 +46,6 @@ impl Continuations {
     }
 
     pub fn last_created(&self) -> u64 {
-        //println!("last created: {:?}", self.next_continuation_id - 1);
-        //println!("all created: {:?}", self.storage);
         self.next_continuation_id
     }
 

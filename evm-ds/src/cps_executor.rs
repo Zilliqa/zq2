@@ -113,17 +113,10 @@ impl<'a, B: Backend> CpsExecutor<'a, B> {
             runtime.machine_mut().stack_mut().pop()?;
 
             // Re-create the logs based on feedback passed
-            // todo: no clone.
             for log in feedback.logs.iter() {
                 let address: H160 = log.address;
                 let data: Vec<u8> = log.data.clone();
                 let topics = log.topics.clone();
-                //let mut topics: Vec<H256> = vec![];
-
-                //for topic in log.topics {
-                //    topics.push(topic.into());
-                //}
-
                 self.stack_executor.log(address, topics, data)?;
             }
 

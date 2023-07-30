@@ -15,7 +15,6 @@ use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
 
 use anyhow::{anyhow, Result};
-use futures::lock::Mutex;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -78,7 +77,6 @@ static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
 pub struct State {
     db: Arc<SledDb>,
     accounts: PatriciaTrie<SledDb>,
-    pub mutex: Arc<Mutex<u64>>,
 }
 
 impl State {
@@ -87,15 +85,12 @@ impl State {
         let mut state = Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
-            mutex: Default::default(),
         };
 
         state
             .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
 
         for (address, balance) in GENESIS.iter() {
-            info!("");
-            info!("\n\nSetting balance for {} to {}", address, balance);
             state.set_native_balance(*address, *balance)?;
         }
 
@@ -107,7 +102,6 @@ impl State {
         Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db).at_root(root_hash),
-            mutex: Default::default(),
         }
     }
 
@@ -116,17 +110,11 @@ impl State {
         Self {
             db,
             accounts: self.accounts.at_root(root_hash),
-            mutex: Default::default(),
         }
     }
 
     pub fn set_to_root(& mut self, root_hash: H256) {
         self.accounts = self.accounts.at_root(root_hash);
-        //let db = self.db.clone();
-        //Self {
-        //    db,
-        //    accounts: self.accounts.at_root(root_hash),
-        //}
     }
 
     pub fn try_clone(&mut self) -> Result<Self> {
@@ -459,26 +447,9 @@ pub struct TransactionReceipt {
 }
 
 //#[derive(Debug, Clone, Serialize, Deserialize)]
-//pub struct Log {
+//pub struct TransactionDelta {
 //    pub address: Address,
 //    pub topics: Vec<H256>,
 //    pub data: Vec<u8>,
 //}
-
-//impl From<EvmLog> for Log {
-//    fn from(item: EvmLog) -> Self {
-//        Log{
-//            address: Address(item.get_address().into()),
-//            topics: item.get_topics().iter().map(|t| t.into()).collect(),
-//            data: item.get_data().to_vec()
-//        }
-//    }
-//}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionDelta {
-    pub address: Address,
-    pub topics: Vec<H256>,
-    pub data: Vec<u8>,
-}
 

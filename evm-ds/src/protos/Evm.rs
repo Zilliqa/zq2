@@ -2,7 +2,6 @@ use primitive_types::{H160, H256, U256};
 use evm::{ExitSucceed, ExitError, ExitRevert, ExitFatal, ExitReason, Transfer};
 pub use crate::evm::executor::stack::Log;
 use crate::evm::CreateScheme;
-//use evm::ExitReason::{Succeed as ExitSucceedX, Error as ExitError, Revert as ExitRevert, Fatal as ExitFatal};
 
 #[derive(Debug)]
 pub struct EvmEvalExtras {
@@ -108,13 +107,6 @@ pub struct EvmArgs {
     pub caller: H160,
 }
 
-//#[derive(Debug)]
-//pub struct EvmLog {
-//    pub address: H160,
-//    pub topics: Vec<H256>,
-//    pub data: Vec<u8>,
-//}
-
 #[derive(Debug, PartialEq)]
 pub enum ExitReasonCps {
     Succeed(ExitSucceed),
@@ -131,61 +123,6 @@ impl Default for ExitReasonCps {
     }
 }
 
-//#[derive(Debug)]
-//pub enum Succeed {
-//    Stopped,
-//    Returned,
-//    Suicided,
-//}
-
-//#[derive(Debug)]
-//pub struct Error {
-    //pub kind: Kind,
-    //pub error_string: String,
-//}
-
-#[derive(Debug)]
-pub enum Kind {
-    StackUnderflow,
-    StackOverflow,
-    InvalidJump,
-    InvalidRange,
-    DesignatedInvalid,
-    CallTooDeep,
-    CreateCollision,
-    CreateContractLimit,
-    InvalidCode,
-    OutOfOffset,
-    OutOfGas,
-    OutOfFund,
-    PcUnderflow,
-    CreateEmpty,
-    Other,
-}
-
-//#[derive(Debug)]
-//pub struct Revert {}
-
-//#[derive(Debug)]
-//pub struct Fatal {
-//    pub kind: FatalKind,
-//    pub error: Option<Error>,
-//    pub error_string: String,
-//}
-
-//#[derive(Debug)]
-//pub enum FatalKind {
-//    NotSupported,
-//    UnhandledInterrupt,
-//    CallErrorAsFatal,
-//    Other,
-//}
-
-//#[derive(Debug)]
-//pub struct Trap {
-//    pub kind: TrapKind,
-//}
-
 #[derive(Debug, PartialEq)]
 pub enum Trap {
     Unknown,
@@ -193,23 +130,11 @@ pub enum Trap {
     Create,
 }
 
-//#[derive(Debug)]
-//pub struct TrapData {
-//    pub data: Option<TrapDataEnum>,
-//}
-
 #[derive(Debug)]
 pub enum TrapData {
     Call(CallTrap),
     Create(CreateTrap),
 }
-
-//#[derive(Debug)]
-//pub struct Transfer {
-//    pub source: H160,
-//    pub destination: H160,
-//    pub value: U256,
-//}
 
 #[derive(Debug)]
 pub struct Context {
@@ -217,18 +142,6 @@ pub struct Context {
     pub caller: H160,
     pub apparent_value: U256,
 }
-
-//#[derive(Debug)]
-//pub struct Scheme {
-//    pub scheme_type: Option<SchemeType>,
-//}
-
-//#[derive(Debug)]
-//pub enum SchemeType {
-//    Legacy(Legacy),
-//    Create2(Create2),
-//    Fixed(Fixed),
-//}
 
 #[derive(Debug)]
 pub struct Legacy {

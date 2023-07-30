@@ -22,10 +22,7 @@ use crate::precompiles::get_precompiles;
 use crate::pretty_printer::log_evm_result;
 
 use crate::protos::Evm as EvmProto;
-use crate::protos::Evm::EvmResult;
-//use crate::protos::Evm::Create;
 use crate::protos::Evm::*;
-//use crate::protos::Evm::SchemeType::*;
 
 use crate::tracing_logging::{CallContext, LoggingEventListener};
 
@@ -55,11 +52,6 @@ fn build_exit_result<B: Backend>(
                     address: address.into(),
                     balance: basic.balance,
                     nonce: basic.nonce,
-                    //basic: if let Some(scaling) = scaling_factor {
-                    //    Basic { balance: scale_eth_to_zil(basic.balance, scaling), nonce: basic.nonce }
-                    //} else {
-                    //    basic
-                    //},
                     code: code.unwrap_or_default(),
                     storage: storage.into_iter().map(|(k, v)| {
                         continuations.lock().unwrap().update_states(address, k, v, is_static);
@@ -71,7 +63,6 @@ fn build_exit_result<B: Backend>(
         }
     }).collect();
     result.tx_trace = trace.as_string();
-    //result.logs = logs.into_iter().map(Into::into).collect();
     result.logs = logs.into_iter().collect();
     result.remaining_gas = remaining_gas;
     result
@@ -151,17 +142,6 @@ fn build_create_result(
     result.tx_trace = trace.as_string();
     result.remaining_gas = remaining_gas;
 
-    //let scheme: EvmProto::Scheme = match interrupt.scheme {
-    //    evm::CreateScheme::Legacy { caller } => EvmProto::Scheme{scheme_type: Some(Legacy(caller.into()))},
-    //    evm::CreateScheme::Create2 { caller, code_hash, salt } => EvmProto::Create2 {
-    //        caller: caller.into(),
-    //        code_hash: code_hash.into(),
-    //        salt: salt.into(),
-    //        create2_address: interrupt.create2_address.into(),
-    //    },
-    //    evm::CreateScheme::Fixed(address) => EvmProto::Scheme{scheme_type: Some(Fixed(address))}
-    //};
-
     result.trap_data = Some(TrapData::Create(CreateTrap{
         caller: interrupt.caller.into(),
         scheme: interrupt.scheme,
@@ -175,247 +155,9 @@ fn build_create_result(
     result
 }
 
-// Similarly for the other functions...
-
-
-//#[allow(clippy::too_many_arguments)]
-//fn build_exit_result<B: Backend>(
-//    executor: CpsExecutor<B>,
-//    runtime: &Runtime,
-//    trace: &LoggingEventListener,
-//    exit_reason: &evm::ExitReason,
-//    remaining_gas: u64,
-//    is_static: bool,
-//    continuations: Arc<Mutex<Continuations>>,
-//    scaling_factor: Option<u64>,
-//) -> EvmProto::EvmResult {
-//    let mut result = EvmProto::EvmResult::new();
-//    result.set_exit_reason(exit_reason.clone().into());
-//    result.set_return_value(runtime.machine().return_value().into());
-//    let (state_apply, logs) = executor.into_state().deconstruct();
-//
-//    result.set_apply(
-//        state_apply
-//            .into_iter()
-//            .map(|apply| {
-//                let mut result = EvmProto::Apply::new();
-//                match apply {
-//                    Apply::Delete { address } => {
-//                        let mut delete = EvmProto::Apply_Delete::new();
-//                        delete.set_address(address.into());
-//                        result.set_delete(delete);
-//                    }
-//                    Apply::Modify {
-//                        address,
-//                        basic,
-//                        code,
-//                        storage,
-//                        reset_storage,
-//                    } => {
-//                        let mut modify = EvmProto::Apply_Modify::new();
-//                        modify.set_address(address.into());
-//                        if let Some(scaling) = scaling_factor {
-//                            modify.set_balance(scale_eth_to_zil(basic.balance, scaling).into());
-//                        }
-//                        modify.set_nonce(basic.nonce.into());
-//                        if let Some(code) = code {
-//                            modify.set_code(code.into());
-//                        }
-//                        modify.set_reset_storage(reset_storage);
-//
-//                        // Is this call static? if so, we don't want to modify other continuations' state
-//                        let storage_proto = storage
-//                            .into_iter()
-//                            .map(|(k, v)| {
-//                                continuations
-//                                    .lock()
-//                                    .unwrap()
-//                                    .update_states(address, k, v, is_static);
-//                                encode_storage(k, v, scaling_factor.is_some()).into()
-//                            })
-//                            .collect();
-//
-//                        modify.set_storage(storage_proto);
-//                        result.set_modify(modify);
-//                    }
-//                };
-//                result
-//            })
-//            .collect(),
-//    );
-//    result.set_tx_trace(trace.as_string().into());
-//    result.set_logs(logs.into_iter().map(Into::into).collect());
-//    result.set_remaining_gas(remaining_gas);
-//    result
-//}
-//
-//#[allow(clippy::too_many_arguments)]
-//fn build_call_result<B: Backend>(
-//    executor: CpsExecutor<B>,
-//    runtime: &Runtime,
-//    interrupt: CpsCallInterrupt,
-//    trace: &LoggingEventListener,
-//    remaining_gas: u64,
-//    is_static: bool,
-//    cont_id: u64,
-//    scaling_factor: Option<u64>,
-//) -> EvmProto::EvmResult {
-//    let mut result = EvmProto::EvmResult::new();
-//    result.set_return_value(runtime.machine().return_value().into());
-//    let mut trap_reason = EvmProto::ExitReason_Trap::new();
-//    trap_reason.set_kind(EvmProto::ExitReason_Trap_Kind::CALL);
-//    let mut exit_reason = EvmProto::ExitReason::new();
-//
-//    let (state_apply, _) = executor.into_state().deconstruct();
-//
-//    // We need to apply the changes made to the state so subsequent calls can
-//    // see the changes.
-//    result.set_apply(
-//        state_apply
-//            .into_iter()
-//            .map(|apply| {
-//                let mut result = EvmProto::Apply::new();
-//                match apply {
-//                    Apply::Delete { address } => {
-//                        let mut delete = EvmProto::Apply_Delete::new();
-//                        delete.set_address(address.into());
-//                        result.set_delete(delete);
-//                    }
-//                    Apply::Modify {
-//                        address,
-//                        basic,
-//                        code,
-//                        storage,
-//                        reset_storage,
-//                    } => {
-//                        debug!("Modify: {:?} {:?}", address, basic);
-//                        let mut modify = EvmProto::Apply_Modify::new();
-//                        modify.set_address(address.into());
-//                        if let Some(scaling) = scaling_factor {
-//                            modify.set_balance(scale_eth_to_zil(basic.balance, scaling).into());
-//                        }
-//                        modify.set_nonce(basic.nonce.into());
-//                        if let Some(code) = code {
-//                            modify.set_code(code.into());
-//                        }
-//                        modify.set_reset_storage(reset_storage);
-//                        let storage_proto = storage
-//                            .into_iter()
-//                            .map(|(k, v)| encode_storage(k, v, scaling_factor.is_some()).into())
-//                            .collect();
-//                        modify.set_storage(storage_proto);
-//                        result.set_modify(modify);
-//                    }
-//                };
-//                result
-//            })
-//            .collect(),
-//    );
-//
-//    exit_reason.set_trap(trap_reason);
-//    result.set_exit_reason(exit_reason);
-//    result.set_tx_trace(trace.as_string().into());
-//    result.set_remaining_gas(remaining_gas);
-//
-//    let mut trap_data_call = EvmProto::TrapData_Call::new();
-//
-//    let mut context = EvmProto::TrapData_Context::new();
-//    context.set_apparent_value(interrupt.context.apparent_value.into());
-//    context.set_caller(interrupt.context.caller.into());
-//    context.set_destination(interrupt.context.address.into());
-//
-//    trap_data_call.set_context(context);
-//
-//    if let Some(tran) = interrupt.transfer {
-//        let mut transfer = EvmProto::TrapData_Transfer::new();
-//        transfer.set_destination(tran.target.into());
-//        transfer.set_source(tran.source.into());
-//        transfer.set_value(tran.value.into());
-//        trap_data_call.set_transfer(transfer);
-//    }
-//
-//    trap_data_call.set_callee_address(interrupt.code_address.into());
-//    trap_data_call.set_call_data(interrupt.input.into());
-//    trap_data_call.set_is_static(interrupt.is_static || is_static);
-//    trap_data_call.set_is_precompile(interrupt.is_precompile);
-//    trap_data_call.set_target_gas(interrupt.target_gas.unwrap_or(u64::MAX));
-//    trap_data_call.set_memory_offset(interrupt.memory_offset.into());
-//    trap_data_call.set_offset_len(interrupt.offset_len.into());
-//
-//    let mut trap_data = EvmProto::TrapData::new();
-//    trap_data.set_call(trap_data_call);
-//    result.set_trap_data(trap_data);
-//    result.set_continuation_id(cont_id);
-//    result
-//}
-//
-//fn build_create_result(
-//    runtime: &Runtime,
-//    interrupt: CpsCreateInterrupt,
-//    trace: &LoggingEventListener,
-//    remaining_gas: u64,
-//    cont_id: u64,
-//) -> EvmProto::EvmResult {
-//    let mut result = EvmProto::EvmResult::new();
-//
-//    result.set_return_value(runtime.machine().return_value().into());
-//    let mut trap_reason = EvmProto::ExitReason_Trap::new();
-//    trap_reason.set_kind(EvmProto::ExitReason_Trap_Kind::CREATE);
-//    let mut exit_reason = EvmProto::ExitReason::new();
-//    exit_reason.set_trap(trap_reason);
-//    result.set_exit_reason(exit_reason);
-//    result.set_tx_trace(trace.as_string().into());
-//    result.set_remaining_gas(remaining_gas);
-//
-//    let mut scheme = EvmProto::TrapData_Scheme::new();
-//
-//    match interrupt.scheme {
-//        evm::CreateScheme::Legacy { caller } => {
-//            let mut scheme_legacy = EvmProto::TrapData_Scheme_Legacy::new();
-//            scheme_legacy.set_caller(caller.into());
-//            scheme.set_legacy(scheme_legacy);
-//        }
-//        evm::CreateScheme::Create2 {
-//            caller,
-//            code_hash,
-//            salt,
-//        } => {
-//            let mut scheme_create2 = EvmProto::TrapData_Scheme_Create2::new();
-//            scheme_create2.set_caller(caller.into());
-//            scheme_create2.set_code_hash(code_hash.into());
-//            scheme_create2.set_salt(salt.into());
-//            scheme_create2.set_create2_address(interrupt.create2_address.into());
-//            scheme.set_create2(scheme_create2);
-//        }
-//        evm::CreateScheme::Fixed(address) => {
-//            let mut scheme_fixed = EvmProto::TrapData_Scheme_Fixed::new();
-//            scheme_fixed.set_addres(address.into());
-//            scheme.set_fixed(scheme_fixed);
-//        }
-//    }
-//    let mut trap_data_create = EvmProto::TrapData_Create::new();
-//    trap_data_create.set_scheme(scheme);
-//    trap_data_create.set_caller(interrupt.caller.into());
-//    trap_data_create.set_call_data(interrupt.init_code.into());
-//    trap_data_create.set_target_gas(interrupt.target_gas.unwrap_or(u64::MAX));
-//    trap_data_create.set_value(interrupt.value.into());
-//    let mut trap_data = EvmProto::TrapData::new();
-//    trap_data.set_create(trap_data_create);
-//    result.set_trap_data(trap_data);
-//    result.set_continuation_id(cont_id);
-//    result
-//}
-
 fn handle_panic(_trace: String, _remaining_gas: u64, _reason: &str) -> EvmProto::EvmResult {
     // todo: this.
     let mut result = EvmProto::EvmResult::default();
-    //let mut fatal = EvmProto::Fatal{}
-    //fatal.set_error_string(reason.into());
-    //let mut exit_reason = EvmProto::ExitReason::new();
-    //exit_reason.set_fatal(fatal);
-    //result.set_exit_reason(exit_reason);
-    //result.set_tx_trace(trace.into());
-    //result.set_remaining_gas(remaining_gas);
     result
 }
 
@@ -680,10 +422,3 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs, backend: &B) -> EvmRes
 pub(crate) fn scale_eth_to_zil(eth: U256, zil_scaling_factor: u64) -> U256 {
     eth / zil_scaling_factor
 }
-
-//pub fn encode_storage(key: H256, value: H256, _: bool) -> (Bytes, Bytes) {
-//    (
-//        Bytes::copy_from_slice(key.as_bytes()),
-//        Bytes::copy_from_slice(value.as_bytes()),
-//    )
-//}
