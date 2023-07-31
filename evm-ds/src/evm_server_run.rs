@@ -36,9 +36,12 @@ fn build_exit_result<B: Backend>(
     continuations: Arc<Mutex<Continuations>>,
     _scaling_factor: Option<u64>,
 ) -> EvmResult {
-    let mut result = EvmResult::default();
-    result.exit_reason = exit_reason.into();
-    result.return_value = runtime.machine().return_value();
+    let mut result = EvmProto::EvmResult {
+        exit_reason: exit_reason.into(),
+        return_value: runtime.machine().return_value(),
+        ..Default::default()
+    };
+
     let (state_apply, logs) = executor.into_state().deconstruct();
 
     result.apply = state_apply
@@ -87,8 +90,10 @@ fn build_call_result<B: Backend>(
     cont_id: u64,
     _scaling_factor: Option<u64>,
 ) -> EvmResult {
-    let mut result = EvmResult::default();
-    result.return_value = runtime.machine().return_value();
+    let mut result = EvmProto::EvmResult {
+        return_value: runtime.machine().return_value(),
+        ..Default::default()
+    };
 
     let (state_apply, _) = executor.into_state().deconstruct();
     result.apply = state_apply
@@ -146,15 +151,7 @@ fn build_create_result(
     remaining_gas: u64,
     cont_id: u64,
 ) -> EvmResult {
-    let mut result = EvmResult::default();
-
-    result.return_value = runtime.machine().return_value();
-    result.exit_reason = EvmProto::ExitReasonCps::Trap(EvmProto::Trap::Create);
-
-    result.tx_trace = trace.as_string();
-    result.remaining_gas = remaining_gas;
-
-    result.trap_data = Some(TrapData::Create(CreateTrap {
+    let trap_data = Some(TrapData::Create(CreateTrap {
         caller: interrupt.caller,
         scheme: interrupt.scheme,
         value: interrupt.value,
@@ -162,7 +159,16 @@ fn build_create_result(
         target_gas: interrupt.target_gas.unwrap_or(u64::MAX),
     }));
 
-    result.continuation_id = cont_id;
+    let result = EvmProto::EvmResult {
+        return_value: runtime.machine().return_value(),
+        exit_reason: EvmProto::ExitReasonCps::Trap(EvmProto::Trap::Create),
+        tx_trace: trace.as_string(),
+        remaining_gas,
+        trap_data,
+        continuation_id: cont_id,
+        ..Default::default()
+    };
+
     result
 }
 

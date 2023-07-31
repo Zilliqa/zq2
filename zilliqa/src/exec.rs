@@ -347,7 +347,7 @@ impl State {
     }
 
     // Apply the changes the EVM is requesting for
-    fn apply_delta<'a>(&mut self, applys: Vec<evm_ds::protos::evm::Apply>) -> Result<()> {
+    fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm::Apply>) -> Result<()> {
         for apply in applys {
             match apply {
                 Apply::Delete { .. } => {
