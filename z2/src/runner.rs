@@ -36,8 +36,8 @@ impl Process {
     ) -> Result<Process> {
         let mut cmd = Command::new("target/debug/zilliqa");
         cmd.arg(key);
-        cmd.arg("--config-file");
-        cmd.arg(Setup::config_path(index));
+        // cmd.arg("--config-file");
+        // cmd.arg(Setup::config_path(index));
         if !rpc {
             cmd.arg("--no-jsonrpc");
         }

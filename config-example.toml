@@ -1,0 +1,11 @@
+[[nodes]]
+p2p_port = 0
+json_rpc_port = 4201
+eth_chain_id = 0x8001
+consensus_timeout = { secs = 5, nanos = 0 }
+
+[[nodes]]
+p2p_port = 0
+json_rpc_port = 4202
+eth_chain_id = 0x8002
+consensus_timeout = { secs = 5, nanos = 0 }

@@ -13,6 +13,7 @@ use opentelemetry::runtime;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use tokio::{task::JoinSet, time::Duration};
 
+use tracing::{debug, info};
 use zilliqa::{cfg::Config, crypto::SecretKey, node_launcher::NodeLauncher};
 
 #[derive(Parser, Debug)]
@@ -64,38 +65,25 @@ async fn main() -> Result<()> {
             .build()?;
     };
 
-    // TODO: proper multi-node config!!
-    // let mut shard_config = config.clone();
-    // // shard_config.p2p_port += 1;
-    // shard_config.json_rpc_port += 1;
-    // shard_config.eth_chain_id += 1;
-
-    println!("a");
-    let mut main_shard_node = NodeLauncher::new(args.secret_key, config)?;
-    // let mut shard_node = NodeLauncher::new(args.secret_key, shard_config)?;
-
-    println!("b");
-    if !args.no_jsonrpc {
-        let handle = main_shard_node.launch_rpc_server().await?;
-        tokio::spawn(handle.stopped());
-
-        // println!("c");
-        // let handle = shard_node.launch_rpc_server().await?;
-        // tokio::spawn(handle.stopped());
-        // println!("d");
+    let mut task_set = JoinSet::new();
+    info!("Starting {} nodes...", config.nodes.len());
+    for node_config in config.nodes {
+        info!("Starting node for chain ID {}", node_config.eth_chain_id);
+        let mut node = NodeLauncher::new(args.secret_key, node_config)?;
+        if !args.no_jsonrpc {
+            debug!(
+                "Starting json_rpc server for chain ID {} at port {}",
+                node.config.eth_chain_id, node.config.json_rpc_port
+            );
+            let handle = node.launch_rpc_server().await?;
+            tokio::spawn(handle.stopped());
+        }
+        task_set.spawn(async move { node.start_p2p_node().await });
     }
 
-    let mut task_set = JoinSet::new();
-    task_set.spawn(async move { main_shard_node.start_p2p_node().await });
-    println!("e");
-    // task_set.spawn(async move { shard_node.start_p2p_node().await });
-    println!("f");
     while let Some(res) = task_set.join_next().await {
-        println!("__g");
         println!("{:?}", res);
         res??;
-        println!("__g1");
     }
-    println!("h");
     Ok(())
 }

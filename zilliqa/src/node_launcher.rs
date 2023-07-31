@@ -10,7 +10,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     api,
-    cfg::Config,
+    cfg::NodeConfig,
     crypto::{NodePublicKey, SecretKey},
     networking::{request_response, MessageCodec, MessageProtocol, ProtocolSupport},
     node,
@@ -70,6 +70,7 @@ struct Behaviour {
 
 pub struct NodeLauncher {
     pub node: Arc<Mutex<Node>>,
+    pub config: NodeConfig,
     pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
     pub secret_key: SecretKey,
     pub peer_id: PeerId,
@@ -79,11 +80,10 @@ pub struct NodeLauncher {
     pub reset_timeout_receiver: UnboundedReceiverStream<()>,
     rpc_launched: bool,
     node_launched: bool,
-    config: Config,
 }
 
 impl NodeLauncher {
-    pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
+    pub fn new(secret_key: SecretKey, config: NodeConfig) -> Result<Self> {
         let (message_sender, message_receiver) = mpsc::unbounded_channel();
         let message_receiver = UnboundedReceiverStream::new(message_receiver);
         let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
@@ -143,7 +143,7 @@ impl NodeLauncher {
             .allow_origin(Any)
             .allow_headers([header::CONTENT_TYPE]);
         let middleware = tower::ServiceBuilder::new().layer(cors);
-        let port = self.node.lock().unwrap().config.json_rpc_port;
+        let port = self.config.json_rpc_port;
         let server = jsonrpsee::server::ServerBuilder::new()
             .set_middleware(middleware)
             .build((Ipv4Addr::UNSPECIFIED, port))

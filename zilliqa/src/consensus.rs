@@ -10,7 +10,7 @@ use sled::{Db, Tree};
 use tracing::{debug, trace};
 
 use crate::{
-    cfg::Config,
+    cfg::NodeConfig,
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
     exec::TouchedAddressEventListener,
     exec::TransactionApplyResult,
@@ -61,7 +61,7 @@ pub struct Validator {
 #[derive(Debug)]
 pub struct Consensus {
     secret_key: SecretKey,
-    config: Config,
+    config: NodeConfig,
     committee: Vec<Validator>,
     block_headers: Tree,
     canonical_block_numbers: Tree,
@@ -91,7 +91,7 @@ pub struct Consensus {
 }
 
 impl Consensus {
-    pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
+    pub fn new(secret_key: SecretKey, config: NodeConfig) -> Result<Self> {
         let validator = Validator {
             public_key: secret_key.node_public_key(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),

@@ -1,4 +1,5 @@
 use crate::{
+    cfg::NodeConfig,
     message::BlockNumber,
     state::{SignedTransaction, TransactionReceipt},
 };
@@ -11,7 +12,6 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::info;
 
 use crate::{
-    cfg::Config,
     consensus::Consensus,
     crypto::{Hash, NodePublicKey, SecretKey},
     message::{Block, BlockRequest, BlockResponse, Message, Proposal},
@@ -34,7 +34,7 @@ use crate::{
 /// Successfully executed transactions are added to `transactions` so they can be returned via APIs.
 #[derive(Debug)]
 pub struct Node {
-    pub config: Config,
+    pub config: NodeConfig,
     peer_id: PeerId,
     message_sender: UnboundedSender<(Option<PeerId>, Message)>,
     reset_timeout: UnboundedSender<()>,
@@ -43,7 +43,7 @@ pub struct Node {
 
 impl Node {
     pub fn new(
-        config: Config,
+        config: NodeConfig,
         secret_key: SecretKey,
         message_sender: UnboundedSender<(Option<PeerId>, Message)>,
         reset_timeout: UnboundedSender<()>,

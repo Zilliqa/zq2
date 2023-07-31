@@ -35,7 +35,7 @@ use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::trace;
-use zilliqa::{cfg::Config, crypto::SecretKey, message::Message, node::Node};
+use zilliqa::{cfg::NodeConfig, crypto::SecretKey, message::Message, node::Node};
 
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
 // type
@@ -59,11 +59,11 @@ fn node(
     std::mem::forget(reset_timeout_receiver);
 
     let node = Node::new(
-        Config {
+        NodeConfig {
             data_dir: datadir
                 .as_ref()
                 .map(|d| d.path().to_str().unwrap().to_string()),
-            ..Config::default()
+            ..NodeConfig::default()
         },
         secret_key,
         message_sender,
