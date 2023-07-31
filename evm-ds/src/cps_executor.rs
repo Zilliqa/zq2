@@ -81,7 +81,7 @@ impl<'a, B: Backend> CpsExecutor<'a, B> {
     pub fn execute(
         &mut self,
         runtime: &mut Runtime,
-        feedback: Option<EvmProto::Continuation>,
+        feedback: Option<EvmProto::ContinuationFb>,
     ) -> CpsReason {
         if self.enable_cps {
             if let Err(r) = self.apply_feedback(runtime, feedback) {
@@ -90,8 +90,6 @@ impl<'a, B: Backend> CpsExecutor<'a, B> {
                 )));
             }
         }
-
-        //runtime.machine.step()
 
         match runtime.run(self) {
             Capture::Exit(s) => CpsReason::NormalExit(s),
@@ -105,7 +103,7 @@ impl<'a, B: Backend> CpsExecutor<'a, B> {
     fn apply_feedback(
         &mut self,
         runtime: &mut Runtime,
-        feedback: Option<EvmProto::Continuation>,
+        feedback: Option<EvmProto::ContinuationFb>,
     ) -> Result<(), evm::ExitError> {
         if let Some(feedback) = feedback {
             // Sputnik places empty H256 value on a stack before returning with a trap

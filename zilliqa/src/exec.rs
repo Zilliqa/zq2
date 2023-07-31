@@ -8,12 +8,10 @@ use std::{
 use crate::evm_backend::EvmBackend;
 use anyhow::Result;
 use ethabi::Token;
-use evm_ds::evm::{backend::Backend, tracing::EventListener};
-use evm_ds::evm_server_run::EvmCallArgs;
-use evm_ds::protos::evm::*;
 use evm_ds::{
-    continuations::Continuations,
+    evm::{backend::Backend, tracing::EventListener},
     evm_server_run::{calculate_contract_address, run_evm_impl_direct},
+    protos::evm as EvmProto,
 };
 use primitive_types::{H160, U256};
 use tracing::{error, info};
@@ -97,7 +95,7 @@ pub struct TransactionApplyResult {
     /// If the transaction was a contract creation, the address of the resulting contract.
     pub contract_address: Option<Address>,
     /// The logs emitted by the transaction execution.
-    pub logs: Vec<Log>,
+    pub logs: Vec<EvmProto::Log>,
 }
 
 impl State {
@@ -115,18 +113,17 @@ impl State {
         to_addr: Option<Address>,
         _gas_price: u128,
         gas_limit: u64,
-        amount: u128,
+        _amount: u128,
         payload: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
-    ) -> Result<(Vec<Log>, EvmResult, Option<H160>)> {
-        let _apparent_value: U256 = amount.into();
+    ) -> Result<(Vec<EvmProto::Log>, EvmProto::EvmResult, Option<H160>)> {
         let caller = from_addr;
         let gas_scaling_factor = 1;
         let estimate = false;
         let is_static = false;
         let context = "".to_string();
-        let continuations: Arc<Mutex<Continuations>> = Default::default();
+        let continuations: Arc<Mutex<EvmProto::Continuations>> = Default::default();
         let account = self
             .get_account(to_addr.unwrap_or(Address::ZERO))
             .unwrap_or_default();
@@ -138,11 +135,6 @@ impl State {
 
         let mut backend = EvmBackend::new(self, U256::zero(), caller.0, chain_id, current_block);
 
-        if Address::is_balance_transfer(Address(to)) {
-            // todo: can probably remove this.
-            code = contracts::native_token::CODE.clone();
-        }
-
         // If is contract creation
         if to_addr.is_none() {
             code = data;
@@ -151,7 +143,7 @@ impl State {
             created_contract_addr = Some(to);
         }
 
-        let mut continuation_stack: Vec<EvmCallArgs> = vec![EvmCallArgs {
+        let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![EvmProto::EvmCallArgs {
             address: to,
             code,
             data,
@@ -183,19 +175,21 @@ impl State {
             backend.apply_update(to_addr, result.take_apply());
 
             if result.has_trap() {
-                let mut cont = Continuation::new(continuations.lock().unwrap().last_created());
+                let mut cont =
+                    EvmProto::ContinuationFb::new(continuations.lock().unwrap().last_created());
 
                 match result.trap_data.unwrap() {
-                    TrapData::Create(_) => {
+                    EvmProto::TrapData::Create(_) => {
                         panic!("create trap not implemented")
                     }
-                    TrapData::Call(call) => {
-                        cont.feedback_type = Type::Call;
-                        cont.feedback_data = Some(FeedbackData::CallData(Call {
-                            data: Vec::new(),
-                            memory_offset: call.memory_offset,
-                            offset_len: call.offset_len,
-                        }));
+                    EvmProto::TrapData::Call(call) => {
+                        cont.feedback_type = EvmProto::Type::Call;
+                        cont.feedback_data =
+                            Some(EvmProto::FeedbackData::CallData(EvmProto::Call {
+                                data: Vec::new(),
+                                memory_offset: call.memory_offset,
+                                offset_len: call.offset_len,
+                            }));
 
                         call_args.node_continuation = Some(cont); // todo: move this.
 
@@ -207,12 +201,12 @@ impl State {
                             U256::zero()
                         };
 
-                        let call_args_shim: Option<EvmCallArgs> = if !value.is_zero() {
+                        let call_args_shim: Option<EvmProto::EvmCallArgs> = if !value.is_zero() {
                             let balance_data = contracts::native_token::SET_BALANCE
                                 .encode_input(&[Token::Address(call_addr), Token::Uint(value)])
                                 .unwrap();
 
-                            Some(EvmCallArgs {
+                            Some(EvmProto::EvmCallArgs {
                                 caller: Address::ZERO.0,
                                 address: Address::NATIVE_TOKEN.0,
                                 code: contracts::native_token::CODE.clone(),
@@ -232,7 +226,7 @@ impl State {
                         let code_next = backend.code(call_addr);
 
                         // Set up the next continuation, adjust the relevant parameters
-                        let call_args_next = EvmCallArgs {
+                        let call_args_next = EvmProto::EvmCallArgs {
                             address: call_addr,
                             code: code_next,
                             data: call_data_next,
@@ -265,7 +259,7 @@ impl State {
 
                 let old_calldata = prior.node_continuation.as_mut().unwrap().get_calldata();
                 prior.node_continuation.as_mut().unwrap().feedback_data =
-                    Some(FeedbackData::CallData(Call {
+                    Some(EvmProto::FeedbackData::CallData(EvmProto::Call {
                         data: result.return_value.clone(),
                         ..*old_calldata
                     }));
@@ -350,10 +344,10 @@ impl State {
     fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm::Apply>) -> Result<()> {
         for apply in applys {
             match apply {
-                Apply::Delete { .. } => {
+                EvmProto::Apply::Delete { .. } => {
                     panic!("We have a delete here");
                 }
-                Apply::Modify {
+                EvmProto::Apply::Modify {
                     address,
                     balance: _,
                     nonce: _,
@@ -392,8 +386,6 @@ impl State {
         let data = contracts::native_token::BALANCE_OF
             .encode_input(&[Token::Address(address.0)])
             .unwrap();
-
-        println!("making request for native balance!");
 
         let balance = self.call_contract(
             Address::ZERO,

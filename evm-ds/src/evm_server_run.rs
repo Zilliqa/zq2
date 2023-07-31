@@ -15,13 +15,11 @@ use tracing::{error, info, trace};
 
 use primitive_types::*;
 
-use crate::continuations::Continuations;
 use crate::cps_executor::{CpsCallInterrupt, CpsCreateInterrupt, CpsExecutor, CpsReason};
 use crate::precompiles::get_precompiles;
 use crate::pretty_printer::log_evm_result;
 
 use crate::protos::evm as EvmProto;
-use crate::protos::evm::*;
 
 use crate::tracing_logging::{CallContext, LoggingEventListener};
 
@@ -33,9 +31,9 @@ fn build_exit_result<B: Backend>(
     exit_reason: evm::ExitReason,
     remaining_gas: u64,
     is_static: bool,
-    continuations: Arc<Mutex<Continuations>>,
+    continuations: Arc<Mutex<EvmProto::Continuations>>,
     _scaling_factor: Option<u64>,
-) -> EvmResult {
+) -> EvmProto::EvmResult {
     let mut result = EvmProto::EvmResult {
         exit_reason: exit_reason.into(),
         return_value: runtime.machine().return_value(),
@@ -44,6 +42,8 @@ fn build_exit_result<B: Backend>(
 
     let (state_apply, logs) = executor.into_state().deconstruct();
 
+    // Note: If this is a static call, we do not want to modify other continuations' state
+    // but if not, then we need to update the state of other continuations if relevant
     result.apply = state_apply
         .into_iter()
         .map(|apply| match apply {
@@ -66,7 +66,7 @@ fn build_exit_result<B: Backend>(
                             .lock()
                             .unwrap()
                             .update_states(address, k, v, is_static);
-                        Storage { key: k, value: v }
+                        EvmProto::Storage { key: k, value: v }
                     })
                     .collect(),
                 reset_storage,
@@ -89,7 +89,7 @@ fn build_call_result<B: Backend>(
     is_static: bool,
     cont_id: u64,
     _scaling_factor: Option<u64>,
-) -> EvmResult {
+) -> EvmProto::EvmResult {
     let mut result = EvmProto::EvmResult {
         return_value: runtime.machine().return_value(),
         ..Default::default()
@@ -113,7 +113,7 @@ fn build_call_result<B: Backend>(
                 code: code.unwrap_or_default(),
                 storage: storage
                     .into_iter()
-                    .map(|(key, value)| Storage { key, value })
+                    .map(|(key, value)| EvmProto::Storage { key, value })
                     .collect(),
                 reset_storage,
             },
@@ -124,7 +124,7 @@ fn build_call_result<B: Backend>(
     result.tx_trace = trace.as_string();
     result.remaining_gas = remaining_gas;
 
-    result.trap_data = Some(TrapData::Call(CallTrap {
+    result.trap_data = Some(EvmProto::TrapData::Call(EvmProto::CallTrap {
         context: EvmProto::Context {
             destination: interrupt.context.address,
             caller: interrupt.context.caller,
@@ -150,8 +150,8 @@ fn build_create_result(
     trace: &LoggingEventListener,
     remaining_gas: u64,
     cont_id: u64,
-) -> EvmResult {
-    let trap_data = Some(TrapData::Create(CreateTrap {
+) -> EvmProto::EvmResult {
+    let trap_data = Some(EvmProto::TrapData::Create(EvmProto::CreateTrap {
         caller: interrupt.caller,
         scheme: interrupt.scheme,
         value: interrupt.value,
@@ -172,15 +172,19 @@ fn build_create_result(
     result
 }
 
-fn handle_panic(_trace: String, _remaining_gas: u64, _reason: &str) -> EvmProto::EvmResult {
-    // todo: this.
-
-    EvmProto::EvmResult::default()
+fn handle_panic(trace: String, remaining_gas: u64, reason: &str) -> EvmProto::EvmResult {
+    EvmProto::EvmResult {
+        exit_reason: EvmProto::ExitReasonCps::Fatal(evm::ExitFatal::Other(
+            reason.to_string().into(),
+        )),
+        tx_trace: trace,
+        remaining_gas,
+        ..Default::default()
+    }
 }
 
 // Convenience fn to hide the evm internals and just
 // let you calculate contract address as easily as possible
-#[allow(dead_code)]
 pub fn calculate_contract_address(address: H160, backend: &impl Backend) -> H160 {
     let config = evm::Config {
         estimate: false,
@@ -196,27 +200,10 @@ pub fn calculate_contract_address(address: H160, backend: &impl Backend) -> H160
     executor.get_create_address(CreateScheme::Legacy { caller: address })
 }
 
-#[derive(Clone, Debug)]
-pub struct EvmCallArgs {
-    pub address: H160,
-    pub code: Vec<u8>,
-    pub data: Vec<u8>,
-    pub apparent_value: U256,
-    pub gas_limit: u64,
-    pub caller: H160,
-    pub gas_scaling_factor: u64,
-    pub scaling_factor: Option<u64>,
-    pub estimate: bool,
-    pub is_static: bool,
-    pub evm_context: String,
-    pub node_continuation: Option<EvmProto::Continuation>,
-    pub continuations: Arc<Mutex<Continuations>>,
-    pub enable_cps: bool,
-    pub tx_trace_enabled: bool,
-    pub tx_trace: String,
-}
-
-pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs, backend: &B) -> EvmResult {
+pub fn run_evm_impl_direct<B: Backend>(
+    args: EvmProto::EvmCallArgs,
+    backend: &B,
+) -> EvmProto::EvmResult {
     trace!(
         origin = ?backend.origin(),
         address = ?args.address,

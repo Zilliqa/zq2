@@ -1,8 +1,8 @@
 use crate::evm::ExitReason;
-use crate::protos::evm as EvmProto;
-use crate::protos::evm::*;
+use crate::protos::evm::ExitReasonCps;
 
-impl From<evm::ExitReason> for EvmProto::ExitReasonCps {
+// Convert from normal evm to cps evm (traps are set seperately)
+impl From<evm::ExitReason> for ExitReasonCps {
     fn from(exit_reason: evm::ExitReason) -> Self {
         match exit_reason {
             ExitReason::Succeed(s) => ExitReasonCps::Succeed(s),

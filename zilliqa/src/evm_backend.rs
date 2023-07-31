@@ -1,4 +1,8 @@
-//! Manages execution of transactions on state.
+//! The evm backend is what the evm sees when it is executing. It is a wrapper around the state
+//! and in this implementation, we also cache changes to the state so that we can return them
+//! all as one set of changes at the end of the transaction execution.
+//! apply_update will be called for each continuation, and at the end we generate the EvmResult via
+//! get_result
 
 use evm_ds::protos::evm::{Apply, EvmResult, Storage};
 use std::collections::HashMap;
@@ -152,10 +156,6 @@ impl<'a> Backend for EvmBackend<'a> {
     fn block_difficulty(&self) -> U256 {
         0.into()
     }
-
-    //fn block_randomness(&self) -> Option<H256> { // Put note for PR
-    //    None
-    //}
 
     fn block_gas_limit(&self) -> U256 {
         0.into()

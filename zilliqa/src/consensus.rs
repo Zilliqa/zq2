@@ -7,7 +7,7 @@ use itertools::Itertools;
 use libp2p::PeerId;
 use lru::LruCache;
 use sled::{Db, Tree};
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use crate::{
     cfg::Config,
@@ -723,11 +723,6 @@ impl Consensus {
 
     pub fn add_block(&mut self, block: Block) -> Result<()> {
         let hash = block.hash();
-
-        if block.header.view == 4 {
-            info!(?hash, ?block.header.view, "chain appears to be running");
-        }
-
         debug!(?hash, ?block.header.view, "added block");
         self.block_headers
             .insert(hash.as_bytes(), bincode::serialize(&block.header)?)?;
