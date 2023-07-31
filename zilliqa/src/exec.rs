@@ -8,25 +8,21 @@ use std::{
 use crate::evm_backend::EvmBackend;
 use anyhow::Result;
 use ethabi::Token;
-use evm_ds::evm::{
-    backend::{Backend, Basic},
-    tracing::EventListener,
-};
+use evm_ds::evm::{backend::Backend, tracing::EventListener};
 use evm_ds::evm_server_run::EvmCallArgs;
-use evm_ds::protos::Evm::*;
+use evm_ds::protos::evm::*;
 use evm_ds::{
     continuations::Continuations,
     evm_server_run::{calculate_contract_address, run_evm_impl_direct},
 };
-use primitive_types::{H160, H256, U256};
-use tracing::{error, info, trace};
+use primitive_types::{H160, U256};
+use tracing::{error, info};
 
 use crate::state::SignedTransaction;
 use crate::{
     contracts,
     message::BlockHeader,
     state::{Address, State},
-    time::SystemTime,
 };
 
 #[derive(Default)]
@@ -123,9 +119,8 @@ impl State {
         payload: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
-        //backend: EvmBackend,
     ) -> Result<(Vec<Log>, EvmResult, Option<H160>)> {
-        let apparent_value: U256 = amount.into();
+        let _apparent_value: U256 = amount.into();
         let caller = from_addr;
         let gas_scaling_factor = 1;
         let estimate = false;
@@ -158,8 +153,8 @@ impl State {
 
         let mut continuation_stack: Vec<EvmCallArgs> = vec![EvmCallArgs {
             address: to,
-            code: code.clone(),
-            data: data.clone(),
+            code,
+            data,
             apparent_value: U256::zero(),
             gas_limit,
             caller: caller.0,
@@ -167,7 +162,7 @@ impl State {
             scaling_factor: None,
             estimate,
             is_static,
-            evm_context: context.clone(),
+            evm_context: context,
             node_continuation: None,
             continuations: continuations.clone(),
             enable_cps: true,
@@ -237,7 +232,7 @@ impl State {
                         let code_next = backend.code(call_addr);
 
                         // Set up the next continuation, adjust the relevant parameters
-                        let mut call_args_next = EvmCallArgs {
+                        let call_args_next = EvmCallArgs {
                             address: call_addr,
                             code: code_next,
                             data: call_data_next,
@@ -312,14 +307,14 @@ impl State {
         );
 
         match result {
-            Ok((mut logs, result, contract_addr)) => {
+            Ok((logs, result, contract_addr)) => {
                 // Apply the state changes only if success
                 let success = result.succeeded();
 
                 if success {
                     if let Some(contract_addr) = contract_addr {
                         let mut acct = self.get_account(Address(contract_addr)).unwrap_or_default();
-                        acct.code = result.return_value.clone().to_vec();
+                        acct.code = result.return_value.to_vec();
                         self.save_account(Address(contract_addr), acct)?;
                     }
 
@@ -352,7 +347,7 @@ impl State {
     }
 
     // Apply the changes the EVM is requesting for
-    fn apply_delta<'a>(&mut self, applys: Vec<evm_ds::protos::Evm::Apply>) -> Result<()> {
+    fn apply_delta<'a>(&mut self, applys: Vec<evm_ds::protos::evm::Apply>) -> Result<()> {
         for apply in applys {
             match apply {
                 Apply::Delete { .. } => {
@@ -360,8 +355,8 @@ impl State {
                 }
                 Apply::Modify {
                     address,
-                    balance,
-                    nonce,
+                    balance: _,
+                    nonce: _,
                     code,
                     storage,
                     reset_storage,
@@ -433,7 +428,7 @@ impl State {
         );
 
         match result {
-            Ok((lgs, result, _)) => {
+            Ok((_lgs, result, _)) => {
                 // Apply the state changes only if success
                 let success = result.succeeded();
 
@@ -468,6 +463,6 @@ impl State {
             current_block,
         );
 
-        result.map(|ret| ret.1.return_value.into())
+        result.map(|ret| ret.1.return_value)
     }
 }

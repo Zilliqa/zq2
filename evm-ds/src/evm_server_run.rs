@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use std::ops::Deref;
 use std::panic::{self, AssertUnwindSafe};
 use std::rc::Rc;
@@ -12,7 +11,7 @@ use evm::{
     CreateScheme, Handler,
 };
 use evm::{Machine, Runtime};
-use tracing::{debug, error, info, trace};
+use tracing::{error, info, trace};
 
 use primitive_types::*;
 
@@ -21,8 +20,8 @@ use crate::cps_executor::{CpsCallInterrupt, CpsCreateInterrupt, CpsExecutor, Cps
 use crate::precompiles::get_precompiles;
 use crate::pretty_printer::log_evm_result;
 
-use crate::protos::Evm as EvmProto;
-use crate::protos::Evm::*;
+use crate::protos::evm as EvmProto;
+use crate::protos::evm::*;
 
 use crate::tracing_logging::{CallContext, LoggingEventListener};
 
@@ -35,19 +34,17 @@ fn build_exit_result<B: Backend>(
     remaining_gas: u64,
     is_static: bool,
     continuations: Arc<Mutex<Continuations>>,
-    scaling_factor: Option<u64>,
+    _scaling_factor: Option<u64>,
 ) -> EvmResult {
     let mut result = EvmResult::default();
     result.exit_reason = exit_reason.into();
-    result.return_value = runtime.machine().return_value().clone();
+    result.return_value = runtime.machine().return_value();
     let (state_apply, logs) = executor.into_state().deconstruct();
 
     result.apply = state_apply
         .into_iter()
         .map(|apply| match apply {
-            Apply::Delete { address } => EvmProto::Apply::Delete {
-                address: address.into(),
-            },
+            Apply::Delete { address } => EvmProto::Apply::Delete { address },
             Apply::Modify {
                 address,
                 basic,
@@ -55,7 +52,7 @@ fn build_exit_result<B: Backend>(
                 storage,
                 reset_storage,
             } => EvmProto::Apply::Modify {
-                address: address.into(),
+                address,
                 balance: basic.balance,
                 nonce: basic.nonce,
                 code: code.unwrap_or_default(),
@@ -88,18 +85,16 @@ fn build_call_result<B: Backend>(
     remaining_gas: u64,
     is_static: bool,
     cont_id: u64,
-    scaling_factor: Option<u64>,
+    _scaling_factor: Option<u64>,
 ) -> EvmResult {
     let mut result = EvmResult::default();
-    result.return_value = runtime.machine().return_value().clone();
+    result.return_value = runtime.machine().return_value();
 
     let (state_apply, _) = executor.into_state().deconstruct();
     result.apply = state_apply
         .into_iter()
         .map(|apply| match apply {
-            Apply::Delete { address } => EvmProto::Apply::Delete {
-                address: address.into(),
-            },
+            Apply::Delete { address } => EvmProto::Apply::Delete { address },
             Apply::Modify {
                 address,
                 basic,
@@ -107,7 +102,7 @@ fn build_call_result<B: Backend>(
                 storage,
                 reset_storage,
             } => EvmProto::Apply::Modify {
-                address: address.into(),
+                address,
                 balance: basic.balance,
                 nonce: basic.nonce,
                 code: code.unwrap_or_default(),
@@ -126,18 +121,18 @@ fn build_call_result<B: Backend>(
 
     result.trap_data = Some(TrapData::Call(CallTrap {
         context: EvmProto::Context {
-            destination: interrupt.context.address.into(),
-            caller: interrupt.context.caller.into(),
-            apparent_value: interrupt.context.apparent_value.into(),
+            destination: interrupt.context.address,
+            caller: interrupt.context.caller,
+            apparent_value: interrupt.context.apparent_value,
         },
         transfer: interrupt.transfer,
-        callee_address: interrupt.code_address.into(),
-        call_data: interrupt.input.into(),
+        callee_address: interrupt.code_address,
+        call_data: interrupt.input,
         is_static: interrupt.is_static || is_static,
         is_precompile: interrupt.is_precompile,
         target_gas: interrupt.target_gas.unwrap_or(u64::MAX),
-        memory_offset: interrupt.memory_offset.into(),
-        offset_len: interrupt.offset_len.into(),
+        memory_offset: interrupt.memory_offset,
+        offset_len: interrupt.offset_len,
     }));
 
     result.continuation_id = cont_id;
@@ -153,17 +148,17 @@ fn build_create_result(
 ) -> EvmResult {
     let mut result = EvmResult::default();
 
-    result.return_value = runtime.machine().return_value().clone();
+    result.return_value = runtime.machine().return_value();
     result.exit_reason = EvmProto::ExitReasonCps::Trap(EvmProto::Trap::Create);
 
     result.tx_trace = trace.as_string();
     result.remaining_gas = remaining_gas;
 
     result.trap_data = Some(TrapData::Create(CreateTrap {
-        caller: interrupt.caller.into(),
+        caller: interrupt.caller,
         scheme: interrupt.scheme,
-        value: interrupt.value.into(),
-        call_data: interrupt.init_code.into(),
+        value: interrupt.value,
+        call_data: interrupt.init_code,
         target_gas: interrupt.target_gas.unwrap_or(u64::MAX),
     }));
 
@@ -173,8 +168,8 @@ fn build_create_result(
 
 fn handle_panic(_trace: String, _remaining_gas: u64, _reason: &str) -> EvmProto::EvmResult {
     // todo: this.
-    let mut result = EvmProto::EvmResult::default();
-    result
+
+    EvmProto::EvmResult::default()
 }
 
 // Convenience fn to hide the evm internals and just
@@ -435,8 +430,4 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs, backend: &B) -> EvmRes
     );
 
     result
-}
-
-pub(crate) fn scale_eth_to_zil(eth: U256, zil_scaling_factor: u64) -> U256 {
-    eth / zil_scaling_factor
 }

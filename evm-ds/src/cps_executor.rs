@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::protos::Evm as EvmProto;
+use crate::protos::evm as EvmProto;
 use core::cmp::min;
 use evm::executor::stack::{
     MemoryStackState, PrecompileFailure, PrecompileOutput, PrecompileOutputType, PrecompileSet,
@@ -125,11 +125,11 @@ impl<'a, B: Backend> CpsExecutor<'a, B> {
                 runtime.machine_mut().stack_mut().push(eth_address.into())?;
             } else {
                 *runtime.return_data_buffer() = feedback.get_calldata().data.clone();
-                let offset_len: U256 = U256::from(feedback.get_calldata().offset_len);
+                let offset_len: U256 = feedback.get_calldata().offset_len;
                 let target_len = min(offset_len, U256::from(runtime.return_data_buffer().len()));
                 if feedback.succeeded {
                     match runtime.machine_mut().memory_mut().copy_large(
-                        U256::from(feedback.get_calldata().memory_offset),
+                        feedback.get_calldata().memory_offset,
                         U256::zero(),
                         target_len,
                         feedback.get_calldata().data.as_slice(),
@@ -149,7 +149,7 @@ impl<'a, B: Backend> CpsExecutor<'a, B> {
                     }
                 } else {
                     let _ = runtime.machine_mut().memory_mut().copy_large(
-                        U256::from(feedback.get_calldata().memory_offset),
+                        feedback.get_calldata().memory_offset,
                         U256::zero(),
                         target_len,
                         feedback.get_calldata().data.as_slice(),

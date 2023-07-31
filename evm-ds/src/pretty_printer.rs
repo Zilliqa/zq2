@@ -1,8 +1,4 @@
-use primitive_types::{H160, H256, U256};
-use protobuf::Message;
-use std::fmt::Write;
-
-use crate::protos::{Evm as EvmProto, ScillaMessage};
+use crate::protos::evm as EvmProto;
 
 pub fn log_evm_result(result: &EvmProto::EvmResult) -> String {
     format!("{:?}", result)

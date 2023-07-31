@@ -1,16 +1,14 @@
 //! Manages execution of transactions on state.
 
-use evm_ds::protos::Evm;
-use evm_ds::protos::Evm::{Apply, EvmResult, Storage};
+use evm_ds::protos::evm::{Apply, EvmResult, Storage};
 use std::collections::HashMap;
 
 use evm_ds::evm::backend::{Backend, Basic};
 
 use primitive_types::{H160, H256, U256};
-use tracing::{error, info, trace};
+use tracing::{error, trace};
 
 use crate::{
-    contracts,
     message::BlockHeader,
     state::{Account, Address, State},
     time::SystemTime,
@@ -45,19 +43,18 @@ impl<'a> EvmBackend<'a> {
 
     pub fn apply_update(
         &mut self,
-        to_addr: Option<Address>,
-        //applys: impl Iterator<Item = evm_ds::protos::Evm::Apply>,
-        applys: Vec<evm_ds::protos::Evm::Apply>,
+        _to_addr: Option<Address>,
+        applys: Vec<evm_ds::protos::evm::Apply>,
     ) {
         for apply in applys {
             match apply {
-                Apply::Delete { address } => {
+                Apply::Delete { address: _ } => {
                     panic!("Delete not implemented");
                 }
                 Apply::Modify {
                     address,
-                    balance,
-                    nonce,
+                    balance: _,
+                    nonce: _,
                     code,
                     storage,
                     reset_storage,
@@ -70,15 +67,16 @@ impl<'a> EvmBackend<'a> {
 
                     // Get or create the element in the cache, the account will be
                     // reflected but the storage will not.
-                    if !self.account_storage_cached.contains_key(&address) {
+                    if let std::collections::hash_map::Entry::Vacant(e) =
+                        self.account_storage_cached.entry(address)
+                    {
                         let account = self.state.get_account(address).unwrap_or_default();
-                        self.account_storage_cached
-                            .insert(address, (account, HashMap::new()));
+                        e.insert((account, HashMap::new()));
                     }
 
-                    let mut cache = self.account_storage_cached.get_mut(&address).unwrap();
-                    let mut account_cached = &mut cache.0;
-                    let mut storage_cached = &mut cache.1;
+                    let cache = self.account_storage_cached.get_mut(&address).unwrap();
+                    let account_cached = &mut cache.0;
+                    let storage_cached = &mut cache.1;
 
                     if !code.is_empty() {
                         account_cached.code = code.to_vec();
@@ -110,11 +108,11 @@ impl<'a> EvmBackend<'a> {
                 reset_storage: false, // todo: this.
             });
         }
-        let ret = EvmResult {
+
+        EvmResult {
             apply: applys,
             ..Default::default()
-        };
-        ret
+        }
     }
 }
 

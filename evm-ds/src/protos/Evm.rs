@@ -1,6 +1,6 @@
 pub use crate::evm::executor::stack::Log;
 use crate::evm::CreateScheme;
-use evm::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed, Transfer};
+use evm::{ExitError, ExitFatal, ExitRevert, ExitSucceed, Transfer};
 use primitive_types::{H160, H256, U256};
 
 #[derive(Debug)]
@@ -200,17 +200,11 @@ pub struct EvmResult {
 
 impl EvmResult {
     pub fn has_trap(&self) -> bool {
-        match self.exit_reason {
-            ExitReasonCps::Trap(_) => true,
-            _ => false,
-        }
+        matches!(self.exit_reason, ExitReasonCps::Trap(_))
     }
 
     pub fn succeeded(&self) -> bool {
-        match self.exit_reason {
-            ExitReasonCps::Succeed(_) => true,
-            _ => false,
-        }
+        matches!(self.exit_reason, ExitReasonCps::Succeed(_))
     }
 
     pub fn take_apply(&mut self) -> Vec<Apply> {

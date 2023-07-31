@@ -15,10 +15,9 @@ use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
 
 use anyhow::{anyhow, Result};
-use evm_ds::protos::Evm::Log;
+use evm_ds::protos::evm::Log;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
-use tracing::info;
 
 use crate::{contracts, crypto, db::SledDb};
 
