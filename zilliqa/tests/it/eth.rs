@@ -337,8 +337,9 @@ async fn eth_call(mut network: Network<'_>) {
         "tests/it/contracts/SetGetContractValue.sol",
         "SetGetContractValue",
         &wallet,
-        &mut network
-    ).await;
+        &mut network,
+    )
+    .await;
 
     network
         .run_until_async(

@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::evm_backend::EvmBackend;
 use anyhow::Result;
 use ethabi::Token;
 use evm_ds::evm::{
@@ -18,7 +19,6 @@ use evm_ds::{
     evm_server_run::{calculate_contract_address, run_evm_impl_direct},
 };
 use primitive_types::{H160, H256, U256};
-use crate::evm_backend::EvmBackend;
 use tracing::{error, info, trace};
 
 use crate::state::SignedTransaction;
@@ -125,7 +125,6 @@ impl State {
         current_block: BlockHeader,
         //backend: EvmBackend,
     ) -> Result<(Vec<Log>, EvmResult, Option<H160>)> {
-        self.mutex.lock();
         let apparent_value: U256 = amount.into();
         let caller = from_addr;
         let gas_scaling_factor = 1;
@@ -142,13 +141,7 @@ impl State {
         let mut code: Vec<u8> = account.code;
         let mut data: Vec<u8> = payload;
 
-        let mut backend = EvmBackend::new(
-            self,
-             U256::zero(),
-             caller.0,
-             chain_id,
-             current_block,
-        );
+        let mut backend = EvmBackend::new(self, U256::zero(), caller.0, chain_id, current_block);
 
         if Address::is_balance_transfer(Address(to)) {
             // todo: can probably remove this.
@@ -164,23 +157,23 @@ impl State {
         }
 
         let mut continuation_stack: Vec<EvmCallArgs> = vec![EvmCallArgs {
-                address: to,
-                code: code.clone(),
-                data: data.clone(),
-                apparent_value: U256::zero(),
-                gas_limit,
-                caller: caller.0,
-                gas_scaling_factor,
-                scaling_factor: None,
-                estimate,
-                is_static,
-                evm_context: context.clone(),
-                node_continuation: None,
-                continuations: continuations.clone(),
-                enable_cps: true,
-                tx_trace_enabled: false,
-                tx_trace: "".to_string(),
-            }];
+            address: to,
+            code: code.clone(),
+            data: data.clone(),
+            apparent_value: U256::zero(),
+            gas_limit,
+            caller: caller.0,
+            gas_scaling_factor,
+            scaling_factor: None,
+            estimate,
+            is_static,
+            evm_context: context.clone(),
+            node_continuation: None,
+            continuations: continuations.clone(),
+            enable_cps: true,
+            tx_trace_enabled: false,
+            tx_trace: "".to_string(),
+        }];
         let mut result;
 
         // Set the first continuation as our current context and then loop while there is still
@@ -198,28 +191,33 @@ impl State {
                 let mut cont = Continuation::new(continuations.lock().unwrap().last_created());
 
                 match result.trap_data.unwrap() {
-                    TrapData::Create(_) => { panic!("create trap not implemented")}
+                    TrapData::Create(_) => {
+                        panic!("create trap not implemented")
+                    }
                     TrapData::Call(call) => {
-
                         cont.feedback_type = Type::Call;
-                        cont.feedback_data = Some(FeedbackData::CallData(Call{data: Vec::new(), memory_offset: call.memory_offset, offset_len: call.offset_len}));
+                        cont.feedback_data = Some(FeedbackData::CallData(Call {
+                            data: Vec::new(),
+                            memory_offset: call.memory_offset,
+                            offset_len: call.offset_len,
+                        }));
 
                         call_args.node_continuation = Some(cont); // todo: move this.
 
                         let call_data_next = call.call_data;
-                        let call_addr: H160 =  call.callee_address;
-                        let value : U256 = if let Some(transfer) = call.transfer {
+                        let call_addr: H160 = call.callee_address;
+                        let value: U256 = if let Some(transfer) = call.transfer {
                             transfer.value
                         } else {
                             U256::zero()
                         };
 
-                        let call_args_shim : Option<EvmCallArgs> = if !value.is_zero() {
+                        let call_args_shim: Option<EvmCallArgs> = if !value.is_zero() {
                             let balance_data = contracts::native_token::SET_BALANCE
                                 .encode_input(&[Token::Address(call_addr), Token::Uint(value)])
                                 .unwrap();
 
-                            Some(EvmCallArgs{
+                            Some(EvmCallArgs {
                                 caller: Address::ZERO.0,
                                 address: Address::NATIVE_TOKEN.0,
                                 code: contracts::native_token::CODE.clone(),
@@ -229,7 +227,8 @@ impl State {
                                 continuations: continuations.clone(),
                                 node_continuation: None,
                                 evm_context: Default::default(),
-                                ..call_args})
+                                ..call_args
+                            })
                         } else {
                             None
                         };
@@ -238,16 +237,16 @@ impl State {
                         let code_next = backend.code(call_addr);
 
                         // Set up the next continuation, adjust the relevant parameters
-                        let mut call_args_next =
-                            EvmCallArgs{
-                                address: call_addr,
-                                code: code_next,
-                                data: call_data_next,
-                                tx_trace: Default::default(),
-                                continuations: continuations.clone(),
-                                node_continuation: None,
-                                evm_context: Default::default(),
-                                ..call_args};
+                        let mut call_args_next = EvmCallArgs {
+                            address: call_addr,
+                            code: code_next,
+                            data: call_data_next,
+                            tx_trace: Default::default(),
+                            continuations: continuations.clone(),
+                            node_continuation: None,
+                            evm_context: Default::default(),
+                            ..call_args
+                        };
 
                         // This is the paused execution, push it back
                         continuation_stack.push(call_args);
@@ -260,15 +259,21 @@ impl State {
                         if let Some(call_args_shim) = call_args_shim {
                             continuation_stack.push(call_args_shim);
                         }
-
                     }
                 }
-            } else if result.succeeded() && !continuation_stack.is_empty() && !backend.origin.is_zero()  {
+            } else if result.succeeded()
+                && !continuation_stack.is_empty()
+                && !backend.origin.is_zero()
+            {
                 // We need to let the continuation prior know the return result
                 let prior = continuation_stack.last_mut().unwrap();
 
                 let old_calldata = prior.node_continuation.as_mut().unwrap().get_calldata();
-                prior.node_continuation.as_mut().unwrap().feedback_data = Some(FeedbackData::CallData(Call{data: result.return_value.clone(), ..*old_calldata}));
+                prior.node_continuation.as_mut().unwrap().feedback_data =
+                    Some(FeedbackData::CallData(Call {
+                        data: result.return_value.clone(),
+                        ..*old_calldata
+                    }));
                 prior.node_continuation.as_mut().unwrap().succeeded = true;
                 prior.node_continuation.as_mut().unwrap().logs = result.logs.clone();
             }
@@ -318,7 +323,7 @@ impl State {
                         self.save_account(Address(contract_addr), acct)?;
                     }
 
-                    self.apply_delta( result.apply)?;
+                    self.apply_delta(result.apply)?;
                 }
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
@@ -347,17 +352,20 @@ impl State {
     }
 
     // Apply the changes the EVM is requesting for
-    fn apply_delta<'a>(
-        &mut self,
-        applys: Vec<evm_ds::protos::Evm::Apply>,
-    ) -> Result<()> {
-
+    fn apply_delta<'a>(&mut self, applys: Vec<evm_ds::protos::Evm::Apply>) -> Result<()> {
         for apply in applys {
             match apply {
-                Apply::Delete{..} => {
+                Apply::Delete { .. } => {
                     panic!("We have a delete here");
                 }
-                Apply::Modify{address, balance, nonce, code, storage, reset_storage} => {
+                Apply::Modify {
+                    address,
+                    balance,
+                    nonce,
+                    code,
+                    storage,
+                    reset_storage,
+                } => {
                     let address = Address(address);
                     let mut account = self.get_account(address).unwrap_or_default();
 
@@ -406,11 +414,7 @@ impl State {
         Ok(balance)
     }
 
-    pub fn set_native_balance(
-        &mut self,
-        address: Address,
-        amount: U256,
-    ) -> Result<()> {
+    pub fn set_native_balance(&mut self, address: Address, amount: U256) -> Result<()> {
         let data = contracts::native_token::SET_BALANCE
             .encode_input(&[Token::Address(address.0), Token::Uint(amount)])
             .unwrap();
@@ -434,7 +438,7 @@ impl State {
                 let success = result.succeeded();
 
                 if success {
-                    self.apply_delta( result.apply)?;
+                    self.apply_delta(result.apply)?;
                 }
 
                 Ok(())

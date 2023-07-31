@@ -1,12 +1,10 @@
 //! Manages execution of transactions on state.
 
-use std::collections::HashMap;
-use evm_ds::protos::Evm::{Apply, EvmResult, Storage};
 use evm_ds::protos::Evm;
+use evm_ds::protos::Evm::{Apply, EvmResult, Storage};
+use std::collections::HashMap;
 
-use evm_ds::{
-    evm::backend::{Backend, Basic},
-};
+use evm_ds::evm::backend::{Backend, Basic};
 
 use primitive_types::{H160, H256, U256};
 use tracing::{error, info, trace};
@@ -14,7 +12,7 @@ use tracing::{error, info, trace};
 use crate::{
     contracts,
     message::BlockHeader,
-    state::{Address, Account, State},
+    state::{Account, Address, State},
     time::SystemTime,
 };
 
@@ -28,7 +26,6 @@ pub struct EvmBackend<'a> {
 }
 
 impl<'a> EvmBackend<'a> {
-
     pub fn new(
         state: &'a State,
         gas_price: U256,
@@ -51,9 +48,8 @@ impl<'a> EvmBackend<'a> {
         to_addr: Option<Address>,
         //applys: impl Iterator<Item = evm_ds::protos::Evm::Apply>,
         applys: Vec<evm_ds::protos::Evm::Apply>,
-    )  {
+    ) {
         for apply in applys {
-
             match apply {
                 Apply::Delete { address } => {
                     panic!("Delete not implemented");
@@ -66,7 +62,6 @@ impl<'a> EvmBackend<'a> {
                     storage,
                     reset_storage,
                 } => {
-
                     let address = Address(address);
 
                     if reset_storage {
@@ -77,7 +72,8 @@ impl<'a> EvmBackend<'a> {
                     // reflected but the storage will not.
                     if !self.account_storage_cached.contains_key(&address) {
                         let account = self.state.get_account(address).unwrap_or_default();
-                        self.account_storage_cached.insert(address, (account, HashMap::new()));
+                        self.account_storage_cached
+                            .insert(address, (account, HashMap::new()));
                     }
 
                     let mut cache = self.account_storage_cached.get_mut(&address).unwrap();
@@ -95,21 +91,22 @@ impl<'a> EvmBackend<'a> {
             }
             // todo: delete.
         }
-
     }
 
     // Get the deltas from all of the operations so far
     pub fn get_result(self) -> EvmResult {
-        let mut applys : Vec<Apply> = vec![];
+        let mut applys: Vec<Apply> = vec![];
 
         for (addr, (acct, stor)) in self.account_storage_cached.into_iter() {
-
-            applys.push(Apply::Modify{
+            applys.push(Apply::Modify {
                 address: addr.0,
                 balance: U256::zero(),
                 nonce: U256::zero(),
                 code: acct.code,
-                storage: stor.into_iter().map(|(key, value)| Storage{key, value}).collect(),
+                storage: stor
+                    .into_iter()
+                    .map(|(key, value)| Storage { key, value })
+                    .collect(),
                 reset_storage: false, // todo: this.
             });
         }

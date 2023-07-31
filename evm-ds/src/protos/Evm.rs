@@ -1,7 +1,7 @@
-use primitive_types::{H160, H256, U256};
-use evm::{ExitSucceed, ExitError, ExitRevert, ExitFatal, ExitReason, Transfer};
 pub use crate::evm::executor::stack::Log;
 use crate::evm::CreateScheme;
+use evm::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed, Transfer};
+use primitive_types::{H160, H256, U256};
 
 #[derive(Debug)]
 pub struct EvmEvalExtras {
@@ -21,7 +21,9 @@ pub struct Storage {
 
 #[derive(Debug)]
 pub enum Apply {
-    Delete { address: H160 },
+    Delete {
+        address: H160,
+    },
     Modify {
         address: H160,
         balance: U256,
@@ -54,9 +56,7 @@ pub struct Continuation {
     pub succeeded: bool,
 }
 
-
 impl Continuation {
-
     pub fn new(id: u64) -> Self {
         Continuation {
             id,
@@ -114,12 +114,14 @@ pub enum ExitReasonCps {
     Revert(ExitRevert),
     Fatal(ExitFatal),
     Trap(Trap), // todo: trap raname
-    //ExitSucceedX,
+                //ExitSucceedX,
 }
 
 impl Default for ExitReasonCps {
     fn default() -> Self {
-        ExitReasonCps::Fatal(ExitFatal::Other("Defaulted ExitReasonCps used".to_string().into()))
+        ExitReasonCps::Fatal(ExitFatal::Other(
+            "Defaulted ExitReasonCps used".to_string().into(),
+        ))
     }
 }
 
@@ -199,7 +201,7 @@ pub struct EvmResult {
 impl EvmResult {
     pub fn has_trap(&self) -> bool {
         match self.exit_reason {
-           ExitReasonCps::Trap(_) => true,
+            ExitReasonCps::Trap(_) => true,
             _ => false,
         }
     }
@@ -211,7 +213,7 @@ impl EvmResult {
         }
     }
 
-    pub fn take_apply(& mut self) -> Vec<Apply> {
+    pub fn take_apply(&mut self) -> Vec<Apply> {
         let mut ret = Vec::new();
         std::mem::swap(&mut ret, &mut self.apply);
         ret

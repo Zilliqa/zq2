@@ -42,26 +42,37 @@ fn build_exit_result<B: Backend>(
     result.return_value = runtime.machine().return_value().clone();
     let (state_apply, logs) = executor.into_state().deconstruct();
 
-    result.apply = state_apply.into_iter().map(|apply| {
-        match apply {
-            Apply::Delete { address } => {
-                EvmProto::Apply::Delete { address: address.into() }
+    result.apply = state_apply
+        .into_iter()
+        .map(|apply| match apply {
+            Apply::Delete { address } => EvmProto::Apply::Delete {
+                address: address.into(),
             },
-            Apply::Modify { address, basic, code, storage, reset_storage } => {
-                EvmProto::Apply::Modify {
-                    address: address.into(),
-                    balance: basic.balance,
-                    nonce: basic.nonce,
-                    code: code.unwrap_or_default(),
-                    storage: storage.into_iter().map(|(k, v)| {
-                        continuations.lock().unwrap().update_states(address, k, v, is_static);
-                        Storage{key: k, value: v}
-                    }).collect(),
-                    reset_storage,
-                }
+            Apply::Modify {
+                address,
+                basic,
+                code,
+                storage,
+                reset_storage,
+            } => EvmProto::Apply::Modify {
+                address: address.into(),
+                balance: basic.balance,
+                nonce: basic.nonce,
+                code: code.unwrap_or_default(),
+                storage: storage
+                    .into_iter()
+                    .map(|(k, v)| {
+                        continuations
+                            .lock()
+                            .unwrap()
+                            .update_states(address, k, v, is_static);
+                        Storage { key: k, value: v }
+                    })
+                    .collect(),
+                reset_storage,
             },
-        }
-    }).collect();
+        })
+        .collect();
     result.tx_trace = trace.as_string();
     result.logs = logs.into_iter().collect();
     result.remaining_gas = remaining_gas;
@@ -83,32 +94,38 @@ fn build_call_result<B: Backend>(
     result.return_value = runtime.machine().return_value().clone();
 
     let (state_apply, _) = executor.into_state().deconstruct();
-    result.apply = state_apply.into_iter().map(|apply| {
-        match apply {
-            Apply::Delete { address } => {
-                EvmProto::Apply::Delete { address: address.into() }
+    result.apply = state_apply
+        .into_iter()
+        .map(|apply| match apply {
+            Apply::Delete { address } => EvmProto::Apply::Delete {
+                address: address.into(),
             },
-            Apply::Modify { address, basic, code, storage, reset_storage } => {
-                EvmProto::Apply::Modify {
-                    address: address.into(),
-                    balance: basic.balance,
-                    nonce: basic.nonce,
-                    code: code.unwrap_or_default(),
-                    storage: storage.into_iter().map(|(key, value)| {
-                        Storage{key, value}
-                    }).collect(),
-                    reset_storage,
-                }
+            Apply::Modify {
+                address,
+                basic,
+                code,
+                storage,
+                reset_storage,
+            } => EvmProto::Apply::Modify {
+                address: address.into(),
+                balance: basic.balance,
+                nonce: basic.nonce,
+                code: code.unwrap_or_default(),
+                storage: storage
+                    .into_iter()
+                    .map(|(key, value)| Storage { key, value })
+                    .collect(),
+                reset_storage,
             },
-        }
-    }).collect();
+        })
+        .collect();
 
     result.exit_reason = EvmProto::ExitReasonCps::Trap(EvmProto::Trap::Call);
     result.tx_trace = trace.as_string();
     result.remaining_gas = remaining_gas;
 
     result.trap_data = Some(TrapData::Call(CallTrap {
-            context: EvmProto::Context {
+        context: EvmProto::Context {
             destination: interrupt.context.address.into(),
             caller: interrupt.context.caller.into(),
             apparent_value: interrupt.context.apparent_value.into(),
@@ -142,13 +159,12 @@ fn build_create_result(
     result.tx_trace = trace.as_string();
     result.remaining_gas = remaining_gas;
 
-    result.trap_data = Some(TrapData::Create(CreateTrap{
+    result.trap_data = Some(TrapData::Create(CreateTrap {
         caller: interrupt.caller.into(),
         scheme: interrupt.scheme,
         value: interrupt.value.into(),
         call_data: interrupt.init_code.into(),
         target_gas: interrupt.target_gas.unwrap_or(u64::MAX),
-
     }));
 
     result.continuation_id = cont_id;
@@ -238,9 +254,11 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs, backend: &B) -> EvmRes
                 .unwrap()
                 .get_contination(continuation.id);
             if recorded_cont.is_none() {
-                let result = handle_panic(args.tx_trace,
-                                          gas_limit,
-                                          format!("Continuation not found! Id: {:?}", continuation.id).as_str());
+                let result = handle_panic(
+                    args.tx_trace,
+                    gas_limit,
+                    format!("Continuation not found! Id: {:?}", continuation.id).as_str(),
+                );
                 return result;
             }
 

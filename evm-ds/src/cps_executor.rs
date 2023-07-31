@@ -120,7 +120,7 @@ impl<'a, B: Backend> CpsExecutor<'a, B> {
                 self.stack_executor.log(address, topics, data)?;
             }
 
-            if feedback.feedback_type ==  EvmProto::Type::Create {
+            if feedback.feedback_type == EvmProto::Type::Create {
                 let eth_address = feedback.get_address();
                 runtime.machine_mut().stack_mut().push(eth_address.into())?;
             } else {

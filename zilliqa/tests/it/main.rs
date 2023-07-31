@@ -19,11 +19,11 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 
 use ethers::{
-    types::H256,
     abi::Contract,
-    prelude::{DeploymentTxFactory, CompilerInput, SignerMiddleware, Wallet, EvmVersion},
+    prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, SignerMiddleware, Wallet},
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::{LocalWallet, Signer},
+    types::H256,
 };
 use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
 use itertools::Itertools;
@@ -353,13 +353,15 @@ macro_rules! deploy_contract {
         let compiler_input = compiler_input.first_mut().unwrap();
         compiler_input.settings.evm_version = Some(EvmVersion::Shanghai);
 
-        let out = sc.compile::<CompilerInput>(compiler_input).unwrap_or_else(|e| {
-            panic!(
-                "failed to compile contract {}: {}",
-                $contract,
-                e.to_string()
-            )
-        });
+        let out = sc
+            .compile::<CompilerInput>(compiler_input)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "failed to compile contract {}: {}",
+                    $contract,
+                    e.to_string()
+                )
+            });
 
         let contract = out
             .get(contract_file.path().to_str().unwrap(), $contract)
@@ -399,7 +401,12 @@ macro_rules! deploy_contract {
     }};
 }
 
-async fn  deploy_contractX(path: &str, contract: &str, wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>, network: &mut Network<'_>) -> (H256, Contract) {
+async fn deploy_contractX(
+    path: &str,
+    contract: &str,
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+    network: &mut Network<'_>,
+) -> (H256, Contract) {
     // Include the contract source directly in the binary.
     //let contract_source = include_bytes!(path.to_string());
 
@@ -421,13 +428,11 @@ async fn  deploy_contractX(path: &str, contract: &str, wallet: &SignerMiddleware
     let compiler_input = compiler_input.first_mut().unwrap();
     compiler_input.settings.evm_version = Some(EvmVersion::Paris);
 
-    let out = sc.compile::<CompilerInput>(compiler_input).unwrap_or_else(|e| {
-        panic!(
-            "failed to compile contract {}: {}",
-            contract,
-            e.to_string()
-        );
-    });
+    let out = sc
+        .compile::<CompilerInput>(compiler_input)
+        .unwrap_or_else(|e| {
+            panic!("failed to compile contract {}: {}", contract, e.to_string());
+        });
 
     let contract = out
         .get(contract_file.path().to_str().unwrap(), contract)
@@ -465,7 +470,6 @@ async fn  deploy_contractX(path: &str, contract: &str, wallet: &SignerMiddleware
         (hash, abi)
     }
 }
-
 
 pub(crate) use deploy_contract;
 //pub(crate) use deploy_contractX;

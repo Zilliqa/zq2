@@ -15,10 +15,10 @@ use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
 
 use anyhow::{anyhow, Result};
+use evm_ds::protos::Evm::Log;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 use tracing::info;
-use evm_ds::protos::Evm::Log;
 
 use crate::{contracts, crypto, db::SledDb};
 
@@ -113,7 +113,7 @@ impl State {
         }
     }
 
-    pub fn set_to_root(& mut self, root_hash: H256) {
+    pub fn set_to_root(&mut self, root_hash: H256) {
         self.accounts = self.accounts.at_root(root_hash);
     }
 
@@ -452,4 +452,3 @@ pub struct TransactionReceipt {
 //    pub topics: Vec<H256>,
 //    pub data: Vec<u8>,
 //}
-

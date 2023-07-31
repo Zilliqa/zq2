@@ -7,7 +7,7 @@ use itertools::Itertools;
 use libp2p::PeerId;
 use lru::LruCache;
 use sled::{Db, Tree};
-use tracing::{debug, trace, info};
+use tracing::{debug, info, trace};
 
 use crate::{
     cfg::Config,
