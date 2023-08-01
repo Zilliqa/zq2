@@ -366,7 +366,7 @@ async fn deploy_contract(
     let out = sc
         .compile::<CompilerInput>(compiler_input)
         .unwrap_or_else(|e| {
-            panic!("failed to compile contract {}: {}", contract, e.to_string());
+            panic!("failed to compile contract {}: {}", contract, e);
         });
 
     // test if your solc can compile with v8.20 (shanghai) with
