@@ -14,7 +14,7 @@ use anyhow::{anyhow, Result};
 use libp2p::{
     core::upgrade,
     futures::StreamExt,
-    gossipsub::{self, IdentTopic, MessageAuthenticity},
+    gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
     identify,
     kad::{
         store::MemoryStore, GetRecordOk, Kademlia, KademliaEvent, PeerRecord, QueryResult, Quorum,
@@ -34,7 +34,7 @@ use tokio::{
     sync::mpsc,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::message::Message;
 
@@ -47,20 +47,22 @@ struct Behaviour {
     identify: identify::Behaviour,
 }
 
+/// (destination, shard_id, message)
+pub type OutboundMessageTuple = (Option<PeerId>, u64, Message);
+
 pub struct P2pNode {
-    /// Indexed by topic string
-    shard_nodes: HashMap<String, UnboundedSender<(Option<PeerId>, Message)>>,
+    shard_nodes: HashMap<TopicHash, UnboundedSender<(PeerId, Message)>>,
     job_set: JoinSet<Result<()>>,
     secret_key: SecretKey,
     peer_id: PeerId,
     p2p_port: u16,
     swarm: Swarm<Behaviour>,
     bootstrap_address: Option<Multiaddr>,
-    /// Shard nodes get a handle to this sender, to propagate messages to the p2p network.
-    outbound_message_sender: UnboundedSender<(Option<PeerId>, Message)>,
+    /// Shard nodes get a copy of a handle to this sender, to propagate messages to the p2p network.
+    outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
     /// The p2p node keeps a handle to this receiver, to obtain messages from shards and propagate
     /// them to the p2p network.
-    outbound_message_receiver: UnboundedReceiverStream<(Option<PeerId>, Message)>,
+    outbound_message_receiver: UnboundedReceiverStream<OutboundMessageTuple>,
 }
 
 impl P2pNode {
@@ -120,16 +122,19 @@ impl P2pNode {
         })
     }
 
-    pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
-        let topic_string = format!("z2shard{}", config.eth_chain_id);
-        let topic = IdentTopic::new(topic_string.clone());
+    pub fn shard_id_to_topic(shard_id: u64) -> IdentTopic {
+        IdentTopic::new(format!("z2shard{}", shard_id))
+    }
+
+    pub fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
+        let topic = Self::shard_id_to_topic(config.eth_chain_id);
         let mut node = NodeLauncher::new(
             self.secret_key,
             config,
             self.outbound_message_sender.clone(),
         )?;
         // TODO: figure out rpc server here
-        self.shard_nodes.insert(topic_string, node.message_sender());
+        self.shard_nodes.insert(topic.hash(), node.message_sender());
         self.job_set
             .spawn(async move { node.start_p2p_node().await });
         self.swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
@@ -199,8 +204,11 @@ impl P2pNode {
                         let peer_id = PeerId::from_multihash(Multihash::from_bytes(key.as_ref())?).expect("key should be a peer ID");
                         let public_key = NodePublicKey::from_bytes(&value)?;
 
-                        // TODO: idk here. loop through nodes and add peer to each? or hardcode?
-                        // self.node.lock().unwrap().add_peer(peer_id, public_key)?;
+                        // TODO: temporary, until we have proper dynamic joining!
+                        for (_, node) in &self.shard_nodes {
+
+                            node.send((peer_id, Message::AddPeer(public_key)))?;
+                        }
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
                         message: gossipsub::Message {
@@ -214,44 +222,52 @@ impl P2pNode {
                         let message_type = message.name();
                         debug!(%source, message_type, "message recieved");
                         // TODO: filter by topic here, send to the correct node
-                        // self.node.lock().unwrap().handle_message(source, message).unwrap();
+                        match self.shard_nodes.get(&topic) {
+                            Some(inbound_message_sender) => inbound_message_sender.send((source, message))?,
+                            None => warn!(?topic, ?source, ?message, "Message received for unknown shard/topic")
+                        };
                     }
 
                     SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer })) => {
-                                match message {
-                                    request_response::Message::Request {request, channel, ..} => {
-                                        debug!(%peer, "direct message received");
-                                        // TODO: send to the correct node? filter somehow?
+                        match message {
+                            request_response::Message::Request {request, channel, ..} => {
+                                debug!(%peer, "direct message received");
+                                let (shard_id, data) = request;
+                                let topic = Self::shard_id_to_topic(shard_id);
 
-                                        // self.node.lock().unwrap().handle_message(peer, request).unwrap();
+                                match self.shard_nodes.get(&topic.hash()) {
+                                    Some(inbound_message_sender) => inbound_message_sender.send((peer, data))?,
+                                    None => warn!(?topic, ?peer, ?data, "Message received for unknown shard/topic")
+                                };
 
-                                        let _ = self.swarm.behaviour_mut().request_response.send_response(channel, Message::RequestResponse);
-                                    }
-                                    request_response::Message::Response {..} => {}
-                                }
+                                let _ = self.swarm.behaviour_mut().request_response.send_response(channel, (shard_id, Message::RequestResponse));
+                            }
+                            request_response::Message::Response {..} => {}
+                        }
                     }
 
                     _ => {},
                 },
                 message = self.outbound_message_receiver.next() => {
-                    let (dest, message) = message.expect("message stream should be infinite");
+                    let (dest, shard_id, message) = message.expect("message stream should be infinite");
                     let message_type = message.name();
                     let data = serde_json::to_vec(&message).unwrap();
+
+                    let topic = Self::shard_id_to_topic(shard_id);
 
                     match dest {
                         Some(dest) => {
                             debug!(%dest, message_type, "sending direct message");
-                            let _ = self.swarm.behaviour_mut().request_response.send_request(&dest, message);
+                            let _ = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
                         },
                         None => {
                             debug!(message_type, "sending gossip message");
-                            // TODO: append correct topic and send
-                            // match swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
-                            //     Ok(_) => {},
-                            //     Err(e) => {
-                            //         error!(%e, "failed to publish message");
-                            //     }
-                            // }
+                            match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    error!(%e, "failed to publish message");
+                                }
+                            }
                         },
                     }
                 },

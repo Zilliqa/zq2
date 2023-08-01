@@ -108,6 +108,7 @@ pub struct BlockResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
+    AddPeer(NodePublicKey),
     Proposal(Proposal),
     Vote(Vote),
     NewView(NewView),
@@ -121,6 +122,7 @@ impl Message {
     pub fn name(&self) -> &'static str {
         match self {
             Message::Proposal(_) => "Proposal",
+            Message::AddPeer(_) => "AddPeer",
             Message::Vote(_) => "Vote",
             Message::NewView(_) => "NewView",
             Message::BlockRequest(_) => "BlockRequest",

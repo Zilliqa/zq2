@@ -5,7 +5,7 @@ use std::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{api, cfg::NodeConfig, crypto::SecretKey, node};
+use crate::{api, cfg::NodeConfig, crypto::SecretKey, node, p2p_node::OutboundMessageTuple};
 
 use anyhow::{anyhow, Result};
 use http::{header, Method};
@@ -20,7 +20,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, info, trace};
+use tracing::{info, trace};
 
 use crate::message::Message;
 
@@ -30,11 +30,10 @@ pub struct NodeLauncher {
     pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
     pub secret_key: SecretKey,
     pub peer_id: PeerId,
-    pub inbound_message_sender: UnboundedSender<(Option<PeerId>, Message)>,
-    pub inbound_message_receiver: UnboundedReceiverStream<(Option<PeerId>, Message)>,
+    pub inbound_message_sender: UnboundedSender<(PeerId, Message)>,
+    pub inbound_message_receiver: UnboundedReceiverStream<(PeerId, Message)>,
     pub reset_timeout_sender: UnboundedSender<()>,
     pub reset_timeout_receiver: UnboundedReceiverStream<()>,
-    outbound_message_sender: UnboundedSender<(Option<PeerId>, Message)>,
     rpc_launched: bool,
     node_launched: bool,
 }
@@ -43,7 +42,7 @@ impl NodeLauncher {
     pub fn new(
         secret_key: SecretKey,
         config: NodeConfig,
-        outbound_message_sender: UnboundedSender<(Option<PeerId>, Message)>,
+        outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
     ) -> Result<Self> {
         let (inbound_message_sender, inbound_message_receiver) = mpsc::unbounded_channel();
         let inbound_message_receiver = UnboundedReceiverStream::new(inbound_message_receiver);
@@ -55,7 +54,7 @@ impl NodeLauncher {
         let node = Node::new(
             config.clone(),
             secret_key,
-            inbound_message_sender.clone(),
+            outbound_message_sender.clone(),
             reset_timeout_sender.clone(),
         )?;
         let node = Arc::new(Mutex::new(node));
@@ -71,14 +70,13 @@ impl NodeLauncher {
             inbound_message_receiver,
             reset_timeout_sender,
             reset_timeout_receiver,
-            outbound_message_sender,
             rpc_launched: false,
             node_launched: false,
             config,
         })
     }
 
-    pub fn message_sender(&self) -> UnboundedSender<(Option<PeerId>, Message)> {
+    pub fn message_sender(&self) -> UnboundedSender<(PeerId, Message)> {
         self.inbound_message_sender.clone()
     }
 
@@ -122,27 +120,8 @@ impl NodeLauncher {
         loop {
             select! {
                 message = self.inbound_message_receiver.next() => {
-                    let (dest, message) = message.expect("message stream should be infinite");
-                    let message_type = message.name();
-                    let data = serde_json::to_vec(&message).unwrap();
-
-                    match dest {
-                        Some(dest) => {
-                            debug!(%dest, message_type, "sending direct message");
-                            // TODO: send message over to p2p node
-                            // let _ = swarm.behaviour_mut().request_response.send_request(&dest, message);
-                        },
-                        None => {
-                            debug!(message_type, "sending gossip message");
-                            // TODO: send message over to p2p node
-                            // match swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
-                            //     Ok(_) => {},
-                            //     Err(e) => {
-                            //         error!(%e, "failed to publish message");
-                            //     }
-                            // }
-                        },
-                    }
+                    let (source, message) = message.expect("message stream should be infinite");
+                    self.node.lock().unwrap().handle_message(source, message).unwrap();
                 },
                 () = &mut sleep => {
                     trace!("timeout elapsed");

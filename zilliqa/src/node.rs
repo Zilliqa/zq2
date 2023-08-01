@@ -1,6 +1,7 @@
 use crate::{
     cfg::NodeConfig,
     message::BlockNumber,
+    p2p_node::OutboundMessageTuple,
     state::{SignedTransaction, TransactionReceipt},
 };
 use primitive_types::H256;
@@ -36,7 +37,7 @@ use crate::{
 pub struct Node {
     pub config: NodeConfig,
     peer_id: PeerId,
-    message_sender: UnboundedSender<(Option<PeerId>, Message)>,
+    message_sender: UnboundedSender<OutboundMessageTuple>,
     reset_timeout: UnboundedSender<()>,
     consensus: Consensus,
 }
@@ -45,7 +46,7 @@ impl Node {
     pub fn new(
         config: NodeConfig,
         secret_key: SecretKey,
-        message_sender: UnboundedSender<(Option<PeerId>, Message)>,
+        message_sender: UnboundedSender<OutboundMessageTuple>,
         reset_timeout: UnboundedSender<()>,
     ) -> Result<Node> {
         let node = Node {
@@ -97,6 +98,9 @@ impl Node {
             Message::RequestResponse => {}
             Message::NewTransaction(t) => {
                 self.consensus.new_transaction(t)?;
+            }
+            Message::AddPeer(public_key) => {
+                self.add_peer(source, public_key)?;
             }
         }
 
@@ -248,13 +252,15 @@ impl Node {
             // We need to 'send' this message to ourselves.
             self.handle_message(peer, message)?;
         } else {
-            self.message_sender.send((Some(peer), message))?;
+            self.message_sender
+                .send((Some(peer), self.config.eth_chain_id, message))?;
         }
         Ok(())
     }
 
     fn broadcast_message(&mut self, message: Message) -> Result<()> {
-        self.message_sender.send((None, message.clone()))?;
+        self.message_sender
+            .send((None, self.config.eth_chain_id, message.clone()))?;
         // Also handle it ourselves
         self.handle_message(self.peer_id, message)?;
         Ok(())

@@ -53,7 +53,7 @@ fn node(
     // Augment the `message_receiver` stream to include the sender's `PeerId`.
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
     let message_receiver = message_receiver
-        .map(move |(dest, message)| (peer_id, dest, message))
+        .map(move |(dest, _, message)| (peer_id, dest, message))
         .boxed();
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     std::mem::forget(reset_timeout_receiver);

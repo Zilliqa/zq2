@@ -8,6 +8,11 @@ use serde::Deserialize;
 pub struct Config {
     /// Individual configuration for every node to run.
     pub nodes: Vec<NodeConfig>,
+    /// The port to listen for P2P messages on. Optional - If not provided a random port will be used.
+    pub p2p_port: u16,
+    /// The address of another node to dial when this node starts. To join the network, a node must know about at least
+    /// one other existing node in the network.
+    pub bootstrap_address: Option<Multiaddr>,
     /// The base address of the OTLP collector. If not set, metrics will not be exported.
     pub otlp_collector_endpoint: Option<String>,
 }
@@ -16,6 +21,8 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             nodes: vec![NodeConfig::default()],
+            bootstrap_address: None,
+            p2p_port: 0,
             otlp_collector_endpoint: None,
         }
     }
@@ -24,8 +31,6 @@ impl Default for Config {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct NodeConfig {
-    /// The port to listen for P2P messages on. Optional - If not provided a random port will be used.
-    pub p2p_port: u16,
     /// The port to listen for JSON-RPC requests on. Defaults to 4201.
     pub json_rpc_port: u16,
     pub eth_chain_id: u64,
@@ -35,21 +40,16 @@ pub struct NodeConfig {
     pub data_dir: Option<String>,
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     pub consensus_timeout: Duration,
-    /// The address of another node to dial when this node starts. To join the network, a node must know about at least
-    /// one other existing node in the network.
-    pub bootstrap_address: Option<Multiaddr>,
 }
 
 impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
-            p2p_port: 0,
             json_rpc_port: 4201,
             eth_chain_id: 1 + 0x8000,
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: None,
             consensus_timeout: Duration::from_secs(5),
-            bootstrap_address: None,
         }
     }
 }
