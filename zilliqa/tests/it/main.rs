@@ -349,9 +349,7 @@ async fn deploy_contract(
     let contract_source = std::fs::read(&full_path).unwrap_or_else(|e| {
         panic!(
             "failed to read contract source {}: aka {:?}. Error: {}",
-            path,
-            full_path,
-            e.to_string()
+            path, full_path, e
         )
     });
 
