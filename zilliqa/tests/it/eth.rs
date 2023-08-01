@@ -1,13 +1,12 @@
 use ethabi::ethereum_types::U64;
-use ethers::abi::FunctionExt;
-use ethers::solc::EvmVersion;
+use std::fmt::Debug;
+
 use ethers::{
-    prelude::{CompilerInput, DeploymentTxFactory},
+    abi::FunctionExt,
     providers::{Middleware, Provider},
     types::{transaction::eip2718::TypedTransaction, BlockId, BlockNumber, TransactionRequest},
     utils::keccak256,
 };
-use std::fmt::Debug;
 
 use primitive_types::{H160, H256};
 use serde::Serialize;
@@ -18,7 +17,13 @@ use crate::{deploy_contract, LocalRpcClient, Network};
 async fn call_block_number(mut network: Network<'_>) {
     let wallet = network.random_wallet();
 
-    let (hash, abi) = deploy_contract!("contracts/CallMe.sol", "CallMe", wallet, network);
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/CallMe.sol",
+        "CallMe",
+        &wallet,
+        &mut network,
+    )
+    .await;
 
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
 
@@ -217,7 +222,13 @@ async fn get_storage_at(mut network: Network<'_>) {
     let wallet = network.random_wallet();
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
-    let (hash, abi) = deploy_contract!("contracts/Storage.sol", "Storage", wallet, network);
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/Storage.sol",
+        "Storage",
+        &wallet,
+        &mut network,
+    )
+    .await;
 
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let contract_address = receipt.contract_address.unwrap();
@@ -333,12 +344,13 @@ async fn send_transaction(mut network: Network<'_>) {
 async fn eth_call(mut network: Network<'_>) {
     let wallet = network.random_wallet();
 
-    let (hash, abi) = deploy_contract!(
-        "contracts/SetGetContractValue.sol",
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/SetGetContractValue.sol",
         "SetGetContractValue",
-        wallet,
-        network
-    );
+        &wallet,
+        &mut network,
+    )
+    .await;
 
     network
         .run_until_async(
