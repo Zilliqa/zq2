@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::protos::evm as EvmProto;
+use crate::protos::evm_proto as EvmProto;
 use core::cmp::min;
 use evm::executor::stack::{
     MemoryStackState, PrecompileFailure, PrecompileOutput, PrecompileOutputType, PrecompileSet,

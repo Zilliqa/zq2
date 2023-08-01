@@ -19,7 +19,7 @@ use crate::cps_executor::{CpsCallInterrupt, CpsCreateInterrupt, CpsExecutor, Cps
 use crate::precompiles::get_precompiles;
 use crate::pretty_printer::log_evm_result;
 
-use crate::protos::evm as EvmProto;
+use crate::protos::evm_proto as EvmProto;
 
 use crate::tracing_logging::{CallContext, LoggingEventListener};
 

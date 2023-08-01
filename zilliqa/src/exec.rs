@@ -11,7 +11,7 @@ use ethabi::Token;
 use evm_ds::{
     evm::{backend::Backend, tracing::EventListener},
     evm_server_run::{calculate_contract_address, run_evm_impl_direct},
-    protos::evm as EvmProto,
+    protos::evm_proto as EvmProto,
 };
 use primitive_types::{H160, U256};
 use tracing::{error, info};
@@ -341,7 +341,7 @@ impl State {
     }
 
     // Apply the changes the EVM is requesting for
-    fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm::Apply>) -> Result<()> {
+    fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm_proto::Apply>) -> Result<()> {
         for apply in applys {
             match apply {
                 EvmProto::Apply::Delete { .. } => {

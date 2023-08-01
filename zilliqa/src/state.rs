@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
 
 use anyhow::{anyhow, Result};
-use evm_ds::protos::evm::Log;
+use evm_ds::protos::evm_proto::Log;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 

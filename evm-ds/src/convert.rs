@@ -1,5 +1,5 @@
 use crate::evm::ExitReason;
-use crate::protos::evm::ExitReasonCps;
+use crate::protos::evm_proto::ExitReasonCps;
 
 // Convert from normal evm to cps evm (traps are set seperately)
 impl From<evm::ExitReason> for ExitReasonCps {

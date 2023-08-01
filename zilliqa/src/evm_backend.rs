@@ -4,7 +4,7 @@
 //! apply_update will be called for each continuation, and at the end we generate the EvmResult via
 //! get_result
 
-use evm_ds::protos::evm::{Apply, EvmResult, Storage};
+use evm_ds::protos::evm_proto::{Apply, EvmResult, Storage};
 use std::collections::HashMap;
 
 use evm_ds::evm::backend::{Backend, Basic};
@@ -48,7 +48,7 @@ impl<'a> EvmBackend<'a> {
     pub fn apply_update(
         &mut self,
         _to_addr: Option<Address>,
-        applys: Vec<evm_ds::protos::evm::Apply>,
+        applys: Vec<evm_ds::protos::evm_proto::Apply>,
     ) {
         for apply in applys {
             match apply {
