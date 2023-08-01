@@ -121,11 +121,6 @@ impl State {
         Ok(self.at_root(root_hash))
     }
 
-    // todo: make sure to change this
-    pub fn rooty(&mut self) -> Result<H256> {
-        Ok(self.accounts.root_hash()?)
-    }
-
     pub fn root_hash(&mut self) -> Result<crypto::Hash> {
         Ok(crypto::Hash(
             self.accounts.root_hash()?.as_bytes().try_into()?,
@@ -444,10 +439,3 @@ pub struct TransactionReceipt {
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
 }
-
-//#[derive(Debug, Clone, Serialize, Deserialize)]
-//pub struct TransactionDelta {
-//    pub address: Address,
-//    pub topics: Vec<H256>,
-//    pub data: Vec<u8>,
-//}

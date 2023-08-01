@@ -106,6 +106,7 @@ impl State {
         self.save_account(address, account)
     }
 
+    // Call this function with your transaction and it will return
     #[allow(clippy::too_many_arguments)]
     fn apply_transaction_inner(
         &self,
@@ -117,7 +118,7 @@ impl State {
         payload: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
-    ) -> Result<(Vec<EvmProto::Log>, EvmProto::EvmResult, Option<H160>)> {
+    ) -> Result<(EvmProto::EvmResult, Option<H160>)> {
         let caller = from_addr;
         let gas_scaling_factor = 1;
         let estimate = false;
@@ -168,7 +169,7 @@ impl State {
         loop {
             let mut call_args = continuation_stack.pop().unwrap();
 
-            backend.origin = call_args.caller; // todo: refactor
+            backend.origin = call_args.caller;
             result = run_evm_impl_direct(call_args.clone(), &backend);
 
             // Apply the results to the backend so they can be used in the next continuation
@@ -275,8 +276,9 @@ impl State {
         let mut backend_result = backend.get_result();
         backend_result.exit_reason = result.exit_reason;
         backend_result.return_value = result.return_value;
+        backend_result.logs = result.logs;
 
-        Ok((result.logs, backend_result, created_contract_addr))
+        Ok((backend_result, created_contract_addr))
     }
 
     /// Apply a transaction to the account state.
@@ -301,7 +303,7 @@ impl State {
         );
 
         match result {
-            Ok((logs, result, contract_addr)) => {
+            Ok((result, contract_addr)) => {
                 // Apply the state changes only if success
                 let success = result.succeeded();
 
@@ -325,7 +327,7 @@ impl State {
                 Ok(TransactionApplyResult {
                     success,
                     contract_address: contract_addr.map(Address),
-                    logs,
+                    logs: result.logs,
                 })
             }
             Err(e) => {
@@ -420,7 +422,7 @@ impl State {
         );
 
         match result {
-            Ok((_lgs, result, _)) => {
+            Ok((result, _)) => {
                 // Apply the state changes only if success
                 let success = result.succeeded();
 
@@ -455,6 +457,6 @@ impl State {
             current_block,
         );
 
-        result.map(|ret| ret.1.return_value)
+        result.map(|ret| ret.0.return_value)
     }
 }
