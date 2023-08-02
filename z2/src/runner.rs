@@ -31,16 +31,16 @@ impl Process {
     pub async fn spawn(
         index: usize,
         key: &str,
-        rpc: bool,
+        _rpc: bool,
         channel: &mpsc::Sender<Message>,
     ) -> Result<Process> {
         let mut cmd = Command::new("target/debug/zilliqa");
         cmd.arg(key);
-        // cmd.arg("--config-file");
-        // cmd.arg(Setup::config_path(index));
-        if !rpc {
-            cmd.arg("--no-jsonrpc");
-        }
+        cmd.arg("--config-file");
+        cmd.arg(Setup::config_path(index));
+        // if !rpc {
+        //     cmd.arg("--no-jsonrpc");
+        // }
         cmd.stdout(Stdio::piped());
         let mut child = cmd
             .spawn()

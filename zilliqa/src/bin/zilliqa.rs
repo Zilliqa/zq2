@@ -16,8 +16,6 @@ struct Args {
     secret_key: SecretKey,
     #[clap(long, short, default_value = "config.toml")]
     config_file: PathBuf,
-    #[clap(long, default_value = "false")]
-    no_jsonrpc: bool,
 }
 
 #[tokio::main]
@@ -57,7 +55,7 @@ async fn main() -> Result<()> {
 
     let mut node = P2pNode::new(args.secret_key, config.p2p_port, config.bootstrap_address)?;
 
-    node.add_shard_node(config.nodes[0].clone())?;
+    node.add_shard_node(config.nodes[0].clone()).await?;
 
     node.start().await
 }

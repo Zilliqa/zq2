@@ -1,4 +1,4 @@
-use jsonrpsee::{server::ServerHandle, RpcModule};
+use jsonrpsee::RpcModule;
 use std::{
     net::Ipv4Addr,
     sync::{Arc, Mutex},
@@ -20,7 +20,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{info, trace};
+use tracing::trace;
 
 use crate::message::Message;
 
@@ -28,18 +28,14 @@ pub struct NodeLauncher {
     pub node: Arc<Mutex<Node>>,
     pub config: NodeConfig,
     pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
-    pub secret_key: SecretKey,
-    pub peer_id: PeerId,
     pub inbound_message_sender: UnboundedSender<(PeerId, Message)>,
     pub inbound_message_receiver: UnboundedReceiverStream<(PeerId, Message)>,
-    pub reset_timeout_sender: UnboundedSender<()>,
     pub reset_timeout_receiver: UnboundedReceiverStream<()>,
-    rpc_launched: bool,
     node_launched: bool,
 }
 
 impl NodeLauncher {
-    pub fn new(
+    pub async fn new(
         secret_key: SecretKey,
         config: NodeConfig,
         outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
@@ -48,8 +44,6 @@ impl NodeLauncher {
         let inbound_message_receiver = UnboundedReceiverStream::new(inbound_message_receiver);
         let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
         let reset_timeout_receiver = UnboundedReceiverStream::new(reset_timeout_receiver);
-
-        let peer_id = PeerId::from(secret_key.to_libp2p_keypair().public());
 
         let node = Node::new(
             config.clone(),
@@ -61,16 +55,29 @@ impl NodeLauncher {
 
         let rpc_module = api::rpc_module(Arc::clone(&node));
 
+        if !config.disable_rpc {
+            trace!("Launching JSON-RPC server");
+            // Construct the JSON-RPC API server. We inject a [CorsLayer] to ensure web browsers can call our API directly.
+            let cors = CorsLayer::new()
+                .allow_methods(Method::POST)
+                .allow_origin(Any)
+                .allow_headers([header::CONTENT_TYPE]);
+            let middleware = tower::ServiceBuilder::new().layer(cors);
+            let port = config.json_rpc_port;
+            let server = jsonrpsee::server::ServerBuilder::new()
+                .set_middleware(middleware)
+                .build((Ipv4Addr::UNSPECIFIED, port))
+                .await?;
+            let handle = server.start(rpc_module.clone())?;
+            let _ = tokio::spawn(handle.stopped());
+        }
+
         Ok(Self {
             node,
             rpc_module,
-            secret_key,
-            peer_id,
             inbound_message_sender,
             inbound_message_receiver,
-            reset_timeout_sender,
             reset_timeout_receiver,
-            rpc_launched: false,
             node_launched: false,
             config,
         })
@@ -80,36 +87,10 @@ impl NodeLauncher {
         self.inbound_message_sender.clone()
     }
 
-    pub async fn launch_rpc_server(&mut self) -> Result<ServerHandle> {
-        if self.rpc_launched {
-            return Err(anyhow!("RPC server already running!"));
-        }
-        trace!("Launching JSON-RPC server");
-        // Construct the JSON-RPC API server. We inject a [CorsLayer] to ensure web browsers can call our API directly.
-        let cors = CorsLayer::new()
-            .allow_methods(Method::POST)
-            .allow_origin(Any)
-            .allow_headers([header::CONTENT_TYPE]);
-        let middleware = tower::ServiceBuilder::new().layer(cors);
-        let port = self.config.json_rpc_port;
-        let server = jsonrpsee::server::ServerBuilder::new()
-            .set_middleware(middleware)
-            .build((Ipv4Addr::UNSPECIFIED, port))
-            .await?;
-        Ok(server.start(self.rpc_module.clone()).map(|res| {
-            self.rpc_launched = true;
-            res
-        })?)
-    }
-
     pub async fn start_p2p_node(&mut self) -> Result<()> {
         if self.node_launched {
             return Err(anyhow!("Node already running!"));
         }
-
-        let key_pair = self.secret_key.to_libp2p_keypair();
-        let peer_id = PeerId::from(key_pair.public());
-        info!(%peer_id);
 
         let mut terminate = signal::unix::signal(SignalKind::terminate())?;
         let sleep = time::sleep(self.config.consensus_timeout);

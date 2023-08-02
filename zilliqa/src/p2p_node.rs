@@ -1,11 +1,12 @@
 //! A node in the Zilliqa P2P network. May coordinate multiple shard nodes.
 
+use crate::crypto::NodePublicKey;
 use std::{collections::HashMap, iter};
 use tokio::{sync::mpsc::UnboundedSender, task::JoinSet};
 
 use crate::{
     cfg::NodeConfig,
-    crypto::{NodePublicKey, SecretKey},
+    crypto::SecretKey,
     networking::{request_response, MessageCodec, MessageProtocol, ProtocolSupport},
     node_launcher::NodeLauncher,
 };
@@ -52,7 +53,7 @@ pub type OutboundMessageTuple = (Option<PeerId>, u64, Message);
 
 pub struct P2pNode {
     shard_nodes: HashMap<TopicHash, UnboundedSender<(PeerId, Message)>>,
-    job_set: JoinSet<Result<()>>,
+    shard_threads: JoinSet<Result<()>>,
     secret_key: SecretKey,
     peer_id: PeerId,
     p2p_port: u16,
@@ -115,7 +116,7 @@ impl P2pNode {
             peer_id,
             p2p_port,
             swarm,
-            job_set: JoinSet::new(),
+            shard_threads: JoinSet::new(),
             bootstrap_address,
             outbound_message_sender,
             outbound_message_receiver,
@@ -123,19 +124,19 @@ impl P2pNode {
     }
 
     pub fn shard_id_to_topic(shard_id: u64) -> IdentTopic {
-        IdentTopic::new(format!("z2shard{}", shard_id))
+        IdentTopic::new(shard_id.to_string())
     }
 
-    pub fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
+    pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
         let topic = Self::shard_id_to_topic(config.eth_chain_id);
         let mut node = NodeLauncher::new(
             self.secret_key,
             config,
             self.outbound_message_sender.clone(),
-        )?;
-        // TODO: figure out rpc server here
+        )
+        .await?;
         self.shard_nodes.insert(topic.hash(), node.message_sender());
-        self.job_set
+        self.shard_threads
             .spawn(async move { node.start_p2p_node().await });
         self.swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
         Ok(())
@@ -202,12 +203,14 @@ impl P2pNode {
                         ..
                     })) => {
                         let peer_id = PeerId::from_multihash(Multihash::from_bytes(key.as_ref())?).expect("key should be a peer ID");
-                        let public_key = NodePublicKey::from_bytes(&value)?;
+                        let _public_key = NodePublicKey::from_bytes(&value)?;
+                        info!(?peer_id, "Got a new PEER!!!!!!");
 
                         // TODO: temporary, until we have proper dynamic joining!
-                        for (_, node) in &self.shard_nodes {
+                        for (_topic, _node) in &self.shard_nodes {
 
-                            node.send((peer_id, Message::AddPeer(public_key)))?;
+                            // self.outbound_message_sender.send((Some(peer_id), _topic.to_string().parse()?, Message::AddPeer(self.secret_key.node_public_key())))?;
+                            _node.send((peer_id, Message::AddPeer(_public_key)))?;
                         }
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
@@ -255,23 +258,27 @@ impl P2pNode {
 
                     let topic = Self::shard_id_to_topic(shard_id);
 
-                    match dest {
-                        Some(dest) => {
-                            debug!(%dest, message_type, "sending direct message");
-                            let _ = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
-                        },
-                        None => {
-                            debug!(message_type, "sending gossip message");
-                            match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
-                                Ok(_) => {},
-                                Err(e) => {
-                                    error!(%e, "failed to publish message");
+                    if let Message::LaunchShard(config) = message {
+                        self.add_shard_node(config).await?;
+                    } else {
+                        match dest {
+                            Some(dest) => {
+                                debug!(%dest, message_type, "sending direct message");
+                                let _ = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
+                            },
+                            None => {
+                                debug!(message_type, "sending gossip message");
+                                match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
+                                    Ok(_) => {},
+                                    Err(e) => {
+                                        error!(%e, "failed to publish message");
+                                    }
                                 }
-                            }
-                        },
+                            },
+                    }
                     }
                 },
-                Some(res) = self.job_set.join_next() => {
+                Some(res) = self.shard_threads.join_next() => {
                     if let Err(e) = res {
                         // Currently, abort everything should a single shard fail.
                         error!(%e);
@@ -279,11 +286,11 @@ impl P2pNode {
                     }
                 }
                 _ = terminate.recv() => {
-                    self.job_set.shutdown().await;
+                    self.shard_threads.shutdown().await;
                     break;
                 },
                 _ = signal::ctrl_c() => {
-                    self.job_set.shutdown().await;
+                    self.shard_threads.shutdown().await;
                     break;
                 },
             }

@@ -53,7 +53,11 @@ impl Setup {
             {
                 Ok(mut file) => {
                     println!("Creating config file {}", path.to_string_lossy());
-                    writeln!(file, "data_dir = \"{DATADIR_PREFIX}{i}\"")?;
+                    writeln!(file, "[[nodes]]")?;
+                    // writeln!(file, "data_dir = \"{DATADIR_PREFIX}{i}\"")?;
+                    if i != 0 {
+                        writeln!(file, "disable_rpc = true")?;
+                    }
                 }
                 Err(already_exists) if already_exists.kind() == AlreadyExists => {
                     // ignore existing files
@@ -66,7 +70,7 @@ impl Setup {
 
     pub async fn run(&mut self) -> Result<()> {
         // Generate a collector
-        // self.ensure_config_files_exist()?;
+        self.ensure_config_files_exist()?;
         self.collector = Some(collector::Collector::new(&self.secret_keys).await?);
         if let Some(mut c) = self.collector.take() {
             c.complete().await?;

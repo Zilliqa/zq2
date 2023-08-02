@@ -7,6 +7,7 @@ use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
+use crate::cfg::NodeConfig;
 use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     state::SignedTransaction,
@@ -115,6 +116,7 @@ pub enum Message {
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
     NewTransaction(SignedTransaction),
+    LaunchShard(NodeConfig),
     RequestResponse,
 }
 
@@ -128,6 +130,7 @@ impl Message {
             Message::BlockRequest(_) => "BlockRequest",
             Message::BlockResponse(_) => "BlockResponse",
             Message::NewTransaction(_) => "NewTransaction",
+            Message::LaunchShard(_) => "LaunchShard",
             Message::RequestResponse => "RequestResponse",
         }
     }

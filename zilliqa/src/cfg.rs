@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use libp2p::Multiaddr;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -28,11 +28,13 @@ impl Default for Config {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct NodeConfig {
     /// The port to listen for JSON-RPC requests on. Defaults to 4201.
     pub json_rpc_port: u16,
+    /// If true, the JSON-RPC server is not started. Defaults to false.
+    pub disable_rpc: bool,
     pub eth_chain_id: u64,
     /// The maximum duration between a recieved block's timestamp and the current time. Defaults to 10 seconds.
     pub allowed_timestamp_skew: Duration,
@@ -46,6 +48,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
             json_rpc_port: 4201,
+            disable_rpc: false,
             eth_chain_id: 1 + 0x8000,
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: None,

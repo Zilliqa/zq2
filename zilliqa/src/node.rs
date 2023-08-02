@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     consensus::Consensus,
@@ -101,6 +101,9 @@ impl Node {
             }
             Message::AddPeer(public_key) => {
                 self.add_peer(source, public_key)?;
+            }
+            Message::LaunchShard(_) => {
+                warn!("LaunchShard messages should not be passed to the node.");
             }
         }
 
