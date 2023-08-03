@@ -42,6 +42,9 @@ pub struct NodeConfig {
     pub data_dir: Option<String>,
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     pub consensus_timeout: Duration,
+    /// Temporary value for launching sharded nodes. Should be removed once dynamic sharding
+    /// through contracts is implemented.
+    pub is_main_shard: bool,
 }
 
 impl Default for NodeConfig {
@@ -53,6 +56,7 @@ impl Default for NodeConfig {
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: None,
             consensus_timeout: Duration::from_secs(5),
+            is_main_shard: true,
         }
     }
 }

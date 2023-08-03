@@ -7,7 +7,7 @@ use itertools::Itertools;
 use libp2p::PeerId;
 use lru::LruCache;
 use sled::{Db, Tree};
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use crate::{
     cfg::NodeConfig,
@@ -198,8 +198,6 @@ impl Consensus {
         if self.pending_peers.contains(&(peer, public_key)) {
             return Ok(None);
         }
-        info!(%peer, "Adding peer inside node!!");
-
         debug!(%peer, "added pending peer");
 
         self.pending_peers.push((peer, public_key));
