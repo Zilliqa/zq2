@@ -18,7 +18,7 @@ use evm_ds::{
     evm_server_run::{calculate_contract_address, run_evm_impl_direct},
 };
 use primitive_types::{H160, H256, U256};
-use tracing::{error, info, trace};
+use tracing::{error, trace};
 
 use crate::state::SignedTransaction;
 use crate::{
@@ -190,9 +190,6 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<TransactionApplyResult> {
-        let hash = txn.hash();
-        info!(?hash, "executing txn");
-
         let result = self.apply_transaction_inner(
             txn.from_addr,
             txn.transaction.to_addr,
@@ -225,7 +222,6 @@ impl State {
                 acct.nonce = acct.nonce.checked_add(1).unwrap();
                 self.save_account(txn.from_addr, acct)?;
 
-                info!(?hash, "finished executing txn");
                 Ok(TransactionApplyResult {
                     success,
                     contract_address: contract_addr.map(Address),

@@ -49,13 +49,21 @@ impl Node {
         message_sender: UnboundedSender<OutboundMessageTuple>,
         reset_timeout: UnboundedSender<()>,
     ) -> Result<Node> {
-        let node = Node {
+        let mut node = Node {
             config: config.clone(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             message_sender,
             reset_timeout,
-            consensus: Consensus::new(secret_key, config)?,
+            consensus: Consensus::new(secret_key, config.clone())?,
         };
+
+        // FIXME
+        // Start a new dummy shard immediately.
+        let new_shard_config = NodeConfig {
+            json_rpc_port: config.json_rpc_port + 1,
+            ..config
+        };
+        node.send_internal_message(None, InternalMessage::LaunchShard(new_shard_config))?;
 
         Ok(node)
     }
