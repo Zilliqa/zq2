@@ -37,7 +37,7 @@ use tokio::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, error, info, warn};
 
-use crate::message::Message;
+use crate::message::{ExternalMessage, InternalMessage, Message};
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
@@ -204,13 +204,12 @@ impl P2pNode {
                     })) => {
                         let peer_id = PeerId::from_multihash(Multihash::from_bytes(key.as_ref())?).expect("key should be a peer ID");
                         let _public_key = NodePublicKey::from_bytes(&value)?;
-                        info!(?peer_id, "Got a new PEER!!!!!!");
 
                         // TODO: temporary, until we have proper dynamic joining!
                         for (_topic, _node) in &self.shard_nodes {
 
                             // self.outbound_message_sender.send((Some(peer_id), _topic.to_string().parse()?, Message::AddPeer(self.secret_key.node_public_key())))?;
-                            _node.send((peer_id, Message::AddPeer(_public_key)))?;
+                            _node.send((peer_id, Message::Internal(InternalMessage::AddPeer(_public_key))))?;
                         }
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
@@ -223,12 +222,18 @@ impl P2pNode {
                         let source = source.expect("message should have a source");
                         let message = serde_json::from_slice::<Message>(&data).unwrap();
                         let message_type = message.name();
-                        debug!(%source, message_type, "message recieved");
-                        // TODO: filter by topic here, send to the correct node
-                        match self.shard_nodes.get(&topic) {
-                            Some(inbound_message_sender) => inbound_message_sender.send((source, message))?,
-                            None => warn!(?topic, ?source, ?message, "Message received for unknown shard/topic")
-                        };
+                        match message {
+                            Message::Internal(_) => {
+                                warn!(%source, message_type, "Internal message received over the network!");
+                            }
+                            Message::External(m) => {
+                                debug!(%source, message_type, "message recieved");
+                                match self.shard_nodes.get(&topic) {
+                                    Some(inbound_message_sender) => inbound_message_sender.send((source, Message::External(m)))?,
+                                    None => warn!(?topic, ?source, ?m, "Message received for unknown shard/topic")
+                                };
+                            }
+                        }
                     }
 
                     SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer })) => {
@@ -239,11 +244,11 @@ impl P2pNode {
                                 let topic = Self::shard_id_to_topic(shard_id);
 
                                 match self.shard_nodes.get(&topic.hash()) {
-                                    Some(inbound_message_sender) => inbound_message_sender.send((peer, data))?,
+                                    Some(inbound_message_sender) => inbound_message_sender.send((peer, Message::External(data)))?,
                                     None => warn!(?topic, ?peer, ?data, "Message received for unknown shard/topic")
                                 };
 
-                                let _ = self.swarm.behaviour_mut().request_response.send_response(channel, (shard_id, Message::RequestResponse));
+                                let _ = self.swarm.behaviour_mut().request_response.send_response(channel, (shard_id, ExternalMessage::RequestResponse));
                             }
                             request_response::Message::Response {..} => {}
                         }
@@ -258,24 +263,32 @@ impl P2pNode {
 
                     let topic = Self::shard_id_to_topic(shard_id);
 
-                    if let Message::LaunchShard(config) = message {
-                        self.add_shard_node(config).await?;
-                    } else {
-                        match dest {
-                            Some(dest) => {
-                                debug!(%dest, message_type, "sending direct message");
-                                let _ = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
+                    match message {
+                        Message::Internal(internal_message) => match internal_message {
+                            InternalMessage::LaunchShard(config) => {
+                                self.add_shard_node(config).await?;
                             },
-                            None => {
-                                debug!(message_type, "sending gossip message");
-                                match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
-                                    Ok(_) => {},
-                                    Err(e) => {
-                                        error!(%e, "failed to publish message");
+                            _ => {
+                                warn!(?message_type, "Unexpected internal message in outbound message queue");
+                            }
+                        }
+                        Message::External(external_message) => {
+                            match dest {
+                                Some(dest) => {
+                                    debug!(%dest, message_type, "sending direct message");
+                                    let _ = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, external_message));
+                                },
+                                None => {
+                                    debug!(message_type, "sending gossip message");
+                                    match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
+                                        Ok(_) => {},
+                                        Err(e) => {
+                                            error!(%e, "failed to publish message");
+                                        }
                                     }
-                                }
-                            },
-                    }
+                                },
+                            }
+                        }
                     }
                 },
                 Some(res) = self.shard_threads.join_next() => {

@@ -89,6 +89,14 @@ impl State {
         state
             .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
 
+        let temp_shard_address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0AAA"));
+        state.deploy_fixed_contract(temp_shard_address, contracts::shard::CODE.clone())?;
+
+        state.deploy_fixed_contract(
+            Address::SHARD_REGISTRY,
+            contracts::shard_registry::CODE.clone(),
+        )?;
+
         for (address, balance) in GENESIS.iter() {
             // We don't care about these logs.
             let mut logs = vec![];
@@ -258,7 +266,7 @@ impl Address {
     /// Address of the native token ERC-20 contract.
     pub const NATIVE_TOKEN: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"));
 
-    pub const SHARD_CONTRACT: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0SHARD"));
+    pub const SHARD_REGISTRY: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0SHARD"));
 
     pub fn is_balance_transfer(to: Address) -> bool {
         to == Address::NATIVE_TOKEN

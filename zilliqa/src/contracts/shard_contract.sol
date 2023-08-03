@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.4;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-
-contract Shard is Ownable {
-    uint64 public parentShard;
+contract Shard {
+    uint public parentShard;
     uint16 public consensusTimeoutMs;
 
-    constructor(uint64 parentId, uint16 consensusTimeout) {
+    constructor(uint parentId, uint16 consensusTimeout) {
         parentShard = parentId;
         consensusTimeoutMs = consensusTimeout;
     }

@@ -35,7 +35,7 @@ use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::trace;
-use zilliqa::{cfg::NodeConfig, crypto::SecretKey, message::Message, node::Node};
+use zilliqa::{cfg::NodeConfig, crypto::SecretKey, message::ExternalMessage, node::Node};
 
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
 // type
@@ -46,7 +46,7 @@ fn node(
     datadir: Option<TempDir>,
 ) -> Result<(
     TestNode,
-    BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
+    BoxStream<'static, (PeerId, Option<PeerId>, ExternalMessage)>,
 )> {
     let (message_sender, message_receiver) = mpsc::unbounded_channel();
     let message_receiver = UnboundedReceiverStream::new(message_receiver);
@@ -101,8 +101,8 @@ struct Network<'r> {
     nodes: Vec<TestNode>,
     /// A stream of messages from each node. The stream items are a tuple of (source, destination, message).
     /// If the destination is `None`, the message is a broadcast.
-    receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, Message)>>,
-    resend_message: UnboundedSender<(PeerId, Option<PeerId>, Message)>,
+    receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, ExternalMessage)>>,
+    resend_message: UnboundedSender<(PeerId, Option<PeerId>, ExternalMessage)>,
     rng: &'r mut ChaCha8Rng,
     /// The seed input for the node - because rng.get_seed() returns a different, internal
     /// representation
@@ -151,7 +151,7 @@ impl<'r> Network<'r> {
             });
 
         let (resend_message, receive_resend_message) =
-            mpsc::unbounded_channel::<(PeerId, Option<PeerId>, Message)>();
+            mpsc::unbounded_channel::<(PeerId, Option<PeerId>, ExternalMessage)>();
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
@@ -315,7 +315,7 @@ fn format_message(
     nodes: &[TestNode],
     source: PeerId,
     destination: Option<PeerId>,
-    message: &Message,
+    message: &ExternalMessage,
 ) -> String {
     let source_index = nodes.iter().find(|n| n.peer_id == source).unwrap().index;
     if let Some(destination) = destination {

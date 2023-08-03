@@ -109,29 +109,55 @@ pub struct BlockResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
-    AddPeer(NodePublicKey),
+    External(ExternalMessage),
+    Internal(InternalMessage),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ExternalMessage {
     Proposal(Proposal),
     Vote(Vote),
     NewView(NewView),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
     NewTransaction(SignedTransaction),
-    LaunchShard(NodeConfig),
     RequestResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum InternalMessage {
+    AddPeer(NodePublicKey),
+    LaunchShard(NodeConfig),
 }
 
 impl Message {
     pub fn name(&self) -> &'static str {
         match self {
-            Message::Proposal(_) => "Proposal",
-            Message::AddPeer(_) => "AddPeer",
-            Message::Vote(_) => "Vote",
-            Message::NewView(_) => "NewView",
-            Message::BlockRequest(_) => "BlockRequest",
-            Message::BlockResponse(_) => "BlockResponse",
-            Message::NewTransaction(_) => "NewTransaction",
-            Message::LaunchShard(_) => "LaunchShard",
-            Message::RequestResponse => "RequestResponse",
+            Self::External(m) => m.name(),
+            Self::Internal(m) => m.name(),
+        }
+    }
+}
+
+impl ExternalMessage {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ExternalMessage::Proposal(_) => "Proposal",
+            ExternalMessage::Vote(_) => "Vote",
+            ExternalMessage::NewView(_) => "NewView",
+            ExternalMessage::BlockRequest(_) => "BlockRequest",
+            ExternalMessage::BlockResponse(_) => "BlockResponse",
+            ExternalMessage::NewTransaction(_) => "NewTransaction",
+            ExternalMessage::RequestResponse => "RequestResponse",
+        }
+    }
+}
+
+impl InternalMessage {
+    pub fn name(&self) -> &'static str {
+        match self {
+            InternalMessage::AddPeer(_) => "AddPeer",
+            InternalMessage::LaunchShard(_) => "LaunchShard",
         }
     }
 }

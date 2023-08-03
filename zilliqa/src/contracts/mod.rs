@@ -36,6 +36,50 @@ pub mod native_token {
     pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
 }
 
+pub mod shard {
+    use ethabi::Function;
+    use once_cell::sync::Lazy;
+
+    use super::{CombinedJson, Contract};
+
+    const COMBINED_JSON: &str = include_str!("shard.json");
+    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
+            .unwrap()
+            .contracts
+            .remove("shard_contract.sol:Shard")
+            .unwrap()
+    });
+    pub static MAIN_SHARD: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("parentShard").unwrap().clone());
+    pub static CONSENSUS_TIMEOUT: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("consensusTimeoutMs").unwrap().clone());
+    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
+}
+
+pub mod shard_registry {
+    use ethabi::Function;
+    use once_cell::sync::Lazy;
+
+    use super::{CombinedJson, Contract};
+
+    const COMBINED_JSON: &str = include_str!("shard_registry.json");
+    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
+            .unwrap()
+            .contracts
+            .remove("shard_registry.sol:ShardRegistry")
+            .unwrap()
+    });
+    pub static MAIN_SHARD: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("selfShard").unwrap().clone());
+    pub static SHARDS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("shards").unwrap().clone());
+    pub static ADD_SHARD: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("addShard").unwrap().clone());
+    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
+}
+
 /// These tests assert the contract binaries in this module are correct and reproducible, by recompiling the source
 /// files and checking the result is the same. This means we can keep the compiled source code in-tree, while also
 /// asserting in CI that the compiled source code is genuine. The tests only run when the `test_contract_bytecode`
@@ -56,11 +100,39 @@ mod tests {
     use sha2::Digest;
     use sha3::Keccak256;
 
-    use super::native_token;
+    use super::{native_token, shard, shard_registry};
 
     #[test]
     #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
     fn native_token() {
+        test_contract(
+            "native_token.sol",
+            "native_token.sol:NativeToken",
+            native_token::CODE.as_slice(),
+        )
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    fn shard() {
+        test_contract(
+            "shard_contract.sol",
+            "shard_contract.sol:Shard",
+            shard::CODE.as_slice(),
+        )
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    fn shard_registry() {
+        test_contract(
+            "shard_registry.sol",
+            "shard_registry.sol:ShardRegistry",
+            shard_registry::CODE.as_slice(),
+        )
+    }
+
+    fn test_contract(filename: &str, json_key: &str, code: &[u8]) {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut solc = Vec::new();
         let solc_download_path = format!(
@@ -87,7 +159,7 @@ mod tests {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src")
             .join("contracts");
-        let contract = root.join("native_token.sol");
+        let contract = root.join(filename);
         let vendor = root
             .parent()
             .unwrap()
@@ -113,11 +185,11 @@ mod tests {
         eprintln!("{}", std::str::from_utf8(&output.stderr).unwrap());
         let combined_json: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-        let bin = combined_json["contracts"]["native_token.sol:NativeToken"]["bin-runtime"]
+        let bin = combined_json["contracts"][&json_key]["bin-runtime"]
             .as_str()
             .unwrap();
-        let code = hex::decode(bin).unwrap();
+        let expected_code = hex::decode(bin).unwrap();
 
-        assert_eq!(native_token::CODE.as_slice(), code);
+        assert_eq!(code, expected_code);
     }
 }
