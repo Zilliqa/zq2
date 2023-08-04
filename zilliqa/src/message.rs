@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
 use serde::Deserializer;
@@ -22,7 +24,7 @@ pub struct Proposal {
     pub header: BlockHeader,
     pub qc: QuorumCertificate,
     pub agg: Option<AggregateQc>,
-    pub committee: Vec<Validator>,
+    pub committee: Committee,
     pub transactions: Vec<SignedTransaction>,
 }
 
@@ -343,6 +345,40 @@ impl FromStr for BlockNumber {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Invariant: The set is non-empty
+pub struct Committee(BTreeSet<Validator>);
+
+impl Committee {
+    pub fn new(validator: Validator) -> Committee {
+        Committee([validator].into_iter().collect())
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Validator> + '_ {
+        self.0.iter().copied()
+    }
+
+    pub fn get_by_index(&self, index: usize) -> Option<Validator> {
+        self.0.iter().nth(index).copied()
+    }
+
+    pub fn leader(&self, view: u64) -> Validator {
+        *self.0.iter().nth(view as usize % self.0.len()).unwrap()
+    }
+
+    pub fn total_weight(&self) -> u128 {
+        self.0.iter().map(|v| v.weight).sum()
+    }
+
+    pub fn add_validators(&mut self, validators: impl IntoIterator<Item = Validator>) {
+        self.0.extend(validators);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub header: BlockHeader,
     /// A block's quorum certificate (QC) is proof that more than `2n/3` nodes (out of `n`) have voted for this block.
@@ -353,11 +389,11 @@ pub struct Block {
     pub agg: Option<AggregateQc>,
     pub transactions: Vec<Hash>,
     /// The consensus committee for this block.
-    pub committee: Vec<Validator>,
+    pub committee: Committee,
 }
 
 impl Block {
-    pub fn genesis(committee: Vec<Validator>, state_root_hash: Hash) -> Block {
+    pub fn genesis(committee: Committee, state_root_hash: Hash) -> Block {
         let view = 0u64;
         let qc = QuorumCertificate {
             signature: NodeSignature::identity(),
@@ -369,6 +405,7 @@ impl Block {
 
         // FIXME: Just concatenating the keys is dumb.
         let committee_keys: Vec<_> = committee
+            .0
             .iter()
             .flat_map(|v| v.public_key.as_bytes())
             .collect();
@@ -406,6 +443,7 @@ impl Block {
         // FIXME: Just concatenating the keys is dumb.
         let committee_keys: Vec<_> = self
             .committee
+            .0
             .iter()
             .flat_map(|v| v.public_key.as_bytes())
             .collect();
@@ -445,10 +483,11 @@ impl Block {
         state_root_hash: Hash,
         transactions: Vec<Hash>,
         timestamp: SystemTime,
-        committee: Vec<Validator>,
+        committee: Committee,
     ) -> Block {
         // FIXME: Just concatenating the keys is dumb.
         let committee_keys: Vec<_> = committee
+            .0
             .iter()
             .flat_map(|v| v.public_key.as_bytes())
             .collect();
@@ -487,10 +526,11 @@ impl Block {
         parent_hash: Hash,
         state_root_hash: Hash,
         timestamp: SystemTime,
-        committee: Vec<Validator>,
+        committee: Committee,
     ) -> Block {
         // FIXME: Just concatenating the keys is dumb.
         let committee_keys: Vec<_> = committee
+            .0
             .iter()
             .flat_map(|v| v.public_key.as_bytes())
             .collect();

@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, error::Error, fmt::Display};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, trace};
 
-use crate::message::Message;
+use crate::message::{Committee, Message};
 use crate::{
     block_store::BlockStore,
     cfg::Config,
@@ -46,11 +46,31 @@ struct NewViewVote {
     qcs: Vec<QuorumCertificate>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Validator {
     pub public_key: NodePublicKey,
     pub peer_id: PeerId,
     pub weight: u128,
+}
+
+impl PartialEq for Validator {
+    fn eq(&self, other: &Self) -> bool {
+        self.peer_id == other.peer_id
+    }
+}
+
+impl Eq for Validator {}
+
+impl PartialOrd for Validator {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Validator {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.peer_id.cmp(&other.peer_id)
+    }
 }
 
 #[derive(Debug)]
@@ -140,23 +160,19 @@ impl Consensus {
         let latest_block = match latest_block {
             Some(l) => l,
             None => {
-                let genesis_committee: Vec<_> = config
-                    .clone()
-                    .genesis_committee
-                    .into_iter()
-                    .map(|(public_key, peer_id)| Validator {
-                        public_key,
-                        peer_id,
-                        weight: 100,
-                    })
-                    .collect();
-                if genesis_committee.len() != 1 {
+                if config.genesis_committee.len() != 1 {
                     return Err(anyhow!(
                         "genesis committee must have length 1, not {}",
-                        genesis_committee.len()
+                        config.genesis_committee.len()
                     ));
                 }
-                Block::genesis(genesis_committee, state.root_hash()?)
+                let (public_key, peer_id) = config.genesis_committee[0];
+                let genesis_validator = Validator {
+                    public_key,
+                    peer_id,
+                    weight: 100,
+                };
+                Block::genesis(Committee::new(genesis_validator), state.root_hash()?)
             }
         };
         trace!("Loading state at height {}", latest_block.view());
@@ -207,7 +223,7 @@ impl Consensus {
         Ok(consensus)
     }
 
-    fn committee(&self) -> Result<Vec<Validator>> {
+    fn committee(&self) -> Result<Committee> {
         let block = self
             .get_block_by_view(self.view.saturating_sub(1))?
             .ok_or_else(|| anyhow!("missing block"))?;
@@ -320,8 +336,7 @@ impl Consensus {
         let parent = self
             .get_block(&block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block"))?;
-        let parent_header = parent.header;
-        let next_leader = block.committee[proposal_view as usize % block.committee.len()].peer_id;
+        let next_leader = block.committee.leader(proposal_view).peer_id;
         let block_state_root = block.state_root_hash();
 
         // If the proposed block is safe, vote for it and advance to the next round.
@@ -330,7 +345,7 @@ impl Consensus {
             trace!("block is safe");
 
             for txn in &transactions {
-                if let Some(result) = self.apply_transaction(txn.clone(), parent_header)? {
+                if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
                     let receipt = TransactionReceipt {
                         block_hash: block.hash(),
                         success: result.success,
@@ -419,9 +434,7 @@ impl Consensus {
         trace!(block_view, self.view, %block_hash, "handling vote");
 
         // if we are not the leader of the round in which the vote counts
-        if block.committee[block_view as usize % block.committee.len()].public_key
-            != self.secret_key.node_public_key()
-        {
+        if block.committee.leader(block_view).public_key != self.secret_key.node_public_key() {
             trace!(vote_view = block_view + 1, "skipping vote, not the leader");
             return Ok(None);
         }
@@ -432,7 +445,7 @@ impl Consensus {
         }
 
         // verify the sender's signature on block_hash
-        let (index, &sender) = block // TODO: Is this the right committee?
+        let (index, sender) = block // TODO: Is this the right committee?
             .committee
             .iter()
             .enumerate()
@@ -463,7 +476,7 @@ impl Consensus {
             cosigned.set(index, true);
             cosigned_weight += sender.weight;
 
-            supermajority = cosigned_weight * 3 > self.committee_weight(&block.committee)? * 2;
+            supermajority = cosigned_weight * 3 > block.committee.total_weight() * 2;
             trace!(
                 cosigned_weight,
                 supermajority,
@@ -553,13 +566,10 @@ impl Consensus {
         Ok(None)
     }
 
-    fn get_next_committee(&mut self) -> Result<Vec<Validator>> {
-        let committee = self.committee()?.to_vec();
-        let joiners = self
-            .pending_peers
-            .drain(..)
-            .filter(|v1| !committee.iter().any(|v2| v1.peer_id == v2.peer_id));
-        Ok(committee.iter().cloned().chain(joiners).collect())
+    fn get_next_committee(&mut self) -> Result<Committee> {
+        let mut committee = self.committee()?.clone();
+        committee.add_validators(self.pending_peers.drain(..));
+        Ok(committee)
     }
 
     pub fn new_view(&mut self, _: PeerId, new_view: NewView) -> Result<Option<Block>> {
@@ -581,7 +591,6 @@ impl Consensus {
                 debug!("ignoring new view from unknown node (buffer?)");
                 return Ok(None);
             };
-        let sender = *sender;
         new_view.verify(sender.public_key)?;
 
         // check if the sender's qc is higher than our high_qc or even higher than our view
@@ -614,7 +623,7 @@ impl Consensus {
             cosigned_weight += sender.weight;
             qcs.push(new_view.qc);
             // TODO: New views broken
-            supermajority = cosigned_weight * 3 > self.committee_weight(&[])? * 2;
+            supermajority = cosigned_weight * 3 > 99999 /* total weight of what committee? */ * 2;
             let num_signers = signers.len();
             trace!(
                 num_signers,
@@ -869,7 +878,7 @@ impl Consensus {
         let Some(parent) = self.get_block(&block.parent_hash())? else { return Err(MissingBlockError::from(block.parent_hash()).into()); };
 
         // Derive the proposer from the block's view
-        let proposer = parent.committee[parent.view() as usize % parent.committee.len()];
+        let proposer = parent.committee.leader(parent.view());
         trace!("I think the block proposer is: {}", proposer.peer_id);
         // Verify the proposer's signature on the block
         proposer
@@ -1053,7 +1062,7 @@ impl Consensus {
         let public_keys: Vec<_> = agg
             .signers
             .iter()
-            .map(|i| committee[*i as usize].public_key)
+            .map(|i| committee.get_by_index(*i as usize).unwrap().public_key)
             .collect();
 
         verify_messages(agg.signature, &messages, &public_keys)
@@ -1062,14 +1071,11 @@ impl Consensus {
     fn get_leader(&self, view: u64) -> Result<Validator> {
         // currently it's a simple round robin but later
         // we will select the leader based on the weights
+        // Get the previous block, so we know the committee, then calculate the leader from there.
         let block = self
             .get_block_by_view(view - 1)?
             .ok_or_else(|| anyhow!("missing block"))?;
-        Ok(block.committee[view as usize % block.committee.len()])
-    }
-
-    fn committee_weight(&self, committee: &[Validator]) -> Result<u128> {
-        Ok(committee.iter().map(|v| v.weight).sum())
+        Ok(block.committee.leader(view))
     }
 
     fn check_quorum_in_bits(&self, view: u64, cosigned: &BitSlice) -> Result<()> {
@@ -1083,7 +1089,7 @@ impl Consensus {
             .map(|(i, v)| if cosigned[i] { v.weight } else { 0 })
             .sum();
 
-        if cosigned_sum * 3 <= self.committee_weight(committee)? * 2 {
+        if cosigned_sum * 3 <= committee.total_weight() * 2 {
             return Err(anyhow!("no quorum"));
         }
 
@@ -1095,9 +1101,12 @@ impl Consensus {
             .get_block_by_view(view - 1)?
             .ok_or_else(|| anyhow!("missing block"))?
             .committee;
-        let signed_sum: u128 = signers.iter().map(|i| committee[*i as usize].weight).sum();
+        let signed_sum: u128 = signers
+            .iter()
+            .map(|i| committee.get_by_index(*i as usize).unwrap().weight)
+            .sum();
 
-        if signed_sum * 3 <= self.committee_weight(committee)? * 2 {
+        if signed_sum * 3 <= committee.total_weight() * 2 {
             return Err(anyhow!("no quorum"));
         }
 
