@@ -449,7 +449,7 @@ impl Consensus {
         }
 
         // verify the sender's signature on block_hash
-        let (index, sender) = block // TODO: Is this the right committee?
+        let (index, sender) = block
             .committee
             .iter()
             .enumerate()
