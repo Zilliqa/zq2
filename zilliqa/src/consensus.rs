@@ -140,7 +140,7 @@ impl Consensus {
         let latest_block = match latest_block {
             Some(l) => l,
             None => {
-                let genesis_committee = config
+                let genesis_committee: Vec<_> = config
                     .clone()
                     .genesis_committee
                     .into_iter()
@@ -150,6 +150,12 @@ impl Consensus {
                         weight: 100,
                     })
                     .collect();
+                if genesis_committee.len() != 1 {
+                    return Err(anyhow!(
+                        "genesis committee must have length 1, not {}",
+                        genesis_committee.len()
+                    ));
+                }
                 Block::genesis(genesis_committee, state.root_hash()?)
             }
         };
@@ -245,7 +251,6 @@ impl Consensus {
                 .get_block_by_view(0)?
                 .ok_or_else(|| anyhow!("missing block"))?;
             // If we're in the genesis committee, vote again.
-            // TODO: Make this work for genesis committee with multiple participants?
             if genesis.committee.iter().any(|v| v.peer_id == me) {
                 trace!("voting for genesis block");
                 let leader = self.get_leader(self.view)?;
