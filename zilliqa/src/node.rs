@@ -184,7 +184,7 @@ impl Node {
     }
 
     pub fn get_chain_tip(&self) -> u64 {
-        self.consensus.view().saturating_sub(1)
+        self.consensus.get_chain_tip()
     }
 
     pub fn get_account(&self, address: Address, block_number: BlockNumber) -> Result<Account> {

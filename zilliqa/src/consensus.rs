@@ -223,9 +223,13 @@ impl Consensus {
         Ok(consensus)
     }
 
+    pub fn get_chain_tip(&self) -> u64 {
+        self.view.saturating_sub(1)
+    }
+
     fn committee(&self) -> Result<Committee> {
         let block = self
-            .get_block_by_view(self.view.saturating_sub(1))?
+            .get_block_by_view(self.get_chain_tip())?
             .ok_or_else(|| anyhow!("missing block"))?;
         Ok(block.committee)
     }
