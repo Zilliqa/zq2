@@ -781,7 +781,7 @@ impl Consensus {
     fn check_safe_block(&mut self, proposal: &Block) -> Result<bool> {
         let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else { trace!("could not get qc for block: {}", proposal.qc.block_hash); return Ok(false); };
         // We don't vote on blocks older than our view
-        let not_outdated = proposal.view() >= self.view;
+        let outdated = proposal.view() < self.view;
         let proposal_hash = proposal.hash();
         match proposal.agg {
             // we check elsewhere that qc is the highest among the qcs in the agg
@@ -789,7 +789,7 @@ impl Consensus {
                 Ok(true) => {
                     let block_hash = proposal_hash;
                     self.check_and_commit(block_hash)?;
-                    Ok(not_outdated)
+                    Ok(!outdated)
                 }
                 Ok(false) => {
                     trace!("block does not extend from parent");
@@ -804,11 +804,11 @@ impl Consensus {
                 if proposal.view() == 0 || proposal.view() == qc_block.view() + 1 {
                     self.check_and_commit(proposal.hash())?;
 
-                    if !not_outdated {
+                    if outdated {
                         trace!("proposal is outdated: {} < {}", proposal.view(), self.view);
                     }
 
-                    Ok(not_outdated)
+                    Ok(!outdated)
                 } else {
                     trace!(
                         "block does not extend from parent, {} != {} + 1",
