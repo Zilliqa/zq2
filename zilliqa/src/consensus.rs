@@ -371,11 +371,8 @@ impl Consensus {
             self.view = proposal_view + 1;
             self.save_highest_view(block.hash(), proposal_view)?;
 
-            if !block
-                .committee
-                .iter()
-                .any(|v| v.peer_id == self.secret_key.to_libp2p_keypair().public().to_peer_id())
-            {
+            let me = self.secret_key.to_libp2p_keypair().public().to_peer_id();
+            if !block.committee.iter().any(|v| v.peer_id == me) {
                 trace!("can't vote for block proposal, we aren't in the committee");
                 Ok(None)
             } else {
