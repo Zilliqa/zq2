@@ -393,7 +393,7 @@ impl Consensus {
         current_block: BlockHeader,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash();
-        trace!(?hash, "executing transaction");
+        debug!(?hash, "executing transaction");
 
         // If we have the transaction in the mempool, remove it.
         self.new_transactions.remove(&hash);
