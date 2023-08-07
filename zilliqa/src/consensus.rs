@@ -470,22 +470,21 @@ impl Consensus {
             return Ok(None);
         }
 
-        let mut supermajority = false;
         // if the vote is new, store it
         if !cosigned[index] {
             signatures.push(vote.signature);
             cosigned.set(index, true);
             cosigned_weight += sender.weight;
 
-            supermajority = cosigned_weight * 3 > block.committee.total_weight() * 2;
+            supermajority_reached = cosigned_weight * 3 > block.committee.total_weight() * 2;
             trace!(
                 cosigned_weight,
-                supermajority,
+                supermajority_reached,
                 self.view,
                 vote_view = block_view + 1,
                 "storing vote"
             );
-            if supermajority {
+            if supermajority_reached {
                 self.block_store.request_block_by_view(block_view)?;
                 self.download_blocks_up_to(block_view)?;
 
@@ -541,10 +540,8 @@ impl Consensus {
                             Ok(tx)
                         })
                         .collect();
-
                     let applied_transactions = applied_transactions?;
 
-                    supermajority_reached = true;
                     self.votes.insert(
                         block_hash,
                         (signatures, cosigned, cosigned_weight, supermajority_reached),
@@ -557,12 +554,11 @@ impl Consensus {
                 }
             }
         }
-        if !supermajority {
-            self.votes.insert(
-                block_hash,
-                (signatures, cosigned, cosigned_weight, supermajority_reached),
-            );
-        }
+
+        self.votes.insert(
+            block_hash,
+            (signatures, cosigned, cosigned_weight, supermajority_reached),
+        );
 
         Ok(None)
     }
