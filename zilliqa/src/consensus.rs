@@ -41,6 +41,8 @@ const ADDR_TOUCHED_INDEX: &[u8] = b"addresses_touched_index";
 // single keys stored in default tree in DB
 /// value: block hash
 const LATEST_FINALIZED_BLOCK_HASH: &[u8] = b"latest_finalized_block_hash";
+/// value: serialized QC
+const HIGH_QC: &[u8] = b"high_qc";
 
 #[derive(Debug)]
 struct NewViewVote {
@@ -118,6 +120,12 @@ impl Consensus {
             None
         };
 
+        let high_qc = if let Some(ivec) = db.get(HIGH_QC)? {
+            Some(bincode::deserialize::<QuorumCertificate>(&ivec)?)
+        } else {
+            None
+        };
+
         let mut state = if let Some(header) = latest_block_header {
             State::new_from_root(state_trie, H256(header.state_root_hash.0))
         } else {
@@ -150,7 +158,7 @@ impl Consensus {
             blocks: db.open_tree(BLOCKS_TREE)?,
             votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
-            high_qc: None,
+            high_qc,
             view: latest_block_header.view,
             finalized: latest_block_header.hash,
             pending_peers: Vec::new(),
@@ -207,7 +215,7 @@ impl Consensus {
         // because the supermajority condition is impossible to achieve.
         if self.pending_peers.len() >= 3 && self.view == 0 {
             let genesis = Block::genesis(self.committee.len(), self.state.root_hash()?);
-            self.high_qc = Some(genesis.qc.clone());
+            self.set_high_qc(Some(genesis.qc.clone()))?;
             self.add_block(genesis.clone())?;
             self.save_highest_view(genesis.hash(), genesis.view())?;
             // treat genesis as finalized
@@ -600,6 +608,16 @@ impl Consensus {
         Ok(())
     }
 
+    fn set_high_qc(&mut self, qc: Option<QuorumCertificate>) -> Result<()> {
+        self.high_qc = qc.clone();
+        if let Some(qc) = qc {
+            self.db.insert(HIGH_QC, bincode::serialize(&qc)?)?;
+        } else {
+            self.db.remove(HIGH_QC)?;
+        }
+        Ok(())
+    }
+
     fn update_high_qc_and_view(
         &mut self,
         from_agg: bool,
@@ -613,13 +631,13 @@ impl Consensus {
         };
         match &self.high_qc {
             None => {
-                self.high_qc = Some(new_high_qc);
+                self.set_high_qc(Some(new_high_qc))?;
             }
             Some(high_qc) => {
                 let current_high_qc_view = self.get_block(&high_qc.block_hash)?.view();
                 // If `from_agg` then we always release the lock because the supermajority has a different high_qc.
                 if from_agg || new_high_qc_block.view() > current_high_qc_view {
-                    self.high_qc = Some(new_high_qc);
+                    self.set_high_qc(Some(new_high_qc))?;
                 }
             }
         }
