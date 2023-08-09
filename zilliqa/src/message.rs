@@ -162,7 +162,7 @@ impl QuorumCertificate {
         Self {
             signature: NodeSignature::identity(),
             cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
-            block_hash: BlockHeader::genesis_hash(),
+            block_hash: Hash::ZERO,
         }
     }
 
