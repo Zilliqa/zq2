@@ -126,7 +126,7 @@ pub struct BlockResponse {
 pub enum Message {
     Proposal(Proposal),
     Vote(Vote),
-    NewView(NewView),
+    NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
     NewTransaction(SignedTransaction),
@@ -351,6 +351,10 @@ pub struct Committee(BTreeSet<Validator>);
 impl Committee {
     pub fn new(validator: Validator) -> Committee {
         Committee([validator].into_iter().collect())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     pub fn len(&self) -> usize {

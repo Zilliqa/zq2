@@ -80,7 +80,7 @@ impl Node {
                 }
             }
             Message::NewView(m) => {
-                if let Some(block) = self.consensus.new_view(from, m)? {
+                if let Some(block) = self.consensus.new_view(from, *m)? {
                     self.broadcast_message(Message::Proposal(Proposal::from_parts(block, vec![])))?;
                 }
             }
@@ -105,7 +105,7 @@ impl Node {
     pub fn handle_timeout(&mut self) -> Result<()> {
         let (leader, new_view) = self.consensus.timeout()?;
 
-        self.send_message(leader, Message::NewView(new_view))?;
+        self.send_message(leader, Message::NewView(Box::new(new_view)))?;
 
         Ok(())
     }
@@ -268,12 +268,7 @@ impl Node {
             return Ok(());
         };
 
-        self.send_message(
-            source,
-            Message::BlockResponse(BlockResponse {
-                block: block.clone(),
-            }),
-        )?;
+        self.send_message(source, Message::BlockResponse(BlockResponse { block }))?;
 
         Ok(())
     }

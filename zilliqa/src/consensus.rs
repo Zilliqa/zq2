@@ -564,7 +564,7 @@ impl Consensus {
     }
 
     fn get_next_committee(&mut self) -> Result<Committee> {
-        let mut committee = self.committee()?.clone();
+        let mut committee = self.committee()?;
         committee.add_validators(self.pending_peers.drain(..));
         Ok(committee)
     }
