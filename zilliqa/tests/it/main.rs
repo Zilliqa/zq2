@@ -102,7 +102,7 @@ struct TestNode {
 }
 
 struct Network<'r> {
-    genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
     // the borrow checker happy.
     nodes: Vec<TestNode>,
@@ -185,7 +185,13 @@ impl<'r> Network<'r> {
 
     pub fn add_node(&mut self) -> usize {
         let secret_key = SecretKey::new_from_rng(self.rng).unwrap();
-        let (node, receiver) = node(self.genesis_committee.clone(), secret_key, self.nodes.len());
+        let (node, receiver) = node(
+            self.genesis_committee.clone(),
+            secret_key,
+            self.nodes.len(),
+            None,
+        )
+        .unwrap();
 
         self.resend_message
             .send((

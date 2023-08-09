@@ -21,7 +21,13 @@ async fn block_production(mut network: Network<'_>) {
 
     network
         .run_until(
-            |n| n.node_at(index).get_latest_block().map_or(0, |b| b.view()) >= 10,
+            |n| {
+                n.node_at(index)
+                    .get_latest_block()
+                    .unwrap()
+                    .map_or(0, |b| b.view())
+                    >= 10
+            },
             500,
         )
         .await
