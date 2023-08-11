@@ -7,7 +7,7 @@ use itertools::Itertools;
 use libp2p::PeerId;
 use lru::LruCache;
 use sled::{Db, Tree};
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::{
     cfg::NodeConfig,
@@ -119,6 +119,7 @@ impl Consensus {
         };
 
         let mut state = if let Some(header) = latest_block_header {
+            warn!("!!!!!!!LOADINGGG STATE");
             State::new_from_root(state_trie, H256(header.state_root_hash.0))
         } else {
             State::new_genesis(state_trie)?

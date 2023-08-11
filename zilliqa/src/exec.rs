@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use anyhow::anyhow;
 use anyhow::Result;
 use ethabi::Token;
 use evm_ds::evm::{
@@ -18,7 +19,7 @@ use evm_ds::{
     evm_server_run::{calculate_contract_address, run_evm_impl_direct},
 };
 use primitive_types::{H160, H256, U256};
-use tracing::{error, trace};
+use tracing::{error, trace, warn};
 
 use crate::state::SignedTransaction;
 use crate::{
@@ -111,6 +112,40 @@ impl State {
         self.save_account(address, account)
     }
 
+    pub fn deploy_fixed_contract_with_constructor(
+        &mut self,
+        address: Address,
+        code: Vec<u8>,
+        calldata: Vec<u8>,
+    ) -> Result<()> {
+        self.deploy_fixed_contract(address, code)?;
+
+        let result = self.apply_transaction_inner(
+            Address::ZERO,
+            Some(address),
+            u128::MAX,
+            u64::MAX,
+            0,
+            calldata,
+            // The chain ID and current block are not accessed when the native balance is updated, so we just pass in
+            // some dummy values.
+            0,
+            BlockHeader::default(),
+        );
+
+        match result {
+            Ok((_, result, _)) if result.exit_reason.as_ref().unwrap().has_succeed() => {
+                let mut tmp = vec![];
+                self.apply_delta(&mut tmp, Some(address), result.apply.iter())?;
+                Ok(())
+            }
+            Ok(_) => Ok(()),
+            Err(e) => {
+                panic!("Failed to construct contract with error: {:?}", e);
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn apply_transaction_inner(
         &self,
@@ -181,6 +216,65 @@ impl State {
         });
 
         Ok((logs, result, created_contract_addr))
+    }
+
+    pub fn force_deploy_contract_at_address(
+        &mut self,
+        creation_bytecode: Vec<u8>,
+        creation_address: Address,
+    ) -> Result<()> {
+        let result = self.apply_transaction_inner(
+            Address::ZERO,
+            None,
+            u128::MAX,
+            u64::MAX,
+            0,
+            creation_bytecode,
+            0,
+            BlockHeader::default(),
+        );
+
+        match result {
+            Ok((mut logs, mut result, old_address))
+                if result.exit_reason.clone().unwrap().has_succeed() =>
+            {
+                let old_address = old_address.unwrap();
+                // Apply the state changes only if success
+                let mut acct = self.get_account(creation_address)?;
+                acct.code = result.return_value.clone().to_vec();
+                self.save_account(creation_address, acct)?;
+
+                warn!("PRINTING APPLYS!! {}", result.apply.len());
+                for apply in &mut result.apply {
+                    if apply.has_modify() {
+                        let modify = apply.get_modify();
+                        if Into::<H160>::into(modify.get_address()) == old_address {
+                            modify.set_address(creation_address.0.into());
+                        }
+                    }
+                    warn!("Apply: {:?}", apply);
+                }
+                for apply in &mut result.apply {
+                    if apply.has_modify() {
+                        let modify = apply.get_modify();
+                        if Into::<H160>::into(modify.get_address()) == old_address {
+                            println!("Failed to edit apply...");
+                        }
+                    }
+                }
+                self.apply_delta(&mut logs, None, result.apply.iter())?;
+                Ok(())
+            }
+            Ok((_, result, _)) => {
+                let exit = result.exit_reason.clone().unwrap();
+                warn!("FAILED!!!! {:?}", exit);
+                Err(anyhow!("{:?}", exit))
+            }
+            Err(e) => {
+                error!("Error applying transaction: {:?}", e);
+                Err(e)
+            }
+        }
     }
 
     /// Apply a transaction to the account state.

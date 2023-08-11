@@ -9,30 +9,100 @@ struct CombinedJson {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
-struct Contract {
-    abi: ethabi::Contract,
-    bin_runtime: String,
+pub struct Contract {
+    pub abi: ethabi::Contract,
+    pub bin: String,
+    pub bin_runtime: String,
 }
 
 // Generated with `solc native_token.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin > native_token.json`.
 pub mod native_token {
-    use ethabi::Function;
+    use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
 
     use super::{CombinedJson, Contract};
 
-    const COMBINED_JSON: &str = include_str!("native_token.json");
-    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+    const COMBINED_JSON: &str = include_str!("native_token_2.json");
+    pub static CONTRACT: Lazy<Contract> = Lazy::new(|| {
         serde_json::from_str::<CombinedJson>(COMBINED_JSON)
             .unwrap()
             .contracts
             .remove("native_token.sol:NativeToken")
             .unwrap()
     });
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
     pub static BALANCE_OF: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("balanceOf").unwrap().clone());
     pub static SET_BALANCE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("setBalance").unwrap().clone());
+    pub static CREATION_CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin).unwrap());
+    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
+}
+
+// Generated with `solc native_token.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin > native_token.json`.
+pub mod call_me {
+    use ethabi::Constructor;
+    use once_cell::sync::Lazy;
+
+    use super::{CombinedJson, Contract};
+
+    const COMBINED_JSON: &str = include_str!("call_me.json");
+    pub static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
+            .unwrap()
+            .contracts
+            .remove("CallMe.sol:CallMe")
+            .unwrap()
+    });
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+    pub static CREATION_CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin).unwrap());
+    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
+}
+
+// Generated with `solc shard.sol --base-path . --include-path ../../../vendor/ --combined-json abi,bin > shard.json`.
+pub mod shard {
+    use ethabi::Function;
+    use once_cell::sync::Lazy;
+
+    use super::{CombinedJson, Contract};
+
+    const COMBINED_JSON: &str = include_str!("shard.json");
+    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
+            .unwrap()
+            .contracts
+            .remove("shard.sol:Shard")
+            .unwrap()
+    });
+    pub static CONSTRUCTOR: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("constructor").unwrap().clone());
+    pub static ADD_VALIDATOR: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("addValidator").unwrap().clone());
+    pub static CONSENSUS_TIMEOUT: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("consensusTimeoutMs").unwrap().clone());
+    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
+}
+
+pub mod shard_registry {
+    use ethabi::Function;
+    use once_cell::sync::Lazy;
+
+    use super::{CombinedJson, Contract};
+
+    const COMBINED_JSON: &str = include_str!("shard_registry.json");
+    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
+            .unwrap()
+            .contracts
+            .remove("shard_registry.sol:ShardRegistry")
+            .unwrap()
+    });
+    pub static CONSTRUCTOR: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("constructor").unwrap().clone());
+    pub static ADD_SHARD: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("addShard").unwrap().clone());
     pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
 }
 
@@ -56,7 +126,7 @@ mod tests {
     use sha2::Digest;
     use sha3::Keccak256;
 
-    use super::native_token;
+    use super::{native_token, shard, shard_registry};
 
     #[test]
     #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
@@ -65,6 +135,22 @@ mod tests {
             "native_token.sol",
             "native_token.sol:NativeToken",
             native_token::CODE.as_slice(),
+        )
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    fn shard() {
+        test_contract("shard.sol", "shard.sol:Shard", shard::CODE.as_slice())
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    fn shard_registry() {
+        test_contract(
+            "shard_registry.sol",
+            "shard_registry.sol:ShardRegistry",
+            shard_registry::CODE.as_slice(),
         )
     }
 

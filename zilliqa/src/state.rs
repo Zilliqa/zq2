@@ -17,7 +17,7 @@ use std::{hash::Hash, str::FromStr};
 use anyhow::{anyhow, Result};
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{contracts, crypto, db::SledDb};
 
@@ -28,6 +28,12 @@ const fn u128_to_u256(value: u128) -> U256 {
     ret[1] = (value >> 64) as u64;
     U256(ret)
 }
+
+static GENESIS_SHARDS: Lazy<Vec<(u128, u128)>> = Lazy::new(|| {
+    // (shard_id, consensus_timeout)
+    // First shard is main shard
+    vec![(32769, 5000), (32770, 5000)]
+});
 
 static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
     // Address with private key  0000000000000000000000000000000000000000000000000000000000000001
@@ -86,8 +92,42 @@ impl State {
             accounts: PatriciaTrie::new(db),
         };
 
-        state
-            .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
+        // state
+        //     .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
+
+        // if let Some(cfg) = GENESIS_SHARDS.get(0) {
+        //     let calldata = contracts::shard_registry::CONSTRUCTOR
+        //         .encode_input(&[Token::Uint(u128_to_u256(cfg.1))])
+        //         .unwrap();
+
+        //     state.deploy_fixed_contract_with_constructor(
+        //         Address::SHARD_CONTRACT,
+        //         contracts::shard_registry::CODE.clone(),
+        //         calldata,
+        //     )?;
+        // };
+
+        // for cfg in GENESIS_SHARDS.iter().skip(1) {
+        //     let calldata = contracts::shard::CONSTRUCTOR
+        //         .encode_input(&[
+        //             Token::Uint(u128_to_u256(cfg.0)),
+        //             Token::Uint(u128_to_u256(cfg.1)),
+        //         ])
+        //         .unwrap();
+
+        //     state.deploy_fixed_contract_with_constructor(
+        //         Address::SHARD_CONTRACT,
+        //         contracts::shard::CODE.clone(),
+        //         calldata,
+        //     )?;
+        // }
+
+        // warn!("DEPLOYING GENESIS STATE!!!!");
+        let data = contracts::native_token::CONSTRUCTOR
+            .encode_input(contracts::native_token::CREATION_CODE.to_vec(), &vec![])?;
+        // println!("{:?}", hex::encode(data.clone()));
+        state.deploy_contract_at_address(data, Address::NATIVE_TOKEN)?;
+        warn!("DONE! DEPLOYED callme CONTRACT!");
 
         for (address, balance) in GENESIS.iter() {
             // We don't care about these logs.
@@ -258,7 +298,7 @@ impl Address {
     /// Address of the native token ERC-20 contract.
     pub const NATIVE_TOKEN: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"));
 
-    pub const SHARD_REGISTRY: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0SHARD"));
+    pub const SHARD_CONTRACT: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0SHARD"));
 
     pub fn is_balance_transfer(to: Address) -> bool {
         to == Address::NATIVE_TOKEN
