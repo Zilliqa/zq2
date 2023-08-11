@@ -19,7 +19,7 @@ pub struct BlockStore {
     block_headers: Tree,
     canonical_block_numbers: Tree,
     blocks: Tree,
-    _block_cache: RefCell<LruCache<Hash, Block>>,
+    block_cache: RefCell<LruCache<Hash, Block>>,
     message_sender: UnboundedSender<(Option<PeerId>, Message)>,
 }
 
@@ -32,7 +32,7 @@ impl BlockStore {
             block_headers: db.open_tree(b"block_headers_tree")?,
             canonical_block_numbers: db.open_tree(b"canonical_block_numbers_tree")?,
             blocks: db.open_tree(b"blocks_tree")?,
-            _block_cache: RefCell::new(LruCache::new(NonZeroUsize::new(5).unwrap())),
+            block_cache: RefCell::new(LruCache::new(NonZeroUsize::new(5).unwrap())),
             message_sender,
         })
     }
@@ -42,8 +42,13 @@ impl BlockStore {
     }
 
     pub fn get_block(&self, hash: Hash) -> Result<Option<Block>> {
+        let mut block_cache = self.block_cache.borrow_mut();
+        if let Some(block) = block_cache.get(&hash) {
+            return Ok(Some(block.clone()));
+        }
         let Some(block) = self.blocks.get(hash.as_bytes())? else { return Ok(None); };
-        let block = bincode::deserialize(&block)?;
+        let block: Block = bincode::deserialize(&block)?;
+        block_cache.put(hash, block.clone());
         Ok(Some(block))
     }
 
