@@ -1,13 +1,13 @@
 use crate::message::ExternalMessage;
-use std::{cell::RefCell, num::NonZeroUsize};
+use std::{cell::RefCell, num::NonZeroUsize, sync::Arc};
 
 use anyhow::Result;
 use lru::LruCache;
-use sled::{Db, Tree};
 use tracing::*;
 
 use crate::{
     crypto::Hash,
+    db::Db,
     message::{Block, BlockRef, BlockRequest},
     node::MessageSender,
 };
@@ -16,26 +16,22 @@ use crate::{
 /// this may become more complex with retries, batching, snapshots, etc.
 #[derive(Debug)]
 pub struct BlockStore {
-    block_headers: Tree,
-    canonical_block_numbers: Tree,
-    blocks: Tree,
+    db: Arc<Db>,
     block_cache: RefCell<LruCache<Hash, Block>>,
     message_sender: MessageSender,
 }
 
 impl BlockStore {
-    pub fn new(db: &Db, message_sender: MessageSender) -> Result<Self> {
+    pub fn new(db: Arc<Db>, message_sender: MessageSender) -> Result<Self> {
         Ok(BlockStore {
-            block_headers: db.open_tree(b"block_headers_tree")?,
-            canonical_block_numbers: db.open_tree(b"canonical_block_numbers_tree")?,
-            blocks: db.open_tree(b"blocks_tree")?,
+            db,
             block_cache: RefCell::new(LruCache::new(NonZeroUsize::new(5).unwrap())),
             message_sender,
         })
     }
 
     pub fn contains_block(&self, hash: Hash) -> Result<bool> {
-        Ok(self.blocks.contains_key(hash.as_bytes())?)
+        self.db.contains_block(&hash)
     }
 
     pub fn get_block(&self, hash: Hash) -> Result<Option<Block>> {
@@ -43,22 +39,19 @@ impl BlockStore {
         if let Some(block) = block_cache.get(&hash) {
             return Ok(Some(block.clone()));
         }
-        let Some(block) = self.blocks.get(hash.as_bytes())? else { return Ok(None); };
-        let block: Block = bincode::deserialize(&block)?;
+        let Some(block) = self.db.get_block(&hash)? else { return Ok(None); };
         block_cache.put(hash, block.clone());
         Ok(Some(block))
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        let Some(hash) = self.canonical_block_numbers.get(view.to_be_bytes())? else { return Ok(None); };
-        let hash = Hash::from_bytes(hash)?;
+        let Some(hash) = self.db.get_canonical_block_number(view)? else { return Ok(None); };
         self.get_block(hash)
     }
 
     pub fn request_block_by_view(&mut self, view: u64) -> Result<()> {
         trace!("Request block with view {view}");
-        if let Some(hash) = self.canonical_block_numbers.get(view.to_be_bytes())? {
-            let hash = Hash::from_bytes(hash)?;
+        if let Some(hash) = self.db.get_canonical_block_number(view)? {
             trace!("I know the hash, its {hash}");
             self.request_block(hash)?;
         } else {
@@ -73,7 +66,7 @@ impl BlockStore {
     }
 
     pub fn request_block(&mut self, hash: Hash) -> Result<()> {
-        if !self.blocks.contains_key(hash.as_bytes())? {
+        if !self.db.contains_block(&hash)? {
             self.message_sender
                 .broadcast_external_message(ExternalMessage::BlockRequest(BlockRequest(
                     BlockRef::Hash(hash),
@@ -86,17 +79,14 @@ impl BlockStore {
     }
 
     pub fn set_canonical(&mut self, view: u64, hash: Hash) -> Result<()> {
-        self.canonical_block_numbers
-            .insert(view.to_be_bytes(), &hash.0)?;
+        self.db.put_canonical_block_number(view, hash)?;
         Ok(())
     }
 
     pub fn process_block(&mut self, block: Block) -> Result<()> {
         trace!(view = block.view(), hash = ?block.hash(), "insert block");
-        self.block_headers
-            .insert(block.hash().as_bytes(), bincode::serialize(&block.header)?)?;
-        self.blocks
-            .insert(block.hash().as_bytes(), bincode::serialize(&block)?)?;
+        self.db.insert_block_header(&block.hash(), &block.header)?;
+        self.db.insert_block(&block.hash(), &block)?;
         // TODO: Is this correct?
         self.set_canonical(block.view(), block.hash())?;
         Ok(())

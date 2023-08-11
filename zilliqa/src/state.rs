@@ -7,7 +7,6 @@ use generic_array::{
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
-use sled::Tree;
 use std::convert::TryInto;
 use std::fmt::Display;
 use std::sync::Arc;
@@ -18,17 +17,17 @@ use evm_ds::protos::evm_proto::Log;
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 
-use crate::{contracts, crypto, db::SledDb};
+use crate::{contracts, crypto, db::TrieStorage};
 
 #[derive(Debug)]
 pub struct State {
-    db: Arc<SledDb>,
-    accounts: PatriciaTrie<SledDb>,
+    db: Arc<TrieStorage>,
+    accounts: PatriciaTrie<TrieStorage>,
 }
 
 impl State {
-    pub fn new_genesis(database: Tree, genesis_accounts: &[(Address, String)]) -> Result<State> {
-        let db = Arc::new(SledDb::new(database));
+    pub fn new_genesis(trie: TrieStorage, genesis_accounts: &[(Address, String)]) -> Result<State> {
+        let db = Arc::new(trie);
         let mut state = Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
@@ -51,8 +50,8 @@ impl State {
         Ok(state)
     }
 
-    pub fn new_from_root(database: Tree, root_hash: H256) -> Self {
-        let db = Arc::new(SledDb::new(database));
+    pub fn new_from_root(trie: TrieStorage, root_hash: H256) -> Self {
+        let db = Arc::new(trie);
         Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db).at_root(root_hash),
@@ -116,7 +115,7 @@ impl State {
     }
 
     /// If using this to modify the account, ensure save_account gets called
-    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<SledDb>> {
+    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
         Ok(match self.get_account(address)?.storage_root {
             Some(root) => PatriciaTrie::new(self.db.clone()).at_root(root),
             None => PatriciaTrie::new(self.db.clone()),
