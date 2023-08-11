@@ -266,12 +266,15 @@ impl Consensus {
         debug!(%peer_id, "added pending peer");
 
         if self.view == 1 {
-            let me = self.secret_key.to_libp2p_keypair().public().to_peer_id();
             let genesis = self
                 .get_block_by_view(0)?
                 .ok_or_else(|| anyhow!("missing block"))?;
             // If we're in the genesis committee, vote again.
-            if genesis.committee.iter().any(|v| v.peer_id == me) {
+            if genesis
+                .committee
+                .iter()
+                .any(|v| v.peer_id == self.peer_id())
+            {
                 trace!("voting for genesis block");
                 let leader = self.get_leader(self.view)?;
                 let vote = self.vote_from_block(&genesis);
@@ -303,6 +306,10 @@ impl Consensus {
             self.secret_key.node_public_key(),
         );
         Ok((leader, new_view))
+    }
+
+    pub fn peer_id(&self) -> PeerId {
+        self.secret_key.to_libp2p_keypair().public().to_peer_id()
     }
 
     pub fn proposal(&mut self, proposal: Proposal) -> Result<Option<(PeerId, Vote)>> {
@@ -371,8 +378,7 @@ impl Consensus {
             self.view = proposal_view + 1;
             self.save_highest_view(block.hash(), proposal_view)?;
 
-            let me = self.secret_key.to_libp2p_keypair().public().to_peer_id();
-            if !block.committee.iter().any(|v| v.peer_id == me) {
+            if !block.committee.iter().any(|v| v.peer_id == self.peer_id()) {
                 trace!("can't vote for block proposal, we aren't in the committee");
                 Ok(None)
             } else {
