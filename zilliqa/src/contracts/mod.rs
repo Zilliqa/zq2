@@ -11,12 +11,13 @@ struct CombinedJson {
 #[serde(rename_all = "kebab-case")]
 struct Contract {
     abi: ethabi::Contract,
+    bin: String,
     bin_runtime: String,
 }
 
-// Generated with `solc native_token.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin > native_token.json`.
+// Generated with `solc native_token.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > native_token.json`.
 pub mod native_token {
-    use ethabi::Function;
+    use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
 
     use super::{CombinedJson, Contract};
@@ -29,11 +30,14 @@ pub mod native_token {
             .remove("native_token.sol:NativeToken")
             .unwrap()
     });
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
     pub static BALANCE_OF: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("balanceOf").unwrap().clone());
     pub static SET_BALANCE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("setBalance").unwrap().clone());
     pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
+    pub static CREATION_CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin).unwrap());
 }
 
 /// These tests assert the contract binaries in this module are correct and reproducible, by recompiling the source
