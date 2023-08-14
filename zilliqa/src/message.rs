@@ -107,6 +107,7 @@ pub struct BlockResponse {
     pub block: Block,
 }
 
+#[allow(clippy::large_enum_variant)] // Pending refactor once join_network is merged
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
     External(ExternalMessage),

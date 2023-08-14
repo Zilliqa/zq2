@@ -49,7 +49,7 @@ impl Node {
         message_sender: UnboundedSender<OutboundMessageTuple>,
         reset_timeout: UnboundedSender<()>,
     ) -> Result<Node> {
-        let mut node = Node {
+        let node = Node {
             config: config.clone(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             message_sender,
@@ -254,6 +254,8 @@ impl Node {
     }
 
     /// Pass a message either to the p2p/coordinator thread, or to a locally running shard node.
+    /// Dead code until inter-shard communication features are added.
+    #[allow(dead_code)]
     fn send_internal_message(
         &mut self,
         shard: Option<u64>,

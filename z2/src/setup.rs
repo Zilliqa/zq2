@@ -54,7 +54,7 @@ impl Setup {
                 Ok(mut file) => {
                     println!("Creating config file {}", path.to_string_lossy());
                     writeln!(file, "[[nodes]]")?;
-                    // writeln!(file, "data_dir = \"{DATADIR_PREFIX}{i}\"")?;
+                    writeln!(file, "data_dir = \"{DATADIR_PREFIX}{i}\"")?;
                     if i != 0 {
                         writeln!(file, "disable_rpc = true")?;
                     }

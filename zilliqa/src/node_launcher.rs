@@ -68,8 +68,8 @@ impl NodeLauncher {
                 .set_middleware(middleware)
                 .build((Ipv4Addr::UNSPECIFIED, port))
                 .await?;
-            let handle = server.start(rpc_module.clone())?;
-            let _ = tokio::spawn(handle.stopped());
+            let handle = server.start(rpc_module.clone());
+            tokio::spawn(handle.stopped());
         }
 
         Ok(Self {

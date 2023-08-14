@@ -206,10 +206,10 @@ impl P2pNode {
                         let _public_key = NodePublicKey::from_bytes(&value)?;
 
                         // TODO: temporary, until we have proper dynamic joining!
-                        for (_topic, _node) in &self.shard_nodes {
+                        for node in self.shard_nodes.values() {
 
                             // self.outbound_message_sender.send((Some(peer_id), _topic.to_string().parse()?, Message::AddPeer(self.secret_key.node_public_key())))?;
-                            _node.send((peer_id, Message::Internal(InternalMessage::AddPeer(_public_key))))?;
+                            node.send((peer_id, Message::Internal(InternalMessage::AddPeer(_public_key))))?;
                         }
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
