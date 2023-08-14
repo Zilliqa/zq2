@@ -218,10 +218,12 @@ impl State {
         Ok((logs, result, created_contract_addr))
     }
 
-    pub fn force_deploy_contract_at_address(
+    /// Used primarily during genesis to set up contracts for chain functionality.
+    /// If override_address is set, will force the contract creation at that address.
+    pub fn force_deploy_contract(
         &mut self,
         creation_bytecode: Vec<u8>,
-        creation_address: Address,
+        override_address: Option<Address>,
     ) -> Result<()> {
         let result = self.apply_transaction_inner(
             Address::ZERO,
@@ -235,30 +237,35 @@ impl State {
         );
 
         match result {
-            Ok((mut logs, mut result, old_address))
+            Ok((mut logs, mut result, evm_address))
                 if result.exit_reason.clone().unwrap().has_succeed() =>
             {
-                let old_address = old_address.unwrap();
-                // Apply the state changes only if success
-                let mut acct = self.get_account(creation_address)?;
-                acct.code = result.return_value.clone().to_vec();
-                self.save_account(creation_address, acct)?;
+                let evm_address = evm_address.expect(
+                    "Transaction submitted to force_deploy_contract must be a contract creation.",
+                );
 
-                warn!("PRINTING APPLYS!! {}", result.apply.len());
-                for apply in &mut result.apply {
-                    if apply.has_modify() {
-                        let modify = apply.get_modify();
-                        if Into::<H160>::into(modify.get_address()) == old_address {
-                            modify.set_address(creation_address.0.into());
+                let real_address = override_address.map(|a| a.0).unwrap_or(evm_address);
+
+                let mut acct = self.get_account(Address(real_address))?;
+                acct.code = result.return_value.clone().to_vec();
+                self.save_account(Address(real_address), acct)?;
+
+                if override_address.is_some() {
+                    // Overwrite applys to use the desired address.
+                    for apply in &mut result.apply {
+                        if apply.has_modify() {
+                            let mut modify = apply.get_modify().clone();
+                            if Into::<H160>::into(modify.get_address()) == evm_address {
+                                modify.set_address(real_address.into());
+                            }
+                            apply.set_modify(modify);
                         }
-                    }
-                    warn!("Apply: {:?}", apply);
-                }
-                for apply in &mut result.apply {
-                    if apply.has_modify() {
-                        let modify = apply.get_modify();
-                        if Into::<H160>::into(modify.get_address()) == old_address {
-                            println!("Failed to edit apply...");
+                        if apply.has_delete() {
+                            let mut delete = apply.get_delete().clone();
+                            if Into::<H160>::into(delete.get_address()) == evm_address {
+                                delete.set_address(real_address.into());
+                            }
+                            apply.set_delete(delete);
                         }
                     }
                 }
@@ -267,13 +274,9 @@ impl State {
             }
             Ok((_, result, _)) => {
                 let exit = result.exit_reason.clone().unwrap();
-                warn!("FAILED!!!! {:?}", exit);
                 Err(anyhow!("{:?}", exit))
             }
-            Err(e) => {
-                error!("Error applying transaction: {:?}", e);
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 

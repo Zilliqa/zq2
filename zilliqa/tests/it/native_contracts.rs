@@ -38,12 +38,12 @@ async fn native_token(mut network: Network<'_>) {
         .call()
         .await
         .unwrap();
+    assert_eq!(name, "Zilliqa Native Token");
     let symbol = contract
         .method::<_, String>("symbol", ())
         .unwrap()
         .call()
         .await
         .unwrap();
-    println!("{:?}", name);
-    println!("{:?}", symbol);
+    assert_eq!(symbol, "ZIL");
 }

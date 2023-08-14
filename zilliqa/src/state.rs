@@ -92,9 +92,6 @@ impl State {
             accounts: PatriciaTrie::new(db),
         };
 
-        // state
-        //     .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
-
         // if let Some(cfg) = GENESIS_SHARDS.get(0) {
         //     let calldata = contracts::shard_registry::CONSTRUCTOR
         //         .encode_input(&[Token::Uint(u128_to_u256(cfg.1))])
@@ -122,12 +119,9 @@ impl State {
         //     )?;
         // }
 
-        // warn!("DEPLOYING GENESIS STATE!!!!");
-        let data = contracts::native_token::CONSTRUCTOR
+        let native_token_data = contracts::native_token::CONSTRUCTOR
             .encode_input(contracts::native_token::CREATION_CODE.to_vec(), &vec![])?;
-        // println!("{:?}", hex::encode(data.clone()));
-        state.deploy_contract_at_address(data, Address::NATIVE_TOKEN)?;
-        warn!("DONE! DEPLOYED callme CONTRACT!");
+        state.force_deploy_contract(native_token_data, Some(Address::NATIVE_TOKEN))?;
 
         for (address, balance) in GENESIS.iter() {
             // We don't care about these logs.
