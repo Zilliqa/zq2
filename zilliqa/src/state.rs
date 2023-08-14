@@ -86,8 +86,36 @@ impl State {
             accounts: PatriciaTrie::new(db),
         };
 
-        state
-            .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
+        // if let Some(cfg) = GENESIS_SHARDS.get(0) {
+        //     let calldata = contracts::shard_registry::CONSTRUCTOR
+        //         .encode_input(&[Token::Uint(u128_to_u256(cfg.1))])
+        //         .unwrap();
+
+        //     state.deploy_fixed_contract_with_constructor(
+        //         Address::SHARD_CONTRACT,
+        //         contracts::shard_registry::CODE.clone(),
+        //         calldata,
+        //     )?;
+        // };
+
+        // for cfg in GENESIS_SHARDS.iter().skip(1) {
+        //     let calldata = contracts::shard::CONSTRUCTOR
+        //         .encode_input(&[
+        //             Token::Uint(u128_to_u256(cfg.0)),
+        //             Token::Uint(u128_to_u256(cfg.1)),
+        //         ])
+        //         .unwrap();
+
+        //     state.deploy_fixed_contract_with_constructor(
+        //         Address::SHARD_CONTRACT,
+        //         contracts::shard::CODE.clone(),
+        //         calldata,
+        //     )?;
+        // }
+
+        let native_token_data = contracts::native_token::CONSTRUCTOR
+            .encode_input(contracts::native_token::CREATION_CODE.to_vec(), &vec![])?;
+        state.force_deploy_contract(native_token_data, Some(Address::NATIVE_TOKEN))?;
 
         for (address, balance) in GENESIS.iter() {
             // We don't care about these logs.

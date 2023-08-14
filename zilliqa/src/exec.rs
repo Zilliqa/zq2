@@ -104,13 +104,6 @@ pub struct TransactionApplyResult {
 }
 
 impl State {
-    /// Deploy a contract at a fixed address. Used for system contracts which exist at well known addresses.
-    pub fn deploy_fixed_contract(&mut self, address: Address, code: Vec<u8>) -> Result<()> {
-        let mut account = self.get_account(address)?;
-        account.code = code;
-        self.save_account(address, account)
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn apply_transaction_inner(
         &self,
@@ -181,6 +174,68 @@ impl State {
         });
 
         Ok((logs, result, created_contract_addr))
+    }
+
+    /// Used primarily during genesis to set up contracts for chain functionality.
+    /// If override_address is set, will force the contract creation at that address.
+    pub fn force_deploy_contract(
+        &mut self,
+        creation_bytecode: Vec<u8>,
+        override_address: Option<Address>,
+    ) -> Result<()> {
+        let result = self.apply_transaction_inner(
+            Address::ZERO,
+            None,
+            u128::MAX,
+            u64::MAX,
+            0,
+            creation_bytecode,
+            0,
+            BlockHeader::default(),
+        );
+
+        match result {
+            Ok((mut logs, mut result, evm_address))
+                if result.exit_reason.clone().unwrap().has_succeed() =>
+            {
+                let evm_address = evm_address.expect(
+                    "Transaction submitted to force_deploy_contract must be a contract creation.",
+                );
+
+                let real_address = override_address.map(|a| a.0).unwrap_or(evm_address);
+
+                let mut acct = self.get_account(Address(real_address))?;
+                acct.code = result.return_value.clone().to_vec();
+                self.save_account(Address(real_address), acct)?;
+
+                if override_address.is_some() {
+                    // Overwrite applys to use the desired address.
+                    for apply in &mut result.apply {
+                        if apply.has_modify() {
+                            let mut modify = apply.get_modify().clone();
+                            if Into::<H160>::into(modify.get_address()) == evm_address {
+                                modify.set_address(real_address.into());
+                            }
+                            apply.set_modify(modify);
+                        }
+                        if apply.has_delete() {
+                            let mut delete = apply.get_delete().clone();
+                            if Into::<H160>::into(delete.get_address()) == evm_address {
+                                delete.set_address(real_address.into());
+                            }
+                            apply.set_delete(delete);
+                        }
+                    }
+                }
+                self.apply_delta(&mut logs, None, result.apply.iter())?;
+                Ok(())
+            }
+            Ok((_, result, _)) => {
+                let exit = result.exit_reason.clone().unwrap();
+                Err(anyhow!("{:?}", exit))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Apply a transaction to the account state.
