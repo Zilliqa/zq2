@@ -23,7 +23,7 @@ pub struct Config {
     pub consensus_timeout: Duration,
     /// The address of another node to dial when this node starts. To join the network, a node must know about at least
     /// one other existing node in the network.
-    pub bootstrap_address: Option<Multiaddr>,
+    pub bootstrap_address: Option<(PeerId, Multiaddr)>,
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
 }
 
