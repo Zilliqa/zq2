@@ -55,7 +55,9 @@ async fn main() -> Result<()> {
 
     let mut node = P2pNode::new(args.secret_key, config.p2p_port, config.bootstrap_address)?;
 
-    node.add_shard_node(config.nodes[0].clone()).await?;
+    for shardConfig in config.nodes {
+        node.add_shard_node(shardConfig.clone()).await?;
+    }
 
     node.start().await
 }

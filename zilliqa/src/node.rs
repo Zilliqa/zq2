@@ -56,19 +56,6 @@ impl Node {
             reset_timeout,
             consensus: Consensus::new(secret_key, config.clone())?,
         };
-
-        // FIXME
-        // Start a new dummy shard immediately.
-        // This is for testing, pending a proper contract-based dynamic shard creation.
-        if config.is_main_shard {
-            let new_shard_config = NodeConfig {
-                json_rpc_port: config.json_rpc_port + 1,
-                is_main_shard: false,
-                ..config
-            };
-            node.send_internal_message(None, InternalMessage::LaunchShard(new_shard_config))?;
-        }
-
         Ok(node)
     }
 
