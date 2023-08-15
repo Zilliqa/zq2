@@ -148,6 +148,7 @@ impl State {
         }
     }
 
+    // Call this function with your transaction and it will return
     #[allow(clippy::too_many_arguments)]
     fn apply_transaction_inner(
         &self,
