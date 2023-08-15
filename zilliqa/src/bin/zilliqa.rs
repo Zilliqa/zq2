@@ -67,10 +67,15 @@ async fn main() -> Result<()> {
 
     let mut networked_node = NodeLauncher::new(args.secret_key, config)?;
 
+    println!("here we are0");
     if !args.no_jsonrpc {
+        println!("here we are1");
         let handle = networked_node.launch_rpc_server().await?;
+        println!("here we are2");
         tokio::spawn(handle.stopped());
+        println!("here we are3");
     }
+    println!("here we are4");
 
     networked_node.start_p2p_node(p2p_port).await
 }

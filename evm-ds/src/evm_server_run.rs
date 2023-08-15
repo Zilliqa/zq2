@@ -204,6 +204,17 @@ pub fn calculate_contract_address(address: H160, backend: &impl Backend) -> H160
     executor.get_create_address(CreateScheme::Legacy { caller: address })
 }
 
+pub fn calculate_contract_address_scheme(scheme: CreateScheme, backend: &impl Backend) -> H160 {
+    let config = get_config(false, false);
+
+    let metadata = StackSubstateMetadata::new(1, &config);
+    let state = MemoryStackState::new(metadata, &backend);
+    let precompiles = get_precompiles();
+
+    let mut executor = CpsExecutor::new_with_precompiles(state, &config, &precompiles, true);
+    executor.get_create_address(scheme)
+}
+
 pub fn run_evm_impl_direct<B: Backend>(
     args: EvmProto::EvmCallArgs,
     backend: &B,

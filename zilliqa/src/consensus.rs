@@ -723,7 +723,9 @@ impl Consensus {
 
     pub fn add_block(&mut self, block: Block) -> Result<()> {
         let hash = block.hash();
-        debug!(?hash, ?block.header.view, "added block");
+        if block.header.view == 4 {
+            debug!(?hash, ?block.header.view, "added block");
+        }
         self.block_headers
             .insert(hash.as_bytes(), bincode::serialize(&block.header)?)?;
         self.blocks.insert(hash.0, bincode::serialize(&block)?)?;

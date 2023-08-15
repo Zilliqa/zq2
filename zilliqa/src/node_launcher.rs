@@ -45,7 +45,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, error, info, trace};
+use tracing::{error, info, trace};
 
 use crate::message::Message;
 
@@ -275,14 +275,14 @@ impl NodeLauncher {
                         let source = source.expect("message should have a source");
                         let message = serde_json::from_slice::<Message>(&data).unwrap();
                         let message_type = message.name();
-                        debug!(%source, message_type, "message recieved");
+                        trace!(%source, message_type, "message recieved");
                         self.node.lock().unwrap().handle_message(source, message).unwrap();
                     }
 
                     SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer })) => {
                                 match message {
                                     request_response::Message::Request {request, channel, ..} => {
-                                        debug!(%peer, "direct message received");
+                                        trace!(%peer, "direct message received");
 
                                         self.node.lock().unwrap().handle_message(peer, request).unwrap();
 
@@ -301,11 +301,11 @@ impl NodeLauncher {
 
                     match dest {
                         Some(dest) => {
-                            debug!(%dest, message_type, "sending direct message");
+                            trace!(%dest, message_type, "sending direct message");
                             let _ = swarm.behaviour_mut().request_response.send_request(&dest, message);
                         },
                         None => {
-                            debug!(message_type, "sending gossip message");
+                            trace!(message_type, "sending gossip message");
                             match swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
                                 Ok(_) => {},
                                 Err(e) => {

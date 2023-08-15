@@ -8,6 +8,7 @@ use primitive_types::{H160, H256, U256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
+use core::fmt;
 
 // This file contains all of the structs used to communicate between evm-ds and the outside world
 
@@ -98,6 +99,13 @@ impl ContinuationFb {
     pub fn get_calldata(&self) -> &Call {
         match &self.feedback_data {
             Some(FeedbackData::CallData(call)) => call,
+            _ => panic!("ContinuationFb does not contain call data"),
+        }
+    }
+
+    pub fn get_createdata(&self) -> &H160 {
+        match &self.feedback_data {
+            Some(FeedbackData::Address(addr)) => addr,
             _ => panic!("ContinuationFb does not contain call data"),
         }
     }
@@ -277,7 +285,7 @@ pub struct CreateTrap {
 // This is the main struct returned from the evm after program invocation.
 // Either it has completed, and is a success or revert, or it is some type of
 // trap.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct EvmResult {
     pub exit_reason: ExitReasonCps,
     pub return_value: Vec<u8>,
@@ -288,6 +296,40 @@ pub struct EvmResult {
     pub continuation_id: u64,
     pub trap_data: Option<TrapData>,
 }
+
+fn vec_to_string_concat<T: fmt::Debug>(input: &Vec<T>) -> String {
+    if input.len() > 10 {
+        let start = &input[0..5];
+        let end = &input[input.len()-5..];
+        let start_str = start.iter().map(|x| format!("{:?}", x)).collect::<Vec<_>>().join(", ");
+        let end_str = end.iter().map(|x| format!("{:?}", x)).collect::<Vec<_>>().join(", ");
+        format!("[{}, ..., {}]", start_str, end_str)
+    } else {
+        format!("{:?}", input)
+    }
+}
+
+impl fmt::Debug for EvmResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+
+        f.debug_struct("EvmResult")
+            .field("exit_reason", &self.exit_reason)
+            .field("return_value", &vec_to_string_concat(&self.return_value))
+            .field("apply", &self.apply)
+            .field("logs", &self.logs)
+            .field("tx_trace", &"too long to display")
+            .field("remaining_gas", &self.remaining_gas)
+            .field("continuation_id", &self.continuation_id)
+            .field("trap_data", &self.trap_data)
+            .finish()
+    }
+}
+
+//impl Display for EvmResult {
+//    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+//        write!(f, "({:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?})", self.exit_reason, self.return_value, self.apply, self.logs, self.tx_trace, self.remaining_gas, self.continuation_id, self.trap_data)
+//    }
+//}
 
 impl EvmResult {
     pub fn has_trap(&self) -> bool {

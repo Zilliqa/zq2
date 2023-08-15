@@ -24,7 +24,7 @@ pub struct EvmBackend<'a> {
     pub origin: H160,
     pub chain_id: u64,
     pub current_block: BlockHeader,
-    pub account_storage_cached: HashMap<Address, (Account, HashMap<H256, H256>)>,
+    pub account_storage_cached: HashMap<Address, Option<(Account, HashMap<H256, H256>)>>,
 }
 
 impl<'a> EvmBackend<'a> {
@@ -52,8 +52,12 @@ impl<'a> EvmBackend<'a> {
     ) {
         for apply in applys {
             match apply {
-                Apply::Delete { address: _ } => {
-                    panic!("Delete not implemented");
+                Apply::Delete { address: address } => {
+                    let address = Address(address);
+
+                    // Insert empty slot into cache
+                    self.account_storage_cached.insert(address, None);
+
                 }
                 Apply::Modify {
                     address,
@@ -71,14 +75,15 @@ impl<'a> EvmBackend<'a> {
 
                     // Get or create the element in the cache, the account will be
                     // reflected but the storage will not.
-                    if let std::collections::hash_map::Entry::Vacant(e) =
+                    if let std::collections::hash_map::Entry::Vacant(element) =
                         self.account_storage_cached.entry(address)
                     {
                         let account = self.state.get_account(address).unwrap_or_default();
-                        e.insert((account, HashMap::new()));
+                        element.insert(Some((account, HashMap::new())));
                     }
 
                     let cache = self.account_storage_cached.get_mut(&address).unwrap();
+                    let cache = cache.as_mut().expect("Modify should not be called on a previously deleted account");
                     let account_cached = &mut cache.0;
                     let storage_cached = &mut cache.1;
 
@@ -91,7 +96,6 @@ impl<'a> EvmBackend<'a> {
                     }
                 }
             }
-            // todo: delete.
         }
     }
 
@@ -99,18 +103,26 @@ impl<'a> EvmBackend<'a> {
     pub fn get_result(self) -> EvmResult {
         let mut applys: Vec<Apply> = vec![];
 
-        for (addr, (acct, stor)) in self.account_storage_cached.into_iter() {
-            applys.push(Apply::Modify {
-                address: addr.0,
-                balance: U256::zero(),
-                nonce: U256::zero(),
-                code: acct.code,
-                storage: stor
-                    .into_iter()
-                    .map(|(key, value)| Storage { key, value })
-                    .collect(),
-                reset_storage: false, // todo: this.
-            });
+        for (addr, item) in self.account_storage_cached.into_iter() {
+
+            match item {
+                Some((acct, stor)) => {
+                    applys.push(Apply::Modify {
+                        address: addr.0,
+                        balance: U256::zero(),
+                        nonce: U256::zero(),
+                        code: acct.code,
+                        storage: stor
+                            .into_iter()
+                            .map(|(key, value)| Storage { key, value })
+                            .collect(),
+                        reset_storage: false,
+                    });
+                }
+                None => {
+                    applys.push(Apply::Delete { address: addr.0 });
+                }
+            }
         }
 
         EvmResult {

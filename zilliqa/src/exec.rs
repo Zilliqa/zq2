@@ -1,20 +1,17 @@
 //! Manages execution of transactions on state.
 
-use std::{
-    collections::HashSet,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashSet, default, sync::{Arc, Mutex}};
 
 use crate::evm_backend::EvmBackend;
 use anyhow::Result;
 use ethabi::Token;
 use evm_ds::{
     evm::{backend::Backend, tracing::EventListener},
-    evm_server_run::{calculate_contract_address, run_evm_impl_direct},
+    evm_server_run::{calculate_contract_address, calculate_contract_address_scheme, run_evm_impl_direct},
     protos::evm_proto as EvmProto,
 };
 use primitive_types::{H160, U256};
-use tracing::{error, info};
+use tracing::{error, info, trace, debug};
 
 use crate::state::SignedTransaction;
 use crate::{
@@ -114,13 +111,13 @@ impl State {
         to_addr: Option<Address>,
         _gas_price: u128,
         gas_limit: u64,
-        _amount: u128,
+        amount: u128,
         payload: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<(EvmProto::EvmResult, Option<H160>)> {
         let caller = from_addr;
-        let gas_scaling_factor = 1;
+        //let gas_scaling_factor = 1;
         let estimate = false;
         let is_static = false;
         let context = "".to_string();
@@ -144,14 +141,24 @@ impl State {
             created_contract_addr = Some(to);
         }
 
-        let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![EvmProto::EvmCallArgs {
+        let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];
+
+        //// Check the sender has enough balance and deduct it before any other operations happen
+        //if (get_native_balance(from_addr) >= amount) {
+        //    push_transfer(&mut continuation_stack, caller.0, to, amount);
+        //} else {
+        //    info!("Transaction attempted to transfer more value than it actually had!");
+        //    return EvmProto::EvmResult(exit_reason: EvmProto::ExitReasonCps::Error(OutOfFund) , ..default::Default);
+        //}
+
+        continuation_stack.push(EvmProto::EvmCallArgs {
             address: to,
             code,
             data,
-            apparent_value: U256::zero(),
+            apparent_value: amount.into(),
             gas_limit,
             caller: caller.0,
-            gas_scaling_factor,
+            gas_scaling_factor: 1,
             scaling_factor: None,
             estimate,
             is_static,
@@ -161,8 +168,10 @@ impl State {
             enable_cps: true,
             tx_trace_enabled: false,
             tx_trace: "".to_string(),
-        }];
+        });
         let mut result;
+
+        debug!("Evm invocation begin - with args {:?}", continuation_stack);
 
         // Set the first continuation as our current context and then loop while there is still
         // a continuation, pushing onto the stack when there are more continuations
@@ -172,6 +181,8 @@ impl State {
             backend.origin = call_args.caller;
             result = run_evm_impl_direct(call_args.clone(), &backend);
 
+            debug!("Evm invocation complete - applying result {:?}", result);
+
             // Apply the results to the backend so they can be used in the next continuation
             backend.apply_update(to_addr, result.take_apply());
 
@@ -180,8 +191,33 @@ impl State {
                     EvmProto::ContinuationFb::new(continuations.lock().unwrap().last_created());
 
                 match result.trap_data.unwrap() {
-                    EvmProto::TrapData::Create(_) => {
-                        panic!("create trap not implemented")
+                    EvmProto::TrapData::Create(create) => {
+                        println!("Create trap! Scheme: {:?}", create.scheme);
+                        let addr_to_create = calculate_contract_address_scheme(create.scheme, &backend);
+                        println!("calculated contract addr: {:?}", addr_to_create);
+                        cont.feedback_type = EvmProto::Type::Create;
+                        cont.feedback_data = Some(EvmProto::FeedbackData::Address(addr_to_create));
+
+                        call_args.node_continuation = Some(cont);
+
+                        // Set up the next continuation, adjust the relevant parameters
+                        let call_args_next = EvmProto::EvmCallArgs {
+                            caller: create.caller,
+                            address: addr_to_create,
+                            code: vec![],
+                            data: create.call_data,
+                            tx_trace: Default::default(),
+                            continuations: continuations.clone(),
+                            node_continuation: None,
+                            evm_context: Default::default(),
+                            ..call_args
+                        };
+
+                        // This is the paused execution, push it back
+                        continuation_stack.push(call_args);
+
+                        // Now push on the context we want to execute
+                        continuation_stack.push(call_args_next);
                     }
                     EvmProto::TrapData::Call(call) => {
                         cont.feedback_type = EvmProto::Type::Call;
@@ -192,7 +228,7 @@ impl State {
                                 offset_len: call.offset_len,
                             }));
 
-                        call_args.node_continuation = Some(cont); // todo: move this.
+                        call_args.node_continuation = Some(cont);
 
                         let call_data_next = call.call_data;
                         let call_addr: H160 = call.callee_address;
@@ -202,6 +238,7 @@ impl State {
                             U256::zero()
                         };
 
+                        // todo: de-duplicate this and add it to create scheme
                         let call_args_shim: Option<EvmProto::EvmCallArgs> = if !value.is_zero() {
                             let balance_data = contracts::native_token::SET_BALANCE
                                 .encode_input(&[Token::Address(call_addr), Token::Uint(value)])
@@ -258,14 +295,26 @@ impl State {
                 // We need to let the continuation prior know the return result
                 let prior = continuation_stack.last_mut().unwrap();
 
-                let old_calldata = prior.node_continuation.as_mut().unwrap().get_calldata();
-                prior.node_continuation.as_mut().unwrap().feedback_data =
-                    Some(EvmProto::FeedbackData::CallData(EvmProto::Call {
-                        data: result.return_value.clone(),
-                        ..*old_calldata
-                    }));
-                prior.node_continuation.as_mut().unwrap().succeeded = true;
-                prior.node_continuation.as_mut().unwrap().logs = result.logs.clone();
+                // Check whether we completed a call or a create trap just now
+                let prior_node_continuation = prior.node_continuation.as_mut().unwrap();
+
+                match prior_node_continuation.feedback_type {
+                    EvmProto::Type::Call => {
+                        let old_calldata = prior_node_continuation.get_calldata();
+                        prior_node_continuation.feedback_data =
+                            Some(EvmProto::FeedbackData::CallData(EvmProto::Call {
+                                data: result.return_value.clone(),
+                                ..*old_calldata
+                            }));
+                        prior_node_continuation.succeeded = true;
+                        prior_node_continuation.logs = result.logs.clone();
+                    }
+                    EvmProto::Type::Create => {
+                        prior_node_continuation.feedback_data = Some(EvmProto::FeedbackData::Address(*prior_node_continuation.get_createdata()));
+                        prior_node_continuation.succeeded = true;
+                        prior_node_continuation.logs = result.logs.clone();
+                    }
+                }
             }
 
             if continuation_stack.is_empty() {
@@ -277,6 +326,8 @@ impl State {
         backend_result.exit_reason = result.exit_reason;
         backend_result.return_value = result.return_value;
         backend_result.logs = result.logs;
+
+        debug!("Loop complete - returning final result {:?}", backend_result);
 
         Ok((backend_result, created_contract_addr))
     }
@@ -346,8 +397,9 @@ impl State {
     fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm_proto::Apply>) -> Result<()> {
         for apply in applys {
             match apply {
-                EvmProto::Apply::Delete { .. } => {
-                    panic!("We have a delete here");
+                EvmProto::Apply::Delete { address } => {
+                    let address = Address(address);
+                    let mut account = self.delete_account(address);
                 }
                 EvmProto::Apply::Modify {
                     address,
