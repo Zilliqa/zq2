@@ -340,8 +340,6 @@ async fn deploy_contract(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
     network: &mut Network<'_>,
 ) -> (H256, Contract) {
-    // Include the contract source directly in the binary.
-    //let contract_source = include_bytes!(path.to_string());
 
     let mut full_path = env::current_dir().unwrap();
     full_path.push(path);
