@@ -48,8 +48,8 @@ pub mod native_token {
 #[cfg(test)]
 mod tests {
     // Obtained from https://binaries.soliditylang.org/linux-amd64/list.json.
-    const SOLC_VERSION: &str = "v0.8.19+commit.7dd6d404";
-    const SOLC_HASH: &str = "8da560f93223e19fbd973f12a29f765869559274aaeed3f795738ac433130ab9";
+    const SOLC_VERSION: &str = "v0.8.21+commit.d9974bed";
+    const SOLC_HASH: &str = "00bebaa90cfcc8c807b6b48cd8e9423bdbe5b7054ca0e47cbe5d8dd1aa1dced3";
 
     use std::{
         fs::OpenOptions, io::Write, mem, os::unix::prelude::OpenOptionsExt, path::PathBuf,
@@ -78,6 +78,7 @@ mod tests {
         assert_eq!(expected_hash, actual_hash.to_vec());
 
         let solc_path = temp_dir.path().join("solc");
+        println!("{}", solc_path.to_string_lossy());
         let mut solc_file = OpenOptions::new()
             .mode(0o777)
             .write(true)
@@ -110,18 +111,22 @@ mod tests {
             .arg("--include-path")
             .arg(vendor)
             .arg("--combined-json")
-            .arg("abi,bin-runtime")
+            .arg("abi,bin,bin-runtime")
+            .arg("--evm-version=paris")
             .output()
             .unwrap();
 
         eprintln!("{}", std::str::from_utf8(&output.stderr).unwrap());
         let combined_json: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-        let bin = combined_json["contracts"]["native_token.sol:NativeToken"]["bin-runtime"]
-            .as_str()
-            .unwrap();
-        let code = hex::decode(bin).unwrap();
+        let contract = combined_json["contracts"]["native_token.sol:NativeToken"].clone();
 
+        let code = hex::decode(contract["bin-runtime"].as_str().unwrap()).unwrap();
+        assert_eq!(native_token::CODE.len(), code.len());
         assert_eq!(native_token::CODE.as_slice(), code);
+
+        let creation_code = hex::decode(contract["bin"].as_str().unwrap()).unwrap();
+        assert_eq!(native_token::CREATION_CODE.len(), creation_code.len());
+        assert_eq!(native_token::CREATION_CODE.as_slice(), creation_code);
     }
 }
