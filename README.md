@@ -32,4 +32,3 @@ Most tests create an in-memory network of nodes, with the libp2p networking laye
 the network.
 
 Some tests involve compiling Solidity code, so a `solc` installation is required. The path is determined as documented in [ethers::solc::Solc](https://docs.rs/ethers/latest/ethers/solc/struct.Solc.html).
-
