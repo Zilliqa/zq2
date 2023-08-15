@@ -6194,6 +6194,7 @@ dependencies = [
  "bitvec 1.0.1",
  "bls-signatures",
  "bls12_381",
+ "bytes",
  "clap",
  "eth_trie",
  "ethabi",

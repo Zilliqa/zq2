@@ -15,9 +15,9 @@ use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
 
 use anyhow::{anyhow, Result};
+use evm_ds::protos::evm_proto::Log;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
-use tracing::info;
 
 use crate::{contracts, crypto, db::SledDb};
 
@@ -90,10 +90,7 @@ impl State {
             .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
 
         for (address, balance) in GENESIS.iter() {
-            // We don't care about these logs.
-            let mut logs = vec![];
-            info!("Setting balance for {} to {}", address, balance);
-            state.set_native_balance(&mut logs, *address, *balance)?;
+            state.set_native_balance(*address, *balance)?;
         }
 
         Ok(state)
@@ -113,6 +110,10 @@ impl State {
             db,
             accounts: self.accounts.at_root(root_hash),
         }
+    }
+
+    pub fn set_to_root(&mut self, root_hash: H256) {
+        self.accounts = self.accounts.at_root(root_hash);
     }
 
     pub fn try_clone(&mut self) -> Result<Self> {
@@ -437,11 +438,4 @@ pub struct TransactionReceipt {
     pub success: bool,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Log {
-    pub address: Address,
-    pub topics: Vec<H256>,
-    pub data: Vec<u8>,
 }

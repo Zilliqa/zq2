@@ -316,7 +316,7 @@ pub(super) fn get_transaction_receipt_inner(
                 transaction_hash,
                 block_hash,
                 block_number,
-                address: log.address.0,
+                address: log.address,
                 data: log.data,
                 topics: log.topics,
             };

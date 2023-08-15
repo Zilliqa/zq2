@@ -1,2 +1,1 @@
-pub mod Evm;
-pub mod ScillaMessage;
+pub mod evm_proto;
