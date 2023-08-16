@@ -19,6 +19,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use http::{header, Method};
+use itertools::Itertools;
 use libp2p::{
     core::upgrade,
     futures::StreamExt,
@@ -39,7 +40,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, warn, trace};
 
 use crate::message::Message;
 
@@ -271,6 +272,14 @@ impl NodeLauncher {
                     let data = serde_json::to_vec(&message).unwrap();
                     let from = self.peer_id;
 
+                    if swarm.behaviour().gossipsub.all_peers().collect_vec().is_empty() {
+                        warn!("no peers to send message to - deferring transmission.");
+                        //self.message_receiver.poll_next()
+                        //self.message_receiver.send(message);
+                        self.message_sender.send((dest, message));
+                        continue;
+                    }
+
                     match dest {
                         Some(dest) => {
                             debug!(%from, %dest, message_type, "sending message");
@@ -298,6 +307,7 @@ impl NodeLauncher {
                     if !joined {
                         self.message_sender.send((None, Message::JoinCommittee(self.secret_key.node_public_key()))).unwrap();
                         joined = true;
+                        //self.node.lock().unwrap().add_peer()
                     } else {
                         self.node.lock().unwrap().handle_timeout().unwrap();
                     }

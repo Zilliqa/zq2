@@ -1,19 +1,31 @@
+extern crate bs58;
 use std::{fs, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
+use std::error::Error;
 
-use libp2p::{
-    gossipsub, identify,
-    kad::{store::MemoryStore, Kademlia},
-    mdns,
-    swarm::NetworkBehaviour,
-};
+use libp2p::{gossipsub, identify, kad::{store::MemoryStore, Kademlia}, mdns, PeerId, swarm::NetworkBehaviour};
 use opentelemetry::runtime;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use tokio::time::Duration;
 
 use zilliqa::{cfg::Config, crypto::SecretKey, node_launcher::NodeLauncher};
+use zilliqa::crypto::NodePublicKey;
+
+/// Parse a single key-value pair
+fn parse_key_val<T, U>(s: &str) -> Result<(T, U), Box<dyn Error>>
+where
+    T: std::str::FromStr,
+    T::Err: Error + 'static,
+    U: std::str::FromStr,
+    U::Err: Error + 'static,
+{
+    let pos = s
+        .find('=')
+        .ok_or_else(|| format!("invalid KEY=value: no `=` found in `{}`", s))?;
+    Ok((s[..pos].parse()?, s[pos + 1..].parse()?))
+}
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -23,6 +35,8 @@ struct Args {
     config_file: PathBuf,
     #[clap(long, default_value = "false")]
     no_jsonrpc: bool,
+    #[arg(short, long)]
+    genesis_committee: Vec<String>,
 }
 
 #[derive(NetworkBehaviour)]
@@ -46,7 +60,30 @@ async fn main() -> Result<()> {
         // empty TOML document.
         String::new()
     };
-    let config: Config = toml::from_str(&config)?;
+    let mut config: Config = toml::from_str(&config)?;
+
+    // If the config has no committee to start the network, we need to get this from the args
+    // otherwise we have nothing to start with
+    if config.genesis_committee.is_empty() {
+        if args.genesis_committee.is_empty() {
+            panic!("No genesis committee provided via config or command line");
+        }
+
+        for item in args.genesis_committee.iter() {
+
+            let parts: Vec<&str> = item.split(",").collect();
+
+            println!("parts: {:?}", parts);
+            println!("parts unwrapped: {:?}", hex::decode(parts[1]));
+
+            let pk: NodePublicKey = NodePublicKey::from_hex_string(parts[0]).expect("Invalid public key");
+            let id: PeerId = PeerId::from_bytes(&bs58::decode(parts[1]).into_vec().unwrap()).unwrap();
+            //let id: PeerId = pk.into();
+            //NodePublicKey, PeerId
+
+            config.genesis_committee.push((pk, id));
+        }
+    }
 
     let p2p_port = config.p2p_port;
     if let Some(endpoint) = &config.otlp_collector_endpoint {
