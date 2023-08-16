@@ -334,15 +334,15 @@ fn format_message(
     }
 }
 
+const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
+
 async fn deploy_contract(
     path: &str,
     contract: &str,
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
     network: &mut Network<'_>,
 ) -> (H256, Contract) {
-
-    let mut full_path = env::current_dir().unwrap();
-    full_path.push(path);
+    let full_path = format!("{}{}", PROJECT_ROOT, path);
 
     let contract_source = std::fs::read(&full_path).unwrap_or_else(|e| {
         panic!(
