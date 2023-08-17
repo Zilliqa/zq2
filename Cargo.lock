@@ -6210,6 +6210,7 @@ dependencies = [
  "generic-array",
  "hex",
  "http",
+ "hyper",
  "itertools 0.11.0",
  "jsonrpsee",
  "k256",

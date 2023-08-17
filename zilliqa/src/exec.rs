@@ -14,7 +14,7 @@ use evm_ds::{
     protos::evm_proto as EvmProto,
 };
 use primitive_types::{H160, U256};
-use tracing::{error, info};
+use tracing::*;
 
 use crate::state::SignedTransaction;
 use crate::{

@@ -12,6 +12,7 @@ use crate::{
     api,
     cfg::Config,
     crypto::SecretKey,
+    health::HealthLayer,
     networking::{request_response, MessageCodec, MessageProtocol, ProtocolSupport},
     node,
 };
@@ -39,7 +40,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, error, info, trace};
+use tracing::*;
 
 use crate::message::Message;
 
@@ -137,7 +138,7 @@ impl NodeLauncher {
             .allow_methods(Method::POST)
             .allow_origin(Any)
             .allow_headers([header::CONTENT_TYPE]);
-        let middleware = tower::ServiceBuilder::new().layer(cors);
+        let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
         let port = self.node.lock().unwrap().config.json_rpc_port;
         let server = jsonrpsee::server::ServerBuilder::new()
             .set_middleware(middleware)

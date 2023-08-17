@@ -5,7 +5,7 @@ use libp2p::PeerId;
 use lru::LruCache;
 use sled::{Db, Tree};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::trace;
+use tracing::*;
 
 use crate::{
     crypto::Hash,
