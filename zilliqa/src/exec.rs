@@ -111,7 +111,7 @@ impl State {
         to_addr: Option<Address>,
         _gas_price: u128,
         gas_limit: u64,
-        _amount: u128,
+        amount: u128,
         payload: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
