@@ -40,7 +40,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, error, info, warn, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::message::Message;
 
@@ -273,10 +273,7 @@ impl NodeLauncher {
                     let from = self.peer_id;
 
                     if swarm.behaviour().gossipsub.all_peers().collect_vec().is_empty() {
-                        warn!("no peers to send message to - deferring transmission.");
-                        //self.message_receiver.poll_next()
-                        //self.message_receiver.send(message);
-                        self.message_sender.send((dest, message));
+                        let _ = self.message_sender.send((dest, message));
                         continue;
                     }
 

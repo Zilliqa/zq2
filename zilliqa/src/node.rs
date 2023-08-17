@@ -48,9 +48,11 @@ impl Node {
         message_sender: UnboundedSender<(Option<PeerId>, Message)>,
         reset_timeout: UnboundedSender<()>,
     ) -> Result<Node> {
-
-        println!("Constructing new node with identity: {}", secret_key.node_public_key());
-        println!("Constructing new node with peer id: {}", secret_key.to_libp2p_keypair().public().to_peer_id());
+        info!(
+            "Constructing new node with identity: {} and peer id: {}",
+            secret_key.node_public_key(),
+            secret_key.to_libp2p_keypair().public().to_peer_id()
+        );
 
         let node = Node {
             config: config.clone(),
@@ -108,10 +110,8 @@ impl Node {
 
     pub fn handle_timeout(&mut self) -> Result<()> {
         if self.consensus.blockchain_active() {
-            println!("No committee members, skipping timeout");
+            println!("Blockchain is not active, skipping handling timeout");
             return Ok(());
-        } else {
-            println!("some committee members, allowing timeout {:?}", self.consensus.committee());
         }
 
         let (leader, new_view) = self.consensus.timeout()?;

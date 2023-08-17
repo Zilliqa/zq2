@@ -3,29 +3,20 @@ use std::{fs, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
-use std::error::Error;
 
-use libp2p::{gossipsub, identify, kad::{store::MemoryStore, Kademlia}, mdns, PeerId, swarm::NetworkBehaviour};
+use libp2p::{
+    gossipsub, identify,
+    kad::{store::MemoryStore, Kademlia},
+    mdns,
+    swarm::NetworkBehaviour,
+    PeerId,
+};
 use opentelemetry::runtime;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use tokio::time::Duration;
 
-use zilliqa::{cfg::Config, crypto::SecretKey, node_launcher::NodeLauncher};
 use zilliqa::crypto::NodePublicKey;
-
-/// Parse a single key-value pair
-fn parse_key_val<T, U>(s: &str) -> Result<(T, U), Box<dyn Error>>
-where
-    T: std::str::FromStr,
-    T::Err: Error + 'static,
-    U: std::str::FromStr,
-    U::Err: Error + 'static,
-{
-    let pos = s
-        .find('=')
-        .ok_or_else(|| format!("invalid KEY=value: no `=` found in `{}`", s))?;
-    Ok((s[..pos].parse()?, s[pos + 1..].parse()?))
-}
+use zilliqa::{cfg::Config, crypto::SecretKey, node_launcher::NodeLauncher};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -70,16 +61,16 @@ async fn main() -> Result<()> {
         }
 
         for item in args.genesis_committee.iter() {
+            let parts: Vec<&str> = item.split(',').collect();
 
-            let parts: Vec<&str> = item.split(",").collect();
+            if parts.len() != 2 {
+                panic!("Invalid genesis committee entry, it must be in the format pubkey,peer_id but we got: {}", item);
+            }
 
-            println!("parts: {:?}", parts);
-            println!("parts unwrapped: {:?}", hex::decode(parts[1]));
-
-            let pk: NodePublicKey = NodePublicKey::from_hex_string(parts[0]).expect("Invalid public key");
-            let id: PeerId = PeerId::from_bytes(&bs58::decode(parts[1]).into_vec().unwrap()).unwrap();
-            //let id: PeerId = pk.into();
-            //NodePublicKey, PeerId
+            let pk: NodePublicKey =
+                NodePublicKey::from_hex_string(parts[0]).expect("Invalid public key");
+            let id: PeerId =
+                PeerId::from_bytes(&bs58::decode(parts[1]).into_vec().unwrap()).unwrap();
 
             config.genesis_committee.push((pk, id));
         }

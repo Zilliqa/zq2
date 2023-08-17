@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::{collections::BTreeMap, error::Error, fmt::Display};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 use crate::message::{Committee, Message};
 use crate::{
@@ -154,7 +154,6 @@ impl Consensus {
         let mut state = if let Some(latest_block) = &latest_block {
             State::new_from_root(state_trie, H256(latest_block.state_root_hash().0))
         } else {
-            println!("latest block new genesis!");
             State::new_genesis(state_trie)?
         };
 
@@ -228,12 +227,11 @@ impl Consensus {
         self.view.saturating_sub(1)
     }
 
-
     pub fn blockchain_active(&self) -> bool {
         self.view > 0
     }
 
-    fn committee(&self) -> Result<Committee> {
+    pub fn committee(&self) -> Result<Committee> {
         let block = self
             .get_block_by_view(self.get_chain_tip())?
             .ok_or_else(|| anyhow!("missing block"))?;
@@ -357,7 +355,6 @@ impl Consensus {
         let block_state_root = block.state_root_hash();
 
         // If the proposed block is safe, vote for it and advance to the next round.
-        trace!("checking whether block is safe");
         if self.check_safe_block(&block)? {
             trace!("block is safe");
 
@@ -967,7 +964,7 @@ impl Consensus {
 
     fn add_block(&mut self, block: Block) -> Result<()> {
         let hash = block.hash();
-        debug!(?hash, ?block.header.view, "added block");
+        info!(?hash, ?block.header.view, "added block");
         self.block_store.process_block(block)?;
         Ok(())
     }

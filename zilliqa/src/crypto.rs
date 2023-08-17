@@ -78,7 +78,9 @@ impl NodePublicKey {
     }
 
     pub fn from_hex_string(hex_str: &str) -> Result<NodePublicKey> {
-        Ok(NodePublicKey(bls_signatures::PublicKey::from_bytes(&hex::decode(hex_str).expect("Public key should be a hex string"))?))
+        Ok(NodePublicKey(bls_signatures::PublicKey::from_bytes(
+            &hex::decode(hex_str).expect("Public key should be a hex string"),
+        )?))
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
