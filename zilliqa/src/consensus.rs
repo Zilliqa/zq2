@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::{collections::BTreeMap, error::Error, fmt::Display};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{debug, trace, info};
+use tracing::{debug, trace};
 
 use crate::message::{Committee, Message};
 use crate::{
@@ -140,8 +140,6 @@ impl Consensus {
 
         let state_trie = db.open_tree(STATE_TRIE_TREE)?;
 
-        println!("config is: {:?}", config);
-
         let latest_block = db
             .get(LATEST_FINALIZED_VIEW)?
             .map(|b| Ok::<_, anyhow::Error>(u64::from_be_bytes(b.as_ref().try_into()?)))
@@ -152,12 +150,6 @@ impl Consensus {
                     .ok_or_else(|| anyhow!("no header found at view {view}"))
             })
             .transpose()?;
-
-        if latest_block.is_some() {
-            println!("latest block is some!");
-        } else {
-            println!("latest block is none!");
-        }
 
         let mut state = if let Some(latest_block) = &latest_block {
             State::new_from_root(state_trie, H256(latest_block.state_root_hash().0))
@@ -236,11 +228,12 @@ impl Consensus {
         self.view.saturating_sub(1)
     }
 
+
     pub fn blockchain_active(&self) -> bool {
         self.view > 0
     }
 
-    pub fn committee(&self) -> Result<Committee> {
+    fn committee(&self) -> Result<Committee> {
         let block = self
             .get_block_by_view(self.get_chain_tip())?
             .ok_or_else(|| anyhow!("missing block"))?;
@@ -974,12 +967,7 @@ impl Consensus {
 
     fn add_block(&mut self, block: Block) -> Result<()> {
         let hash = block.hash();
-        info!(?hash, ?block.header.view, "added block");
-
-        //if block.header.view > 4 {
-        //    panic!("stopme.");
-        //}
-
+        debug!(?hash, ?block.header.view, "added block");
         self.block_store.process_block(block)?;
         Ok(())
     }

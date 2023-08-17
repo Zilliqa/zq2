@@ -107,13 +107,16 @@ impl Node {
     }
 
     pub fn handle_timeout(&mut self) -> Result<()> {
-
         if self.consensus.blockchain_active() {
             println!("No committee members, skipping timeout");
             return Ok(());
         } else {
             println!("some committee members, allowing timeout {:?}", self.consensus.committee());
         }
+
+        let (leader, new_view) = self.consensus.timeout()?;
+
+        self.send_message(leader, Message::NewView(Box::new(new_view)))?;
 
         let (leader, new_view) = self.consensus.timeout()?;
 

@@ -307,7 +307,6 @@ impl NodeLauncher {
                     if !joined {
                         self.message_sender.send((None, Message::JoinCommittee(self.secret_key.node_public_key()))).unwrap();
                         joined = true;
-                        //self.node.lock().unwrap().add_peer()
                     } else {
                         self.node.lock().unwrap().handle_timeout().unwrap();
                     }

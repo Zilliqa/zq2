@@ -44,9 +44,6 @@ impl Setup {
                     genesis_committee = [ [ "{first_key}", "{first_peer_id}" ] ]
                 "#
             )?;
-
-            println!("config file is : {:?}", config_file);
-
             config_files.push(config_file);
         }
 
