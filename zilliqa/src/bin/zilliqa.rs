@@ -1,3 +1,4 @@
+extern crate bs58;
 use std::{fs, path::PathBuf};
 
 use anyhow::Result;
@@ -19,7 +20,7 @@ use zilliqa::{cfg::Config, crypto::SecretKey, node_launcher::NodeLauncher};
 struct Args {
     #[arg(value_parser = SecretKey::from_hex)]
     secret_key: SecretKey,
-    #[clap(long, short, default_value = "config.toml")]
+    #[clap(long, short, required = true, default_value = "config.toml")]
     config_file: PathBuf,
     #[clap(long, default_value = "false")]
     no_jsonrpc: bool,
@@ -42,9 +43,7 @@ async fn main() -> Result<()> {
     let config = if args.config_file.exists() {
         fs::read_to_string(&args.config_file)?
     } else {
-        // If the configuration file doesn't exist, we can still construct a default configuration file by parsing an
-        // empty TOML document.
-        String::new()
+        panic!("There needs to be a config file provided");
     };
     let config: Config = toml::from_str(&config)?;
 

@@ -66,7 +66,6 @@ impl Process {
                         line: line.to_string(),
                     }))
                     .await;
-                // println!("Stdout says {line}");
             }
         });
         let joiner = futures::future::join_all(vec![join_handle, output_waiter]);

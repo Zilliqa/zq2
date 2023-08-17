@@ -19,6 +19,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use http::{header, Method};
+use itertools::Itertools;
 use libp2p::{
     core::upgrade,
     futures::StreamExt,
@@ -154,8 +155,10 @@ impl NodeLauncher {
         }
 
         let key_pair = self.secret_key.to_libp2p_keypair();
-        let peer_id = PeerId::from(key_pair.public());
-        info!(%peer_id);
+        let public_key = key_pair.public();
+        let peer_id = PeerId::from(public_key);
+        let pubkey_str = self.secret_key.node_public_key().to_string();
+        info!(%peer_id, %pubkey_str);
 
         let transport = tcp::tokio::Transport::new(tcp::Config::default())
             .upgrade(upgrade::Version::V1)
@@ -270,6 +273,13 @@ impl NodeLauncher {
                     let message_type = message.name();
                     let data = serde_json::to_vec(&message).unwrap();
                     let from = self.peer_id;
+
+                    // If we don't have any peers, push it back into the reciever since it is
+                    // bound to fail.
+                    if swarm.behaviour().gossipsub.all_peers().collect_vec().is_empty() {
+                        let _ = self.message_sender.send((dest, message));
+                        continue;
+                    }
 
                     match dest {
                         Some(dest) => {
