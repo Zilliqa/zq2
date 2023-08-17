@@ -2,7 +2,7 @@ use crate::{Network, TestNode};
 use ethers::providers::Middleware;
 use ethers::types::TransactionRequest;
 use primitive_types::H160;
-use tracing::warn;
+use tracing::*;
 use zilliqa::crypto::Hash;
 use zilliqa::crypto::SecretKey;
 

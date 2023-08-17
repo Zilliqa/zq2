@@ -33,7 +33,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::{info, trace};
+use tracing::*;
 use zilliqa::{
     cfg::Config,
     crypto::{NodePublicKey, SecretKey},
