@@ -55,7 +55,7 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
     let inner = node.inner.lock().unwrap();
     let last_view = inner.view() - 1;
     let receipt = inner.get_transaction_receipt(hash).unwrap().unwrap();
-    let finalized_view = inner.get_finalized_height().unwrap();
+    let finalized_view = inner.get_finalized_height();
     let block_with_tx = inner
         .get_block_by_hash(receipt.block_hash)
         .unwrap()
@@ -70,7 +70,12 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
     drop(inner);
     #[allow(clippy::redundant_closure_call)]
     let dir = (|mut node: TestNode| node.dir.take())(node).unwrap(); // move dir out and drop the rest of node
-    let result = crate::node(SecretKey::new().unwrap(), 0, Some(dir));
+    let result = crate::node(
+        network.genesis_committee,
+        SecretKey::new().unwrap(),
+        0,
+        Some(dir),
+    );
 
     // Sometimes, the dropping Arc<Node> (by dropping the TestNode above) does not actually drop
     // the underlying Node. See: https://github.com/Zilliqa/zq2/issues/299
@@ -84,7 +89,7 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
     let inner = newnode.inner.lock().unwrap();
 
     // ensure finalized height was saved
-    assert_eq!(inner.get_finalized_height().unwrap(), finalized_view);
+    assert_eq!(inner.get_finalized_height(), finalized_view);
 
     // ensure all blocks created were saved up till the last one
     let loaded_last_block = inner.get_block_by_view(last_view).unwrap();
