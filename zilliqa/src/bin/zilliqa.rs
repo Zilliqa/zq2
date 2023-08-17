@@ -14,7 +14,6 @@ use opentelemetry::runtime;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use tokio::time::Duration;
 
-
 use zilliqa::{cfg::Config, crypto::SecretKey, node_launcher::NodeLauncher};
 
 #[derive(Parser, Debug)]
