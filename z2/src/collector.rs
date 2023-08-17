@@ -2,7 +2,9 @@ use crate::runner;
 use eyre::Result;
 use futures::future::JoinAll;
 use std::vec::Vec;
+use tempfile::NamedTempFile;
 use tokio::sync::mpsc;
+use zilliqa::crypto::SecretKey;
 
 pub struct Collector {
     pub runners: Vec<runner::Process>,
@@ -11,14 +13,16 @@ pub struct Collector {
 }
 
 impl Collector {
-    pub async fn new(keys: &Vec<String>) -> Result<Collector> {
+    pub async fn new(keys: &[SecretKey], config_files: &[NamedTempFile]) -> Result<Collector> {
         let mut runners = Vec::new();
         let (tx, mut rx) = mpsc::channel(32);
         let nr = keys.len();
         // Fire everything up.
         let mut do_rpc = true;
-        for (i, key) in keys.iter().enumerate() {
-            runners.push(runner::Process::spawn(i, key, do_rpc, &tx).await?);
+        for (i, (key, config_file)) in keys.iter().zip(config_files).enumerate() {
+            runners.push(
+                runner::Process::spawn(i, &key.to_hex(), config_file.path(), do_rpc, &tx).await?,
+            );
             do_rpc = false; // only launch RPC server in first node. TODO: better config on nodes
         }
         let reader = tokio::spawn(async move {

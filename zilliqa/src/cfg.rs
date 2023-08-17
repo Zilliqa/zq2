@@ -1,7 +1,9 @@
 use std::time::Duration;
 
-use libp2p::Multiaddr;
+use libp2p::{Multiaddr, PeerId};
 use serde::Deserialize;
+
+use crate::crypto::NodePublicKey;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -22,6 +24,7 @@ pub struct Config {
     /// The address of another node to dial when this node starts. To join the network, a node must know about at least
     /// one other existing node in the network.
     pub bootstrap_address: Option<Multiaddr>,
+    pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
 }
 
 impl Default for Config {
@@ -35,6 +38,7 @@ impl Default for Config {
             data_dir: None,
             consensus_timeout: Duration::from_secs(5),
             bootstrap_address: None,
+            genesis_committee: vec![],
         }
     }
 }

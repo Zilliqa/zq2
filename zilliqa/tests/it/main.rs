@@ -25,7 +25,6 @@ use ethers::{
     types::H256,
 };
 use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
-use itertools::Itertools;
 use jsonrpsee::{
     types::{Id, RequestSer, Response, ResponsePayload},
     RpcModule,
@@ -38,13 +37,19 @@ use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::trace;
-use zilliqa::{cfg::Config, crypto::SecretKey, message::Message, node::Node};
+use tracing::{info, trace};
+use zilliqa::{
+    cfg::Config,
+    crypto::{NodePublicKey, SecretKey},
+    message::Message,
+    node::Node,
+};
 
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
 // type
 #[allow(clippy::type_complexity)]
 fn node(
+    genesis_committee: Vec<(NodePublicKey, PeerId)>,
     secret_key: SecretKey,
     index: usize,
     datadir: Option<TempDir>,
@@ -67,7 +72,8 @@ fn node(
             data_dir: datadir
                 .as_ref()
                 .map(|d| d.path().to_str().unwrap().to_string()),
-            ..Config::default()
+            genesis_committee,
+            ..Default::default()
         },
         secret_key,
         message_sender,
@@ -100,6 +106,7 @@ struct TestNode {
 }
 
 struct Network<'r> {
+    pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
     // the borrow checker happy.
     nodes: Vec<TestNode>,
@@ -121,10 +128,25 @@ impl<'r> Network<'r> {
         // Sort the keys in the same order as they will occur in the consensus committee. This means node indices line
         // up with indices in the committee, making logs easier to read.
         keys.sort_unstable_by_key(|key| key.to_libp2p_keypair().public().to_peer_id());
+
+        let validator = (
+            keys[0].node_public_key(),
+            keys[0].to_libp2p_keypair().public().to_peer_id(),
+        );
+        let genesis_committee = vec![validator];
+
         let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
-            .map(|(i, key)| node(key, i, Some(tempfile::tempdir().unwrap())).unwrap())
+            .map(|(i, key)| {
+                node(
+                    genesis_committee.clone(),
+                    key,
+                    i,
+                    Some(tempfile::tempdir().unwrap()),
+                )
+                .unwrap()
+            })
             .unzip();
 
         for node in &nodes {
@@ -136,24 +158,6 @@ impl<'r> Network<'r> {
             );
         }
 
-        nodes
-            .iter()
-            .enumerate()
-            .cartesian_product(nodes.iter().enumerate())
-            .for_each(|((i, n1), (j, n2))| {
-                if i != j {
-                    let key = n2.secret_key;
-                    n1.inner
-                        .lock()
-                        .unwrap()
-                        .add_peer(
-                            key.to_libp2p_keypair().public().to_peer_id(),
-                            key.node_public_key(),
-                        )
-                        .unwrap();
-                }
-            });
-
         let (resend_message, receive_resend_message) =
             mpsc::unbounded_channel::<(PeerId, Option<PeerId>, Message)>();
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
@@ -162,13 +166,53 @@ impl<'r> Network<'r> {
         // Pause time so we can control it.
         zilliqa::time::pause_at_epoch();
 
+        for node in &nodes[1..] {
+            // Simulate every node broadcasting a `JoinCommittee` message.
+            resend_message
+                .send((
+                    node.peer_id,
+                    None,
+                    Message::JoinCommittee(node.secret_key.node_public_key()),
+                ))
+                .unwrap();
+        }
+
         Network {
+            genesis_committee,
             nodes,
             receivers,
             resend_message,
             rng,
             seed,
         }
+    }
+
+    pub fn add_node(&mut self) -> usize {
+        let secret_key = SecretKey::new_from_rng(self.rng).unwrap();
+        let (node, receiver) = node(
+            self.genesis_committee.clone(),
+            secret_key,
+            self.nodes.len(),
+            None,
+        )
+        .unwrap();
+
+        self.resend_message
+            .send((
+                node.peer_id,
+                None,
+                Message::JoinCommittee(node.secret_key.node_public_key()),
+            ))
+            .unwrap();
+
+        info!("Node {}: {}", node.index, node.peer_id);
+
+        let index = node.index;
+
+        self.nodes.push(node);
+        self.receivers.push(receiver);
+
+        index
     }
 
     pub async fn tick(&mut self) {
@@ -227,18 +271,24 @@ impl<'r> Network<'r> {
                 .iter()
                 .find(|n| n.peer_id == destination)
                 .unwrap();
-            node.inner
-                .lock()
-                .unwrap()
-                .handle_message(source, message)
-                .unwrap();
-        } else {
-            for node in &self.nodes {
+            let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
+            span.in_scope(|| {
                 node.inner
                     .lock()
                     .unwrap()
-                    .handle_message(source, message.clone())
+                    .handle_message(source, message)
                     .unwrap();
+            });
+        } else {
+            for node in &self.nodes {
+                let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
+                span.in_scope(|| {
+                    node.inner
+                        .lock()
+                        .unwrap()
+                        .handle_message(source, message.clone())
+                        .unwrap();
+                });
             }
         }
     }
@@ -301,13 +351,19 @@ impl<'r> Network<'r> {
         self.nodes.remove(idx)
     }
 
+    pub fn node_at(&mut self, index: usize) -> MutexGuard<Node> {
+        self.nodes[index].inner.lock().unwrap()
+    }
+
     pub fn random_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
         let wallet: LocalWallet = SigningKey::random(self.rng).into();
         let wallet = wallet.with_chain_id(0x8001u64);
 
+        let node = self.nodes.choose(self.rng).unwrap();
+        trace!(index = node.index, "node selected for wallet");
         let client = LocalRpcClient {
             id: Arc::new(AtomicU64::new(0)),
-            rpc_module: self.nodes.choose(self.rng).unwrap().rpc_module.clone(),
+            rpc_module: node.rpc_module.clone(),
         };
         let provider = Provider::new(client);
 
@@ -321,6 +377,24 @@ fn format_message(
     destination: Option<PeerId>,
     message: &Message,
 ) -> String {
+    let message = match message {
+        Message::Proposal(proposal) => format!(
+            "{} [{}] ({:?})",
+            message.name(),
+            proposal.header.view,
+            proposal
+                .committee
+                .iter()
+                .map(|v| nodes.iter().find(|n| n.peer_id == v.peer_id).unwrap().index)
+                .collect::<Vec<_>>()
+        ),
+        Message::BlockRequest(request) => format!("{} [{:?}]", message.name(), request.0),
+        Message::BlockResponse(response) => {
+            format!("{} [{}]", message.name(), response.block.view())
+        }
+        _ => message.name().to_owned(),
+    };
+
     let source_index = nodes.iter().find(|n| n.peer_id == source).unwrap().index;
     if let Some(destination) = destination {
         let destination_index = nodes
@@ -328,9 +402,9 @@ fn format_message(
             .find(|n| n.peer_id == destination)
             .unwrap()
             .index;
-        format!("{source_index} -> {destination_index}: {}", message.name())
+        format!("{source_index} -> {destination_index}: {}", message)
     } else {
-        format!("{source_index} -> *: {}", message.name())
+        format!("{source_index} -> *: {}", message)
     }
 }
 
