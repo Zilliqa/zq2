@@ -155,8 +155,10 @@ impl NodeLauncher {
         }
 
         let key_pair = self.secret_key.to_libp2p_keypair();
-        let peer_id = PeerId::from(key_pair.public());
-        info!(%peer_id);
+        let public_key = key_pair.public();
+        let peer_id = PeerId::from(public_key);
+        let pubkey_str = self.secret_key.node_public_key().to_string();
+        info!(%peer_id, %pubkey_str);
 
         let transport = tcp::tokio::Transport::new(tcp::Config::default())
             .upgrade(upgrade::Version::V1)

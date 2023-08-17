@@ -48,12 +48,6 @@ impl Node {
         message_sender: UnboundedSender<(Option<PeerId>, Message)>,
         reset_timeout: UnboundedSender<()>,
     ) -> Result<Node> {
-        info!(
-            "Constructing new node with identity: {} and peer id: {}",
-            secret_key.node_public_key(),
-            secret_key.to_libp2p_keypair().public().to_peer_id()
-        );
-
         let node = Node {
             config: config.clone(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),

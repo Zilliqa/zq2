@@ -9,26 +9,22 @@ use libp2p::{
     kad::{store::MemoryStore, Kademlia},
     mdns,
     swarm::NetworkBehaviour,
-    PeerId,
 };
 use opentelemetry::runtime;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use tokio::time::Duration;
 
-use zilliqa::crypto::NodePublicKey;
+
 use zilliqa::{cfg::Config, crypto::SecretKey, node_launcher::NodeLauncher};
 
 #[derive(Parser, Debug)]
 struct Args {
     #[arg(value_parser = SecretKey::from_hex)]
     secret_key: SecretKey,
-    #[clap(long, short, default_value = "config.toml")]
+    #[clap(long, short, required = true, default_value = "config.toml")]
     config_file: PathBuf,
     #[clap(long, default_value = "false")]
     no_jsonrpc: bool,
-    #[arg(short, long)]
-    // Optionally pass in genesis committee like so: -g b27aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a3,12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU
-    genesis_committee: Vec<String>,
 }
 
 #[derive(NetworkBehaviour)]
@@ -48,34 +44,9 @@ async fn main() -> Result<()> {
     let config = if args.config_file.exists() {
         fs::read_to_string(&args.config_file)?
     } else {
-        // If the configuration file doesn't exist, we can still construct a default configuration file by parsing an
-        // empty TOML document.
-        String::new()
+        panic!("There needs to be a config file provided");
     };
-    let mut config: Config = toml::from_str(&config)?;
-
-    // If the config has no committee to start the network, we need to get this from the args
-    // otherwise we have nothing to start with
-    if config.genesis_committee.is_empty() {
-        if args.genesis_committee.is_empty() {
-            panic!("No genesis committee provided via config or command line");
-        }
-
-        for item in args.genesis_committee.iter() {
-            let parts: Vec<&str> = item.split(',').collect();
-
-            if parts.len() != 2 {
-                panic!("Invalid genesis committee entry, it must be in the format pubkey,peer_id but we got: {}", item);
-            }
-
-            let pk: NodePublicKey =
-                NodePublicKey::from_hex_string(parts[0]).expect("Invalid public key");
-            let id: PeerId =
-                PeerId::from_bytes(&bs58::decode(parts[1]).into_vec().unwrap()).unwrap();
-
-            config.genesis_committee.push((pk, id));
-        }
-    }
+    let config: Config = toml::from_str(&config)?;
 
     let p2p_port = config.p2p_port;
     if let Some(endpoint) = &config.otlp_collector_endpoint {
