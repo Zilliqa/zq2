@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::{collections::BTreeMap, error::Error, fmt::Display};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{debug, trace};
+use tracing::*;
 
 use crate::message::{Committee, Message};
 use crate::{
