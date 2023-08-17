@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::{collections::BTreeMap, error::Error, fmt::Display};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use crate::message::{Committee, Message};
 use crate::{
@@ -964,7 +964,7 @@ impl Consensus {
 
     fn add_block(&mut self, block: Block) -> Result<()> {
         let hash = block.hash();
-        info!(?hash, ?block.header.view, "added block");
+        debug!(?hash, ?block.header.view, "added block");
         self.block_store.process_block(block)?;
         Ok(())
     }

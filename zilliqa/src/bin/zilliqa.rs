@@ -27,6 +27,7 @@ struct Args {
     #[clap(long, default_value = "false")]
     no_jsonrpc: bool,
     #[arg(short, long)]
+    // Optionally pass in genesis committee like so: -g b27aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a3,12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU
     genesis_committee: Vec<String>,
 }
 

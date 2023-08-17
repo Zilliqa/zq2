@@ -272,6 +272,8 @@ impl NodeLauncher {
                     let data = serde_json::to_vec(&message).unwrap();
                     let from = self.peer_id;
 
+                    // If we don't have any peers, push it back into the reciever since it is
+                    // bound to fail.
                     if swarm.behaviour().gossipsub.all_peers().collect_vec().is_empty() {
                         let _ = self.message_sender.send((dest, message));
                         continue;

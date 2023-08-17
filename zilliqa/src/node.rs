@@ -110,7 +110,6 @@ impl Node {
 
     pub fn handle_timeout(&mut self) -> Result<()> {
         if self.consensus.blockchain_active() {
-            println!("Blockchain is not active, skipping handling timeout");
             return Ok(());
         }
 
