@@ -325,12 +325,6 @@ impl fmt::Debug for EvmResult {
     }
 }
 
-//impl Display for EvmResult {
-//    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-//        write!(f, "({:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?})", self.exit_reason, self.return_value, self.apply, self.logs, self.tx_trace, self.remaining_gas, self.continuation_id, self.trap_data)
-//    }
-//}
-
 impl EvmResult {
     pub fn has_trap(&self) -> bool {
         matches!(self.exit_reason, ExitReasonCps::Trap(_))

@@ -11,7 +11,7 @@ use evm::{
     CreateScheme, Handler,
 };
 use evm::{Machine, Runtime};
-use tracing::{error, info, trace};
+use tracing::*;
 
 use primitive_types::*;
 

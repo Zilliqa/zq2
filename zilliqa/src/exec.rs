@@ -11,7 +11,7 @@ use evm_ds::{
     protos::evm_proto as EvmProto,
 };
 use primitive_types::{H160, U256};
-use tracing::{error, info, trace, debug};
+use tracing::*;
 
 use crate::state::SignedTransaction;
 use crate::{
@@ -111,7 +111,7 @@ impl State {
         to_addr: Option<Address>,
         _gas_price: u128,
         gas_limit: u64,
-        amount: u128,
+        _amount: u128,
         payload: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
@@ -238,7 +238,6 @@ impl State {
                             U256::zero()
                         };
 
-                        // todo: de-duplicate this and add it to create scheme
                         let call_args_shim: Option<EvmProto::EvmCallArgs> = if !value.is_zero() {
                             let balance_data = contracts::native_token::SET_BALANCE
                                 .encode_input(&[Token::Address(call_addr), Token::Uint(value)])

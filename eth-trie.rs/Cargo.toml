@@ -14,7 +14,7 @@ documentation = "https://docs.rs/eth_trie"
 [dependencies]
 hashbrown = "0.14.0"
 keccak-hash = "0.10.0"
-log = "0.4.19"
+log = "0.4.20"
 parking_lot = "0.12.1"
 rlp = "0.5.2"
 
