@@ -363,6 +363,8 @@ impl Consensus {
                         contract_address: result.contract_address,
                         logs: result.logs,
                     };
+                    self.transactions
+                        .insert(txn.hash().0, bincode::serialize(&txn)?)?;
                     self.transaction_receipts
                         .insert(txn.hash().0, bincode::serialize(&receipt)?)?;
                 }
@@ -415,8 +417,6 @@ impl Consensus {
                 self.state
                     .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
             })?;
-            self.transactions
-                .insert(hash.0, bincode::serialize(&txn)?)?;
             for address in listener.touched {
                 self.touched_address_index.merge(address.0, hash.0)?;
             }
@@ -503,21 +503,19 @@ impl Consensus {
                         .ok_or_else(|| anyhow!("missing block"))?;
                     let parent_header = parent.header;
 
+                    let previous_state_root_hash = self.state.root_hash()?;
+
                     let applied_transactions: Vec<_> =
                         self.new_transactions.values().cloned().collect();
                     let applied_transactions: Vec<_> = applied_transactions
                         .into_iter()
                         .filter_map(|tx| {
                             let result = self.apply_transaction(tx.clone(), parent_header);
-                            result.transpose().map(|r| {
-                                r.map(|r| (tx.clone(), r.success, r.contract_address, r.logs))
-                            })
+                            result.transpose().map(|r| r.map(|_| tx.clone()))
                         })
                         .collect::<Result<_>>()?;
-                    let applied_transaction_hashes: Vec<_> = applied_transactions
-                        .iter()
-                        .map(|(tx, _, _, _)| tx.hash())
-                        .collect();
+                    let applied_transaction_hashes: Vec<_> =
+                        applied_transactions.iter().map(|tx| tx.hash()).collect();
 
                     let proposal = Block::from_qc(
                         self.secret_key,
@@ -530,23 +528,7 @@ impl Consensus {
                         self.get_next_committee()?,
                     );
 
-                    let applied_transactions: Result<Vec<_>> = applied_transactions
-                        .into_iter()
-                        .map(|(tx, success, contract_address, logs)| {
-                            self.transactions
-                                .insert(tx.hash().0, bincode::serialize(&tx)?)?;
-                            let receipt = TransactionReceipt {
-                                block_hash: proposal.hash(),
-                                success,
-                                contract_address,
-                                logs,
-                            };
-                            self.transaction_receipts
-                                .insert(tx.hash().0, bincode::serialize(&receipt)?)?;
-                            Ok(tx)
-                        })
-                        .collect();
-                    let applied_transactions = applied_transactions?;
+                    self.state.set_to_root(H256(previous_state_root_hash.0));
 
                     self.votes.insert(
                         block_hash,
