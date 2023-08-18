@@ -49,27 +49,13 @@ impl Node {
         message_sender: UnboundedSender<OutboundMessageTuple>,
         reset_timeout: UnboundedSender<()>,
     ) -> Result<Node> {
-        let mut node = Node {
+        Ok(Node {
             config: config.clone(),
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             message_sender,
             reset_timeout,
             consensus: Consensus::new(secret_key, config.clone())?,
-        };
-
-        // FIXME
-        // Start a new dummy shard immediately.
-        // This is for testing, pending a proper contract-based dynamic shard creation.
-        if config.is_main_shard {
-            let new_shard_config = NodeConfig {
-                json_rpc_port: config.json_rpc_port + 1,
-                is_main_shard: false,
-                ..config
-            };
-            node.send_internal_message(None, InternalMessage::LaunchShard(new_shard_config))?;
-        }
-
-        Ok(node)
+        })
     }
 
     // TODO: Multithreading - `&mut self` -> `&self`
@@ -254,8 +240,19 @@ impl Node {
         self.consensus.maybe_get_block(&hash)
     }
 
-    pub fn get_transaction_receipt(&self, hash: Hash) -> Result<Option<TransactionReceipt>> {
-        self.consensus.get_transaction_receipt(hash)
+    pub fn get_block_hash_from_transaction(&self, tx_hash: Hash) -> Result<Option<Hash>> {
+        self.consensus.get_block_hash_from_transaction(&tx_hash)
+    }
+
+    pub fn get_transaction_receipts_in_block(
+        &self,
+        block_hash: Hash,
+    ) -> Result<Option<Vec<TransactionReceipt>>> {
+        self.consensus.get_transaction_receipts_in_block(block_hash)
+    }
+
+    pub fn get_transaction_receipt(&self, tx_hash: Hash) -> Result<Option<TransactionReceipt>> {
+        self.consensus.get_transaction_receipt(&tx_hash)
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<SignedTransaction>> {

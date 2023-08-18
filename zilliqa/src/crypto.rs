@@ -262,6 +262,13 @@ impl Hash {
     }
 }
 
+impl TryFrom<&[u8]> for Hash {
+    type Error = anyhow::Error;
+    fn try_from(value: &[u8]) -> std::result::Result<Self, Self::Error> {
+        Ok(Self(<[u8; 32]>::try_from(value)?))
+    }
+}
+
 impl Display for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", hex::encode(self.as_bytes()))

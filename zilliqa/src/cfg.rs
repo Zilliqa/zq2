@@ -47,6 +47,8 @@ pub struct NodeConfig {
     pub is_main_shard: bool,
 }
 
+pub struct ShardConfig {}
+
 impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {

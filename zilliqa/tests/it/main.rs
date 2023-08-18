@@ -350,7 +350,6 @@ macro_rules! deploy_contract {
         let compiler_input = compiler_input.first_mut().unwrap();
         compiler_input.settings.evm_version = Some(EvmVersion::Paris);
 
-        println!("{:?}", compiler_input);
         let out = sc.compile::<CompilerInput>(compiler_input).unwrap();
 
         let contract = out
@@ -362,7 +361,6 @@ macro_rules! deploy_contract {
         // Deploy the contract.
         let factory = DeploymentTxFactory::new(abi, bytecode, $wallet.clone());
         let deployer = factory.deploy(()).unwrap();
-        println!("{:?}", deployer.tx);
         let abi = deployer.abi().clone();
         {
             use ethers::providers::Middleware;
@@ -372,6 +370,7 @@ macro_rules! deploy_contract {
                 .await
                 .unwrap()
                 .tx_hash();
+            println!("Waiting for receipt for tx: {}", hash);
 
             $network
                 .run_until_async(

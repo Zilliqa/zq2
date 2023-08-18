@@ -1,4 +1,5 @@
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
+use ethabi::Token;
 use generic_array::{
     sequence::Split,
     typenum::{U12, U20},
@@ -15,9 +16,9 @@ use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
 
 use anyhow::{anyhow, Result};
+use evm_ds::protos::evm_proto::Log;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
 
 use crate::{contracts, crypto, db::SledDb};
 
@@ -85,60 +86,65 @@ pub struct State {
 }
 
 impl State {
-    pub fn new_genesis(database: Tree) -> Result<State> {
+    pub fn new(database: Tree) -> State {
+        let db = Arc::new(SledDb::new(database));
+        Self {
+            db: db.clone(),
+            accounts: PatriciaTrie::new(db),
+        }
+    }
+
+    pub fn new_at_root(database: Tree, root_hash: H256) -> Self {
+        Self::new(database).at_root(root_hash)
+    }
+
+    pub fn new_with_genesis(database: Tree) -> Result<State> {
         let db = Arc::new(SledDb::new(database));
         let mut state = Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
         };
 
-        // if let Some(cfg) = GENESIS_SHARDS.get(0) {
-        //     let calldata = contracts::shard_registry::CONSTRUCTOR
-        //         .encode_input(&[Token::Uint(u128_to_u256(cfg.1))])
-        //         .unwrap();
+        let main_shard_cfg = GENESIS_SHARDS
+            .get(0)
+            .expect("At least the main shard must be specified when starting a new genesis");
 
-        //     state.deploy_fixed_contract_with_constructor(
-        //         Address::SHARD_CONTRACT,
-        //         contracts::shard_registry::CODE.clone(),
-        //         calldata,
-        //     )?;
-        // };
+        let main_shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
+            contracts::shard_registry::CREATION_CODE.to_vec(),
+            &[Token::Uint(u128_to_u256(main_shard_cfg.1))],
+        )?;
+        state.force_deploy_contract(main_shard_data, Some(Address::SHARD_CONTRACT))?;
 
-        // for cfg in GENESIS_SHARDS.iter().skip(1) {
-        //     let calldata = contracts::shard::CONSTRUCTOR
-        //         .encode_input(&[
-        //             Token::Uint(u128_to_u256(cfg.0)),
-        //             Token::Uint(u128_to_u256(cfg.1)),
-        //         ])
-        //         .unwrap();
+        for cfg in GENESIS_SHARDS.iter().skip(1) {
+            let calldata = contracts::shard::CONSTRUCTOR
+                .encode_input(
+                    contracts::shard::CREATION_CODE.to_vec(),
+                    &[
+                        Token::Uint(u128_to_u256(main_shard_cfg.0)), // parent id
+                        Token::Uint(u128_to_u256(cfg.1)),
+                    ],
+                )
+                .unwrap();
 
-        //     state.deploy_fixed_contract_with_constructor(
-        //         Address::SHARD_CONTRACT,
-        //         contracts::shard::CODE.clone(),
-        //         calldata,
-        //     )?;
-        // }
+            let shard_contract =
+                state.force_deploy_contract(calldata, Some(Address::SHARD_CONTRACT))?;
+
+            let insert_shard_payload = contracts::shard_registry::ADD_SHARD.encode_input(&[
+                Token::Uint(u128_to_u256(cfg.0)),
+                Token::Address(shard_contract.0),
+            ])?;
+            state.force_execute_payload(Some(Address::SHARD_CONTRACT), insert_shard_payload)?;
+        }
 
         let native_token_data = contracts::native_token::CONSTRUCTOR
-            .encode_input(contracts::native_token::CREATION_CODE.to_vec(), &vec![])?;
+            .encode_input(contracts::native_token::CREATION_CODE.to_vec(), &[])?;
         state.force_deploy_contract(native_token_data, Some(Address::NATIVE_TOKEN))?;
 
         for (address, balance) in GENESIS.iter() {
-            // We don't care about these logs.
-            let mut logs = vec![];
-            info!("Setting balance for {} to {}", address, balance);
-            state.set_native_balance(&mut logs, *address, *balance)?;
+            state.set_native_balance(*address, *balance)?;
         }
 
         Ok(state)
-    }
-
-    pub fn new_from_root(database: Tree, root_hash: H256) -> Self {
-        let db = Arc::new(SledDb::new(database));
-        Self {
-            db: db.clone(),
-            accounts: PatriciaTrie::new(db).at_root(root_hash),
-        }
     }
 
     pub fn at_root(&self, root_hash: H256) -> Self {
@@ -147,6 +153,10 @@ impl State {
             db,
             accounts: self.accounts.at_root(root_hash),
         }
+    }
+
+    pub fn set_to_root(&mut self, root_hash: H256) {
+        self.accounts = self.accounts.at_root(root_hash);
     }
 
     pub fn try_clone(&mut self) -> Result<Self> {
@@ -470,14 +480,8 @@ pub struct Transaction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionReceipt {
     pub block_hash: crypto::Hash,
+    pub tx_hash: crypto::Hash,
     pub success: bool,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Log {
-    pub address: Address,
-    pub topics: Vec<H256>,
-    pub data: Vec<u8>,
 }

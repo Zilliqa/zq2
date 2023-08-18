@@ -1,3 +1,5 @@
+use ethabi::RawLog;
+use evm_ds::protos::evm_proto::Log as ProtoLog;
 use primitive_types::H256;
 use std::{cell::RefCell, collections::BTreeMap, num::NonZeroUsize};
 
@@ -7,10 +9,11 @@ use itertools::Itertools;
 use libp2p::PeerId;
 use lru::LruCache;
 use sled::{Db, Tree};
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use crate::{
     cfg::NodeConfig,
+    contracts,
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
     exec::TouchedAddressEventListener,
     exec::TransactionApplyResult,
@@ -33,8 +36,10 @@ const CANONICAL_BLOCK_NUMBERS_TREE: &[u8] = b"canonical_block_numbers_tree";
 const BLOCKS_TREE: &[u8] = b"blocks_tree";
 /// Key: transaction hash; value: transaction data
 const TXS_TREE: &[u8] = b"txs_tree";
-/// Key: tx hash; value: receipt for it
+/// Key: block_hash; value: receipt for all transactions in it
 const RECEIPTS_TREE: &[u8] = b"receipts_tree";
+/// Key: tx_hash; value: corresponding block_hash
+const TX_BLOCK_INDEX: &[u8] = b"tx_block_index";
 /// Key: address; value: Vec<tx hash where this address was touched>
 const ADDR_TOUCHED_INDEX: &[u8] = b"addresses_touched_index";
 
@@ -87,6 +92,8 @@ pub struct Consensus {
     /// An index of address to a list of transaction hashes, for which this address appeared somewhere in the
     /// transaction trace. The list of transations is ordered by execution order.
     touched_address_index: Tree,
+    /// Lookup of block hashes for transaction hashes.
+    block_hash_reverse_index: Tree,
     block_cache: RefCell<LruCache<Hash, Block>>,
 }
 
@@ -119,15 +126,16 @@ impl Consensus {
         };
 
         let mut state = if let Some(header) = latest_block_header {
-            warn!("!!!!!!!LOADINGGG STATE");
-            State::new_from_root(state_trie, H256(header.state_root_hash.0))
+            State::new_at_root(state_trie, H256(header.state_root_hash.0))
         } else {
-            State::new_genesis(state_trie)?
+            State::new_with_genesis(state_trie)?
         };
 
         let latest_block_header =
             latest_block_header.unwrap_or(BlockHeader::genesis(state.root_hash()?));
         trace!("Loading state at height {}", latest_block_header.view);
+
+        let block_hash_reverse_index = db.open_tree(TX_BLOCK_INDEX)?;
 
         let touched_address_index = db.open_tree(ADDR_TOUCHED_INDEX)?;
         touched_address_index.set_merge_operator(|_k, old_value, additional_value| {
@@ -140,6 +148,21 @@ impl Consensus {
             };
             vec.push(Hash(additional_value.try_into().unwrap()));
             Some(bincode::serialize(&vec).unwrap())
+        });
+
+        let transaction_receipts = db.open_tree(RECEIPTS_TREE)?;
+        transaction_receipts.set_merge_operator(|_k, old_value, additional_value| {
+            // TODO: Yeah there definitely needs to be a better way to pack this than deserializing
+            // both, concatenating, then reserializing
+            let old_vec = if let Some(old_value) = old_value {
+                bincode::deserialize::<Vec<TransactionReceipt>>(old_value).unwrap()
+            } else {
+                vec![]
+            };
+            let new_vec =
+                bincode::deserialize::<Vec<TransactionReceipt>>(additional_value).unwrap();
+            let concat = old_vec.into_iter().chain(new_vec.into_iter()).collect_vec();
+            Some(bincode::serialize(&concat).unwrap())
         });
 
         Ok(Consensus {
@@ -157,9 +180,10 @@ impl Consensus {
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
             transactions: db.open_tree(TXS_TREE)?,
-            transaction_receipts: db.open_tree(RECEIPTS_TREE)?,
+            transaction_receipts,
             state,
             db,
+            block_hash_reverse_index,
             touched_address_index,
             block_cache: RefCell::new(LruCache::new(NonZeroUsize::new(5).unwrap())),
         })
@@ -211,9 +235,7 @@ impl Consensus {
             self.add_block(genesis.clone())?;
             self.save_highest_view(genesis.hash(), genesis.view())?;
             // treat genesis as finalized
-            self.db
-                .insert(LATEST_FINALIZED_BLOCK_HASH, &genesis.hash().0)?;
-            self.finalized = genesis.hash();
+            self.finalize(genesis.clone())?;
             self.update_view(1);
             let vote = self.vote_from_block(&genesis);
             let leader = self.get_leader(self.view).peer_id;
@@ -292,18 +314,27 @@ impl Consensus {
 
         let block_state_root = block.state_root_hash();
         if self.check_safe_block(block.clone())? {
+            let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
             for txn in &transactions {
                 if let Some(result) = self.apply_transaction(txn.clone(), parent_header)? {
+                    let tx_hash = txn.hash();
+                    self.block_hash_reverse_index
+                        .insert(tx_hash.0, &block.hash().0)?;
                     let receipt = TransactionReceipt {
                         block_hash: block.hash(),
+                        tx_hash,
                         success: result.success,
                         contract_address: result.contract_address,
                         logs: result.logs,
                     };
-                    self.transaction_receipts
-                        .insert(txn.hash().0, bincode::serialize(&receipt)?)?;
+                    block_receipts.push(receipt);
                 }
             }
+
+            // Proposals always happen before votes, so we can safely insert a new vector here
+            self.transaction_receipts
+                .merge(block.hash().0, bincode::serialize(&block_receipts)?)?;
+
             if self.state.root_hash()? != block_state_root {
                 return Err(anyhow!(
                     "state root hash mismatch, expected: {:?}, actual: {:?}",
@@ -443,22 +474,27 @@ impl Consensus {
                     SystemTime::max(SystemTime::now(), parent_header.timestamp),
                 );
 
+                let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
                 let applied_transactions: Result<Vec<_>> = applied_transactions
                     .into_iter()
                     .map(|(tx, success, contract_address, logs)| {
-                        self.transactions
-                            .insert(tx.hash().0, bincode::serialize(&tx)?)?;
+                        let tx_hash = tx.hash();
+                        self.block_hash_reverse_index
+                            .insert(tx_hash.0, &proposal.hash().0)?;
                         let receipt = TransactionReceipt {
                             block_hash: proposal.hash(),
+                            tx_hash,
                             success,
                             contract_address,
                             logs,
                         };
-                        self.transaction_receipts
-                            .insert(tx.hash().0, bincode::serialize(&receipt)?)?;
+                        block_receipts.push(receipt);
                         Ok(tx)
                     })
                     .collect();
+                // Merge any new transactions with any that had already been applied
+                self.transaction_receipts
+                    .insert(proposal.hash().0, bincode::serialize(&block_receipts)?)?;
 
                 let applied_transactions = applied_transactions?;
 
@@ -587,11 +623,39 @@ impl Consensus {
             .transpose()
     }
 
-    pub fn get_transaction_receipt(&self, hash: Hash) -> Result<Option<TransactionReceipt>> {
-        self.transaction_receipts
-            .get(hash.0)?
-            .map(|encoded| Ok(bincode::deserialize::<TransactionReceipt>(&encoded)?))
+    pub fn get_block_hash_from_transaction(&self, tx_hash: &Hash) -> Result<Option<Hash>> {
+        self.block_hash_reverse_index
+            .get(tx_hash.0)?
+            .map(|ivec| ivec.as_ref().try_into())
             .transpose()
+    }
+
+    pub fn get_transaction_receipts_in_block(
+        &self,
+        block_hash: Hash,
+    ) -> Result<Option<Vec<TransactionReceipt>>> {
+        self.transaction_receipts
+            .get(block_hash.0)?
+            .map(|encoded| Ok(bincode::deserialize::<Vec<TransactionReceipt>>(&encoded)?))
+            .transpose()
+    }
+
+    pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
+        // println!("Trying to get receipt for hash {}", hash);
+        let Some(block_hash) = self.get_block_hash_from_transaction(hash)? else {
+            return Ok(None);
+        };
+        // println!("  Therefore getting receipts in block {}", block_hash);
+        let Some(block_receipts) = self.get_transaction_receipts_in_block(block_hash)? else {
+            return Ok(None);
+        };
+        // println!(
+        //     "  Got {} receipts in block, going to filter now and return.",
+        //     block_receipts.len()
+        // );
+        Ok(block_receipts
+            .into_iter()
+            .find(|receipt| receipt.tx_hash == *hash))
     }
 
     fn save_highest_view(&self, block_hash: Hash, view: u64) -> Result<()> {
@@ -704,20 +768,54 @@ impl Consensus {
         if prev_1.view() == prev_2.view() + 1 {
             let committed_block = prev_2;
             let Ok(finalized_block) = self.get_block(&self.finalized) else { return Ok(()); };
-            let committed_hash = committed_block.hash();
-            let mut current = committed_block;
+            let mut current = committed_block.clone();
             // commit blocks back to the last finalized block
             while current.view() > finalized_block.view() {
                 let Ok(new) = self.get_block(&current.parent_hash()) else { return Ok(()); };
                 current = new;
             }
             if current.hash() == self.finalized {
-                self.finalized = committed_hash;
-                self.db
-                    .insert(LATEST_FINALIZED_BLOCK_HASH, &committed_hash.0)?;
+                self.finalize(committed_block)?;
                 // discard blocks that can't be committed anymore
             }
         };
+        Ok(())
+    }
+
+    /// Intended to be used with the oldest pending block, to move the finalized tip forward by
+    /// one.
+    /// Does not update view/height.
+    fn finalize(&mut self, newly_finalized_block: Block) -> Result<()> {
+        let hash = newly_finalized_block.hash();
+        self.finalized = hash;
+        self.db.insert(LATEST_FINALIZED_BLOCK_HASH, &hash.0)?;
+
+        // Process the logs in the block
+        let Some(receipts) = self.get_transaction_receipts_in_block(hash)? else {
+            return Ok(()); // no transations in block, most likely
+        };
+        let logs = receipts
+            .into_iter()
+            .map(|receipt| receipt.logs)
+            .flatten()
+            .collect::<Vec<ProtoLog>>();
+
+        let evt = contracts::shard_registry::SHARD_ADDED_EVT.clone();
+        let shard_logs: Result<Vec<_>, _> = logs
+            .into_iter()
+            .filter(|log| log.topics[0] == evt.signature())
+            .map(|log| {
+                evt.parse_log_whole(RawLog {
+                    topics: log.topics,
+                    data: log.data,
+                })
+            })
+            .collect();
+        let shard_logs = shard_logs?;
+
+        // println!("{:?}", shard_logs);
+
+        // TODO: filter for ShardAdded logs, and then somehow get the node to launch a shard
         Ok(())
     }
 
