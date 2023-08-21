@@ -24,10 +24,12 @@ use libp2p::{
     core::upgrade,
     futures::StreamExt,
     gossipsub::{self, IdentTopic, MessageAuthenticity},
-    identify, mdns,
+    identify,
+    kad::{store::MemoryStore, Kademlia},
+    mdns,
     multiaddr::{Multiaddr, Protocol},
     noise,
-    swarm::{dial_opts::DialOpts, NetworkBehaviour, SwarmBuilder, SwarmEvent},
+    swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
     tcp, yamux, PeerId, Transport,
 };
 
@@ -60,6 +62,7 @@ struct Behaviour {
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
     identify: identify::Behaviour,
+    kademlia: Kademlia<MemoryStore>,
 }
 
 pub struct NodeLauncher {
@@ -74,7 +77,7 @@ pub struct NodeLauncher {
     rpc_launched: bool,
     node_launched: bool,
     consensus_timeout: Duration,
-    bootstrap_address: Option<Multiaddr>,
+    bootstrap_address: Option<(PeerId, Multiaddr)>,
 }
 
 impl NodeLauncher {
@@ -184,6 +187,7 @@ impl NodeLauncher {
                 "/ipfs/id/1.0.0".to_owned(),
                 key_pair.public(),
             )),
+            kademlia: Kademlia::new(peer_id, MemoryStore::new(peer_id)),
         };
 
         let mut swarm = SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id).build();
@@ -194,12 +198,12 @@ impl NodeLauncher {
 
         swarm.listen_on(addr)?;
 
-        if let Some(bootstrap_address) = &self.bootstrap_address {
-            swarm.dial(
-                DialOpts::unknown_peer_id()
-                    .address(bootstrap_address.clone())
-                    .build(),
-            )?;
+        if let Some((peer, address)) = &self.bootstrap_address {
+            swarm
+                .behaviour_mut()
+                .kademlia
+                .add_address(peer, address.clone());
+            swarm.behaviour_mut().kademlia.bootstrap()?;
         }
 
         let topic = IdentTopic::new("topic");
@@ -220,17 +224,22 @@ impl NodeLauncher {
                         info!(%address, "started listening");
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
-                        for (peer, _) in list {
-                            info!(%peer, "adding peer");
-                            swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
+                        for (peer_id, addr) in list {
+                            info!(%peer_id, %addr, "discovered peer via mDNS");
+                            swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                            swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                         }
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
-                        for (peer, _) in list {
-                            swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer);
+                        for (peer_id, addr) in list {
+                            swarm.behaviour_mut().kademlia.remove_address(&peer_id, &addr);
                         }
                     }
-                    SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, .. }, .. })) => {
+                    SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id })) => {
+                        for addr in listen_addrs {
+                            info!(%peer_id, %addr, "identity info received");
+                            swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                        }
                         // Mark the address observed for us by the external peer as confirmed.
                         // TODO: We shouldn't trust this, instead we should confirm our own address manually or using
                         // `libp2p-autonat`.
