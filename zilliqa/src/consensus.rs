@@ -150,21 +150,6 @@ impl Consensus {
             Some(bincode::serialize(&vec).unwrap())
         });
 
-        let transaction_receipts = db.open_tree(RECEIPTS_TREE)?;
-        transaction_receipts.set_merge_operator(|_k, old_value, additional_value| {
-            // TODO: Yeah there definitely needs to be a better way to pack this than deserializing
-            // both, concatenating, then reserializing
-            let old_vec = if let Some(old_value) = old_value {
-                bincode::deserialize::<Vec<TransactionReceipt>>(old_value).unwrap()
-            } else {
-                vec![]
-            };
-            let new_vec =
-                bincode::deserialize::<Vec<TransactionReceipt>>(additional_value).unwrap();
-            let concat = old_vec.into_iter().chain(new_vec.into_iter()).collect_vec();
-            Some(bincode::serialize(&concat).unwrap())
-        });
-
         Ok(Consensus {
             secret_key,
             config,
@@ -180,7 +165,7 @@ impl Consensus {
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
             transactions: db.open_tree(TXS_TREE)?,
-            transaction_receipts,
+            transaction_receipts: db.open_tree(RECEIPTS_TREE)?,
             state,
             db,
             block_hash_reverse_index,
@@ -330,10 +315,11 @@ impl Consensus {
                     block_receipts.push(receipt);
                 }
             }
-
-            // Proposals always happen before votes, so we can safely insert a new vector here
-            self.transaction_receipts
-                .merge(block.hash().0, bincode::serialize(&block_receipts)?)?;
+            // If we were the proposer we would've already processed the transactions
+            if !self.transaction_receipts.contains_key(block.hash().0)? {
+                self.transaction_receipts
+                    .insert(block.hash().0, bincode::serialize(&block_receipts)?)?;
+            }
 
             if self.state.root_hash()? != block_state_root {
                 return Err(anyhow!(
@@ -641,18 +627,12 @@ impl Consensus {
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
-        // println!("Trying to get receipt for hash {}", hash);
         let Some(block_hash) = self.get_block_hash_from_transaction(hash)? else {
             return Ok(None);
         };
-        // println!("  Therefore getting receipts in block {}", block_hash);
         let Some(block_receipts) = self.get_transaction_receipts_in_block(block_hash)? else {
             return Ok(None);
         };
-        // println!(
-        //     "  Got {} receipts in block, going to filter now and return.",
-        //     block_receipts.len()
-        // );
         Ok(block_receipts
             .into_iter()
             .find(|receipt| receipt.tx_hash == *hash))
@@ -813,7 +793,7 @@ impl Consensus {
             .collect();
         let shard_logs = shard_logs?;
 
-        // println!("{:?}", shard_logs);
+        println!("{:?}", shard_logs);
 
         // TODO: filter for ShardAdded logs, and then somehow get the node to launch a shard
         Ok(())
