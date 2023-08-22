@@ -223,13 +223,13 @@ fn get_block_transaction_count_by_number(
 
     let node = node.lock().unwrap();
     let block = match block_number {
-        BlockNumber::Number(number) => node.get_block_by_view(number)?,
-        BlockNumber::Earliest => node.get_block_by_view(0)?,
-        BlockNumber::Latest => node.get_latest_block()?,
+        BlockNumber::Number(number) => node.get_block_by_view(number),
+        BlockNumber::Earliest => node.get_block_by_view(0),
+        BlockNumber::Latest => node.get_latest_block(),
         _ => {
             return Err(anyhow!("unsupported block number: {block_number:?}"));
         }
-    };
+    }?;
 
     Ok(block.map(|b| b.transactions.len().to_hex()))
 }
@@ -316,7 +316,7 @@ pub(super) fn get_transaction_receipt_inner(
                 transaction_hash,
                 block_hash,
                 block_number,
-                address: log.address.0,
+                address: log.address,
                 data: log.data,
                 topics: log.topics,
             };

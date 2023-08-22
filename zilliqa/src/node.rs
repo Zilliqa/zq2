@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{info, warn};
+use tracing::*;
 
 use crate::{
     consensus::Consensus,
@@ -18,6 +18,49 @@ use crate::{
     message::{Block, BlockRequest, BlockResponse, ExternalMessage, Proposal},
     state::{Account, Address},
 };
+
+#[derive(Debug, Clone)]
+pub struct MessageSender {
+    our_shard: u64,
+    our_peer_id: PeerId,
+    outbound_channel: UnboundedSender<OutboundMessageTuple>,
+}
+
+impl MessageSender {
+    /// Send message to the p2p/coordinator thread
+    pub fn send_message_to_coordinator(&mut self, message: InternalMessage) -> Result<()> {
+        self.outbound_channel
+            .send((None, self.our_shard, Message::Internal(message)))?;
+        Ok(())
+    }
+
+    /// Send a message to a locally running shard node
+    pub fn send_message_to_shard(&mut self, shard: u64, message: InternalMessage) -> Result<()> {
+        self.outbound_channel
+            .send((None, shard, Message::Internal(message)))?;
+        Ok(())
+    }
+
+    /// Send a message to a remote node of the same shard.
+    pub fn send_external_message(&mut self, peer: PeerId, message: ExternalMessage) -> Result<()> {
+        tracing::debug!(
+            "sending {} from {} to {}",
+            message.name(),
+            self.our_peer_id,
+            peer
+        );
+        self.outbound_channel
+            .send((Some(peer), self.our_shard, Message::External(message)))?;
+        Ok(())
+    }
+
+    /// Broadcast to the entire network of this shard
+    pub fn broadcast_external_message(&mut self, message: ExternalMessage) -> Result<()> {
+        self.outbound_channel
+            .send((None, self.our_shard, Message::External(message)))?;
+        Ok(())
+    }
+}
 
 /// The central data structure for a blockchain node.
 ///
@@ -37,7 +80,7 @@ use crate::{
 pub struct Node {
     pub config: NodeConfig,
     peer_id: PeerId,
-    message_sender: UnboundedSender<OutboundMessageTuple>,
+    message_sender: MessageSender,
     reset_timeout: UnboundedSender<()>,
     consensus: Consensus,
 }
@@ -46,63 +89,70 @@ impl Node {
     pub fn new(
         config: NodeConfig,
         secret_key: SecretKey,
-        message_sender: UnboundedSender<OutboundMessageTuple>,
+        message_sender_channel: UnboundedSender<OutboundMessageTuple>,
         reset_timeout: UnboundedSender<()>,
     ) -> Result<Node> {
+        let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+        let message_sender = MessageSender {
+            our_shard: config.eth_chain_id,
+            our_peer_id: peer_id,
+            outbound_channel: message_sender_channel.clone(),
+        };
         let node = Node {
             config: config.clone(),
-            peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
-            message_sender,
+            peer_id: peer_id.clone(),
+            message_sender: message_sender.clone(),
             reset_timeout,
-            consensus: Consensus::new(secret_key, config.clone())?,
+            consensus: Consensus::new(secret_key, config, message_sender)?,
         };
         Ok(node)
     }
 
     // TODO: Multithreading - `&mut self` -> `&self`
-    pub fn handle_message(&mut self, source: PeerId, message: Message) -> Result<()> {
+    pub fn handle_message(&mut self, from: PeerId, message: Message) -> Result<()> {
+        let to = self.peer_id;
+        let message_name = message.name();
+        tracing::debug!(%from, %to, %message_name, "handling message");
         match message {
             Message::External(external_message) => match external_message {
                 ExternalMessage::Proposal(m) => {
                     if let Some((leader, vote)) = self.consensus.proposal(m)? {
                         self.reset_timeout.send(())?;
-                        self.send_external_message(leader, ExternalMessage::Vote(vote))?;
+                        self.message_sender
+                            .send_external_message(leader, ExternalMessage::Vote(vote))?;
                     }
                 }
                 ExternalMessage::Vote(m) => {
-                    if let Some((block, transactions)) = self.consensus.vote(source, m)? {
-                        self.broadcast_message(ExternalMessage::Proposal(Proposal {
-                            header: block.header,
-                            qc: block.qc,
-                            agg: block.agg,
-                            transactions,
-                        }))?;
+                    if let Some((block, transactions)) = self.consensus.vote(m)? {
+                        self.message_sender.broadcast_external_message(
+                            ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
+                        )?;
                     }
                 }
                 ExternalMessage::NewView(m) => {
-                    if let Some(block) = self.consensus.new_view(source, m)? {
-                        self.broadcast_message(ExternalMessage::Proposal(Proposal {
-                            header: block.header,
-                            qc: block.qc,
-                            agg: block.agg,
-                            transactions: vec![],
-                        }))?;
+                    if let Some(block) = self.consensus.new_view(from, *m)? {
+                        self.message_sender.broadcast_external_message(
+                            ExternalMessage::Proposal(Proposal::from_parts(block, vec![])),
+                        )?;
                     }
                 }
                 ExternalMessage::BlockRequest(m) => {
-                    self.handle_block_request(source, m)?;
+                    self.handle_block_request(from, m)?;
                 }
                 ExternalMessage::BlockResponse(m) => {
-                    self.handle_block_response(source, m)?;
+                    self.handle_block_response(from, m)?;
                 }
                 ExternalMessage::RequestResponse => {}
                 ExternalMessage::NewTransaction(t) => {
                     self.consensus.new_transaction(t)?;
                 }
+                ExternalMessage::JoinCommittee(public_key) => {
+                    self.add_peer(from, public_key)?;
+                }
             },
             Message::Internal(internal_message) => match internal_message {
                 InternalMessage::AddPeer(public_key) => {
-                    self.add_peer(source, public_key)?;
+                    self.add_peer(from, public_key)?;
                 }
                 InternalMessage::LaunchShard(_) => {
                     warn!("LaunchShard messages should not be passed to the node.");
@@ -114,17 +164,20 @@ impl Node {
     }
 
     pub fn handle_timeout(&mut self) -> Result<()> {
-        if let Some((leader, new_view)) = self.consensus.timeout()? {
-            self.send_external_message(leader, ExternalMessage::NewView(new_view))?;
-        }
-
+        let (leader, new_view) = self.consensus.timeout()?;
+        self.message_sender
+            .send_external_message(leader, ExternalMessage::NewView(Box::new(new_view)))?;
         Ok(())
     }
 
     pub fn add_peer(&mut self, peer: PeerId, public_key: NodePublicKey) -> Result<()> {
-        if let Some((leader, vote)) = self.consensus.add_peer(peer, public_key)? {
+        if let Some((dest, message)) = self.consensus.add_peer(peer, public_key)? {
             self.reset_timeout.send(())?;
-            self.send_external_message(leader, ExternalMessage::Vote(vote))?;
+            if let Some(leader) = dest {
+                self.message_sender.send_external_message(leader, message)?;
+            } else {
+                self.message_sender.broadcast_external_message(message)?;
+            }
         }
 
         Ok(())
@@ -139,7 +192,8 @@ impl Node {
 
         // Make sure TX hasn't been seen before
         if !self.consensus.seen_tx_already(&hash)? {
-            self.broadcast_message(ExternalMessage::NewTransaction(txn))?;
+            self.message_sender
+                .broadcast_external_message(ExternalMessage::NewTransaction(txn))?;
         }
 
         Ok(hash)
@@ -195,7 +249,7 @@ impl Node {
     }
 
     pub fn get_chain_tip(&self) -> u64 {
-        self.consensus.view().saturating_sub(1)
+        self.consensus.get_chain_tip()
     }
 
     pub fn get_account(&self, address: Address, block_number: BlockNumber) -> Result<Account> {
@@ -229,7 +283,7 @@ impl Node {
         self.get_block_by_view(self.get_view(block_number))
     }
 
-    pub fn get_finalized_height(&self) -> Result<u64> {
+    pub fn get_finalized_height(&self) -> u64 {
         self.consensus.finalized_view()
     }
 
@@ -238,7 +292,7 @@ impl Node {
     }
 
     pub fn get_block_by_hash(&self, hash: Hash) -> Result<Option<Block>> {
-        self.consensus.maybe_get_block(&hash)
+        self.consensus.get_block(&hash)
     }
 
     pub fn get_transaction_receipt(&self, hash: Hash) -> Result<Option<TransactionReceipt>> {
@@ -253,48 +307,17 @@ impl Node {
         self.consensus.get_touched_transactions(address)
     }
 
-    /// Pass a message either to the p2p/coordinator thread, or to a locally running shard node.
-    /// Dead code until inter-shard communication features are added.
-    #[allow(dead_code)]
-    fn send_internal_message(
-        &mut self,
-        shard: Option<u64>,
-        message: InternalMessage,
-    ) -> Result<()> {
-        self.message_sender.send((
-            None,
-            shard.unwrap_or(self.config.eth_chain_id),
-            Message::Internal(message),
-        ))?;
-        Ok(())
-    }
-
-    /// Send a message to a remote node of the same shard.
-    fn send_external_message(&mut self, peer: PeerId, message: ExternalMessage) -> Result<()> {
-        let message = Message::External(message);
-        if peer == self.peer_id {
-            // We need to 'send' this message to ourselves.
-            self.handle_message(peer, message)?;
-        } else {
-            self.message_sender
-                .send((Some(peer), self.config.eth_chain_id, message))?;
-        }
-        Ok(())
-    }
-
-    fn broadcast_message(&mut self, message: ExternalMessage) -> Result<()> {
-        let message = Message::External(message);
-        self.message_sender
-            .send((None, self.config.eth_chain_id, message.clone()))?;
-        // Also handle it ourselves
-        self.handle_message(self.peer_id, message)?;
-        Ok(())
-    }
-
     fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
-        let block = self.consensus.get_block(&request.hash)?;
+        let block = match request.0 {
+            crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
+            crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view),
+        }?;
+        let Some(block) = block else {
+            debug!("ignoring block request for unknown block: {:?}", request.0);
+            return Ok(());
+        };
 
-        self.send_external_message(
+        self.message_sender.send_external_message(
             source,
             ExternalMessage::BlockResponse(BlockResponse { block }),
         )?;
@@ -303,7 +326,7 @@ impl Node {
     }
 
     fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
-        self.consensus.add_block(response.block)?;
+        self.consensus.receive_block(response.block)?;
 
         Ok(())
     }

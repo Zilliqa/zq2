@@ -5,7 +5,7 @@ use crate::message;
 use async_trait::async_trait;
 use libp2p::core::upgrade::{read_length_prefixed, write_length_prefixed};
 pub use libp2p::request_response::{self, ProtocolSupport, RequestId, ResponseChannel};
-use tracing::error;
+use tracing::*;
 
 #[derive(Debug, Clone, Default)]
 pub struct MessageProtocol;

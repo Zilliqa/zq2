@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use std::ops::Deref;
 use std::panic::{self, AssertUnwindSafe};
 use std::rc::Rc;
@@ -12,16 +11,16 @@ use evm::{
     CreateScheme, Handler,
 };
 use evm::{Machine, Runtime};
-use tracing::{debug, error, info, trace};
+use tracing::*;
 
 use primitive_types::*;
 
-use crate::continuations::Continuations;
 use crate::cps_executor::{CpsCallInterrupt, CpsCreateInterrupt, CpsExecutor, CpsReason};
 use crate::precompiles::get_precompiles;
 use crate::pretty_printer::log_evm_result;
-use crate::protos::Evm as EvmProto;
-use crate::protos::Evm::EvmResult;
+
+use crate::protos::evm_proto as EvmProto;
+
 use crate::tracing_logging::{CallContext, LoggingEventListener};
 
 #[allow(clippy::too_many_arguments)]
@@ -29,69 +28,54 @@ fn build_exit_result<B: Backend>(
     executor: CpsExecutor<B>,
     runtime: &Runtime,
     trace: &LoggingEventListener,
-    exit_reason: &evm::ExitReason,
+    exit_reason: evm::ExitReason,
     remaining_gas: u64,
     is_static: bool,
-    continuations: Arc<Mutex<Continuations>>,
-    scaling_factor: Option<u64>,
+    continuations: Arc<Mutex<EvmProto::Continuations>>,
+    _scaling_factor: Option<u64>,
 ) -> EvmProto::EvmResult {
-    let mut result = EvmProto::EvmResult::new();
-    result.set_exit_reason(exit_reason.clone().into());
-    result.set_return_value(runtime.machine().return_value().into());
+    let mut result = EvmProto::EvmResult {
+        exit_reason: exit_reason.into(),
+        return_value: runtime.machine().return_value(),
+        ..Default::default()
+    };
+
     let (state_apply, logs) = executor.into_state().deconstruct();
 
-    result.set_apply(
-        state_apply
-            .into_iter()
-            .map(|apply| {
-                let mut result = EvmProto::Apply::new();
-                match apply {
-                    Apply::Delete { address } => {
-                        let mut delete = EvmProto::Apply_Delete::new();
-                        delete.set_address(address.into());
-                        result.set_delete(delete);
-                    }
-                    Apply::Modify {
-                        address,
-                        basic,
-                        code,
-                        storage,
-                        reset_storage,
-                    } => {
-                        let mut modify = EvmProto::Apply_Modify::new();
-                        modify.set_address(address.into());
-                        if let Some(scaling) = scaling_factor {
-                            modify.set_balance(scale_eth_to_zil(basic.balance, scaling).into());
-                        }
-                        modify.set_nonce(basic.nonce.into());
-                        if let Some(code) = code {
-                            modify.set_code(code.into());
-                        }
-                        modify.set_reset_storage(reset_storage);
-
-                        // Is this call static? if so, we don't want to modify other continuations' state
-                        let storage_proto = storage
-                            .into_iter()
-                            .map(|(k, v)| {
-                                continuations
-                                    .lock()
-                                    .unwrap()
-                                    .update_states(address, k, v, is_static);
-                                encode_storage(k, v, scaling_factor.is_some()).into()
-                            })
-                            .collect();
-
-                        modify.set_storage(storage_proto);
-                        result.set_modify(modify);
-                    }
-                };
-                result
-            })
-            .collect(),
-    );
-    result.set_tx_trace(trace.as_string().into());
-    result.set_logs(logs.into_iter().map(Into::into).collect());
-    result.set_remaining_gas(remaining_gas);
+    // Note: If this is a static call, we do not want to modify other continuations' state
+    // but if not, then we need to update the state of other continuations if relevant
+    result.apply = state_apply
+        .into_iter()
+        .map(|apply| match apply {
+            Apply::Delete { address } => EvmProto::Apply::Delete { address },
+            Apply::Modify {
+                address,
+                basic,
+                code,
+                storage,
+                reset_storage,
+            } => EvmProto::Apply::Modify {
+                address,
+                balance: basic.balance,
+                nonce: basic.nonce,
+                code: code.unwrap_or_default(),
+                storage: storage
+                    .into_iter()
+                    .map(|(k, v)| {
+                        continuations
+                            .lock()
+                            .unwrap()
+                            .update_states(address, k, v, is_static);
+                        EvmProto::Storage { key: k, value: v }
+                    })
+                    .collect(),
+                reset_storage,
+            },
+        })
+        .collect();
+    result.tx_trace = trace.as_string();
+    result.logs = logs.into_iter().collect();
+    result.remaining_gas = remaining_gas;
     result
 }
 
@@ -104,94 +88,59 @@ fn build_call_result<B: Backend>(
     remaining_gas: u64,
     is_static: bool,
     cont_id: u64,
-    scaling_factor: Option<u64>,
+    _scaling_factor: Option<u64>,
 ) -> EvmProto::EvmResult {
-    let mut result = EvmProto::EvmResult::new();
-    result.set_return_value(runtime.machine().return_value().into());
-    let mut trap_reason = EvmProto::ExitReason_Trap::new();
-    trap_reason.set_kind(EvmProto::ExitReason_Trap_Kind::CALL);
-    let mut exit_reason = EvmProto::ExitReason::new();
+    let mut result = EvmProto::EvmResult {
+        return_value: runtime.machine().return_value(),
+        ..Default::default()
+    };
 
     let (state_apply, _) = executor.into_state().deconstruct();
+    result.apply = state_apply
+        .into_iter()
+        .map(|apply| match apply {
+            Apply::Delete { address } => EvmProto::Apply::Delete { address },
+            Apply::Modify {
+                address,
+                basic,
+                code,
+                storage,
+                reset_storage,
+            } => EvmProto::Apply::Modify {
+                address,
+                balance: basic.balance,
+                nonce: basic.nonce,
+                code: code.unwrap_or_default(),
+                storage: storage
+                    .into_iter()
+                    .map(|(key, value)| EvmProto::Storage { key, value })
+                    .collect(),
+                reset_storage,
+            },
+        })
+        .collect();
 
-    // We need to apply the changes made to the state so subsequent calls can
-    // see the changes.
-    result.set_apply(
-        state_apply
-            .into_iter()
-            .map(|apply| {
-                let mut result = EvmProto::Apply::new();
-                match apply {
-                    Apply::Delete { address } => {
-                        let mut delete = EvmProto::Apply_Delete::new();
-                        delete.set_address(address.into());
-                        result.set_delete(delete);
-                    }
-                    Apply::Modify {
-                        address,
-                        basic,
-                        code,
-                        storage,
-                        reset_storage,
-                    } => {
-                        debug!("Modify: {:?} {:?}", address, basic);
-                        let mut modify = EvmProto::Apply_Modify::new();
-                        modify.set_address(address.into());
-                        if let Some(scaling) = scaling_factor {
-                            modify.set_balance(scale_eth_to_zil(basic.balance, scaling).into());
-                        }
-                        modify.set_nonce(basic.nonce.into());
-                        if let Some(code) = code {
-                            modify.set_code(code.into());
-                        }
-                        modify.set_reset_storage(reset_storage);
-                        let storage_proto = storage
-                            .into_iter()
-                            .map(|(k, v)| encode_storage(k, v, scaling_factor.is_some()).into())
-                            .collect();
-                        modify.set_storage(storage_proto);
-                        result.set_modify(modify);
-                    }
-                };
-                result
-            })
-            .collect(),
-    );
+    result.exit_reason = EvmProto::ExitReasonCps::Trap(EvmProto::Trap::Call);
+    result.tx_trace = trace.as_string();
+    result.remaining_gas = remaining_gas;
 
-    exit_reason.set_trap(trap_reason);
-    result.set_exit_reason(exit_reason);
-    result.set_tx_trace(trace.as_string().into());
-    result.set_remaining_gas(remaining_gas);
+    result.trap_data = Some(EvmProto::TrapData::Call(EvmProto::CallTrap {
+        context: EvmProto::Context {
+            destination: interrupt.context.address,
+            caller: interrupt.context.caller,
+            apparent_value: interrupt.context.apparent_value,
+        },
+        transfer: interrupt.transfer,
+        callee_address: interrupt.code_address,
+        call_data: interrupt.input,
+        is_static: interrupt.is_static || is_static,
+        is_precompile: interrupt.is_precompile,
+        target_gas: interrupt.target_gas.unwrap_or(u64::MAX),
+        memory_offset: interrupt.memory_offset,
+        offset_len: interrupt.offset_len,
+    }));
 
-    let mut trap_data_call = EvmProto::TrapData_Call::new();
-
-    let mut context = EvmProto::TrapData_Context::new();
-    context.set_apparent_value(interrupt.context.apparent_value.into());
-    context.set_caller(interrupt.context.caller.into());
-    context.set_destination(interrupt.context.address.into());
-
-    trap_data_call.set_context(context);
-
-    if let Some(tran) = interrupt.transfer {
-        let mut transfer = EvmProto::TrapData_Transfer::new();
-        transfer.set_destination(tran.target.into());
-        transfer.set_source(tran.source.into());
-        transfer.set_value(tran.value.into());
-        trap_data_call.set_transfer(transfer);
-    }
-
-    trap_data_call.set_callee_address(interrupt.code_address.into());
-    trap_data_call.set_call_data(interrupt.input.into());
-    trap_data_call.set_is_static(interrupt.is_static || is_static);
-    trap_data_call.set_is_precompile(interrupt.is_precompile);
-    trap_data_call.set_target_gas(interrupt.target_gas.unwrap_or(u64::MAX));
-    trap_data_call.set_memory_offset(interrupt.memory_offset.into());
-    trap_data_call.set_offset_len(interrupt.offset_len.into());
-
-    let mut trap_data = EvmProto::TrapData::new();
-    trap_data.set_call(trap_data_call);
-    result.set_trap_data(trap_data);
-    result.set_continuation_id(cont_id);
+    result.continuation_id = cont_id;
     result
 }
 
@@ -202,77 +151,50 @@ fn build_create_result(
     remaining_gas: u64,
     cont_id: u64,
 ) -> EvmProto::EvmResult {
-    let mut result = EvmProto::EvmResult::new();
+    let trap_data = Some(EvmProto::TrapData::Create(EvmProto::CreateTrap {
+        caller: interrupt.caller,
+        scheme: interrupt.scheme,
+        value: interrupt.value,
+        call_data: interrupt.init_code,
+        target_gas: interrupt.target_gas.unwrap_or(u64::MAX),
+    }));
 
-    result.set_return_value(runtime.machine().return_value().into());
-    let mut trap_reason = EvmProto::ExitReason_Trap::new();
-    trap_reason.set_kind(EvmProto::ExitReason_Trap_Kind::CREATE);
-    let mut exit_reason = EvmProto::ExitReason::new();
-    exit_reason.set_trap(trap_reason);
-    result.set_exit_reason(exit_reason);
-    result.set_tx_trace(trace.as_string().into());
-    result.set_remaining_gas(remaining_gas);
+    let result = EvmProto::EvmResult {
+        return_value: runtime.machine().return_value(),
+        exit_reason: EvmProto::ExitReasonCps::Trap(EvmProto::Trap::Create),
+        tx_trace: trace.as_string(),
+        remaining_gas,
+        trap_data,
+        continuation_id: cont_id,
+        ..Default::default()
+    };
 
-    let mut scheme = EvmProto::TrapData_Scheme::new();
-
-    match interrupt.scheme {
-        evm::CreateScheme::Legacy { caller } => {
-            let mut scheme_legacy = EvmProto::TrapData_Scheme_Legacy::new();
-            scheme_legacy.set_caller(caller.into());
-            scheme.set_legacy(scheme_legacy);
-        }
-        evm::CreateScheme::Create2 {
-            caller,
-            code_hash,
-            salt,
-        } => {
-            let mut scheme_create2 = EvmProto::TrapData_Scheme_Create2::new();
-            scheme_create2.set_caller(caller.into());
-            scheme_create2.set_code_hash(code_hash.into());
-            scheme_create2.set_salt(salt.into());
-            scheme_create2.set_create2_address(interrupt.create2_address.into());
-            scheme.set_create2(scheme_create2);
-        }
-        evm::CreateScheme::Fixed(address) => {
-            let mut scheme_fixed = EvmProto::TrapData_Scheme_Fixed::new();
-            scheme_fixed.set_addres(address.into());
-            scheme.set_fixed(scheme_fixed);
-        }
-    }
-    let mut trap_data_create = EvmProto::TrapData_Create::new();
-    trap_data_create.set_scheme(scheme);
-    trap_data_create.set_caller(interrupt.caller.into());
-    trap_data_create.set_call_data(interrupt.init_code.into());
-    trap_data_create.set_target_gas(interrupt.target_gas.unwrap_or(u64::MAX));
-    trap_data_create.set_value(interrupt.value.into());
-    let mut trap_data = EvmProto::TrapData::new();
-    trap_data.set_create(trap_data_create);
-    result.set_trap_data(trap_data);
-    result.set_continuation_id(cont_id);
     result
 }
 
 fn handle_panic(trace: String, remaining_gas: u64, reason: &str) -> EvmProto::EvmResult {
-    let mut result = EvmProto::EvmResult::new();
-    let mut fatal = EvmProto::ExitReason_Fatal::new();
-    fatal.set_error_string(reason.into());
-    let mut exit_reason = EvmProto::ExitReason::new();
-    exit_reason.set_fatal(fatal);
-    result.set_exit_reason(exit_reason);
-    result.set_tx_trace(trace.into());
-    result.set_remaining_gas(remaining_gas);
-    result
+    EvmProto::EvmResult {
+        exit_reason: EvmProto::ExitReasonCps::Fatal(evm::ExitFatal::Other(
+            reason.to_string().into(),
+        )),
+        tx_trace: trace,
+        remaining_gas,
+        ..Default::default()
+    }
+}
+
+fn get_config(estimate: bool, call_l64_after_gas: bool) -> evm::Config {
+    evm::Config {
+        estimate,
+        call_l64_after_gas,
+        ..evm::Config::shanghai()
+    }
 }
 
 // Convenience fn to hide the evm internals and just
 // let you calculate contract address as easily as possible
-#[allow(dead_code)]
-pub fn calculate_contract_address(address: H160, backend: impl Backend) -> H160 {
-    let config = evm::Config {
-        estimate: false,
-        call_l64_after_gas: false,
-        ..evm::Config::london()
-    };
+pub fn calculate_contract_address(address: H160, backend: &impl Backend) -> H160 {
+    let config = get_config(false, false);
 
     let metadata = StackSubstateMetadata::new(1, &config);
     let state = MemoryStackState::new(metadata, &backend);
@@ -282,29 +204,12 @@ pub fn calculate_contract_address(address: H160, backend: impl Backend) -> H160 
     executor.get_create_address(CreateScheme::Legacy { caller: address })
 }
 
-pub struct EvmCallArgs<B> {
-    pub address: H160,
-    pub code: Vec<u8>,
-    pub data: Vec<u8>,
-    pub apparent_value: U256,
-    pub gas_limit: u64,
-    pub caller: H160,
-    pub gas_scaling_factor: u64,
-    pub scaling_factor: Option<u64>,
-    pub backend: B,
-    pub estimate: bool,
-    pub is_static: bool,
-    pub evm_context: String,
-    pub node_continuation: Option<EvmProto::Continuation>,
-    pub continuations: Arc<Mutex<Continuations>>,
-    pub enable_cps: bool,
-    pub tx_trace_enabled: bool,
-    pub tx_trace: String,
-}
-
-pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
+pub fn run_evm_impl_direct<B: Backend>(
+    args: EvmProto::EvmCallArgs,
+    backend: &B,
+) -> EvmProto::EvmResult {
     trace!(
-        origin = ?args.backend.origin(),
+        origin = ?backend.origin(),
         address = ?args.address,
         gas_limit = ?args.gas_limit,
         value = ?args.apparent_value,
@@ -319,12 +224,8 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
     let code = Rc::new(args.code);
     let data = Rc::new(args.data);
     // TODO: handle call_l64_after_gas problem: https://zilliqa-jira.atlassian.net/browse/ZIL-5012
-    // todo: this needs to be shanghai...
-    let config = evm::Config {
-        estimate: args.estimate,
-        call_l64_after_gas: false,
-        ..evm::Config::london()
-    };
+    let config = get_config(args.estimate, false);
+
     let context = evm::Context {
         address: args.address,
         caller: args.caller,
@@ -339,9 +240,13 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
                 .continuations
                 .lock()
                 .unwrap()
-                .get_contination(continuation.get_id());
+                .get_contination(continuation.id);
             if recorded_cont.is_none() {
-                let result = handle_panic(args.tx_trace, gas_limit, "Continuation not found!");
+                let result = handle_panic(
+                    args.tx_trace,
+                    gas_limit,
+                    format!("Continuation not found! Id: {:?}", continuation.id).as_str(),
+                );
                 return result;
             }
 
@@ -364,11 +269,11 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
                 recorded_cont.storages,
                 recorded_cont.deletes,
             );
-            let state = MemoryStackState::new_with_substate(memory_substate, &args.backend);
+            let state = MemoryStackState::new_with_substate(memory_substate, &backend);
             (Some(continuation), runtime, state)
         } else {
             let runtime = evm::Runtime::new(code, data.clone(), context, &config);
-            let state = MemoryStackState::new(metadata, &args.backend);
+            let state = MemoryStackState::new(metadata, &backend);
             (None, runtime, state)
         };
     // Scale the gas limit.
@@ -397,7 +302,7 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
         call.input = format!("0x{}", hex::encode(data.deref()));
 
         if listener.call_tracer.is_empty() {
-            call.from = format!("{:?}", args.backend.origin());
+            call.from = format!("{:?}", backend.origin());
         } else {
             call.from = listener.call_tracer.last().unwrap().to.clone();
         }
@@ -467,7 +372,7 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
                 executor,
                 &runtime,
                 &listener,
-                &exit_reason,
+                exit_reason,
                 remaining_gas,
                 args.is_static,
                 args.continuations,
@@ -505,7 +410,7 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
 
     trace!(
         context = ?args.evm_context,
-        origin = ?args.backend.origin(),
+        origin = ?backend.origin(),
         address = ?args.address,
         gas_limit = args.gas_limit,
         value = ?args.apparent_value,
@@ -518,15 +423,4 @@ pub fn run_evm_impl_direct<B: Backend>(args: EvmCallArgs<B>) -> EvmResult {
     );
 
     result
-}
-
-pub(crate) fn scale_eth_to_zil(eth: U256, zil_scaling_factor: u64) -> U256 {
-    eth / zil_scaling_factor
-}
-
-pub(crate) fn encode_storage(key: H256, value: H256, _: bool) -> (Bytes, Bytes) {
-    (
-        Bytes::copy_from_slice(key.as_bytes()),
-        Bytes::copy_from_slice(value.as_bytes()),
-    )
 }
