@@ -37,4 +37,5 @@ license-files = [
 ]
 
 [advisories]
-ignore = ["RUSTSEC-2022-0093"]
+ignore = ["RUSTSEC-2022-0052"]
+ignore = ["RUSTSEC-2022-0053"]
