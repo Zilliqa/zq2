@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use evm_ds::evm::backend::{Backend, Basic};
 
 use primitive_types::{H160, H256, U256};
-use tracing::{error, trace};
+use tracing::*;
 
 use crate::{
     message::BlockHeader,

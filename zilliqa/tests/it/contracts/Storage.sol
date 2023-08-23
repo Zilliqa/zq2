@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 contract Storage {
     uint pos0;
     mapping(address => uint) pos1;

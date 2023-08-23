@@ -1,5 +1,25 @@
 # Zilliqa 2.0 - The next evolution of Zilliqa
 
+## Prerequisites
+
+You need to have solidity 8.20 or greater. You can install it as follows:
+
+mac:
+
+```
+brew install solidity
+```
+
+ubuntu:
+
+```
+sudo add-apt-repository ppa:ethereum/ethereum
+sudo apt-get update
+sudo apt-get install solc
+```
+
+
+
 ## Running a Node
 
 To start a node you need to pass a private key as a command line parameter.
@@ -32,3 +52,4 @@ Most tests create an in-memory network of nodes, with the libp2p networking laye
 the network.
 
 Some tests involve compiling Solidity code, so a `solc` installation is required. The path is determined as documented in [ethers::solc::Solc](https://docs.rs/ethers/latest/ethers/solc/struct.Solc.html).
+

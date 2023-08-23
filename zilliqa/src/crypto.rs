@@ -101,7 +101,7 @@ impl serde::Serialize for NodePublicKey {
     where
         S: serde::Serializer,
     {
-        self.as_bytes().serialize(serializer)
+        hex::encode(self.as_bytes()).serialize(serializer)
     }
 }
 
@@ -110,7 +110,8 @@ impl<'de> Deserialize<'de> for NodePublicKey {
     where
         D: serde::Deserializer<'de>,
     {
-        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+        let s = <String>::deserialize(deserializer)?;
+        let bytes = hex::decode(s).unwrap();
         NodePublicKey::from_bytes(&bytes)
             .map_err(|_| de::Error::invalid_value(Unexpected::Bytes(&bytes), &"a public key"))
     }
@@ -209,12 +210,12 @@ impl SecretKey {
         k256::ecdsa::SigningKey::from_bytes(&self.bytes.into()).unwrap()
     }
 
-    pub fn as_bytes(&self) -> Result<Vec<u8>> {
-        Ok(self.bytes.to_vec())
+    pub fn as_bytes(&self) -> Vec<u8> {
+        self.bytes.to_vec()
     }
 
-    pub fn to_hex(&self) -> Result<String> {
-        Ok(hex::encode(self.bytes))
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.bytes)
     }
 
     pub fn sign(&self, message: &[u8]) -> NodeSignature {
@@ -248,6 +249,11 @@ pub struct Hash(pub [u8; 32]);
 
 impl Hash {
     pub const ZERO: Hash = Hash([0; 32]);
+
+    pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        Ok(Hash(bytes.try_into()?))
+    }
 
     pub fn as_bytes(&self) -> &[u8] {
         &self.0

@@ -1,4 +1,5 @@
 pub mod api;
+mod block_store;
 pub mod cfg;
 pub mod consensus;
 mod contracts;
@@ -6,6 +7,7 @@ pub mod crypto;
 mod db;
 mod evm_backend;
 mod exec;
+mod health;
 pub mod message;
 pub mod networking;
 pub mod node;
