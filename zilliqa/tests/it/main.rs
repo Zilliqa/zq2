@@ -401,6 +401,7 @@ fn format_message(
             }
             _ => message.name().to_owned(),
         },
+        #[allow(clippy::match_single_binding)]
         Message::Internal(internal_message) => match internal_message {
             _ => message.name().to_owned(),
         },

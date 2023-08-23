@@ -100,7 +100,7 @@ impl Node {
         };
         let node = Node {
             config: config.clone(),
-            peer_id: peer_id.clone(),
+            peer_id,
             message_sender: message_sender.clone(),
             reset_timeout,
             consensus: Consensus::new(secret_key, config, message_sender)?,
