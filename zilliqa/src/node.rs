@@ -28,22 +28,22 @@ pub struct MessageSender {
 
 impl MessageSender {
     /// Send message to the p2p/coordinator thread
-    pub fn send_message_to_coordinator(&mut self, message: InternalMessage) -> Result<()> {
+    pub fn send_message_to_coordinator(&self, message: InternalMessage) -> Result<()> {
         self.outbound_channel
             .send((None, self.our_shard, Message::Internal(message)))?;
         Ok(())
     }
 
     /// Send a message to a locally running shard node
-    pub fn send_message_to_shard(&mut self, shard: u64, message: InternalMessage) -> Result<()> {
+    pub fn send_message_to_shard(&self, shard: u64, message: InternalMessage) -> Result<()> {
         self.outbound_channel
             .send((None, shard, Message::Internal(message)))?;
         Ok(())
     }
 
     /// Send a message to a remote node of the same shard.
-    pub fn send_external_message(&mut self, peer: PeerId, message: ExternalMessage) -> Result<()> {
-        tracing::debug!(
+    pub fn send_external_message(&self, peer: PeerId, message: ExternalMessage) -> Result<()> {
+        debug!(
             "sending {} from {} to {}",
             message.name(),
             self.our_peer_id,
@@ -55,7 +55,7 @@ impl MessageSender {
     }
 
     /// Broadcast to the entire network of this shard
-    pub fn broadcast_external_message(&mut self, message: ExternalMessage) -> Result<()> {
+    pub fn broadcast_external_message(&self, message: ExternalMessage) -> Result<()> {
         self.outbound_channel
             .send((None, self.our_shard, Message::External(message)))?;
         Ok(())

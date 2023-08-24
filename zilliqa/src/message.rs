@@ -123,13 +123,15 @@ pub struct BlockResponse {
     pub block: Block,
 }
 
-#[allow(clippy::large_enum_variant)] // Pending refactor once join_network is merged
+// #[allow(clippy::large_enum_variant)] // Pending refactor once join_network is merged
+/// TODO: #397, refactor these two out into separate, unrelated structs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
     External(ExternalMessage),
     Internal(InternalMessage),
 }
 
+/// A message intended to be sent over the network as part of p2p communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExternalMessage {
     Proposal(Proposal),
@@ -142,6 +144,8 @@ pub enum ExternalMessage {
     JoinCommittee(NodePublicKey),
 }
 
+/// A message intended only for local communication between shard nodes and/or the parent p2p node,
+/// but not sent over the network.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InternalMessage {
     AddPeer(NodePublicKey),
