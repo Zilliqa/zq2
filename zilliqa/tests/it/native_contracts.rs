@@ -1,22 +1,10 @@
+use crate::CombinedJson;
 use ethers::prelude::Contract;
-use serde::Deserialize;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use zilliqa::state::Address;
 
 use crate::Network;
-
-#[derive(Deserialize)]
-struct CombinedJson {
-    contracts: HashMap<String, ContractAa>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct ContractAa {
-    abi: ethabi::Contract,
-}
 
 #[zilliqa_macros::test]
 async fn native_token(mut network: Network<'_>) {

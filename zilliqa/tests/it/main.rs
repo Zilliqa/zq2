@@ -4,6 +4,7 @@ mod native_contracts;
 mod persistence;
 mod web3;
 
+use std::collections::HashMap;
 use std::{
     fmt::Debug,
     rc::Rc,
@@ -32,12 +33,24 @@ use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
+use serde::Deserialize;
 use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::trace;
 use zilliqa::{cfg::NodeConfig, crypto::SecretKey, node::Node};
+
+#[derive(Deserialize)]
+struct CombinedJson {
+    contracts: HashMap<String, AbiContract>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct AbiContract {
+    abi: ethabi::Contract,
+}
 
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
 // type
