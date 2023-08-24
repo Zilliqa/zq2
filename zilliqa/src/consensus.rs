@@ -1,3 +1,5 @@
+use crate::message::ExternalMessage;
+use crate::node::MessageSender;
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
@@ -5,13 +7,12 @@ use primitive_types::H256;
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::{collections::BTreeMap, error::Error, fmt::Display};
-use tokio::sync::mpsc::UnboundedSender;
 use tracing::*;
 
-use crate::message::{Committee, Message};
+use crate::message::Committee;
 use crate::{
     block_store::BlockStore,
-    cfg::Config,
+    cfg::NodeConfig,
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
     exec::TouchedAddressEventListener,
     exec::TransactionApplyResult,
@@ -99,7 +100,7 @@ impl From<Hash> for MissingBlockError {
 #[derive(Debug)]
 pub struct Consensus {
     secret_key: SecretKey,
-    config: Config,
+    config: NodeConfig,
     block_store: BlockStore,
     votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128, bool)>,
     new_views: BTreeMap<u64, NewViewVote>,
@@ -126,8 +127,8 @@ pub struct Consensus {
 impl Consensus {
     pub fn new(
         secret_key: SecretKey,
-        config: Config,
-        message_sender: UnboundedSender<(Option<PeerId>, Message)>,
+        config: NodeConfig,
+        message_sender: MessageSender,
     ) -> Result<Self> {
         trace!("Opening database at path {:?}", config.data_dir);
 
@@ -238,7 +239,7 @@ impl Consensus {
         &mut self,
         peer_id: PeerId,
         public_key: NodePublicKey,
-    ) -> Result<Option<(Option<PeerId>, Message)>> {
+    ) -> Result<Option<(Option<PeerId>, ExternalMessage)>> {
         if self.pending_peers.contains(&Validator {
             peer_id,
             public_key,
@@ -278,7 +279,7 @@ impl Consensus {
                 trace!("voting for genesis block");
                 let leader = self.get_leader(self.view)?;
                 let vote = self.vote_from_block(&genesis);
-                return Ok(Some((Some(leader.peer_id), Message::Vote(vote))));
+                return Ok(Some((Some(leader.peer_id), ExternalMessage::Vote(vote))));
             }
         }
 

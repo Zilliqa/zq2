@@ -21,8 +21,8 @@ impl AsRef<str> for MessageProtocol {
 #[async_trait]
 impl request_response::Codec for MessageCodec {
     type Protocol = MessageProtocol;
-    type Request = message::Message;
-    type Response = message::Message;
+    type Request = (u64, message::ExternalMessage);
+    type Response = (u64, message::ExternalMessage);
 
     async fn read_request<T>(
         &mut self,

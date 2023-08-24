@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{fmt::Display, str::FromStr};
 
+use crate::cfg::NodeConfig;
 use crate::{
     consensus::Validator,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
@@ -122,8 +123,17 @@ pub struct BlockResponse {
     pub block: Block,
 }
 
+// #[allow(clippy::large_enum_variant)] // Pending refactor once join_network is merged
+/// TODO: #397, refactor these two out into separate, unrelated structs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
+    External(ExternalMessage),
+    Internal(InternalMessage),
+}
+
+/// A message intended to be sent over the network as part of p2p communication.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ExternalMessage {
     Proposal(Proposal),
     Vote(Vote),
     NewView(Box<NewView>),
@@ -134,17 +144,43 @@ pub enum Message {
     JoinCommittee(NodePublicKey),
 }
 
+/// A message intended only for local communication between shard nodes and/or the parent p2p node,
+/// but not sent over the network.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum InternalMessage {
+    AddPeer(NodePublicKey),
+    LaunchShard(NodeConfig),
+}
+
 impl Message {
     pub fn name(&self) -> &'static str {
         match self {
-            Message::Proposal(_) => "Proposal",
-            Message::Vote(_) => "Vote",
-            Message::NewView(_) => "NewView",
-            Message::BlockRequest(_) => "BlockRequest",
-            Message::BlockResponse(_) => "BlockResponse",
-            Message::NewTransaction(_) => "NewTransaction",
-            Message::RequestResponse => "RequestResponse",
-            Message::JoinCommittee(_) => "JoinCommittee",
+            Self::External(m) => m.name(),
+            Self::Internal(m) => m.name(),
+        }
+    }
+}
+
+impl ExternalMessage {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ExternalMessage::Proposal(_) => "Proposal",
+            ExternalMessage::Vote(_) => "Vote",
+            ExternalMessage::NewView(_) => "NewView",
+            ExternalMessage::BlockRequest(_) => "BlockRequest",
+            ExternalMessage::BlockResponse(_) => "BlockResponse",
+            ExternalMessage::NewTransaction(_) => "NewTransaction",
+            ExternalMessage::RequestResponse => "RequestResponse",
+            ExternalMessage::JoinCommittee(_) => "JoinCommittee",
+        }
+    }
+}
+
+impl InternalMessage {
+    pub fn name(&self) -> &'static str {
+        match self {
+            InternalMessage::AddPeer(_) => "AddPeer",
+            InternalMessage::LaunchShard(_) => "LaunchShard",
         }
     }
 }
