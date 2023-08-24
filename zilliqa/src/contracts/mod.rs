@@ -65,6 +65,15 @@ mod tests {
     #[test]
     #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
     fn native_token() {
+        test_contract(
+            "native_token.sol",
+            "native_token.sol:NativeToken",
+            native_token::CODE.as_slice(),
+            native_token::CREATION_CODE.as_slice(),
+        )
+    }
+
+    fn test_contract(filename: &str, json_key: &str, code: &[u8], creation_code: &[u8]) {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut solc = Vec::new();
         let solc_download_path = format!(
@@ -92,7 +101,7 @@ mod tests {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src")
             .join("contracts");
-        let contract = root.join("native_token.sol");
+        let contract = root.join(filename);
         let vendor = root
             .parent()
             .unwrap()
@@ -118,15 +127,14 @@ mod tests {
 
         eprintln!("{}", std::str::from_utf8(&output.stderr).unwrap());
         let combined_json: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let contract = combined_json["contracts"][&json_key].clone();
 
-        let contract = combined_json["contracts"]["native_token.sol:NativeToken"].clone();
+        let bin = contract["bin-runtime"].as_str().unwrap();
+        let expected_code = hex::decode(bin).unwrap();
+        assert_eq!(code, expected_code);
 
-        let code = hex::decode(contract["bin-runtime"].as_str().unwrap()).unwrap();
-        assert_eq!(native_token::CODE.len(), code.len());
-        assert_eq!(native_token::CODE.as_slice(), code);
-
-        let creation_code = hex::decode(contract["bin"].as_str().unwrap()).unwrap();
-        assert_eq!(native_token::CREATION_CODE.len(), creation_code.len());
-        assert_eq!(native_token::CREATION_CODE.as_slice(), creation_code);
+        let bin_creation = contract["bin"].as_str().unwrap();
+        let expected_creation_code = hex::decode(bin_creation).unwrap();
+        assert_eq!(creation_code, expected_creation_code);
     }
 }

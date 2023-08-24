@@ -40,9 +40,9 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
 use zilliqa::{
-    cfg::Config,
+    cfg::NodeConfig,
     crypto::{NodePublicKey, SecretKey},
-    message::Message,
+    message::{ExternalMessage, Message},
     node::Node,
 };
 
@@ -63,13 +63,13 @@ fn node(
     // Augment the `message_receiver` stream to include the sender's `PeerId`.
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
     let message_receiver = message_receiver
-        .map(move |(dest, message)| (peer_id, dest, message))
+        .map(move |(dest, _, message)| (peer_id, dest, message))
         .boxed();
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     std::mem::forget(reset_timeout_receiver);
 
     let node = Node::new(
-        Config {
+        NodeConfig {
             data_dir: datadir
                 .as_ref()
                 .map(|d| d.path().to_str().unwrap().to_string()),
@@ -173,7 +173,9 @@ impl<'r> Network<'r> {
                 .send((
                     node.peer_id,
                     None,
-                    Message::JoinCommittee(node.secret_key.node_public_key()),
+                    Message::External(ExternalMessage::JoinCommittee(
+                        node.secret_key.node_public_key(),
+                    )),
                 ))
                 .unwrap();
         }
@@ -202,7 +204,9 @@ impl<'r> Network<'r> {
             .send((
                 node.peer_id,
                 None,
-                Message::JoinCommittee(node.secret_key.node_public_key()),
+                Message::External(ExternalMessage::JoinCommittee(
+                    node.secret_key.node_public_key(),
+                )),
             ))
             .unwrap();
 
@@ -379,21 +383,29 @@ fn format_message(
     message: &Message,
 ) -> String {
     let message = match message {
-        Message::Proposal(proposal) => format!(
-            "{} [{}] ({:?})",
-            message.name(),
-            proposal.header.view,
-            proposal
-                .committee
-                .iter()
-                .map(|v| nodes.iter().find(|n| n.peer_id == v.peer_id).unwrap().index)
-                .collect::<Vec<_>>()
-        ),
-        Message::BlockRequest(request) => format!("{} [{:?}]", message.name(), request.0),
-        Message::BlockResponse(response) => {
-            format!("{} [{}]", message.name(), response.block.view())
-        }
-        _ => message.name().to_owned(),
+        Message::External(external_message) => match external_message {
+            ExternalMessage::Proposal(proposal) => format!(
+                "{} [{}] ({:?})",
+                message.name(),
+                proposal.header.view,
+                proposal
+                    .committee
+                    .iter()
+                    .map(|v| nodes.iter().find(|n| n.peer_id == v.peer_id).unwrap().index)
+                    .collect::<Vec<_>>()
+            ),
+            ExternalMessage::BlockRequest(request) => {
+                format!("{} [{:?}]", message.name(), request.0)
+            }
+            ExternalMessage::BlockResponse(response) => {
+                format!("{} [{}]", message.name(), response.block.view())
+            }
+            _ => message.name().to_owned(),
+        },
+        #[allow(clippy::match_single_binding)]
+        Message::Internal(internal_message) => match internal_message {
+            _ => message.name().to_owned(),
+        },
     };
 
     let source_index = nodes.iter().find(|n| n.peer_id == source).unwrap().index;

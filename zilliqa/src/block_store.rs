@@ -1,15 +1,15 @@
+use crate::message::ExternalMessage;
 use std::{cell::RefCell, num::NonZeroUsize};
 
 use anyhow::Result;
-use libp2p::PeerId;
 use lru::LruCache;
 use sled::{Db, Tree};
-use tokio::sync::mpsc::UnboundedSender;
 use tracing::*;
 
 use crate::{
     crypto::Hash,
-    message::{Block, BlockRef, BlockRequest, Message},
+    message::{Block, BlockRef, BlockRequest},
+    node::MessageSender,
 };
 
 /// Stores and manages the node's list of blocks. Also responsible for making requests for new blocks. In the future,
@@ -20,14 +20,11 @@ pub struct BlockStore {
     canonical_block_numbers: Tree,
     blocks: Tree,
     block_cache: RefCell<LruCache<Hash, Block>>,
-    message_sender: UnboundedSender<(Option<PeerId>, Message)>,
+    message_sender: MessageSender,
 }
 
 impl BlockStore {
-    pub fn new(
-        db: &Db,
-        message_sender: UnboundedSender<(Option<PeerId>, Message)>,
-    ) -> Result<Self> {
+    pub fn new(db: &Db, message_sender: MessageSender) -> Result<Self> {
         Ok(BlockStore {
             block_headers: db.open_tree(b"block_headers_tree")?,
             canonical_block_numbers: db.open_tree(b"canonical_block_numbers_tree")?,
@@ -58,7 +55,7 @@ impl BlockStore {
         self.get_block(hash)
     }
 
-    pub fn request_block_by_view(&self, view: u64) -> Result<()> {
+    pub fn request_block_by_view(&mut self, view: u64) -> Result<()> {
         trace!("Request block with view {view}");
         if let Some(hash) = self.canonical_block_numbers.get(view.to_be_bytes())? {
             let hash = Hash::from_bytes(hash)?;
@@ -67,22 +64,20 @@ impl BlockStore {
         } else {
             trace!("I don't know the hash");
             self.message_sender
-                .send((
-                    None,
-                    Message::BlockRequest(BlockRequest(BlockRef::View(view))),
-                ))
+                .broadcast_external_message(ExternalMessage::BlockRequest(BlockRequest(
+                    BlockRef::View(view),
+                )))
                 .unwrap();
         }
         Ok(())
     }
 
-    pub fn request_block(&self, hash: Hash) -> Result<()> {
+    pub fn request_block(&mut self, hash: Hash) -> Result<()> {
         if !self.blocks.contains_key(hash.as_bytes())? {
             self.message_sender
-                .send((
-                    None,
-                    Message::BlockRequest(BlockRequest(BlockRef::Hash(hash))),
-                ))
+                .broadcast_external_message(ExternalMessage::BlockRequest(BlockRequest(
+                    BlockRef::Hash(hash),
+                )))
                 .unwrap();
         } else {
             trace!("Already got the block with hash {hash}");
