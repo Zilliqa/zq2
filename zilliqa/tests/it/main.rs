@@ -135,7 +135,18 @@ impl<'r> Network<'r> {
         let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
-            .map(|(i, key)| node(key, i, Some(tempfile::tempdir().unwrap())).unwrap())
+            .map(|(i, key)| {
+                node(
+                    key, //aaaaa
+                    i,   //aaaaa
+                    Some(
+                        //aaaaa
+                        tempfile::tempdir() //aaaaa
+                            .unwrap(),
+                    ), //aaaaa
+                )
+                .unwrap()
+            }) //aaaaa
             .unzip();
 
         for node in &nodes {

@@ -1,4 +1,4 @@
-use ethabi::RawLog;
+use ethabi::{Event, Log, RawLog};
 use evm_ds::protos::evm_proto::Log as ProtoLog;
 use primitive_types::H256;
 use std::{cell::RefCell, collections::BTreeMap, num::NonZeroUsize};
@@ -638,6 +638,27 @@ impl Consensus {
             .find(|receipt| receipt.tx_hash == *hash))
     }
 
+    pub fn get_logs_in_block(&self, hash: Hash, event: Event) -> Result<Vec<Log>> {
+        let Some(receipts) = self.get_transaction_receipts_in_block(hash)? else {
+            return Ok(vec![]); // no transations in block, most likely
+        };
+
+        let mut logs: Result<Vec<_>, _> = receipts
+            .into_iter()
+            .map(|receipt| receipt.logs)
+            .flatten()
+            .filter(|log| log.topics[0] == event.signature())
+            .map(|log| {
+                event.parse_log_whole(RawLog {
+                    topics: log.topics,
+                    data: log.data,
+                })
+            })
+            .collect();
+
+        return Ok(logs?);
+    }
+
     fn save_highest_view(&self, block_hash: Hash, view: u64) -> Result<()> {
         self.canonical_block_numbers
             .insert(view.to_be_bytes(), &block_hash.0)?;
@@ -771,31 +792,12 @@ impl Consensus {
         self.db.insert(LATEST_FINALIZED_BLOCK_HASH, &hash.0)?;
 
         // Process the logs in the block
-        let Some(receipts) = self.get_transaction_receipts_in_block(hash)? else {
-            return Ok(()); // no transations in block, most likely
-        };
-        let logs = receipts
-            .into_iter()
-            .map(|receipt| receipt.logs)
-            .flatten()
-            .collect::<Vec<ProtoLog>>();
-
-        let evt = contracts::shard_registry::SHARD_ADDED_EVT.clone();
-        let shard_logs: Result<Vec<_>, _> = logs
-            .into_iter()
-            .filter(|log| log.topics[0] == evt.signature())
-            .map(|log| {
-                evt.parse_log_whole(RawLog {
-                    topics: log.topics,
-                    data: log.data,
-                })
-            })
-            .collect();
-        let shard_logs = shard_logs?;
-
+        let shard_logs =
+            self.get_logs_in_block(hash, contracts::shard_registry::SHARD_ADDED_EVT.clone())?;
         println!("{:?}", shard_logs);
 
-        // TODO: filter for ShardAdded logs, and then somehow get the node to launch a shard
+        // TODO: use MessageSender to send the AddShard message for every shard
+
         Ok(())
     }
 

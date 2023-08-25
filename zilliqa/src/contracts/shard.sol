@@ -12,6 +12,10 @@ contract Shard {
         consensusTimeoutMs = consensusTimeout;
     }
 
+    function isMain() public view returns (bool) {
+        return parentShard == block.chainid;
+    }
+
     function addValidator(address validator) public returns (bool) {
         // dummy
         emit ValidatorAdded(validator);

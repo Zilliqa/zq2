@@ -116,23 +116,8 @@ impl State {
         state.force_deploy_contract(main_shard_data, Some(Address::SHARD_CONTRACT))?;
 
         for cfg in GENESIS_SHARDS.iter().skip(1) {
-            let calldata = contracts::shard::CONSTRUCTOR
-                .encode_input(
-                    contracts::shard::CREATION_CODE.to_vec(),
-                    &[
-                        Token::Uint(u128_to_u256(main_shard_cfg.0)), // parent id
-                        Token::Uint(u128_to_u256(cfg.1)),
-                    ],
-                )
-                .unwrap();
-
-            let shard_contract =
-                state.force_deploy_contract(calldata, Some(Address::SHARD_CONTRACT))?;
-
-            let insert_shard_payload = contracts::shard_registry::ADD_SHARD.encode_input(&[
-                Token::Uint(u128_to_u256(cfg.0)),
-                Token::Address(shard_contract.0),
-            ])?;
+            let insert_shard_payload = contracts::shard_registry::ADD_SHARD
+                .encode_input(&[Token::Uint(u128_to_u256(cfg.0))])?;
             state.force_execute_payload(Some(Address::SHARD_CONTRACT), insert_shard_payload)?;
         }
 

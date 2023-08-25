@@ -4,21 +4,21 @@ pragma solidity ^0.8.4;
 import "./shard.sol";
 
 contract ShardRegistry is Shard {
-    event ShardAdded(uint id, address contractAddress);
-
-    mapping(uint => address) shardContracts;
+    event ShardAdded(uint id);
+    mapping(uint => uint) indices;
     uint[] shards;
 
     constructor(uint16 consensusTimeoutMs) Shard(block.chainid, consensusTimeoutMs) {
+        addShard(block.chainid);
     }
 
-    function addShard(uint shardId, address contractLocation) public {
-        if (shardId == block.chainid || shardContracts[shardId] != address(0)) {
-            revert("Shard already exists.");
+    function addShard(uint shardId) public {
+        if (indices[shardId] != 0) {
+            revert("Shard was already registered.");
         }
         shards.push(shardId);
-        shardContracts[shardId] = contractLocation;
-        emit ShardAdded(shardId, contractLocation);
+        indices[shardId] = shards.length - 1;
+        emit ShardAdded(shardId);
     }
 }
 
