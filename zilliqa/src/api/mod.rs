@@ -3,6 +3,7 @@ pub mod eth;
 mod net;
 mod ots;
 mod to_hex;
+mod trace;
 mod types;
 mod web3;
 pub mod zilliqa;
@@ -15,6 +16,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     module.merge(net::rpc_module(node.clone())).unwrap();
     module.merge(ots::rpc_module(node.clone())).unwrap();
     module.merge(web3::rpc_module(node.clone())).unwrap();
+    module.merge(trace::rpc_module(node.clone())).unwrap();
     module.merge(zilliqa::rpc_module(node)).unwrap();
 
     module
