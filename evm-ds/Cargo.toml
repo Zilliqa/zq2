@@ -14,7 +14,7 @@ evm = { git = "https://github.com/Zilliqa/evm", rev = "08a117eadfd0368cd2cc81376
 ethers = "2.0.8"
 hex = "0.4.3"
 libsecp256k1 = "0.7.1"
-num-bigint = "0.4.3"
+num-bigint = "0.4.4"
 num-integer = "0.1.45"
 primitive-types = { version = "0.12.1", features = ["serde"] }
 protobuf = { version = "2.27.1",  features = ["with-bytes"] }
