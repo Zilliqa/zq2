@@ -38,7 +38,7 @@ pub struct Node {
     peer_id: PeerId,
     message_sender: UnboundedSender<(Option<PeerId>, Message)>,
     reset_timeout: UnboundedSender<()>,
-    consensus: Consensus,
+    pub consensus: Consensus,
 }
 
 impl Node {
@@ -188,6 +188,7 @@ impl Node {
             data,
             self.config.eth_chain_id,
             block.header,
+            true,
         )
     }
 
@@ -215,7 +216,7 @@ impl Node {
     pub fn get_native_balance(&self, address: Address, block_number: BlockNumber) -> Result<U256> {
         self.consensus
             .try_get_state_at(self.get_view(block_number))?
-            .get_native_balance(address)
+            .get_native_balance(address, false)
     }
 
     pub fn get_latest_block(&self) -> Result<Option<Block>> {

@@ -115,6 +115,7 @@ impl State {
         payload: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
+        print_enabled: bool,
     ) -> Result<(EvmProto::EvmResult, Option<H160>)> {
         let caller = from_addr;
         //let gas_scaling_factor = 1;
@@ -139,17 +140,12 @@ impl State {
             data = vec![];
             to = calculate_contract_address(from_addr.0, &backend);
             created_contract_addr = Some(to);
+            debug!("Calculated contract address for creation: {}", to);
         }
 
         let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];
-
-        //// Check the sender has enough balance and deduct it before any other operations happen
-        //if (get_native_balance(from_addr) >= amount) {
-        //    push_transfer(&mut continuation_stack, caller.0, to, amount);
-        //} else {
-        //    info!("Transaction attempted to transfer more value than it actually had!");
-        //    return EvmProto::EvmResult(exit_reason: EvmProto::ExitReasonCps::Error(OutOfFund) , ..default::Default);
-        //}
+        let native_balance = self.get_native_balance(from_addr, false).unwrap();
+        let target_balance = self.get_native_balance(to.into(), false).unwrap();
 
         continuation_stack.push(EvmProto::EvmCallArgs {
             address: to,
@@ -171,17 +167,42 @@ impl State {
         });
         let mut result;
 
-        debug!("Evm invocation begin - with args {:?}", continuation_stack);
+        // Check the sender has enough balance and deduct it before any other operations happen, sending
+        // it to the destination address or contract creation address
+        if (amount > 0 && native_balance >= amount.into()) {
+            if print_enabled {
+                debug!("Populating account {}->{} with balance: {}", from_addr, to, amount);
+                debug!("Prior balances:  {} and {} ", native_balance, target_balance);
+            }
+
+            continuation_stack.push(push_transfer(to, amount.into(), continuations.clone()));
+        } else if (amount > 0){
+            if print_enabled {
+                info!("Transaction attempted to transfer more value than it actually had! Amount: {}, Balance: {}", amount, native_balance);
+            }
+            //return EvmProto::EvmResult(exit_reason: EvmProto::ExitReasonCps::Error(OutOfFund) , ..default::Default);
+        }
+
+        if print_enabled {
+            debug!("*** Evm invocation begin - with args {:?}", continuation_stack);
+        }
 
         // Set the first continuation as our current context and then loop while there is still
         // a continuation, pushing onto the stack when there are more continuations
         loop {
             let mut call_args = continuation_stack.pop().unwrap();
 
+            if print_enabled {
+                debug!("Running execution loop...");
+            }
+
             backend.origin = call_args.caller;
             result = run_evm_impl_direct(call_args.clone(), &backend);
 
-            debug!("Evm invocation complete - applying result {:?}", result);
+
+            if print_enabled {
+                debug!("Evm invocation complete - applying result {:?}", result);
+            }
 
             // Apply the results to the backend so they can be used in the next continuation
             backend.apply_update(to_addr, result.take_apply());
@@ -192,9 +213,13 @@ impl State {
 
                 match result.trap_data.unwrap() {
                     EvmProto::TrapData::Create(create) => {
-                        println!("Create trap! Scheme: {:?}", create.scheme);
+
                         let addr_to_create = calculate_contract_address_scheme(create.scheme, &backend);
-                        println!("calculated contract addr: {:?}", addr_to_create);
+
+                        if print_enabled {
+                            println!("Create trap! Scheme: {:?}", create.scheme);
+                            println!("calculated contract addr: {:?}", addr_to_create);
+                        }
                         cont.feedback_type = EvmProto::Type::Create;
                         cont.feedback_data = Some(EvmProto::FeedbackData::Address(addr_to_create));
 
@@ -295,25 +320,30 @@ impl State {
                 let prior = continuation_stack.last_mut().unwrap();
 
                 // Check whether we completed a call or a create trap just now
-                let prior_node_continuation = prior.node_continuation.as_mut().unwrap();
+                let prior_node_continuation = prior.node_continuation.as_mut();
 
-                match prior_node_continuation.feedback_type {
-                    EvmProto::Type::Call => {
-                        let old_calldata = prior_node_continuation.get_calldata();
-                        prior_node_continuation.feedback_data =
-                            Some(EvmProto::FeedbackData::CallData(EvmProto::Call {
-                                data: result.return_value.clone(),
-                                ..*old_calldata
-                            }));
-                        prior_node_continuation.succeeded = true;
-                        prior_node_continuation.logs = result.logs.clone();
-                    }
-                    EvmProto::Type::Create => {
-                        prior_node_continuation.feedback_data = Some(EvmProto::FeedbackData::Address(*prior_node_continuation.get_createdata()));
-                        prior_node_continuation.succeeded = true;
-                        prior_node_continuation.logs = result.logs.clone();
+                if let Some(prior_node_continuation) = prior_node_continuation {
+                    match prior_node_continuation.feedback_type {
+                        EvmProto::Type::Call => {
+                            let old_calldata = prior_node_continuation.get_calldata();
+                            prior_node_continuation.feedback_data =
+                                Some(EvmProto::FeedbackData::CallData(EvmProto::Call {
+                                    data: result.return_value.clone(),
+                                    ..*old_calldata
+                                }));
+                            prior_node_continuation.succeeded = true;
+                            prior_node_continuation.logs = result.logs.clone();
+                        }
+                        EvmProto::Type::Create => {
+                            prior_node_continuation.feedback_data = Some(EvmProto::FeedbackData::Address(*prior_node_continuation.get_createdata()));
+                            prior_node_continuation.succeeded = true;
+                            prior_node_continuation.logs = result.logs.clone();
+                        }
                     }
                 }
+
+                // Handle suicide
+                //if result.exit_reason
             }
 
             if continuation_stack.is_empty() {
@@ -326,7 +356,9 @@ impl State {
         backend_result.return_value = result.return_value;
         backend_result.logs = result.logs;
 
-        debug!("Loop complete - returning final result {:?}", backend_result);
+        if print_enabled {
+            debug!("*** Loop complete - returning final result {:?}", backend_result);
+        }
 
         Ok((backend_result, created_contract_addr))
     }
@@ -350,6 +382,7 @@ impl State {
             txn.transaction.payload,
             chain_id,
             current_block,
+            true,
         );
 
         match result {
@@ -435,10 +468,22 @@ impl State {
         Ok(())
     }
 
-    pub fn get_native_balance(&self, address: Address) -> Result<U256> {
+    pub fn get_native_balance(&self, address: Address, print_enabled: bool) -> Result<U256> {
+
+        // For these accounts, we hardcode the balance we return to the EVM engine as zero. Otherwise, we have an
+        // infinite recursion because getting the native balance of any account requires this method to be called for
+        // these two 'special' accounts.
+        if address == Address::NATIVE_TOKEN || address == Address::ZERO {
+            return Ok(U256::zero());
+        }
+
         let data = contracts::native_token::BALANCE_OF
             .encode_input(&[Token::Address(address.0)])
             .unwrap();
+
+        if print_enabled {
+            debug!("Calling contract to get balance...");
+        }
 
         let balance = self.call_contract(
             Address::ZERO,
@@ -448,8 +493,11 @@ impl State {
             // dummy values.
             0,
             BlockHeader::default(),
+            print_enabled,
         )?;
         let balance = U256::from_big_endian(&balance);
+
+        trace!("Queried balance is: {}", balance);
 
         Ok(balance)
     }
@@ -458,6 +506,8 @@ impl State {
         let data = contracts::native_token::SET_BALANCE
             .encode_input(&[Token::Address(address.0), Token::Uint(amount)])
             .unwrap();
+
+        debug!("****** Setting native balance of {} to: {}", address, amount);
 
         let result = self.apply_transaction_inner(
             Address::ZERO,
@@ -470,6 +520,7 @@ impl State {
             // some dummy values.
             0,
             BlockHeader::default(),
+            true,
         );
 
         match result {
@@ -496,7 +547,13 @@ impl State {
         data: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
+        print_enabled: bool,
     ) -> Result<Vec<u8>> {
+
+        if print_enabled {
+            debug!("Calling contract from: {:?} to: {:?}", from_addr, to_addr);
+        }
+
         let result = self.apply_transaction_inner(
             from_addr,
             to_addr,
@@ -506,8 +563,40 @@ impl State {
             data,
             chain_id,
             current_block,
+            print_enabled,
         );
 
+        if print_enabled {
+            debug!("finished contact call");
+        }
+
         result.map(|ret| ret.0.return_value)
+    }
+}
+
+// Convenience function to create a balance transfer for the call stack
+pub fn push_transfer(to: H160, amount: U256, continuations: Arc<Mutex<EvmProto::Continuations>>) -> EvmProto::EvmCallArgs {
+
+    let balance_data = contracts::native_token::SET_BALANCE
+        .encode_input(&[Token::Address(to), Token::Uint(amount)])
+        .unwrap();
+
+    EvmProto::EvmCallArgs {
+        caller: Address::ZERO.0,
+        gas_scaling_factor: 1,
+        scaling_factor: None,
+        estimate: false,
+        address: Address::NATIVE_TOKEN.0,
+        code: contracts::native_token::CODE.clone(),
+        data: balance_data,
+        apparent_value: Default::default(),
+        gas_limit: u64::MAX,
+        tx_trace: Default::default(),
+        continuations: continuations,
+        enable_cps: true,
+        node_continuation: None,
+        evm_context: Default::default(),
+        is_static: false,
+        tx_trace_enabled: false,
     }
 }

@@ -9,15 +9,24 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 use core::fmt;
+use derivative::Derivative;
 
 // This file contains all of the structs used to communicate between evm-ds and the outside world
 
+fn shortened_vec(val: &Vec<u8>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{}", vec_to_string_concat(val))
+}
+
 // The struct used to drive the evm-ds execution. An external caller will maintain the continuations
 // and set the node_continuation (populating return values) if this is a continuation call
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct EvmCallArgs {
     pub address: H160,
+    #[derivative(Debug(format_with = "shortened_vec"))]
     pub code: Vec<u8>,
+    #[derivative(Debug(format_with = "shortened_vec"))]
     pub data: Vec<u8>,
     pub apparent_value: U256,
     pub gas_limit: u64,
@@ -40,7 +49,9 @@ pub struct Storage {
     pub value: H256,
 }
 
-#[derive(Debug)]
+//#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub enum Apply {
     Delete {
         address: H160,
@@ -49,6 +60,7 @@ pub enum Apply {
         address: H160,
         balance: U256,
         nonce: U256,
+        #[derivative(Debug(format_with = "shortened_vec"))]
         code: Vec<u8>,
         storage: Vec<Storage>,
         reset_storage: bool,
@@ -324,6 +336,22 @@ impl fmt::Debug for EvmResult {
             .finish()
     }
 }
+
+//impl fmt::Debug for EvmCallArgs {
+//    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//
+//        f.debug_struct("EvmCallArgs")
+//            .field("address", &self.exit_reason)
+//            .field("code", &vec_to_string_concat(&self.return_value))
+//            .field("data", &self.apply)
+//            .field("apparent_value", &self.logs)
+//            .field("tx_trace", &"too long to display")
+//            .field("remaining_gas", &self.remaining_gas)
+//            .field("continuation_id", &self.continuation_id)
+//            .field("trap_data", &self.trap_data)
+//            .finish()
+//    }
+//}
 
 impl EvmResult {
     pub fn has_trap(&self) -> bool {

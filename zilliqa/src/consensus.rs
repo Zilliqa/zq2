@@ -7,6 +7,7 @@ use sled::{Db, Tree};
 use std::{collections::BTreeMap, error::Error, fmt::Display};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::*;
+use tracing::field::debug;
 
 use crate::message::{Committee, Message};
 use crate::{
@@ -238,6 +239,27 @@ impl Consensus {
         Ok(block.committee)
     }
 
+    pub fn generate_vote_block(&mut self) -> Result<Option<(Option<PeerId>, Message)>> {
+        if self.view == 1 {
+            let genesis = self
+                .get_block_by_view(0)?
+                .ok_or_else(|| anyhow!("missing block"))?;
+            // If we're in the genesis committee, vote again.
+            if genesis.committee
+                .iter()
+                .any(|v| v.peer_id == self.peer_id())
+            {
+                trace!("voting for genesis block, we are {:?}", self.peer_id());
+                let leader = self.get_leader(self.view)?;
+                let vote = self.vote_from_block(&genesis);
+                return Ok(Some((Some(leader.peer_id), Message::Vote(vote))));
+            }
+        } else {
+            debug!("not voting for genesis block - view is {}", self.view);
+        }
+        return Ok(None);
+    }
+
     pub fn add_peer(
         &mut self,
         peer_id: PeerId,
@@ -269,24 +291,7 @@ impl Consensus {
 
         debug!(%peer_id, "added pending peer");
 
-        if self.view == 1 {
-            let genesis = self
-                .get_block_by_view(0)?
-                .ok_or_else(|| anyhow!("missing block"))?;
-            // If we're in the genesis committee, vote again.
-            if genesis
-                .committee
-                .iter()
-                .any(|v| v.peer_id == self.peer_id())
-            {
-                trace!("voting for genesis block");
-                let leader = self.get_leader(self.view)?;
-                let vote = self.vote_from_block(&genesis);
-                return Ok(Some((Some(leader.peer_id), Message::Vote(vote))));
-            }
-        }
-
-        Ok(None)
+        self.generate_vote_block()
     }
 
     fn download_blocks_up_to(&mut self, to: u64) -> Result<()> {

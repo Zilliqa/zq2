@@ -253,6 +253,12 @@ impl State {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Address(pub H160);
 
+impl From<H160> for Address {
+    fn from(h: H160) -> Address {
+        Address(h)
+    }
+}
+
 impl Address {
     pub const ZERO: Address = Address(H160::zero());
 

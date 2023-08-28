@@ -182,36 +182,75 @@ impl<'a> Backend for EvmBackend<'a> {
     }
 
     fn exists(&self, address: H160) -> bool {
-        trace!("EVM request: Checking whether account {:?} exists", address);
-        // Ethereum charges extra gas for `CALL`s or `SELFDESTRUCT`s which create new accounts, to discourage the
-        // creation of many addresses and the resulting increase in state size.
-        self.state.has_account(Address(address))
+        true
+        //// Ethereum charges extra gas for `CALL`s or `SELFDESTRUCT`s which create new accounts, to discourage the
+        //// creation of many addresses and the resulting increase in state size.
+
+        //// first check if the account is cleared in the cache
+        //if let Some(item) = self.account_storage_cached.get(&address.into()) {
+        //    if item.is_none() {
+        //        return false;
+        //    }
+        //}
+
+        //self.state.has_account(Address(address))
+        //trace!("EVM request: Checking whether account {:?} exists", address);
     }
 
     fn basic(&self, address: H160) -> Basic {
-        trace!("EVM request: Requesting basic info for {:?}", address);
-        let nonce = self.state.must_get_account(Address(address)).nonce;
-        // For these accounts, we hardcode the balance we return to the EVM engine as zero. Otherwise, we have an
-        // infinite recursion because getting the native balance of any account requires this method to be called for
-        // these two 'special' accounts.
-        let is_special_account = address == Address::ZERO.0 || address == Address::NATIVE_TOKEN.0;
-        Basic {
-            balance: if is_special_account {
-                0.into()
-            } else {
-                self.state.get_native_balance(Address(address)).unwrap()
-            },
-            nonce: nonce.into(),
+
+        // first check if the account is in the cache
+        if let Some(item) = self.account_storage_cached.get(&Address(address)) {
+            if let Some((acct, _)) = item {
+                let nonce = acct.nonce;
+                let basic = Basic {
+                    balance: self.state.get_native_balance(Address(address), false).unwrap(),
+                    nonce: nonce.into(),
+                };
+                trace!("EVM request: (cached) Requesting basic info for {:?} - answ: {:?}", address, basic);
+                return basic;
+            }
         }
+
+        let nonce = self.state.must_get_account(Address(address)).nonce;
+        let basic = Basic {
+            balance: self.state.get_native_balance(Address(address), false).unwrap(),
+            nonce: nonce.into(),
+        };
+        trace!("EVM request: Requesting basic info for {:?} - answ: {:?}", address, basic);
+        basic
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
-        trace!("EVM request: Requesting code for {:?}", address);
+
+        // first check if the account is in the cache
+        if let Some(item) = self.account_storage_cached.get(&Address(address)) {
+            if let Some((acct, _)) = item {
+                let code = acct.code.clone();
+                trace!("EVM request: (cached) Requesting code for {:?} - answ: {:?}", address, code);
+                return code;
+            }
+        }
+
         // Will this mean panic if you try to call address that doesn't exist?
-        self.state.must_get_account(Address(address)).code
+        let code = self.state.must_get_account(Address(address)).code;
+
+        trace!("EVM request: Requesting code for {:?} - answ: {:?}", address, code);
+        code
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
+
+        // first check if the account is in the cache
+        if let Some(item) = self.account_storage_cached.get(&Address(address)) {
+            if let Some((_, stor)) = item {
+                if let Some(value) = stor.get(&index) {
+                    trace!("EVM request: (cached) Requesting storage for {:?} at {:?} and is: {:?}", address, index, value);
+                    return *value;
+                }
+            }
+        }
+
         let res = self.state.must_get_account_storage(Address(address), index);
 
         trace!(

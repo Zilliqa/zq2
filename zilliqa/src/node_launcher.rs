@@ -277,6 +277,7 @@ impl NodeLauncher {
                     // If we don't have any peers, push it back into the reciever since it is
                     // bound to fail.
                     if swarm.behaviour().gossipsub.all_peers().collect_vec().is_empty() {
+                        warn!(%message_type, "no peers, pushing message back into queue");
                         let _ = self.message_sender.send((dest, message));
                         continue;
                     }
@@ -284,6 +285,13 @@ impl NodeLauncher {
                     match dest {
                         Some(dest) => {
                             trace!(%dest, message_type, "sending direct message");
+
+                            if dest == self.peer_id {
+                                trace!(%dest, message_type, "sending message to ourselves...");
+                                self.node.lock().unwrap().handle_message(from, message).unwrap();
+                                continue;
+                            }
+
                             let _ = swarm.behaviour_mut().request_response.send_request(&dest, message);
                         },
                         None => {
@@ -305,6 +313,12 @@ impl NodeLauncher {
                         self.message_sender.send((None, Message::JoinCommittee(self.secret_key.node_public_key()))).unwrap();
                         joined = true;
                     } else {
+                        let vote_bump = self.node.lock().unwrap().consensus.generate_vote_block();
+
+                        if let Ok(Some(vote_x)) = vote_bump {
+                            self.message_sender.send((None, vote_x.1)).unwrap();
+                        }
+
                         self.node.lock().unwrap().handle_timeout().unwrap();
                     }
                     sleep.as_mut().reset(Instant::now() + self.consensus_timeout);
