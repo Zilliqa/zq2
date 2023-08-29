@@ -23,6 +23,22 @@ async fn block_production(mut network: Network<'_>) {
         )
         .await
         .unwrap();
+
+    let index = network.add_node();
+
+    network
+        .run_until(
+            |n| {
+                n.node_at(index)
+                    .get_latest_block()
+                    .unwrap()
+                    .map_or(0, |b| b.view())
+                    >= 10
+            },
+            500,
+        )
+        .await
+        .unwrap();
 }
 
 #[zilliqa_macros::test]
@@ -67,9 +83,11 @@ async fn launch_shard(mut network: Network<'_>) {
         .await
         .unwrap();
 
+    let included_block = wallet.get_block_number().await.unwrap();
+
     network
         .run_until_async(
-            || async { wallet.get_block_number().await.unwrap().as_u64() >= 5 },
+            || async { wallet.get_block_number().await.unwrap() >= included_block + 2 },
             50,
         )
         .await

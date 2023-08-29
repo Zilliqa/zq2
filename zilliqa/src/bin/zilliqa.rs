@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     };
     let config: Config = toml::from_str(&config)?;
     assert!(
-        config.nodes.len() > 0,
+        !config.nodes.is_empty(),
         "At least one shard must be configured"
     );
 
@@ -53,9 +53,10 @@ async fn main() -> Result<()> {
             .build()?;
     };
 
-    let mut node = P2pNode::new(args.secret_key, config.p2p_port, config.bootstrap_address)?;
+    let mut node = P2pNode::new(args.secret_key, config.clone())?;
 
-    node.add_shard_node(config.nodes[0].clone()).await?;
+    node.add_shard_node(config.nodes.first().unwrap().clone())
+        .await?;
 
     node.start().await
 }

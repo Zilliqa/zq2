@@ -1,11 +1,11 @@
 //! A node in the Zilliqa P2P network. May coordinate multiple shard nodes.
 
-use crate::crypto::NodePublicKey;
+use crate::cfg::NodeConfig;
 use std::{collections::HashMap, iter};
 use tokio::{sync::mpsc::UnboundedSender, task::JoinSet};
 
 use crate::{
-    cfg::NodeConfig,
+    cfg::Config,
     crypto::SecretKey,
     networking::{request_response, MessageCodec, MessageProtocol, ProtocolSupport},
     node_launcher::NodeLauncher,
@@ -17,15 +17,11 @@ use libp2p::{
     futures::StreamExt,
     gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
     identify,
-    kad::{
-        store::MemoryStore, GetRecordOk, Kademlia, KademliaEvent, PeerRecord, QueryResult, Quorum,
-        Record,
-    },
+    kad::{store::MemoryStore, Kademlia},
     mdns,
     multiaddr::{Multiaddr, Protocol},
-    multihash::Multihash,
     noise,
-    swarm::{dial_opts::DialOpts, NetworkBehaviour, SwarmBuilder, SwarmEvent},
+    swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
     tcp, yamux, PeerId, Swarm, Transport,
 };
 
@@ -44,8 +40,8 @@ struct Behaviour {
     request_response: request_response::Behaviour<MessageCodec>,
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
-    kademlia: Kademlia<MemoryStore>,
     identify: identify::Behaviour,
+    kademlia: Kademlia<MemoryStore>,
 }
 
 /// (destination, shard_id, message)
@@ -55,10 +51,9 @@ pub struct P2pNode {
     shard_nodes: HashMap<TopicHash, UnboundedSender<(PeerId, Message)>>,
     shard_threads: JoinSet<Result<()>>,
     secret_key: SecretKey,
+    config: Config,
     peer_id: PeerId,
-    p2p_port: u16,
     swarm: Swarm<Behaviour>,
-    bootstrap_address: Option<Multiaddr>,
     /// Shard nodes get a copy of a handle to this sender, to propagate messages to the p2p network.
     outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
     /// The p2p node keeps a handle to this receiver, to obtain messages from shards and propagate
@@ -67,11 +62,7 @@ pub struct P2pNode {
 }
 
 impl P2pNode {
-    pub fn new(
-        secret_key: SecretKey,
-        p2p_port: u16,
-        bootstrap_address: Option<Multiaddr>,
-    ) -> Result<Self> {
+    pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
         let (outbound_message_sender, outbound_message_receiver) = mpsc::unbounded_channel();
         let outbound_message_receiver = UnboundedReceiverStream::new(outbound_message_receiver);
 
@@ -101,23 +92,22 @@ impl P2pNode {
             )
             .map_err(|e| anyhow!(e))?,
             mdns: mdns::Behaviour::new(Default::default(), peer_id)?,
-            kademlia: Kademlia::new(peer_id, MemoryStore::new(peer_id)),
             identify: identify::Behaviour::new(identify::Config::new(
                 "/ipfs/id/1.0.0".to_owned(),
                 key_pair.public(),
             )),
+            kademlia: Kademlia::new(peer_id, MemoryStore::new(peer_id)),
         };
 
         let swarm = SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id).build();
 
         Ok(Self {
             shard_nodes: HashMap::new(),
-            secret_key,
             peer_id,
-            p2p_port,
+            secret_key,
+            config,
             swarm,
             shard_threads: JoinSet::new(),
-            bootstrap_address,
             outbound_message_sender,
             outbound_message_receiver,
         })
@@ -125,6 +115,16 @@ impl P2pNode {
 
     pub fn shard_id_to_topic(shard_id: u64) -> IdentTopic {
         IdentTopic::new(shard_id.to_string())
+    }
+
+    /// Temporary method until light nodes are implemented, which will allow connecting to the
+    /// other shard and obtaining consensus parameters
+    fn clone_config(from: &NodeConfig) -> NodeConfig {
+        let from = from.clone();
+        NodeConfig {
+            json_rpc_port: from.json_rpc_port + 1,
+            ..from
+        }
     }
 
     pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
@@ -142,29 +142,37 @@ impl P2pNode {
         Ok(())
     }
 
+    fn forward_message_to_node(
+        &self,
+        topic_hash: &TopicHash,
+        source: PeerId,
+        message: Message,
+    ) -> Result<()> {
+        match self.shard_nodes.get(topic_hash) {
+            Some(inbound_message_sender) => inbound_message_sender.send((source, message))?,
+            None => warn!(
+                ?topic_hash,
+                ?source,
+                ?message,
+                "Message received for unknown shard/topic"
+            ),
+        };
+        Ok(())
+    }
+
     pub async fn start(&mut self) -> Result<()> {
         let mut addr: Multiaddr = "/ip4/0.0.0.0".parse().unwrap();
-
-        addr.push(Protocol::Tcp(self.p2p_port));
+        addr.push(Protocol::Tcp(self.config.p2p_port));
 
         self.swarm.listen_on(addr)?;
 
-        if let Some(bootstrap_address) = &self.bootstrap_address {
-            self.swarm.dial(
-                DialOpts::unknown_peer_id()
-                    .address(bootstrap_address.clone())
-                    .build(),
-            )?;
+        if let Some((peer, address)) = &self.config.bootstrap_address {
+            self.swarm
+                .behaviour_mut()
+                .kademlia
+                .add_address(peer, address.clone());
+            self.swarm.behaviour_mut().kademlia.bootstrap()?;
         }
-
-        // Store our public key in the DHT, indexed by our peer ID.
-        self.swarm.behaviour_mut().kademlia.put_record(
-            Record::new(
-                Multihash::from(self.peer_id), // TODO: Disambiguate this key?
-                self.secret_key.node_public_key().as_bytes(),
-            ),
-            Quorum::One,
-        )?;
 
         let mut terminate = signal::unix::signal(SignalKind::terminate())?;
 
@@ -175,79 +183,58 @@ impl P2pNode {
                         info!(%address, "started listening");
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
-                        for (peer, address) in list {
-                            self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
-                            self.swarm.behaviour_mut().kademlia.add_address(&peer, address);
-                            self.swarm.behaviour_mut().kademlia.get_record(Multihash::from(peer).into());
+                        for (peer_id, addr) in list {
+                            info!(%peer_id, %addr, "discovered peer via mDNS");
+                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                            self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                         }
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
-                        for (peer, address) in list {
-                            self.swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer);
-                            self.swarm.behaviour_mut().kademlia.remove_address(&peer, &address);
+                        for (peer_id, addr) in list {
+                            self.swarm.behaviour_mut().kademlia.remove_address(&peer_id, &addr);
                         }
                     }
-                    SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info: identify::Info { listen_addrs, observed_addr, .. }})) => {
-                        for address in listen_addrs {
-                            self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, address);
-                            self.swarm.behaviour_mut().kademlia.get_record(Multihash::from(peer_id).into());
+                    SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id })) => {
+                        for addr in listen_addrs {
+                            info!(%peer_id, %addr, "identity info received");
+                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                         }
                         // Mark the address observed for us by the external peer as confirmed.
                         // TODO: We shouldn't trust this, instead we should confirm our own address manually or using
                         // `libp2p-autonat`.
                         self.swarm.add_external_address(observed_addr);
                     }
-                    SwarmEvent::Behaviour(BehaviourEvent::Kademlia(KademliaEvent::OutboundQueryProgressed {
-                        result: QueryResult::GetRecord(Ok(GetRecordOk::FoundRecord(PeerRecord { record: Record { key, value, .. }, .. }))),
-                        ..
-                    })) => {
-                        let peer_id = PeerId::from_multihash(Multihash::from_bytes(key.as_ref())?).expect("key should be a peer ID");
-                        let _public_key = NodePublicKey::from_bytes(&value)?;
-
-                        // TODO: temporary, until we have proper dynamic joining!
-                        for (_topic, _node) in &self.shard_nodes {
-
-                            // self.outbound_message_sender.send((Some(peer_id), _topic.to_string().parse()?, Message::AddPeer(self.secret_key.node_public_key())))?;
-                            _node.send((peer_id, Message::Internal(InternalMessage::AddPeer(_public_key))))?;
-                        }
-                    }
                     SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
                         message: gossipsub::Message {
                             source,
                             data,
-                            topic, ..
+                            topic: topic_hash, ..
                         }, ..
                     })) => {
                         let source = source.expect("message should have a source");
                         let message = serde_json::from_slice::<Message>(&data).unwrap();
                         let message_type = message.name();
+                        let to = self.peer_id;
                         match message {
                             Message::Internal(_) => {
                                 warn!(%source, message_type, "Internal message received over the network!");
                             }
                             Message::External(m) => {
-                                debug!(%source, message_type, "message recieved");
-                                match self.shard_nodes.get(&topic) {
-                                    Some(inbound_message_sender) => inbound_message_sender.send((source, Message::External(m)))?,
-                                    None => warn!(?topic, ?source, ?m, "Message received for unknown shard/topic")
-                                };
+                                debug!(%source, %to, message_type, "broadcast recieved");
+                                self.forward_message_to_node(&topic_hash, source, Message::External(m))?;
                             }
                         }
                     }
 
-                    SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer })) => {
+                    SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: source })) => {
                         match message {
                             request_response::Message::Request {request, channel, ..} => {
-                                debug!(%peer, "direct message received");
-                                let (shard_id, data) = request;
+                                let to = self.peer_id;
+                                let (shard_id, external_message) = request;
+                                let message_type = external_message.name();
+                                debug!(%source, %to, message_type, "message received");
                                 let topic = Self::shard_id_to_topic(shard_id);
-
-                                match self.shard_nodes.get(&topic.hash()) {
-                                    Some(inbound_message_sender) => inbound_message_sender.send((peer, Message::External(data)))?,
-                                    None => warn!(?topic, ?peer, ?data, "Message received for unknown shard/topic")
-                                };
-
+                                self.forward_message_to_node(&topic.hash(), source, Message::External(external_message))?;
                                 let _ = self.swarm.behaviour_mut().request_response.send_response(channel, (shard_id, ExternalMessage::RequestResponse));
                             }
                             request_response::Message::Response {..} => {}
@@ -260,13 +247,20 @@ impl P2pNode {
                     let (dest, shard_id, message) = message.expect("message stream should be infinite");
                     let message_type = message.name();
                     let data = serde_json::to_vec(&message).unwrap();
+                    let from = self.peer_id;
 
                     let topic = Self::shard_id_to_topic(shard_id);
 
                     match message {
                         Message::Internal(internal_message) => match internal_message {
-                            InternalMessage::LaunchShard(config) => {
-                                self.add_shard_node(config).await?;
+                            InternalMessage::LaunchShard(shard_id) => {
+                                let shard_config = self.config.nodes
+                                    .iter()
+                                    .find(|shard_config| shard_config.eth_chain_id == shard_id)
+                                    .map(|c| c.clone())
+                                    .unwrap_or_else(
+                                        || Self::clone_config(self.config.nodes.first().unwrap()));
+                                self.add_shard_node(shard_config.clone()).await?;
                             },
                             _ => {
                                 warn!(?message_type, "Unexpected internal message in outbound message queue");
@@ -275,17 +269,23 @@ impl P2pNode {
                         Message::External(external_message) => {
                             match dest {
                                 Some(dest) => {
-                                    debug!(%dest, message_type, "sending direct message");
-                                    let _ = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, external_message));
+                                    debug!(%from, %dest, message_type, "sending direct message");
+                                    if from == dest {
+                                        self.forward_message_to_node(&topic.hash(), from, Message::External(external_message))?;
+                                    } else {
+                                        let _ = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, external_message));
+                                    }
                                 },
                                 None => {
-                                    debug!(message_type, "sending gossip message");
+                                    debug!(%from, message_type, "broadcasting");
                                     match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
                                         Ok(_) => {},
                                         Err(e) => {
                                             error!(%e, "failed to publish message");
                                         }
                                     }
+                                    // Also broadcast the message to ourselves.
+                                    self.forward_message_to_node(&topic.hash(), from, Message::External(external_message))?;
                                 },
                             }
                         }

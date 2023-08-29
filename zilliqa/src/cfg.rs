@@ -1,7 +1,9 @@
 use std::time::Duration;
 
-use libp2p::Multiaddr;
+use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
+
+use crate::crypto::NodePublicKey;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -12,7 +14,7 @@ pub struct Config {
     pub p2p_port: u16,
     /// The address of another node to dial when this node starts. To join the network, a node must know about at least
     /// one other existing node in the network.
-    pub bootstrap_address: Option<Multiaddr>,
+    pub bootstrap_address: Option<(PeerId, Multiaddr)>,
     /// The base address of the OTLP collector. If not set, metrics will not be exported.
     pub otlp_collector_endpoint: Option<String>,
 }
@@ -42,12 +44,8 @@ pub struct NodeConfig {
     pub data_dir: Option<String>,
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     pub consensus_timeout: Duration,
-    /// Temporary value for launching sharded nodes. Should be removed once dynamic sharding
-    /// through contracts is implemented.
-    pub is_main_shard: bool,
+    pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
 }
-
-pub struct ShardConfig {}
 
 impl Default for NodeConfig {
     fn default() -> Self {
@@ -58,7 +56,7 @@ impl Default for NodeConfig {
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: None,
             consensus_timeout: Duration::from_secs(5),
-            is_main_shard: true,
+            genesis_committee: vec![],
         }
     }
 }

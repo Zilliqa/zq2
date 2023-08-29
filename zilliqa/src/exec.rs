@@ -14,7 +14,7 @@ use evm_ds::{
     protos::evm_proto::{self as EvmProto, ExitReasonCps},
 };
 use primitive_types::{H160, U256};
-use tracing::error;
+use tracing::*;
 
 use crate::state::SignedTransaction;
 use crate::{

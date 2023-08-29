@@ -1,14 +1,15 @@
-use serde::Deserializer;
-use std::{fmt::Display, str::FromStr};
+use std::collections::BTreeSet;
 
-use anyhow::anyhow;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
+use serde::Deserializer;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
+use std::{fmt::Display, str::FromStr};
 
 use crate::cfg::NodeConfig;
 use crate::{
+    consensus::Validator,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     state::SignedTransaction,
     time::SystemTime,
@@ -24,16 +25,27 @@ pub struct Proposal {
     pub header: BlockHeader,
     pub qc: QuorumCertificate,
     pub agg: Option<AggregateQc>,
+    pub committee: Committee,
     pub transactions: Vec<SignedTransaction>,
 }
 
 impl Proposal {
+    pub fn from_parts(block: Block, transactions: Vec<SignedTransaction>) -> Self {
+        Proposal {
+            header: block.header,
+            qc: block.qc,
+            agg: block.agg,
+            committee: block.committee,
+            transactions,
+        }
+    }
     pub fn into_parts(self) -> (Block, Vec<SignedTransaction>) {
         (
             Block {
                 header: self.header,
                 qc: self.qc,
                 agg: self.agg,
+                committee: self.committee,
                 transactions: self.transactions.iter().map(|txn| txn.hash()).collect(),
             },
             self.transactions,
@@ -46,20 +58,21 @@ pub struct Vote {
     /// A signature on the block_hash.
     pub signature: NodeSignature,
     pub block_hash: Hash,
-    pub index: u16,
+    pub public_key: NodePublicKey,
 }
 
 impl Vote {
-    pub fn new(secret_key: SecretKey, block_hash: Hash, index: u16) -> Self {
+    pub fn new(secret_key: SecretKey, block_hash: Hash, public_key: NodePublicKey) -> Self {
         Vote {
             signature: secret_key.sign(block_hash.as_bytes()),
             block_hash,
-            index,
+            public_key,
         }
     }
 
-    pub fn verify(&self, public_key: NodePublicKey) -> Result<()> {
-        public_key.verify(self.block_hash.as_bytes(), self.signature)
+    pub fn verify(&self) -> Result<()> {
+        self.public_key
+            .verify(self.block_hash.as_bytes(), self.signature)
     }
 }
 
@@ -69,28 +82,33 @@ pub struct NewView {
     pub signature: NodeSignature,
     pub qc: QuorumCertificate,
     pub view: u64,
-    pub index: u16,
+    pub public_key: NodePublicKey,
 }
 
 impl NewView {
-    pub fn new(secret_key: SecretKey, qc: QuorumCertificate, view: u64, index: u16) -> Self {
+    pub fn new(
+        secret_key: SecretKey,
+        qc: QuorumCertificate,
+        view: u64,
+        public_key: NodePublicKey,
+    ) -> Self {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(qc.compute_hash().as_bytes());
-        bytes.extend_from_slice(&index.to_be_bytes());
+        bytes.extend_from_slice(&public_key.as_bytes());
         bytes.extend_from_slice(&view.to_be_bytes());
 
         NewView {
             signature: secret_key.sign(&bytes),
             qc,
             view,
-            index,
+            public_key,
         }
     }
 
     pub fn verify(&self, public_key: NodePublicKey) -> Result<()> {
         let mut message = Vec::new();
         message.extend_from_slice(self.qc.compute_hash().as_bytes());
-        message.extend_from_slice(&self.index.to_be_bytes());
+        message.extend_from_slice(&self.public_key.as_bytes());
         message.extend_from_slice(&self.view.to_be_bytes());
 
         public_key.verify(&message, self.signature)
@@ -98,36 +116,40 @@ impl NewView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockRequest {
-    pub hash: Hash,
-}
+pub struct BlockRequest(pub BlockRef);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
     pub block: Block,
 }
 
+// #[allow(clippy::large_enum_variant)] // Pending refactor once join_network is merged
+/// TODO: #397, refactor these two out into separate, unrelated structs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
     External(ExternalMessage),
     Internal(InternalMessage),
 }
 
+/// A message intended to be sent over the network as part of p2p communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExternalMessage {
     Proposal(Proposal),
     Vote(Vote),
-    NewView(NewView),
+    NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
     NewTransaction(SignedTransaction),
     RequestResponse,
+    JoinCommittee(NodePublicKey),
 }
 
+/// A message intended only for local communication between shard nodes and/or the parent p2p node,
+/// but not sent over the network.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InternalMessage {
     AddPeer(NodePublicKey),
-    LaunchShard(NodeConfig),
+    LaunchShard(u64),
 }
 
 impl Message {
@@ -149,6 +171,7 @@ impl ExternalMessage {
             ExternalMessage::BlockResponse(_) => "BlockResponse",
             ExternalMessage::NewTransaction(_) => "NewTransaction",
             ExternalMessage::RequestResponse => "RequestResponse",
+            ExternalMessage::JoinCommittee(_) => "JoinCommittee",
         }
     }
 }
@@ -175,7 +198,7 @@ impl QuorumCertificate {
         Self {
             signature: NodeSignature::identity(),
             cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
-            block_hash: BlockHeader::genesis_hash(),
+            block_hash: Hash::ZERO,
         }
     }
 
@@ -224,6 +247,12 @@ impl AggregateQc {
             .as_bytes(),
         ])
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum BlockRef {
+    Hash(Hash),
+    View(u64),
 }
 
 /// The [Copy]-able subset of a block.
@@ -352,6 +381,44 @@ impl FromStr for BlockNumber {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Invariant: The set is non-empty
+pub struct Committee(BTreeSet<Validator>);
+
+impl Committee {
+    pub fn new(validator: Validator) -> Committee {
+        Committee([validator].into_iter().collect())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Validator> + '_ {
+        self.0.iter().copied()
+    }
+
+    pub fn get_by_index(&self, index: usize) -> Option<Validator> {
+        self.0.iter().nth(index).copied()
+    }
+
+    pub fn leader(&self, view: u64) -> Validator {
+        *self.0.iter().nth(view as usize % self.0.len()).unwrap()
+    }
+
+    pub fn total_weight(&self) -> u128 {
+        self.0.iter().map(|v| v.weight).sum()
+    }
+
+    pub fn add_validators(&mut self, validators: impl IntoIterator<Item = Validator>) {
+        self.0.extend(validators);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub header: BlockHeader,
     /// A block's quorum certificate (QC) is proof that more than `2n/3` nodes (out of `n`) have voted for this block.
@@ -361,19 +428,93 @@ pub struct Block {
     /// this is not `None`, `qc` will contain a clone of the highest QC within this [AggregateQc];
     pub agg: Option<AggregateQc>,
     pub transactions: Vec<Hash>,
+    /// The consensus committee for this block.
+    pub committee: Committee,
 }
 
 impl Block {
-    pub fn genesis(committee_size: usize, state_root_hash: Hash) -> Block {
-        let qc = QuorumCertificate::genesis(committee_size);
+    pub fn genesis(committee: Committee, state_root_hash: Hash) -> Block {
+        let view = 0u64;
+        let qc = QuorumCertificate {
+            signature: NodeSignature::identity(),
+            cosigned: bitvec![u8, bitvec::order::Msb0; 1; 0],
+            block_hash: Hash::ZERO,
+        };
+        let parent_hash = Hash::ZERO;
+        let timestamp = SystemTime::UNIX_EPOCH;
+
+        // FIXME: Just concatenating the keys is dumb.
+        let committee_keys: Vec<_> = committee
+            .0
+            .iter()
+            .flat_map(|v| v.public_key.as_bytes())
+            .collect();
+
+        let digest = Hash::compute([
+            &view.to_be_bytes(),
+            qc.compute_hash().as_bytes(),
+            // hash of agg missing here intentionally
+            parent_hash.as_bytes(),
+            state_root_hash.as_bytes(),
+            &committee_keys,
+        ]);
+
         Block {
-            header: BlockHeader::genesis(state_root_hash),
-            qc,
+            header: BlockHeader {
+                view,
+                hash: digest,
+                parent_hash,
+                signature: NodeSignature::identity(),
+                state_root_hash,
+                timestamp,
+            },
+            qc: QuorumCertificate {
+                signature: NodeSignature::identity(),
+                cosigned: bitvec![u8, bitvec::order::Msb0; 1; 0],
+                block_hash: Hash::ZERO,
+            },
             agg: None,
             transactions: vec![],
+            committee,
         }
     }
 
+    pub fn verify_hash(&self) -> Result<()> {
+        // FIXME: Just concatenating the keys is dumb.
+        let committee_keys: Vec<_> = self
+            .committee
+            .0
+            .iter()
+            .flat_map(|v| v.public_key.as_bytes())
+            .collect();
+
+        let computed_hash = if let Some(agg) = &self.agg {
+            Hash::compute([
+                &self.view().to_be_bytes(),
+                self.qc.compute_hash().as_bytes(),
+                agg.compute_hash().as_bytes(),
+                self.parent_hash().as_bytes(),
+                self.state_root_hash().as_bytes(),
+                &committee_keys,
+            ])
+        } else {
+            Hash::compute([
+                &self.view().to_be_bytes(),
+                self.qc.compute_hash().as_bytes(),
+                self.parent_hash().as_bytes(),
+                self.state_root_hash().as_bytes(),
+                &committee_keys,
+            ])
+        };
+
+        if computed_hash != self.hash() {
+            return Err(anyhow!("invalid hash"));
+        }
+
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn from_qc(
         secret_key: SecretKey,
         view: u64,
@@ -382,13 +523,22 @@ impl Block {
         state_root_hash: Hash,
         transactions: Vec<Hash>,
         timestamp: SystemTime,
+        committee: Committee,
     ) -> Block {
+        // FIXME: Just concatenating the keys is dumb.
+        let committee_keys: Vec<_> = committee
+            .0
+            .iter()
+            .flat_map(|v| v.public_key.as_bytes())
+            .collect();
+
         let digest = Hash::compute([
             &view.to_be_bytes(),
             qc.compute_hash().as_bytes(),
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
             state_root_hash.as_bytes(),
+            &committee_keys,
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {
@@ -403,9 +553,11 @@ impl Block {
             qc,
             agg: None,
             transactions,
+            committee,
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn from_agg(
         secret_key: SecretKey,
         view: u64,
@@ -414,13 +566,22 @@ impl Block {
         parent_hash: Hash,
         state_root_hash: Hash,
         timestamp: SystemTime,
+        committee: Committee,
     ) -> Block {
+        // FIXME: Just concatenating the keys is dumb.
+        let committee_keys: Vec<_> = committee
+            .0
+            .iter()
+            .flat_map(|v| v.public_key.as_bytes())
+            .collect();
+
         let digest = Hash::compute([
             &view.to_be_bytes(),
             qc.compute_hash().as_bytes(),
             agg.compute_hash().as_bytes(),
             parent_hash.as_bytes(),
             state_root_hash.as_bytes(),
+            &committee_keys,
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {
@@ -435,6 +596,7 @@ impl Block {
             qc,
             agg: Some(agg),
             transactions: vec![],
+            committee,
         }
     }
 

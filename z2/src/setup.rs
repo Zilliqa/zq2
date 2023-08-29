@@ -1,77 +1,64 @@
-use std::io::ErrorKind::AlreadyExists;
-use std::path::Path;
-use std::{fs::File, io::Write};
-
 use crate::collector;
 use eyre::{eyre, Result};
+use std::io::Write;
+use tempfile::NamedTempFile;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
-use zilliqa::crypto;
+use zilliqa::crypto::SecretKey;
 
-/// Filename prefix for per-node config files
-const CFG_PREFIX: &str = "z2_node_"; //.toml
 const DATADIR_PREFIX: &str = "z2_node_";
 
 pub struct Setup {
     /// How many nodes should we start?
     pub how_many: usize,
-    /// Secret keys for the nodes (we deliberately elect not to know too much about them)
-    pub secret_keys: Vec<String>,
+    /// Secret keys for the nodes
+    pub secret_keys: Vec<SecretKey>,
     /// The collector, if one is running
     pub collector: Option<collector::Collector>,
+    config_files: Vec<NamedTempFile>,
 }
 
 impl Setup {
     pub fn new(how_many: usize) -> Result<Self> {
-        // Generate some keys
-        let mut secret_keys: Vec<String> = Vec::new();
+        let mut secret_keys = Vec::new();
         for i in 0..how_many {
-            let key = generate_secret_key_hex()?;
-            println!("[#{i}] = {key}");
+            let key = generate_secret_key()?;
+            println!("[#{i}] = {}", key.to_hex());
             secret_keys.push(key);
         }
+
+        let first_key = secret_keys[0].node_public_key().to_string();
+        let first_peer_id = secret_keys[0]
+            .to_libp2p_keypair()
+            .public()
+            .to_peer_id()
+            .to_string();
+
+        let mut config_files = Vec::new();
+        for i in 0..how_many {
+            let mut config_file = NamedTempFile::new()?;
+            write!(
+                config_file,
+                r#"
+                    data_dir = "{DATADIR_PREFIX}{i}"
+                    genesis_committee = [ [ "{first_key}", "{first_peer_id}" ] ]
+                "#
+            )?;
+            config_files.push(config_file);
+        }
+
         Ok(Self {
             how_many,
             secret_keys,
             collector: None,
+            config_files,
         })
-    }
-
-    pub fn config_path(index: usize) -> String {
-        format!("{CFG_PREFIX}{index}.toml")
-    }
-
-    pub fn ensure_config_files_exist(&self) -> Result<()> {
-        for i in 0..self.how_many {
-            let path = Self::config_path(i);
-            let path = Path::new(&path);
-            match File::options()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(path)
-            {
-                Ok(mut file) => {
-                    println!("Creating config file {}", path.to_string_lossy());
-                    writeln!(file, "[[nodes]]")?;
-                    // writeln!(file, "data_dir = \"{DATADIR_PREFIX}{i}\"")?;
-                    if i != 0 {
-                        writeln!(file, "disable_rpc = true")?;
-                    }
-                }
-                Err(already_exists) if already_exists.kind() == AlreadyExists => {
-                    // ignore existing files
-                }
-                Err(e) => return Err(eyre!("Failed to open config file: {e}")),
-            }
-        }
-        Ok(())
     }
 
     pub async fn run(&mut self) -> Result<()> {
         // Generate a collector
-        self.ensure_config_files_exist()?;
-        self.collector = Some(collector::Collector::new(&self.secret_keys).await?);
+        self.collector =
+            Some(collector::Collector::new(&self.secret_keys, &self.config_files).await?);
         if let Some(mut c) = self.collector.take() {
             c.complete().await?;
         }
@@ -79,9 +66,6 @@ impl Setup {
     }
 }
 
-pub fn generate_secret_key_hex() -> Result<String> {
-    crypto::SecretKey::new()
-        .map_err(|err| eyre!(Box::new(err)))?
-        .to_hex()
-        .map_err(|err| eyre!(Box::new(err)))
+pub fn generate_secret_key() -> Result<SecretKey> {
+    SecretKey::new().map_err(|err| eyre!(Box::new(err)))
 }

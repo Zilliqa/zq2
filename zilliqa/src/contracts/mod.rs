@@ -41,6 +41,7 @@ pub mod native_token {
 }
 
 // Generated with `solc shard.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > shard.json`.
+#[allow(dead_code)] // define properties on the contract, even if they aren't currently invoked
 pub mod shard {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
@@ -66,6 +67,7 @@ pub mod shard {
 }
 
 // Generated with `solc shard_registry.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > shard_registry.json`.
+#[allow(dead_code)]
 pub mod shard_registry {
     use ethabi::{Constructor, Event, Function};
     use once_cell::sync::Lazy;

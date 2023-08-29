@@ -11,7 +11,7 @@ use evm::{
     CreateScheme, Handler,
 };
 use evm::{Machine, Runtime};
-use tracing::{error, info, trace};
+use tracing::*;
 
 use primitive_types::*;
 
@@ -183,14 +183,18 @@ fn handle_panic(trace: String, remaining_gas: u64, reason: &str) -> EvmProto::Ev
     }
 }
 
+fn get_config(estimate: bool, call_l64_after_gas: bool) -> evm::Config {
+    evm::Config {
+        estimate,
+        call_l64_after_gas,
+        ..evm::Config::shanghai()
+    }
+}
+
 // Convenience fn to hide the evm internals and just
 // let you calculate contract address as easily as possible
 pub fn calculate_contract_address(address: H160, backend: &impl Backend) -> H160 {
-    let config = evm::Config {
-        estimate: false,
-        call_l64_after_gas: false,
-        ..evm::Config::london()
-    };
+    let config = get_config(false, false);
 
     let metadata = StackSubstateMetadata::new(1, &config);
     let state = MemoryStackState::new(metadata, &backend);
@@ -220,12 +224,8 @@ pub fn run_evm_impl_direct<B: Backend>(
     let code = Rc::new(args.code);
     let data = Rc::new(args.data);
     // TODO: handle call_l64_after_gas problem: https://zilliqa-jira.atlassian.net/browse/ZIL-5012
-    // todo: this needs to be shanghai...
-    let config = evm::Config {
-        estimate: args.estimate,
-        call_l64_after_gas: false,
-        ..evm::Config::london()
-    };
+    let config = get_config(args.estimate, false);
+
     let context = evm::Context {
         address: args.address,
         caller: args.caller,

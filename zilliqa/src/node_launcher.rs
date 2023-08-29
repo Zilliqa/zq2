@@ -1,3 +1,4 @@
+use crate::message::ExternalMessage;
 use jsonrpsee::RpcModule;
 use std::{
     net::Ipv4Addr,
@@ -11,18 +12,17 @@ use anyhow::{anyhow, Result};
 use http::{header, Method};
 use libp2p::{futures::StreamExt, PeerId};
 
+use crate::message::Message;
 use node::Node;
+use std::time::Duration;
 use tokio::{
     select,
-    signal::{self, unix::SignalKind},
     sync::mpsc,
     time::{self, Instant},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::trace;
-
-use crate::message::Message;
+use tracing::*;
 
 pub struct NodeLauncher {
     pub node: Arc<Mutex<Node>>,
@@ -30,8 +30,11 @@ pub struct NodeLauncher {
     pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
     pub inbound_message_sender: UnboundedSender<(PeerId, Message)>,
     pub inbound_message_receiver: UnboundedReceiverStream<(PeerId, Message)>,
+    outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
     pub reset_timeout_receiver: UnboundedReceiverStream<()>,
+    secret_key: SecretKey,
     node_launched: bool,
+    consensus_timeout: Duration,
 }
 
 impl NodeLauncher {
@@ -69,7 +72,7 @@ impl NodeLauncher {
                 .build((Ipv4Addr::UNSPECIFIED, port))
                 .await?;
             let handle = server.start(rpc_module.clone());
-            let _ = tokio::spawn(handle.stopped());
+            tokio::spawn(handle.stopped());
         }
 
         Ok(Self {
@@ -78,7 +81,10 @@ impl NodeLauncher {
             inbound_message_sender,
             inbound_message_receiver,
             reset_timeout_receiver,
+            outbound_message_sender,
             node_launched: false,
+            consensus_timeout: config.consensus_timeout,
+            secret_key,
             config,
         })
     }
@@ -92,11 +98,12 @@ impl NodeLauncher {
             return Err(anyhow!("Node already running!"));
         }
 
-        let mut terminate = signal::unix::signal(SignalKind::terminate())?;
         let sleep = time::sleep(self.config.consensus_timeout);
         tokio::pin!(sleep);
 
         self.node_launched = true;
+
+        let mut joined = false;
 
         loop {
             select! {
@@ -106,18 +113,20 @@ impl NodeLauncher {
                 },
                 () = &mut sleep => {
                     trace!("timeout elapsed");
-                    self.node.lock().unwrap().handle_timeout().unwrap();
-                    sleep.as_mut().reset(Instant::now() + self.config.consensus_timeout);
+                    if !joined {
+                        self.outbound_message_sender.send((None, self.config.eth_chain_id, Message::External(ExternalMessage::JoinCommittee(self.secret_key.node_public_key())))).unwrap();
+                        joined = true;
+                    } else {
+                        self.node.lock().unwrap().handle_timeout().unwrap();
+                    }
+                    sleep.as_mut().reset(Instant::now() + self.consensus_timeout);
                 },
                 r = self.reset_timeout_receiver.next() => {
                     let () = r.expect("reset timeout stream should be infinite");
                     trace!("timeout reset");
                     sleep.as_mut().reset(Instant::now() + self.config.consensus_timeout);
                 },
-                _ = terminate.recv() => { break; },
-                _ = signal::ctrl_c() => { break; },
             }
         }
-        Ok(())
     }
 }

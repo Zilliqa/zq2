@@ -106,7 +106,7 @@ impl State {
         };
 
         let main_shard_cfg = GENESIS_SHARDS
-            .get(0)
+            .first()
             .expect("At least the main shard must be specified when starting a new genesis");
 
         let main_shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
@@ -287,7 +287,7 @@ impl Address {
     /// Address of the native token ERC-20 contract.
     pub const NATIVE_TOKEN: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"));
 
-    pub const SHARD_CONTRACT: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0SHARD"));
+    pub const SHARD_CONTRACT: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD"));
 
     pub fn is_balance_transfer(to: Address) -> bool {
         to == Address::NATIVE_TOKEN
