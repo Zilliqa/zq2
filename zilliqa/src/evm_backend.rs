@@ -24,6 +24,8 @@ pub struct EvmBackend<'a> {
     pub origin: H160,
     pub chain_id: u64,
     pub current_block: BlockHeader,
+    // Map of cached (execution in progress) address to account and any dirty storage.
+    // If the value is None, this means a deletion
     pub account_storage_cached: HashMap<Address, Option<(Account, HashMap<H256, H256>)>>,
 }
 
@@ -45,14 +47,22 @@ impl<'a> EvmBackend<'a> {
         }
     }
 
+    pub fn create_account(
+        &mut self,
+        address: H160,
+        code: Vec<u8>,
+    ) {
+        // Insert empty slot into cache
+        self.account_storage_cached.insert(Address(address), Some((Account{nonce: 0, code: code, storage_root: None}, HashMap::new())));
+    }
+
     pub fn apply_update(
         &mut self,
-        _to_addr: Option<Address>,
         applys: Vec<evm_ds::protos::evm_proto::Apply>,
     ) {
         for apply in applys {
             match apply {
-                Apply::Delete { address: address } => {
+                Apply::Delete { address } => {
                     let address = Address(address);
 
                     // Insert empty slot into cache
@@ -182,19 +192,19 @@ impl<'a> Backend for EvmBackend<'a> {
     }
 
     fn exists(&self, address: H160) -> bool {
-        true
-        //// Ethereum charges extra gas for `CALL`s or `SELFDESTRUCT`s which create new accounts, to discourage the
-        //// creation of many addresses and the resulting increase in state size.
+        // Ethereum charges extra gas for `CALL`s or `SELFDESTRUCT`s which create new accounts, to discourage the
+        // creation of many addresses and the resulting increase in state size.
 
-        //// first check if the account is cleared in the cache
-        //if let Some(item) = self.account_storage_cached.get(&address.into()) {
-        //    if item.is_none() {
-        //        return false;
-        //    }
-        //}
+        // first check if the account is cleared in the cache
+        if let Some(item) = self.account_storage_cached.get(&address.into()) {
+            if item.is_none() {
+                return false;
+            }
+        }
 
-        //self.state.has_account(Address(address))
-        //trace!("EVM request: Checking whether account {:?} exists", address);
+        let exists = self.state.has_account(Address(address));
+        trace!("EVM request: Checking whether account {:?} exists {}", address, exists);
+        exists
     }
 
     fn basic(&self, address: H160) -> Basic {

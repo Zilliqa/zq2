@@ -33,6 +33,8 @@ pub mod native_token {
         Lazy::new(|| CONTRACT.abi.function("balanceOf").unwrap().clone());
     pub static SET_BALANCE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("setBalance").unwrap().clone());
+    pub static TRANSFER: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("transfer").unwrap().clone());
     pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
 }
 

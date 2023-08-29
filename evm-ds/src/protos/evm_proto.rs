@@ -49,7 +49,6 @@ pub struct Storage {
     pub value: H256,
 }
 
-//#[derive(Debug)]
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub enum Apply {

@@ -175,7 +175,7 @@ impl State {
                 debug!("Prior balances:  {} and {} ", native_balance, target_balance);
             }
 
-            continuation_stack.push(push_transfer(to, amount.into(), continuations.clone()));
+            continuation_stack.push(push_transfer(from_addr.0, to, amount.into(), continuations.clone()));
         } else if (amount > 0){
             if print_enabled {
                 info!("Transaction attempted to transfer more value than it actually had! Amount: {}, Balance: {}", amount, native_balance);
@@ -199,13 +199,12 @@ impl State {
             backend.origin = call_args.caller;
             result = run_evm_impl_direct(call_args.clone(), &backend);
 
-
             if print_enabled {
-                debug!("Evm invocation complete - applying result {:?}", result);
+                info!("Evm invocation complete - applying result {:?}", result);
             }
 
             // Apply the results to the backend so they can be used in the next continuation
-            backend.apply_update(to_addr, result.take_apply());
+            backend.apply_update(result.take_apply());
 
             if result.has_trap() {
                 let mut cont =
@@ -257,32 +256,36 @@ impl State {
 
                         let call_data_next = call.call_data;
                         let call_addr: H160 = call.callee_address;
+                        let caller: H160 = call.context.caller;
                         let value: U256 = if let Some(transfer) = call.transfer {
                             transfer.value
                         } else {
                             U256::zero()
                         };
 
-                        let call_args_shim: Option<EvmProto::EvmCallArgs> = if !value.is_zero() {
-                            let balance_data = contracts::native_token::SET_BALANCE
-                                .encode_input(&[Token::Address(call_addr), Token::Uint(value)])
-                                .unwrap();
+                        //let call_args_shim: Option<EvmProto::EvmCallArgs> = if !value.is_zero() {
+                        //
+                        //    trace!("Call trap has value! Inserting shim to transfer value to callee");
+                        //
+                        //    let balance_data = contracts::native_token::SET_BALANCE
+                        //        .encode_input(&[Token::Address(call_addr), Token::Uint(value)])
+                        //        .unwrap();
 
-                            Some(EvmProto::EvmCallArgs {
-                                caller: Address::ZERO.0,
-                                address: Address::NATIVE_TOKEN.0,
-                                code: contracts::native_token::CODE.clone(),
-                                data: balance_data,
-                                gas_limit: u64::MAX,
-                                tx_trace: Default::default(),
-                                continuations: continuations.clone(),
-                                node_continuation: None,
-                                evm_context: Default::default(),
-                                ..call_args
-                            })
-                        } else {
-                            None
-                        };
+                        //    Some(EvmProto::EvmCallArgs {
+                        //        caller: Address::ZERO.0,
+                        //        address: Address::NATIVE_TOKEN.0,
+                        //        code: contracts::native_token::CODE.clone(),
+                        //        data: balance_data,
+                        //        gas_limit: u64::MAX,
+                        //        tx_trace: Default::default(),
+                        //        continuations: continuations.clone(),
+                        //        node_continuation: None,
+                        //        evm_context: Default::default(),
+                        //        ..call_args
+                        //    })
+                        //} else {
+                        //    None
+                        //};
 
                         // Fetch the code from the backend
                         let code_next = backend.code(call_addr);
@@ -292,6 +295,7 @@ impl State {
                             address: call_addr,
                             code: code_next,
                             data: call_data_next,
+                            apparent_value: value,
                             tx_trace: Default::default(),
                             continuations: continuations.clone(),
                             node_continuation: None,
@@ -305,10 +309,11 @@ impl State {
                         // Now push on the context we want to execute
                         continuation_stack.push(call_args_next);
 
-                        // If we want to insert a shim, do it here so as to execute first
-                        // (shim will increase balance of address)
-                        if let Some(call_args_shim) = call_args_shim {
-                            continuation_stack.push(call_args_shim);
+                        // If the call also has a value transfer, we need to execute that first
+                        if !value.is_zero() {
+                            trace!("Call trap has value! Inserting shim to transfer value to callee {call_addr}");
+
+                            continuation_stack.push(push_transfer(caller, call_addr, value, continuations.clone()));
                         }
                     }
                 }
@@ -351,6 +356,11 @@ impl State {
             }
         }
 
+        if let Some(created_contract_addr) = created_contract_addr {
+            // Construct an update for creating this contract address
+            backend.create_account(created_contract_addr, result.return_value.clone());
+        }
+
         let mut backend_result = backend.get_result();
         backend_result.exit_reason = result.exit_reason;
         backend_result.return_value = result.return_value;
@@ -391,11 +401,11 @@ impl State {
                 let success = result.succeeded();
 
                 if success {
-                    if let Some(contract_addr) = contract_addr {
-                        let mut acct = self.get_account(Address(contract_addr)).unwrap_or_default();
-                        acct.code = result.return_value.to_vec();
-                        self.save_account(Address(contract_addr), acct)?;
-                    }
+                    //if let Some(contract_addr) = contract_addr {
+                    //    let mut acct = self.get_account(Address(contract_addr)).unwrap_or_default();
+                    //    acct.code = result.return_value.to_vec();
+                    //    self.save_account(Address(contract_addr), acct)?;
+                    //}
 
                     self.apply_delta(result.apply)?;
                 }
@@ -410,6 +420,7 @@ impl State {
                 Ok(TransactionApplyResult {
                     success,
                     contract_address: contract_addr.map(Address),
+                    //contract_address: contract_addr,
                     logs: result.logs,
                 })
             }
@@ -497,7 +508,7 @@ impl State {
         )?;
         let balance = U256::from_big_endian(&balance);
 
-        trace!("Queried balance is: {}", balance);
+        trace!("Queried balance of addr {} is: {}", address, balance);
 
         Ok(balance)
     }
@@ -574,15 +585,16 @@ impl State {
     }
 }
 
-// Convenience function to create a balance transfer for the call stack
-pub fn push_transfer(to: H160, amount: U256, continuations: Arc<Mutex<EvmProto::Continuations>>) -> EvmProto::EvmCallArgs {
+// Convenience function to create a balance transfer for the call stack. Note we do NOT use the
+// setBalance function as this should only be used at genesis
+pub fn push_transfer(from: H160, to: H160, amount: U256, continuations: Arc<Mutex<EvmProto::Continuations>>) -> EvmProto::EvmCallArgs {
 
-    let balance_data = contracts::native_token::SET_BALANCE
+    let balance_data = contracts::native_token::TRANSFER
         .encode_input(&[Token::Address(to), Token::Uint(amount)])
         .unwrap();
 
     EvmProto::EvmCallArgs {
-        caller: Address::ZERO.0,
+        caller: from,
         gas_scaling_factor: 1,
         scaling_factor: None,
         estimate: false,
