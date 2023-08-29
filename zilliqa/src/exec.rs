@@ -531,7 +531,7 @@ impl State {
             // some dummy values.
             0,
             BlockHeader::default(),
-            true,
+            false,
         );
 
         match result {

@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
+use tracing::log::trace;
 
 use crate::{
     crypto::Hash,
@@ -80,8 +81,10 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         block_number,
         Address(call_params.from),
         call_params.to.map(Address),
-        call_params.data,
+        call_params.data.clone(),
     )?;
+
+    trace!("Performed eth call. Args: {:?} ie: {:?} {:?} {:?}  ret: {:?}", serde_json::to_string(&call_params), call_params.from, call_params.to, call_params.data, return_value.to_hex());
 
     Ok(return_value.to_hex())
 }

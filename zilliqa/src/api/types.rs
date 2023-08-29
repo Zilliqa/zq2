@@ -374,7 +374,7 @@ fn bool_as_int<S: Serializer>(b: &bool, serializer: S) -> Result<S::Ok, S::Error
 }
 
 /// Parameters passed to `eth_call`.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct CallParams {
     #[serde(default)]
     pub from: H160,

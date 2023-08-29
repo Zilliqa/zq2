@@ -308,12 +308,12 @@ pub struct EvmResult {
     pub trap_data: Option<TrapData>,
 }
 
-fn vec_to_string_concat<T: fmt::Debug>(input: &Vec<T>) -> String {
+fn vec_to_string_concat<T: fmt::Debug + fmt::Display>(input: &Vec<T>) -> String {
     if input.len() > 10 {
         let start = &input[0..5];
         let end = &input[input.len()-5..];
-        let start_str = start.iter().map(|x| format!("{:?}", x)).collect::<Vec<_>>().join(", ");
-        let end_str = end.iter().map(|x| format!("{:?}", x)).collect::<Vec<_>>().join(", ");
+        let start_str = start.iter().map(|x| format!("{:}", x)).collect::<Vec<_>>().join(", ");
+        let end_str = end.iter().map(|x| format!("{:}", x)).collect::<Vec<_>>().join(", ");
         format!("[{}, ..., {}]", start_str, end_str)
     } else {
         format!("{:?}", input)
