@@ -1,6 +1,6 @@
 //! A node in the Zilliqa P2P network. May coordinate multiple shard nodes.
 
-use crate::cfg::NodeConfig;
+use crate::cfg::{ConsensusConfig, NodeConfig};
 use std::{collections::HashMap, iter};
 use tokio::{sync::mpsc::UnboundedSender, task::JoinSet};
 
@@ -117,13 +117,21 @@ impl P2pNode {
         IdentTopic::new(shard_id.to_string())
     }
 
-    /// Temporary method until light nodes are implemented, which will allow connecting to the
-    /// other shard and obtaining consensus parameters
-    fn clone_config(from: &NodeConfig) -> NodeConfig {
-        let from = from.clone();
+    /// Temporary method until light nodes are implemented, which will allow
+    /// connecting to the other shard and obtaining consensus parameters.
+    /// For now, we copy the (presumably main shard's) existing config and use it
+    /// as a default to construct a child shard.
+    fn generate_child_config(parent: &NodeConfig, shard_id: u64) -> NodeConfig {
+        let parent = parent.clone();
         NodeConfig {
-            json_rpc_port: from.json_rpc_port + 1,
-            ..from
+            json_rpc_port: parent.json_rpc_port + 1,
+            eth_chain_id: shard_id,
+            consensus: ConsensusConfig {
+                is_main: false,
+                main_shard_id: Some(parent.eth_chain_id),
+                consensus_timeout: parent.consensus.consensus_timeout,
+            },
+            ..parent
         }
     }
 
@@ -257,9 +265,9 @@ impl P2pNode {
                                 let shard_config = self.config.nodes
                                     .iter()
                                     .find(|shard_config| shard_config.eth_chain_id == shard_id)
-                                    .map(|c| c.clone())
+                                    .cloned()
                                     .unwrap_or_else(
-                                        || Self::clone_config(self.config.nodes.first().unwrap()));
+                                        || Self::generate_child_config(self.config.nodes.first().unwrap(), shard_id));
                                 self.add_shard_node(shard_config.clone()).await?;
                             },
                             _ => {

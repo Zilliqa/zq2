@@ -83,7 +83,7 @@ impl NodeLauncher {
             reset_timeout_receiver,
             outbound_message_sender,
             node_launched: false,
-            consensus_timeout: config.consensus_timeout,
+            consensus_timeout: config.consensus.consensus_timeout,
             secret_key,
             config,
         })
@@ -98,7 +98,7 @@ impl NodeLauncher {
             return Err(anyhow!("Node already running!"));
         }
 
-        let sleep = time::sleep(self.config.consensus_timeout);
+        let sleep = time::sleep(self.config.consensus.consensus_timeout);
         tokio::pin!(sleep);
 
         self.node_launched = true;
@@ -124,7 +124,7 @@ impl NodeLauncher {
                 r = self.reset_timeout_receiver.next() => {
                     let () = r.expect("reset timeout stream should be infinite");
                     trace!("timeout reset");
-                    sleep.as_mut().reset(Instant::now() + self.config.consensus_timeout);
+                    sleep.as_mut().reset(Instant::now() + self.config.consensus.consensus_timeout);
                 },
             }
         }

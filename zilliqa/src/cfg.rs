@@ -37,14 +37,36 @@ pub struct NodeConfig {
     pub json_rpc_port: u16,
     /// If true, the JSON-RPC server is not started. Defaults to false.
     pub disable_rpc: bool,
+    /// Chain identifier. Doubles as shard_id internally.
     pub eth_chain_id: u64,
+    /// Consensus-specific data.
+    pub consensus: ConsensusConfig,
     /// The maximum duration between a recieved block's timestamp and the current time. Defaults to 10 seconds.
     pub allowed_timestamp_skew: Duration,
     /// The location of persistence data. If not set, uses a temporary path.
     pub data_dir: Option<String>,
+    pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConsensusConfig {
+    /// If main, deploy a shard registry contract.
+    pub is_main: bool,
+    /// If not main, parent main shard.
+    pub main_shard_id: Option<u64>,
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     pub consensus_timeout: Duration,
-    pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
+}
+
+impl Default for ConsensusConfig {
+    fn default() -> Self {
+        ConsensusConfig {
+            is_main: true,
+            main_shard_id: None,
+            consensus_timeout: Duration::from_secs(5),
+        }
+    }
 }
 
 impl Default for NodeConfig {
@@ -53,9 +75,9 @@ impl Default for NodeConfig {
             json_rpc_port: 4201,
             disable_rpc: false,
             eth_chain_id: 1 + 0x8000,
+            consensus: Default::default(),
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: None,
-            consensus_timeout: Duration::from_secs(5),
             genesis_committee: vec![],
         }
     }

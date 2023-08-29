@@ -172,7 +172,7 @@ impl Consensus {
         let mut state = if let Some(latest_block) = &latest_block {
             State::new_at_root(state_trie, H256(latest_block.state_root_hash().0))
         } else {
-            State::new_with_genesis(state_trie)?
+            State::new_with_genesis(state_trie, config.consensus.clone())?
         };
 
         let latest_block = match latest_block {
@@ -919,7 +919,7 @@ impl Consensus {
                 .params
                 .into_iter()
                 .find(|param| param.name == "id")
-                .map(|param| param.value.into_uint()).flatten() else {
+                .and_then(|param| param.value.into_uint()) else {
                 return Err(anyhow!("LaunchShard event does not contain an id!"))
                 };
             self.message_sender

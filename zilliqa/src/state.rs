@@ -20,7 +20,7 @@ use evm_ds::protos::evm_proto::Log;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 
-use crate::{contracts, crypto, db::SledDb};
+use crate::{cfg::ConsensusConfig, contracts, crypto, db::SledDb};
 
 /// Const version of `impl From<u128> for U256`
 const fn u128_to_u256(value: u128) -> U256 {
@@ -29,12 +29,6 @@ const fn u128_to_u256(value: u128) -> U256 {
     ret[1] = (value >> 64) as u64;
     U256(ret)
 }
-
-static GENESIS_SHARDS: Lazy<Vec<(u128, u128)>> = Lazy::new(|| {
-    // (shard_id, consensus_timeout)
-    // First shard is main shard
-    vec![(32769, 5000), (32770, 5000)]
-});
 
 static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
     // Address with private key  0000000000000000000000000000000000000000000000000000000000000001
@@ -98,28 +92,30 @@ impl State {
         Self::new(database).at_root(root_hash)
     }
 
-    pub fn new_with_genesis(database: Tree) -> Result<State> {
+    pub fn new_with_genesis(database: Tree, config: ConsensusConfig) -> Result<State> {
         let db = Arc::new(SledDb::new(database));
         let mut state = Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
         };
 
-        let main_shard_cfg = GENESIS_SHARDS
-            .first()
-            .expect("At least the main shard must be specified when starting a new genesis");
-
-        let main_shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
-            contracts::shard_registry::CREATION_CODE.to_vec(),
-            &[Token::Uint(u128_to_u256(main_shard_cfg.1))],
-        )?;
-        state.force_deploy_contract(main_shard_data, Some(Address::SHARD_CONTRACT))?;
-
-        for cfg in GENESIS_SHARDS.iter().skip(1) {
-            let insert_shard_payload = contracts::shard_registry::ADD_SHARD
-                .encode_input(&[Token::Uint(u128_to_u256(cfg.0))])?;
-            state.force_execute_payload(Some(Address::SHARD_CONTRACT), insert_shard_payload)?;
-        }
+        let shard_data = if config.is_main {
+            contracts::shard_registry::CONSTRUCTOR.encode_input(
+                contracts::shard_registry::CREATION_CODE.to_vec(),
+                &[Token::Uint(u128_to_u256(
+                    config.consensus_timeout.as_millis(),
+                ))],
+            )?
+        } else {
+            contracts::shard::CONSTRUCTOR.encode_input(
+                contracts::shard::CREATION_CODE.to_vec(),
+                &[
+                    Token::Uint(u128_to_u256(config.main_shard_id.unwrap().into())),
+                    Token::Uint(u128_to_u256(config.consensus_timeout.as_millis())),
+                ],
+            )?
+        };
+        state.force_deploy_contract(shard_data, Some(Address::SHARD_CONTRACT))?;
 
         let native_token_data = contracts::native_token::CONSTRUCTOR
             .encode_input(contracts::native_token::CREATION_CODE.to_vec(), &[])?;

@@ -2,12 +2,10 @@ use std::collections::BTreeSet;
 
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
-use serde::Deserializer;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{fmt::Display, str::FromStr};
 
-use crate::cfg::NodeConfig;
 use crate::{
     consensus::Validator,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
