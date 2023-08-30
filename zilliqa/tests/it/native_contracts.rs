@@ -7,7 +7,7 @@ use zilliqa::state::Address;
 use crate::Network;
 
 #[zilliqa_macros::test]
-async fn native_token(mut network: Network<'_>) {
+async fn native_token(mut network: Network) {
     let wallet = network.random_wallet();
 
     let abi = include_str!("../../src/contracts/native_token.json");

@@ -913,7 +913,6 @@ impl Consensus {
             newly_finalized_block.hash(),
             contracts::shard_registry::SHARD_ADDED_EVT.clone(),
         )?;
-        println!("{:?}", shard_logs);
         for log in shard_logs {
             let Some(shard_id) = log
                 .params

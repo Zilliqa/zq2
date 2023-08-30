@@ -7,7 +7,7 @@ use zilliqa::crypto::Hash;
 use zilliqa::crypto::SecretKey;
 
 #[zilliqa_macros::test]
-async fn block_and_tx_data_persistence(mut network: Network<'_>) {
+async fn block_and_tx_data_persistence(mut network: Network) {
     let wallet = network.random_wallet();
     // send and include tx
     let hash = Hash(

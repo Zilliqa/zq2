@@ -4,10 +4,12 @@ mod native_contracts;
 mod persistence;
 mod web3;
 use std::env;
+use std::ops::DerefMut;
 use zilliqa::cfg::NodeConfig;
 use zilliqa::crypto::NodePublicKey;
 use zilliqa::crypto::SecretKey;
 use zilliqa::message::ExternalMessage;
+use zilliqa::message::InternalMessage;
 use zilliqa::node::Node;
 
 use std::collections::HashMap;
@@ -119,8 +121,10 @@ struct TestNode {
     dir: Option<TempDir>,
 }
 
-struct Network<'r> {
+struct Network {
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    /// Child shards.
+    pub children: HashMap<u64, Network>,
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
     // the borrow checker happy.
     nodes: Vec<TestNode>,
@@ -128,16 +132,16 @@ struct Network<'r> {
     /// If the destination is `None`, the message is a broadcast.
     receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, Message)>>,
     resend_message: UnboundedSender<(PeerId, Option<PeerId>, Message)>,
-    rng: &'r mut ChaCha8Rng,
+    rng: Arc<Mutex<ChaCha8Rng>>,
     /// The seed input for the node - because rng.get_seed() returns a different, internal
     /// representation
     seed: u64,
 }
 
-impl<'r> Network<'r> {
-    pub fn new(rng: &mut ChaCha8Rng, nodes: usize, seed: u64) -> Network {
+impl Network {
+    pub fn new(rng: Arc<Mutex<ChaCha8Rng>>, nodes: usize, seed: u64) -> Network {
         let mut keys: Vec<_> = (0..nodes)
-            .map(|_| SecretKey::new_from_rng(rng).unwrap())
+            .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
             .collect();
         // Sort the keys in the same order as they will occur in the consensus committee. This means node indices line
         // up with indices in the committee, making logs easier to read.
@@ -200,11 +204,12 @@ impl<'r> Network<'r> {
             resend_message,
             rng,
             seed,
+            children: HashMap::new(),
         }
     }
 
     pub fn add_node(&mut self) -> usize {
-        let secret_key = SecretKey::new_from_rng(self.rng).unwrap();
+        let secret_key = SecretKey::new_from_rng(self.rng.lock().unwrap().deref_mut()).unwrap();
         let (node, receiver) = node(
             self.genesis_committee.clone(),
             secret_key,
@@ -271,7 +276,7 @@ impl<'r> Network<'r> {
             return;
         }
         // Pick a random message
-        let index = self.rng.gen_range(0..messages.len());
+        let index = self.rng.lock().unwrap().gen_range(0..messages.len());
         let (source, destination, message) = messages.swap_remove(index);
         // Requeue the other messages
         for message in messages {
@@ -283,52 +288,59 @@ impl<'r> Network<'r> {
             format_message(&self.nodes, source, destination, &message)
         );
 
-        if let Some(destination) = destination {
-            let node = self
-                .nodes
-                .iter()
-                .find(|n| n.peer_id == destination)
-                .unwrap();
-            let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
-            span.in_scope(|| {
-                node.inner
-                    .lock()
-                    .unwrap()
-                    .handle_message(source, message)
-                    .unwrap();
-            });
+        if let Message::Internal(internal_message) = message {
+            if let InternalMessage::LaunchShard(network_id) = internal_message {
+                if let Some(network) = self.children.get_mut(&network_id) {
+                    trace!("Launching shard node for {network_id} - adding new node to shard");
+                    network.add_node();
+                } else {
+                    info!("Launching node in new shard network {network_id}");
+                    self.children
+                        .insert(network_id, Network::new(self.rng.clone(), 1, self.seed));
+                }
+            }
         } else {
-            for node in &self.nodes {
+            // ExternalMessage
+            if let Some(destination) = destination {
+                let node = self
+                    .nodes
+                    .iter()
+                    .find(|n| n.peer_id == destination)
+                    .unwrap();
                 let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
                 span.in_scope(|| {
                     node.inner
                         .lock()
                         .unwrap()
-                        .handle_message(source, message.clone())
+                        .handle_message(source, message)
                         .unwrap();
                 });
+            } else {
+                for node in &self.nodes {
+                    let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
+                    span.in_scope(|| {
+                        node.inner
+                            .lock()
+                            .unwrap()
+                            .handle_message(source, message.clone())
+                            .unwrap();
+                    });
+                }
             }
         }
     }
 
-    pub async fn run_until(
-        &mut self,
-        condition: impl FnMut(&mut Network) -> bool,
-        timeout: usize,
-    ) -> Result<()> {
-        self.run_until_rec(condition, timeout, timeout).await
-    }
-
-    async fn run_until_rec(
+    async fn run_until(
         &mut self,
         mut condition: impl FnMut(&mut Network) -> bool,
         mut timeout: usize,
-        orig_timeout: usize,
     ) -> Result<()> {
+        let initial_timeout = timeout;
+
         while !condition(self) {
             if timeout == 0 {
                 return Err(anyhow!(
-                    "condition was still false after {orig_timeout} ticks"
+                    "condition was still false after {initial_timeout} ticks"
                 ));
             }
             self.tick().await;
@@ -343,13 +355,15 @@ impl<'r> Network<'r> {
         mut condition: impl FnMut() -> Fut,
         mut timeout: usize,
     ) -> Result<()> {
+        let initial_timeout = timeout;
+
         while !condition().await {
             if timeout == 0 {
-                return Err(anyhow!("condition was still false after {timeout} ticks"));
+                return Err(anyhow!(
+                    "condition was still false after {initial_timeout} ticks"
+                ));
             }
-
             self.tick().await;
-
             timeout -= 1;
         }
 
@@ -357,7 +371,7 @@ impl<'r> Network<'r> {
     }
 
     pub fn random_index(&mut self) -> usize {
-        self.rng.gen_range(0..self.nodes.len())
+        self.rng.lock().unwrap().gen_range(0..self.nodes.len())
     }
 
     pub fn get_node(&self, index: usize) -> MutexGuard<Node> {
@@ -374,10 +388,13 @@ impl<'r> Network<'r> {
     }
 
     pub fn random_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
-        let wallet: LocalWallet = SigningKey::random(self.rng).into();
+        let wallet: LocalWallet = SigningKey::random(self.rng.lock().unwrap().deref_mut()).into();
         let wallet = wallet.with_chain_id(0x8001u64);
 
-        let node = self.nodes.choose(self.rng).unwrap();
+        let node = self
+            .nodes
+            .choose(self.rng.lock().unwrap().deref_mut())
+            .unwrap();
         trace!(index = node.index, "node selected for wallet");
         let client = LocalRpcClient {
             id: Arc::new(AtomicU64::new(0)),
@@ -440,7 +457,7 @@ async fn deploy_contract(
     path: &str,
     contract: &str,
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-    network: &mut Network<'_>,
+    network: &mut Network,
 ) -> (H256, Contract) {
     let full_path = format!("{}{}", PROJECT_ROOT, path);
 
