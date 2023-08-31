@@ -18,7 +18,7 @@ use anyhow::{anyhow, Result};
 use evm_ds::protos::evm_proto::Log;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+
 
 use crate::{contracts, crypto, db::SledDb};
 

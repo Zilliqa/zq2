@@ -38,7 +38,6 @@ fn vec_to_string_concat<T: fmt::Debug + fmt::Display>(input: &Vec<T>) -> String 
     }
 }
 
-
 // The struct used to drive the evm-ds execution. An external caller will maintain the continuations
 // and set the node_continuation (populating return values) if this is a continuation call
 #[derive(Clone, Derivative)]
@@ -317,7 +316,7 @@ pub struct CreateTrap {
 // This is the main struct returned from the evm after program invocation.
 // Either it has completed, and is a success or revert, or it is some type of
 // trap.
-#[derive(Default)]
+#[derive(Default, Derivative)]
 #[derivative(Debug)]
 pub struct EvmResult {
     pub exit_reason: ExitReasonCps,

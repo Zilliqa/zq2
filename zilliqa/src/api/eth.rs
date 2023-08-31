@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
-use tracing::info;
+
 use tracing::log::trace;
 
 use crate::{
@@ -105,7 +105,6 @@ fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-
     let mut params = params.sequence();
     let call_params: EstimateGasParams = params.next()?;
     let block_number: BlockNumber = params.next().unwrap_or(BlockNumber::Latest);

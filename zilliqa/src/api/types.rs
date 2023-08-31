@@ -1,4 +1,4 @@
-use crate::state::{Address, default_gas, default_gas_price};
+use crate::state::{default_gas, default_gas_price, Address};
 use primitive_types::{H160, H256, U256};
 use serde::{
     de::{self, Unexpected},
