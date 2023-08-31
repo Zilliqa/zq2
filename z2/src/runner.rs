@@ -31,14 +31,10 @@ impl Process {
         index: usize,
         key: &str,
         config_file: &Path,
-        rpc: bool,
         channel: &mpsc::Sender<Message>,
     ) -> Result<Process> {
         let mut cmd = Command::new("target/debug/zilliqa");
         cmd.arg(key);
-        if !rpc {
-            cmd.arg("--no-jsonrpc");
-        }
         cmd.arg("--config-file");
         cmd.arg(config_file);
         cmd.stdout(Stdio::piped());
