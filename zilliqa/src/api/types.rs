@@ -1,5 +1,5 @@
-use primitive_types::{H160, H256, U256};
 use crate::state::Address;
+use primitive_types::{H160, H256, U256};
 use serde::{
     de::{self, Unexpected},
     ser::SerializeSeq,
@@ -400,7 +400,10 @@ pub struct EstimateGasParams {
     pub to: Option<Address>,
     #[serde(default = "default_gas", deserialize_with = "deserialize_hex_str")]
     pub gas: u64,
-    #[serde(default = "default_gas_price", deserialize_with = "deserialize_hex_str")]
+    #[serde(
+        default = "default_gas_price",
+        deserialize_with = "deserialize_hex_str"
+    )]
     pub gasPrice: u64,
     #[serde(default)]
     pub value: U256,

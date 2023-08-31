@@ -207,7 +207,7 @@ impl Node {
         data: Vec<u8>,
         gas: u64,
         gasPrice: u64,
-        value: U256
+        value: U256,
     ) -> Result<u64> {
         // TODO: optimise this to get header directly once persistance is merged
         // (which will provide a header index)

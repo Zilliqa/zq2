@@ -219,7 +219,6 @@ pub fn run_evm_impl_direct<B: Backend>(
     args: EvmProto::EvmCallArgs,
     backend: &B,
 ) -> EvmProto::EvmResult {
-
     let estimate_override = false;
 
     trace!(

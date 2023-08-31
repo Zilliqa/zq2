@@ -18,7 +18,10 @@ use crate::{
 
 use super::{
     to_hex::ToHex,
-    types::{CallParams, EstimateGasParams, EthBlock, EthTransaction, EthTransactionReceipt, HashOrTransaction, Log},
+    types::{
+        CallParams, EstimateGasParams, EthBlock, EthTransaction, EthTransactionReceipt,
+        HashOrTransaction, Log,
+    },
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -78,7 +81,13 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let call_params: CallParams = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
-    info!("Performing eth call... Args: {:?} ie: {:?} {:?} {:?} ", serde_json::to_string(&call_params), call_params.from, call_params.to, call_params.data);
+    info!(
+        "Performing eth call... Args: {:?} ie: {:?} {:?} {:?} ",
+        serde_json::to_string(&call_params),
+        call_params.from,
+        call_params.to,
+        call_params.data
+    );
 
     let return_value = node.lock().unwrap().call_contract(
         block_number,
@@ -87,7 +96,14 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.data.clone(),
     )?;
 
-    trace!("Performed eth call. Args: {:?} ie: {:?} {:?} {:?}  ret: {:?}", serde_json::to_string(&call_params), call_params.from, call_params.to, call_params.data, return_value.to_hex());
+    trace!(
+        "Performed eth call. Args: {:?} ie: {:?} {:?} {:?}  ret: {:?}",
+        serde_json::to_string(&call_params),
+        call_params.from,
+        call_params.to,
+        call_params.data,
+        return_value.to_hex()
+    );
 
     Ok(return_value.to_hex())
 }
@@ -102,7 +118,7 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let call_params: EstimateGasParams = params.next()?;
     let block_number: BlockNumber = params.next().unwrap_or(BlockNumber::Latest);
-        //params.next()?;
+    //params.next()?;
 
     //pub gas: Option<H256>,
     //pub gasPrice: Option<H256>,

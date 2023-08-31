@@ -1,5 +1,7 @@
 pub use crate::evm::executor::stack::Log;
 use crate::evm::CreateScheme;
+use core::fmt;
+use derivative::Derivative;
 use evm::{
     executor::stack::{MemoryStackAccount, MemoryStackSubstate},
     ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed, Memory, Stack, Transfer, Valids,
@@ -8,8 +10,6 @@ use primitive_types::{H160, H256, U256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
-use core::fmt;
-use derivative::Derivative;
 
 // This file contains all of the structs used to communicate between evm-ds and the outside world
 
@@ -19,8 +19,7 @@ fn shortened_vec(val: &Vec<u8>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 
 // The struct used to drive the evm-ds execution. An external caller will maintain the continuations
 // and set the node_continuation (populating return values) if this is a continuation call
-#[derive(Clone)]
-#[derive(Derivative)]
+#[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub struct EvmCallArgs {
     pub address: H160,
@@ -311,9 +310,17 @@ pub struct EvmResult {
 fn vec_to_string_concat<T: fmt::Debug + fmt::Display>(input: &Vec<T>) -> String {
     if input.len() > 10 {
         let start = &input[0..5];
-        let end = &input[input.len()-5..];
-        let start_str = start.iter().map(|x| format!("{:}", x)).collect::<Vec<_>>().join(", ");
-        let end_str = end.iter().map(|x| format!("{:}", x)).collect::<Vec<_>>().join(", ");
+        let end = &input[input.len() - 5..];
+        let start_str = start
+            .iter()
+            .map(|x| format!("{:}", x))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let end_str = end
+            .iter()
+            .map(|x| format!("{:}", x))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!("[{}, ..., {}]", start_str, end_str)
     } else {
         format!("{:?}", input)
@@ -322,7 +329,6 @@ fn vec_to_string_concat<T: fmt::Debug + fmt::Display>(input: &Vec<T>) -> String 
 
 impl fmt::Debug for EvmResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-
         f.debug_struct("EvmResult")
             .field("exit_reason", &self.exit_reason)
             .field("return_value", &vec_to_string_concat(&self.return_value))

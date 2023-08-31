@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::{collections::BTreeMap, error::Error, fmt::Display};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::*;
 use tracing::field::debug;
+use tracing::*;
 
 use crate::message::{Committee, Message};
 use crate::{
@@ -245,7 +245,8 @@ impl Consensus {
                 .get_block_by_view(0)?
                 .ok_or_else(|| anyhow!("missing block"))?;
             // If we're in the genesis committee, vote again.
-            if genesis.committee
+            if genesis
+                .committee
                 .iter()
                 .any(|v| v.peer_id == self.peer_id())
             {

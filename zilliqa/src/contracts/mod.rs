@@ -61,7 +61,6 @@ pub mod gas_price {
     pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
 }
 
-
 /// These tests assert the contract binaries in this module are correct and reproducible, by recompiling the source
 /// files and checking the result is the same. This means we can keep the compiled source code in-tree, while also
 /// asserting in CI that the compiled source code is genuine. The tests only run when the `test_contract_bytecode`

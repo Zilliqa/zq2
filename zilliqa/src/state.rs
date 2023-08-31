@@ -90,8 +90,7 @@ impl State {
         state
             .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
 
-        state
-            .deploy_fixed_contract(Address::GAS_PRICE, contracts::gas_price::CODE.clone())?;
+        state.deploy_fixed_contract(Address::GAS_PRICE, contracts::gas_price::CODE.clone())?;
 
         state.set_gas_price(1000000.into());
 

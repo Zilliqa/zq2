@@ -47,11 +47,7 @@ impl<'a> EvmBackend<'a> {
         }
     }
 
-    pub fn create_account(
-        &mut self,
-        address: Address,
-        code: Vec<u8>,
-    ) {
+    pub fn create_account(&mut self, address: Address, code: Vec<u8>) {
         // Insert empty slot into cache if it does not already exist, else just put the code there
         if let Some(item) = self.account_storage_cached.get_mut(&address) {
             if let Some((acct, _)) = item {
@@ -61,13 +57,20 @@ impl<'a> EvmBackend<'a> {
         }
 
         // Fall through
-        self.account_storage_cached.insert(address, Some((Account{nonce: 0, code: code, storage_root: None}, HashMap::new())));
+        self.account_storage_cached.insert(
+            address,
+            Some((
+                Account {
+                    nonce: 0,
+                    code: code,
+                    storage_root: None,
+                },
+                HashMap::new(),
+            )),
+        );
     }
 
-    pub fn apply_update(
-        &mut self,
-        applys: Vec<evm_ds::protos::evm_proto::Apply>,
-    ) {
+    pub fn apply_update(&mut self, applys: Vec<evm_ds::protos::evm_proto::Apply>) {
         for apply in applys {
             match apply {
                 Apply::Delete { address } => {
@@ -75,7 +78,6 @@ impl<'a> EvmBackend<'a> {
 
                     // Insert empty slot into cache
                     self.account_storage_cached.insert(address, None);
-
                 }
                 Apply::Modify {
                     address,
@@ -101,7 +103,9 @@ impl<'a> EvmBackend<'a> {
                     }
 
                     let cache = self.account_storage_cached.get_mut(&address).unwrap();
-                    let cache = cache.as_mut().expect("Modify should not be called on a previously deleted account");
+                    let cache = cache
+                        .as_mut()
+                        .expect("Modify should not be called on a previously deleted account");
                     let account_cached = &mut cache.0;
                     let storage_cached = &mut cache.1;
 
@@ -122,7 +126,6 @@ impl<'a> EvmBackend<'a> {
         let mut applys: Vec<Apply> = vec![];
 
         for (addr, item) in self.account_storage_cached.into_iter() {
-
             match item {
                 Some((acct, stor)) => {
                     applys.push(Apply::Modify {
@@ -211,41 +214,61 @@ impl<'a> Backend for EvmBackend<'a> {
         }
 
         let exists = self.state.has_account(Address(address));
-        trace!("EVM request: Checking whether account {:?} exists {}", address, exists);
+        trace!(
+            "EVM request: Checking whether account {:?} exists {}",
+            address,
+            exists
+        );
         exists
     }
 
     fn basic(&self, address: H160) -> Basic {
-
         // first check if the account is in the cache
         if let Some(item) = self.account_storage_cached.get(&Address(address)) {
             if let Some((acct, _)) = item {
                 let nonce = acct.nonce;
                 let basic = Basic {
-                    balance: self.state.get_native_balance(Address(address), false).unwrap(),
+                    balance: self
+                        .state
+                        .get_native_balance(Address(address), false)
+                        .unwrap(),
                     nonce: nonce.into(),
                 };
-                trace!("EVM request: (cached) Requesting basic info for {:?} - answ: {:?}", address, basic);
+                trace!(
+                    "EVM request: (cached) Requesting basic info for {:?} - answ: {:?}",
+                    address,
+                    basic
+                );
                 return basic;
             }
         }
 
         let nonce = self.state.must_get_account(Address(address)).nonce;
         let basic = Basic {
-            balance: self.state.get_native_balance(Address(address), false).unwrap(),
+            balance: self
+                .state
+                .get_native_balance(Address(address), false)
+                .unwrap(),
             nonce: nonce.into(),
         };
-        trace!("EVM request: Requesting basic info for {:?} - answ: {:?}", address, basic);
+        trace!(
+            "EVM request: Requesting basic info for {:?} - answ: {:?}",
+            address,
+            basic
+        );
         basic
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
-
         // first check if the account is in the cache
         if let Some(item) = self.account_storage_cached.get(&Address(address)) {
             if let Some((acct, _)) = item {
                 let code = acct.code.clone();
-                trace!("EVM request: (cached) Requesting code for {:?} - answ: {:?}", address, code);
+                trace!(
+                    "EVM request: (cached) Requesting code for {:?} - answ: {:?}",
+                    address,
+                    code
+                );
                 return code;
             }
         }
@@ -253,17 +276,25 @@ impl<'a> Backend for EvmBackend<'a> {
         // Will this mean panic if you try to call address that doesn't exist?
         let code = self.state.must_get_account(Address(address)).code;
 
-        trace!("EVM request: Requesting code for {:?} - answ: {:?}", address, code);
+        trace!(
+            "EVM request: Requesting code for {:?} - answ: {:?}",
+            address,
+            code
+        );
         code
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
-
         // first check if the account is in the cache
         if let Some(item) = self.account_storage_cached.get(&Address(address)) {
             if let Some((_, stor)) = item {
                 if let Some(value) = stor.get(&index) {
-                    trace!("EVM request: (cached) Requesting storage for {:?} at {:?} and is: {:?}", address, index, value);
+                    trace!(
+                        "EVM request: (cached) Requesting storage for {:?} at {:?} and is: {:?}",
+                        address,
+                        index,
+                        value
+                    );
                     return *value;
                 }
             }
