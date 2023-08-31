@@ -513,7 +513,7 @@ mod tests {
         let signed_tx = transaction_from_rlp(&transaction, 1).unwrap();
         let tx = &signed_tx.transaction;
         assert_eq!(tx.nonce, 9);
-        assert_eq!(tx.gas_price, 20 * 10u128.pow(9));
+        assert_eq!(tx.gas_price, 20 * 10_u64.pow(9));
         assert_eq!(tx.gas_limit, 21000u64);
         assert_eq!(
             tx.to_addr.unwrap(),

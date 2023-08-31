@@ -1,9 +1,7 @@
 //! Manages execution of transactions on state.
 
-use std::arch::global_asm;
 use std::{
     collections::HashSet,
-    default,
     sync::{Arc, Mutex},
 };
 
@@ -17,7 +15,7 @@ use evm_ds::{
     },
     protos::evm_proto as EvmProto,
 };
-use primitive_types::{H160, H256, U256};
+use primitive_types::{H160, U256};
 use tracing::*;
 
 use crate::state::SignedTransaction;
@@ -193,7 +191,7 @@ impl State {
             return Err(anyhow!(error_str));
         }
 
-        if (amount > U256::zero()) {
+        if amount > U256::zero() {
             if print_enabled {
                 debug!(
                     "Populating account {}->{} with balance: {}",
@@ -388,7 +386,7 @@ impl State {
                 gas_deduction.into(),
                 continuations.clone(),
             ));
-            let mut call_args = continuation_stack.pop().unwrap();
+            let call_args = continuation_stack.pop().unwrap();
 
             if print_enabled {
                 debug!("Applying gas deduction of {}", gas_deduction);
@@ -522,7 +520,7 @@ impl State {
             match apply {
                 EvmProto::Apply::Delete { address } => {
                     let address = Address(address);
-                    let mut account = self.delete_account(address);
+                    let _account = self.delete_account(address);
                 }
                 EvmProto::Apply::Modify {
                     address,
