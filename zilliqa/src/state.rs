@@ -19,7 +19,6 @@ use evm_ds::protos::evm_proto::Log;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 
-
 use crate::{contracts, crypto, db::SledDb};
 
 /// Const version of `impl From<u128> for U256`
