@@ -439,7 +439,7 @@ fn format_message(
     }
 }
 
-const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
+//const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
 
 async fn deploy_contract(
     path: &str,

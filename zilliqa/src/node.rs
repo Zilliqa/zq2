@@ -96,7 +96,7 @@ impl Node {
         let message_sender = MessageSender {
             our_shard: config.eth_chain_id,
             our_peer_id: peer_id,
-            outbound_channel: message_sender_channel.clone(),
+            outbound_channel: message_sender_channel,
         };
         let node = Node {
             config: config.clone(),
