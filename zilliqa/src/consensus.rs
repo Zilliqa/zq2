@@ -908,21 +908,23 @@ impl Consensus {
         self.finalized_view = view;
         self.db.insert(LATEST_FINALIZED_VIEW, &view.to_be_bytes())?;
 
-        // Process the logs in the block
-        let shard_logs = self.get_logs_in_block(
-            newly_finalized_block.hash(),
-            contracts::shard_registry::SHARD_ADDED_EVT.clone(),
-        )?;
-        for log in shard_logs {
-            let Some(shard_id) = log
+        if self.config.consensus.is_main {
+            // Check for new shards to join
+            let shard_logs = self.get_logs_in_block(
+                newly_finalized_block.hash(),
+                contracts::shard_registry::SHARD_ADDED_EVT.clone(),
+            )?;
+            for log in shard_logs {
+                let Some(shard_id) = log
                 .params
                 .into_iter()
                 .find(|param| param.name == "id")
                 .and_then(|param| param.value.into_uint()) else {
                 return Err(anyhow!("LaunchShard event does not contain an id!"))
                 };
-            self.message_sender
-                .send_message_to_coordinator(InternalMessage::LaunchShard(shard_id.as_u64()))?;
+                self.message_sender
+                    .send_message_to_coordinator(InternalMessage::LaunchShard(shard_id.as_u64()))?;
+            }
         }
 
         Ok(())
