@@ -25,7 +25,7 @@ pub struct EvmBackend<'a> {
     pub chain_id: u64,
     pub current_block: BlockHeader,
     // Map of cached (execution in progress) address to account and any dirty storage.
-    // If the value is None, this means a deletion
+    // If the value is None, this means a deletion of that account and storage
     pub account_storage_cached: HashMap<Address, Option<(Account, HashMap<H256, H256>)>>,
 }
 
@@ -52,10 +52,6 @@ impl<'a> EvmBackend<'a> {
         if let Some(Some((acct, _))) = self.account_storage_cached.get_mut(&address) {
             acct.code = code;
             return;
-            //if let Some((acct, _)) = item {
-            //    acct.code = code;
-            //    return;
-            //}
         }
 
         // Fall through
@@ -227,7 +223,6 @@ impl<'a> Backend for EvmBackend<'a> {
     fn basic(&self, address: H160) -> Basic {
         // first check if the account is in the cache
         if let Some(Some((acct, _))) = self.account_storage_cached.get(&Address(address)) {
-            //if let Some((acct, _)) = item {
             let nonce = acct.nonce;
             let basic = Basic {
                 balance: self
@@ -242,7 +237,6 @@ impl<'a> Backend for EvmBackend<'a> {
                 basic
             );
             return basic;
-            //}
         }
 
         let nonce = self.state.must_get_account(Address(address)).nonce;
@@ -264,7 +258,6 @@ impl<'a> Backend for EvmBackend<'a> {
     fn code(&self, address: H160) -> Vec<u8> {
         // first check if the account is in the cache
         if let Some(Some((acct, _))) = self.account_storage_cached.get(&Address(address)) {
-            //if let Some((acct, _)) = item {
             let code = acct.code.clone();
             trace!(
                 "EVM request: (cached) Requesting code for {:?} - answ: {:?}",
@@ -272,7 +265,6 @@ impl<'a> Backend for EvmBackend<'a> {
                 code
             );
             return code;
-            //}
         }
 
         // Will this mean panic if you try to call address that doesn't exist?
@@ -289,7 +281,6 @@ impl<'a> Backend for EvmBackend<'a> {
     fn storage(&self, address: H160, index: H256) -> H256 {
         // first check if the account is in the cache
         if let Some(Some((_, stor))) = self.account_storage_cached.get(&Address(address)) {
-            //if let Some((_, stor)) = item {
             if let Some(value) = stor.get(&index) {
                 trace!(
                     "EVM request: (cached) Requesting storage for {:?} at {:?} and is: {:?}",
@@ -299,7 +290,6 @@ impl<'a> Backend for EvmBackend<'a> {
                 );
                 return *value;
             }
-            //}
         }
 
         let res = self.state.must_get_account_storage(Address(address), index);

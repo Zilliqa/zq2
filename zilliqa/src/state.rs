@@ -92,9 +92,7 @@ impl State {
 
         state.deploy_fixed_contract(Address::GAS_PRICE, contracts::gas_price::CODE.clone())?;
 
-        let _ = state.set_gas_price(1000000.into());
-
-        info!("GAs price is : {:?}", state.get_gas_price());
+        let _ = state.set_gas_price(default_gas_price().into());
 
         for (address, balance) in GENESIS.iter() {
             state.set_native_balance(*address, *balance)?;
@@ -462,4 +460,12 @@ pub struct TransactionReceipt {
     pub success: bool,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
+}
+
+pub fn default_gas() -> u64 {
+    10000000
+}
+
+pub fn default_gas_price() -> u64 {
+    1000000
 }

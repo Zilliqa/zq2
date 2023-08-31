@@ -108,7 +108,13 @@ impl State {
         self.save_account(address, account)
     }
 
-    // Call this function with your transaction and it will return
+    // Call this function with your transaction and it will return whether is succeeded and the state deltas that
+    // you should apply if you want to commit this transaction.
+    //
+    // The way it works is by using a continuation passing style. At each point the Tx makes a call,
+    // or some other operations,
+    // a trap is generated and the Tx is paused (continuation). The continuation is then pushed onto a stack and the next
+    // continuation (the call to make) is pushed onto the stack.
     #[allow(clippy::too_many_arguments)]
     fn apply_transaction_inner(
         &self,
@@ -124,8 +130,6 @@ impl State {
         print_enabled: bool,
     ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
         let caller = from_addr;
-        //let gas_scaling_factor = 1;
-        //let estimate = false;
         let is_static = false;
         let context = "".to_string();
         let continuations: Arc<Mutex<EvmProto::Continuations>> = Default::default();
@@ -138,9 +142,10 @@ impl State {
         let mut code: Vec<u8> = account.code;
         let mut data: Vec<u8> = payload;
 
+        // The backend is provided to the evm as a way to read accounts and state during execution
         let mut backend = EvmBackend::new(self, U256::zero(), caller.0, chain_id, current_block);
 
-        // If is contract creation
+        // if this is none, it is contract creation
         if to_addr.is_none() {
             code = data;
             data = vec![];
@@ -153,6 +158,7 @@ impl State {
         let native_balance = self.get_native_balance(from_addr, false).unwrap();
         let target_balance = self.get_native_balance(to, false).unwrap();
 
+        // The first continuation in the stack is the tx itself
         continuation_stack.push(EvmProto::EvmCallArgs {
             address: to.0,
             code,
@@ -191,10 +197,12 @@ impl State {
             return Err(anyhow!(error_str));
         }
 
+        // If the contract is to have funds during its execution, we need to push a transfer from
+        // the sender to the contract onto the stack to execute first
         if amount > U256::zero() {
             if print_enabled {
                 debug!(
-                    "Populating account {}->{} with balance: {}",
+                    "During execution: populating account {}->{} with balance: {}",
                     from_addr, to, amount
                 );
                 debug!(
@@ -233,6 +241,8 @@ impl State {
             backend.apply_update(result.take_apply());
             run_succeeded = result.succeeded();
 
+            // Handle potential traps. The continuation which was executing needs to get its
+            // feedback set for when it resumes
             if result.has_trap() {
                 let mut cont =
                     EvmProto::ContinuationFb::new(continuations.lock().unwrap().last_created());
@@ -242,10 +252,6 @@ impl State {
                         let addr_to_create =
                             calculate_contract_address_scheme(create.scheme, &backend);
 
-                        if print_enabled {
-                            println!("Create trap! Scheme: {:?}", create.scheme);
-                            println!("calculated contract addr: {:?}", addr_to_create);
-                        }
                         cont.feedback_type = EvmProto::Type::Create;
                         cont.feedback_data = Some(EvmProto::FeedbackData::Address(addr_to_create));
 
@@ -290,7 +296,7 @@ impl State {
                             U256::zero()
                         };
 
-                        // Fetch the code from the backend
+                        // Fetch the code to be called from the backend
                         let code_next = backend.code(call_addr.0);
 
                         // Set up the next continuation, adjust the relevant parameters
@@ -314,8 +320,6 @@ impl State {
 
                         // If the call also has a value transfer, we need to execute that first
                         if !value.is_zero() {
-                            trace!("Call trap has value! Inserting shim to transfer value to callee {call_addr}");
-
                             continuation_stack.push(push_transfer(
                                 caller,
                                 call_addr,
@@ -359,6 +363,7 @@ impl State {
                 }
             }
 
+            // We have finished looping, break
             if continuation_stack.is_empty() {
                 break;
             }
@@ -395,13 +400,6 @@ impl State {
             backend.origin = call_args.caller;
             let mut gas_result = run_evm_impl_direct(call_args, &backend);
 
-            if print_enabled {
-                info!(
-                    "Evm gas invocation complete - applying result {:?}",
-                    gas_result
-                );
-            }
-
             if !gas_result.succeeded() {
                 let fail_string = format!(
                     "Gas deduction FAILED with error: {:?}",
@@ -414,8 +412,9 @@ impl State {
             backend.apply_update(gas_result.take_apply());
         }
 
+        // If this was contract creation, apply this to the deltas for the convenience of
+        // the caller
         if let Some(created_contract_addr) = created_contract_addr {
-            // Construct an update for creating this contract address
             backend.create_account(created_contract_addr, result.return_value.clone());
         }
 

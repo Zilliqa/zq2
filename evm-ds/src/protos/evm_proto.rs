@@ -13,9 +13,31 @@ use std::sync::{Arc, Mutex};
 
 // This file contains all of the structs used to communicate between evm-ds and the outside world
 
+// Convenience function to print long vectors, truncating if they are massive
 fn shortened_vec(val: &Vec<u8>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "{}", vec_to_string_concat(val))
 }
+
+fn vec_to_string_concat<T: fmt::Debug + fmt::Display>(input: &Vec<T>) -> String {
+    if input.len() > 64 {
+        let start = &input[0..5];
+        let end = &input[input.len() - 5..];
+        let start_str = start
+            .iter()
+            .map(|x| format!("{:}", x))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let end_str = end
+            .iter()
+            .map(|x| format!("{:}", x))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("[{}, ..., {}]", start_str, end_str)
+    } else {
+        format!("{:?}", input)
+    }
+}
+
 
 // The struct used to drive the evm-ds execution. An external caller will maintain the continuations
 // and set the node_continuation (populating return values) if this is a continuation call
@@ -296,8 +318,10 @@ pub struct CreateTrap {
 // Either it has completed, and is a success or revert, or it is some type of
 // trap.
 #[derive(Default)]
+#[derivative(Debug)]
 pub struct EvmResult {
     pub exit_reason: ExitReasonCps,
+    #[derivative(Debug(format_with = "shortened_vec"))]
     pub return_value: Vec<u8>,
     pub apply: Vec<Apply>,
     pub logs: Vec<Log>,
@@ -306,57 +330,6 @@ pub struct EvmResult {
     pub continuation_id: u64,
     pub trap_data: Option<TrapData>,
 }
-
-fn vec_to_string_concat<T: fmt::Debug + fmt::Display>(input: &Vec<T>) -> String {
-    if input.len() > 10 {
-        let start = &input[0..5];
-        let end = &input[input.len() - 5..];
-        let start_str = start
-            .iter()
-            .map(|x| format!("{:}", x))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let end_str = end
-            .iter()
-            .map(|x| format!("{:}", x))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("[{}, ..., {}]", start_str, end_str)
-    } else {
-        format!("{:?}", input)
-    }
-}
-
-impl fmt::Debug for EvmResult {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("EvmResult")
-            .field("exit_reason", &self.exit_reason)
-            .field("return_value", &vec_to_string_concat(&self.return_value))
-            .field("apply", &self.apply)
-            .field("logs", &self.logs)
-            .field("tx_trace", &"too long to display")
-            .field("remaining_gas", &self.remaining_gas)
-            .field("continuation_id", &self.continuation_id)
-            .field("trap_data", &self.trap_data)
-            .finish()
-    }
-}
-
-//impl fmt::Debug for EvmCallArgs {
-//    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//
-//        f.debug_struct("EvmCallArgs")
-//            .field("address", &self.exit_reason)
-//            .field("code", &vec_to_string_concat(&self.return_value))
-//            .field("data", &self.apply)
-//            .field("apparent_value", &self.logs)
-//            .field("tx_trace", &"too long to display")
-//            .field("remaining_gas", &self.remaining_gas)
-//            .field("continuation_id", &self.continuation_id)
-//            .field("trap_data", &self.trap_data)
-//            .finish()
-//    }
-//}
 
 impl EvmResult {
     pub fn has_trap(&self) -> bool {

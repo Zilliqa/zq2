@@ -358,7 +358,6 @@ impl<'r> Network<'r> {
     pub fn node_at(&mut self, index: usize) -> MutexGuard<Node> {
         self.nodes[index].inner.lock().unwrap()
     }
-
     pub fn genesis_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
         // Private key with funds should be at 0x00....01
         let hex_string = "0000000000000000000000000000000000000000000000000000000000000001";
@@ -377,7 +376,7 @@ impl<'r> Network<'r> {
 
         SignerMiddleware::new(provider, wallet)
     }
-
+    
     pub fn random_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
         let wallet: LocalWallet = SigningKey::random(self.rng).into();
         let wallet = wallet.with_chain_id(0x8001u64);
@@ -439,7 +438,7 @@ fn format_message(
     }
 }
 
-//const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
+const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
 
 async fn deploy_contract(
     path: &str,
@@ -447,11 +446,7 @@ async fn deploy_contract(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
     network: &mut Network<'_>,
 ) -> (H256, Contract) {
-    // Include the contract source directly in the binary.
-    //let contract_source = include_bytes!(path.to_string());
-
-    let mut full_path = env::current_dir().unwrap();
-    full_path.push(path);
+    let full_path = format!("{}{}", PROJECT_ROOT, path);
 
     let contract_source = std::fs::read(&full_path).unwrap_or_else(|e| {
         panic!(
@@ -473,7 +468,7 @@ async fn deploy_contract(
     let out = sc
         .compile::<CompilerInput>(compiler_input)
         .unwrap_or_else(|e| {
-            panic!("failed to compile contract {}: {}", contract, e.to_string());
+            panic!("failed to compile contract {}: {}", contract, e);
         });
 
     // test if your solc can compile with v8.20 (shanghai) with

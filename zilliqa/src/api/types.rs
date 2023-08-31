@@ -1,4 +1,4 @@
-use crate::state::Address;
+use crate::state::{Address, default_gas, default_gas_price};
 use primitive_types::{H160, H256, U256};
 use serde::{
     de::{self, Unexpected},
@@ -382,14 +382,6 @@ pub struct CallParams {
     pub to: Option<H160>,
     #[serde(deserialize_with = "deserialize_data")]
     pub data: Vec<u8>,
-}
-
-fn default_gas() -> u64 {
-    1000000
-}
-
-fn default_gas_price() -> u64 {
-    1000
 }
 
 /// Parameters passed to `estimate_gas`.

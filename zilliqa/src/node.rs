@@ -228,8 +228,6 @@ impl Node {
         to_addr: Option<Address>,
         data: Vec<u8>,
     ) -> Result<Vec<u8>> {
-        // TODO: optimise this to get header directly once persistance is merged
-        // (which will provide a header index)
         let block = self
             .get_block_by_view(self.get_view(block_number))?
             .ok_or_else(|| anyhow!("block not found"))?;

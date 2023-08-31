@@ -38,7 +38,7 @@ pub mod native_token {
     pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
 }
 
-// Generated with `solc gas_price.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin > gas_price.json`.
+// Generated with `solc gas_price.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > gas_price.json`.
 pub mod gas_price {
     use ethabi::Function;
     use once_cell::sync::Lazy;
