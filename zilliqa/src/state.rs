@@ -278,7 +278,10 @@ impl Address {
     /// Address of the gas contract
     pub const GAS_PRICE: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0GAS"));
 
+    /// Gas fees go here
     pub const COLLECTED_FEES: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0FEE"));
+
+    pub const SHARD_REGISTRY: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD"));
 
     pub fn is_balance_transfer(to: Address) -> bool {
         to == Address::NATIVE_TOKEN

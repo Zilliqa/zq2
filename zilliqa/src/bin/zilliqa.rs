@@ -1,20 +1,15 @@
 extern crate bs58;
 use std::{fs, path::PathBuf};
+use zilliqa::p2p_node::P2pNode;
 
 use anyhow::Result;
 use clap::Parser;
 
-use libp2p::{
-    gossipsub, identify,
-    kad::{store::MemoryStore, Kademlia},
-    mdns,
-    swarm::NetworkBehaviour,
-};
 use opentelemetry::runtime;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use tokio::time::Duration;
 
-use zilliqa::{cfg::Config, crypto::SecretKey, node_launcher::NodeLauncher};
+use zilliqa::{cfg::Config, crypto::SecretKey};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -22,16 +17,6 @@ struct Args {
     secret_key: SecretKey,
     #[clap(long, short, required = true, default_value = "config.toml")]
     config_file: PathBuf,
-    #[clap(long, default_value = "false")]
-    no_jsonrpc: bool,
-}
-
-#[derive(NetworkBehaviour)]
-struct Behaviour {
-    gossipsub: gossipsub::Behaviour,
-    mdns: mdns::tokio::Behaviour,
-    kademlia: Kademlia<MemoryStore>,
-    identify: identify::Behaviour,
 }
 
 #[tokio::main]
@@ -46,8 +31,11 @@ async fn main() -> Result<()> {
         panic!("There needs to be a config file provided");
     };
     let config: Config = toml::from_str(&config)?;
+    assert!(
+        !config.nodes.is_empty(),
+        "At least one shard must be configured"
+    );
 
-    let p2p_port = config.p2p_port;
     if let Some(endpoint) = &config.otlp_collector_endpoint {
         let export_config = ExportConfig {
             endpoint: endpoint.clone(),
@@ -64,17 +52,11 @@ async fn main() -> Result<()> {
             .build()?;
     };
 
-    let mut networked_node = NodeLauncher::new(args.secret_key, config)?;
+    let mut node = P2pNode::new(args.secret_key, config.p2p_port, config.bootstrap_address)?;
 
-    println!("here we are0");
-    if !args.no_jsonrpc {
-        println!("here we are1");
-        let handle = networked_node.launch_rpc_server().await?;
-        println!("here we are2");
-        tokio::spawn(handle.stopped());
-        println!("here we are3");
+    for shard_config in config.nodes {
+        node.add_shard_node(shard_config.clone()).await?;
     }
-    println!("here we are4");
 
-    networked_node.start_p2p_node(p2p_port).await
+    node.start().await
 }

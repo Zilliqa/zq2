@@ -1,3 +1,5 @@
+use crate::message::ExternalMessage;
+use crate::node::MessageSender;
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
@@ -6,13 +8,14 @@ use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::{collections::BTreeMap, error::Error, fmt::Display};
 use tokio::sync::mpsc::UnboundedSender;
+use crate::message::Message;
 
 use tracing::*;
 
-use crate::message::{Committee, Message};
+use crate::message::Committee;
 use crate::{
     block_store::BlockStore,
-    cfg::Config,
+    cfg::NodeConfig,
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
     exec::TouchedAddressEventListener,
     exec::TransactionApplyResult,
@@ -100,7 +103,7 @@ impl From<Hash> for MissingBlockError {
 #[derive(Debug)]
 pub struct Consensus {
     secret_key: SecretKey,
-    config: Config,
+    config: NodeConfig,
     block_store: BlockStore,
     votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128, bool)>,
     new_views: BTreeMap<u64, NewViewVote>,
@@ -127,8 +130,8 @@ pub struct Consensus {
 impl Consensus {
     pub fn new(
         secret_key: SecretKey,
-        config: Config,
-        message_sender: UnboundedSender<(Option<PeerId>, Message)>,
+        config: NodeConfig,
+        message_sender: MessageSender,
     ) -> Result<Self> {
         trace!("Opening database at path {:?}", config.data_dir);
 
@@ -265,7 +268,7 @@ impl Consensus {
         &mut self,
         peer_id: PeerId,
         public_key: NodePublicKey,
-    ) -> Result<Option<(Option<PeerId>, Message)>> {
+    ) -> Result<Option<(Option<PeerId>, ExternalMessage)>> {
         if self.pending_peers.contains(&Validator {
             peer_id,
             public_key,
@@ -292,7 +295,24 @@ impl Consensus {
 
         debug!(%peer_id, "added pending peer");
 
-        self.generate_vote_block()
+        if self.view == 1 {
+            let genesis = self
+                .get_block_by_view(0)?
+                .ok_or_else(|| anyhow!("missing block"))?;
+            // If we're in the genesis committee, vote again.
+            if genesis
+                .committee
+                .iter()
+                .any(|v| v.peer_id == self.peer_id())
+            {
+                trace!("voting for genesis block");
+                let leader = self.get_leader(self.view)?;
+                let vote = self.vote_from_block(&genesis);
+                return Ok(Some((Some(leader.peer_id), ExternalMessage::Vote(vote))));
+            }
+        }
+
+        Ok(None)
     }
 
     fn download_blocks_up_to(&mut self, to: u64) -> Result<()> {
@@ -372,6 +392,8 @@ impl Consensus {
                         contract_address: result.contract_address,
                         logs: result.logs,
                     };
+                    self.transactions
+                        .insert(txn.hash().0, bincode::serialize(&txn)?)?;
                     self.transaction_receipts
                         .insert(txn.hash().0, bincode::serialize(&receipt)?)?;
                 }
@@ -424,8 +446,6 @@ impl Consensus {
                 self.state
                     .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
             })?;
-            self.transactions
-                .insert(hash.0, bincode::serialize(&txn)?)?;
             for address in listener.touched {
                 self.touched_address_index.merge(address.0, hash.0)?;
             }
@@ -512,21 +532,19 @@ impl Consensus {
                         .ok_or_else(|| anyhow!("missing block"))?;
                     let parent_header = parent.header;
 
+                    let previous_state_root_hash = self.state.root_hash()?;
+
                     let applied_transactions: Vec<_> =
                         self.new_transactions.values().cloned().collect();
                     let applied_transactions: Vec<_> = applied_transactions
                         .into_iter()
                         .filter_map(|tx| {
                             let result = self.apply_transaction(tx.clone(), parent_header);
-                            result.transpose().map(|r| {
-                                r.map(|r| (tx.clone(), r.success, r.contract_address, r.logs))
-                            })
+                            result.transpose().map(|r| r.map(|_| tx.clone()))
                         })
                         .collect::<Result<_>>()?;
-                    let applied_transaction_hashes: Vec<_> = applied_transactions
-                        .iter()
-                        .map(|(tx, _, _, _)| tx.hash())
-                        .collect();
+                    let applied_transaction_hashes: Vec<_> =
+                        applied_transactions.iter().map(|tx| tx.hash()).collect();
 
                     let proposal = Block::from_qc(
                         self.secret_key,
@@ -539,23 +557,7 @@ impl Consensus {
                         self.get_next_committee()?,
                     );
 
-                    let applied_transactions: Result<Vec<_>> = applied_transactions
-                        .into_iter()
-                        .map(|(tx, success, contract_address, logs)| {
-                            self.transactions
-                                .insert(tx.hash().0, bincode::serialize(&tx)?)?;
-                            let receipt = TransactionReceipt {
-                                block_hash: proposal.hash(),
-                                success,
-                                contract_address,
-                                logs,
-                            };
-                            self.transaction_receipts
-                                .insert(tx.hash().0, bincode::serialize(&receipt)?)?;
-                            Ok(tx)
-                        })
-                        .collect();
-                    let applied_transactions = applied_transactions?;
+                    self.state.set_to_root(H256(previous_state_root_hash.0));
 
                     self.votes.insert(
                         block_hash,

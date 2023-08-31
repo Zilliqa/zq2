@@ -489,7 +489,6 @@ impl State {
                 acct.nonce = acct.nonce.checked_add(1).unwrap();
                 self.save_account(txn.from_addr, acct)?;
 
-                info!(?hash, "finished executing txn");
                 Ok(TransactionApplyResult {
                     success,
                     contract_address: contract_addr,

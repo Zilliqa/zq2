@@ -86,6 +86,14 @@ mod tests {
     #[test]
     #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
     fn native_token() {
+        test_contract(
+            "native_token.sol",
+            "native_token.sol:NativeToken",
+            native_token::CODE.as_slice(),
+        )
+    }
+
+    fn test_contract(filename: &str, json_key: &str, code: &[u8]) {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut solc = Vec::new();
         let solc_download_path = format!(
@@ -112,7 +120,7 @@ mod tests {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src")
             .join("contracts");
-        let contract = root.join("native_token.sol");
+        let contract = root.join(filename);
         let vendor = root
             .parent()
             .unwrap()
@@ -138,11 +146,11 @@ mod tests {
         eprintln!("{}", std::str::from_utf8(&output.stderr).unwrap());
         let combined_json: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-        let bin = combined_json["contracts"]["native_token.sol:NativeToken"]["bin-runtime"]
+        let bin = combined_json["contracts"][&json_key]["bin-runtime"]
             .as_str()
             .unwrap();
-        let code = hex::decode(bin).unwrap();
+        let expected_code = hex::decode(bin).unwrap();
 
-        assert_eq!(native_token::CODE.as_slice(), code);
+        assert_eq!(code, expected_code);
     }
 }
