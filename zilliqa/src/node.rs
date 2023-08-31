@@ -82,7 +82,7 @@ pub struct Node {
     peer_id: PeerId,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<()>,
-    pub consensus: Consensus,
+    consensus: Consensus,
 }
 
 impl Node {
@@ -164,14 +164,6 @@ impl Node {
     }
 
     pub fn handle_timeout(&mut self) -> Result<()> {
-        if self.consensus.blockchain_active() {
-            return Ok(());
-        }
-
-        let (leader, new_view) = self.consensus.timeout()?;
-
-        self.send_message(leader, Message::NewView(Box::new(new_view)))?;
-
         let (leader, new_view) = self.consensus.timeout()?;
         self.message_sender
             .send_external_message(leader, ExternalMessage::NewView(Box::new(new_view)))?;

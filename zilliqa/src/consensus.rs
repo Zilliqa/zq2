@@ -7,9 +7,6 @@ use primitive_types::H256;
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::{collections::BTreeMap, error::Error, fmt::Display};
-use tokio::sync::mpsc::UnboundedSender;
-use crate::message::Message;
-
 use tracing::*;
 
 use crate::message::Committee;
@@ -231,37 +228,11 @@ impl Consensus {
         self.view.saturating_sub(1)
     }
 
-    pub fn blockchain_active(&self) -> bool {
-        self.view > 0
-    }
-
-    pub fn committee(&self) -> Result<Committee> {
+    fn committee(&self) -> Result<Committee> {
         let block = self
             .get_block_by_view(self.get_chain_tip())?
             .ok_or_else(|| anyhow!("missing block"))?;
         Ok(block.committee)
-    }
-
-    pub fn generate_vote_block(&mut self) -> Result<Option<(Option<PeerId>, Message)>> {
-        if self.view == 1 {
-            let genesis = self
-                .get_block_by_view(0)?
-                .ok_or_else(|| anyhow!("missing block"))?;
-            // If we're in the genesis committee, vote again.
-            if genesis
-                .committee
-                .iter()
-                .any(|v| v.peer_id == self.peer_id())
-            {
-                trace!("voting for genesis block, we are {:?}", self.peer_id());
-                let leader = self.get_leader(self.view)?;
-                let vote = self.vote_from_block(&genesis);
-                return Ok(Some((Some(leader.peer_id), Message::Vote(vote))));
-            }
-        } else {
-            debug!("not voting for genesis block - view is {}", self.view);
-        }
-        Ok(None)
     }
 
     pub fn add_peer(
@@ -381,6 +352,7 @@ impl Consensus {
         let block_state_root = block.state_root_hash();
 
         // If the proposed block is safe, vote for it and advance to the next round.
+        trace!("checking whether block is safe");
         if self.check_safe_block(&block)? {
             trace!("block is safe");
 

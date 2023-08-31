@@ -10,17 +10,7 @@ use crate::{api, cfg::NodeConfig, crypto::SecretKey, node, p2p_node::OutboundMes
 
 use anyhow::{anyhow, Result};
 use http::{header, Method};
-use itertools::Itertools;
-use libp2p::{
-    core::upgrade,
-    futures::StreamExt,
-    gossipsub::{self, IdentTopic, MessageAuthenticity},
-    identify, mdns,
-    multiaddr::{Multiaddr, Protocol},
-    noise,
-    swarm::{dial_opts::DialOpts, NetworkBehaviour, SwarmBuilder, SwarmEvent},
-    tcp, yamux, PeerId, Transport,
-};
+use libp2p::{futures::StreamExt, PeerId};
 
 use crate::message::Message;
 use node::Node;
@@ -127,12 +117,6 @@ impl NodeLauncher {
                         self.outbound_message_sender.send((None, self.config.eth_chain_id, Message::External(ExternalMessage::JoinCommittee(self.secret_key.node_public_key())))).unwrap();
                         joined = true;
                     } else {
-                        let vote_bump = self.node.lock().unwrap().consensus.generate_vote_block();
-
-                        if let Ok(Some(vote_x)) = vote_bump {
-                            self.message_sender().send((None, vote_x.1)).unwrap();
-                        }
-
                         self.node.lock().unwrap().handle_timeout().unwrap();
                     }
                     sleep.as_mut().reset(Instant::now() + self.consensus_timeout);
@@ -146,10 +130,3 @@ impl NodeLauncher {
         }
     }
 }
-
-//// If we don't have any peers, push it back into the reciever since it is
-//// bound to fail.
-//if swarm.behaviour().gossipsub.all_peers().collect_vec().is_empty() {
-//    let _ = self.message_sender.send((dest, message));
-//    continue;
-//}
