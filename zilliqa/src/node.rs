@@ -196,7 +196,7 @@ impl Node {
     }
 
     pub fn get_gas_price(&self) -> u64 {
-        self.consensus.state().get_gas_price().unwrap().into()
+        self.consensus.state().get_gas_price().unwrap()
     }
 
     pub fn estimate_gas(

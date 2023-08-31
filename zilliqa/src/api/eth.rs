@@ -130,9 +130,9 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.from,
         call_params.to,
         call_params.data.clone(),
-        call_params.gas.clone(),
-        call_params.gasPrice.clone(),
-        call_params.value.clone(),
+        call_params.gas,
+        call_params.gasPrice,
+        call_params.value,
     )?;
 
     trace!("Performed eth estimate gas.  ret: {:?}", return_value);

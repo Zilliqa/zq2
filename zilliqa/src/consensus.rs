@@ -258,7 +258,7 @@ impl Consensus {
         } else {
             debug!("not voting for genesis block - view is {}", self.view);
         }
-        return Ok(None);
+        Ok(None)
     }
 
     pub fn add_peer(

@@ -151,13 +151,13 @@ impl State {
 
         let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];
         let native_balance = self.get_native_balance(from_addr, false).unwrap();
-        let target_balance = self.get_native_balance(to.into(), false).unwrap();
+        let target_balance = self.get_native_balance(to, false).unwrap();
 
         continuation_stack.push(EvmProto::EvmCallArgs {
             address: to.0,
             code,
             data,
-            apparent_value: amount.into(),
+            apparent_value: amount,
             gas_limit,
             caller: caller.0,
             gas_scaling_factor: 1,
@@ -206,7 +206,7 @@ impl State {
             continuation_stack.push(push_transfer(
                 from_addr,
                 to,
-                amount.into(),
+                amount,
                 continuations.clone(),
             ));
         }
@@ -384,7 +384,7 @@ impl State {
                 from_addr,
                 Address::COLLECTED_FEES,
                 gas_deduction.into(),
-                continuations.clone(),
+                continuations,
             ));
             let call_args = continuation_stack.pop().unwrap();
 
@@ -398,7 +398,7 @@ impl State {
             }
 
             backend.origin = call_args.caller;
-            let mut gas_result = run_evm_impl_direct(call_args.clone(), &backend);
+            let mut gas_result = run_evm_impl_direct(call_args, &backend);
 
             if print_enabled {
                 info!(
@@ -820,7 +820,7 @@ pub fn push_transfer(
         apparent_value: Default::default(),
         gas_limit: u64::MAX,
         tx_trace: Default::default(),
-        continuations: continuations,
+        continuations,
         enable_cps: true,
         node_continuation: None,
         evm_context: Default::default(),

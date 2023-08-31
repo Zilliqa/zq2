@@ -62,7 +62,7 @@ impl<'a> EvmBackend<'a> {
             Some((
                 Account {
                     nonce: 0,
-                    code: code,
+                    code,
                     storage_root: None,
                 },
                 HashMap::new(),
