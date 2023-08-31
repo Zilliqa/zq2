@@ -1,16 +1,17 @@
 //! Manages execution of transactions on state.
 
 use std::{collections::HashSet, default, sync::{Arc, Mutex}};
+use std::arch::global_asm;
 
 use crate::evm_backend::EvmBackend;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use ethabi::Token;
 use evm_ds::{
     evm::{backend::Backend, tracing::EventListener},
     evm_server_run::{calculate_contract_address, calculate_contract_address_scheme, run_evm_impl_direct},
     protos::evm_proto as EvmProto,
 };
-use primitive_types::{H160, U256};
+use primitive_types::{H160, H256, U256};
 use tracing::*;
 
 use crate::state::SignedTransaction;
@@ -109,25 +110,26 @@ impl State {
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
-        _gas_price: u128,
+        gas_price: u64,
         gas_limit: u64,
-        amount: u128,
+        amount: U256,
         payload: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
+        estimate: bool,
         print_enabled: bool,
-    ) -> Result<(EvmProto::EvmResult, Option<H160>)> {
+    ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
         let caller = from_addr;
         //let gas_scaling_factor = 1;
-        let estimate = false;
+        //let estimate = false;
         let is_static = false;
         let context = "".to_string();
         let continuations: Arc<Mutex<EvmProto::Continuations>> = Default::default();
         let account = self
             .get_account(to_addr.unwrap_or(Address::ZERO))
             .unwrap_or_default();
-        let mut to = to_addr.unwrap_or(Address::ZERO).0;
-        let mut created_contract_addr: Option<H160> = None;
+        let mut to = to_addr.unwrap_or(Address::ZERO);
+        let mut created_contract_addr: Option<Address> = None;
 
         let mut code: Vec<u8> = account.code;
         let mut data: Vec<u8> = payload;
@@ -138,7 +140,7 @@ impl State {
         if to_addr.is_none() {
             code = data;
             data = vec![];
-            to = calculate_contract_address(from_addr.0, &backend);
+            to = Address(calculate_contract_address(from_addr.0, &backend));
             created_contract_addr = Some(to);
             debug!("Calculated contract address for creation: {}", to);
         }
@@ -148,7 +150,7 @@ impl State {
         let target_balance = self.get_native_balance(to.into(), false).unwrap();
 
         continuation_stack.push(EvmProto::EvmCallArgs {
-            address: to,
+            address: to.0,
             code,
             data,
             apparent_value: amount.into(),
@@ -166,21 +168,28 @@ impl State {
             tx_trace: "".to_string(),
         });
         let mut result;
+        let mut run_succeeded = false;
+
+        // For gas, we need to check that the caller has enough balance to pay for the gas and the
+        // transfer (gas price). After execution, we can then deduct the gas used from the caller's balance.
+        let gas_cost_max: U256 = (gas_price + gas_limit).into();
+        let upfront_reserve = if estimate {amount} else {gas_cost_max + amount};
 
         // Check the sender has enough balance and deduct it before any other operations happen, sending
         // it to the destination address or contract creation address
-        if (amount > 0 && native_balance >= amount.into()) {
+        if gas_price > 0 && native_balance <= upfront_reserve {
+            let error_str = format!("Transaction attempted to use more funds and gas than it actually had! Amount: {}, Balance: {}, gas_price: {}", upfront_reserve, native_balance, gas_price);
+            warn!(error_str);
+            return Err(anyhow!(error_str));
+        }
+
+        if (amount > U256::zero()) {
             if print_enabled {
                 debug!("Populating account {}->{} with balance: {}", from_addr, to, amount);
                 debug!("Prior balances:  {} and {} ", native_balance, target_balance);
             }
 
-            continuation_stack.push(push_transfer(from_addr.0, to, amount.into(), continuations.clone()));
-        } else if (amount > 0){
-            if print_enabled {
-                info!("Transaction attempted to transfer more value than it actually had! Amount: {}, Balance: {}", amount, native_balance);
-            }
-            //return EvmProto::EvmResult(exit_reason: EvmProto::ExitReasonCps::Error(OutOfFund) , ..default::Default);
+            continuation_stack.push(push_transfer(from_addr, to, amount.into(), continuations.clone()));
         }
 
         if print_enabled {
@@ -205,6 +214,7 @@ impl State {
 
             // Apply the results to the backend so they can be used in the next continuation
             backend.apply_update(result.take_apply());
+            run_succeeded = result.succeeded();
 
             if result.has_trap() {
                 let mut cont =
@@ -255,44 +265,20 @@ impl State {
                         call_args.node_continuation = Some(cont);
 
                         let call_data_next = call.call_data;
-                        let call_addr: H160 = call.callee_address;
-                        let caller: H160 = call.context.caller;
+                        let call_addr: Address = call.callee_address.into();
+                        let caller: Address = call.context.caller.into();
                         let value: U256 = if let Some(transfer) = call.transfer {
                             transfer.value
                         } else {
                             U256::zero()
                         };
 
-                        //let call_args_shim: Option<EvmProto::EvmCallArgs> = if !value.is_zero() {
-                        //
-                        //    trace!("Call trap has value! Inserting shim to transfer value to callee");
-                        //
-                        //    let balance_data = contracts::native_token::SET_BALANCE
-                        //        .encode_input(&[Token::Address(call_addr), Token::Uint(value)])
-                        //        .unwrap();
-
-                        //    Some(EvmProto::EvmCallArgs {
-                        //        caller: Address::ZERO.0,
-                        //        address: Address::NATIVE_TOKEN.0,
-                        //        code: contracts::native_token::CODE.clone(),
-                        //        data: balance_data,
-                        //        gas_limit: u64::MAX,
-                        //        tx_trace: Default::default(),
-                        //        continuations: continuations.clone(),
-                        //        node_continuation: None,
-                        //        evm_context: Default::default(),
-                        //        ..call_args
-                        //    })
-                        //} else {
-                        //    None
-                        //};
-
                         // Fetch the code from the backend
-                        let code_next = backend.code(call_addr);
+                        let code_next = backend.code(call_addr.0);
 
                         // Set up the next continuation, adjust the relevant parameters
                         let call_args_next = EvmProto::EvmCallArgs {
-                            address: call_addr,
+                            address: call_addr.0,
                             code: code_next,
                             data: call_data_next,
                             apparent_value: value,
@@ -346,14 +332,48 @@ impl State {
                         }
                     }
                 }
-
-                // Handle suicide
-                //if result.exit_reason
             }
 
             if continuation_stack.is_empty() {
                 break;
             }
+        }
+
+        // Finally, we want to deduct the gas used by the caller and send it to the miner
+        // For now we send it to origin and assume we will handle rewards later
+        // In estimation mode, we do not attempt to deduct the gas (so we should use this mode for
+        // system calls)
+        if !estimate && run_succeeded
+        {
+            if result.remaining_gas > gas_limit {
+                panic!("More gas remains than we specified at the beginning of execution!");
+            }
+
+            let gas_deduction = gas_limit - result.remaining_gas + gas_price;
+
+            continuation_stack.push(push_transfer(from_addr, Address::COLLECTED_FEES, gas_deduction.into(), continuations.clone()));
+            let mut call_args = continuation_stack.pop().unwrap();
+
+            if print_enabled {
+                debug!("Applying gas deduction of {}", gas_deduction);
+                debug!("our balance is: {}", self.get_native_balance(from_addr, false).unwrap());
+                debug!("our caller is: {}", call_args.caller);
+            }
+
+            backend.origin = call_args.caller;
+            let mut gas_result = run_evm_impl_direct(call_args.clone(), &backend);
+
+            if print_enabled {
+                info!("Evm gas invocation complete - applying result {:?}", gas_result);
+            }
+
+            if !gas_result.succeeded() {
+                let fail_string = format!("Gas deduction FAILED with error: {:?}", gas_result.exit_reason);
+                warn!(fail_string);
+                return Err(anyhow!(fail_string));
+            }
+
+            backend.apply_update(gas_result.take_apply());
         }
 
         if let Some(created_contract_addr) = created_contract_addr {
@@ -364,6 +384,7 @@ impl State {
         let mut backend_result = backend.get_result();
         backend_result.exit_reason = result.exit_reason;
         backend_result.return_value = result.return_value;
+        backend_result.remaining_gas = result.remaining_gas;
         backend_result.logs = result.logs;
 
         if print_enabled {
@@ -383,15 +404,23 @@ impl State {
         let hash = txn.hash();
         info!(?hash, "executing txn");
 
+        let gas_price = self.get_gas_price()?;
+
+        if txn.transaction.gas_limit < gas_price {
+            let error_str = format!("Transaction gas limit is less than the gas price! Tx limit: {}, Gas price: {}", txn.transaction.gas_limit, gas_price);
+            warn!(error_str);
+        }
+
         let result = self.apply_transaction_inner(
             txn.from_addr,
             txn.transaction.to_addr,
             txn.transaction.gas_price,
-            100000000000000, // Workaround until gas is implemented.
-            txn.transaction.amount,
+            txn.transaction.gas_limit,
+            txn.transaction.amount.into(),
             txn.transaction.payload,
             chain_id,
             current_block,
+            false,
             true,
         );
 
@@ -419,7 +448,7 @@ impl State {
                 info!(?hash, "finished executing txn");
                 Ok(TransactionApplyResult {
                     success,
-                    contract_address: contract_addr.map(Address),
+                    contract_address: contract_addr,
                     //contract_address: contract_addr,
                     logs: result.logs,
                 })
@@ -513,24 +542,25 @@ impl State {
         Ok(balance)
     }
 
-    pub fn set_native_balance(&mut self, address: Address, amount: U256) -> Result<()> {
-        let data = contracts::native_token::SET_BALANCE
-            .encode_input(&[Token::Address(address.0), Token::Uint(amount)])
+    pub fn set_gas_price(&mut self, price: U256) -> Result<()> {
+        let data = contracts::gas_price::SET_GAS
+            .encode_input(&[Token::Uint(price)])
             .unwrap();
 
-        debug!("****** Setting native balance of {} to: {}", address, amount);
+        debug!("****** setting gas price to: {}", price);
 
         let result = self.apply_transaction_inner(
             Address::ZERO,
-            Some(Address::NATIVE_TOKEN),
-            u128::MAX,
+            Some(Address::GAS_PRICE),
+            u64::MIN,
             u64::MAX,
-            0,
+            U256::zero(),
             data,
             // The chain ID and current block are not accessed when the native balance is updated, so we just pass in
             // some dummy values.
             0,
             BlockHeader::default(),
+            true,
             false,
         );
 
@@ -541,12 +571,140 @@ impl State {
 
                 if success {
                     self.apply_delta(result.apply)?;
+                } else {
+                    panic!("Failed to set gas price with error: {:?}", result.exit_reason);
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                panic!("Failed to set gas with error: {:?}", e);
+            }
+        }
+    }
+
+    pub fn get_gas_price(&self) -> Result<u64> {
+
+        let data = contracts::gas_price::GET_GAS
+            .encode_input(&[])
+            .unwrap();
+
+        let gas_price = self.call_contract(
+            Address::ZERO,
+            Some(Address::GAS_PRICE),
+            data,
+            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // dummy values.
+            0,
+            BlockHeader::default(),
+            false,
+        )?;
+        let gas_price = U256::from_big_endian(&gas_price);
+
+        trace!("Queried GAS! is: {}", gas_price);
+
+        Ok(gas_price.as_u64())
+    }
+
+    pub fn set_native_balance(&mut self, address: Address, amount: U256) -> Result<()> {
+        let data = contracts::native_token::SET_BALANCE
+            .encode_input(&[Token::Address(address.0), Token::Uint(amount)])
+            .unwrap();
+
+        debug!("****** Setting native balance of {} to: {}", address, amount);
+
+        let result = self.apply_transaction_inner(
+            Address::ZERO,
+            Some(Address::NATIVE_TOKEN),
+            u64::MIN,
+            u64::MAX,
+            U256::zero(),
+            data,
+            // The chain ID and current block are not accessed when the native balance is updated, so we just pass in
+            // some dummy values.
+            0,
+            BlockHeader::default(),
+            true,
+            false,
+        );
+
+        match result {
+            Ok((result, _)) => {
+                // Apply the state changes only if success
+                let success = result.succeeded();
+
+                if success {
+                    self.apply_delta(result.apply)?;
+                } else {
+                    panic!("Failed to set balance with error: {:?}", result.exit_reason);
                 }
 
                 Ok(())
             }
             Err(e) => {
                 panic!("Failed to set balance with error: {:?}", e);
+            }
+        }
+    }
+
+    pub fn estimate_gas(
+        &self,
+        from_addr: Address,
+        to_addr: Option<Address>,
+        data: Vec<u8>,
+        chain_id: u64,
+        current_block: BlockHeader,
+        print_enabled: bool,
+        gas: u64,
+        _gasPrice: u64,
+        value: U256,
+    ) -> Result<u64> {
+
+        if print_enabled {
+            debug!("estimating gas from: {:?} to: {:?}", from_addr, to_addr);
+        }
+
+        let gasPrice = self.get_gas_price()?;
+
+        let result = self.apply_transaction_inner(
+            from_addr,
+            to_addr,
+            gasPrice,
+            gas,
+            value,
+            data,
+            chain_id,
+            current_block,
+            true,
+            print_enabled,
+        );
+
+        if print_enabled {
+            debug!("finished contact gas estimation");
+        }
+
+        match result {
+            Ok((result, _)) => {
+                if !result.succeeded() {
+                    let error_str = format!("Estimate gas failed with error: {:?}", result.exit_reason);
+                    warn!(error_str);
+                    return Err(anyhow!(error_str));
+                }
+
+                if result.remaining_gas > gas {
+                    let error_str = format!("More gas remaining than was specified in the estimate! Remaining gas: {} Provided: {}", result.remaining_gas, gas);
+                    warn!(error_str);
+                    return Err(anyhow!(error_str));
+                }
+
+                info!("gas estimation: {} {} {} ", gas, result.remaining_gas, gasPrice);
+
+                Ok(gas - result.remaining_gas + gasPrice)
+            },
+            Err(e) => {
+                let error_str = format!("Estimate gas failed with error: {:?}", e);
+                warn!(error_str);
+                Err(anyhow!(error_str))
             }
         }
     }
@@ -570,10 +728,11 @@ impl State {
             to_addr,
             0,
             u64::MAX,
-            0,
+            U256::zero(),
             data,
             chain_id,
             current_block,
+            true,
             print_enabled,
         );
 
@@ -587,14 +746,14 @@ impl State {
 
 // Convenience function to create a balance transfer for the call stack. Note we do NOT use the
 // setBalance function as this should only be used at genesis
-pub fn push_transfer(from: H160, to: H160, amount: U256, continuations: Arc<Mutex<EvmProto::Continuations>>) -> EvmProto::EvmCallArgs {
+pub fn push_transfer(from: Address, to: Address, amount: U256, continuations: Arc<Mutex<EvmProto::Continuations>>) -> EvmProto::EvmCallArgs {
 
     let balance_data = contracts::native_token::TRANSFER
-        .encode_input(&[Token::Address(to), Token::Uint(amount)])
+        .encode_input(&[Token::Address(to.0), Token::Uint(amount)])
         .unwrap();
 
     EvmProto::EvmCallArgs {
-        caller: from,
+        caller: from.0,
         gas_scaling_factor: 1,
         scaling_factor: None,
         estimate: false,

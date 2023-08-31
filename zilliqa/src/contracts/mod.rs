@@ -38,6 +38,30 @@ pub mod native_token {
     pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
 }
 
+// Generated with `solc gas_price.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin > gas_price.json`.
+pub mod gas_price {
+    use ethabi::Function;
+    use once_cell::sync::Lazy;
+
+    use super::{CombinedJson, Contract};
+
+    const COMBINED_JSON: &str = include_str!("gas_price.json");
+    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
+            .unwrap()
+            .contracts
+            .remove("gas_price.sol:GasPrice")
+            .unwrap()
+    });
+    pub static SET_GAS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("setGas").unwrap().clone());
+
+    pub static GET_GAS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("value").unwrap().clone());
+    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
+}
+
+
 /// These tests assert the contract binaries in this module are correct and reproducible, by recompiling the source
 /// files and checking the result is the same. This means we can keep the compiled source code in-tree, while also
 /// asserting in CI that the compiled source code is genuine. The tests only run when the `test_contract_bytecode`

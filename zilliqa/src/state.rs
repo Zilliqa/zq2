@@ -18,6 +18,7 @@ use anyhow::{anyhow, Result};
 use evm_ds::protos::evm_proto::Log;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::{contracts, crypto, db::SledDb};
 
@@ -88,6 +89,13 @@ impl State {
 
         state
             .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
+
+        state
+            .deploy_fixed_contract(Address::GAS_PRICE, contracts::gas_price::CODE.clone())?;
+
+        state.set_gas_price(1000000.into());
+
+        info!("GAs price is : {:?}", state.get_gas_price());
 
         for (address, balance) in GENESIS.iter() {
             state.set_native_balance(*address, *balance)?;
@@ -261,9 +269,17 @@ impl From<H160> for Address {
 
 impl Address {
     pub const ZERO: Address = Address(H160::zero());
+    pub fn zero() -> Address {
+        Address(H160::zero())
+    }
 
     /// Address of the native token ERC-20 contract.
     pub const NATIVE_TOKEN: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"));
+
+    /// Address of the gas contract
+    pub const GAS_PRICE: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0GAS"));
+
+    pub const COLLECTED_FEES: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0FEE"));
 
     pub fn is_balance_transfer(to: Address) -> bool {
         to == Address::NATIVE_TOKEN
@@ -430,7 +446,7 @@ pub enum SigningInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Transaction {
     pub nonce: u64,
-    pub gas_price: u128,
+    pub gas_price: u64,
     pub gas_limit: u64,
     pub to_addr: Option<Address>,
     pub amount: u128,

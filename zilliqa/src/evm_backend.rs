@@ -49,11 +49,11 @@ impl<'a> EvmBackend<'a> {
 
     pub fn create_account(
         &mut self,
-        address: H160,
+        address: Address,
         code: Vec<u8>,
     ) {
         // Insert empty slot into cache if it does not already exist, else just put the code there
-        if let Some(item) = self.account_storage_cached.get_mut(&Address(address)) {
+        if let Some(item) = self.account_storage_cached.get_mut(&address) {
             if let Some((acct, _)) = item {
                 acct.code = code;
                 return;
@@ -61,7 +61,7 @@ impl<'a> EvmBackend<'a> {
         }
 
         // Fall through
-        self.account_storage_cached.insert(Address(address), Some((Account{nonce: 0, code: code, storage_root: None}, HashMap::new())));
+        self.account_storage_cached.insert(address, Some((Account{nonce: 0, code: code, storage_root: None}, HashMap::new())));
     }
 
     pub fn apply_update(

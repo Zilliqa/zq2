@@ -219,6 +219,9 @@ pub fn run_evm_impl_direct<B: Backend>(
     args: EvmProto::EvmCallArgs,
     backend: &B,
 ) -> EvmProto::EvmResult {
+
+    let estimate_override = false;
+
     trace!(
         origin = ?backend.origin(),
         address = ?args.address,
@@ -235,7 +238,7 @@ pub fn run_evm_impl_direct<B: Backend>(
     let code = Rc::new(args.code);
     let data = Rc::new(args.data);
     // TODO: handle call_l64_after_gas problem: https://zilliqa-jira.atlassian.net/browse/ZIL-5012
-    let config = get_config(args.estimate, false);
+    let config = get_config(estimate_override, false);
 
     let context = evm::Context {
         address: args.address,

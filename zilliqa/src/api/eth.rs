@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
+use tracing::info;
 use tracing::log::trace;
 
 use crate::{
@@ -17,7 +18,7 @@ use crate::{
 
 use super::{
     to_hex::ToHex,
-    types::{CallParams, EthBlock, EthTransaction, EthTransactionReceipt, HashOrTransaction, Log},
+    types::{CallParams, EstimateGasParams, EthBlock, EthTransaction, EthTransactionReceipt, HashOrTransaction, Log},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -33,7 +34,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_getCode", get_code),
             ("eth_getStorageAt", get_storage_at),
             ("eth_getTransactionCount", get_transaction_count),
-            ("eth_gasPrice", gas_price),
+            ("eth_gasPrice", get_gas_price),
             ("eth_getBlockByNumber", get_block_by_number),
             ("eth_getBlockByHash", get_block_by_hash),
             (
@@ -77,6 +78,8 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let call_params: CallParams = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
+    info!("Performing eth call... Args: {:?} ie: {:?} {:?} {:?} ", serde_json::to_string(&call_params), call_params.from, call_params.to, call_params.data);
+
     let return_value = node.lock().unwrap().call_contract(
         block_number,
         Address(call_params.from),
@@ -93,9 +96,32 @@ fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(node.lock().unwrap().config.eth_chain_id.to_hex())
 }
 
-fn estimate_gas(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
-    // TODO: #69
-    Ok("0x100")
+fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    info!("estimate_gas has been called!!!");
+
+    let mut params = params.sequence();
+    let call_params: EstimateGasParams = params.next()?;
+    let block_number: BlockNumber = params.next().unwrap_or(BlockNumber::Latest);
+        //params.next()?;
+
+    //pub gas: Option<H256>,
+    //pub gasPrice: Option<H256>,
+    //pub value: Option<H256>,
+    //// Set up some defaults
+
+    let return_value = node.lock().unwrap().estimate_gas(
+        block_number,
+        call_params.from,
+        call_params.to,
+        call_params.data.clone(),
+        call_params.gas.clone(),
+        call_params.gasPrice.clone(),
+        call_params.value.clone(),
+    )?;
+
+    trace!("Performed eth estimate gas.  ret: {:?}", return_value);
+
+    Ok(return_value.to_hex())
 }
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -154,9 +180,9 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
         .to_hex())
 }
 
-fn gas_price(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
+fn get_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     // TODO: #71
-    Ok("0x454b7b38e70")
+    Ok(node.lock().unwrap().get_gas_price().to_hex())
 }
 
 fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
@@ -252,12 +278,14 @@ pub(super) fn get_transaction_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
 ) -> Result<Option<EthTransaction>> {
-    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else {  return Ok(None); };
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else {  println!("XXXXXXXXXX tx not found somehow!!!!!! {:?}", hash); return Ok(None); };
 
-    // The block can either be null or some based on whether the tx has executed yet
+    // The block can either be null or some based on whether the tx exists
     let block = if let Some(receipt) = node.get_transaction_receipt(hash)? {
         node.get_block_by_hash(receipt.block_hash)?
     } else {
+        // Even if it has not been mined, the tx may still be in the mempool and should return
+        // a correct tx, with pending/null fields
         None
     };
 
@@ -287,6 +315,8 @@ pub(super) fn get_transaction_inner(
         r,
         s,
     };
+
+    info!("RETURNING TRANSACTION: {:?}", transaction);
 
     Ok(Some(transaction))
 }

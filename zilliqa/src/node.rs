@@ -138,6 +138,9 @@ impl Node {
 
         txn.verify()?;
 
+        // There is a race on querying txn hash, so avoid it by immediately putting it into the pool
+        self.consensus.new_transaction(txn.clone())?;
+
         // Make sure TX hasn't been seen before
         if !self.consensus.seen_tx_already(&hash)? {
             self.broadcast_message(Message::NewTransaction(txn))?;
@@ -189,6 +192,43 @@ impl Node {
             self.config.eth_chain_id,
             block.header,
             true,
+        )
+    }
+
+    pub fn get_gas_price(&self) -> u64 {
+        self.consensus.state().get_gas_price().unwrap().into()
+    }
+
+    pub fn estimate_gas(
+        &self,
+        block_number: BlockNumber,
+        from_addr: Address,
+        to_addr: Option<Address>,
+        data: Vec<u8>,
+        gas: u64,
+        gasPrice: u64,
+        value: U256
+    ) -> Result<u64> {
+        // TODO: optimise this to get header directly once persistance is merged
+        // (which will provide a header index)
+        let block = self
+            .get_block_by_view(self.get_view(block_number))?
+            .ok_or_else(|| anyhow!("block not found"))?;
+        let state = self
+            .consensus
+            .state()
+            .at_root(H256(block.state_root_hash().0));
+
+        state.estimate_gas(
+            from_addr,
+            to_addr,
+            data,
+            self.config.eth_chain_id,
+            block.header,
+            true,
+            gas,
+            gasPrice,
+            value,
         )
     }
 

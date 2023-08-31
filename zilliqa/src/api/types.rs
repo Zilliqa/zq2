@@ -1,4 +1,5 @@
-use primitive_types::{H160, H256};
+use primitive_types::{H160, H256, U256};
+use crate::state::Address;
 use serde::{
     de::{self, Unexpected},
     ser::SerializeSeq,
@@ -228,7 +229,7 @@ pub struct OtterscanTransactions {
 }
 
 /// A transaction object, returned by the Ethereum API.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct EthTransaction {
     #[serde(serialize_with = "option_hex")]
@@ -240,7 +241,7 @@ pub struct EthTransaction {
     #[serde(serialize_with = "hex")]
     pub gas: u64,
     #[serde(serialize_with = "hex")]
-    pub gas_price: u128,
+    pub gas_price: u64,
     #[serde(serialize_with = "hex")]
     pub hash: H256,
     #[serde(serialize_with = "hex")]
@@ -383,6 +384,30 @@ pub struct CallParams {
     pub data: Vec<u8>,
 }
 
+fn default_gas() -> u64 {
+    1000000
+}
+
+fn default_gas_price() -> u64 {
+    1000
+}
+
+/// Parameters passed to `estimate_gas`.
+#[derive(Deserialize, Serialize)]
+pub struct EstimateGasParams {
+    #[serde(default = "Address::zero")]
+    pub from: Address,
+    pub to: Option<Address>,
+    #[serde(default = "default_gas", deserialize_with = "deserialize_hex_str")]
+    pub gas: u64,
+    #[serde(default = "default_gas_price", deserialize_with = "deserialize_hex_str")]
+    pub gasPrice: u64,
+    #[serde(default)]
+    pub value: U256,
+    #[serde(default, deserialize_with = "deserialize_data")]
+    pub data: Vec<u8>,
+}
+
 fn deserialize_data<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
     let s = String::deserialize(deserializer)?;
 
@@ -391,6 +416,16 @@ fn deserialize_data<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8
     })?;
 
     hex::decode(s).map_err(de::Error::custom)
+}
+
+fn deserialize_hex_str<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    let s = String::deserialize(deserializer)?;
+
+    let s = s.strip_prefix("0x").ok_or_else(|| {
+        de::Error::invalid_value(Unexpected::Str(&s), &"a string prefixed with \"0x\"")
+    })?;
+
+    Ok(u64::from_str_radix(s, 16).unwrap_or_default())
 }
 
 #[cfg(test)]
