@@ -17,7 +17,7 @@ use crate::{
     state::{Account, Address, State},
     time::SystemTime,
 };
-
+#[allow(clippy::type_complexity)]
 pub struct EvmBackend<'a> {
     pub state: &'a State,
     pub gas_price: U256,
@@ -49,11 +49,13 @@ impl<'a> EvmBackend<'a> {
 
     pub fn create_account(&mut self, address: Address, code: Vec<u8>) {
         // Insert empty slot into cache if it does not already exist, else just put the code there
-        if let Some(item) = self.account_storage_cached.get_mut(&address) {
-            if let Some((acct, _)) = item {
-                acct.code = code;
-                return;
-            }
+        if let Some(Some((acct, _))) = self.account_storage_cached.get_mut(&address) {
+            acct.code = code;
+            return;
+            //if let Some((acct, _)) = item {
+            //    acct.code = code;
+            //    return;
+            //}
         }
 
         // Fall through
@@ -224,23 +226,23 @@ impl<'a> Backend for EvmBackend<'a> {
 
     fn basic(&self, address: H160) -> Basic {
         // first check if the account is in the cache
-        if let Some(item) = self.account_storage_cached.get(&Address(address)) {
-            if let Some((acct, _)) = item {
-                let nonce = acct.nonce;
-                let basic = Basic {
-                    balance: self
-                        .state
-                        .get_native_balance(Address(address), false)
-                        .unwrap(),
-                    nonce: nonce.into(),
-                };
-                trace!(
-                    "EVM request: (cached) Requesting basic info for {:?} - answ: {:?}",
-                    address,
-                    basic
-                );
-                return basic;
-            }
+        if let Some(Some((acct, _))) = self.account_storage_cached.get(&Address(address)) {
+            //if let Some((acct, _)) = item {
+            let nonce = acct.nonce;
+            let basic = Basic {
+                balance: self
+                    .state
+                    .get_native_balance(Address(address), false)
+                    .unwrap(),
+                nonce: nonce.into(),
+            };
+            trace!(
+                "EVM request: (cached) Requesting basic info for {:?} - answ: {:?}",
+                address,
+                basic
+            );
+            return basic;
+            //}
         }
 
         let nonce = self.state.must_get_account(Address(address)).nonce;
@@ -261,16 +263,16 @@ impl<'a> Backend for EvmBackend<'a> {
 
     fn code(&self, address: H160) -> Vec<u8> {
         // first check if the account is in the cache
-        if let Some(item) = self.account_storage_cached.get(&Address(address)) {
-            if let Some((acct, _)) = item {
-                let code = acct.code.clone();
-                trace!(
-                    "EVM request: (cached) Requesting code for {:?} - answ: {:?}",
-                    address,
-                    code
-                );
-                return code;
-            }
+        if let Some(Some((acct, _))) = self.account_storage_cached.get(&Address(address)) {
+            //if let Some((acct, _)) = item {
+            let code = acct.code.clone();
+            trace!(
+                "EVM request: (cached) Requesting code for {:?} - answ: {:?}",
+                address,
+                code
+            );
+            return code;
+            //}
         }
 
         // Will this mean panic if you try to call address that doesn't exist?
@@ -286,18 +288,18 @@ impl<'a> Backend for EvmBackend<'a> {
 
     fn storage(&self, address: H160, index: H256) -> H256 {
         // first check if the account is in the cache
-        if let Some(item) = self.account_storage_cached.get(&Address(address)) {
-            if let Some((_, stor)) = item {
-                if let Some(value) = stor.get(&index) {
-                    trace!(
-                        "EVM request: (cached) Requesting storage for {:?} at {:?} and is: {:?}",
-                        address,
-                        index,
-                        value
-                    );
-                    return *value;
-                }
+        if let Some(Some((_, stor))) = self.account_storage_cached.get(&Address(address)) {
+            //if let Some((_, stor)) = item {
+            if let Some(value) = stor.get(&index) {
+                trace!(
+                    "EVM request: (cached) Requesting storage for {:?} at {:?} and is: {:?}",
+                    address,
+                    index,
+                    value
+                );
+                return *value;
             }
+            //}
         }
 
         let res = self.state.must_get_account_storage(Address(address), index);

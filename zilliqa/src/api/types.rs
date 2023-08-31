@@ -394,6 +394,7 @@ fn default_gas_price() -> u64 {
 
 /// Parameters passed to `estimate_gas`.
 #[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EstimateGasParams {
     #[serde(default = "Address::zero")]
     pub from: Address,
@@ -404,7 +405,7 @@ pub struct EstimateGasParams {
         default = "default_gas_price",
         deserialize_with = "deserialize_hex_str"
     )]
-    pub gasPrice: u64,
+    pub gas_price: u64,
     #[serde(default)]
     pub value: U256,
     #[serde(default, deserialize_with = "deserialize_data")]

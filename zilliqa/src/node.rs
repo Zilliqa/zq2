@@ -199,6 +199,7 @@ impl Node {
         self.consensus.state().get_gas_price().unwrap()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn estimate_gas(
         &self,
         block_number: BlockNumber,
@@ -206,7 +207,7 @@ impl Node {
         to_addr: Option<Address>,
         data: Vec<u8>,
         gas: u64,
-        gasPrice: u64,
+        gas_price: u64,
         value: U256,
     ) -> Result<u64> {
         // TODO: optimise this to get header directly once persistance is merged
@@ -227,7 +228,7 @@ impl Node {
             block.header,
             true,
             gas,
-            gasPrice,
+            gas_price,
             value,
         )
     }

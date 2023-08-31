@@ -277,7 +277,6 @@ impl NodeLauncher {
                     // If we don't have any peers, push it back into the reciever since it is
                     // bound to fail.
                     if swarm.behaviour().gossipsub.all_peers().collect_vec().is_empty() {
-                        warn!(%message_type, "no peers, pushing message back into queue");
                         let _ = self.message_sender.send((dest, message));
                         continue;
                     }

@@ -131,7 +131,7 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.to,
         call_params.data.clone(),
         call_params.gas,
-        call_params.gasPrice,
+        call_params.gas_price,
         call_params.value,
     )?;
 

@@ -172,7 +172,7 @@ impl State {
             tx_trace: "".to_string(),
         });
         let mut result;
-        let mut run_succeeded = false;
+        let mut run_succeeded;
 
         // For gas, we need to check that the caller has enough balance to pay for the gas and the
         // transfer (gas price). After execution, we can then deduct the gas used from the caller's balance.
@@ -203,12 +203,7 @@ impl State {
                 );
             }
 
-            continuation_stack.push(push_transfer(
-                from_addr,
-                to,
-                amount,
-                continuations.clone(),
-            ));
+            continuation_stack.push(push_transfer(from_addr, to, amount, continuations.clone()));
         }
 
         if print_enabled {
@@ -698,6 +693,7 @@ impl State {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn estimate_gas(
         &self,
         from_addr: Address,
@@ -707,19 +703,19 @@ impl State {
         current_block: BlockHeader,
         print_enabled: bool,
         gas: u64,
-        _gasPrice: u64,
+        _gas_price: u64,
         value: U256,
     ) -> Result<u64> {
         if print_enabled {
             debug!("estimating gas from: {:?} to: {:?}", from_addr, to_addr);
         }
 
-        let gasPrice = self.get_gas_price()?;
+        let gas_price = self.get_gas_price()?;
 
         let result = self.apply_transaction_inner(
             from_addr,
             to_addr,
-            gasPrice,
+            gas_price,
             gas,
             value,
             data,
@@ -750,10 +746,10 @@ impl State {
 
                 info!(
                     "gas estimation: {} {} {} ",
-                    gas, result.remaining_gas, gasPrice
+                    gas, result.remaining_gas, gas_price
                 );
 
-                Ok(gas - result.remaining_gas + gasPrice)
+                Ok(gas - result.remaining_gas + gas_price)
             }
             Err(e) => {
                 let error_str = format!("Estimate gas failed with error: {:?}", e);

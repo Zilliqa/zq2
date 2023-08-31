@@ -92,7 +92,7 @@ impl State {
 
         state.deploy_fixed_contract(Address::GAS_PRICE, contracts::gas_price::CODE.clone())?;
 
-        state.set_gas_price(1000000.into());
+        let _ = state.set_gas_price(1000000.into());
 
         info!("GAs price is : {:?}", state.get_gas_price());
 
