@@ -70,9 +70,18 @@ impl NodeLauncher {
             let server = jsonrpsee::server::ServerBuilder::new()
                 .set_middleware(middleware)
                 .build((Ipv4Addr::UNSPECIFIED, port))
-                .await?;
-            let handle = server.start(rpc_module.clone());
-            tokio::spawn(handle.stopped());
+                .await;
+
+            match server {
+                Ok(server) => {
+                    info!("JSON-RPC server listening on port {}", port);
+                    let handle = server.start(rpc_module.clone());
+                    tokio::spawn(handle.stopped());
+                }
+                Err(e) => {
+                    error!("Failed to start JSON-RPC server: {}", e);
+                }
+            }
         }
 
         Ok(Self {
@@ -113,6 +122,12 @@ impl NodeLauncher {
                 },
                 () = &mut sleep => {
                     trace!("timeout elapsed");
+                    //if swarm.behaviour().gossipsub.all_peers().collect_vec().is_empty() {
+                    //    let _ = self.message_sender.send((dest, message));
+                    //    continue;
+                    //}
+
+
                     if !joined {
                         self.outbound_message_sender.send((None, self.config.eth_chain_id, Message::External(ExternalMessage::JoinCommittee(self.secret_key.node_public_key())))).unwrap();
                         joined = true;

@@ -297,9 +297,15 @@ impl Consensus {
     }
 
     pub fn timeout(&mut self) -> Result<(PeerId, NewView)> {
+        //if !self.blockchain_active() {
+        //    return Err(anyhow!("blockchain not active"));
+        //}
+
         self.view += 1;
 
+        //let leader = self.get_leader(self.view)?.peer_id;
         let leader = self.get_leader(self.view)?.peer_id;
+
         let new_view = NewView::new(
             self.secret_key,
             self.high_qc.clone(),
@@ -664,6 +670,9 @@ impl Consensus {
         }
 
         Ok(None)
+    }
+    pub fn blockchain_active(&self) -> bool {
+        self.view > 0
     }
 
     pub fn new_transaction(&mut self, txn: SignedTransaction) -> Result<()> {
@@ -1058,9 +1067,15 @@ impl Consensus {
         // currently it's a simple round robin but later
         // we will select the leader based on the weights
         // Get the previous block, so we know the committee, then calculate the leader from there.
-        let block = self
-            .get_block_by_view(view - 1)?
-            .ok_or_else(|| anyhow!("missing block"))?;
+        let block = self.get_block_by_view(view - 1)?;
+
+        let block = match block {
+            Some(block) => block,
+            None => self
+                .get_block_by_view(0)?
+                .ok_or_else(|| anyhow!("missing genesis block!"))?,
+        };
+
         Ok(block.committee.leader(view))
     }
 
