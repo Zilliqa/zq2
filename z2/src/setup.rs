@@ -40,9 +40,11 @@ impl Setup {
             write!(
                 config_file,
                 r#"
-                    data_dir = "{DATADIR_PREFIX}{i}"
+                    [[nodes]]
+                    {}data_dir = "{DATADIR_PREFIX}{i}"
                     genesis_committee = [ [ "{first_key}", "{first_peer_id}" ] ]
-                "#
+                "#,
+                if i == 0 { "" } else { "disable_rpc = true\n" }
             )?;
             config_files.push(config_file);
         }
