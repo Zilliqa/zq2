@@ -706,7 +706,7 @@ impl State {
         let result = self.apply_transaction_inner(
             from_addr,
             to_addr,
-            gas_price,
+            0,
             gas,
             value,
             data,
