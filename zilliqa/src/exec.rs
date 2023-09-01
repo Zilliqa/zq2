@@ -354,7 +354,7 @@ impl State {
                         EvmProto::Type::Create => {
                             prior_node_continuation.feedback_data =
                                 Some(EvmProto::FeedbackData::Address(
-                                    *prior_node_continuation.get_createdata(),
+                                    prior_node_continuation.get_address(),
                                 ));
                             prior_node_continuation.succeeded = true;
                             prior_node_continuation.logs = result.logs.clone();
@@ -473,12 +473,6 @@ impl State {
                 let success = result.succeeded();
 
                 if success {
-                    //if let Some(contract_addr) = contract_addr {
-                    //    let mut acct = self.get_account(Address(contract_addr)).unwrap_or_default();
-                    //    acct.code = result.return_value.to_vec();
-                    //    self.save_account(Address(contract_addr), acct)?;
-                    //}
-
                     self.apply_delta(result.apply)?;
                 }
 
@@ -491,7 +485,6 @@ impl State {
                 Ok(TransactionApplyResult {
                     success,
                     contract_address: contract_addr,
-                    //contract_address: contract_addr,
                     logs: result.logs,
                 })
             }

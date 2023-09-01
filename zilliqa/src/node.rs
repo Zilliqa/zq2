@@ -188,13 +188,11 @@ impl Node {
 
         info!(?hash, "seen new txn");
 
-        txn.verify()?;
-
-        // There is a race on querying txn hash, so avoid it by immediately putting it into the pool
-        self.consensus.new_transaction(txn.clone())?;
-
         // Make sure TX hasn't been seen before
         if !self.consensus.seen_tx_already(&hash)? {
+            // There is a race on querying txn hash, so avoid it by immediately putting it into the pool
+            self.consensus.new_transaction(txn.clone())?;
+
             self.message_sender
                 .broadcast_external_message(ExternalMessage::NewTransaction(txn))?;
         }

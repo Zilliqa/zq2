@@ -267,7 +267,6 @@ impl<'a> Backend for EvmBackend<'a> {
             return code;
         }
 
-        // Will this mean panic if you try to call address that doesn't exist?
         let code = self.state.must_get_account(Address(address)).code;
 
         trace!(

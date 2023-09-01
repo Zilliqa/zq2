@@ -133,13 +133,6 @@ impl ContinuationFb {
             _ => panic!("ContinuationFb does not contain call data"),
         }
     }
-
-    pub fn get_createdata(&self) -> &H160 {
-        match &self.feedback_data {
-            Some(FeedbackData::Address(addr)) => addr,
-            _ => panic!("ContinuationFb does not contain call data"),
-        }
-    }
 }
 
 // When a continuation finishes, the feedback data must be correctly set here
