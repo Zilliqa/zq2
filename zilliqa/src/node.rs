@@ -96,7 +96,7 @@ impl Node {
         let message_sender = MessageSender {
             our_shard: config.eth_chain_id,
             our_peer_id: peer_id,
-            outbound_channel: message_sender_channel.clone(),
+            outbound_channel: message_sender_channel,
         };
         let node = Node {
             config: config.clone(),
@@ -188,10 +188,11 @@ impl Node {
 
         info!(?hash, "seen new txn");
 
-        txn.verify()?;
-
         // Make sure TX hasn't been seen before
         if !self.consensus.seen_tx_already(&hash)? {
+            // There is a race on querying txn hash, so avoid it by immediately putting it into the pool
+            self.consensus.new_transaction(txn.clone())?;
+
             self.message_sender
                 .broadcast_external_message(ExternalMessage::NewTransaction(txn))?;
         }
@@ -225,8 +226,6 @@ impl Node {
         to_addr: Option<Address>,
         data: Vec<u8>,
     ) -> Result<Vec<u8>> {
-        // TODO: optimise this to get header directly once persistance is merged
-        // (which will provide a header index)
         let block = self
             .get_block_by_view(self.get_view(block_number))?
             .ok_or_else(|| anyhow!("block not found"))?;
@@ -241,6 +240,45 @@ impl Node {
             data,
             self.config.eth_chain_id,
             block.header,
+            true,
+        )
+    }
+
+    pub fn get_gas_price(&self) -> u64 {
+        self.consensus.state().get_gas_price().unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn estimate_gas(
+        &self,
+        block_number: BlockNumber,
+        from_addr: Address,
+        to_addr: Option<Address>,
+        data: Vec<u8>,
+        gas: u64,
+        gas_price: u64,
+        value: U256,
+    ) -> Result<u64> {
+        // TODO: optimise this to get header directly once persistance is merged
+        // (which will provide a header index)
+        let block = self
+            .get_block_by_view(self.get_view(block_number))?
+            .ok_or_else(|| anyhow!("block not found"))?;
+        let state = self
+            .consensus
+            .state()
+            .at_root(H256(block.state_root_hash().0));
+
+        state.estimate_gas(
+            from_addr,
+            to_addr,
+            data,
+            self.config.eth_chain_id,
+            block.header,
+            true,
+            gas,
+            gas_price,
+            value,
         )
     }
 
@@ -272,7 +310,7 @@ impl Node {
     pub fn get_native_balance(&self, address: Address, block_number: BlockNumber) -> Result<U256> {
         self.consensus
             .try_get_state_at(self.get_view(block_number))?
-            .get_native_balance(address)
+            .get_native_balance(address, false)
     }
 
     pub fn get_latest_block(&self) -> Result<Option<Block>> {

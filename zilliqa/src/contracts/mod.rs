@@ -33,6 +33,31 @@ pub mod native_token {
         Lazy::new(|| CONTRACT.abi.function("balanceOf").unwrap().clone());
     pub static SET_BALANCE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("setBalance").unwrap().clone());
+    pub static TRANSFER: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("transfer").unwrap().clone());
+    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
+}
+
+// Generated with `solc gas_price.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > gas_price.json`.
+pub mod gas_price {
+    use ethabi::Function;
+    use once_cell::sync::Lazy;
+
+    use super::{CombinedJson, Contract};
+
+    const COMBINED_JSON: &str = include_str!("gas_price.json");
+    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
+            .unwrap()
+            .contracts
+            .remove("gas_price.sol:GasPrice")
+            .unwrap()
+    });
+    pub static SET_GAS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("setGas").unwrap().clone());
+
+    pub static GET_GAS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("value").unwrap().clone());
     pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
 }
 
