@@ -10,21 +10,23 @@ use std::collections::HashMap;
 use evm_ds::evm::backend::{Backend, Basic};
 
 use primitive_types::{H160, H256, U256};
-use tracing::*;
+use tracing::{error, trace};
 
 use crate::{
     message::BlockHeader,
     state::{Account, Address, State},
     time::SystemTime,
 };
-
+#[allow(clippy::type_complexity)]
 pub struct EvmBackend<'a> {
     pub state: &'a State,
     pub gas_price: U256,
     pub origin: H160,
     pub chain_id: u64,
     pub current_block: BlockHeader,
-    pub account_storage_cached: HashMap<Address, (Account, HashMap<H256, H256>)>,
+    // Map of cached (execution in progress) address to account and any dirty storage.
+    // If the value is None, this means a deletion of that account and storage
+    pub account_storage_cached: HashMap<Address, Option<(Account, HashMap<H256, H256>)>>,
 }
 
 impl<'a> EvmBackend<'a> {
@@ -45,15 +47,35 @@ impl<'a> EvmBackend<'a> {
         }
     }
 
-    pub fn apply_update(
-        &mut self,
-        _to_addr: Option<Address>,
-        applys: Vec<evm_ds::protos::evm_proto::Apply>,
-    ) {
+    pub fn create_account(&mut self, address: Address, code: Vec<u8>) {
+        // Insert empty slot into cache if it does not already exist, else just put the code there
+        if let Some(Some((acct, _))) = self.account_storage_cached.get_mut(&address) {
+            acct.code = code;
+            return;
+        }
+
+        // Fall through
+        self.account_storage_cached.insert(
+            address,
+            Some((
+                Account {
+                    nonce: 0,
+                    code,
+                    storage_root: None,
+                },
+                HashMap::new(),
+            )),
+        );
+    }
+
+    pub fn apply_update(&mut self, applys: Vec<evm_ds::protos::evm_proto::Apply>) {
         for apply in applys {
             match apply {
-                Apply::Delete { address: _ } => {
-                    panic!("Delete not implemented");
+                Apply::Delete { address } => {
+                    let address = Address(address);
+
+                    // Insert empty slot into cache
+                    self.account_storage_cached.insert(address, None);
                 }
                 Apply::Modify {
                     address,
@@ -71,14 +93,17 @@ impl<'a> EvmBackend<'a> {
 
                     // Get or create the element in the cache, the account will be
                     // reflected but the storage will not.
-                    if let std::collections::hash_map::Entry::Vacant(e) =
+                    if let std::collections::hash_map::Entry::Vacant(element) =
                         self.account_storage_cached.entry(address)
                     {
                         let account = self.state.get_account(address).unwrap_or_default();
-                        e.insert((account, HashMap::new()));
+                        element.insert(Some((account, HashMap::new())));
                     }
 
                     let cache = self.account_storage_cached.get_mut(&address).unwrap();
+                    let cache = cache
+                        .as_mut()
+                        .expect("Modify should not be called on a previously deleted account");
                     let account_cached = &mut cache.0;
                     let storage_cached = &mut cache.1;
 
@@ -91,7 +116,6 @@ impl<'a> EvmBackend<'a> {
                     }
                 }
             }
-            // todo: delete.
         }
     }
 
@@ -99,18 +123,25 @@ impl<'a> EvmBackend<'a> {
     pub fn get_result(self) -> EvmResult {
         let mut applys: Vec<Apply> = vec![];
 
-        for (addr, (acct, stor)) in self.account_storage_cached.into_iter() {
-            applys.push(Apply::Modify {
-                address: addr.0,
-                balance: U256::zero(),
-                nonce: U256::zero(),
-                code: acct.code,
-                storage: stor
-                    .into_iter()
-                    .map(|(key, value)| Storage { key, value })
-                    .collect(),
-                reset_storage: false, // todo: this.
-            });
+        for (addr, item) in self.account_storage_cached.into_iter() {
+            match item {
+                Some((acct, stor)) => {
+                    applys.push(Apply::Modify {
+                        address: addr.0,
+                        balance: U256::zero(),
+                        nonce: U256::zero(),
+                        code: acct.code,
+                        storage: stor
+                            .into_iter()
+                            .map(|(key, value)| Storage { key, value })
+                            .collect(),
+                        reset_storage: false,
+                    });
+                }
+                None => {
+                    applys.push(Apply::Delete { address: addr.0 });
+                }
+            }
         }
 
         EvmResult {
@@ -170,36 +201,96 @@ impl<'a> Backend for EvmBackend<'a> {
     }
 
     fn exists(&self, address: H160) -> bool {
-        trace!("EVM request: Checking whether account {:?} exists", address);
         // Ethereum charges extra gas for `CALL`s or `SELFDESTRUCT`s which create new accounts, to discourage the
         // creation of many addresses and the resulting increase in state size.
-        self.state.has_account(Address(address))
+
+        // first check if the account is cleared in the cache
+        if let Some(item) = self.account_storage_cached.get(&address.into()) {
+            if item.is_none() {
+                return false;
+            }
+        }
+
+        let exists = self.state.has_account(Address(address));
+        trace!(
+            "EVM request: Checking whether account {:?} exists {}",
+            address,
+            exists
+        );
+        exists
     }
 
     fn basic(&self, address: H160) -> Basic {
-        trace!("EVM request: Requesting basic info for {:?}", address);
-        let nonce = self.state.must_get_account(Address(address)).nonce;
-        // For these accounts, we hardcode the balance we return to the EVM engine as zero. Otherwise, we have an
-        // infinite recursion because getting the native balance of any account requires this method to be called for
-        // these two 'special' accounts.
-        let is_special_account = address == Address::ZERO.0 || address == Address::NATIVE_TOKEN.0;
-        Basic {
-            balance: if is_special_account {
-                0.into()
-            } else {
-                self.state.get_native_balance(Address(address)).unwrap()
-            },
-            nonce: nonce.into(),
+        // first check if the account is in the cache
+        if let Some(Some((acct, _))) = self.account_storage_cached.get(&Address(address)) {
+            let nonce = acct.nonce;
+            let basic = Basic {
+                balance: self
+                    .state
+                    .get_native_balance(Address(address), false)
+                    .unwrap(),
+                nonce: nonce.into(),
+            };
+            trace!(
+                "EVM request: (cached) Requesting basic info for {:?} - answ: {:?}",
+                address,
+                basic
+            );
+            return basic;
         }
+
+        let nonce = self.state.must_get_account(Address(address)).nonce;
+        let basic = Basic {
+            balance: self
+                .state
+                .get_native_balance(Address(address), false)
+                .unwrap(),
+            nonce: nonce.into(),
+        };
+        trace!(
+            "EVM request: Requesting basic info for {:?} - answ: {:?}",
+            address,
+            basic
+        );
+        basic
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
-        trace!("EVM request: Requesting code for {:?}", address);
-        // Will this mean panic if you try to call address that doesn't exist?
-        self.state.must_get_account(Address(address)).code
+        // first check if the account is in the cache
+        if let Some(Some((acct, _))) = self.account_storage_cached.get(&Address(address)) {
+            let code = acct.code.clone();
+            trace!(
+                "EVM request: (cached) Requesting code for {:?} - answ: {:?}",
+                address,
+                code
+            );
+            return code;
+        }
+
+        let code = self.state.must_get_account(Address(address)).code;
+
+        trace!(
+            "EVM request: Requesting code for {:?} - answ: {:?}",
+            address,
+            code
+        );
+        code
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
+        // first check if the account is in the cache
+        if let Some(Some((_, stor))) = self.account_storage_cached.get(&Address(address)) {
+            if let Some(value) = stor.get(&index) {
+                trace!(
+                    "EVM request: (cached) Requesting storage for {:?} at {:?} and is: {:?}",
+                    address,
+                    index,
+                    value
+                );
+                return *value;
+            }
+        }
+
         let res = self.state.must_get_account_storage(Address(address), index);
 
         trace!(

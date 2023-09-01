@@ -8,6 +8,7 @@ license = "Apache-2.0 OR MIT"
 base64 = "0.21.2"
 byteorder = "1.4.3"
 bytes = "1.4.0"
+derivative = "2.2.0"
 ethabi = "18.0.0"
 ethereum = { version = "0.14.0", features = ["with-serde"] }
 evm = { git = "https://github.com/Zilliqa/evm", rev = "08a117eadfd0368cd2cc813763155e8f740bd881", features = ["tracing"] }
