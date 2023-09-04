@@ -247,8 +247,8 @@ impl P2pNode {
 
                     let topic = Self::shard_id_to_topic(shard_id);
 
+                    // Push messages back into queue if there are no peers
                     if self.swarm.behaviour().gossipsub.all_peers().collect_vec().is_empty() {
-                        //warn!("no peers to send message to! Pushing back onto queue");
                         let _ = self.outbound_message_sender.send((dest, shard_id, message));
                         continue;
                     }

@@ -6,8 +6,6 @@ cargo build --all-targets > /dev/null 2>&1
 ./target/debug/z2 internal run > /tmp/zil_log_out.txt 2>&1 &
 sleep 10;
 
-echo "Started z2, now running test";
-
 # Pull submodule
 cd evm_js_tests
 git pull

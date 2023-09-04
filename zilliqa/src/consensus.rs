@@ -79,7 +79,7 @@ struct MissingBlockError(BlockRef);
 
 impl Display for MissingBlockError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "missing0 block: {:?}", self.0)
+        write!(f, "missing block: {:?}", self.0)
     }
 }
 
@@ -231,7 +231,7 @@ impl Consensus {
     fn committee(&self) -> Result<Committee> {
         let block = self
             .get_block_by_view(self.get_chain_tip())?
-            .ok_or_else(|| anyhow!("missing block1"))?;
+            .ok_or_else(|| anyhow!("missing block"))?;
         Ok(block.committee)
     }
 
@@ -269,7 +269,7 @@ impl Consensus {
         if self.view == 1 {
             let genesis = self
                 .get_block_by_view(0)?
-                .ok_or_else(|| anyhow!("missing block2"))?;
+                .ok_or_else(|| anyhow!("missing block"))?;
             // If we're in the genesis committee, vote again.
             if genesis
                 .committee
@@ -297,13 +297,8 @@ impl Consensus {
     }
 
     pub fn timeout(&mut self) -> Result<(PeerId, NewView)> {
-        //if !self.blockchain_active() {
-        //    return Err(anyhow!("blockchain not active"));
-        //}
-
         self.view += 1;
 
-        //let leader = self.get_leader(self.view)?.peer_id;
         let leader = self.get_leader(self.view)?.peer_id;
 
         let new_view = NewView::new(
@@ -332,7 +327,7 @@ impl Consensus {
             Ok(()) => {}
             Err(e) => {
                 if let Some(e) = e.downcast_ref::<MissingBlockError>() {
-                    trace!(?e, "missing block3");
+                    trace!(?e, "missing block");
                     match e.0 {
                         BlockRef::Hash(hash) => self.block_store.request_block(hash)?,
                         BlockRef::View(view) => self.block_store.request_block_by_view(view)?,
@@ -353,7 +348,7 @@ impl Consensus {
         let proposal_view = block.view();
         let parent = self
             .get_block(&block.parent_hash())?
-            .ok_or_else(|| anyhow!("missing block4"))?;
+            .ok_or_else(|| anyhow!("missing block"))?;
         let next_leader = block.committee.leader(proposal_view).peer_id;
         let block_state_root = block.state_root_hash();
 
@@ -512,7 +507,7 @@ impl Consensus {
                     let parent_hash = qc.block_hash;
                     let parent = self
                         .get_block(&parent_hash)?
-                        .ok_or_else(|| anyhow!("missing block5"))?;
+                        .ok_or_else(|| anyhow!("missing block"))?;
                     let parent_header = parent.header;
 
                     let previous_state_root_hash = self.state.root_hash()?;
@@ -643,7 +638,7 @@ impl Consensus {
                     let state_root_hash = self.state.root_hash()?;
                     let parent = self
                         .get_block(&parent_hash)?
-                        .ok_or_else(|| anyhow!("missing block6"))?;
+                        .ok_or_else(|| anyhow!("missing block"))?;
                     let proposal = Block::from_agg(
                         self.secret_key,
                         self.view,
@@ -727,7 +722,7 @@ impl Consensus {
         } else {
             let current_high_qc_view = self
                 .get_block(&self.high_qc.block_hash)?
-                .ok_or_else(|| anyhow!("missing block7"))?
+                .ok_or_else(|| anyhow!("missing block"))?
                 .view();
             // If `from_agg` then we always release the lock because the supermajority has a different high_qc.
             if from_agg || new_high_qc_block_view > current_high_qc_view {
@@ -834,7 +829,7 @@ impl Consensus {
             let committed_block_view = committed_block.view();
             let finalized_block = self
                 .get_block_by_view(self.finalized_view)?
-                .ok_or_else(|| anyhow!("missing block8"))?;
+                .ok_or_else(|| anyhow!("missing block"))?;
             let mut current = committed_block;
             // commit blocks back to the last finalized block
             while current.view() > self.finalized_view {
@@ -1023,7 +1018,7 @@ impl Consensus {
             .iter()
             .map(|qc| (qc, self.get_block(&qc.block_hash)))
             .try_fold(None, |acc, (qc, block)| {
-                let block = block?.ok_or_else(|| anyhow!("missing block9"))?;
+                let block = block?.ok_or_else(|| anyhow!("missing block"))?;
                 if let Some((_, acc_view)) = acc {
                     if acc_view < block.view() {
                         Ok::<_, anyhow::Error>(Some((qc, block.view())))
@@ -1087,7 +1082,7 @@ impl Consensus {
     fn check_quorum_in_bits(&self, view: u64, cosigned: &BitSlice) -> Result<()> {
         let committee = &self
             .get_block_by_view(view - 1)?
-            .ok_or_else(|| anyhow!("missing blockA"))?
+            .ok_or_else(|| anyhow!("missing block"))?
             .committee;
         let cosigned_sum: u128 = committee
             .iter()
@@ -1105,7 +1100,7 @@ impl Consensus {
     fn check_quorum_in_indices(&self, view: u64, signers: &[u16]) -> Result<()> {
         let committee = &self
             .get_block_by_view(view - 1)?
-            .ok_or_else(|| anyhow!("missing blockB"))?
+            .ok_or_else(|| anyhow!("missing block"))?
             .committee;
         let signed_sum: u128 = signers
             .iter()
