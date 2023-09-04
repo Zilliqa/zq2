@@ -35,7 +35,6 @@ npx hardhat test --parallel
 retVal=$?
 
 pkill -INT zilliqa
-cat npx.out
 if [ $retVal -ne 0 ]; then
     cat /tmp/zil_log_out.txt
     echo "!!!!!! Error with JS integration test !!!!!!"

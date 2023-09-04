@@ -1,5 +1,7 @@
 pub use crate::evm::executor::stack::Log;
 use crate::evm::CreateScheme;
+use core::fmt;
+use derivative::Derivative;
 use evm::{
     executor::stack::{MemoryStackAccount, MemoryStackSubstate},
     ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed, Memory, Stack, Transfer, Valids,
@@ -11,12 +13,40 @@ use std::sync::{Arc, Mutex};
 
 // This file contains all of the structs used to communicate between evm-ds and the outside world
 
+// Convenience function to print long vectors, truncating if they are massive
+fn shortened_vec(val: &Vec<u8>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{}", vec_to_string_concat(val))
+}
+
+fn vec_to_string_concat<T: fmt::Debug + fmt::Display>(input: &Vec<T>) -> String {
+    if input.len() > 64 {
+        let start = &input[0..5];
+        let end = &input[input.len() - 5..];
+        let start_str = start
+            .iter()
+            .map(|x| format!("{:}", x))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let end_str = end
+            .iter()
+            .map(|x| format!("{:}", x))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("[{}, ..., {}]", start_str, end_str)
+    } else {
+        format!("{:?}", input)
+    }
+}
+
 // The struct used to drive the evm-ds execution. An external caller will maintain the continuations
 // and set the node_continuation (populating return values) if this is a continuation call
-#[derive(Clone, Debug)]
+#[derive(Clone, Derivative)]
+#[derivative(Debug)]
 pub struct EvmCallArgs {
     pub address: H160,
+    #[derivative(Debug(format_with = "shortened_vec"))]
     pub code: Vec<u8>,
+    #[derivative(Debug(format_with = "shortened_vec"))]
     pub data: Vec<u8>,
     pub apparent_value: U256,
     pub gas_limit: u64,
@@ -39,7 +69,8 @@ pub struct Storage {
     pub value: H256,
 }
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub enum Apply {
     Delete {
         address: H160,
@@ -48,6 +79,7 @@ pub enum Apply {
         address: H160,
         balance: U256,
         nonce: U256,
+        #[derivative(Debug(format_with = "shortened_vec"))]
         code: Vec<u8>,
         storage: Vec<Storage>,
         reset_storage: bool,
@@ -277,9 +309,11 @@ pub struct CreateTrap {
 // This is the main struct returned from the evm after program invocation.
 // Either it has completed, and is a success or revert, or it is some type of
 // trap.
-#[derive(Debug, Default)]
+#[derive(Default, Derivative)]
+#[derivative(Debug)]
 pub struct EvmResult {
     pub exit_reason: ExitReasonCps,
+    #[derivative(Debug(format_with = "shortened_vec"))]
     pub return_value: Vec<u8>,
     pub apply: Vec<Apply>,
     pub logs: Vec<Log>,

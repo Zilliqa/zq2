@@ -194,6 +194,10 @@ fn get_config(estimate: bool, call_l64_after_gas: bool) -> evm::Config {
 // Convenience fn to hide the evm internals and just
 // let you calculate contract address as easily as possible
 pub fn calculate_contract_address(address: H160, backend: &impl Backend) -> H160 {
+    calculate_contract_address_scheme(CreateScheme::Legacy { caller: address }, backend)
+}
+
+pub fn calculate_contract_address_scheme(scheme: CreateScheme, backend: &impl Backend) -> H160 {
     let config = get_config(false, false);
 
     let metadata = StackSubstateMetadata::new(1, &config);
@@ -201,13 +205,17 @@ pub fn calculate_contract_address(address: H160, backend: &impl Backend) -> H160
     let precompiles = get_precompiles();
 
     let mut executor = CpsExecutor::new_with_precompiles(state, &config, &precompiles, true);
-    executor.get_create_address(CreateScheme::Legacy { caller: address })
+    executor.get_create_address(scheme)
 }
 
 pub fn run_evm_impl_direct<B: Backend>(
     args: EvmProto::EvmCallArgs,
     backend: &B,
 ) -> EvmProto::EvmResult {
+    // For some reason, in estimation mode, it gives slightly too low a gas estimate, which is not
+    // how it should be. So always set estimate mode to false for now
+    let estimate_override = false;
+
     trace!(
         origin = ?backend.origin(),
         address = ?args.address,
@@ -224,7 +232,7 @@ pub fn run_evm_impl_direct<B: Backend>(
     let code = Rc::new(args.code);
     let data = Rc::new(args.data);
     // TODO: handle call_l64_after_gas problem: https://zilliqa-jira.atlassian.net/browse/ZIL-5012
-    let config = get_config(args.estimate, false);
+    let config = get_config(estimate_override, false);
 
     let context = evm::Context {
         address: args.address,

@@ -7,6 +7,8 @@ use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
 
+use tracing::log::trace;
+
 use crate::{
     crypto::Hash,
     message::{Block, BlockNumber},
@@ -16,7 +18,10 @@ use crate::{
 
 use super::{
     to_hex::ToHex,
-    types::{CallParams, EthBlock, EthTransaction, EthTransactionReceipt, HashOrTransaction, Log},
+    types::{
+        CallParams, EstimateGasParams, EthBlock, EthTransaction, EthTransactionReceipt,
+        HashOrTransaction, Log,
+    },
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -32,7 +37,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_getCode", get_code),
             ("eth_getStorageAt", get_storage_at),
             ("eth_getTransactionCount", get_transaction_count),
-            ("eth_gasPrice", gas_price),
+            ("eth_gasPrice", get_gas_price),
             ("eth_getBlockByNumber", get_block_by_number),
             ("eth_getBlockByHash", get_block_by_hash),
             (
@@ -80,8 +85,17 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         block_number,
         Address(call_params.from),
         call_params.to.map(Address),
-        call_params.data,
+        call_params.data.clone(),
     )?;
+
+    trace!(
+        "Performed eth call. Args: {:?} ie: {:?} {:?} {:?}  ret: {:?}",
+        serde_json::to_string(&call_params),
+        call_params.from,
+        call_params.to,
+        call_params.data,
+        return_value.to_hex()
+    );
 
     Ok(return_value.to_hex())
 }
@@ -90,9 +104,22 @@ fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(node.lock().unwrap().config.eth_chain_id.to_hex())
 }
 
-fn estimate_gas(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
-    // TODO: #69
-    Ok("0x100")
+fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let mut params = params.sequence();
+    let call_params: EstimateGasParams = params.next()?;
+    let block_number: BlockNumber = params.next().unwrap_or(BlockNumber::Latest);
+
+    let return_value = node.lock().unwrap().estimate_gas(
+        block_number,
+        call_params.from,
+        call_params.to,
+        call_params.data.clone(),
+        call_params.gas,
+        call_params.gas_price,
+        call_params.value,
+    )?;
+
+    Ok(return_value.to_hex())
 }
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -151,9 +178,8 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
         .to_hex())
 }
 
-fn gas_price(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
-    // TODO: #71
-    Ok("0x454b7b38e70")
+fn get_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok(node.lock().unwrap().get_gas_price().to_hex())
 }
 
 fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
@@ -249,12 +275,14 @@ pub(super) fn get_transaction_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
 ) -> Result<Option<EthTransaction>> {
-    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else {  return Ok(None); };
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else { return Ok(None); };
 
-    // The block can either be null or some based on whether the tx has executed yet
+    // The block can either be null or some based on whether the tx exists
     let block = if let Some(receipt) = node.get_transaction_receipt(hash)? {
         node.get_block_by_hash(receipt.block_hash)?
     } else {
+        // Even if it has not been mined, the tx may still be in the mempool and should return
+        // a correct tx, with pending/null fields
         None
     };
 
@@ -464,7 +492,7 @@ mod tests {
         let signed_tx = transaction_from_rlp(&transaction, 1).unwrap();
         let tx = &signed_tx.transaction;
         assert_eq!(tx.nonce, 9);
-        assert_eq!(tx.gas_price, 20 * 10u128.pow(9));
+        assert_eq!(tx.gas_price, 20 * 10_u64.pow(9));
         assert_eq!(tx.gas_limit, 21000u64);
         assert_eq!(
             tx.to_addr.unwrap(),
