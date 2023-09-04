@@ -671,9 +671,6 @@ impl Consensus {
 
         Ok(None)
     }
-    pub fn blockchain_active(&self) -> bool {
-        self.view > 0
-    }
 
     pub fn new_transaction(&mut self, txn: SignedTransaction) -> Result<()> {
         txn.verify()?; // sanity check
