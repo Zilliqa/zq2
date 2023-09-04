@@ -110,13 +110,13 @@ impl State {
         let (mut result, evm_address) = self.apply_transaction_inner(
             Address::ZERO,
             None,
-            u64::MAX,
+            0,
             u64::MAX,
             U256::zero(),
             creation_bytecode,
             0,
             BlockHeader::default(),
-            false,
+            true,
             false,
         )?;
 
