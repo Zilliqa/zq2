@@ -159,7 +159,7 @@ impl State {
             node_continuation: None,
             continuations: continuations.clone(),
             enable_cps: true,
-            tx_trace_enabled: false,
+            tx_trace_enabled: true,
             tx_trace: "".to_string(),
         }];
         let mut result;
@@ -277,6 +277,7 @@ impl State {
         backend_result.exit_reason = result.exit_reason;
         backend_result.return_value = result.return_value;
         backend_result.logs = result.logs;
+        backend_result.tx_trace = result.tx_trace;
 
         Ok((backend_result, created_contract_addr))
     }
@@ -303,7 +304,7 @@ impl State {
             Ok((result, contract_addr)) => {
                 // Apply the state changes only if success
                 let success = result.succeeded();
-
+                trace!(?result.tx_trace, "tx_trace");
                 if success {
                     if let Some(contract_addr) = contract_addr {
                         let mut acct = self.get_account(Address(contract_addr)).unwrap_or_default();

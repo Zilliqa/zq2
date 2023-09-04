@@ -2,34 +2,24 @@
 
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use jsonrpsee::{types::Params, RpcModule};
-use primitive_types::{H160, H256, U256};
+use primitive_types::H256;
 
-use crate::{
-    crypto::Hash,
-    message::{Block, BlockNumber},
-    node::Node,
-    state::{Address, SignedTransaction, SigningInfo, Transaction},
-};
+use crate::node::Node;
 
-use super::{
-    to_hex::ToHex,
-    types::{
-        BlockTrace, CallParams, EthBlock, EthTransaction, EthTransactionReceipt, HashOrTransaction,
-        Log, StateDiff, TraceAction, TraceActionType, TraceCall, TraceCallType, TraceResponse,
-        TransactionTrace,
-    },
+use super::types::{
+    BlockTrace, StateDiff, TraceAction, TraceActionType, TraceCall, TraceCallType, TransactionTrace,
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(node, [("trace_replayTransaction", replay_transaction)])
 }
 
-fn replay_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<BlockTrace> {
+fn replay_transaction(params: Params, _node: &Arc<Mutex<Node>>) -> Result<BlockTrace> {
     let mut params = params.sequence();
     let hash: H256 = params.next()?;
     let trace_params: Vec<&str> = params.next()?;
