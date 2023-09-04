@@ -5,7 +5,7 @@ edition = "2021"
 license = "Apache-2.0 OR MIT"
 
 [dependencies]
-base64 = "0.21.2"
+base64 = "0.21.3"
 byteorder = "1.4.3"
 bytes = "1.4.0"
 derivative = "2.2.0"
