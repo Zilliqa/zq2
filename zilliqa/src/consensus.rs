@@ -427,6 +427,11 @@ impl Consensus {
             for address in listener.touched {
                 self.touched_address_index.merge(address.0, hash.0)?;
             }
+
+            if !result.success {
+                warn!("Transcaction was a failure...");
+            }
+
             Ok(Some(result))
         } else {
             Ok(None)
