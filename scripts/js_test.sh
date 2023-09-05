@@ -3,7 +3,7 @@ echo "The CI is running this script."
 # Start network early.
 pwd
 cargo build --all-targets > /dev/null 2>&1
-./target/debug/z2 internal run > /tmp/zil_log_out.txt &
+./target/debug/z2 internal run > /tmp/zil_log_out.txt 2>&1 &
 sleep 10;
 
 # Pull submodule
@@ -35,7 +35,6 @@ npx hardhat test --parallel
 retVal=$?
 
 pkill -INT zilliqa
-cat npx.out
 if [ $retVal -ne 0 ]; then
     cat /tmp/zil_log_out.txt
     echo "!!!!!! Error with JS integration test !!!!!!"

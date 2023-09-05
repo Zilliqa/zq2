@@ -1,5 +1,6 @@
 //! A node in the Zilliqa P2P network. May coordinate multiple shard nodes.
 
+use itertools::Itertools;
 use std::{collections::HashMap, iter};
 use tokio::{sync::mpsc::UnboundedSender, task::JoinSet};
 
@@ -245,6 +246,12 @@ impl P2pNode {
                     let from = self.peer_id;
 
                     let topic = Self::shard_id_to_topic(shard_id);
+
+                    // Push messages back into queue if there are no peers
+                    if self.swarm.behaviour().gossipsub.all_peers().collect_vec().is_empty() {
+                        let _ = self.outbound_message_sender.send((dest, shard_id, message));
+                        continue;
+                    }
 
                     match message {
                         Message::Internal(internal_message) => match internal_message {

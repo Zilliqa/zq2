@@ -300,6 +300,7 @@ impl Consensus {
         self.view += 1;
 
         let leader = self.get_leader(self.view)?.peer_id;
+
         let new_view = NewView::new(
             self.secret_key,
             self.high_qc.clone(),
@@ -421,6 +422,11 @@ impl Consensus {
             for address in listener.touched {
                 self.touched_address_index.merge(address.0, hash.0)?;
             }
+
+            if !result.success {
+                warn!("Transcaction was a failure...");
+            }
+
             Ok(Some(result))
         } else {
             Ok(None)
@@ -1058,9 +1064,15 @@ impl Consensus {
         // currently it's a simple round robin but later
         // we will select the leader based on the weights
         // Get the previous block, so we know the committee, then calculate the leader from there.
-        let block = self
-            .get_block_by_view(view - 1)?
-            .ok_or_else(|| anyhow!("missing block"))?;
+        let block = self.get_block_by_view(view - 1)?;
+
+        let block = match block {
+            Some(block) => block,
+            None => self
+                .get_block_by_view(0)?
+                .ok_or_else(|| anyhow!("missing genesis block!"))?,
+        };
+
         Ok(block.committee.leader(view))
     }
 
