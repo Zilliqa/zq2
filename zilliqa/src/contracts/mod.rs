@@ -16,6 +16,7 @@ struct Contract {
 }
 
 // Generated with `solc native_token.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > native_token.json`.
+#[allow(dead_code)] // define properties on the contract, even if they aren't currently invoked
 pub mod native_token {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
@@ -36,6 +37,8 @@ pub mod native_token {
         Lazy::new(|| CONTRACT.abi.function("balanceOf").unwrap().clone());
     pub static SET_BALANCE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("setBalance").unwrap().clone());
+    pub static TRANSFER: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("transfer").unwrap().clone());
     pub static CREATION_CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin).unwrap());
     pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
 }
@@ -92,6 +95,33 @@ pub mod shard_registry {
     pub static CREATION_CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin).unwrap());
 }
 
+// Generated with `solc gas_price.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > gas_price.json`.
+#[allow(dead_code)] // in case not all properties are used immediately
+pub mod gas_price {
+    use ethabi::{Constructor, Function};
+    use once_cell::sync::Lazy;
+
+    use super::{CombinedJson, Contract};
+
+    const COMBINED_JSON: &str = include_str!("gas_price.json");
+    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
+            .unwrap()
+            .contracts
+            .remove("gas_price.sol:GasPrice")
+            .unwrap()
+    });
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+    pub static SET_GAS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("setGas").unwrap().clone());
+
+    pub static GET_GAS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("value").unwrap().clone());
+    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
+    pub static CREATION_CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin).unwrap());
+}
+
 /// These tests assert the contract binaries in this module are correct and reproducible, by recompiling the source
 /// files and checking the result is the same. This means we can keep the compiled source code in-tree, while also
 /// asserting in CI that the compiled source code is genuine. The tests only run when the `test_contract_bytecode`
@@ -112,7 +142,7 @@ mod tests {
     use sha2::Digest;
     use sha3::Keccak256;
 
-    use super::{native_token, shard, shard_registry};
+    use super::{gas_price, native_token, shard, shard_registry};
 
     #[test]
     #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
@@ -144,6 +174,17 @@ mod tests {
             "shard_registry.sol:ShardRegistry",
             shard_registry::CODE.as_slice(),
             shard_registry::CREATION_CODE.as_slice(),
+        )
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    fn gas_price() {
+        test_contract(
+            "gas_price.sol",
+            "gas_price.sol:GasPrice",
+            gas_price::CODE.as_slice(),
+            gas_price::CREATION_CODE.as_slice(),
         )
     }
 
@@ -203,11 +244,14 @@ mod tests {
         let combined_json: Value = serde_json::from_slice(&output.stdout).unwrap();
         let contract = combined_json["contracts"][&json_key].clone();
 
-        let expected_code = hex::decode(contract["bin-runtime"].as_str().unwrap()).unwrap();
-        assert_eq!(code.len(), expected_code.len());
+        let bin = contract["bin-runtime"].as_str().unwrap();
+        let expected_code = hex::decode(bin).unwrap();
+        assert_eq!(code.len(), expected_code.len()); // fail fast on a mismatch rather than dumping
+                                                     // full blobs into stdout
         assert_eq!(code, expected_code);
 
-        let expected_creation_code = hex::decode(contract["bin"].as_str().unwrap()).unwrap();
+        let bin_creation = contract["bin"].as_str().unwrap();
+        let expected_creation_code = hex::decode(bin_creation).unwrap();
         assert_eq!(creation_code.len(), expected_creation_code.len());
         assert_eq!(creation_code, expected_creation_code);
     }

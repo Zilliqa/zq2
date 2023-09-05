@@ -386,6 +386,27 @@ impl Network {
     pub fn node_at(&mut self, index: usize) -> MutexGuard<Node> {
         self.nodes[index].inner.lock().unwrap()
     }
+    pub fn genesis_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+        // Private key with funds should be at 0x00....01
+        let hex_string = "0000000000000000000000000000000000000000000000000000000000000001";
+        let hex_bytes = hex::decode(hex_string).expect("Failed to decode hex");
+
+        let wallet: LocalWallet = SigningKey::from_slice(hex_bytes.as_slice()).unwrap().into();
+        let wallet = wallet.with_chain_id(0x8001u64);
+
+        let node = self
+            .nodes
+            .choose(self.rng.lock().unwrap().deref_mut())
+            .unwrap();
+        trace!(index = node.index, "node selected for wallet");
+        let client = LocalRpcClient {
+            id: Arc::new(AtomicU64::new(0)),
+            rpc_module: node.rpc_module.clone(),
+        };
+        let provider = Provider::new(client);
+
+        SignerMiddleware::new(provider, wallet)
+    }
 
     pub fn random_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
         let wallet: LocalWallet = SigningKey::random(self.rng.lock().unwrap().deref_mut()).into();

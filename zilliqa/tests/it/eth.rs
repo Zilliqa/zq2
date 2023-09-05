@@ -15,7 +15,7 @@ use crate::{deploy_contract, LocalRpcClient, Network};
 
 #[zilliqa_macros::test]
 async fn call_block_number(mut network: Network) {
-    let wallet = network.random_wallet();
+    let wallet = network.genesis_wallet();
 
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/CallMe.sol",
@@ -85,7 +85,7 @@ async fn call_block_number(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_block_transaction_count(mut network: Network) {
-    let wallet = network.random_wallet();
+    let wallet = network.genesis_wallet();
     let provider = wallet.provider();
 
     async fn count_by_number<T: Debug + Serialize + Send + Sync>(
@@ -161,7 +161,7 @@ async fn get_block_transaction_count(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_account_transaction_count(mut network: Network) {
-    let wallet = network.random_wallet();
+    let wallet = network.genesis_wallet();
     let provider = wallet.provider();
 
     async fn count_at_block(provider: &Provider<LocalRpcClient>, params: (H160, U64)) -> u64 {
@@ -219,7 +219,7 @@ async fn get_account_transaction_count(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_storage_at(mut network: Network) {
-    let wallet = network.random_wallet();
+    let wallet = network.genesis_wallet();
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
     let (hash, abi) = deploy_contract(
@@ -303,7 +303,7 @@ async fn get_storage_at(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn send_transaction(mut network: Network) {
-    let wallet = network.random_wallet();
+    let wallet = network.genesis_wallet();
 
     let to: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
@@ -342,7 +342,7 @@ async fn send_transaction(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn eth_call(mut network: Network) {
-    let wallet = network.random_wallet();
+    let wallet = network.genesis_wallet();
 
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/SetGetContractValue.sol",

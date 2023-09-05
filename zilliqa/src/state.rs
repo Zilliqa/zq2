@@ -121,6 +121,12 @@ impl State {
             .encode_input(contracts::native_token::CREATION_CODE.to_vec(), &[])?;
         state.force_deploy_contract(native_token_data, Some(Address::NATIVE_TOKEN))?;
 
+        let gas_price_data = contracts::gas_price::CONSTRUCTOR
+            .encode_input(contracts::gas_price::CREATION_CODE.to_vec(), &[])?;
+        state.force_deploy_contract(gas_price_data, Some(Address::GAS_PRICE))?;
+
+        let _ = state.set_gas_price(default_gas_price().into());
+
         for (address, balance) in GENESIS.iter() {
             state.set_native_balance(*address, *balance)?;
         }
@@ -277,13 +283,28 @@ impl State {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Address(pub H160);
 
+impl From<H160> for Address {
+    fn from(h: H160) -> Address {
+        Address(h)
+    }
+}
+
 impl Address {
     pub const ZERO: Address = Address(H160::zero());
+    pub fn zero() -> Address {
+        Address(H160::zero())
+    }
 
     /// Address of the native token ERC-20 contract.
     pub const NATIVE_TOKEN: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"));
 
     pub const SHARD_CONTRACT: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD"));
+
+    /// Address of the gas contract
+    pub const GAS_PRICE: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0GAS"));
+
+    /// Gas fees go here
+    pub const COLLECTED_FEES: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0FEE"));
 
     pub fn is_balance_transfer(to: Address) -> bool {
         to == Address::NATIVE_TOKEN
@@ -450,7 +471,7 @@ pub enum SigningInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Transaction {
     pub nonce: u64,
-    pub gas_price: u128,
+    pub gas_price: u64,
     pub gas_limit: u64,
     pub to_addr: Option<Address>,
     pub amount: u128,
@@ -465,4 +486,12 @@ pub struct TransactionReceipt {
     pub success: bool,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
+}
+
+pub fn default_gas() -> u64 {
+    10000000
+}
+
+pub fn default_gas_price() -> u64 {
+    1000000
 }
