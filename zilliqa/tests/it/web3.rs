@@ -3,7 +3,7 @@ use ethers::providers::Middleware;
 
 #[zilliqa_macros::test]
 async fn sha3(mut network: Network<'_>) {
-    let wallet = network.random_wallet();
+    let wallet = network.random_wallet().await;
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#web3_sha3
     let result: String = wallet
