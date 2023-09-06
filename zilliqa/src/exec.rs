@@ -493,6 +493,16 @@ impl State {
                 // and we get the return value (which will indicate the error)
                 let mut acct = self.get_account(txn.from_addr).unwrap();
                 acct.nonce = acct.nonce.checked_add(1).unwrap();
+
+                if acct.nonce != txn.transaction.nonce {
+                    let error_str = format!(
+                        "Nonce mismatch during tx execution! Expected: {}, Actual: {}",
+                        acct.nonce, txn.transaction.nonce
+                    );
+                    warn!(error_str);
+                    return Err(anyhow!(error_str));
+                }
+
                 self.save_account(txn.from_addr, acct)?;
 
                 Ok(TransactionApplyResult {

@@ -7,6 +7,7 @@ use primitive_types::H256;
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::{collections::BTreeMap, error::Error, fmt::Display};
+use std::ops::Add;
 use tracing::*;
 
 use crate::message::Committee;
@@ -455,9 +456,9 @@ impl Consensus {
                 {
                     // Incremement the value if it exists, otherwise set it to 1
                     let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
-                    let _ = retries.checked_add(1);
+                    retries.add(1);
                     warn!(
-                        "Transaction nonce for tx {} is too high at {} when acct nonce is {}, retrying... {}/{}",
+                        "Transaction nonce for tx {} is incorrect: {} when acct nonce is {}, retrying... {}/{}",
                         tx.hash(),
                         tx.transaction.nonce,
                         self.state.must_get_account(tx.from_addr).nonce,
