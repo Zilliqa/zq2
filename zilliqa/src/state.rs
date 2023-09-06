@@ -1,3 +1,4 @@
+use core::fmt;
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use generic_array::{
     sequence::Split,
@@ -13,7 +14,6 @@ use std::convert::TryInto;
 use std::fmt::{Display, LowerHex};
 use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
-use core::fmt;
 
 use anyhow::{anyhow, Result};
 use evm_ds::protos::evm_proto::Log;

@@ -427,7 +427,7 @@ impl Consensus {
             }
 
             if !result.success {
-                warn!("Transcaction was a failure...");
+                warn!("Transaction was a failure...");
             }
 
             Ok(Some(result))
@@ -446,19 +446,30 @@ impl Consensus {
 
     pub fn get_txns_to_execute(&mut self) -> Vec<SignedTransaction> {
         // Note: push back Txns that have an incorrect nonce
-        self.new_transactions.values().cloned().filter(|tx| {
-            if self.state.has_account(tx.from_addr) && self.state.must_get_account(tx.from_addr).nonce != tx.transaction.nonce {
-                // Incremement the value if it exists, otherwise set it to 1
-                let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
-                retries.checked_add(1);
-                warn!("Transaction nonce for tx {} is too high, retrying... {}/{}", tx.hash(), retries, self.config.tx_retries);
-                if *retries > self.config.tx_retries {
-                    self.new_transactions_waiting.remove(&tx.hash());
+        self.new_transactions
+            .values()
+            .cloned()
+            .filter(|tx| {
+                if self.state.has_account(tx.from_addr)
+                    && self.state.must_get_account(tx.from_addr).nonce != tx.transaction.nonce
+                {
+                    // Incremement the value if it exists, otherwise set it to 1
+                    let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
+                    retries.checked_add(1);
+                    warn!(
+                        "Transaction nonce for tx {} is too high, retrying... {}/{}",
+                        tx.hash(),
+                        retries,
+                        self.config.tx_retries
+                    );
+                    if *retries > self.config.tx_retries {
+                        self.new_transactions_waiting.remove(&tx.hash());
+                    }
+                    return false;
                 }
-                return false;
-            }
-            true
-        }).collect()
+                true
+            })
+            .collect()
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {

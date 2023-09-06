@@ -192,9 +192,12 @@ impl State {
         // Check the sender has enough balance and deduct it before any other operations happen, sending
         // it to the destination address or contract creation address
         if gas_price > 0 && native_balance <= upfront_reserve {
-            let error_str = format!("Transaction attempted to use more funds \
+            let error_str = format!(
+                "Transaction attempted to use more funds \
              and gas than it actually had! Amount: {}, Balance: {}, gas_price: {}, \
-              addr: {}", upfront_reserve, native_balance, gas_price, from_addr);
+              addr: {}",
+                upfront_reserve, native_balance, gas_price, from_addr
+            );
             warn!(error_str);
             return Err(anyhow!(error_str));
         }
@@ -331,10 +334,17 @@ impl State {
                         }
                     }
                 }
-            } else if result.succeeded()
-                && !continuation_stack.is_empty()
-                && !backend.origin.is_zero()
-            {
+            } else if !continuation_stack.is_empty() && !backend.origin.is_zero() {
+                if !run_succeeded {
+                    warn!(
+                        "Tx failed to execute! Call context: {}",
+                        call_a*"fund_transfer"         );
+
+                    if call_args.evm_context == "fund_transfer".to_string() {
+                        continuation_stack.pop();
+                    }
+                }
+
                 // We need to let the continuation prior know the return result
                 let prior = continuation_stack.last_mut().unwrap();
 
@@ -350,7 +360,7 @@ impl State {
                                     data: result.return_value.clone(),
                                     ..*old_calldata
                                 }));
-                            prior_node_continuation.succeeded = true;
+                            prior_node_continuation.succeeded = run_succeeded;
                             prior_node_continuation.logs = result.logs.clone();
                         }
                         EvmProto::Type::Create => {
@@ -358,7 +368,7 @@ impl State {
                                 Some(EvmProto::FeedbackData::Address(
                                     prior_node_continuation.get_address(),
                                 ));
-                            prior_node_continuation.succeeded = true;
+                            prior_node_continuation.succeeded = run_succeeded;
                             prior_node_continuation.logs = result.logs.clone();
                         }
                     }
@@ -429,8 +439,7 @@ impl State {
         if print_enabled {
             debug!(
                 "*** Loop complete - returning final results {:?} {:?}",
-                backend_result,
-                created_contract_addr
+                backend_result, created_contract_addr
             );
         }
 
@@ -689,13 +698,11 @@ impl State {
 
     #[allow(clippy::too_many_arguments)]
     pub fn estimate_gas(
-        &self,
-        from_addr: Address,
-        to_addr: Option<Address>,
+        &self_data      from_addr: Ad_chain_id       to_addr:_current_blockss>,
         data: Vec<u8>,
         chain_id: u64,
-        current_block: BlockHeader,
-        print_enabled: bool,
+ _gas    current_block: BlockHeader,
+        _value_enabled: bool,
         gas: u64,
         _gas_price: u64,
         value: U256,
@@ -706,55 +713,55 @@ impl State {
 
         Ok(1001014 * 2)
 
-//        let gas_price = self.get_gas_price()?;
-//
-//        let result = self.apply_transaction_inner(
-//            from_addr,
-//            to_addr,
-//            0,
-//            gas,
-//            value,
-//            data,
-//            chain_id,
-//            current_block,
-//            true,
-//            print_enabled,
-//        );
-//
-//        if print_enabled {
-//            debug!("finished contact gas estimation");
-//        }
-//
-//        match result {
-//            Ok((result, _)) => {
-//                if !result.succeeded() {
-//                    let error_str =
-//                        format!("Estimate gas failed with error: {:?}", result.exit_reason);
-//                    warn!(error_str);
-//                    return Err(anyhow!(error_str));
-//                }
-//
-//                if result.remaining_gas > gas {
-//                    let error_str = format!("More gas remaining than was specified in the estimate! Remaining gas: {} Provided: {}", result.remaining_gas, gas);
-//                    warn!(error_str);
-//                    return Err(anyhow!(error_str));
-//                }
-//
-//                let res = gas - result.remaining_gas + gas_price;
-//
-//                info!(
-//                    "gas estimation: {} {} {} -> {}",
-//                    gas, result.remaining_gas, gas_price, res
-//                );
-//
-//                Ok(res)
-//            }
-//            Err(e) => {
-//                let error_str = format!("Estimate gas failed with error: {:?}", e);
-//                warn!(error_str);
-//                Err(anyhow!(error_str))
-//            }
-//        }
+        //        let gas_price = self.get_gas_price()?;
+        //
+        //        let result = self.apply_transaction_inner(
+        //            from_addr,
+        //            to_addr,
+        //            0,
+        //            gas,
+        //            value,
+        //            data,
+        //            chain_id,
+        //            current_block,
+        //            true,
+        //            print_enabled,
+        //        );
+        //
+        //        if print_enabled {
+        //            debug!("finished contact gas estimation");
+        //        }
+        //
+        //        match result {
+        //            Ok((result, _)) => {
+        //                if !result.succeeded() {
+        //                    let error_str =
+        //                        format!("Estimate gas failed with error: {:?}", result.exit_reason);
+        //                    warn!(error_str);
+        //                    return Err(anyhow!(error_str));
+        //                }
+        //
+        //                if result.remaining_gas > gas {
+        //                    let error_str = format!("More gas remaining than was specified in the estimate! Remaining gas: {} Provided: {}", result.remaining_gas, gas);
+        //                    warn!(error_str);
+        //                    return Err(anyhow!(error_str));
+        //                }
+        //
+        //                let res = gas - result.remaining_gas + gas_price;
+        //
+        //                info!(
+        //                    "gas estimation: {} {} {} -> {}",
+        //                    gas, result.remaining_gas, gas_price, res
+        //                );
+        //
+        //                Ok(res)
+        //            }
+        //            Err(e) => {
+        //                let error_str = format!("Estimate gas failed with error: {:?}", e);
+        //                warn!(error_str);
+        //                Err(anyhow!(error_str))
+        //            }
+        //        }
     }
 
     pub fn call_contract(
@@ -799,8 +806,12 @@ pub fn push_transfer(
     amount: U256,
     continuations: Arc<Mutex<EvmProto::Continuations>>,
 ) -> EvmProto::EvmCallArgs {
-
-    trace!("Pushing transfer from: {} -> to: {} amount: {}", from, to, amount);
+    trace!(
+        "Pushing transfer from: {} -> to: {} amount: {}",
+        from,
+        to,
+        amount
+    );
 
     let balance_data = contracts::native_token::TRANSFER
         .encode_input(&[Token::Address(to.0), Token::Uint(amount)])
@@ -820,7 +831,7 @@ pub fn push_transfer(
         continuations,
         enable_cps: true,
         node_continuation: None,
-        evm_context: Default::default(),
+        evm_context: "fund_transfer".to_string(),
         is_static: false,
         tx_trace_enabled: false,
     }
