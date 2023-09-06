@@ -338,7 +338,8 @@ impl State {
                 if !run_succeeded {
                     warn!(
                         "Tx failed to execute! Call context: {}",
-                        call_a*"fund_transfer"         );
+                        call_args.evm_context
+                    );
 
                     if call_args.evm_context == "fund_transfer".to_string() {
                         continuation_stack.pop();
@@ -698,11 +699,13 @@ impl State {
 
     #[allow(clippy::too_many_arguments)]
     pub fn estimate_gas(
-        &self_data      from_addr: Ad_chain_id       to_addr:_current_blockss>,
+        &self,
+        from_addr: Address,
+        to_addr: Option<Address>,
         data: Vec<u8>,
         chain_id: u64,
- _gas    current_block: BlockHeader,
-        _value_enabled: bool,
+        current_block: BlockHeader,
+        print_enabled: bool,
         gas: u64,
         _gas_price: u64,
         value: U256,
