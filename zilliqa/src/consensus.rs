@@ -111,6 +111,8 @@ pub struct Consensus {
     pending_peers: Vec<Validator>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
     new_transactions: BTreeMap<Hash, SignedTransaction>,
+    /// Transactions that cannot yet be executed due to the nonce being higher. The value is the number of retries
+    new_transactions_waiting: BTreeMap<Hash, u64>,
     /// Transactions that have been executed and included in a block, and the blocks the are
     /// included in.
     transactions: Tree,
@@ -202,6 +204,7 @@ impl Consensus {
             finalized_view: latest_block.view(),
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
+            new_transactions_waiting: BTreeMap::new(),
             transactions: db.open_tree(TXS_TREE)?,
             transaction_receipts: db.open_tree(RECEIPTS_TREE)?,
             state,
@@ -353,9 +356,8 @@ impl Consensus {
         let block_state_root = block.state_root_hash();
 
         // If the proposed block is safe, vote for it and advance to the next round.
-        trace!("checking whether block is safe");
         if self.check_safe_block(&block)? {
-            trace!("block is safe");
+            trace!("Number of txns to execute: {}", transactions.len());
 
             for txn in &transactions {
                 if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
@@ -367,6 +369,8 @@ impl Consensus {
                     };
                     self.transactions
                         .insert(txn.hash().0, bincode::serialize(&txn)?)?;
+
+                    info!(?receipt, "applied transaction {:?}", receipt);
                     self.transaction_receipts
                         .insert(txn.hash().0, bincode::serialize(&receipt)?)?;
                 }
@@ -403,7 +407,6 @@ impl Consensus {
         current_block: BlockHeader,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash();
-        debug!(?hash, "executing transaction");
 
         // If we have the transaction in the mempool, remove it.
         self.new_transactions.remove(&hash);
@@ -439,6 +442,23 @@ impl Consensus {
             .map(|encoded| Ok(bincode::deserialize::<Vec<Hash>>(&encoded)?))
             .transpose()
             .map(|opt| opt.unwrap_or_default())
+    }
+
+    pub fn get_txns_to_execute(&mut self) -> Vec<SignedTransaction> {
+        // Note: push back Txns that have an incorrect nonce
+        self.new_transactions.values().cloned().filter(|tx| {
+            if self.state.has_account(tx.from_addr) && self.state.must_get_account(tx.from_addr).nonce != tx.transaction.nonce {
+                // Incremement the value if it exists, otherwise set it to 1
+                let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
+                retries.checked_add(1);
+                warn!("Transaction nonce for tx {} is too high, retrying... {}/{}", tx.hash(), retries, self.config.tx_retries);
+                if *retries > self.config.tx_retries {
+                    self.new_transactions_waiting.remove(&tx.hash());
+                }
+                return false;
+            }
+            true
+        }).collect()
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
@@ -512,9 +532,9 @@ impl Consensus {
 
                     let previous_state_root_hash = self.state.root_hash()?;
 
-                    let applied_transactions: Vec<_> =
-                        self.new_transactions.values().cloned().collect();
-                    let applied_transactions: Vec<_> = applied_transactions
+                    let transactions = self.get_txns_to_execute();
+
+                    let applied_transactions: Vec<_> = transactions
                         .into_iter()
                         .filter_map(|tx| {
                             let result = self.apply_transaction(tx.clone(), parent_header);

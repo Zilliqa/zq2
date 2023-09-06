@@ -10,9 +10,10 @@ use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
 use sled::Tree;
 use std::convert::TryInto;
-use std::fmt::Display;
+use std::fmt::{Display, LowerHex};
 use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
+use core::fmt;
 
 use anyhow::{anyhow, Result};
 use evm_ds::protos::evm_proto::Log;
@@ -254,8 +255,14 @@ impl State {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Address(pub H160);
+
+impl fmt::Debug for Address {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
 
 impl From<H160> for Address {
     fn from(h: H160) -> Address {
@@ -304,7 +311,7 @@ impl Address {
 
 impl Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        LowerHex::fmt(&self.0, f)
     }
 }
 

@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
+use tracing::info;
 
 use tracing::log::trace;
 
@@ -322,7 +323,12 @@ pub(super) fn get_transaction_receipt_inner(
 ) -> Result<Option<EthTransactionReceipt>> {
     let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
+
+
     let Some(receipt) = node.get_transaction_receipt(hash)? else { return Ok(None); };
+
+    info!("get_transaction_receipt_inner: hash: {:?} result: {:?}", hash, receipt);
+
     let Some(block) = node.get_block_by_hash(receipt.block_hash)? else { return Ok(None); };
 
     let transaction_hash = H256(hash.0);
