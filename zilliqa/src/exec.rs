@@ -637,7 +637,7 @@ impl State {
             .unwrap();
 
         debug!("****** setting gas price to: {}", price);
-        let result = self.force_execute_payload(Some(Address::NATIVE_TOKEN), data);
+        let result = self.force_execute_payload(Some(Address::GAS_PRICE), data);
 
         match result {
             Ok((result, _)) => {
