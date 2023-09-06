@@ -457,12 +457,15 @@ impl Consensus {
                     let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
                     let _ = retries.checked_add(1);
                     warn!(
-                        "Transaction nonce for tx {} is too high, retrying... {}/{}",
+                        "Transaction nonce for tx {} is too high at {} when acct nonce is {}, retrying... {}/{}",
                         tx.hash(),
+                        tx.transaction.nonce,
+                        self.state.must_get_account(tx.from_addr).nonce,
                         retries,
                         self.config.tx_retries
                     );
                     if *retries > self.config.tx_retries {
+                        warn!("Tranaction has exceeded retries and has been removed");
                         self.new_transactions_waiting.remove(&tx.hash());
                     }
                     return false;
