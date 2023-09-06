@@ -1,8 +1,9 @@
 [package]
 name = "evm_ds"
-version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0 OR MIT"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
 base64 = "0.21.3"
