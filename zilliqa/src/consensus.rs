@@ -455,7 +455,7 @@ impl Consensus {
                 {
                     // Incremement the value if it exists, otherwise set it to 1
                     let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
-                    retries.checked_add(1);
+                    let _ = retries.checked_add(1);
                     warn!(
                         "Transaction nonce for tx {} is too high, retrying... {}/{}",
                         tx.hash(),

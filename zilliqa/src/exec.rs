@@ -341,7 +341,7 @@ impl State {
                         call_args.evm_context
                     );
 
-                    if call_args.evm_context == "fund_transfer".to_string() {
+                    if call_args.evm_context == *"fund_transfer" {
                         continuation_stack.pop();
                     }
                 }
@@ -702,13 +702,13 @@ impl State {
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
-        data: Vec<u8>,
-        chain_id: u64,
-        current_block: BlockHeader,
+        _data: Vec<u8>,
+        _chain_id: u64,
+        _current_block: BlockHeader,
         print_enabled: bool,
-        gas: u64,
+        _gas: u64,
         _gas_price: u64,
-        value: U256,
+        _value: U256,
     ) -> Result<u64> {
         if print_enabled {
             debug!("estimating gas from: {:?} to: {:?}", from_addr, to_addr);
