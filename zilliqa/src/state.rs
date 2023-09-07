@@ -6,7 +6,6 @@ use generic_array::{
     GenericArray,
 };
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-use once_cell::sync::Lazy;
 use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
 use sled::Tree;
@@ -17,61 +16,10 @@ use std::{hash::Hash, str::FromStr};
 
 use anyhow::{anyhow, Result};
 use evm_ds::protos::evm_proto::Log;
-use primitive_types::{H160, H256, U256};
+use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 
 use crate::{contracts, crypto, db::SledDb};
-
-/// Const version of `impl From<u128> for U256`
-const fn u128_to_u256(value: u128) -> U256 {
-    let mut ret = [0; 4];
-    ret[0] = value as u64;
-    ret[1] = (value >> 64) as u64;
-    U256(ret)
-}
-
-static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
-    // Address with private key  0000000000000000000000000000000000000000000000000000000000000001
-    // then ...0002 etc
-    vec![
-        (
-            Address(H160(
-                hex::decode("7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            )),
-            u128_to_u256(5000 * 10u128.pow(18)),
-        ),
-        (
-            Address(H160(
-                hex::decode("2B5AD5c4795c026514f8317c7a215E218DcCD6cF")
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            )),
-            u128_to_u256(5000 * 10u128.pow(18)),
-        ),
-        (
-            Address(H160(
-                hex::decode("6813Eb9362372EEF6200f3b1dbC3f819671cBA69")
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            )),
-            u128_to_u256(5000 * 10u128.pow(18)),
-        ),
-        (
-            Address(H160(
-                hex::decode("1efF47bc3a10a45D4B230B5d10E37751FE6AA718")
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            )),
-            u128_to_u256(5000 * 10u128.pow(18)),
-        ),
-    ]
-});
 
 #[derive(Debug)]
 pub struct State {
@@ -80,7 +28,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new_genesis(database: Tree) -> Result<State> {
+    pub fn new_genesis(database: Tree, genesis_accounts: &[(Address, u128)]) -> Result<State> {
         let db = Arc::new(SledDb::new(database));
         let mut state = Self {
             db: db.clone(),
@@ -94,8 +42,8 @@ impl State {
 
         let _ = state.set_gas_price(default_gas_price().into());
 
-        for (address, balance) in GENESIS.iter() {
-            state.set_native_balance(*address, *balance)?;
+        for (address, balance) in genesis_accounts {
+            state.set_native_balance(*address, (*balance).into())?;
         }
 
         Ok(state)

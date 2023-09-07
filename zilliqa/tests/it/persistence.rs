@@ -1,6 +1,7 @@
 use crate::{Network, TestNode};
 use ethers::providers::Middleware;
 use ethers::types::TransactionRequest;
+use ethers::utils::secret_key_to_address;
 use primitive_types::H160;
 use tracing::*;
 use zilliqa::crypto::Hash;
@@ -8,7 +9,7 @@ use zilliqa::crypto::SecretKey;
 
 #[zilliqa_macros::test]
 async fn block_and_tx_data_persistence(mut network: Network<'_>) {
-    let wallet = network.genesis_wallet();
+    let wallet = network.genesis_wallet().await;
     // send and include tx
     let hash = Hash(
         wallet
@@ -75,6 +76,7 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
         SecretKey::new().unwrap(),
         0,
         Some(dir),
+        secret_key_to_address(&network.genesis_key),
     );
 
     // Sometimes, the dropping Arc<Node> (by dropping the TestNode above) does not actually drop

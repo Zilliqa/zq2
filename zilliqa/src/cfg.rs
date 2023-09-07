@@ -3,7 +3,7 @@ use std::time::Duration;
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::NodePublicKey;
+use crate::{crypto::NodePublicKey, state::Address};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -48,6 +48,7 @@ pub struct NodeConfig {
     pub tx_retries: u64,
     /// The genesis committee (public key, peer id) pairs. Only allowed to have one member at the moment
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    pub genesis_accounts: Vec<(Address, u128)>,
 }
 
 impl Default for NodeConfig {
@@ -55,12 +56,14 @@ impl Default for NodeConfig {
         NodeConfig {
             json_rpc_port: 4201,
             disable_rpc: false,
-            eth_chain_id: 1 + 0x8000,
+            // Default to the "Zilliqa local development" chain ID.
+            eth_chain_id: 700 + 0x8000,
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: None,
             consensus_timeout: Duration::from_secs(5),
             tx_retries: 1000,
             genesis_committee: vec![],
+            genesis_accounts: Vec::new(),
         }
     }
 }
