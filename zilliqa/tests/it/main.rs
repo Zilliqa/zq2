@@ -1,5 +1,6 @@
 mod consensus;
 mod eth;
+mod native_contracts;
 mod persistence;
 mod web3;
 use std::env;
