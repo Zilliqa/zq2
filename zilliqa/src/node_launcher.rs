@@ -1,4 +1,4 @@
-use crate::message::ExternalMessage;
+use crate::{health::HealthLayer, message::ExternalMessage};
 use jsonrpsee::RpcModule;
 use std::{
     net::Ipv4Addr,
@@ -65,7 +65,7 @@ impl NodeLauncher {
                 .allow_methods(Method::POST)
                 .allow_origin(Any)
                 .allow_headers([header::CONTENT_TYPE]);
-            let middleware = tower::ServiceBuilder::new().layer(cors);
+            let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
             let port = config.json_rpc_port;
             let server = jsonrpsee::server::ServerBuilder::new()
                 .set_middleware(middleware)
