@@ -6,8 +6,8 @@ use libp2p::PeerId;
 use primitive_types::H256;
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
-use std::{collections::BTreeMap, error::Error, fmt::Display};
 use std::ops::Add;
+use std::{collections::BTreeMap, error::Error, fmt::Display};
 use tracing::*;
 
 use crate::message::Committee;
@@ -362,6 +362,7 @@ impl Consensus {
 
             for txn in &transactions {
                 if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
+                    // nathan path 2
                     let receipt = TransactionReceipt {
                         block_hash: block.hash(),
                         success: result.success,
@@ -456,7 +457,7 @@ impl Consensus {
                 {
                     // Incremement the value if it exists, otherwise set it to 1
                     let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
-                    retries.add(1);
+                    let _ = retries.add(1);
                     warn!(
                         "Transaction nonce for tx {} is incorrect: {} when acct nonce is {}, retrying... {}/{}",
                         tx.hash(),
@@ -549,7 +550,7 @@ impl Consensus {
 
                     let transactions = self.get_txns_to_execute();
 
-                    let applied_transactions: Vec<_> = transactions
+                    let applied_transactions: Vec<_> = transactions // nathan path 1
                         .into_iter()
                         .filter_map(|tx| {
                             let result = self.apply_transaction(tx.clone(), parent_header);

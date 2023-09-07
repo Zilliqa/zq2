@@ -16,6 +16,7 @@ use evm_ds::{
     protos::evm_proto as EvmProto,
 };
 use primitive_types::{H160, U256};
+use std::backtrace::Backtrace;
 use tracing::*;
 
 use crate::state::SignedTransaction;
@@ -457,6 +458,8 @@ impl State {
         let hash = txn.hash();
         info!(?hash, ?txn, "executing txn");
 
+        info!("{:?}", Backtrace::force_capture());
+
         let gas_price = self.get_gas_price()?;
 
         if txn.transaction.gas_limit < gas_price {
@@ -492,17 +495,16 @@ impl State {
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
                 // and we get the return value (which will indicate the error)
                 let mut acct = self.get_account(txn.from_addr).unwrap();
-                acct.nonce = acct.nonce.checked_add(1).unwrap();
 
                 if acct.nonce != txn.transaction.nonce {
                     let error_str = format!(
-                        "Nonce mismatch during tx execution! Expected: {}, Actual: {}",
-                        acct.nonce, txn.transaction.nonce
+                        "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
+                        acct.nonce, txn.transaction.nonce, hash
                     );
                     warn!(error_str);
                     return Err(anyhow!(error_str));
                 }
-
+                acct.nonce = acct.nonce.checked_add(1).unwrap();
                 self.save_account(txn.from_addr, acct)?;
 
                 Ok(TransactionApplyResult {
