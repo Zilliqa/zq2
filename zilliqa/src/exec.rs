@@ -13,7 +13,7 @@ use evm_ds::{
     evm_server_run::{
         calculate_contract_address, calculate_contract_address_scheme, run_evm_impl_direct,
     },
-    protos::evm_proto as EvmProto,
+    protos::evm_proto::{self as EvmProto, ExitReasonCps},
 };
 use primitive_types::{H160, U256};
 use tracing::*;
@@ -101,11 +101,55 @@ pub struct TransactionApplyResult {
 }
 
 impl State {
-    /// Deploy a contract at a fixed address. Used for system contracts which exist at well known addresses.
-    pub fn deploy_fixed_contract(&mut self, address: Address, code: Vec<u8>) -> Result<()> {
-        let mut account = self.get_account(address)?;
-        account.code = code;
-        self.save_account(address, account)
+    /// Used primarily during genesis to set up contracts for chain functionality.
+    pub fn force_deploy_contract(
+        &mut self,
+        creation_bytecode: Vec<u8>,
+        override_address: Address,
+    ) -> Result<()> {
+        let (mut result, evm_address) = self.apply_transaction_inner(
+            Address::ZERO,
+            None,
+            0,
+            u64::MAX,
+            U256::zero(),
+            creation_bytecode,
+            0,
+            BlockHeader::default(),
+            true,
+            false,
+        )?;
+
+        match result.exit_reason {
+            ExitReasonCps::Succeed(_) => {
+                let evm_address = evm_address.expect(
+                    "Transaction submitted to force_deploy_contract must be a contract creation.",
+                );
+
+                let mut acct = self.get_account(override_address)?;
+                acct.code = result.return_value.clone().to_vec();
+                self.save_account(override_address, acct)?;
+
+                // Overwrite applys to use the desired address.
+                for apply in result.apply.iter_mut() {
+                    match apply {
+                        EvmProto::Apply::Modify { address, .. } => {
+                            if *address == evm_address.0 {
+                                *address = override_address.0;
+                            }
+                        }
+                        EvmProto::Apply::Delete { address, .. } => {
+                            if *address == evm_address.0 {
+                                *address = override_address.0;
+                            }
+                        }
+                    }
+                }
+                self.apply_delta(result.apply)?;
+                Ok(())
+            }
+            _ => Err(anyhow!("{:?}", result.exit_reason)),
+        }
     }
 
     // Call this function with your transaction and it will return whether is succeeded and the state deltas that

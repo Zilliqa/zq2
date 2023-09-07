@@ -39,10 +39,13 @@ impl State {
             accounts: PatriciaTrie::new(db),
         };
 
-        state
-            .deploy_fixed_contract(Address::NATIVE_TOKEN, contracts::native_token::CODE.clone())?;
+        let native_token_data = contracts::native_token::CONSTRUCTOR
+            .encode_input(contracts::native_token::CREATION_CODE.to_vec(), &[])?;
+        state.force_deploy_contract(native_token_data, Address::NATIVE_TOKEN)?;
 
-        state.deploy_fixed_contract(Address::GAS_PRICE, contracts::gas_price::CODE.clone())?;
+        let gas_price_data = contracts::gas_price::CONSTRUCTOR
+            .encode_input(contracts::gas_price::CREATION_CODE.to_vec(), &[])?;
+        state.force_deploy_contract(gas_price_data, Address::GAS_PRICE)?;
 
         let _ = state.set_gas_price(default_gas_price().into());
 
