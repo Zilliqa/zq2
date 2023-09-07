@@ -718,7 +718,7 @@ impl State {
         current_block: BlockHeader,
         print_enabled: bool,
         gas: u64,
-        gas_price: u64,
+        _gas_price: u64,
         value: U256,
     ) -> Result<u64> {
         if print_enabled {
