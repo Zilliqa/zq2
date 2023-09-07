@@ -8,6 +8,12 @@ members = [
  "eth-trie.rs"
 ]
 
+[workspace.package]
+version = "0.1.0"
+authors = ["Zilliqa <zilliqatech@zilliqa.com>"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
 [profile.release]
 # Add debug information to the release build (does NOT reduce the level of optimization!)
 # Makes flamegraphs more readable.
