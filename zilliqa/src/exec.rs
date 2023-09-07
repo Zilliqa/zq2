@@ -16,7 +16,6 @@ use evm_ds::{
     protos::evm_proto as EvmProto,
 };
 use primitive_types::{H160, U256};
-use std::backtrace::Backtrace;
 use tracing::*;
 
 use crate::state::SignedTransaction;
@@ -342,6 +341,8 @@ impl State {
                         call_args.evm_context
                     );
 
+                    // In the case it was a fund transfer, what is on the stack is what
+                    // would have executed if it had the funds, so we need to pop it additionally.
                     if call_args.evm_context == *"fund_transfer" {
                         continuation_stack.pop();
                     }
@@ -457,8 +458,6 @@ impl State {
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash();
         info!(?hash, ?txn, "executing txn");
-
-        info!("{:?}", Backtrace::force_capture());
 
         let gas_price = self.get_gas_price()?;
 
@@ -714,69 +713,67 @@ impl State {
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
-        _data: Vec<u8>,
-        _chain_id: u64,
-        _current_block: BlockHeader,
+        data: Vec<u8>,
+        chain_id: u64,
+        current_block: BlockHeader,
         print_enabled: bool,
-        _gas: u64,
-        _gas_price: u64,
-        _value: U256,
+        gas: u64,
+        gas_price: u64,
+        value: U256,
     ) -> Result<u64> {
         if print_enabled {
             debug!("estimating gas from: {:?} to: {:?}", from_addr, to_addr);
         }
 
-        Ok(1001014 * 2)
+        let gas_price = self.get_gas_price()?;
 
-        //        let gas_price = self.get_gas_price()?;
-        //
-        //        let result = self.apply_transaction_inner(
-        //            from_addr,
-        //            to_addr,
-        //            0,
-        //            gas,
-        //            value,
-        //            data,
-        //            chain_id,
-        //            current_block,
-        //            true,
-        //            print_enabled,
-        //        );
-        //
-        //        if print_enabled {
-        //            debug!("finished contact gas estimation");
-        //        }
-        //
-        //        match result {
-        //            Ok((result, _)) => {
-        //                if !result.succeeded() {
-        //                    let error_str =
-        //                        format!("Estimate gas failed with error: {:?}", result.exit_reason);
-        //                    warn!(error_str);
-        //                    return Err(anyhow!(error_str));
-        //                }
-        //
-        //                if result.remaining_gas > gas {
-        //                    let error_str = format!("More gas remaining than was specified in the estimate! Remaining gas: {} Provided: {}", result.remaining_gas, gas);
-        //                    warn!(error_str);
-        //                    return Err(anyhow!(error_str));
-        //                }
-        //
-        //                let res = gas - result.remaining_gas + gas_price;
-        //
-        //                info!(
-        //                    "gas estimation: {} {} {} -> {}",
-        //                    gas, result.remaining_gas, gas_price, res
-        //                );
-        //
-        //                Ok(res)
-        //            }
-        //            Err(e) => {
-        //                let error_str = format!("Estimate gas failed with error: {:?}", e);
-        //                warn!(error_str);
-        //                Err(anyhow!(error_str))
-        //            }
-        //        }
+        let result = self.apply_transaction_inner(
+            from_addr,
+            to_addr,
+            0,
+            gas,
+            value,
+            data,
+            chain_id,
+            current_block,
+            true,
+            print_enabled,
+        );
+
+        if print_enabled {
+            debug!("finished contact gas estimation");
+        }
+
+        match result {
+            Ok((result, _)) => {
+                if !result.succeeded() {
+                    let error_str =
+                        format!("Estimate gas failed with error: {:?}", result.exit_reason);
+                    warn!(error_str);
+                    return Err(anyhow!(error_str));
+                }
+
+                if result.remaining_gas > gas {
+                    let error_str = format!("More gas remaining than was specified in the estimate! Remaining gas: {} Provided: {}", result.remaining_gas, gas);
+                    warn!(error_str);
+                    return Err(anyhow!(error_str));
+                }
+
+                let res = gas - result.remaining_gas + gas_price;
+
+                info!(
+                    "gas estimation: {} {} {} -> {}",
+                    gas, result.remaining_gas, gas_price, res
+                );
+
+                Ok(res)
+            }
+            Err(e) => {
+                let error_str = format!("Estimate gas failed with error: {:?}", e);
+                warn!(error_str);
+                Err(anyhow!(error_str))
+            }
+        }
     }
 
     pub fn call_contract(

@@ -6,9 +6,7 @@ use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
-use tracing::info;
-
-use tracing::log::trace;
+use tracing::log::*;
 
 use crate::{
     crypto::Hash,

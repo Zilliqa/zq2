@@ -358,11 +358,8 @@ impl Consensus {
 
         // If the proposed block is safe, vote for it and advance to the next round.
         if self.check_safe_block(&block)? {
-            trace!("Number of txns to execute: {}", transactions.len());
-
             for txn in &transactions {
                 if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
-                    // nathan path 2
                     let receipt = TransactionReceipt {
                         block_hash: block.hash(),
                         success: result.success,
@@ -550,7 +547,7 @@ impl Consensus {
 
                     let transactions = self.get_txns_to_execute();
 
-                    let applied_transactions: Vec<_> = transactions // nathan path 1
+                    let applied_transactions: Vec<_> = transactions
                         .into_iter()
                         .filter_map(|tx| {
                             let result = self.apply_transaction(tx.clone(), parent_header);
