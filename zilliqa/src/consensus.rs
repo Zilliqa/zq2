@@ -155,7 +155,7 @@ impl Consensus {
         let mut state = if let Some(latest_block) = &latest_block {
             State::new_from_root(state_trie, H256(latest_block.state_root_hash().0))
         } else {
-            State::new_genesis(state_trie)?
+            State::new_genesis(state_trie, &config.genesis_accounts)?
         };
 
         let latest_block = match latest_block {

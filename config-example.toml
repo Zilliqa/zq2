@@ -4,6 +4,13 @@ p2p_port = 0
 json_rpc_port = 4201
 eth_chain_id = 0x8001
 consensus_timeout = { secs = 5, nanos = 0 }
+genesis_accounts = [
+    # Accounts with private key 0x1, 0x2, 0x3, 0x4.
+    ["7E5F4552091A69125d5DfCb7b8C2659029395Bdf", 5000000000000000000000],
+    ["2B5AD5c4795c026514f8317c7a215E218DcCD6cF", 5000000000000000000000],
+    ["6813Eb9362372EEF6200f3b1dbC3f819671cBA69", 5000000000000000000000],
+    ["1efF47bc3a10a45D4B230B5d10E37751FE6AA718", 5000000000000000000000],
+]
 
 [[nodes]]
 json_rpc_port = 4202
