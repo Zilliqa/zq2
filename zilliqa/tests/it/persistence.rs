@@ -9,7 +9,7 @@ use zilliqa::crypto::SecretKey;
 
 #[zilliqa_macros::test]
 async fn block_and_tx_data_persistence(mut network: Network<'_>) {
-    let wallet = network.genesis_wallet();
+    let wallet = network.genesis_wallet().await;
     // send and include tx
     let hash = Hash(
         wallet
