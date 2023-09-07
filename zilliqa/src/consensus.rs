@@ -161,7 +161,7 @@ impl Consensus {
             State::new_genesis(
                 state_trie,
                 &config.genesis_accounts,
-                (config.genesis_balance_each as u128).saturating_mul(1000000),
+                (config.genesis_balance_each as u128).saturating_mul(1_000_000),
             )?
         };
 
