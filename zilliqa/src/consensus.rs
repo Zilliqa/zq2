@@ -1,6 +1,7 @@
 use ethabi::{Event, Log, RawLog};
 use primitive_types::H256;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::message::{ExternalMessage, InternalMessage};
@@ -177,21 +178,34 @@ impl Consensus {
 
         let latest_block = match latest_block {
             Some(l) => l,
-            None => {
-                if config.genesis_committee.len() != 1 {
+            None => match (config.genesis_committee.len(), config.genesis_hash) {
+                (0, Some(hash)) => Block::genesis(Committee(BTreeSet::new()), state_root_hash),
+                (0, None) => {
+                    return Err(anyhow!("At least one of genesis_committee or genesis_hash must be specified in config"));
+                }
+                (1, hash) => {
+                    let (public_key, peer_id) = config.genesis_committee[0];
+                    let genesis_validator = Validator {
+                        public_key,
+                        peer_id,
+                        weight: 100,
+                    };
+                    let genesis =
+                        Block::genesis(Committee::new(genesis_validator), state.root_hash()?);
+                    if let Some(hash) = hash {
+                        if genesis.hash() != hash {
+                            return Err(anyhow!("Both genesis committee and genesis hash were specified, but the hashes do not match"));
+                        }
+                    }
+                    genesis
+                }
+                _ => {
                     return Err(anyhow!(
-                        "genesis committee must have length 1, not {}",
+                        "genesis committee must have length 0 or 1, not {}",
                         config.genesis_committee.len()
                     ));
                 }
-                let (public_key, peer_id) = config.genesis_committee[0];
-                let genesis_validator = Validator {
-                    public_key,
-                    peer_id,
-                    weight: 100,
-                };
-                Block::genesis(Committee::new(genesis_validator), state.root_hash()?)
-            }
+            },
         };
         trace!("Loading state at height {}", latest_block.view());
 

@@ -1,3 +1,4 @@
+use crate::crypto::Hash;
 use std::time::Duration;
 
 use libp2p::{Multiaddr, PeerId};
@@ -45,7 +46,10 @@ pub struct NodeConfig {
     pub allowed_timestamp_skew: Duration,
     /// The location of persistence data. If not set, uses a temporary path.
     pub data_dir: Option<String>,
+    /// Genesis data. Specifying a committee node is necessary for nodes participating in the consensus at
+    /// genesis. Only the hash can be specified for nodes joining afterwards.
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    pub genesis_hash: Option<Hash>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +83,7 @@ impl Default for NodeConfig {
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: None,
             genesis_committee: vec![],
+            genesis_hash: None,
         }
     }
 }
