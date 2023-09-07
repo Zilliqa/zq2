@@ -43,6 +43,13 @@ impl Setup {
                     [[nodes]]
                     {}data_dir = "{DATADIR_PREFIX}{i}"
                     genesis_committee = [ [ "{first_key}", "{first_peer_id}" ] ]
+                    genesis_balance_each = 5000000000000000000
+                    genesis_accounts = [
+                        "7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+                        "2B5AD5c4795c026514f8317c7a215E218DcCD6cF",
+                        "6813Eb9362372EEF6200f3b1dbC3f819671cBA69",
+                        "1efF47bc3a10a45D4B230B5d10E37751FE6AA718",
+                        ]
                 "#,
                 if i == 0 { "" } else { "disable_rpc = true\n" }
             )?;

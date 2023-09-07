@@ -48,7 +48,8 @@ pub struct NodeConfig {
     pub tx_retries: u64,
     /// The genesis committee (public key, peer id) pairs. Only allowed to have one member at the moment
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
-    pub genesis_accounts: Vec<(Address, u128)>,
+    pub genesis_balance_each: u64,
+    pub genesis_accounts: Vec<Address>,
 }
 
 impl Default for NodeConfig {
@@ -63,6 +64,7 @@ impl Default for NodeConfig {
             consensus_timeout: Duration::from_secs(5),
             tx_retries: 1000,
             genesis_committee: vec![],
+            genesis_balance_each: 10000000000000000000,
             genesis_accounts: Vec::new(),
         }
     }

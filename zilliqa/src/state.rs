@@ -28,7 +28,11 @@ pub struct State {
 }
 
 impl State {
-    pub fn new_genesis(database: Tree, genesis_accounts: &[(Address, u128)]) -> Result<State> {
+    pub fn new_genesis(
+        database: Tree,
+        genesis_accounts: &[Address],
+        genesis_balance_each: u128,
+    ) -> Result<State> {
         let db = Arc::new(SledDb::new(database));
         let mut state = Self {
             db: db.clone(),
@@ -42,8 +46,12 @@ impl State {
 
         let _ = state.set_gas_price(default_gas_price().into());
 
-        for (address, balance) in genesis_accounts {
-            state.set_native_balance(*address, (*balance).into())?;
+        if genesis_accounts.is_empty() {
+            panic!("No genesis accounts provided");
+        }
+
+        for address in genesis_accounts {
+            state.set_native_balance(*address, (genesis_balance_each).into())?;
         }
 
         Ok(state)
@@ -296,7 +304,6 @@ impl SignedTransaction {
             signing_info,
         })
     }
-
     pub fn hash(&self) -> crypto::Hash {
         let txn = &self.transaction;
         match self.signing_info {
