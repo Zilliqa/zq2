@@ -15,7 +15,7 @@ use zilliqa::{cfg::Config, crypto::SecretKey};
 struct Args {
     #[arg(value_parser = SecretKey::from_hex)]
     secret_key: SecretKey,
-    #[clap(long, short, required = true, default_value = "config.toml")]
+    #[clap(long, short, default_value = "config.toml")]
     config_file: PathBuf,
 }
 

@@ -3,7 +3,7 @@ use std::time::Duration;
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::NodePublicKey;
+use crate::{crypto::NodePublicKey, state::Address};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -45,7 +45,6 @@ pub struct NodeConfig {
     pub allowed_timestamp_skew: Duration,
     /// The location of persistence data. If not set, uses a temporary path.
     pub data_dir: Option<String>,
-    pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +56,8 @@ pub struct ConsensusConfig {
     pub main_shard_id: Option<u64>,
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     pub consensus_timeout: Duration,
+    pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    pub genesis_accounts: Vec<(Address, u128)>,
 }
 
 impl Default for ConsensusConfig {
@@ -65,6 +66,8 @@ impl Default for ConsensusConfig {
             is_main: true,
             main_shard_id: None,
             consensus_timeout: Duration::from_secs(5),
+            genesis_committee: vec![],
+            genesis_accounts: Vec::new(),
         }
     }
 }
@@ -78,7 +81,6 @@ impl Default for NodeConfig {
             consensus: Default::default(),
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: None,
-            genesis_committee: vec![],
         }
     }
 }

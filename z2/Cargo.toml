@@ -1,8 +1,9 @@
 [package]
 name = "z2"
-version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0 OR MIT"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
 
 # This is a bit dodgy and should really be a top-level member of the workspace, but
 # it's not big enough yet - we should promote it if it ever gets large enough

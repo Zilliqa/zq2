@@ -129,7 +129,7 @@ impl P2pNode {
             consensus: ConsensusConfig {
                 is_main: false,
                 main_shard_id: Some(parent.eth_chain_id),
-                consensus_timeout: parent.consensus.consensus_timeout,
+                ..parent.consensus
             },
             ..parent
         }

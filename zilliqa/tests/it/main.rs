@@ -5,12 +5,8 @@ mod persistence;
 mod web3;
 use std::env;
 use std::ops::DerefMut;
-use zilliqa::cfg::NodeConfig;
-use zilliqa::crypto::NodePublicKey;
-use zilliqa::crypto::SecretKey;
-use zilliqa::message::ExternalMessage;
+use zilliqa::cfg::ConsensusConfig;
 use zilliqa::message::InternalMessage;
-use zilliqa::node::Node;
 
 use std::collections::HashMap;
 use std::{
@@ -22,11 +18,11 @@ use std::{
     },
     time::Duration,
 };
-use zilliqa::message::Message;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 
+use ethers::utils::secret_key_to_address;
 use ethers::{
     abi::Contract,
     prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, SignerMiddleware},
@@ -41,6 +37,7 @@ use jsonrpsee::{
 };
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
+use primitive_types::H160;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
 use serde::Deserialize;
@@ -49,6 +46,13 @@ use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
+use zilliqa::state::Address;
+use zilliqa::{
+    cfg::NodeConfig,
+    crypto::{NodePublicKey, SecretKey},
+    message::{ExternalMessage, Message},
+    node::Node,
+};
 
 #[derive(Deserialize)]
 struct CombinedJson {
@@ -69,6 +73,7 @@ fn node(
     secret_key: SecretKey,
     index: usize,
     datadir: Option<TempDir>,
+    genesis_account: H160,
 ) -> Result<(
     TestNode,
     BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
@@ -88,7 +93,15 @@ fn node(
             data_dir: datadir
                 .as_ref()
                 .map(|d| d.path().to_str().unwrap().to_string()),
-            genesis_committee,
+            consensus: ConsensusConfig {
+                genesis_committee,
+                // Give a genesis account 1 billion ZIL.
+                genesis_accounts: vec![(
+                    Address(genesis_account),
+                    1_000_000_000u128.checked_mul(10u128.pow(18)).unwrap(),
+                )],
+                ..Default::default()
+            },
             ..Default::default()
         },
         secret_key,
@@ -136,6 +149,7 @@ struct Network {
     /// The seed input for the node - because rng.get_seed() returns a different, internal
     /// representation
     seed: u64,
+    genesis_key: SigningKey,
 }
 
 impl Network {
@@ -152,6 +166,7 @@ impl Network {
             keys[0].to_libp2p_keypair().public().to_peer_id(),
         );
         let genesis_committee = vec![validator];
+        let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
         let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
             .into_iter()
@@ -162,6 +177,7 @@ impl Network {
                     key,
                     i,
                     Some(tempfile::tempdir().unwrap()),
+                    secret_key_to_address(&genesis_key),
                 )
                 .unwrap()
             })
@@ -205,6 +221,7 @@ impl Network {
             rng,
             seed,
             children: HashMap::new(),
+            genesis_key,
         }
     }
 
@@ -215,6 +232,7 @@ impl Network {
             secret_key,
             self.nodes.len(),
             None,
+            secret_key_to_address(&self.genesis_key),
         )
         .unwrap();
 
@@ -387,11 +405,7 @@ impl Network {
         self.nodes[index].inner.lock().unwrap()
     }
     pub fn genesis_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
-        // Private key with funds should be at 0x00....01
-        let hex_string = "0000000000000000000000000000000000000000000000000000000000000001";
-        let hex_bytes = hex::decode(hex_string).expect("Failed to decode hex");
-
-        let wallet: LocalWallet = SigningKey::from_slice(hex_bytes.as_slice()).unwrap().into();
+        let wallet: LocalWallet = self.genesis_key.clone().into();
         let wallet = wallet.with_chain_id(0x8001u64);
 
         let node = self

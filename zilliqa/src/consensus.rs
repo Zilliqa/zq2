@@ -178,13 +178,13 @@ impl Consensus {
         let latest_block = match latest_block {
             Some(l) => l,
             None => {
-                if config.genesis_committee.len() != 1 {
+                if config.consensus.genesis_committee.len() != 1 {
                     return Err(anyhow!(
                         "genesis committee must have length 1, not {}",
-                        config.genesis_committee.len()
+                        config.consensus.genesis_committee.len()
                     ));
                 }
-                let (public_key, peer_id) = config.genesis_committee[0];
+                let (public_key, peer_id) = config.consensus.genesis_committee[0];
                 let genesis_validator = Validator {
                     public_key,
                     peer_id,
