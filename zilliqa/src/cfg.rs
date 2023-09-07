@@ -77,8 +77,9 @@ impl Default for NodeConfig {
         NodeConfig {
             json_rpc_port: 4201,
             disable_rpc: false,
-            eth_chain_id: 1 + 0x8000,
             consensus: Default::default(),
+            // Default to the "Zilliqa local development" chain ID.
+            eth_chain_id: 700 + 0x8000,
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: None,
         }

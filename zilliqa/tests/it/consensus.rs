@@ -43,7 +43,7 @@ async fn block_production(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn launch_shard(mut network: Network) {
-    let wallet = network.genesis_wallet();
+    let wallet = network.genesis_wallet().await;
 
     network
         .run_until_async(

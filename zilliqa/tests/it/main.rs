@@ -27,7 +27,7 @@ use ethers::{
     abi::Contract,
     prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, SignerMiddleware},
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
-    signers::{LocalWallet, Signer},
+    signers::LocalWallet,
     types::H256,
 };
 use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
@@ -404,9 +404,11 @@ impl Network {
     pub fn node_at(&mut self, index: usize) -> MutexGuard<Node> {
         self.nodes[index].inner.lock().unwrap()
     }
-    pub fn genesis_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+
+    pub async fn genesis_wallet(
+        &mut self,
+    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
         let wallet: LocalWallet = self.genesis_key.clone().into();
-        let wallet = wallet.with_chain_id(0x8001u64);
 
         let node = self
             .nodes
@@ -419,12 +421,15 @@ impl Network {
         };
         let provider = Provider::new(client);
 
-        SignerMiddleware::new(provider, wallet)
+        SignerMiddleware::new_with_provider_chain(provider, wallet)
+            .await
+            .unwrap()
     }
 
-    pub fn random_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+    pub async fn random_wallet(
+        &mut self,
+    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
         let wallet: LocalWallet = SigningKey::random(self.rng.lock().unwrap().deref_mut()).into();
-        let wallet = wallet.with_chain_id(0x8001u64);
 
         let node = self
             .nodes
@@ -437,7 +442,9 @@ impl Network {
         };
         let provider = Provider::new(client);
 
-        SignerMiddleware::new(provider, wallet)
+        SignerMiddleware::new_with_provider_chain(provider, wallet)
+            .await
+            .unwrap()
     }
 }
 
