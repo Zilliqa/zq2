@@ -731,7 +731,12 @@ impl Consensus {
             .find(|receipt| receipt.tx_hash == *hash))
     }
 
-    pub fn get_logs_in_block(&self, hash: Hash, event: Event) -> Result<Vec<Log>> {
+    pub fn get_logs_in_block(
+        &self,
+        hash: Hash,
+        event: Event,
+        emitter: Address,
+    ) -> Result<Vec<Log>> {
         let Some(receipts) = self.get_transaction_receipts_in_block(hash)? else {
             return Ok(vec![]); // no transations in block, most likely
         };
@@ -739,7 +744,7 @@ impl Consensus {
         let logs: Result<Vec<_>, _> = receipts
             .into_iter()
             .flat_map(|receipt| receipt.logs)
-            .filter(|log| log.topics[0] == event.signature())
+            .filter(|log| log.address == emitter.0 && log.topics[0] == event.signature())
             .map(|log| {
                 event.parse_log_whole(RawLog {
                     topics: log.topics,
@@ -913,6 +918,7 @@ impl Consensus {
             let shard_logs = self.get_logs_in_block(
                 newly_finalized_block.hash(),
                 contracts::shard_registry::SHARD_ADDED_EVT.clone(),
+                Address::SHARD_CONTRACT,
             )?;
             for log in shard_logs {
                 let Some(shard_id) = log
