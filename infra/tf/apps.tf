@@ -103,7 +103,7 @@ module "bluebell-playground" {
   source = "./modules/app"
 
   name           = "bluebell-playground"
-  image          = "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa/bluebell-playground:45be2cd6"
+  image          = "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa/bluebell-playground:a01ce76c"
   static_ip_name = "playground-zilstg-dev"
   domain         = "playground.zilstg.dev"
 }
