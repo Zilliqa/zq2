@@ -22,7 +22,7 @@ jobs:
 
     # This job is configured by the deny.toml config file in the project top level
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - uses: EmbarkStudios/cargo-deny-action@v1
       with:
         command: check ${{ matrix.checks }}
