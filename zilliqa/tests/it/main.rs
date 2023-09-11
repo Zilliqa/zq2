@@ -98,7 +98,10 @@ fn node(
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: vec![(
                     Address(genesis_account),
-                    1_000_000_000u128.checked_mul(10u128.pow(18)).unwrap(),
+                    1_000_000_000u128
+                        .checked_mul(10u128.pow(18))
+                        .unwrap()
+                        .to_string(),
                 )],
                 ..Default::default()
             },

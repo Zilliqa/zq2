@@ -57,7 +57,7 @@ pub struct ConsensusConfig {
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     pub consensus_timeout: Duration,
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
-    pub genesis_accounts: Vec<(Address, u128)>,
+    pub genesis_accounts: Vec<(Address, String)>,
 }
 
 impl Default for ConsensusConfig {

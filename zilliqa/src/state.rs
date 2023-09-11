@@ -74,7 +74,7 @@ impl State {
         let _ = state.set_gas_price(default_gas_price().into());
 
         for (address, balance) in config.genesis_accounts {
-            state.set_native_balance(address, balance.into())?;
+            state.set_native_balance(address, balance.parse()?)?;
         }
 
         Ok(state)
