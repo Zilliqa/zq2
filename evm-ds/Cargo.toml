@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-base64 = "0.21.3"
+base64 = "0.21.4"
 byteorder = "1.4.3"
 bytes = "1.4.0"
 derivative = "2.2.0"
