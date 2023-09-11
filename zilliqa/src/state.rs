@@ -27,7 +27,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new_genesis(database: Tree, genesis_accounts: &[(Address, u128)]) -> Result<State> {
+    pub fn new_genesis(database: Tree, genesis_accounts: &[(Address, String)]) -> Result<State> {
         let db = Arc::new(SledDb::new(database));
         let mut state = Self {
             db: db.clone(),
@@ -45,7 +45,7 @@ impl State {
         let _ = state.set_gas_price(default_gas_price().into());
 
         for (address, balance) in genesis_accounts {
-            state.set_native_balance(*address, (*balance).into())?;
+            state.set_native_balance(*address, balance.parse()?)?;
         }
 
         Ok(state)
