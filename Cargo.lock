@@ -2582,7 +2582,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b58db92f96b720de98181bbbe63c831e87005ab460c1bf306eb2622b4707997f"
 dependencies = [
- "socket2 0.5.3",
+ "socket2 0.5.4",
  "widestring",
  "windows-sys",
  "winreg",
@@ -3025,7 +3025,7 @@ dependencies = [
  "log",
  "rand",
  "smallvec 1.11.0",
- "socket2 0.5.3",
+ "socket2 0.5.4",
  "tokio",
  "trust-dns-proto",
  "void",
@@ -3091,7 +3091,7 @@ dependencies = [
  "quinn",
  "rand",
  "rustls",
- "socket2 0.5.3",
+ "socket2 0.5.4",
  "thiserror",
  "tokio",
 ]
@@ -3163,7 +3163,7 @@ dependencies = [
  "libp2p-core",
  "libp2p-identity",
  "log",
- "socket2 0.5.3",
+ "socket2 0.5.4",
  "tokio",
 ]
 
@@ -4413,7 +4413,7 @@ checksum = "055b4e778e8feb9f93c4e439f71dc2156ef13360b432b799e179a8c4cdf0b1d7"
 dependencies = [
  "bytes",
  "libc",
- "socket2 0.5.3",
+ "socket2 0.5.4",
  "tracing",
  "windows-sys",
 ]
@@ -5194,9 +5194,9 @@ dependencies = [
 
 [[package]]
 name = "socket2"
-version = "0.5.3"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2538b18701741680e0322a2302176d3253a35388e2e62f172f64f4f16605f877"
+checksum = "4031e820eb552adee9295814c0ced9e5cf38ddf1e8b7d566d6de8e2538ea989e"
 dependencies = [
  "libc",
  "windows-sys",
@@ -5533,7 +5533,7 @@ dependencies = [
  "parking_lot 0.12.1",
  "pin-project-lite",
  "signal-hook-registry",
- "socket2 0.5.3",
+ "socket2 0.5.4",
  "tokio-macros",
  "windows-sys",
 ]
@@ -6021,9 +6021,9 @@ checksum = "830b7e5d4d90034032940e4ace0d9a9a057e7a45cd94e6c007832e39edb82f6d"
 
 [[package]]
 name = "vergen"
-version = "8.2.4"
+version = "8.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbc5ad0d9d26b2c49a5ab7da76c3e79d3ee37e7821799f8223fcb8f2f391a2e7"
+checksum = "85e7dc29b3c54a2ea67ef4f953d5ec0c4085035c0ae2d325be1c0d2144bd9f16"
 dependencies = [
  "anyhow",
  "rustversion",
