@@ -63,7 +63,6 @@ impl Default for NodeConfig {
             consensus_timeout: Duration::from_secs(5),
             tx_retries: 1000,
             genesis_committee: vec![],
-            genesis_balance_each: 10000000000000000000,
             genesis_accounts: Vec::new(),
         }
     }
