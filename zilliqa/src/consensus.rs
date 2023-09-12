@@ -238,9 +238,13 @@ impl Consensus {
 
     fn committee(&self) -> Result<Committee> {
         let block = self
-            .get_block_by_view(self.get_chain_tip())?
-            .ok_or_else(|| anyhow!("missing block"))?;
-        Ok(block.committee)
+            .get_block_by_view(self.get_chain_tip()).unwrap();
+
+        if block.is_none() {
+            return Ok(self.get_committee_default());
+        }
+
+        Ok(block.unwrap().committee)
     }
 
     pub fn add_peer(
@@ -420,14 +424,21 @@ impl Consensus {
         // If we haven't applied the transaction yet, do so. This ensures we don't execute the transaction twice if we
         // already executed it in the process of proposing this block.
         if !self.transactions.contains_key(hash.0)? {
-            let mut listener = TouchedAddressEventListener::default();
-            let result = evm_ds::evm::tracing::using(&mut listener, || {
-                self.state
-                    .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
-            })?;
-            for address in listener.touched {
-                self.touched_address_index.merge(address.0, hash.0)?;
-            }
+            //let mut listener = TouchedAddressEventListener::default();
+            //let result = evm_ds::evm::tracing::using(&mut listener, || {
+            //    self.state
+            //        .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
+            //})?;
+
+            let result = self.state.apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)?;
+
+            info!("YYYYYYYYYYYY TX traces: {:?}", result.traces);
+
+            //for address in listener.touched {
+            //    info!(?address, "XXXXXXXXXXXXXXXXXXXXXx address touched by transaction");
+            //    //panic!("killme");
+            //    self.touched_address_index.merge(address.0, hash.0)?;
+            //}
 
             if !result.success {
                 warn!("Transaction was a failure...");
@@ -1095,6 +1106,10 @@ impl Consensus {
             .collect();
 
         verify_messages(agg.signature, &messages, &public_keys)
+    }
+
+    fn get_committee_default(&self) -> Committee {
+        self.get_block_by_view(0).unwrap().unwrap().committee
     }
 
     fn get_leader(&self, view: u64) -> Result<Validator> {

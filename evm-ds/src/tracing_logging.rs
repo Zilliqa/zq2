@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 // File to keep all of the misc logging and tracing code
 // made when calling the evm
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CallContext {
     #[serde(rename = "type")]
     pub call_type: String, // only 'call' (not create, delegate, static)
@@ -36,7 +36,7 @@ impl CallContext {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OtterscanCallContext {
     #[serde(rename = "type")]
     pub call_type: String,
@@ -47,7 +47,7 @@ pub struct OtterscanCallContext {
     pub input: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StructLog {
     pub depth: usize,
     pub error: String,
@@ -64,7 +64,7 @@ pub struct StructLog {
 // Created in this way.
 // Each new call gets added to the end of the stack and becomes the current context.
 // On returning from a call, the end of the stack gets put into the item above's calls
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct LoggingEventListener {
     pub call_tracer: Vec<CallContext>,
     pub raw_tracer: StructLogTopLevel,
@@ -75,7 +75,7 @@ pub struct LoggingEventListener {
     pub enabled: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StructLogTopLevel {
     pub gas: u64,
     #[serde(rename = "returnValue")]
@@ -84,7 +84,7 @@ pub struct StructLogTopLevel {
     pub struct_logs: Vec<StructLog>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InternalOperationOtter {
     #[serde(rename = "type")]
     pub call_type: usize,
@@ -105,11 +105,26 @@ impl LoggingEventListener {
             enabled,
         }
     }
+
+    pub fn update(&mut self, other: &LoggingEventListener) {
+        self.call_tracer = other.call_tracer.clone();
+        self.raw_tracer = other.raw_tracer.clone();
+        self.otter_internal_tracer = other.otter_internal_tracer.clone();
+        self.otter_call_tracer = other.otter_call_tracer.clone();
+        self.otter_transaction_error = other.otter_transaction_error.clone();
+        self.otter_addresses_called = other.otter_addresses_called.clone();
+        self.enabled = other.enabled;
+    }
 }
 
 impl evm::runtime::tracing::EventListener for LoggingEventListener {
     fn event(&mut self, event: evm::runtime::tracing::Event) {
         if !self.enabled {
+            return;
+        }
+
+        if self.call_tracer.len() < 1 {
+            println!("call_tracer.len() < 1");
             return;
         }
 
@@ -277,6 +292,8 @@ impl LoggingEventListener {
         // the stack (if we want to do tracing)
         if self.enabled {
             self.call_tracer.push(context);
+        } else {
+            println!("push_call: not enabled");
         }
     }
 }

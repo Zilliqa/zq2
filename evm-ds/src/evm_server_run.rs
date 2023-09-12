@@ -1,3 +1,4 @@
+use std::default;
 use std::ops::Deref;
 use std::panic::{self, AssertUnwindSafe};
 use std::rc::Rc;
@@ -27,7 +28,7 @@ use crate::tracing_logging::{CallContext, LoggingEventListener};
 fn build_exit_result<B: Backend>(
     executor: CpsExecutor<B>,
     runtime: &Runtime,
-    trace: &LoggingEventListener,
+    trace: Arc<Mutex<LoggingEventListener>>,
     exit_reason: evm::ExitReason,
     remaining_gas: u64,
     is_static: bool,
@@ -37,6 +38,7 @@ fn build_exit_result<B: Backend>(
     let mut result = EvmProto::EvmResult {
         exit_reason: exit_reason.into(),
         return_value: runtime.machine().return_value(),
+        tx_trace: trace.clone(),
         ..Default::default()
     };
 
@@ -73,7 +75,7 @@ fn build_exit_result<B: Backend>(
             },
         })
         .collect();
-    result.tx_trace = trace.as_string();
+    result.tx_trace = trace.clone();
     result.logs = logs.into_iter().collect();
     result.remaining_gas = remaining_gas;
     result
@@ -84,7 +86,7 @@ fn build_call_result<B: Backend>(
     executor: CpsExecutor<B>,
     runtime: &Runtime,
     interrupt: CpsCallInterrupt,
-    trace: &LoggingEventListener,
+    trace: Arc<Mutex<LoggingEventListener>>,
     remaining_gas: u64,
     is_static: bool,
     cont_id: u64,
@@ -121,7 +123,7 @@ fn build_call_result<B: Backend>(
         .collect();
 
     result.exit_reason = EvmProto::ExitReasonCps::Trap(EvmProto::Trap::Call);
-    result.tx_trace = trace.as_string();
+    result.tx_trace = trace.clone();
     result.remaining_gas = remaining_gas;
 
     result.trap_data = Some(EvmProto::TrapData::Call(EvmProto::CallTrap {
@@ -147,7 +149,7 @@ fn build_call_result<B: Backend>(
 fn build_create_result(
     runtime: &Runtime,
     interrupt: CpsCreateInterrupt,
-    trace: &LoggingEventListener,
+    trace: Arc<Mutex<LoggingEventListener>>,
     remaining_gas: u64,
     cont_id: u64,
 ) -> EvmProto::EvmResult {
@@ -162,7 +164,7 @@ fn build_create_result(
     let result = EvmProto::EvmResult {
         return_value: runtime.machine().return_value(),
         exit_reason: EvmProto::ExitReasonCps::Trap(EvmProto::Trap::Create),
-        tx_trace: trace.as_string(),
+        tx_trace: trace,
         remaining_gas,
         trap_data,
         continuation_id: cont_id,
@@ -172,12 +174,12 @@ fn build_create_result(
     result
 }
 
-fn handle_panic(trace: String, remaining_gas: u64, reason: &str) -> EvmProto::EvmResult {
+fn handle_panic(remaining_gas: u64, reason: &str, trace: Arc<Mutex<LoggingEventListener>>) -> EvmProto::EvmResult {
     EvmProto::EvmResult {
         exit_reason: EvmProto::ExitReasonCps::Fatal(evm::ExitFatal::Other(
             reason.to_string().into(),
         )),
-        tx_trace: trace,
+        tx_trace: trace.clone(),
         remaining_gas,
         ..Default::default()
     }
@@ -216,6 +218,8 @@ pub fn run_evm_impl_direct<B: Backend>(
     // how it should be. So always set estimate mode to false for now
     let estimate_override = false;
 
+    println!("Trace is {:?}", args.tx_trace);
+
     trace!(
         origin = ?backend.origin(),
         address = ?args.address,
@@ -224,7 +228,7 @@ pub fn run_evm_impl_direct<B: Backend>(
         estimate = args.estimate,
         is_continuation = args.node_continuation.is_some(),
         cps = args.enable_cps,
-        tx_trace = args.tx_trace,
+        //tx_trace = args.tx_trace,
         data = hex::encode(&args.data),
         code = hex::encode(&args.code),
         "running EVM",
@@ -251,9 +255,10 @@ pub fn run_evm_impl_direct<B: Backend>(
                 .get_contination(continuation.id);
             if recorded_cont.is_none() {
                 let result = handle_panic(
-                    args.tx_trace,
+
                     gas_limit,
                     format!("Continuation not found! Id: {:?}", continuation.id).as_str(),
+                    args.tx_trace,
                 );
                 return result;
             }
@@ -291,17 +296,24 @@ pub fn run_evm_impl_direct<B: Backend>(
     let mut executor =
         CpsExecutor::new_with_precompiles(state, &config, &precompiles, args.enable_cps);
 
-    let mut listener;
-
-    if args.tx_trace.is_empty() {
-        listener = LoggingEventListener::new(args.tx_trace_enabled);
-    } else {
-        listener = serde_json::from_str(&args.tx_trace).unwrap()
+    if args.tx_trace_enabled == false {
+        println!("tx_trace_enabled is false");
     }
+
+    let mut listener: LoggingEventListener = args.tx_trace.lock().unwrap().clone();
+
+    //if args.tx_trace.is_empty() {
+    //    println!("constructing new...");
+    //    listener = LoggingEventListener::new(args.tx_trace_enabled);
+    //} else {
+    //    listener = serde_json::from_str(&args.tx_trace).unwrap()
+    //}
 
     // If there is no continuation, we need to push our call context on,
     // Otherwise, our call context is loaded and is last element in stack
     if feedback_continuation.is_none() {
+        println!("evm no continuation!");
+
         let mut call = CallContext::new();
         call.call_type = "CALL".to_string();
         let apparent_value = args.apparent_value;
@@ -310,6 +322,7 @@ pub fn run_evm_impl_direct<B: Backend>(
         call.input = format!("0x{}", hex::encode(data.deref()));
 
         if listener.call_tracer.is_empty() {
+            println!("call tracer is empty");
             call.from = format!("{:?}", backend.origin());
         } else {
             call.from = listener.call_tracer.last().unwrap().to.clone();
@@ -317,19 +330,25 @@ pub fn run_evm_impl_direct<B: Backend>(
 
         let address = args.address;
         call.to = format!("{address:?}");
+        println!("pushing call..");
         listener.push_call(call);
     }
+
+    println!("this is listener: {:?}", listener);
+    println!("this is listener: {:?}", listener.call_tracer);
 
     // We have to catch panics, as error handling in the Backend interface of
     // do not have Result, assuming all operations are successful.
     //
     // We are asserting it is safe to unwind, as objects will be dropped after
-    // the unwind.
+    // the unwind
     let executor_result = panic::catch_unwind(AssertUnwindSafe(|| {
         evm::runtime::tracing::using(&mut listener, || {
             executor.execute(&mut runtime, feedback_continuation)
         })
     }));
+
+    args.tx_trace.lock().unwrap().update(&listener);
 
     // Scale back remaining gas to Scilla units (no rounding!).
     let remaining_gas = executor.gas() / args.gas_scaling_factor;
@@ -349,7 +368,7 @@ pub fn run_evm_impl_direct<B: Backend>(
             .downcast::<String>()
             .unwrap_or_else(|_| Box::new("unknown panic".to_string()));
         error!("EVM panicked: '{:?}'", panic_message);
-        let result = handle_panic(listener.as_string(), remaining_gas, &panic_message);
+        let result = handle_panic(remaining_gas, &panic_message, args.tx_trace);
         return result;
     }
 
@@ -379,7 +398,7 @@ pub fn run_evm_impl_direct<B: Backend>(
             build_exit_result(
                 executor,
                 &runtime,
-                &listener,
+                args.tx_trace,
                 exit_reason,
                 remaining_gas,
                 args.is_static,
@@ -398,7 +417,8 @@ pub fn run_evm_impl_direct<B: Backend>(
                 executor,
                 &runtime,
                 i,
-                &listener,
+                args.tx_trace,
+
                 remaining_gas,
                 args.is_static,
                 cont_id,
@@ -412,7 +432,7 @@ pub fn run_evm_impl_direct<B: Backend>(
                 .unwrap()
                 .create_continuation(runtime.machine_mut(), executor.into_state().substate());
 
-            build_create_result(&runtime, i, &listener, remaining_gas, cont_id)
+            build_create_result(&runtime, i, args.tx_trace, remaining_gas, cont_id)
         }
     };
 
