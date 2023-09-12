@@ -212,7 +212,7 @@ impl Node {
         self.consensus.view()
     }
 
-    fn get_view(&self, block_number: BlockNumber) -> u64 {
+    pub fn get_view(&self, block_number: BlockNumber) -> u64 {
         match block_number {
             BlockNumber::Number(n) => n,
             BlockNumber::Earliest => 0,
