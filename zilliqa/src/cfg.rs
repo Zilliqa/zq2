@@ -48,8 +48,7 @@ pub struct NodeConfig {
     pub tx_retries: u64,
     /// The genesis committee (public key, peer id) pairs. Only allowed to have one member at the moment
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
-    pub genesis_balance_each: u64,
-    pub genesis_accounts: Vec<Address>,
+    pub genesis_accounts: Vec<(Address, String)>,
 }
 
 impl Default for NodeConfig {

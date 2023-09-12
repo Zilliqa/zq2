@@ -28,11 +28,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new_genesis(
-        database: Tree,
-        genesis_accounts: &[Address],
-        genesis_balance_each: u128,
-    ) -> Result<State> {
+    pub fn new_genesis(database: Tree, genesis_accounts: &[(Address, String)]) -> Result<State> {
         let db = Arc::new(SledDb::new(database));
         let mut state = Self {
             db: db.clone(),
@@ -53,8 +49,8 @@ impl State {
             panic!("No genesis accounts provided");
         }
 
-        for address in genesis_accounts {
-            state.set_native_balance(*address, (genesis_balance_each).into())?;
+        for (address, balance) in genesis_accounts {
+            state.set_native_balance(*address, balance.parse()?)?;
         }
 
         Ok(state)
