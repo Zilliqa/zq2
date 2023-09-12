@@ -430,7 +430,7 @@ impl Consensus {
             }
 
             if !result.success {
-                warn!("Transaction was a failure...");
+                info!("Transaction was a failure...");
             }
 
             Ok(Some(result))
@@ -449,7 +449,7 @@ impl Consensus {
 
     pub fn get_txns_to_execute(&mut self) -> Vec<SignedTransaction> {
         // Note: push back Txns that have an incorrect nonce
-        self.new_transactions
+        let to_exec = self.new_transactions
             .values()
             .cloned()
             .filter(|tx| {
@@ -460,22 +460,30 @@ impl Consensus {
                     let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
                     let _ = retries.add(1);
                     warn!(
-                        "Transaction nonce for tx {} is incorrect: {} when acct nonce is {}, retrying... {}/{}",
+                        "Transaction nonce for tx {} is incorrect: {} when acct nonce is {}, tries: {}/{}",
                         tx.hash(),
                         tx.transaction.nonce,
                         self.state.must_get_account(tx.from_addr).nonce,
                         retries,
                         self.config.tx_retries
                     );
-                    if *retries > self.config.tx_retries {
-                        warn!("Tranaction has exceeded retries and has been removed");
-                        self.new_transactions_waiting.remove(&tx.hash());
-                    }
                     return false;
                 }
                 true
             })
-            .collect()
+            .collect();
+
+        // retries might have been exceeded for some Tx, so dump them
+        self.new_transactions_waiting.retain(|tx, retries| {
+            if *retries >= self.config.tx_retries {
+                warn!(?tx, "Tranaction has exceeded retries and has been removed");
+                self.new_transactions.remove(tx);
+            }
+
+            *retries < self.config.tx_retries
+        });
+
+        to_exec
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
