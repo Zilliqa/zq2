@@ -24,7 +24,7 @@ async fn block_production(mut network: Network) {
         .await
         .unwrap();
 
-    let index = network.add_node();
+    let index = network.add_node(false);
 
     network
         .run_until(
@@ -39,6 +39,7 @@ async fn block_production(mut network: Network) {
         )
         .await
         .unwrap();
+    println!("Second block run completed");
 }
 
 #[zilliqa_macros::test]
@@ -102,12 +103,14 @@ async fn launch_shard(mut network: Network) {
         )
         .await
         .unwrap();
+    println!("    SENT TX");
 
     // check we've spawned a shard
     network
         .run_until(|n| n.children.contains_key(&shard_id), 50)
         .await
         .unwrap();
+    println!("    STARTED SHARD");
 
     // check every node has spawned a shard node
     network
@@ -117,6 +120,7 @@ async fn launch_shard(mut network: Network) {
         )
         .await
         .unwrap();
+    println!("    SPAWNED EVERY NODE");
 
     // check shard is producing blocks
     network

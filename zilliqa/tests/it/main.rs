@@ -6,10 +6,8 @@ mod web3;
 use std::env;
 use std::ops::DerefMut;
 use zilliqa::cfg::NodeConfig;
-use zilliqa::crypto::NodePublicKey;
-use zilliqa::crypto::SecretKey;
-use zilliqa::message::ExternalMessage;
-use zilliqa::message::InternalMessage;
+use zilliqa::crypto::{Hash, NodePublicKey, SecretKey};
+use zilliqa::message::{ExternalMessage, InternalMessage};
 use zilliqa::node::Node;
 
 use std::collections::HashMap;
@@ -66,6 +64,7 @@ struct AbiContract {
 #[allow(clippy::type_complexity)]
 fn node(
     genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    genesis_hash: Option<Hash>,
     secret_key: SecretKey,
     index: usize,
     datadir: Option<TempDir>,
@@ -89,6 +88,7 @@ fn node(
                 .as_ref()
                 .map(|d| d.path().to_str().unwrap().to_string()),
             genesis_committee,
+            genesis_hash,
             ..Default::default()
         },
         secret_key,
@@ -159,6 +159,7 @@ impl Network {
             .map(|(i, key)| {
                 node(
                     genesis_committee.clone(),
+                    None,
                     key,
                     i,
                     Some(tempfile::tempdir().unwrap()),
@@ -208,10 +209,26 @@ impl Network {
         }
     }
 
-    pub fn add_node(&mut self) -> usize {
+    pub fn add_node(&mut self, genesis: bool) -> usize {
         let secret_key = SecretKey::new_from_rng(self.rng.lock().unwrap().deref_mut()).unwrap();
+        let (genesis_committee, genesis_hash) = if genesis {
+            (self.genesis_committee.clone(), None)
+        } else {
+            (
+                vec![],
+                Some(
+                    self.nodes[0]
+                        .inner
+                        .lock()
+                        .unwrap()
+                        .get_genesis_hash()
+                        .unwrap(),
+                ),
+            )
+        };
         let (node, receiver) = node(
-            self.genesis_committee.clone(),
+            genesis_committee,
+            genesis_hash,
             secret_key,
             self.nodes.len(),
             None,
@@ -292,7 +309,7 @@ impl Network {
             if let InternalMessage::LaunchShard(network_id) = internal_message {
                 if let Some(network) = self.children.get_mut(&network_id) {
                     trace!("Launching shard node for {network_id} - adding new node to shard");
-                    network.add_node();
+                    network.add_node(true);
                 } else {
                     info!("Launching node in new shard network {network_id}");
                     self.children
