@@ -44,6 +44,9 @@ pub struct NodeConfig {
     pub data_dir: Option<String>,
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     pub consensus_timeout: Duration,
+    /// The maximum number of times to retry out of order TXs before dropping them
+    pub tx_retries: u64,
+    /// The genesis committee (public key, peer id) pairs. Only allowed to have one member at the moment
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
     pub genesis_accounts: Vec<(Address, String)>,
 }
@@ -58,6 +61,7 @@ impl Default for NodeConfig {
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: None,
             consensus_timeout: Duration::from_secs(5),
+            tx_retries: 1000,
             genesis_committee: vec![],
             genesis_accounts: Vec::new(),
         }

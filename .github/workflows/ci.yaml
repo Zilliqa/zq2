@@ -36,13 +36,7 @@ jobs:
     - name: Verify working directory is clean
       run: git diff --exit-code
 
-  e2e_test_gate:
-    runs-on: ubuntu-latest
-    steps:
-    - run: if [ $(date +%s) -ge $(date -d "2023-09-22" +%s) ]; then echo "Fix the tests!"; exit 1; else exit 0; fi
   e2e_test:
-    needs: e2e_test_gate
-    if: needs.e2e_test_gate.outputs.status == 'failure'
     runs-on: ubuntu-latest
     steps:
     - name: Install dependencies

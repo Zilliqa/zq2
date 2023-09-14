@@ -6,8 +6,7 @@ use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
-
-use tracing::log::trace;
+use tracing::log::*;
 
 use crate::{
     crypto::Hash,
@@ -77,6 +76,7 @@ fn block_number(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    trace!("call: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
     let block_number: BlockNumber = params.next()?;
@@ -105,6 +105,7 @@ fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    trace!("estimate_gas: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: EstimateGasParams = params.next()?;
     let block_number: BlockNumber = params.next().unwrap_or(BlockNumber::Latest);
@@ -135,6 +136,7 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    trace!("get_code: params: {:?}", params);
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let block_number: BlockNumber = params.next()?;
@@ -148,6 +150,7 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    trace!("get_storage_at: params: {:?}", params);
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let position: U256 = params.next()?;
@@ -166,9 +169,19 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    trace!("get_transaction_count: params: {:?}", params);
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let block_number: BlockNumber = params.next()?;
+
+    trace!(
+        "get_transaction_count resp: {:?}",
+        node.lock()
+            .unwrap()
+            .get_account(Address(address), block_number)?
+            .nonce
+            .to_hex()
+    );
 
     Ok(node
         .lock()
@@ -264,6 +277,7 @@ fn get_transaction_by_hash(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<EthTransaction>> {
+    trace!("get_transaction_by_hash: params: {:?}", params);
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
     let node = node.lock().unwrap();
@@ -322,7 +336,14 @@ pub(super) fn get_transaction_receipt_inner(
 ) -> Result<Option<EthTransactionReceipt>> {
     let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
+
     let Some(receipt) = node.get_transaction_receipt(hash)? else { return Ok(None); };
+
+    info!(
+        "get_transaction_receipt_inner: hash: {:?} result: {:?}",
+        hash, receipt
+    );
+
     let Some(block) = node.get_block_by_hash(receipt.block_hash)? else { return Ok(None); };
 
     let transaction_hash = H256(hash.0);
@@ -380,6 +401,7 @@ fn get_transaction_receipt(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<EthTransactionReceipt>> {
+    trace!("get_transaction_receipt: params: {:?}", params);
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
     let node = node.lock().unwrap();
@@ -387,6 +409,7 @@ fn get_transaction_receipt(
 }
 
 fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    trace!("send_raw_transaction: params: {:?}", params);
     let transaction: String = params.one()?;
     let transaction = transaction
         .strip_prefix("0x")
