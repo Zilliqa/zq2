@@ -1,4 +1,4 @@
-use std::default;
+
 use std::ops::Deref;
 use std::panic::{self, AssertUnwindSafe};
 use std::rc::Rc;
@@ -174,7 +174,11 @@ fn build_create_result(
     result
 }
 
-fn handle_panic(remaining_gas: u64, reason: &str, trace: Arc<Mutex<LoggingEventListener>>) -> EvmProto::EvmResult {
+fn handle_panic(
+    remaining_gas: u64,
+    reason: &str,
+    trace: Arc<Mutex<LoggingEventListener>>,
+) -> EvmProto::EvmResult {
     EvmProto::EvmResult {
         exit_reason: EvmProto::ExitReasonCps::Fatal(evm::ExitFatal::Other(
             reason.to_string().into(),
@@ -218,8 +222,6 @@ pub fn run_evm_impl_direct<B: Backend>(
     // how it should be. So always set estimate mode to false for now
     let estimate_override = false;
 
-    println!("Trace is {:?}", args.tx_trace);
-
     trace!(
         origin = ?backend.origin(),
         address = ?args.address,
@@ -255,7 +257,6 @@ pub fn run_evm_impl_direct<B: Backend>(
                 .get_contination(continuation.id);
             if recorded_cont.is_none() {
                 let result = handle_panic(
-
                     gas_limit,
                     format!("Continuation not found! Id: {:?}", continuation.id).as_str(),
                     args.tx_trace,
@@ -296,24 +297,11 @@ pub fn run_evm_impl_direct<B: Backend>(
     let mut executor =
         CpsExecutor::new_with_precompiles(state, &config, &precompiles, args.enable_cps);
 
-    if args.tx_trace_enabled == false {
-        println!("tx_trace_enabled is false");
-    }
-
     let mut listener: LoggingEventListener = args.tx_trace.lock().unwrap().clone();
-
-    //if args.tx_trace.is_empty() {
-    //    println!("constructing new...");
-    //    listener = LoggingEventListener::new(args.tx_trace_enabled);
-    //} else {
-    //    listener = serde_json::from_str(&args.tx_trace).unwrap()
-    //}
 
     // If there is no continuation, we need to push our call context on,
     // Otherwise, our call context is loaded and is last element in stack
     if feedback_continuation.is_none() {
-        println!("evm no continuation!");
-
         let mut call = CallContext::new();
         call.call_type = "CALL".to_string();
         let apparent_value = args.apparent_value;
@@ -322,7 +310,6 @@ pub fn run_evm_impl_direct<B: Backend>(
         call.input = format!("0x{}", hex::encode(data.deref()));
 
         if listener.call_tracer.is_empty() {
-            println!("call tracer is empty");
             call.from = format!("{:?}", backend.origin());
         } else {
             call.from = listener.call_tracer.last().unwrap().to.clone();
@@ -330,12 +317,8 @@ pub fn run_evm_impl_direct<B: Backend>(
 
         let address = args.address;
         call.to = format!("{address:?}");
-        println!("pushing call..");
         listener.push_call(call);
     }
-
-    println!("this is listener: {:?}", listener);
-    println!("this is listener: {:?}", listener.call_tracer);
 
     // We have to catch panics, as error handling in the Backend interface of
     // do not have Result, assuming all operations are successful.
@@ -418,7 +401,6 @@ pub fn run_evm_impl_direct<B: Backend>(
                 &runtime,
                 i,
                 args.tx_trace,
-
                 remaining_gas,
                 args.is_static,
                 cont_id,

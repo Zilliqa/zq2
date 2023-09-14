@@ -7,8 +7,11 @@ use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::ops::Add;
-use std::{collections::{BTreeMap, HashSet}, error::Error, fmt::Display};
-use jsonrpsee::server::middleware::Port::Default;
+use std::{
+    collections::{BTreeMap, HashSet},
+    error::Error,
+    fmt::Display,
+};
 use tracing::*;
 
 use crate::message::Committee;
@@ -16,7 +19,6 @@ use crate::{
     block_store::BlockStore,
     cfg::NodeConfig,
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
-    exec::TouchedAddressEventListener,
     exec::TransactionApplyResult,
     message::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, NewView, Proposal,
@@ -417,19 +419,18 @@ impl Consensus {
         // If we haven't applied the transaction yet, do so. This ensures we don't execute the transaction twice if we
         // already executed it in the process of proposing this block.
         if !self.transactions.contains_key(hash.0)? {
-            //let mut listener = TouchedAddressEventListener::default();
-            //let result = evm_ds::evm::tracing::using(&mut listener, || {
-            //    self.state
-            //        .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
-            //})?;
+            let result = self.state.apply_transaction(
+                txn.clone(),
+                self.config.eth_chain_id,
+                current_block,
+            )?;
 
-            let result = self.state.apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)?;
-
-            //info!("XYXYXXY listener touched addresses: {:?}", listener.touched);
-            info!("XYXYXXY returned value touched: {:?}", result.traces);
-
-            for address in result.traces.lock().unwrap().addresses_sent_funds_to::<H160>() {
-                info!("OOOOOOOOOOo touched address: {:?}", address);
+            for address in result
+                .traces
+                .lock()
+                .unwrap()
+                .addresses_sent_funds_to::<H160>()
+            {
                 self.touched_address_index.merge(address, hash.0)?;
             }
 
@@ -453,12 +454,15 @@ impl Consensus {
 
     // Get valid TXs to execute while also cleaning the mempool of TXs that are invalid
     pub fn get_txns_to_execute(&mut self) -> Vec<SignedTransaction> {
-
         let mut tx_from_addrs: HashSet<Address> = HashSet::new();
         let mut tx_hashes_invalid: Vec<Hash> = Vec::new();
         let mut ret: Vec<SignedTransaction> = Vec::new();
 
-        for (hash, tx) in self.new_transactions.iter() {
+        if self.config.block_tx_limit < 1 {
+            warn!("Block TX limit is set to 0, no TXs will be added to the block");
+        }
+
+        for (_hash, tx) in self.new_transactions.iter() {
             if ret.len() >= self.config.block_tx_limit {
                 break;
             }
@@ -466,27 +470,27 @@ impl Consensus {
             // All TXs must have a corresponding account
             if !self.state.has_account(tx.from_addr) {
                 warn!(
-                        "Transaction from address {} does not have an account and will be dropped",
-                        tx.from_addr
-                    );
-                tx_hashes_invalid.push(tx.hash().into());
-                continue;
-            }
-
-           // If the TX nonce is too low, remove it
-           let nonce = self.state.must_get_account(tx.from_addr).nonce;
-           if tx.transaction.nonce < nonce {
-                warn!(
-                     "Transaction nonce for tx {} is too low: {} when acct nonce is {}",
-                     tx.hash(),
-                     tx.transaction.nonce,
-                     nonce
+                    "Transaction from address {} does not have an account and will be dropped",
+                    tx.from_addr
                 );
                 tx_hashes_invalid.push(tx.hash());
                 continue;
-           }
+            }
 
-           // If it is higher, mark it for a retry
+            // If the TX nonce is too low, remove it
+            let nonce = self.state.must_get_account(tx.from_addr).nonce;
+            if tx.transaction.nonce < nonce {
+                warn!(
+                    "Transaction nonce for tx {} is too low: {} when acct nonce is {}",
+                    tx.hash(),
+                    tx.transaction.nonce,
+                    nonce
+                );
+                tx_hashes_invalid.push(tx.hash());
+                continue;
+            }
+
+            // If it is higher, mark it for a retry
             if tx.transaction.nonce > nonce {
                 let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
                 let _ = retries.add(1);
@@ -510,9 +514,9 @@ impl Consensus {
             // from address, though (no need to drop though)
             if tx_from_addrs.contains(&tx.from_addr) {
                 warn!(
-                        "Transaction from address {} already exists in block and will not be added",
-                        tx.from_addr
-                    );
+                    "Transaction from address {} already exists in block and will not be added",
+                    tx.from_addr
+                );
                 continue;
             }
 
@@ -525,7 +529,9 @@ impl Consensus {
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
-        let Some(block) = self.get_block(&vote.block_hash)? else { return Ok(None); }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
+        let Some(block) = self.get_block(&vote.block_hash)? else {
+            return Ok(None);
+        }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
         let block_hash = block.hash();
         let block_view = block.view();
         trace!(block_view, self.view, %block_hash, "handling vote");
@@ -662,10 +668,11 @@ impl Consensus {
         let Some((index, sender)) = committee
             .iter()
             .enumerate()
-            .find(|(_, v)| v.public_key == new_view.public_key) else {
-                debug!("ignoring new view from unknown node (buffer?)");
-                return Ok(None);
-            };
+            .find(|(_, v)| v.public_key == new_view.public_key)
+        else {
+            debug!("ignoring new view from unknown node (buffer?)");
+            return Ok(None);
+        };
         new_view.verify(sender.public_key)?;
 
         // check if the sender's qc is higher than our high_qc or even higher than our view
@@ -850,14 +857,19 @@ impl Consensus {
         // todo: the block extends from another block through a chain of parent hashes and not qcs
         let mut current = block.clone();
         while current.view() > ancestor.view() {
-            let Some(next) = self.get_block(&current.parent_hash())? else { return Err(MissingBlockError::from(current.parent_hash()).into()); };
+            let Some(next) = self.get_block(&current.parent_hash())? else {
+                return Err(MissingBlockError::from(current.parent_hash()).into());
+            };
             current = next;
         }
         Ok(current.view() == 0 || current.hash() == ancestor.hash())
     }
 
     fn check_safe_block(&mut self, proposal: &Block) -> Result<bool> {
-        let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else { trace!("could not get qc for block: {}", proposal.qc.block_hash); return Ok(false); };
+        let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else {
+            trace!("could not get qc for block: {}", proposal.qc.block_hash);
+            return Ok(false);
+        };
         // We don't vote on blocks older than our view
         let outdated = proposal.view() < self.view;
         let proposal_hash = proposal.hash();
@@ -900,9 +912,18 @@ impl Consensus {
     }
 
     fn check_and_commit(&mut self, proposal_hash: Hash) -> Result<()> {
-        let Some(proposal) = self.get_block(&proposal_hash)? else { trace!("block not found: {proposal_hash}"); return Ok(()); };
-        let Some(prev_1) = self.get_block(&proposal.qc.block_hash)? else { trace!("parent not found: {}", proposal.qc.block_hash); return Ok(()); };
-        let Some(prev_2) = self.get_block(&prev_1.qc.block_hash)? else { trace!("grandparent not found: {}", prev_1.qc.block_hash); return Ok(()); };
+        let Some(proposal) = self.get_block(&proposal_hash)? else {
+            trace!("block not found: {proposal_hash}");
+            return Ok(());
+        };
+        let Some(prev_1) = self.get_block(&proposal.qc.block_hash)? else {
+            trace!("parent not found: {}", proposal.qc.block_hash);
+            return Ok(());
+        };
+        let Some(prev_2) = self.get_block(&prev_1.qc.block_hash)? else {
+            trace!("grandparent not found: {}", prev_1.qc.block_hash);
+            return Ok(());
+        };
 
         if prev_1.view() == 0 || prev_1.view() == prev_2.view() + 1 {
             let committed_block = prev_2;
@@ -913,7 +934,9 @@ impl Consensus {
             let mut current = committed_block;
             // commit blocks back to the last finalized block
             while current.view() > self.finalized_view {
-                let Some(new) = self.get_block(&current.parent_hash())? else { return Ok(()); };
+                let Some(new) = self.get_block(&current.parent_hash())? else {
+                    return Ok(());
+                };
                 current = new;
             }
             if current.hash() == finalized_block.hash() {
@@ -941,7 +964,9 @@ impl Consensus {
             return Ok(());
         }
 
-        let Some(finalized_block) = self.get_block_by_view(self.finalized_view)? else { return Err(MissingBlockError::from(self.finalized_view).into()); };
+        let Some(finalized_block) = self.get_block_by_view(self.finalized_view)? else {
+            return Err(MissingBlockError::from(self.finalized_view).into());
+        };
         if block.view() < finalized_block.view() {
             return Err(anyhow!(
                 "block is too old: view is {} but we have finalized {}",
@@ -950,7 +975,9 @@ impl Consensus {
             ));
         }
 
-        let Some(parent) = self.get_block(&block.parent_hash())? else { return Err(MissingBlockError::from(block.parent_hash()).into()); };
+        let Some(parent) = self.get_block(&block.parent_hash())? else {
+            return Err(MissingBlockError::from(block.parent_hash()).into());
+        };
 
         // Derive the proposer from the block's view
         let proposer = parent.committee.leader(parent.view());
@@ -972,7 +999,9 @@ impl Consensus {
 
         // Retrieve the highest among the aggregated QCs and check if it equals the block's QC.
         let block_high_qc = self.get_high_qc_from_block(block)?;
-        let Some(block_high_qc_block) = self.get_block(&block_high_qc.block_hash)? else { return Err(MissingBlockError::from(block_high_qc.block_hash).into()); };
+        let Some(block_high_qc_block) = self.get_block(&block_high_qc.block_hash)? else {
+            return Err(MissingBlockError::from(block_high_qc.block_hash).into());
+        };
         // Prevent the creation of forks from the already committed chain
         if block_high_qc_block.view() < finalized_block.view() {
             return Err(anyhow!("invalid block"));
@@ -1047,7 +1076,9 @@ impl Consensus {
     }
 
     fn get_high_qc_from_block<'a>(&self, block: &'a Block) -> Result<&'a QuorumCertificate> {
-        let Some(agg) = &block.agg else { return Ok(&block.qc); };
+        let Some(agg) = &block.agg else {
+            return Ok(&block.qc);
+        };
 
         let high_qc = self.get_highest_from_agg(agg)?;
 

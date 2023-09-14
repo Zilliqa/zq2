@@ -51,6 +51,8 @@ impl State {
 
         for (address, balance) in genesis_accounts {
             state.set_native_balance(*address, balance.parse()?)?;
+            let account_new = state.get_account(*address)?;
+            state.save_account(*address, account_new)?;
         }
 
         Ok(state)

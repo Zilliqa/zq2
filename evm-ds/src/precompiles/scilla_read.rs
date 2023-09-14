@@ -103,7 +103,8 @@ fn read_field_from_storage(
         });
     };
 
-    let Ok(result) = extract_substate_from_json(&substate_json, passed_field_name, &scilla_field) else {
+    let Ok(result) = extract_substate_from_json(&substate_json, passed_field_name, &scilla_field)
+    else {
         return Err(PrecompileFailure::Error {
             exit_status: ExitError::Other(Cow::Borrowed("Unable to extract return value")),
         });
@@ -131,7 +132,9 @@ fn read_field_from_init_data(
 
     let Some(fields_array) = init_data.as_array() else {
         return Err(PrecompileFailure::Error {
-            exit_status: ExitError::Other(Cow::Borrowed("Fields in contract json are not declared as array")),
+            exit_status: ExitError::Other(Cow::Borrowed(
+                "Fields in contract json are not declared as array",
+            )),
         });
     };
 
@@ -140,7 +143,9 @@ fn read_field_from_init_data(
     for json_field in fields_array {
         let Some(vname) = json_field["vname"].as_str() else {
             return Err(PrecompileFailure::Error {
-                exit_status: ExitError::Other(Cow::Borrowed("Fields in contract json are not declared as array")),
+                exit_status: ExitError::Other(Cow::Borrowed(
+                    "Fields in contract json are not declared as array",
+                )),
             });
         };
         if vname.eq(passed_field_name)
@@ -153,7 +158,9 @@ fn read_field_from_init_data(
 
     let Some(object_value) = object_value else {
         return Err(PrecompileFailure::Error {
-            exit_status: ExitError::Other(Cow::Borrowed("Fields in contract json are not declared as array")),
+            exit_status: ExitError::Other(Cow::Borrowed(
+                "Fields in contract json are not declared as array",
+            )),
         });
     };
     let field_type = get_field_type_by_name(passed_field_name, &init_data)?;
@@ -165,14 +172,18 @@ fn read_field_from_init_data(
 fn get_field_type_by_name(field_name: &str, fields: &Value) -> Result<String, PrecompileFailure> {
     let Some(fields_array) = fields.as_array() else {
         return Err(PrecompileFailure::Error {
-            exit_status: ExitError::Other(Cow::Borrowed("Fields in contract json are not declared as array")),
+            exit_status: ExitError::Other(Cow::Borrowed(
+                "Fields in contract json are not declared as array",
+            )),
         });
     };
 
     for json_field in fields_array {
         let Some(vname) = json_field["vname"].as_str() else {
             return Err(PrecompileFailure::Error {
-                exit_status: ExitError::Other(Cow::Borrowed("Fields in contract json are not declared as array")),
+                exit_status: ExitError::Other(Cow::Borrowed(
+                    "Fields in contract json are not declared as array",
+                )),
             });
         };
         if vname.eq(field_name) && json_field["type"].is_string() {
@@ -229,7 +240,9 @@ fn decode_indices(input: &[u8], input_field_type: &str) -> Result<ScillaField, P
 
     let Ok(decoded_array) = decode(&field_types, input) else {
         return Err(PrecompileFailure::Error {
-            exit_status: ExitError::Other(Cow::Borrowed("Unable to decode input by specified field definition")),
+            exit_status: ExitError::Other(Cow::Borrowed(
+                "Unable to decode input by specified field definition",
+            )),
         });
     };
 

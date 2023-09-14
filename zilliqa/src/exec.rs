@@ -149,7 +149,10 @@ impl State {
                         }
                     }
                 }
-                self.apply_delta(result.apply, result.tx_trace.lock().unwrap().addresses_sent_funds_to())?;
+                self.apply_delta(
+                    result.apply,
+                    result.tx_trace.lock().unwrap().addresses_sent_funds_to(),
+                )?;
                 Ok(())
             }
             _ => Err(anyhow!("{:?}", result.exit_reason)),
@@ -190,7 +193,8 @@ impl State {
         let mut code: Vec<u8> = account.code;
         let mut data: Vec<u8> = payload;
         //let mut traces = "".to_string(); // Traces get built up over the course of execution
-        let mut traces: Arc<Mutex<LoggingEventListener>>  = Arc::new(Mutex::new(LoggingEventListener::new(true)));
+        let mut traces: Arc<Mutex<LoggingEventListener>> =
+            Arc::new(Mutex::new(LoggingEventListener::new(true)));
 
         // The backend is provided to the evm as a way to read accounts and state during execution
         let mut backend = EvmBackend::new(self, U256::zero(), caller.0, chain_id, current_block);
@@ -266,7 +270,13 @@ impl State {
                 );
             }
 
-            continuation_stack.push(push_transfer(from_addr, to, amount, continuations.clone(), traces.clone()));
+            continuation_stack.push(push_transfer(
+                from_addr,
+                to,
+                amount,
+                continuations.clone(),
+                traces.clone(),
+            ));
         }
 
         if print_enabled {
@@ -465,7 +475,6 @@ impl State {
             }
 
             backend.origin = call_args.caller;
-            //call_args.tx_trace = traces.clone();
             let mut gas_result = run_evm_impl_direct(call_args, &backend);
             traces = gas_result.tx_trace.clone();
 
@@ -543,7 +552,10 @@ impl State {
                 let success = result.succeeded();
 
                 if success {
-                    self.apply_delta(result.apply, result.tx_trace.lock().unwrap().addresses_sent_funds_to())?;
+                    self.apply_delta(
+                        result.apply,
+                        result.tx_trace.lock().unwrap().addresses_sent_funds_to(),
+                    )?;
                 }
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
@@ -582,8 +594,11 @@ impl State {
     }
 
     // Apply the changes the EVM is requesting for
-    fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm_proto::Apply>, new_addresses: Vec<Address>) -> Result<()> {
-
+    fn apply_delta(
+        &mut self,
+        applys: Vec<evm_ds::protos::evm_proto::Apply>,
+        new_addresses: Vec<Address>,
+    ) -> Result<()> {
         // these accounts have been 'created' by having funds sent to them. We need to create them with nonce 0
         // get_account creates a defaulted account if it doesn't exist
         for address in new_addresses {
@@ -695,7 +710,10 @@ impl State {
                 let success = result.succeeded();
 
                 if success {
-                    self.apply_delta(result.apply, result.tx_trace.lock().unwrap().addresses_sent_funds_to())?;
+                    self.apply_delta(
+                        result.apply,
+                        result.tx_trace.lock().unwrap().addresses_sent_funds_to(),
+                    )?;
                 } else {
                     panic!(
                         "Failed to set gas price with error: {:?}",
@@ -764,7 +782,10 @@ impl State {
                 info!("Set native balance result: {:?}", result);
 
                 if success {
-                    self.apply_delta(result.apply, result.tx_trace.lock().unwrap().addresses_sent_funds_to())?;
+                    self.apply_delta(
+                        result.apply,
+                        result.tx_trace.lock().unwrap().addresses_sent_funds_to(),
+                    )?;
                 } else {
                     panic!("Failed to set balance with error: {:?}", result.exit_reason);
                 }

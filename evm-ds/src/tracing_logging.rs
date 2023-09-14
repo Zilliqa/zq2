@@ -79,7 +79,11 @@ pub struct LoggingEventListener {
 impl LoggingEventListener {
     pub fn addresses_sent_funds_to<T: std::convert::From<primitive_types::H160>>(&self) -> Vec<T> {
         // call types 0 and 1 are for transfer and self destruct
-        self.otter_internal_tracer.iter().filter(|op| {op.call_type == 0 || op.call_type == 1}).map(|op| op.to.into()).collect()
+        self.otter_internal_tracer
+            .iter()
+            .filter(|op| op.call_type == 0 || op.call_type == 1)
+            .map(|op| op.to.into())
+            .collect()
     }
 }
 
@@ -131,8 +135,7 @@ impl evm::runtime::tracing::EventListener for LoggingEventListener {
             return;
         }
 
-        if self.call_tracer.len() < 1 {
-            println!("call_tracer.len() < 1");
+        if self.call_tracer.is_empty() {
             return;
         }
 
@@ -300,8 +303,6 @@ impl LoggingEventListener {
         // the stack (if we want to do tracing)
         if self.enabled {
             self.call_tracer.push(context);
-        } else {
-            println!("push_call: not enabled");
         }
     }
 }
