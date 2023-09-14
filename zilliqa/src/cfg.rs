@@ -73,6 +73,8 @@ impl Default for ConsensusConfig {
             is_main: true,
             main_shard_id: None,
             consensus_timeout: Duration::from_secs(5),
+            block_tx_limit: 1000,
+            tx_retries: 1000,
             genesis_committee: vec![],
             genesis_accounts: Vec::new(),
         }
@@ -90,9 +92,6 @@ impl Default for NodeConfig {
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: None,
             tx_retries: 1000,
-            block_tx_limit: 1000,
-            genesis_committee: vec![],
-            genesis_accounts: Vec::new(),
         }
     }
 }

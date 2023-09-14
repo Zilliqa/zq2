@@ -1,5 +1,4 @@
 use ethabi::{Event, Log, RawLog};
-use primitive_types::H256;
 use std::path::Path;
 
 use crate::message::{ExternalMessage, InternalMessage};
@@ -477,12 +476,12 @@ impl Consensus {
         let mut tx_hashes_invalid: Vec<Hash> = Vec::new();
         let mut ret: Vec<SignedTransaction> = Vec::new();
 
-        if self.config.block_tx_limit < 1 {
+        if self.config.consensus.block_tx_limit < 1 {
             warn!("Block TX limit is set to 0, no TXs will be added to the block");
         }
 
         for (_hash, tx) in self.new_transactions.iter() {
-            if ret.len() >= self.config.block_tx_limit {
+            if ret.len() >= self.config.consensus.block_tx_limit {
                 break;
             }
 
