@@ -79,8 +79,13 @@ fn node(
                 .map(|d| d.path().to_str().unwrap().to_string()),
             genesis_committee,
             // Give a genesis account 1 billion ZIL.
-            genesis_balance_each: 1_000_000_000u64,
-            genesis_accounts: vec![Address(genesis_account)],
+            genesis_accounts: vec![(
+                Address(genesis_account),
+                1_000_000_000u128
+                    .checked_mul(10u128.pow(18))
+                    .unwrap()
+                    .to_string(),
+            )],
             ..Default::default()
         },
         secret_key,

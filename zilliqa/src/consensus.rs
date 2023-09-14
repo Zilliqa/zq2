@@ -158,11 +158,7 @@ impl Consensus {
         let mut state = if let Some(latest_block) = &latest_block {
             State::new_from_root(state_trie, H256(latest_block.state_root_hash().0))
         } else {
-            State::new_genesis(
-                state_trie,
-                &config.genesis_accounts,
-                (config.genesis_balance_each as u128).saturating_mul(1_000_000),
-            )?
+            State::new_genesis(state_trie, &config.genesis_accounts)?
         };
 
         let latest_block = match latest_block {
@@ -238,13 +234,9 @@ impl Consensus {
 
     fn committee(&self) -> Result<Committee> {
         let block = self
-            .get_block_by_view(self.get_chain_tip()).unwrap();
-
-        if block.is_none() {
-            return Ok(self.get_committee_default());
-        }
-
-        Ok(block.unwrap().committee)
+            .get_block_by_view(self.get_chain_tip())?
+            .ok_or_else(|| anyhow!("missing block"))?;
+        Ok(block.committee)
     }
 
     pub fn add_peer(
@@ -424,24 +416,17 @@ impl Consensus {
         // If we haven't applied the transaction yet, do so. This ensures we don't execute the transaction twice if we
         // already executed it in the process of proposing this block.
         if !self.transactions.contains_key(hash.0)? {
-            //let mut listener = TouchedAddressEventListener::default();
-            //let result = evm_ds::evm::tracing::using(&mut listener, || {
-            //    self.state
-            //        .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
-            //})?;
-
-            let result = self.state.apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)?;
-
-            info!("YYYYYYYYYYYY TX traces: {:?}", result.traces);
-
-            //for address in listener.touched {
-            //    info!(?address, "XXXXXXXXXXXXXXXXXXXXXx address touched by transaction");
-            //    //panic!("killme");
-            //    self.touched_address_index.merge(address.0, hash.0)?;
-            //}
+            let mut listener = TouchedAddressEventListener::default();
+            let result = evm_ds::evm::tracing::using(&mut listener, || {
+                self.state
+                    .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
+            })?;
+            for address in listener.touched {
+                self.touched_address_index.merge(address.0, hash.0)?;
+            }
 
             if !result.success {
-                warn!("Transaction was a failure...");
+                info!("Transaction was a failure...");
             }
 
             Ok(Some(result))
@@ -460,33 +445,41 @@ impl Consensus {
 
     pub fn get_txns_to_execute(&mut self) -> Vec<SignedTransaction> {
         // Note: push back Txns that have an incorrect nonce
-        self.new_transactions
+        let to_exec = self.new_transactions
             .values()
             .cloned()
             .filter(|tx| {
                 if self.state.has_account(tx.from_addr)
-                    && self.state.must_get_account(tx.from_addr).nonce != tx.transaction.nonce
+                    && self.state.must_get_account(tx.from_addr).nonce < tx.transaction.nonce
                 {
                     // Incremement the value if it exists, otherwise set it to 1
                     let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
                     let _ = retries.add(1);
                     warn!(
-                        "Transaction nonce for tx {} is incorrect: {} when acct nonce is {}, retrying... {}/{}",
+                        "Transaction nonce for tx {} is incorrect: {} when acct nonce is {}, tries: {}/{}",
                         tx.hash(),
                         tx.transaction.nonce,
                         self.state.must_get_account(tx.from_addr).nonce,
                         retries,
                         self.config.tx_retries
                     );
-                    if *retries > self.config.tx_retries {
-                        warn!("Tranaction has exceeded retries and has been removed");
-                        self.new_transactions_waiting.remove(&tx.hash());
-                    }
                     return false;
                 }
                 true
             })
-            .collect()
+            .collect();
+
+        // retries might have been exceeded for some Tx, so dump them
+        self.new_transactions_waiting.retain(|tx, retries| {
+            if *retries >= self.config.tx_retries {
+                warn!(?tx, "Tranaction has exceeded retries and has been removed");
+                self.new_transactions.remove(tx);
+            }
+
+            *retries < self.config.tx_retries
+        });
+
+        to_exec
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
@@ -1106,10 +1099,6 @@ impl Consensus {
             .collect();
 
         verify_messages(agg.signature, &messages, &public_keys)
-    }
-
-    fn get_committee_default(&self) -> Committee {
-        self.get_block_by_view(0).unwrap().unwrap().committee
     }
 
     fn get_leader(&self, view: u64) -> Result<Validator> {
