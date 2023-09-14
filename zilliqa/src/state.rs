@@ -1,5 +1,6 @@
 use core::fmt;
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
+use ethabi::Token;
 use generic_array::{
     sequence::Split,
     typenum::{U12, U20},
@@ -19,7 +20,7 @@ use evm_ds::protos::evm_proto::Log;
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 
-use crate::{contracts, crypto, db::SledDb};
+use crate::{cfg::ConsensusConfig, contracts, crypto, db::SledDb};
 
 #[derive(Debug)]
 pub struct State {
@@ -28,42 +29,62 @@ pub struct State {
 }
 
 impl State {
-    pub fn new_genesis(database: Tree, genesis_accounts: &[(Address, String)]) -> Result<State> {
+    pub fn new(database: Tree) -> State {
+        let db = Arc::new(SledDb::new(database));
+        Self {
+            db: db.clone(),
+            accounts: PatriciaTrie::new(db),
+        }
+    }
+
+    pub fn new_at_root(database: Tree, root_hash: H256) -> Self {
+        Self::new(database).at_root(root_hash)
+    }
+
+    pub fn new_with_genesis(database: Tree, config: ConsensusConfig) -> Result<State> {
         let db = Arc::new(SledDb::new(database));
         let mut state = Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
         };
 
+        let shard_data = if config.is_main {
+            contracts::shard_registry::CONSTRUCTOR.encode_input(
+                contracts::shard_registry::CREATION_CODE.to_vec(),
+                &[Token::Uint(config.consensus_timeout.as_millis().into())],
+            )?
+        } else {
+            contracts::shard::CONSTRUCTOR.encode_input(
+                contracts::shard::CREATION_CODE.to_vec(),
+                &[
+                    Token::Uint(config.main_shard_id.unwrap().into()),
+                    Token::Uint(config.consensus_timeout.as_millis().into()),
+                ],
+            )?
+        };
+        state.force_deploy_contract(shard_data, Some(Address::SHARD_CONTRACT))?;
+
         let native_token_data = contracts::native_token::CONSTRUCTOR
             .encode_input(contracts::native_token::CREATION_CODE.to_vec(), &[])?;
-        state.force_deploy_contract(native_token_data, Address::NATIVE_TOKEN)?;
+        state.force_deploy_contract(native_token_data, Some(Address::NATIVE_TOKEN))?;
 
         let gas_price_data = contracts::gas_price::CONSTRUCTOR
             .encode_input(contracts::gas_price::CREATION_CODE.to_vec(), &[])?;
-        state.force_deploy_contract(gas_price_data, Address::GAS_PRICE)?;
+        state.force_deploy_contract(gas_price_data, Some(Address::GAS_PRICE))?;
 
         let _ = state.set_gas_price(default_gas_price().into());
 
-        if genesis_accounts.is_empty() {
+        if config.genesis_accounts.is_empty() {
             panic!("No genesis accounts provided");
         }
 
-        for (address, balance) in genesis_accounts {
-            state.set_native_balance(*address, balance.parse()?)?;
+        for (address, balance) in config.genesis_accounts {
+            state.set_native_balance(address, balance.parse()?)?;
             let account_new = state.get_account(*address)?;
             state.save_account(*address, account_new)?;
         }
 
         Ok(state)
-    }
-
-    pub fn new_from_root(database: Tree, root_hash: H256) -> Self {
-        let db = Arc::new(SledDb::new(database));
-        Self {
-            db: db.clone(),
-            accounts: PatriciaTrie::new(db).at_root(root_hash),
-        }
     }
 
     pub fn at_root(&self, root_hash: H256) -> Self {
@@ -236,13 +257,13 @@ impl Address {
     /// Address of the native token ERC-20 contract.
     pub const NATIVE_TOKEN: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"));
 
+    pub const SHARD_CONTRACT: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD"));
+
     /// Address of the gas contract
     pub const GAS_PRICE: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0GAS"));
 
     /// Gas fees go here
     pub const COLLECTED_FEES: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0FEE"));
-
-    pub const SHARD_REGISTRY: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD"));
 
     pub fn is_balance_transfer(to: Address) -> bool {
         to == Address::NATIVE_TOKEN
@@ -419,6 +440,7 @@ pub struct Transaction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionReceipt {
     pub block_hash: crypto::Hash,
+    pub tx_hash: crypto::Hash,
     pub success: bool,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,

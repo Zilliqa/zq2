@@ -1,4 +1,8 @@
-use crate::message::ExternalMessage;
+use ethabi::{Event, Log, RawLog};
+use primitive_types::H256;
+use std::path::Path;
+
+use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::MessageSender;
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
@@ -18,6 +22,7 @@ use crate::message::Committee;
 use crate::{
     block_store::BlockStore,
     cfg::NodeConfig,
+    contracts,
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
     exec::TransactionApplyResult,
     message::{
@@ -33,8 +38,10 @@ use crate::{
 const STATE_TRIE_TREE: &[u8] = b"state_trie";
 /// Key: transaction hash; value: transaction data
 const TXS_TREE: &[u8] = b"txs_tree";
-/// Key: tx hash; value: receipt for it
+/// Key: block_hash; value: receipt for all transactions in it
 const RECEIPTS_TREE: &[u8] = b"receipts_tree";
+/// Key: tx_hash; value: corresponding block_hash
+const TX_BLOCK_INDEX: &[u8] = b"tx_block_index";
 /// Key: address; value: Vec<tx hash where this address was touched>
 const ADDR_TOUCHED_INDEX: &[u8] = b"addresses_touched_index";
 
@@ -105,6 +112,7 @@ impl From<Hash> for MissingBlockError {
 pub struct Consensus {
     secret_key: SecretKey,
     config: NodeConfig,
+    message_sender: MessageSender,
     block_store: BlockStore,
     votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128, bool)>,
     new_views: BTreeMap<u64, NewViewVote>,
@@ -128,6 +136,8 @@ pub struct Consensus {
     /// An index of address to a list of transaction hashes, for which this address appeared somewhere in the
     /// transaction trace. The list of transations is ordered by execution order.
     touched_address_index: Tree,
+    /// Lookup of block hashes for transaction hashes.
+    block_hash_reverse_index: Tree,
 }
 
 impl Consensus {
@@ -136,14 +146,21 @@ impl Consensus {
         config: NodeConfig,
         message_sender: MessageSender,
     ) -> Result<Self> {
-        trace!("Opening database at path {:?}", config.data_dir);
+        trace!(
+            "Opening database in {:?} for shard {}",
+            config.data_dir,
+            config.eth_chain_id
+        );
 
         let db = match &config.data_dir {
-            Some(path) => sled::open(path)?,
+            Some(path) => {
+                let path = Path::new(path).join(config.eth_chain_id.to_string());
+                sled::open(path)?
+            }
             None => sled::Config::new().temporary(true).open()?,
         };
 
-        let block_store = BlockStore::new(&db, message_sender)?;
+        let block_store = BlockStore::new(&db, message_sender.clone())?;
 
         let state_trie = db.open_tree(STATE_TRIE_TREE)?;
 
@@ -159,21 +176,21 @@ impl Consensus {
             .transpose()?;
 
         let mut state = if let Some(latest_block) = &latest_block {
-            State::new_from_root(state_trie, H256(latest_block.state_root_hash().0))
+            State::new_at_root(state_trie, H256(latest_block.state_root_hash().0))
         } else {
-            State::new_genesis(state_trie, &config.genesis_accounts)?
+            State::new_with_genesis(state_trie, config.consensus.clone())?
         };
 
         let latest_block = match latest_block {
             Some(l) => l,
             None => {
-                if config.genesis_committee.len() != 1 {
+                if config.consensus.genesis_committee.len() != 1 {
                     return Err(anyhow!(
                         "genesis committee must have length 1, not {}",
-                        config.genesis_committee.len()
+                        config.consensus.genesis_committee.len()
                     ));
                 }
-                let (public_key, peer_id) = config.genesis_committee[0];
+                let (public_key, peer_id) = config.consensus.genesis_committee[0];
                 let genesis_validator = Validator {
                     public_key,
                     peer_id,
@@ -183,6 +200,8 @@ impl Consensus {
             }
         };
         trace!("Loading state at height {}", latest_block.view());
+
+        let block_hash_reverse_index = db.open_tree(TX_BLOCK_INDEX)?;
 
         let touched_address_index = db.open_tree(ADDR_TOUCHED_INDEX)?;
         touched_address_index.set_merge_operator(|_k, old_value, additional_value| {
@@ -201,6 +220,7 @@ impl Consensus {
             secret_key,
             config,
             block_store,
+            message_sender,
             votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
             high_qc: QuorumCertificate::genesis(1024), // TODO: Restore `high_qc` from persistence
@@ -213,6 +233,7 @@ impl Consensus {
             transaction_receipts: db.open_tree(RECEIPTS_TREE)?,
             state,
             db,
+            block_hash_reverse_index,
             touched_address_index,
         };
 
@@ -221,10 +242,7 @@ impl Consensus {
             consensus.add_block(latest_block.clone())?;
             consensus.save_highest_view(latest_block.hash(), latest_block.view())?;
             // treat genesis as finalized
-            consensus
-                .db
-                .insert(LATEST_FINALIZED_VIEW, &latest_block.view().to_be_bytes())?;
-            consensus.finalized_view = latest_block.view();
+            consensus.finalize(latest_block.clone())?;
             consensus.view = 1;
         }
 
@@ -252,16 +270,6 @@ impl Consensus {
             public_key,
             weight: 100,
         }) {
-            return Ok(None);
-        }
-
-        if self
-            .committee()?
-            .iter()
-            .filter(|v| v.peer_id == peer_id)
-            .count()
-            > 0
-        {
             return Ok(None);
         }
 
@@ -361,22 +369,33 @@ impl Consensus {
 
         // If the proposed block is safe, vote for it and advance to the next round.
         if self.check_safe_block(&block)? {
+            trace!("block is safe");
+
+            let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
             for txn in &transactions {
                 if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
+                    let tx_hash = txn.hash();
+                    self.block_hash_reverse_index
+                        .insert(tx_hash.0, &block.hash().0)?;
                     let receipt = TransactionReceipt {
                         block_hash: block.hash(),
+                        tx_hash,
                         success: result.success,
                         contract_address: result.contract_address,
                         logs: result.logs,
                     };
+                    info!(?receipt, "applied transaction {:?}", receipt);
+                    block_receipts.push(receipt);
                     self.transactions
                         .insert(txn.hash().0, bincode::serialize(&txn)?)?;
-
-                    info!(?receipt, "applied transaction {:?}", receipt);
-                    self.transaction_receipts
-                        .insert(txn.hash().0, bincode::serialize(&receipt)?)?;
                 }
             }
+            // If we were the proposer we would've already processed the transactions
+            if !self.transaction_receipts.contains_key(block.hash().0)? {
+                self.transaction_receipts
+                    .insert(block.hash().0, bincode::serialize(&block_receipts)?)?;
+            }
+
             if self.state.root_hash()? != block_state_root {
                 return Err(anyhow!(
                     "state root hash mismatch, expected: {:?}, actual: {:?}",
@@ -780,11 +799,58 @@ impl Consensus {
             .transpose()
     }
 
-    pub fn get_transaction_receipt(&self, hash: Hash) -> Result<Option<TransactionReceipt>> {
-        self.transaction_receipts
-            .get(hash.0)?
-            .map(|encoded| Ok(bincode::deserialize::<TransactionReceipt>(&encoded)?))
+    pub fn get_block_hash_from_transaction(&self, tx_hash: &Hash) -> Result<Option<Hash>> {
+        self.block_hash_reverse_index
+            .get(tx_hash.0)?
+            .map(|ivec| ivec.as_ref().try_into())
             .transpose()
+    }
+
+    pub fn get_transaction_receipts_in_block(
+        &self,
+        block_hash: Hash,
+    ) -> Result<Option<Vec<TransactionReceipt>>> {
+        self.transaction_receipts
+            .get(block_hash.0)?
+            .map(|encoded| Ok(bincode::deserialize::<Vec<TransactionReceipt>>(&encoded)?))
+            .transpose()
+    }
+
+    pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
+        let Some(block_hash) = self.get_block_hash_from_transaction(hash)? else {
+            return Ok(None);
+        };
+        let Some(block_receipts) = self.get_transaction_receipts_in_block(block_hash)? else {
+            return Ok(None);
+        };
+        Ok(block_receipts
+            .into_iter()
+            .find(|receipt| receipt.tx_hash == *hash))
+    }
+
+    pub fn get_logs_in_block(
+        &self,
+        hash: Hash,
+        event: Event,
+        emitter: Address,
+    ) -> Result<Vec<Log>> {
+        let Some(receipts) = self.get_transaction_receipts_in_block(hash)? else {
+            return Ok(vec![]); // no transations in block, most likely
+        };
+
+        let logs: Result<Vec<_>, _> = receipts
+            .into_iter()
+            .flat_map(|receipt| receipt.logs)
+            .filter(|log| log.address == emitter.0 && log.topics[0] == event.signature())
+            .map(|log| {
+                event.parse_log_whole(RawLog {
+                    topics: log.topics,
+                    data: log.data,
+                })
+            })
+            .collect();
+
+        Ok(logs?)
     }
 
     fn save_highest_view(&mut self, block_hash: Hash, view: u64) -> Result<()> {
@@ -927,11 +993,10 @@ impl Consensus {
 
         if prev_1.view() == 0 || prev_1.view() == prev_2.view() + 1 {
             let committed_block = prev_2;
-            let committed_block_view = committed_block.view();
             let finalized_block = self
                 .get_block_by_view(self.finalized_view)?
                 .ok_or_else(|| anyhow!("missing block"))?;
-            let mut current = committed_block;
+            let mut current = committed_block.clone();
             // commit blocks back to the last finalized block
             while current.view() > self.finalized_view {
                 let Some(new) = self.get_block(&current.parent_hash())? else {
@@ -940,9 +1005,7 @@ impl Consensus {
                 current = new;
             }
             if current.hash() == finalized_block.hash() {
-                self.finalized_view = committed_block_view;
-                self.db
-                    .insert(LATEST_FINALIZED_VIEW, &committed_block_view.to_be_bytes())?;
+                self.finalize(committed_block)?;
                 // discard blocks that can't be committed anymore
             }
         } else {
@@ -951,6 +1014,37 @@ impl Consensus {
                 prev_1.view(),
                 prev_2.view(),
             );
+        }
+
+        Ok(())
+    }
+
+    /// Intended to be used with the oldest pending block, to move the
+    /// finalized tip forward by one. Does not update view/height.
+    pub fn finalize(&mut self, newly_finalized_block: Block) -> Result<()> {
+        let view = newly_finalized_block.view();
+        self.finalized_view = view;
+        self.db.insert(LATEST_FINALIZED_VIEW, &view.to_be_bytes())?;
+
+        if self.config.consensus.is_main {
+            // Check for new shards to join
+            let shard_logs = self.get_logs_in_block(
+                newly_finalized_block.hash(),
+                contracts::shard_registry::SHARD_ADDED_EVT.clone(),
+                Address::SHARD_CONTRACT,
+            )?;
+            for log in shard_logs {
+                let Some(shard_id) = log
+                    .params
+                    .into_iter()
+                    .find(|param| param.name == "id")
+                    .and_then(|param| param.value.into_uint())
+                else {
+                    return Err(anyhow!("LaunchShard event does not contain an id!"));
+                };
+                self.message_sender
+                    .send_message_to_coordinator(InternalMessage::LaunchShard(shard_id.as_u64()))?;
+            }
         }
 
         Ok(())
@@ -1027,7 +1121,6 @@ impl Consensus {
         if !self.block_extends_from(block, &finalized_block)? {
             return Err(anyhow!("invalid block"));
         }
-
         Ok(())
     }
 

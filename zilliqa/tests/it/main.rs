@@ -4,7 +4,11 @@ mod native_contracts;
 mod persistence;
 mod web3;
 use std::env;
+use std::ops::DerefMut;
+use zilliqa::cfg::ConsensusConfig;
+use zilliqa::message::InternalMessage;
 
+use std::collections::HashMap;
 use std::{
     fmt::Debug,
     rc::Rc,
@@ -36,6 +40,7 @@ use libp2p::PeerId;
 use primitive_types::H160;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
+use serde::Deserialize;
 use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -48,6 +53,17 @@ use zilliqa::{
     message::{ExternalMessage, Message},
     node::Node,
 };
+
+#[derive(Deserialize)]
+struct CombinedJson {
+    contracts: HashMap<String, AbiContract>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct AbiContract {
+    abi: ethabi::Contract,
+}
 
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
 // type
@@ -77,15 +93,18 @@ fn node(
             data_dir: datadir
                 .as_ref()
                 .map(|d| d.path().to_str().unwrap().to_string()),
-            genesis_committee,
-            // Give a genesis account 1 billion ZIL.
-            genesis_accounts: vec![(
-                Address(genesis_account),
-                1_000_000_000u128
-                    .checked_mul(10u128.pow(18))
-                    .unwrap()
-                    .to_string(),
-            )],
+            consensus: ConsensusConfig {
+                genesis_committee,
+                // Give a genesis account 1 billion ZIL.
+                genesis_accounts: vec![(
+                    Address(genesis_account),
+                    1_000_000_000u128
+                        .checked_mul(10u128.pow(18))
+                        .unwrap()
+                        .to_string(),
+                )],
+                ..Default::default()
+            },
             ..Default::default()
         },
         secret_key,
@@ -118,8 +137,10 @@ struct TestNode {
     dir: Option<TempDir>,
 }
 
-struct Network<'r> {
+struct Network {
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    /// Child shards.
+    pub children: HashMap<u64, Network>,
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
     // the borrow checker happy.
     nodes: Vec<TestNode>,
@@ -127,17 +148,17 @@ struct Network<'r> {
     /// If the destination is `None`, the message is a broadcast.
     receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, Message)>>,
     resend_message: UnboundedSender<(PeerId, Option<PeerId>, Message)>,
-    rng: &'r mut ChaCha8Rng,
+    rng: Arc<Mutex<ChaCha8Rng>>,
     /// The seed input for the node - because rng.get_seed() returns a different, internal
     /// representation
     seed: u64,
     genesis_key: SigningKey,
 }
 
-impl<'r> Network<'r> {
-    pub fn new(rng: &mut ChaCha8Rng, nodes: usize, seed: u64) -> Network {
+impl Network {
+    pub fn new(rng: Arc<Mutex<ChaCha8Rng>>, nodes: usize, seed: u64) -> Network {
         let mut keys: Vec<_> = (0..nodes)
-            .map(|_| SecretKey::new_from_rng(rng).unwrap())
+            .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
             .collect();
         // Sort the keys in the same order as they will occur in the consensus committee. This means node indices line
         // up with indices in the committee, making logs easier to read.
@@ -148,7 +169,7 @@ impl<'r> Network<'r> {
             keys[0].to_libp2p_keypair().public().to_peer_id(),
         );
         let genesis_committee = vec![validator];
-        let genesis_key = SigningKey::random(rng);
+        let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
         let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
             .into_iter()
@@ -202,12 +223,13 @@ impl<'r> Network<'r> {
             resend_message,
             rng,
             seed,
+            children: HashMap::new(),
             genesis_key,
         }
     }
 
     pub fn add_node(&mut self) -> usize {
-        let secret_key = SecretKey::new_from_rng(self.rng).unwrap();
+        let secret_key = SecretKey::new_from_rng(self.rng.lock().unwrap().deref_mut()).unwrap();
         let (node, receiver) = node(
             self.genesis_committee.clone(),
             secret_key,
@@ -275,7 +297,7 @@ impl<'r> Network<'r> {
             return;
         }
         // Pick a random message
-        let index = self.rng.gen_range(0..messages.len());
+        let index = self.rng.lock().unwrap().gen_range(0..messages.len());
         let (source, destination, message) = messages.swap_remove(index);
         // Requeue the other messages
         for message in messages {
@@ -287,52 +309,59 @@ impl<'r> Network<'r> {
             format_message(&self.nodes, source, destination, &message)
         );
 
-        if let Some(destination) = destination {
-            let node = self
-                .nodes
-                .iter()
-                .find(|n| n.peer_id == destination)
-                .unwrap();
-            let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
-            span.in_scope(|| {
-                node.inner
-                    .lock()
-                    .unwrap()
-                    .handle_message(source, message)
-                    .unwrap();
-            });
+        if let Message::Internal(internal_message) = message {
+            if let InternalMessage::LaunchShard(network_id) = internal_message {
+                if let Some(network) = self.children.get_mut(&network_id) {
+                    trace!("Launching shard node for {network_id} - adding new node to shard");
+                    network.add_node();
+                } else {
+                    info!("Launching node in new shard network {network_id}");
+                    self.children
+                        .insert(network_id, Network::new(self.rng.clone(), 1, self.seed));
+                }
+            }
         } else {
-            for node in &self.nodes {
+            // ExternalMessage
+            if let Some(destination) = destination {
+                let node = self
+                    .nodes
+                    .iter()
+                    .find(|n| n.peer_id == destination)
+                    .unwrap();
                 let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
                 span.in_scope(|| {
                     node.inner
                         .lock()
                         .unwrap()
-                        .handle_message(source, message.clone())
+                        .handle_message(source, message)
                         .unwrap();
                 });
+            } else {
+                for node in &self.nodes {
+                    let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
+                    span.in_scope(|| {
+                        node.inner
+                            .lock()
+                            .unwrap()
+                            .handle_message(source, message.clone())
+                            .unwrap();
+                    });
+                }
             }
         }
     }
 
-    pub async fn run_until(
-        &mut self,
-        condition: impl FnMut(&mut Network) -> bool,
-        timeout: usize,
-    ) -> Result<()> {
-        self.run_until_rec(condition, timeout, timeout).await
-    }
-
-    async fn run_until_rec(
+    async fn run_until(
         &mut self,
         mut condition: impl FnMut(&mut Network) -> bool,
         mut timeout: usize,
-        orig_timeout: usize,
     ) -> Result<()> {
+        let initial_timeout = timeout;
+
         while !condition(self) {
             if timeout == 0 {
                 return Err(anyhow!(
-                    "condition was still false after {orig_timeout} ticks"
+                    "condition was still false after {initial_timeout} ticks"
                 ));
             }
             self.tick().await;
@@ -347,13 +376,15 @@ impl<'r> Network<'r> {
         mut condition: impl FnMut() -> Fut,
         mut timeout: usize,
     ) -> Result<()> {
+        let initial_timeout = timeout;
+
         while !condition().await {
             if timeout == 0 {
-                return Err(anyhow!("condition was still false after {timeout} ticks"));
+                return Err(anyhow!(
+                    "condition was still false after {initial_timeout} ticks"
+                ));
             }
-
             self.tick().await;
-
             timeout -= 1;
         }
 
@@ -361,7 +392,7 @@ impl<'r> Network<'r> {
     }
 
     pub fn random_index(&mut self) -> usize {
-        self.rng.gen_range(0..self.nodes.len())
+        self.rng.lock().unwrap().gen_range(0..self.nodes.len())
     }
 
     pub fn get_node(&self, index: usize) -> MutexGuard<Node> {
@@ -382,7 +413,10 @@ impl<'r> Network<'r> {
     ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
         let wallet: LocalWallet = self.genesis_key.clone().into();
 
-        let node = self.nodes.choose(self.rng).unwrap();
+        let node = self
+            .nodes
+            .choose(self.rng.lock().unwrap().deref_mut())
+            .unwrap();
         trace!(index = node.index, "node selected for wallet");
         let client = LocalRpcClient {
             id: Arc::new(AtomicU64::new(0)),
@@ -398,9 +432,12 @@ impl<'r> Network<'r> {
     pub async fn random_wallet(
         &mut self,
     ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
-        let wallet: LocalWallet = SigningKey::random(self.rng).into();
+        let wallet: LocalWallet = SigningKey::random(self.rng.lock().unwrap().deref_mut()).into();
 
-        let node = self.nodes.choose(self.rng).unwrap();
+        let node = self
+            .nodes
+            .choose(self.rng.lock().unwrap().deref_mut())
+            .unwrap();
         trace!(index = node.index, "node selected for wallet");
         let client = LocalRpcClient {
             id: Arc::new(AtomicU64::new(0)),
@@ -465,7 +502,7 @@ async fn deploy_contract(
     path: &str,
     contract: &str,
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-    network: &mut Network<'_>,
+    network: &mut Network,
 ) -> (H256, Contract) {
     let full_path = format!("{}{}", PROJECT_ROOT, path);
 

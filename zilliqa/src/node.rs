@@ -186,7 +186,6 @@ impl Node {
                 self.message_sender.broadcast_external_message(message)?;
             }
         }
-
         Ok(())
     }
 
@@ -340,8 +339,19 @@ impl Node {
         self.consensus.get_block(&hash)
     }
 
-    pub fn get_transaction_receipt(&self, hash: Hash) -> Result<Option<TransactionReceipt>> {
-        self.consensus.get_transaction_receipt(hash)
+    pub fn get_block_hash_from_transaction(&self, tx_hash: Hash) -> Result<Option<Hash>> {
+        self.consensus.get_block_hash_from_transaction(&tx_hash)
+    }
+
+    pub fn get_transaction_receipts_in_block(
+        &self,
+        block_hash: Hash,
+    ) -> Result<Option<Vec<TransactionReceipt>>> {
+        self.consensus.get_transaction_receipts_in_block(block_hash)
+    }
+
+    pub fn get_transaction_receipt(&self, tx_hash: Hash) -> Result<Option<TransactionReceipt>> {
+        self.consensus.get_transaction_receipt(&tx_hash)
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<SignedTransaction>> {

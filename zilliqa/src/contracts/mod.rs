@@ -16,7 +16,7 @@ struct Contract {
 }
 
 // Generated with `solc native_token.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > native_token.json`.
-#[allow(dead_code)] // in case not all properties are used immediately
+#[allow(dead_code)] // define properties on the contract, even if they aren't currently invoked
 pub mod native_token {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
@@ -39,6 +39,58 @@ pub mod native_token {
         Lazy::new(|| CONTRACT.abi.function("setBalance").unwrap().clone());
     pub static TRANSFER: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("transfer").unwrap().clone());
+    pub static CREATION_CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin).unwrap());
+    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
+}
+
+// Generated with `solc shard.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > shard.json`.
+#[allow(dead_code)] // define properties on the contract, even if they aren't currently invoked
+pub mod shard {
+    use ethabi::{Constructor, Function};
+    use once_cell::sync::Lazy;
+
+    use super::{CombinedJson, Contract};
+
+    const COMBINED_JSON: &str = include_str!("shard.json");
+    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
+            .unwrap()
+            .contracts
+            .remove("shard.sol:Shard")
+            .unwrap()
+    });
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+    pub static ADD_VALIDATOR: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("addValidator").unwrap().clone());
+    pub static CONSENSUS_TIMEOUT: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("consensusTimeoutMs").unwrap().clone());
+    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
+    pub static CREATION_CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin).unwrap());
+}
+
+// Generated with `solc shard_registry.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > shard_registry.json`.
+#[allow(dead_code)]
+pub mod shard_registry {
+    use ethabi::{Constructor, Event, Function};
+    use once_cell::sync::Lazy;
+
+    use super::{CombinedJson, Contract};
+
+    const COMBINED_JSON: &str = include_str!("shard_registry.json");
+    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
+        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
+            .unwrap()
+            .contracts
+            .remove("shard_registry.sol:ShardRegistry")
+            .unwrap()
+    });
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+    pub static SHARD_ADDED_EVT: Lazy<Event> =
+        Lazy::new(|| CONTRACT.abi.event("ShardAdded").unwrap().clone());
+    pub static ADD_SHARD: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("addShard").unwrap().clone());
     pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
     pub static CREATION_CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin).unwrap());
 }
@@ -90,7 +142,7 @@ mod tests {
     use sha2::Digest;
     use sha3::Keccak256;
 
-    use super::{gas_price, native_token};
+    use super::{gas_price, native_token, shard, shard_registry};
 
     #[test]
     #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
@@ -100,6 +152,28 @@ mod tests {
             "native_token.sol:NativeToken",
             native_token::CODE.as_slice(),
             native_token::CREATION_CODE.as_slice(),
+        )
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    fn shard() {
+        test_contract(
+            "shard.sol",
+            "shard.sol:Shard",
+            shard::CODE.as_slice(),
+            shard::CREATION_CODE.as_slice(),
+        )
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    fn shard_registry() {
+        test_contract(
+            "shard_registry.sol",
+            "shard_registry.sol:ShardRegistry",
+            shard_registry::CODE.as_slice(),
+            shard_registry::CREATION_CODE.as_slice(),
         )
     }
 

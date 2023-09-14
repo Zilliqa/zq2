@@ -37,11 +37,25 @@ pub struct NodeConfig {
     pub json_rpc_port: u16,
     /// If true, the JSON-RPC server is not started. Defaults to false.
     pub disable_rpc: bool,
+    /// Chain identifier. Doubles as shard_id internally.
     pub eth_chain_id: u64,
+    /// Consensus-specific data.
+    pub consensus: ConsensusConfig,
+    /// The maximum number of times to retry out of order TXs before dropping them
+    pub tx_retries: u64,
     /// The maximum duration between a recieved block's timestamp and the current time. Defaults to 10 seconds.
     pub allowed_timestamp_skew: Duration,
     /// The location of persistence data. If not set, uses a temporary path.
     pub data_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConsensusConfig {
+    /// If main, deploy a shard registry contract.
+    pub is_main: bool,
+    /// If not main, parent main shard.
+    pub main_shard_id: Option<u64>,
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     pub consensus_timeout: Duration,
     /// The maximum number of times to retry out of order TXs before dropping them
@@ -53,16 +67,28 @@ pub struct NodeConfig {
     pub genesis_accounts: Vec<(Address, String)>,
 }
 
+impl Default for ConsensusConfig {
+    fn default() -> Self {
+        ConsensusConfig {
+            is_main: true,
+            main_shard_id: None,
+            consensus_timeout: Duration::from_secs(5),
+            genesis_committee: vec![],
+            genesis_accounts: Vec::new(),
+        }
+    }
+}
+
 impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
             json_rpc_port: 4201,
             disable_rpc: false,
+            consensus: Default::default(),
             // Default to the "Zilliqa local development" chain ID.
             eth_chain_id: 700 + 0x8000,
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: None,
-            consensus_timeout: Duration::from_secs(5),
             tx_retries: 1000,
             block_tx_limit: 1000,
             genesis_committee: vec![],

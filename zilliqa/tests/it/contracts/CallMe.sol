@@ -2,6 +2,8 @@
 pragma solidity ^0.8.20;
 
 contract CallMe {
+    constructor() {}
+
     function currentBlock() external view returns (uint) {
         return block.number;
     }
