@@ -216,7 +216,7 @@ pub fn run_evm_impl_direct<B: Backend>(
     // how it should be. So always set estimate mode to false for now
     let estimate_override = false;
 
-    trace!(
+    info!(
         origin = ?backend.origin(),
         address = ?args.address,
         gas_limit = ?args.gas_limit,

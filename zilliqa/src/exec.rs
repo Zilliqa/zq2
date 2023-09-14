@@ -1,5 +1,4 @@
 //! Manages execution of transactions on state.
-
 use std::{
     collections::HashSet,
     sync::{Arc, Mutex},
@@ -17,6 +16,7 @@ use evm_ds::{
 };
 use primitive_types::{H160, U256};
 use tracing::*;
+use tracing_subscriber::FmtSubscriber;
 
 use crate::state::SignedTransaction;
 use crate::{
@@ -24,6 +24,12 @@ use crate::{
     message::BlockHeader,
     state::{Address, State},
 };
+
+fn tracing_subscriber() -> FmtSubscriber {
+    tracing_subscriber::fmt()
+        .with_max_level(Level::INFO)
+        .finish()
+}
 
 #[derive(Default)]
 pub struct TouchedAddressEventListener {
@@ -280,7 +286,10 @@ impl State {
             }
 
             backend.origin = call_args.caller;
-            result = run_evm_impl_direct(call_args.clone(), &backend);
+
+            result = tracing::subscriber::with_default(tracing_subscriber(), || {
+                run_evm_impl_direct(call_args.clone(), &backend)
+            });
 
             if print_enabled {
                 info!("Evm invocation complete - applying result {:?}", result);
@@ -457,7 +466,10 @@ impl State {
             }
 
             backend.origin = call_args.caller;
-            let mut gas_result = run_evm_impl_direct(call_args, &backend);
+
+            let mut gas_result = tracing::subscriber::with_default(tracing_subscriber(), || {
+                run_evm_impl_direct(call_args, &backend)
+            });
 
             if !gas_result.succeeded() {
                 let fail_string = format!(
