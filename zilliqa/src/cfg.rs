@@ -41,6 +41,8 @@ pub struct NodeConfig {
     pub eth_chain_id: u64,
     /// Consensus-specific data.
     pub consensus: ConsensusConfig,
+    /// The maximum number of times to retry out of order TXs before dropping them
+    pub tx_retries: u64,
     /// The maximum duration between a recieved block's timestamp and the current time. Defaults to 10 seconds.
     pub allowed_timestamp_skew: Duration,
     /// The location of persistence data. If not set, uses a temporary path.
@@ -56,6 +58,7 @@ pub struct ConsensusConfig {
     pub main_shard_id: Option<u64>,
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     pub consensus_timeout: Duration,
+    /// The genesis committee (public key, peer id) pairs. Only allowed to have one member at the moment
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
     pub genesis_accounts: Vec<(Address, String)>,
 }
@@ -82,6 +85,7 @@ impl Default for NodeConfig {
             eth_chain_id: 700 + 0x8000,
             allowed_timestamp_skew: Duration::from_secs(10),
             data_dir: None,
+            tx_retries: 1000,
         }
     }
 }

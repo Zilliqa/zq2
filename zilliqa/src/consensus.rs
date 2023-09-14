@@ -1,6 +1,5 @@
 use ethabi::{Event, Log, RawLog};
 use primitive_types::H256;
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::message::{ExternalMessage, InternalMessage};
@@ -10,7 +9,8 @@ use bitvec::bitvec;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
-use std::{error::Error, fmt::Display};
+use std::ops::Add;
+use std::{collections::BTreeMap, error::Error, fmt::Display};
 use tracing::*;
 
 use crate::message::Committee;
@@ -119,6 +119,8 @@ pub struct Consensus {
     pending_peers: Vec<Validator>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
     new_transactions: BTreeMap<Hash, SignedTransaction>,
+    /// Transactions that cannot yet be executed due to the nonce being higher. The value is the number of retries
+    new_transactions_waiting: BTreeMap<Hash, u64>,
     /// Transactions that have been executed and included in a block, and the blocks the are
     /// included in.
     transactions: Tree,
@@ -222,6 +224,7 @@ impl Consensus {
             finalized_view: latest_block.view(),
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
+            new_transactions_waiting: BTreeMap::new(),
             transactions: db.open_tree(TXS_TREE)?,
             transaction_receipts: db.open_tree(RECEIPTS_TREE)?,
             state,
@@ -308,6 +311,7 @@ impl Consensus {
         self.view += 1;
 
         let leader = self.get_leader(self.view)?.peer_id;
+
         let new_view = NewView::new(
             self.secret_key,
             self.high_qc.clone(),
@@ -360,7 +364,6 @@ impl Consensus {
         let block_state_root = block.state_root_hash();
 
         // If the proposed block is safe, vote for it and advance to the next round.
-        trace!("checking whether block is safe");
         if self.check_safe_block(&block)? {
             trace!("block is safe");
 
@@ -377,6 +380,7 @@ impl Consensus {
                         contract_address: result.contract_address,
                         logs: result.logs,
                     };
+                    info!(?receipt, "applied transaction {:?}", receipt);
                     block_receipts.push(receipt);
                     self.transactions
                         .insert(txn.hash().0, bincode::serialize(&txn)?)?;
@@ -420,7 +424,6 @@ impl Consensus {
         current_block: BlockHeader,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash();
-        debug!(?hash, "executing transaction");
 
         // If we have the transaction in the mempool, remove it.
         self.new_transactions.remove(&hash);
@@ -439,6 +442,11 @@ impl Consensus {
             for address in listener.touched {
                 self.touched_address_index.merge(address.0, hash.0)?;
             }
+
+            if !result.success {
+                info!("Transaction was a failure...");
+            }
+
             Ok(Some(result))
         } else {
             Ok(None)
@@ -451,6 +459,45 @@ impl Consensus {
             .map(|encoded| Ok(bincode::deserialize::<Vec<Hash>>(&encoded)?))
             .transpose()
             .map(|opt| opt.unwrap_or_default())
+    }
+
+    pub fn get_txns_to_execute(&mut self) -> Vec<SignedTransaction> {
+        // Note: push back Txns that have an incorrect nonce
+        let to_exec = self.new_transactions
+            .values()
+            .cloned()
+            .filter(|tx| {
+                if self.state.has_account(tx.from_addr)
+                    && self.state.must_get_account(tx.from_addr).nonce < tx.transaction.nonce
+                {
+                    // Incremement the value if it exists, otherwise set it to 1
+                    let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
+                    let _ = retries.add(1);
+                    warn!(
+                        "Transaction nonce for tx {} is incorrect: {} when acct nonce is {}, tries: {}/{}",
+                        tx.hash(),
+                        tx.transaction.nonce,
+                        self.state.must_get_account(tx.from_addr).nonce,
+                        retries,
+                        self.config.tx_retries
+                    );
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        // retries might have been exceeded for some Tx, so dump them
+        self.new_transactions_waiting.retain(|tx, retries| {
+            if *retries >= self.config.tx_retries {
+                warn!(?tx, "Tranaction has exceeded retries and has been removed");
+                self.new_transactions.remove(tx);
+            }
+
+            *retries < self.config.tx_retries
+        });
+
+        to_exec
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
@@ -524,9 +571,9 @@ impl Consensus {
 
                     let previous_state_root_hash = self.state.root_hash()?;
 
-                    let applied_transactions: Vec<_> =
-                        self.new_transactions.values().cloned().collect();
-                    let applied_transactions: Vec<_> = applied_transactions
+                    let transactions = self.get_txns_to_execute();
+
+                    let applied_transactions: Vec<_> = transactions
                         .into_iter()
                         .filter_map(|tx| {
                             let result = self.apply_transaction(tx.clone(), parent_header);
@@ -1149,9 +1196,15 @@ impl Consensus {
         // currently it's a simple round robin but later
         // we will select the leader based on the weights
         // Get the previous block, so we know the committee, then calculate the leader from there.
-        let block = self
-            .get_block_by_view(view - 1)?
-            .ok_or_else(|| anyhow!("missing block"))?;
+        let block = self.get_block_by_view(view - 1)?;
+
+        let block = match block {
+            Some(block) => block,
+            None => self
+                .get_block_by_view(0)?
+                .ok_or_else(|| anyhow!("missing genesis block!"))?,
+        };
+
         Ok(block.committee.leader(view))
     }
 

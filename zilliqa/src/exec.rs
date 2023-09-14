@@ -226,7 +226,12 @@ impl State {
         // Check the sender has enough balance and deduct it before any other operations happen, sending
         // it to the destination address or contract creation address
         if gas_price > 0 && native_balance <= upfront_reserve {
-            let error_str = format!("Transaction attempted to use more funds and gas than it actually had! Amount: {}, Balance: {}, gas_price: {}", upfront_reserve, native_balance, gas_price);
+            let error_str = format!(
+                "Transaction attempted to use more funds \
+             and gas than it actually had! Amount: {}, Balance: {}, gas_price: {}, \
+              addr: {}",
+                upfront_reserve, native_balance, gas_price, from_addr
+            );
             warn!(error_str);
             return Err(anyhow!(error_str));
         }
@@ -363,10 +368,20 @@ impl State {
                         }
                     }
                 }
-            } else if result.succeeded()
-                && !continuation_stack.is_empty()
-                && !backend.origin.is_zero()
-            {
+            } else if !continuation_stack.is_empty() && !backend.origin.is_zero() {
+                if !run_succeeded {
+                    warn!(
+                        "Tx failed to execute! Call context: {}",
+                        call_args.evm_context
+                    );
+
+                    // In the case it was a fund transfer, what is on the stack is what
+                    // would have executed if it had the funds, so we need to pop it additionally.
+                    if call_args.evm_context == *"fund_transfer" {
+                        continuation_stack.pop();
+                    }
+                }
+
                 // We need to let the continuation prior know the return result
                 let prior = continuation_stack.last_mut().unwrap();
 
@@ -382,7 +397,7 @@ impl State {
                                     data: result.return_value.clone(),
                                     ..*old_calldata
                                 }));
-                            prior_node_continuation.succeeded = true;
+                            prior_node_continuation.succeeded = run_succeeded;
                             prior_node_continuation.logs = result.logs.clone();
                         }
                         EvmProto::Type::Create => {
@@ -390,7 +405,7 @@ impl State {
                                 Some(EvmProto::FeedbackData::Address(
                                     prior_node_continuation.get_address(),
                                 ));
-                            prior_node_continuation.succeeded = true;
+                            prior_node_continuation.succeeded = run_succeeded;
                             prior_node_continuation.logs = result.logs.clone();
                         }
                     }
@@ -460,8 +475,8 @@ impl State {
 
         if print_enabled {
             debug!(
-                "*** Loop complete - returning final result {:?}",
-                backend_result
+                "*** Loop complete - returning final results {:?} {:?}",
+                backend_result, created_contract_addr
             );
         }
 
@@ -497,7 +512,7 @@ impl State {
         current_block: BlockHeader,
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash();
-        info!(?hash, "executing txn");
+        info!(?hash, ?txn, "executing txn");
 
         let gas_price = self.get_gas_price()?;
 
@@ -534,6 +549,15 @@ impl State {
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
                 // and we get the return value (which will indicate the error)
                 let mut acct = self.get_account(txn.from_addr).unwrap();
+
+                if acct.nonce != txn.transaction.nonce {
+                    let error_str = format!(
+                        "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
+                        acct.nonce, txn.transaction.nonce, hash
+                    );
+                    warn!(error_str);
+                    return Err(anyhow!(error_str));
+                }
                 acct.nonce = acct.nonce.checked_add(1).unwrap();
                 self.save_account(txn.from_addr, acct)?;
 
@@ -747,7 +771,7 @@ impl State {
         let result = self.apply_transaction_inner(
             from_addr,
             to_addr,
-            gas_price,
+            0,
             gas,
             value,
             data,
@@ -776,12 +800,14 @@ impl State {
                     return Err(anyhow!(error_str));
                 }
 
+                let res = gas - result.remaining_gas + gas_price;
+
                 info!(
-                    "gas estimation: {} {} {} ",
-                    gas, result.remaining_gas, gas_price
+                    "gas estimation: {} {} {} -> {}",
+                    gas, result.remaining_gas, gas_price, res
                 );
 
-                Ok(gas - result.remaining_gas + gas_price)
+                Ok(res)
             }
             Err(e) => {
                 let error_str = format!("Estimate gas failed with error: {:?}", e);
@@ -833,6 +859,13 @@ pub fn push_transfer(
     amount: U256,
     continuations: Arc<Mutex<EvmProto::Continuations>>,
 ) -> EvmProto::EvmCallArgs {
+    trace!(
+        "Pushing transfer from: {} -> to: {} amount: {}",
+        from,
+        to,
+        amount
+    );
+
     let balance_data = contracts::native_token::TRANSFER
         .encode_input(&[Token::Address(to.0), Token::Uint(amount)])
         .unwrap();
@@ -851,7 +884,7 @@ pub fn push_transfer(
         continuations,
         enable_cps: true,
         node_continuation: None,
-        evm_context: Default::default(),
+        evm_context: "fund_transfer".to_string(),
         is_static: false,
         tx_trace_enabled: false,
     }

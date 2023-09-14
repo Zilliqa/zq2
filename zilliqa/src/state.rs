@@ -1,3 +1,4 @@
+use core::fmt;
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use generic_array::{
@@ -10,7 +11,7 @@ use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
 use sled::Tree;
 use std::convert::TryInto;
-use std::fmt::Display;
+use std::fmt::{Display, LowerHex};
 use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
 
@@ -72,6 +73,10 @@ impl State {
         state.force_deploy_contract(gas_price_data, Some(Address::GAS_PRICE))?;
 
         let _ = state.set_gas_price(default_gas_price().into());
+
+        if config.genesis_accounts.is_empty() {
+            panic!("No genesis accounts provided");
+        }
 
         for (address, balance) in config.genesis_accounts {
             state.set_native_balance(address, balance.parse()?)?;
@@ -226,8 +231,14 @@ impl State {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Address(pub H160);
+
+impl fmt::Debug for Address {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
 
 impl From<H160> for Address {
     fn from(h: H160) -> Address {
@@ -276,7 +287,7 @@ impl Address {
 
 impl Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        LowerHex::fmt(&self.0, f)
     }
 }
 
@@ -313,7 +324,6 @@ impl SignedTransaction {
             signing_info,
         })
     }
-
     pub fn hash(&self) -> crypto::Hash {
         let txn = &self.transaction;
         match self.signing_info {
