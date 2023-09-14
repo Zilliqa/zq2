@@ -149,7 +149,7 @@ impl State {
                         }
                     }
                 }
-                self.apply_delta(result.apply)?;
+                self.apply_delta(result.apply, result.tx_trace.lock().unwrap().addresses_sent_funds_to())?;
                 Ok(())
             }
             _ => Err(anyhow!("{:?}", result.exit_reason)),
@@ -543,7 +543,7 @@ impl State {
                 let success = result.succeeded();
 
                 if success {
-                    self.apply_delta(result.apply)?;
+                    self.apply_delta(result.apply, result.tx_trace.lock().unwrap().addresses_sent_funds_to())?;
                 }
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
@@ -582,7 +582,17 @@ impl State {
     }
 
     // Apply the changes the EVM is requesting for
-    fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm_proto::Apply>) -> Result<()> {
+    fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm_proto::Apply>, new_addresses: Vec<Address>) -> Result<()> {
+
+        // these accounts have been 'created' by having funds sent to them. We need to create them with nonce 0
+        // get_account creates a defaulted account if it doesn't exist
+        for address in new_addresses {
+            let account = self.get_account(address).unwrap();
+            if account.nonce == 0 {
+                self.save_account(address, account)?;
+            }
+        }
+
         for apply in applys {
             match apply {
                 EvmProto::Apply::Delete { address } => {
@@ -685,7 +695,7 @@ impl State {
                 let success = result.succeeded();
 
                 if success {
-                    self.apply_delta(result.apply)?;
+                    self.apply_delta(result.apply, result.tx_trace.lock().unwrap().addresses_sent_funds_to())?;
                 } else {
                     panic!(
                         "Failed to set gas price with error: {:?}",
@@ -751,8 +761,10 @@ impl State {
                 // Apply the state changes only if success
                 let success = result.succeeded();
 
+                info!("Set native balance result: {:?}", result);
+
                 if success {
-                    self.apply_delta(result.apply)?;
+                    self.apply_delta(result.apply, result.tx_trace.lock().unwrap().addresses_sent_funds_to())?;
                 } else {
                     panic!("Failed to set balance with error: {:?}", result.exit_reason);
                 }

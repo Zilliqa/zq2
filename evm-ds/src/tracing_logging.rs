@@ -1,3 +1,4 @@
+use primitive_types::{H160, U256};
 use serde::{Deserialize, Serialize};
 
 // File to keep all of the misc logging and tracing code
@@ -75,6 +76,13 @@ pub struct LoggingEventListener {
     pub enabled: bool,
 }
 
+impl LoggingEventListener {
+    pub fn addresses_sent_funds_to<T: std::convert::From<primitive_types::H160>>(&self) -> Vec<T> {
+        // call types 0 and 1 are for transfer and self destruct
+        self.otter_internal_tracer.iter().filter(|op| {op.call_type == 0 || op.call_type == 1}).map(|op| op.to.into()).collect()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StructLogTopLevel {
     pub gas: u64,
@@ -88,9 +96,9 @@ pub struct StructLogTopLevel {
 pub struct InternalOperationOtter {
     #[serde(rename = "type")]
     pub call_type: usize,
-    pub from: String,
-    pub to: String,
-    pub value: String,
+    pub from: H160,
+    pub to: H160,
+    pub value: U256,
 }
 
 impl LoggingEventListener {
@@ -181,10 +189,10 @@ impl evm::runtime::tracing::EventListener for LoggingEventListener {
                 input,
             } => {
                 intern_trace = Some(InternalOperationOtter {
-                    call_type: call_depth,
-                    from: format!("{:?}", address),
-                    to: format!("{:?}", target),
-                    value: format!("{:0X?}", balance),
+                    call_type: 0,
+                    from: address,
+                    to: target,
+                    value: balance,
                 });
 
                 self.otter_call_tracer.push(OtterscanCallContext {
@@ -210,9 +218,9 @@ impl evm::runtime::tracing::EventListener for LoggingEventListener {
             } => {
                 intern_trace = Some(InternalOperationOtter {
                     call_type: 1,
-                    from: format!("{:?}", address),
-                    to: format!("{:?}", target),
-                    value: format!("{:0X?}", balance),
+                    from: address,
+                    to: target,
+                    value: balance,
                 });
 
                 self.otter_call_tracer.push(OtterscanCallContext {
@@ -234,9 +242,9 @@ impl evm::runtime::tracing::EventListener for LoggingEventListener {
             } => {
                 intern_trace = Some(InternalOperationOtter {
                     call_type: if is_create2 { 3 } else { 2 },
-                    from: format!("{:?}", address),
-                    to: format!("{:?}", target),
-                    value: format!("{:0X?}", balance),
+                    from: address,
+                    to: target,
+                    value: balance,
                 });
 
                 self.otter_call_tracer.push(OtterscanCallContext {

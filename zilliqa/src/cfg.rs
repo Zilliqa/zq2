@@ -46,6 +46,8 @@ pub struct NodeConfig {
     pub consensus_timeout: Duration,
     /// The maximum number of times to retry out of order TXs before dropping them
     pub tx_retries: u64,
+    /// The maximum number of times to retry out of order TXs before dropping them
+    pub block_tx_limit: usize,
     /// The genesis committee (public key, peer id) pairs. Only allowed to have one member at the moment
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
     pub genesis_accounts: Vec<(Address, String)>,
@@ -62,6 +64,7 @@ impl Default for NodeConfig {
             data_dir: None,
             consensus_timeout: Duration::from_secs(5),
             tx_retries: 1000,
+            block_tx_limit: 1000,
             genesis_committee: vec![],
             genesis_accounts: Vec::new(),
         }
