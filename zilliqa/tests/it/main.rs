@@ -5,10 +5,12 @@ mod persistence;
 mod web3;
 use std::env;
 use std::ops::DerefMut;
+use zilliqa::cfg::ConsensusConfig;
 use zilliqa::cfg::NodeConfig;
 use zilliqa::crypto::{Hash, NodePublicKey, SecretKey};
 use zilliqa::message::{ExternalMessage, InternalMessage};
 use zilliqa::node::Node;
+use zilliqa::state::Address;
 
 use std::collections::HashMap;
 use std::{
@@ -25,11 +27,12 @@ use zilliqa::message::Message;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 
+use ethers::utils::secret_key_to_address;
 use ethers::{
     abi::Contract,
     prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, SignerMiddleware},
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
-    signers::{LocalWallet, Signer},
+    signers::LocalWallet,
     types::H256,
 };
 use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
@@ -39,6 +42,7 @@ use jsonrpsee::{
 };
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
+use primitive_types::H160;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
 use serde::Deserialize;
@@ -68,6 +72,7 @@ fn node(
     secret_key: SecretKey,
     index: usize,
     datadir: Option<TempDir>,
+    genesis_account: H160,
 ) -> Result<(
     TestNode,
     BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
@@ -87,8 +92,19 @@ fn node(
             data_dir: datadir
                 .as_ref()
                 .map(|d| d.path().to_str().unwrap().to_string()),
-            genesis_committee,
-            genesis_hash,
+            consensus: ConsensusConfig {
+                genesis_committee,
+                genesis_hash,
+                // Give a genesis account 1 billion ZIL.
+                genesis_accounts: vec![(
+                    Address(genesis_account),
+                    1_000_000_000u128
+                        .checked_mul(10u128.pow(18))
+                        .unwrap()
+                        .to_string(),
+                )],
+                ..Default::default()
+            },
             ..Default::default()
         },
         secret_key,
@@ -136,6 +152,7 @@ struct Network {
     /// The seed input for the node - because rng.get_seed() returns a different, internal
     /// representation
     seed: u64,
+    genesis_key: SigningKey,
 }
 
 impl Network {
@@ -152,6 +169,7 @@ impl Network {
             keys[0].to_libp2p_keypair().public().to_peer_id(),
         );
         let genesis_committee = vec![validator];
+        let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
         let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
             .into_iter()
@@ -163,6 +181,7 @@ impl Network {
                     key,
                     i,
                     Some(tempfile::tempdir().unwrap()),
+                    secret_key_to_address(&genesis_key),
                 )
                 .unwrap()
             })
@@ -206,6 +225,7 @@ impl Network {
             rng,
             seed,
             children: HashMap::new(),
+            genesis_key,
         }
     }
 
@@ -232,6 +252,7 @@ impl Network {
             secret_key,
             self.nodes.len(),
             None,
+            secret_key_to_address(&self.genesis_key),
         )
         .unwrap();
 
@@ -403,13 +424,11 @@ impl Network {
     pub fn node_at(&mut self, index: usize) -> MutexGuard<Node> {
         self.nodes[index].inner.lock().unwrap()
     }
-    pub fn genesis_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
-        // Private key with funds should be at 0x00....01
-        let hex_string = "0000000000000000000000000000000000000000000000000000000000000001";
-        let hex_bytes = hex::decode(hex_string).expect("Failed to decode hex");
 
-        let wallet: LocalWallet = SigningKey::from_slice(hex_bytes.as_slice()).unwrap().into();
-        let wallet = wallet.with_chain_id(0x8001u64);
+    pub async fn genesis_wallet(
+        &mut self,
+    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+        let wallet: LocalWallet = self.genesis_key.clone().into();
 
         let node = self
             .nodes
@@ -422,12 +441,15 @@ impl Network {
         };
         let provider = Provider::new(client);
 
-        SignerMiddleware::new(provider, wallet)
+        SignerMiddleware::new_with_provider_chain(provider, wallet)
+            .await
+            .unwrap()
     }
 
-    pub fn random_wallet(&mut self) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+    pub async fn random_wallet(
+        &mut self,
+    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
         let wallet: LocalWallet = SigningKey::random(self.rng.lock().unwrap().deref_mut()).into();
-        let wallet = wallet.with_chain_id(0x8001u64);
 
         let node = self
             .nodes
@@ -440,7 +462,9 @@ impl Network {
         };
         let provider = Provider::new(client);
 
-        SignerMiddleware::new(provider, wallet)
+        SignerMiddleware::new_with_provider_chain(provider, wallet)
+            .await
+            .unwrap()
     }
 }
 

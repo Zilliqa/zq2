@@ -21,7 +21,7 @@ jobs:
       run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /home/runner/work/_temp/
     - name: Install dependencies
       run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y protobuf-compiler solc
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
     - uses: Swatinem/rust-cache@v2
@@ -36,18 +36,12 @@ jobs:
     - name: Verify working directory is clean
       run: git diff --exit-code
 
-  e2e_test_gate:
-    runs-on: ubuntu-latest
-    steps:
-    - run: if [ $(date +%s) -ge $(date -d "2023-09-22" +%s) ]; then echo "Fix the tests!"; exit 1; else exit 0; fi
   e2e_test:
-    needs: e2e_test_gate
-    if: needs.e2e_test_gate.outputs.status == 'failure'
     runs-on: ubuntu-latest
     steps:
     - name: Install dependencies
       run: sudo apt install -y protobuf-compiler
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
     - name: Use Rust nightly

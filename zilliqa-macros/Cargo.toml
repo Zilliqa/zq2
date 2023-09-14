@@ -1,8 +1,9 @@
 [package]
 name = "zilliqa-macros"
-version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0 OR MIT"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [lib]
 proc-macro = true
@@ -10,4 +11,4 @@ proc-macro = true
 [dependencies]
 proc-macro2 = "1.0.66"
 quote = "1.0.33"
-syn = "2.0.31"
+syn = "2.0.32"

@@ -8,6 +8,7 @@ use primitive_types::H256;
 
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
+
 use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::*;
@@ -164,9 +165,15 @@ impl Node {
     }
 
     pub fn handle_timeout(&mut self) -> Result<()> {
-        let (leader, new_view) = self.consensus.timeout()?;
-        self.message_sender
-            .send_external_message(leader, ExternalMessage::NewView(Box::new(new_view)))?;
+        match self.consensus.timeout() {
+            Ok((leader, new_view)) => {
+                self.message_sender
+                    .send_external_message(leader, ExternalMessage::NewView(Box::new(new_view)))?;
+            }
+            Err(_) => {
+                warn!("timeout failed");
+            }
+        }
         Ok(())
     }
 
@@ -185,7 +192,7 @@ impl Node {
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
         let hash = txn.hash();
 
-        info!(?hash, "seen new txn");
+        info!(?hash, "seen new txn {:?}", txn);
 
         // Make sure TX hasn't been seen before
         if !self.consensus.seen_tx_already(&hash)? {

@@ -8,7 +8,7 @@ use crate::Network;
 
 #[zilliqa_macros::test]
 async fn native_token(mut network: Network) {
-    let wallet = network.random_wallet();
+    let wallet = network.random_wallet().await;
 
     let abi = include_str!("../../src/contracts/native_token.json");
     let abi = serde_json::from_str::<CombinedJson>(abi)

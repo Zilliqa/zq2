@@ -1,3 +1,4 @@
+use core::fmt;
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use generic_array::{
@@ -6,72 +7,20 @@ use generic_array::{
     GenericArray,
 };
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-use once_cell::sync::Lazy;
 use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
 use sled::Tree;
 use std::convert::TryInto;
-use std::fmt::Display;
+use std::fmt::{Display, LowerHex};
 use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
 
 use anyhow::{anyhow, Result};
 use evm_ds::protos::evm_proto::Log;
-use primitive_types::{H160, H256, U256};
+use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 
 use crate::{cfg::ConsensusConfig, contracts, crypto, db::SledDb};
-
-/// Const version of `impl From<u128> for U256`
-const fn u128_to_u256(value: u128) -> U256 {
-    let mut ret = [0; 4];
-    ret[0] = value as u64;
-    ret[1] = (value >> 64) as u64;
-    U256(ret)
-}
-
-static GENESIS: Lazy<Vec<(Address, U256)>> = Lazy::new(|| {
-    // Address with private key  0000000000000000000000000000000000000000000000000000000000000001
-    // then ...0002 etc
-    vec![
-        (
-            Address(H160(
-                hex::decode("7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            )),
-            u128_to_u256(5000 * 10u128.pow(18)),
-        ),
-        (
-            Address(H160(
-                hex::decode("2B5AD5c4795c026514f8317c7a215E218DcCD6cF")
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            )),
-            u128_to_u256(5000 * 10u128.pow(18)),
-        ),
-        (
-            Address(H160(
-                hex::decode("6813Eb9362372EEF6200f3b1dbC3f819671cBA69")
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            )),
-            u128_to_u256(5000 * 10u128.pow(18)),
-        ),
-        (
-            Address(H160(
-                hex::decode("1efF47bc3a10a45D4B230B5d10E37751FE6AA718")
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            )),
-            u128_to_u256(5000 * 10u128.pow(18)),
-        ),
-    ]
-});
 
 #[derive(Debug)]
 pub struct State {
@@ -102,16 +51,14 @@ impl State {
         let shard_data = if config.is_main {
             contracts::shard_registry::CONSTRUCTOR.encode_input(
                 contracts::shard_registry::CREATION_CODE.to_vec(),
-                &[Token::Uint(u128_to_u256(
-                    config.consensus_timeout.as_millis(),
-                ))],
+                &[Token::Uint(config.consensus_timeout.as_millis().into())],
             )?
         } else {
             contracts::shard::CONSTRUCTOR.encode_input(
                 contracts::shard::CREATION_CODE.to_vec(),
                 &[
-                    Token::Uint(u128_to_u256(config.main_shard_id.unwrap().into())),
-                    Token::Uint(u128_to_u256(config.consensus_timeout.as_millis())),
+                    Token::Uint(config.main_shard_id.unwrap().into()),
+                    Token::Uint(config.consensus_timeout.as_millis().into()),
                 ],
             )?
         };
@@ -127,8 +74,12 @@ impl State {
 
         let _ = state.set_gas_price(default_gas_price().into());
 
-        for (address, balance) in GENESIS.iter() {
-            state.set_native_balance(*address, *balance)?;
+        if config.genesis_accounts.is_empty() {
+            panic!("No genesis accounts provided");
+        }
+
+        for (address, balance) in config.genesis_accounts {
+            state.set_native_balance(address, balance.parse()?)?;
         }
 
         Ok(state)
@@ -280,8 +231,14 @@ impl State {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Address(pub H160);
+
+impl fmt::Debug for Address {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
 
 impl From<H160> for Address {
     fn from(h: H160) -> Address {
@@ -330,7 +287,7 @@ impl Address {
 
 impl Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        LowerHex::fmt(&self.0, f)
     }
 }
 
@@ -367,7 +324,6 @@ impl SignedTransaction {
             signing_info,
         })
     }
-
     pub fn hash(&self) -> crypto::Hash {
         let txn = &self.transaction;
         match self.signing_info {
