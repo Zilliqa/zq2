@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use sled::Tree;
+use sled::{Batch, Tree};
 
 use crate::{
     crypto::Hash,
@@ -56,6 +56,16 @@ macro_rules! get_and_insert_methods {
                         .map(|b| bincode::deserialize(&b))
                         .transpose()?
                 )
+            }
+
+            #[allow(dead_code)]
+            pub fn [<insert_ $name _batch>](&self, items: &[($key, $val)]) -> Result<()> {
+                let mut batch = Batch::default();
+                for (k, v) in items {
+                    batch.insert(k.as_bytes(), bincode::serialize(&v)?);
+                }
+                self.$name.apply_batch(batch)?;
+                Ok(())
             }
         }
     };

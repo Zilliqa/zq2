@@ -23,7 +23,7 @@ jobs:
     - name: Install Rust
       run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
     - name: Install dependencies
-      run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y protobuf-compiler solc build-essential
+      run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y protobuf-compiler solc build-essential cmake gcc g++
     - uses: actions/checkout@v4
       with:
         submodules: recursive

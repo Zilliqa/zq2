@@ -4,7 +4,7 @@
 //! should not care about the implementations. This gives us some confidence that we could replace the implementations
 //! in the future if we wanted to.
 
-use std::fmt::Display;
+use std::{fmt::Display, str::FromStr};
 
 use anyhow::{anyhow, Result};
 use bls12_381::{G1Projective, G2Affine};
@@ -121,6 +121,15 @@ impl Display for NodePublicKey {
     }
 }
 
+impl FromStr for NodePublicKey {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let bytes = hex::decode(s).unwrap();
+        NodePublicKey::from_bytes(&bytes)
+    }
+}
+
 impl serde::Serialize for NodePublicKey {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
@@ -136,9 +145,8 @@ impl<'de> Deserialize<'de> for NodePublicKey {
         D: serde::Deserializer<'de>,
     {
         let s = <String>::deserialize(deserializer)?;
-        let bytes = hex::decode(s).unwrap();
-        NodePublicKey::from_bytes(&bytes)
-            .map_err(|_| de::Error::invalid_value(Unexpected::Bytes(&bytes), &"a public key"))
+        s.parse()
+            .map_err(|_| de::Error::invalid_value(Unexpected::Str(&s), &"a public key"))
     }
 }
 

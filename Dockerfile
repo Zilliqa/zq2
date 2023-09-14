@@ -2,7 +2,7 @@ FROM rust:1.73.0-slim-bullseye as builder
 
 RUN apt update -y && \
     apt upgrade -y && \
-    apt install -y protobuf-compiler
+    apt install -y protobuf-compiler cmake gcc g++
 
 RUN apt autoremove
 

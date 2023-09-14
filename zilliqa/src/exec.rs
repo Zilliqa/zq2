@@ -796,7 +796,11 @@ impl State {
                 if success {
                     self.apply_delta(result.apply)?;
                 } else {
-                    panic!("Failed to set balance with error: {:?}", result.exit_reason);
+                    panic!(
+                        "Failed to set balance with error: {:?} ({})",
+                        result.exit_reason,
+                        hex::encode(result.return_value)
+                    );
                 }
 
                 Ok(())

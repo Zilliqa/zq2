@@ -1,0 +1,2 @@
+[target.x86_64-unknown-linux-gnu]
+pre-build = ["apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --assume-yes protobuf-compiler cmake gcc g++"]

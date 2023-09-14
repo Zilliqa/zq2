@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use zilliqa::{
     schnorr,
-    zq1_proto::{Nonce, ProtoTransactionCoreInfo},
+    zq1::proto::{proto_transaction_core_info::Oneof2 as Nonce, ProtoTransactionCoreInfo},
 };
 
 use crate::Network;
@@ -70,6 +70,9 @@ async fn create_transaction(mut network: Network) {
         oneof2: Some(Nonce::Nonce(nonce)),
         oneof8: None,
         oneof9: None,
+        access_list: vec![],
+        maxpriorityfeepergas: None,
+        maxfeepergas: None,
     };
     let txn_data = proto.encode_to_vec();
     let signature = schnorr::sign(&txn_data, &secret_key);

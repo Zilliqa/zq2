@@ -60,10 +60,6 @@ impl State {
 
         let _ = state.set_gas_price(default_gas_price().into());
 
-        if config.genesis_accounts.is_empty() {
-            panic!("No genesis accounts provided");
-        }
-
         for (address, balance) in config.genesis_accounts {
             state.set_native_balance(address, balance.parse()?)?;
             let account_new = state.get_account(address)?;

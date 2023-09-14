@@ -403,7 +403,7 @@ impl Consensus {
 
         debug!(%peer_id, "added pending peer");
 
-        if self.view.get_view() == 1 {
+        if self.view.get_view() == self.config.consensus.genesis_height + 1 {
             let Some(genesis) = self.get_block_by_view(0)? else {
                 // if we don't have genesis that means we only have its hash
                 // ergo we weren't, and can't be, part of the network at genesis and

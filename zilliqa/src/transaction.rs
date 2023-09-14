@@ -22,7 +22,10 @@ use sha3::{
 use crate::{
     crypto, schnorr,
     state::Address,
-    zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
+    zq1::proto::{
+        proto_transaction_core_info::{Oneof2 as Nonce, Oneof8 as Code, Oneof9 as Data},
+        ProtoTransactionCoreInfo,
+    },
 };
 
 /// A [Transaction] plus its signature. The underlying transaction can be obtained with
@@ -533,6 +536,9 @@ fn encode_zilliqa_transaction(txn: &TxZilliqa, pub_key: schnorr::PublicKey) -> V
         oneof2: Some(Nonce::Nonce(txn.nonce)),
         oneof8,
         oneof9,
+        access_list: vec![],
+        maxpriorityfeepergas: None,
+        maxfeepergas: None,
     };
     proto.encode_to_vec()
 }
