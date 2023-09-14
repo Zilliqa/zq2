@@ -450,7 +450,7 @@ impl Consensus {
             .cloned()
             .filter(|tx| {
                 if self.state.has_account(tx.from_addr)
-                    && self.state.must_get_account(tx.from_addr).nonce != tx.transaction.nonce
+                    && self.state.must_get_account(tx.from_addr).nonce < tx.transaction.nonce
                 {
                     // Incremement the value if it exists, otherwise set it to 1
                     let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
