@@ -14,7 +14,7 @@ use serde::Serialize;
 use crate::{deploy_contract, LocalRpcClient, Network};
 
 #[zilliqa_macros::test]
-async fn call_block_number(mut network: Network<'_>) {
+async fn call_block_number(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     let (hash, abi) = deploy_contract(
@@ -84,7 +84,7 @@ async fn call_block_number(mut network: Network<'_>) {
 }
 
 #[zilliqa_macros::test]
-async fn get_block_transaction_count(mut network: Network<'_>) {
+async fn get_block_transaction_count(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let provider = wallet.provider();
 
@@ -160,7 +160,7 @@ async fn get_block_transaction_count(mut network: Network<'_>) {
 }
 
 #[zilliqa_macros::test]
-async fn get_account_transaction_count(mut network: Network<'_>) {
+async fn get_account_transaction_count(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let provider = wallet.provider();
 
@@ -218,7 +218,7 @@ async fn get_account_transaction_count(mut network: Network<'_>) {
 }
 
 #[zilliqa_macros::test]
-async fn get_storage_at(mut network: Network<'_>) {
+async fn get_storage_at(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
@@ -302,7 +302,7 @@ async fn get_storage_at(mut network: Network<'_>) {
 }
 
 #[zilliqa_macros::test]
-async fn send_transaction(mut network: Network<'_>) {
+async fn send_transaction(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     let to: H160 = "0x00000000000000000000000000000000deadbeef"
@@ -341,7 +341,7 @@ async fn send_transaction(mut network: Network<'_>) {
 }
 
 #[zilliqa_macros::test]
-async fn eth_call(mut network: Network<'_>) {
+async fn eth_call(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     let (hash, abi) = deploy_contract(

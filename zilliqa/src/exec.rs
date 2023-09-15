@@ -108,23 +108,13 @@ pub struct TransactionApplyResult {
 
 impl State {
     /// Used primarily during genesis to set up contracts for chain functionality.
-    pub fn force_deploy_contract(
+    /// If override_address address is set, forces contract deployment to that addess.
+    pub(crate) fn force_deploy_contract(
         &mut self,
         creation_bytecode: Vec<u8>,
-        override_address: Address,
-    ) -> Result<()> {
-        let (mut result, evm_address) = self.apply_transaction_inner(
-            Address::ZERO,
-            None,
-            0,
-            u64::MAX,
-            U256::zero(),
-            creation_bytecode,
-            0,
-            BlockHeader::default(),
-            true,
-            false,
-        )?;
+        override_address: Option<Address>,
+    ) -> Result<Address> {
+        let (mut result, evm_address) = self.force_execute_payload(None, creation_bytecode)?;
 
         match result.exit_reason {
             ExitReasonCps::Succeed(_) => {
@@ -132,27 +122,27 @@ impl State {
                     "Transaction submitted to force_deploy_contract must be a contract creation.",
                 );
 
-                let mut acct = self.get_account(override_address)?;
-                acct.code = result.return_value.clone().to_vec();
-                self.save_account(override_address, acct)?;
+                let actual_address = override_address.unwrap_or(evm_address);
 
-                // Overwrite applys to use the desired address.
-                for apply in result.apply.iter_mut() {
-                    match apply {
-                        EvmProto::Apply::Modify { address, .. } => {
-                            if *address == evm_address.0 {
-                                *address = override_address.0;
+                if let Some(override_address) = override_address {
+                    // Overwrite applys to use the desired address.
+                    for apply in result.apply.iter_mut() {
+                        match apply {
+                            EvmProto::Apply::Modify { address, .. } => {
+                                if *address == evm_address.0 {
+                                    *address = override_address.0;
+                                }
                             }
-                        }
-                        EvmProto::Apply::Delete { address, .. } => {
-                            if *address == evm_address.0 {
-                                *address = override_address.0;
+                            EvmProto::Apply::Delete { address, .. } => {
+                                if *address == evm_address.0 {
+                                    *address = override_address.0;
+                                }
                             }
                         }
                     }
                 }
                 self.apply_delta(result.apply)?;
-                Ok(())
+                Ok(actual_address)
             }
             _ => Err(anyhow!("{:?}", result.exit_reason)),
         }
@@ -166,7 +156,7 @@ impl State {
     // a trap is generated and the Tx is paused (continuation). The continuation is then pushed onto a stack and the next
     // continuation (the call to make) is pushed onto the stack.
     #[allow(clippy::too_many_arguments)]
-    fn apply_transaction_inner(
+    pub(crate) fn apply_transaction_inner(
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
@@ -505,6 +495,27 @@ impl State {
         Ok((backend_result, created_contract_addr))
     }
 
+    /// Helper wrapper around apply_transaction_inner when only the EVM payload matters
+    /// Used for internal system transactions
+    pub(crate) fn force_execute_payload(
+        &mut self,
+        to_addr: Option<Address>,
+        payload: Vec<u8>,
+    ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
+        self.apply_transaction_inner(
+            Address::ZERO,
+            to_addr,
+            u64::MIN,
+            u64::MAX,
+            U256::zero(),
+            payload,
+            0,
+            BlockHeader::default(),
+            true,
+            false,
+        )
+    }
+
     /// Apply a transaction to the account state.
     pub fn apply_transaction(
         &mut self,
@@ -662,21 +673,7 @@ impl State {
             .unwrap();
 
         debug!("****** setting gas price to: {}", price);
-
-        let result = self.apply_transaction_inner(
-            Address::ZERO,
-            Some(Address::GAS_PRICE),
-            u64::MIN,
-            u64::MAX,
-            U256::zero(),
-            data,
-            // The chain ID and current block are not accessed when the native balance is updated, so we just pass in
-            // some dummy values.
-            0,
-            BlockHeader::default(),
-            true,
-            false,
-        );
+        let result = self.force_execute_payload(Some(Address::GAS_PRICE), data);
 
         match result {
             Ok((result, _)) => {
