@@ -52,7 +52,7 @@ impl BlockStore {
     pub fn get_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
         self.canonical_block_numbers
             .get(view.to_be_bytes())?
-            .map(|hash| Hash::from_bytes(hash))
+            .map(Hash::from_bytes)
             .transpose()
     }
 
