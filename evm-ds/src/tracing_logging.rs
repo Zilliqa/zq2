@@ -117,16 +117,6 @@ impl LoggingEventListener {
             enabled,
         }
     }
-
-    pub fn update(&mut self, other: &LoggingEventListener) {
-        self.call_tracer = other.call_tracer.clone();
-        self.raw_tracer = other.raw_tracer.clone();
-        self.otter_internal_tracer = other.otter_internal_tracer.clone();
-        self.otter_call_tracer = other.otter_call_tracer.clone();
-        self.otter_transaction_error = other.otter_transaction_error.clone();
-        self.otter_addresses_called = other.otter_addresses_called.clone();
-        self.enabled = other.enabled;
-    }
 }
 
 impl evm::runtime::tracing::EventListener for LoggingEventListener {

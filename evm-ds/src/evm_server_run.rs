@@ -229,7 +229,6 @@ pub fn run_evm_impl_direct<B: Backend>(
         estimate = args.estimate,
         is_continuation = args.node_continuation.is_some(),
         cps = args.enable_cps,
-        //tx_trace = args.tx_trace,
         data = hex::encode(&args.data),
         code = hex::encode(&args.code),
         "running EVM",
@@ -296,7 +295,7 @@ pub fn run_evm_impl_direct<B: Backend>(
     let mut executor =
         CpsExecutor::new_with_precompiles(state, &config, &precompiles, args.enable_cps);
 
-    let mut listener: LoggingEventListener = args.tx_trace.lock().unwrap().clone();
+    let mut listener = args.tx_trace.lock().unwrap();
 
     // If there is no continuation, we need to push our call context on,
     // Otherwise, our call context is loaded and is last element in stack
@@ -325,12 +324,10 @@ pub fn run_evm_impl_direct<B: Backend>(
     // We are asserting it is safe to unwind, as objects will be dropped after
     // the unwind
     let executor_result = panic::catch_unwind(AssertUnwindSafe(|| {
-        evm::runtime::tracing::using(&mut listener, || {
+        evm::runtime::tracing::using(&mut *listener, || {
             executor.execute(&mut runtime, feedback_continuation)
         })
     }));
-
-    args.tx_trace.lock().unwrap().update(&listener);
 
     // Scale back remaining gas to Scilla units (no rounding!).
     let remaining_gas = executor.gas() / args.gas_scaling_factor;
@@ -350,7 +347,7 @@ pub fn run_evm_impl_direct<B: Backend>(
             .downcast::<String>()
             .unwrap_or_else(|_| Box::new("unknown panic".to_string()));
         error!("EVM panicked: '{:?}'", panic_message);
-        let result = handle_panic(remaining_gas, &panic_message, args.tx_trace);
+        let result = handle_panic(remaining_gas, &panic_message, args.tx_trace.clone());
         return result;
     }
 
@@ -380,7 +377,7 @@ pub fn run_evm_impl_direct<B: Backend>(
             build_exit_result(
                 executor,
                 &runtime,
-                args.tx_trace,
+                args.tx_trace.clone(),
                 exit_reason,
                 remaining_gas,
                 args.is_static,
@@ -399,7 +396,7 @@ pub fn run_evm_impl_direct<B: Backend>(
                 executor,
                 &runtime,
                 i,
-                args.tx_trace,
+                args.tx_trace.clone(),
                 remaining_gas,
                 args.is_static,
                 cont_id,
@@ -413,7 +410,7 @@ pub fn run_evm_impl_direct<B: Backend>(
                 .unwrap()
                 .create_continuation(runtime.machine_mut(), executor.into_state().substate());
 
-            build_create_result(&runtime, i, args.tx_trace, remaining_gas, cont_id)
+            build_create_result(&runtime, i, args.tx_trace.clone(), remaining_gas, cont_id)
         }
     };
 

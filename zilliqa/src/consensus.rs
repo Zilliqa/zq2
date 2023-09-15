@@ -543,6 +543,12 @@ impl Consensus {
             ret.push(tx.clone());
         }
 
+        // Remove invalid txs
+        for hash in tx_hashes_invalid {
+            self.new_transactions.remove(&hash);
+            self.new_transactions_waiting.remove(&hash);
+        }
+
         ret
     }
 
