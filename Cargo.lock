@@ -6512,7 +6512,6 @@ dependencies = [
  "ethers",
  "evm_ds",
  "futures",
- "generic-array",
  "hex",
  "http",
  "hyper",
