@@ -41,7 +41,7 @@ generic-array = "0.14.7"
 hex = { version = "0.4.3", features = ["serde"] }
 http = "0.2.9"
 itertools = "0.11.0"
-jsonrpsee = { version = "0.20.0", features = ["server"] }
+jsonrpsee = { version = "0.20.1", features = ["server"] }
 k256 = {version = "0.13.1", features = ["serde", "pem"] }
 libp2p = { version = "0.52.2", features = ["gossipsub", "macros", "tcp", "tokio", "noise", "mdns", "request-response", "kad", "identify", "serde", "yamux"] }
 once_cell = "1.18.0"
