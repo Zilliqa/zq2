@@ -308,6 +308,10 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             let from = node.get_view(from.unwrap_or(BlockNumber::Latest));
             let to = node.get_view(to.unwrap_or(BlockNumber::Latest));
 
+            if from > to {
+                return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
+            }
+
             Either::Right((from..=to).map(|view| {
                 node.get_block_by_view(view)?
                     .ok_or_else(|| anyhow!("missing block: {view}"))
