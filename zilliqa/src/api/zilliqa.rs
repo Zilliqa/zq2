@@ -12,6 +12,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
         node,
         [
             ("GetCurrentMiniEpoch", get_current_mini_epoch),
+            ("GetMinimumGasPrice", get_minimum_gas_price),
             ("GetVersion", get_git_commit),
         ],
     )
@@ -19,6 +20,10 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
 
 fn get_current_mini_epoch(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(node.lock().unwrap().view().to_string())
+}
+
+fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok(node.lock().unwrap().get_gas_price().to_string())
 }
 
 fn get_git_commit(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
