@@ -16,6 +16,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetBalance", get_balance),
             ("GetCurrentMiniEpoch", get_current_mini_epoch),
             ("GetMinimumGasPrice", get_minimum_gas_price),
+            ("GetNetworkId", get_network_id),
             ("GetVersion", get_git_commit),
         ],
     )
@@ -42,6 +43,17 @@ fn get_current_mini_epoch(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> 
 
 fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(node.lock().unwrap().get_gas_price().to_string())
+}
+
+fn network_id(eth_chain_id: u64) -> u64 {
+    // We fix the convention the Zilliqa network ID is equal to the Ethereum chain ID minus 0x8000. This is true for
+    // all current Zilliqa networks.
+    eth_chain_id - 0x8000
+}
+
+fn get_network_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let network_id = network_id(node.lock().unwrap().config.eth_chain_id);
+    Ok(network_id.to_string())
 }
 
 fn get_git_commit(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
