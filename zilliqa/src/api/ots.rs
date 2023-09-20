@@ -77,7 +77,9 @@ fn get_block_transactions(
 
     let node = node.lock().unwrap();
 
-    let Some(block) = node.get_block_by_view(block_num)? else { return Ok(None); };
+    let Some(block) = node.get_block_by_view(block_num)? else {
+        return Ok(None);
+    };
 
     let start = usize::min(page_number * page_size, block.transactions.len());
     let end = usize::min((page_number + 1) * page_size, block.transactions.len());

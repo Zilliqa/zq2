@@ -43,14 +43,18 @@ impl BlockStore {
         if let Some(block) = block_cache.get(&hash) {
             return Ok(Some(block.clone()));
         }
-        let Some(block) = self.blocks.get(hash.as_bytes())? else { return Ok(None); };
+        let Some(block) = self.blocks.get(hash.as_bytes())? else {
+            return Ok(None);
+        };
         let block: Block = bincode::deserialize(&block)?;
         block_cache.put(hash, block.clone());
         Ok(Some(block))
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        let Some(hash) = self.canonical_block_numbers.get(view.to_be_bytes())? else { return Ok(None); };
+        let Some(hash) = self.canonical_block_numbers.get(view.to_be_bytes())? else {
+            return Ok(None);
+        };
         let hash = Hash::from_bytes(hash)?;
         self.get_block(hash)
     }

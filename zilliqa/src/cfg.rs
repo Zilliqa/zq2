@@ -58,6 +58,10 @@ pub struct ConsensusConfig {
     pub main_shard_id: Option<u64>,
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     pub consensus_timeout: Duration,
+    /// The maximum number of times to retry out of order TXs before dropping them
+    pub tx_retries: u64,
+    /// The maximum number of times to retry out of order TXs before dropping them
+    pub block_tx_limit: usize,
     /// The genesis committee (public key, peer id) pairs. Only allowed to have one member at the moment
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
     pub genesis_accounts: Vec<(Address, String)>,
@@ -69,6 +73,8 @@ impl Default for ConsensusConfig {
             is_main: true,
             main_shard_id: None,
             consensus_timeout: Duration::from_secs(5),
+            block_tx_limit: 1000,
+            tx_retries: 1000,
             genesis_committee: vec![],
             genesis_accounts: Vec::new(),
         }

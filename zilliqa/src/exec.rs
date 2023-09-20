@@ -5,6 +5,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use evm_ds::tracing_logging::LoggingEventListener;
+
 use crate::evm_backend::EvmBackend;
 use anyhow::{anyhow, Result};
 use ethabi::Token;
@@ -98,6 +100,8 @@ pub struct TransactionApplyResult {
     pub contract_address: Option<Address>,
     /// The logs emitted by the transaction execution.
     pub logs: Vec<EvmProto::Log>,
+    /// The traces from the EVM, if enabled
+    pub traces: Arc<Mutex<LoggingEventListener>>,
 }
 
 impl State {
@@ -135,7 +139,10 @@ impl State {
                         }
                     }
                 }
-                self.apply_delta(result.apply)?;
+                self.apply_delta(
+                    result.apply,
+                    result.tx_trace.lock().unwrap().addresses_sent_funds_to(),
+                )?;
                 Ok(actual_address)
             }
             _ => Err(anyhow!("{:?}", result.exit_reason)),
@@ -175,6 +182,9 @@ impl State {
 
         let mut code: Vec<u8> = account.code;
         let mut data: Vec<u8> = payload;
+        //let mut traces = "".to_string(); // Traces get built up over the course of execution
+        let mut traces: Arc<Mutex<LoggingEventListener>> =
+            Arc::new(Mutex::new(LoggingEventListener::new(true)));
 
         // The backend is provided to the evm as a way to read accounts and state during execution
         let mut backend = EvmBackend::new(self, U256::zero(), caller.0, chain_id, current_block);
@@ -185,7 +195,7 @@ impl State {
             data = vec![];
             to = Address(calculate_contract_address(from_addr.0, &backend));
             created_contract_addr = Some(to);
-            debug!("Calculated contract address for creation: {}", to);
+            info!("Calculated contract address for creation: {}", to);
         }
 
         let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];
@@ -208,8 +218,8 @@ impl State {
             node_continuation: None,
             continuations: continuations.clone(),
             enable_cps: true,
-            tx_trace_enabled: false,
-            tx_trace: "".to_string(),
+            tx_trace_enabled: true,
+            tx_trace: traces.clone(),
         });
         let mut result;
         let mut run_succeeded;
@@ -250,7 +260,13 @@ impl State {
                 );
             }
 
-            continuation_stack.push(push_transfer(from_addr, to, amount, continuations.clone()));
+            continuation_stack.push(push_transfer(
+                from_addr,
+                to,
+                amount,
+                continuations.clone(),
+                traces.clone(),
+            ));
         }
 
         if print_enabled {
@@ -302,7 +318,7 @@ impl State {
                             address: addr_to_create,
                             code: vec![],
                             data: create.call_data,
-                            tx_trace: Default::default(),
+                            tx_trace: traces.clone(),
                             continuations: continuations.clone(),
                             node_continuation: None,
                             evm_context: Default::default(),
@@ -344,7 +360,7 @@ impl State {
                             code: code_next,
                             data: call_data_next,
                             apparent_value: value,
-                            tx_trace: Default::default(),
+                            tx_trace: traces.clone(),
                             continuations: continuations.clone(),
                             node_continuation: None,
                             evm_context: Default::default(),
@@ -364,6 +380,7 @@ impl State {
                                 call_addr,
                                 value,
                                 continuations.clone(),
+                                traces.clone(),
                             ));
                         }
                     }
@@ -434,6 +451,7 @@ impl State {
                 Address::COLLECTED_FEES,
                 gas_deduction.into(),
                 continuations,
+                traces,
             ));
             let call_args = continuation_stack.pop().unwrap();
 
@@ -448,6 +466,7 @@ impl State {
 
             backend.origin = call_args.caller;
             let mut gas_result = run_evm_impl_direct(call_args, &backend);
+            traces = gas_result.tx_trace.clone();
 
             if !gas_result.succeeded() {
                 let fail_string = format!(
@@ -472,6 +491,7 @@ impl State {
         backend_result.return_value = result.return_value;
         backend_result.remaining_gas = result.remaining_gas;
         backend_result.logs = result.logs;
+        backend_result.tx_trace = traces.clone();
 
         if print_enabled {
             debug!(
@@ -543,7 +563,10 @@ impl State {
                 let success = result.succeeded();
 
                 if success {
-                    self.apply_delta(result.apply)?;
+                    self.apply_delta(
+                        result.apply,
+                        result.tx_trace.lock().unwrap().addresses_sent_funds_to(),
+                    )?;
                 }
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
@@ -565,6 +588,7 @@ impl State {
                     success,
                     contract_address: contract_addr,
                     logs: result.logs,
+                    traces: result.tx_trace.clone(),
                 })
             }
             Err(e) => {
@@ -574,13 +598,27 @@ impl State {
                     success: false,
                     contract_address: None,
                     logs: Default::default(),
+                    traces: Default::default(),
                 })
             }
         }
     }
 
     // Apply the changes the EVM is requesting for
-    fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm_proto::Apply>) -> Result<()> {
+    fn apply_delta(
+        &mut self,
+        applys: Vec<evm_ds::protos::evm_proto::Apply>,
+        new_addresses: Vec<Address>,
+    ) -> Result<()> {
+        // these accounts have been 'created' by having funds sent to them. We need to create them with nonce 0
+        // get_account creates a defaulted account if it doesn't exist
+        for address in new_addresses {
+            let account = self.get_account(address).unwrap();
+            if account.nonce == 0 {
+                self.save_account(address, account)?;
+            }
+        }
+
         for apply in applys {
             match apply {
                 EvmProto::Apply::Delete { address } => {
@@ -669,7 +707,10 @@ impl State {
                 let success = result.succeeded();
 
                 if success {
-                    self.apply_delta(result.apply)?;
+                    self.apply_delta(
+                        result.apply,
+                        result.tx_trace.lock().unwrap().addresses_sent_funds_to(),
+                    )?;
                 } else {
                     panic!(
                         "Failed to set gas price with error: {:?}",
@@ -735,8 +776,13 @@ impl State {
                 // Apply the state changes only if success
                 let success = result.succeeded();
 
+                info!("Set native balance result: {:?}", result);
+
                 if success {
-                    self.apply_delta(result.apply)?;
+                    self.apply_delta(
+                        result.apply,
+                        result.tx_trace.lock().unwrap().addresses_sent_funds_to(),
+                    )?;
                 } else {
                     panic!("Failed to set balance with error: {:?}", result.exit_reason);
                 }
@@ -858,6 +904,7 @@ pub fn push_transfer(
     to: Address,
     amount: U256,
     continuations: Arc<Mutex<EvmProto::Continuations>>,
+    traces: Arc<Mutex<LoggingEventListener>>,
 ) -> EvmProto::EvmCallArgs {
     trace!(
         "Pushing transfer from: {} -> to: {} amount: {}",
@@ -880,12 +927,12 @@ pub fn push_transfer(
         data: balance_data,
         apparent_value: Default::default(),
         gas_limit: u64::MAX,
-        tx_trace: Default::default(),
+        tx_trace: traces,
         continuations,
         enable_cps: true,
         node_continuation: None,
         evm_context: "fund_transfer".to_string(),
         is_static: false,
-        tx_trace_enabled: false,
+        tx_trace_enabled: true,
     }
 }

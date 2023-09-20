@@ -31,7 +31,7 @@ pub fn substitute_scilla_type_with_sol(arg_name: &str) -> Result<ParamType, Prec
 pub fn get_contract_addr_and_name(input: &[u8]) -> Result<(Address, String), PrecompileFailure> {
     let partial_types = vec![ParamType::Address, ParamType::String];
     let partial_tokens = decode(&partial_types, input);
-    let Ok(partial_tokens) = partial_tokens  else {
+    let Ok(partial_tokens) = partial_tokens else {
         return Err(PrecompileFailure::Error {
             exit_status: ExitError::Other(Cow::Borrowed("Incorrect input")),
         });
@@ -43,7 +43,9 @@ pub fn get_contract_addr_and_name(input: &[u8]) -> Result<(Address, String), Pre
         });
     }
 
-    let (Token::Address(code_address), Token::String(name)) = (&partial_tokens[0], &partial_tokens[1]) else {
+    let (Token::Address(code_address), Token::String(name)) =
+        (&partial_tokens[0], &partial_tokens[1])
+    else {
         return Err(PrecompileFailure::Error {
             exit_status: ExitError::Other(Cow::Borrowed("Incorrect input")),
         });
@@ -55,7 +57,7 @@ pub fn get_contract_addr_and_name(input: &[u8]) -> Result<(Address, String), Pre
 pub fn parse_invocation_prefix(input: &[u8]) -> Result<(Address, String, Uint), PrecompileFailure> {
     let partial_types = vec![ParamType::Address, ParamType::String, ParamType::Uint(8)];
     let partial_tokens = decode(&partial_types, input);
-    let Ok(partial_tokens) = partial_tokens  else {
+    let Ok(partial_tokens) = partial_tokens else {
         return Err(PrecompileFailure::Error {
             exit_status: ExitError::Other(Cow::Borrowed("Incorrect input")),
         });
@@ -67,7 +69,9 @@ pub fn parse_invocation_prefix(input: &[u8]) -> Result<(Address, String, Uint), 
         });
     }
 
-    let (Token::Address(code_address), Token::String(name), Token::Uint(preserve_sender)) = (&partial_tokens[0], &partial_tokens[1], &partial_tokens[2]) else {
+    let (Token::Address(code_address), Token::String(name), Token::Uint(preserve_sender)) =
+        (&partial_tokens[0], &partial_tokens[1], &partial_tokens[2])
+    else {
         return Err(PrecompileFailure::Error {
             exit_status: ExitError::Other(Cow::Borrowed("Incorrect input")),
         });
