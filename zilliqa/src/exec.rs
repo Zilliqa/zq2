@@ -856,6 +856,7 @@ impl State {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn call_contract(
         &self,
         from_addr: Address,
