@@ -113,7 +113,7 @@ impl Node {
     pub fn handle_message(&mut self, from: PeerId, message: Message) -> Result<()> {
         let to = self.peer_id;
         let message_name = message.name();
-        tracing::debug!(%from, %to, %message_name, "handling message");
+        debug!(%from, %to, %message_name, "handling message");
         match message {
             Message::External(external_message) => match external_message {
                 ExternalMessage::Proposal(m) => {
@@ -123,6 +123,7 @@ impl Node {
                             .send_external_message(leader, ExternalMessage::Vote(vote))?;
                     }
                 }
+                // todo: move this into consensus proper
                 ExternalMessage::Vote(m) => {
                     if let Some((block, transactions)) = self.consensus.vote(m)? {
                         self.message_sender.broadcast_external_message(

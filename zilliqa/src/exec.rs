@@ -650,8 +650,6 @@ impl State {
         )?;
         let balance = U256::from_big_endian(&balance);
 
-        trace!("Queried balance of addr {} is: {}", address, balance);
-
         Ok(balance)
     }
 

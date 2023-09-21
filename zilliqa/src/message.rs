@@ -186,6 +186,7 @@ impl InternalMessage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuorumCertificate {
     /// An aggregated signature from `n - f` distinct replicas, built by signing a block hash in a specific view.
+    /// 'in a specific view - but its not included?'
     pub signature: NodeSignature,
     pub cosigned: BitVec,
     pub block_hash: Hash,

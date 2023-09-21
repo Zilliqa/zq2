@@ -124,6 +124,7 @@ impl NodeLauncher {
                     trace!("timeout elapsed");
 
                     if !joined {
+                        trace!("sending joining committee message");
                         self.outbound_message_sender.send((None, self.config.eth_chain_id, Message::External(ExternalMessage::JoinCommittee(self.secret_key.node_public_key())))).unwrap();
                         joined = true;
                     } else {

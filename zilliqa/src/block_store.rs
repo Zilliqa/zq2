@@ -50,6 +50,7 @@ impl BlockStore {
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
+        trace!("Get block with view {view}");
         let Some(hash) = self.canonical_block_numbers.get(view.to_be_bytes())? else { return Ok(None); };
         let hash = Hash::from_bytes(hash)?;
         self.get_block(hash)
