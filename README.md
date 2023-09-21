@@ -55,3 +55,117 @@ the network.
 
 Some tests involve compiling Solidity code, so a `solc` installation is required. The path is determined as documented in [ethers::solc::Solc](https://docs.rs/ethers/latest/ethers/solc/struct.Solc.html).
 
+## Supported APIs
+
+If an API is not mentioned in this table, support for it is not planned.
+Please open an issue or PR for APIs that you think should be included.
+
+🟢 = Fully supported
+
+🟠 = Partially implemented, full support planned
+
+🔴 = Not yet implemented, full support planned
+
+| Method | Status |
+| ------ | ------ |
+| `erigon_getHeaderByNumber` | 🟢 |
+| `eth_accounts` | 🟢 |
+| `eth_blockNumber` | 🟢 |
+| `eth_call` | 🟢 |
+| `eth_chainId` | 🟢 |
+| `eth_estimateGas` | 🟢 |
+| `eth_gasPrice` | 🟢 |
+| `eth_getBalance` | 🟢 |
+| `eth_getBlockByHash` | 🟠 (https://github.com/Zilliqa/zq2/issues/79) |
+| `eth_getBlockByNumber` | 🟠 (https://github.com/Zilliqa/zq2/issues/79) |
+| `eth_getBlockTransactionCountByHash` | 🟢 |
+| `eth_getBlockTransactionCountByNumber` | 🟢 |
+| `eth_getCode` | 🟢 |
+| `eth_getFilterChanges` | 🔴 |
+| `eth_getFilterLogs` | 🔴 |
+| `eth_getLogs` | 🟢 |
+| `eth_getStorageAt` | 🟢 |
+| `eth_getTransactionByBlockHashAndIndex` | 🔴 |
+| `eth_getTransactionByBlockNumberAndIndex` | 🔴 |
+| `eth_getTransactionByHash` | 🟢 |
+| `eth_getTransactionCount` | 🟢 |
+| `eth_getTransactionReceipt` | 🟢 |
+| `eth_getUncleByBlockHashAndIndex` | 🔴 |
+| `eth_getUncleByBlockNumberAndIndex` | 🔴 |
+| `eth_getUncleCountByBlockHash` | 🔴 |
+| `eth_getUncleCountByBlockNumber` | 🔴 |
+| `eth_newFilter` | 🔴 |
+| `eth_newBlockFilter` | 🔴 |
+| `eth_newPendingTransactionFilter` | 🔴 |
+| `eth_sendRawTransaction` | 🟢 |
+| `eth_syncing` | 🟠 |
+| `eth_uninstallFilter` | 🔴 |
+| `net_listening` | 🟢 |
+| `net_peerCount` | 🟠 |
+| `net_version` | 🟢 |
+| `ots_getApiLevel` | 🟢 |
+| `ots_getBlockDetails` | 🟢 |
+| `ots_getBlockDetailsByHash` | 🟢 |
+| `ots_getBlockTransactions` | 🟢 |
+| `ots_getContractCreator` | 🔴 |
+| `ots_getInternalOperations` | 🔴 |
+| `ots_getTransactionBySenderAndNonce` | 🔴 |
+| `ots_getTransactionError` | 🔴 |
+| `ots_hasCode` | 🟢 |
+| `ots_searchTransactionsAfter` | 🟢 |
+| `ots_searchTransactionsBefore` | 🟢 |
+| `ots_traceTransaction` | 🔴 |
+| `web3_clientVersion` | 🟢 |
+| `web3_sha3` | 🟢 |
+| `GetCurrentMiniEpoch` | 🟢 |
+| `GetCurrentDSEpoch` | 🔴 |
+| `GetNodeType` | 🔴 |
+| `GetNetworkId` | 🟢 |
+| `CreateTransaction` | 🔴 |
+| `GetTransaction` | 🔴 |
+| `GetSoftConfirmedTransaction` | 🔴 |
+| `GetDsBlock` | 🔴 |
+| `GetDsBlockVerbose` | 🔴 |
+| `GetTxBlock` | 🔴 |
+| `GetTxBlockVerbose` | 🔴 |
+| `GetLatestDsBlock` | 🔴 |
+| `GetLatestTxBlock` | 🟢 |
+| `GetBalance` | 🟢 |
+| `GetMinimumGasPrice` | 🟢 |
+| `GetPrevDSDifficulty` | 🔴 |
+| `GetPrevDifficulty` | 🔴 |
+| `GetSmartContracts` | 🔴 |
+| `GetContractAddressFromTransactionID` | 🔴 |
+| `GetNumPeers` | 🔴 |
+| `GetNumTxBlocks` | 🔴 |
+| `GetNumDSBlocks` | 🔴 |
+| `GetNumTransactions` | 🔴 |
+| `GetTransactionRate` | 🔴 |
+| `GetTxBlockRate` | 🔴 |
+| `GetDSBlockRate` | 🔴 |
+| `GetShardMembers` | 🔴 |
+| `GetCurrentDSComm` | 🔴 |
+| `DSBlockListing` | 🔴 |
+| `TxBlockListing` | 🔴 |
+| `GetBlockchainInfo` | 🔴 |
+| `GetRecentTransactions` | 🔴 |
+| `GetShardingStructure` | 🔴 |
+| `GetNumTxnsTxEpoch` | 🔴 |
+| `GetNumTxnsDSEpoch` | 🔴 |
+| `GetSmartContractSubState` | 🔴 |
+| `GetSmartContractState` | 🔴 |
+| `GetSmartContractCode` | 🔴 |
+| `GetSmartContractInit` | 🔴 |
+| `GetTransactionsForTxBlock` | 🔴 |
+| `GetTransactionsForTxBlockEx` | 🔴 |
+| `GetTotalCoinSupply` | 🔴 |
+| `GetTotalCoinSupplyAsInt` | 🔴 |
+| `GetPendingTxns` | 🔴 |
+| `GetMinerInfo` | 🔴 |
+| `GetTxnBodiesForTxBlock` | 🔴 |
+| `GetTxnBodiesForTxBlockEx` | 🔴 |
+| `GetTransactionStatus` | 🔴 |
+| `GetStateProof` | 🔴 |
+| `GetVersion` | 🟢 |
+| `GetRawDSBlock` | 🔴 |
+| `GetRawTxBlock` | 🔴 |
