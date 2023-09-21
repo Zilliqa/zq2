@@ -1,11 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
+use evm_ds::tracing_logging::InternalOperationOtter;
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
 use tracing::trace;
-//use evm_ds::protos::evm_proto::InternalOperationOtter;
-use evm_ds::tracing_logging::InternalOperationOtter;
 
 use crate::{crypto::Hash, message::BlockNumber, node::Node, state::Address, time::SystemTime};
 

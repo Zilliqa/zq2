@@ -497,11 +497,6 @@ impl State {
             );
         }
 
-        println!(
-            "XXXXXXXXXXXXXXX tracing is: {:?}",
-            backend_result.tx_trace.lock().unwrap()
-        );
-
         Ok((backend_result, created_contract_addr))
     }
 
