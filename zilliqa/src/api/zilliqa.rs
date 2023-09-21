@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
-use primitive_types::H160;
+use primitive_types::{H160, U256};
 use serde_json::json;
 
 use crate::{message::BlockNumber, node::Node, state::Address};
@@ -30,9 +30,10 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Va
 
     let node = node.lock().unwrap();
 
-    let balance = node
-        .get_native_balance(Address(address), BlockNumber::Latest)?
-        .to_string();
+    let balance = node.get_native_balance(Address(address), BlockNumber::Latest)?;
+    // We need to scale the balance from units of (10^-18) ZIL to (10^-12) ZIL. The value is truncated in this process.
+    let balance = balance / U256::from(10).pow(U256::from(6));
+    let balance = balance.to_string();
     let nonce = node
         .get_account(Address(address), BlockNumber::Latest)?
         .nonce;
