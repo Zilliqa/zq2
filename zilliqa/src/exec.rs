@@ -139,10 +139,7 @@ impl State {
                         }
                     }
                 }
-                self.apply_delta(
-                    result.apply,
-                    result.tx_trace.lock().unwrap().addresses_sent_funds_to(),
-                )?;
+                self.apply_delta(result.apply)?;
                 Ok(actual_address)
             }
             _ => Err(anyhow!("{:?}", result.exit_reason)),
@@ -167,6 +164,7 @@ impl State {
         payload: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
+        tracing: bool,
         estimate: bool,
         print_enabled: bool,
     ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
@@ -182,9 +180,8 @@ impl State {
 
         let mut code: Vec<u8> = account.code;
         let mut data: Vec<u8> = payload;
-        //let mut traces = "".to_string(); // Traces get built up over the course of execution
         let mut traces: Arc<Mutex<LoggingEventListener>> =
-            Arc::new(Mutex::new(LoggingEventListener::new(true)));
+            Arc::new(Mutex::new(LoggingEventListener::new(tracing)));
 
         // The backend is provided to the evm as a way to read accounts and state during execution
         let mut backend = EvmBackend::new(self, U256::zero(), caller.0, chain_id, current_block);
@@ -500,6 +497,11 @@ impl State {
             );
         }
 
+        println!(
+            "XXXXXXXXXXXXXXX tracing is: {:?}",
+            backend_result.tx_trace.lock().unwrap()
+        );
+
         Ok((backend_result, created_contract_addr))
     }
 
@@ -519,6 +521,7 @@ impl State {
             payload,
             0,
             BlockHeader::default(),
+            false,
             true,
             false,
         )
@@ -530,6 +533,7 @@ impl State {
         txn: SignedTransaction,
         chain_id: u64,
         current_block: BlockHeader,
+        tracing: bool,
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash();
         info!(?hash, ?txn, "executing txn");
@@ -553,6 +557,7 @@ impl State {
             txn.transaction.payload,
             chain_id,
             current_block,
+            tracing,
             false,
             true,
         );
@@ -563,10 +568,7 @@ impl State {
                 let success = result.succeeded();
 
                 if success {
-                    self.apply_delta(
-                        result.apply,
-                        result.tx_trace.lock().unwrap().addresses_sent_funds_to(),
-                    )?;
+                    self.apply_delta(result.apply)?;
                 }
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
@@ -605,20 +607,7 @@ impl State {
     }
 
     // Apply the changes the EVM is requesting for
-    fn apply_delta(
-        &mut self,
-        applys: Vec<evm_ds::protos::evm_proto::Apply>,
-        new_addresses: Vec<Address>,
-    ) -> Result<()> {
-        // these accounts have been 'created' by having funds sent to them. We need to create them with nonce 0
-        // get_account creates a defaulted account if it doesn't exist
-        for address in new_addresses {
-            let account = self.get_account(address).unwrap();
-            if account.nonce == 0 {
-                self.save_account(address, account)?;
-            }
-        }
-
+    fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm_proto::Apply>) -> Result<()> {
         for apply in applys {
             match apply {
                 EvmProto::Apply::Delete { address } => {
@@ -676,16 +665,20 @@ impl State {
             debug!("Calling contract to get balance...");
         }
 
-        let balance = self.call_contract(
-            Address::ZERO,
-            Some(Address::NATIVE_TOKEN),
-            data,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
-            // dummy values.
-            0,
-            BlockHeader::default(),
-            print_enabled,
-        )?;
+        let balance = self
+            .call_contract(
+                Address::ZERO,
+                Some(Address::NATIVE_TOKEN),
+                data,
+                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+                // dummy values.
+                U256::zero(),
+                0,
+                BlockHeader::default(),
+                false,
+                print_enabled,
+            )?
+            .return_value;
         let balance = U256::from_big_endian(&balance);
 
         trace!("Queried balance of addr {} is: {}", address, balance);
@@ -707,10 +700,7 @@ impl State {
                 let success = result.succeeded();
 
                 if success {
-                    self.apply_delta(
-                        result.apply,
-                        result.tx_trace.lock().unwrap().addresses_sent_funds_to(),
-                    )?;
+                    self.apply_delta(result.apply)?;
                 } else {
                     panic!(
                         "Failed to set gas price with error: {:?}",
@@ -729,16 +719,20 @@ impl State {
     pub fn get_gas_price(&self) -> Result<u64> {
         let data = contracts::gas_price::GET_GAS.encode_input(&[]).unwrap();
 
-        let gas_price = self.call_contract(
-            Address::ZERO,
-            Some(Address::GAS_PRICE),
-            data,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
-            // dummy values.
-            0,
-            BlockHeader::default(),
-            false,
-        )?;
+        let gas_price = self
+            .call_contract(
+                Address::ZERO,
+                Some(Address::GAS_PRICE),
+                data,
+                U256::zero(),
+                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+                // dummy values.
+                0,
+                BlockHeader::default(),
+                false,
+                false,
+            )?
+            .return_value;
         let gas_price = U256::from_big_endian(&gas_price);
 
         trace!("Queried GAS! is: {}", gas_price);
@@ -767,6 +761,7 @@ impl State {
             // some dummy values.
             0,
             BlockHeader::default(),
+            false,
             true,
             false,
         );
@@ -779,10 +774,7 @@ impl State {
                 info!("Set native balance result: {:?}", result);
 
                 if success {
-                    self.apply_delta(
-                        result.apply,
-                        result.tx_trace.lock().unwrap().addresses_sent_funds_to(),
-                    )?;
+                    self.apply_delta(result.apply)?;
                 } else {
                     panic!("Failed to set balance with error: {:?}", result.exit_reason);
                 }
@@ -823,6 +815,7 @@ impl State {
             data,
             chain_id,
             current_block,
+            false,
             true,
             print_enabled,
         );
@@ -868,10 +861,12 @@ impl State {
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
+        amount: U256,
         chain_id: u64,
         current_block: BlockHeader,
         print_enabled: bool,
-    ) -> Result<Vec<u8>> {
+        tracing: bool,
+    ) -> Result<EvmProto::EvmResult> {
         if print_enabled {
             debug!("Calling contract from: {:?} to: {:?}", from_addr, to_addr);
         }
@@ -881,10 +876,11 @@ impl State {
             to_addr,
             0,
             u64::MAX,
-            U256::zero(),
+            amount,
             data,
             chain_id,
             current_block,
+            tracing,
             true,
             print_enabled,
         );
@@ -893,7 +889,7 @@ impl State {
             debug!("finished contact call");
         }
 
-        result.map(|ret| ret.0.return_value)
+        Ok(result?.0)
     }
 }
 
