@@ -6,7 +6,7 @@ use crate::node::MessageSender;
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
-use primitive_types::{H160, H256};
+use primitive_types::H256;
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::ops::Add;
@@ -23,6 +23,7 @@ use crate::{
     cfg::NodeConfig,
     contracts,
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
+    exec::TouchedAddressEventListener,
     exec::TransactionApplyResult,
     message::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, NewView, Proposal,
@@ -437,19 +438,19 @@ impl Consensus {
         // If we haven't applied the transaction yet, do so. This ensures we don't execute the transaction twice if we
         // already executed it in the process of proposing this block.
         if !self.transactions.contains_key(hash.0)? {
-            let result = self.state.apply_transaction(
-                txn.clone(),
-                self.config.eth_chain_id,
-                current_block,
-            )?;
+            let mut listener = TouchedAddressEventListener::default();
 
-            for address in result
-                .traces
-                .lock()
-                .unwrap()
-                .addresses_sent_funds_to::<H160>()
-            {
-                self.touched_address_index.merge(address, hash.0)?;
+            let result = evm_ds::evm::tracing::using(&mut listener, || {
+                self.state.apply_transaction(
+                    txn.clone(),
+                    self.config.eth_chain_id,
+                    current_block,
+                    false,
+                )
+            })?;
+
+            for address in listener.touched {
+                self.touched_address_index.merge(address.0, hash.0)?;
             }
 
             if !result.success {
@@ -485,10 +486,15 @@ impl Consensus {
                 break;
             }
 
-            // All TXs must have a corresponding account
-            if !self.state.has_account(tx.from_addr) {
+            // All TXs must have some balance
+            if self
+                .state
+                .get_native_balance(tx.from_addr, false)
+                .unwrap()
+                .is_zero()
+            {
                 warn!(
-                    "Transaction from address {} does not have an account and will be dropped",
+                    "Transaction from address {} has no balance and will be dropped",
                     tx.from_addr
                 );
                 tx_hashes_invalid.push(tx.hash());

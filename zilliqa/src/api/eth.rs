@@ -78,11 +78,13 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let call_params: CallParams = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
-    let return_value = node.lock().unwrap().call_contract(
+    let ret = node.lock().unwrap().call_contract(
         block_number,
         Address(call_params.from),
         call_params.to.map(Address),
         call_params.data.clone(),
+        U256::from(call_params.value),
+        false,
     )?;
 
     trace!(
@@ -91,10 +93,10 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.from,
         call_params.to,
         call_params.data,
-        return_value.to_hex()
+        ret.return_value.to_hex()
     );
 
-    Ok(return_value.to_hex())
+    Ok(ret.return_value.to_hex())
 }
 
 fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {

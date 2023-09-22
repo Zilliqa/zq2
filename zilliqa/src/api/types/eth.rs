@@ -216,6 +216,8 @@ pub struct CallParams {
     pub to: Option<H160>,
     #[serde(deserialize_with = "deserialize_data")]
     pub data: Vec<u8>,
+    #[serde(default)]
+    pub value: u64,
 }
 
 /// Parameters passed to `estimate_gas`.

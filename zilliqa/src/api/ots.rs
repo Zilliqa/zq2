@@ -1,8 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
+use evm_ds::tracing_logging::InternalOperationOtter;
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
+use tracing::trace;
 
 use crate::{crypto::Hash, message::BlockNumber, node::Node, state::Address, time::SystemTime};
 
@@ -22,6 +24,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("ots_hasCode", has_code),
             ("ots_searchTransactionsAfter", search_transactions_after),
             ("ots_searchTransactionsBefore", search_transactions_before),
+            ("ots_getInternalOperations", get_internal_operations),
         ],
     )
 }
@@ -233,4 +236,43 @@ fn search_transactions_before(
     }
 
     search_transactions_inner(node, Address(address), block_number, page_size, true)
+}
+
+fn get_internal_operations(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Vec<InternalOperationOtter>> {
+    trace!("get_internal_operations called");
+    let hash: H256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+
+    let node = node.lock().unwrap();
+
+    let tx = node.get_transaction_by_hash(hash)?;
+
+    let receipt = get_transaction_receipt_inner(hash, &node)?;
+
+    if tx.is_none() || receipt.is_none() {
+        return Err(anyhow!("transaction not yet executed: {hash}"));
+    }
+
+    let tx = tx.unwrap();
+    let receipt = receipt.unwrap();
+
+    let call_result = node.call_contract(
+        receipt.block_number.into(),
+        tx.from_addr,
+        tx.transaction.to_addr,
+        tx.transaction.payload,
+        tx.transaction.amount.into(),
+        true,
+    );
+
+    Ok(call_result
+        .unwrap()
+        .tx_trace
+        .lock()
+        .unwrap()
+        .otter_internal_tracer
+        .clone())
 }
