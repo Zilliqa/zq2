@@ -1,6 +1,7 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{panic::AssertUnwindSafe, sync::Arc};
+use tokio::sync::{Mutex, MutexGuard};
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
@@ -63,30 +64,34 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     )
 }
 
-fn accounts(_: Params, _: &Arc<Mutex<Node>>) -> Result<[(); 0]> {
+async fn accounts(_: Params<'_>, _: &Arc<Mutex<Node>>) -> Result<[(); 0]> {
     Ok([])
 }
 
-fn block_number(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    if let Some(block) = node.lock().unwrap().view().checked_sub(1) {
+async fn block_number(_: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<String> {
+    if let Some(block) = node.lock().await.view().checked_sub(1) {
         Ok(block.to_hex())
     } else {
         Err(anyhow!("no blocks"))
     }
 }
 
-fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+async fn call(params: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("call: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
-    let return_value = node.lock().unwrap().call_contract(
-        block_number,
-        Address(call_params.from),
-        call_params.to.map(Address),
-        call_params.data.clone(),
-    )?;
+    let return_value = node
+        .lock()
+        .await
+        .call_contract(
+            block_number,
+            Address(call_params.from),
+            call_params.to.map(Address),
+            call_params.data.clone(),
+        )
+        .await?;
 
     trace!(
         "Performed eth call. Args: {:?} ie: {:?} {:?} {:?}  ret: {:?}",
@@ -100,42 +105,47 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(return_value.to_hex())
 }
 
-fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    Ok(node.lock().unwrap().config.eth_chain_id.to_hex())
+async fn chain_id(_: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok(node.lock().await.config.eth_chain_id.to_hex())
 }
 
-fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+async fn estimate_gas(params: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("estimate_gas: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: EstimateGasParams = params.next()?;
     let block_number: BlockNumber = params.next().unwrap_or(BlockNumber::Latest);
 
-    let return_value = node.lock().unwrap().estimate_gas(
-        block_number,
-        call_params.from,
-        call_params.to,
-        call_params.data.clone(),
-        call_params.gas,
-        call_params.gas_price,
-        call_params.value,
-    )?;
+    let return_value = node
+        .lock()
+        .await
+        .estimate_gas(
+            block_number,
+            call_params.from,
+            call_params.to,
+            call_params.data.clone(),
+            call_params.gas,
+            call_params.gas_price,
+            call_params.value,
+        )
+        .await?;
 
     Ok(return_value.to_hex())
 }
 
-fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+async fn get_balance(params: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
     Ok(node
         .lock()
-        .unwrap()
-        .get_native_balance(Address(address), block_number)?
+        .await
+        .get_native_balance(Address(address), block_number)
+        .await?
         .to_hex())
 }
 
-fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+async fn get_code(params: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("get_code: params: {:?}", params);
     let mut params = params.sequence();
     let address: H160 = params.next()?;
@@ -143,13 +153,14 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     Ok(node
         .lock()
-        .unwrap()
-        .get_account(Address(address), block_number)?
+        .await
+        .get_account(Address(address), block_number)
+        .await?
         .code
         .to_hex())
 }
 
-fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+async fn get_storage_at(params: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("get_storage_at: params: {:?}", params);
     let mut params = params.sequence();
     let address: H160 = params.next()?;
@@ -160,69 +171,78 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     position.to_big_endian(&mut position_bytes);
     let position = H256::from_slice(&position_bytes);
 
-    let value =
-        node.lock()
-            .unwrap()
-            .get_account_storage(Address(address), position, block_number)?;
+    let value = node
+        .lock()
+        .await
+        .get_account_storage(Address(address), position, block_number)
+        .await?;
 
     Ok(value.to_hex())
 }
 
-fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+async fn get_transaction_count(params: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("get_transaction_count: params: {:?}", params);
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
-    trace!(
-        "get_transaction_count resp: {:?}",
-        node.lock()
-            .unwrap()
-            .get_account(Address(address), block_number)?
-            .nonce
-            .to_hex()
-    );
-
-    Ok(node
+    let nonce = node
         .lock()
-        .unwrap()
-        .get_account(Address(address), block_number)?
+        .await
+        .get_account(Address(address), block_number)
+        .await?
         .nonce
-        .to_hex())
+        .to_hex();
+    trace!("get_transaction_count resp: {:?}", nonce);
+
+    Ok(nonce)
 }
 
-fn get_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    Ok(node.lock().unwrap().get_gas_price().to_hex())
+async fn get_gas_price(_: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok(node.lock().await.get_gas_price().to_hex())
 }
 
-fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
+async fn get_block_by_number(
+    params: Params<'_>,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<EthBlock>> {
     let mut params = params.sequence();
     let block_number: BlockNumber = params.next()?;
     let full: bool = params.next()?;
 
-    let node = node.lock().unwrap();
-    let block = node.get_block_by_number(block_number)?;
+    let mut node = node.lock().await;
+    let block = node.get_block_by_number(block_number).await?;
 
-    let block = block.map(|b| convert_block(&node, &b, full)).transpose()?;
-
-    Ok(block)
-}
-
-fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
-    let mut params = params.sequence();
-    let hash: H256 = params.next()?;
-    let full: bool = params.next()?;
-
-    let node = node.lock().unwrap();
-    let block = node
-        .get_block_by_hash(Hash(hash.0))?
-        .map(|b| convert_block(&node, &b, full))
+    let block = block
+        .map(|b| convert_block(&mut node, &b, full).await)
         .transpose()?;
 
     Ok(block)
 }
 
-fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<EthBlock> {
+async fn get_block_by_hash(
+    params: Params<'_>,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<EthBlock>> {
+    let mut params = params.sequence();
+    let hash: H256 = params.next()?;
+    let full: bool = params.next()?;
+
+    let mut node = node.lock().await;
+    let block = node
+        .get_block_by_hash(Hash(hash.0))
+        .await?
+        .map(|b| convert_block(&mut node, &b, full).await)
+        .transpose()?;
+
+    Ok(block)
+}
+
+async fn convert_block(
+    node: &mut MutexGuard<'_, Node>,
+    block: &Block,
+    full: bool,
+) -> Result<EthBlock> {
     if !full {
         Ok(block.into())
     } else {
@@ -230,7 +250,8 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<E
             .transactions
             .iter()
             .map(|h| {
-                get_transaction_inner(*h, node)?
+                get_transaction_inner(*h, node)
+                    .await?
                     .ok_or_else(|| anyhow!("missing transaction: {}", h))
             })
             .map(|t| Ok(HashOrTransaction::Transaction(t?)))
@@ -242,28 +263,28 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<E
     }
 }
 
-fn get_block_transaction_count_by_hash(
-    params: Params,
+async fn get_block_transaction_count_by_hash(
+    params: Params<'_>,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<String>> {
     let hash: H256 = params.one()?;
 
-    let node = node.lock().unwrap();
-    let block = node.get_block_by_hash(Hash(hash.0))?;
+    let mut node = node.lock().await;
+    let block = node.get_block_by_hash(Hash(hash.0)).await?;
 
     Ok(block.map(|b| b.transactions.len().to_hex()))
 }
 
-fn get_block_transaction_count_by_number(
-    params: Params,
+async fn get_block_transaction_count_by_number(
+    params: Params<'_>,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<String>> {
     let block_number: BlockNumber = params.one()?;
 
-    let node = node.lock().unwrap();
+    let mut node = node.lock().await;
     let block = match block_number {
-        BlockNumber::Number(number) => node.get_block_by_view(number),
-        BlockNumber::Earliest => node.get_block_by_view(0),
+        BlockNumber::Number(number) => node.get_block_by_view(number).await,
+        BlockNumber::Earliest => node.get_block_by_view(0).await,
         BlockNumber::Latest => node.get_latest_block(),
         _ => {
             return Err(anyhow!("unsupported block number: {block_number:?}"));
@@ -273,27 +294,27 @@ fn get_block_transaction_count_by_number(
     Ok(block.map(|b| b.transactions.len().to_hex()))
 }
 
-fn get_transaction_by_hash(
-    params: Params,
+async fn get_transaction_by_hash(
+    params: Params<'_>,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<EthTransaction>> {
     trace!("get_transaction_by_hash: params: {:?}", params);
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
-    let node = node.lock().unwrap();
+    let mut node = node.lock().await;
 
-    get_transaction_inner(hash, &node)
+    get_transaction_inner(hash, &mut node).await
 }
 
-pub(super) fn get_transaction_inner(
+pub(super) async fn get_transaction_inner(
     hash: Hash,
-    node: &MutexGuard<Node>,
+    node: &mut MutexGuard<'_, Node>,
 ) -> Result<Option<EthTransaction>> {
     let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else { return Ok(None); };
 
     // The block can either be null or some based on whether the tx exists
     let block = if let Some(receipt) = node.get_transaction_receipt(hash)? {
-        node.get_block_by_hash(receipt.block_hash)?
+        node.get_block_by_hash(receipt.block_hash).await?
     } else {
         // Even if it has not been mined, the tx may still be in the mempool and should return
         // a correct tx, with pending/null fields
@@ -330,9 +351,9 @@ pub(super) fn get_transaction_inner(
     Ok(Some(transaction))
 }
 
-pub(super) fn get_transaction_receipt_inner(
+pub(super) async fn get_transaction_receipt_inner(
     hash: Hash,
-    node: &MutexGuard<Node>,
+    node: &mut MutexGuard<'_, Node>,
 ) -> Result<Option<EthTransactionReceipt>> {
     let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.
@@ -344,7 +365,7 @@ pub(super) fn get_transaction_receipt_inner(
         hash, receipt
     );
 
-    let Some(block) = node.get_block_by_hash(receipt.block_hash)? else { return Ok(None); };
+    let Some(block) = node.get_block_by_hash(receipt.block_hash).await? else { return Ok(None); };
 
     let transaction_hash = H256(hash.0);
     let transaction_index = block.transactions.iter().position(|t| *t == hash).unwrap() as u64;
@@ -397,28 +418,28 @@ pub(super) fn get_transaction_receipt_inner(
     Ok(Some(receipt))
 }
 
-fn get_transaction_receipt(
-    params: Params,
+async fn get_transaction_receipt(
+    params: Params<'_>,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<EthTransactionReceipt>> {
     trace!("get_transaction_receipt: params: {:?}", params);
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
-    let node = node.lock().unwrap();
-    get_transaction_receipt_inner(hash, &node)
+    let mut node = node.lock().await;
+    get_transaction_receipt_inner(hash, &mut node).await
 }
 
-fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+async fn send_raw_transaction(params: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("send_raw_transaction: params: {:?}", params);
     let transaction: String = params.one()?;
     let transaction = transaction
         .strip_prefix("0x")
         .ok_or_else(|| anyhow!("no 0x prefix"))?;
     let transaction = hex::decode(transaction)?;
-    let chain_id = node.lock().unwrap().config.eth_chain_id;
+    let chain_id = node.lock().await.config.eth_chain_id;
     let transaction = transaction_from_rlp(&transaction, chain_id)?;
 
-    let transaction_hash = H256(node.lock().unwrap().create_transaction(transaction)?.0);
+    let transaction_hash = H256(node.lock().await.create_transaction(transaction)?.0);
 
     Ok(transaction_hash.to_hex())
 }
@@ -471,31 +492,31 @@ fn left_pad_arr<const N: usize>(v: &[u8]) -> Result<[u8; N]> {
 }
 
 // These are no-ops basically
-fn get_uncle_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
+async fn get_uncle_count(_: Params<'_>, _: &Arc<Mutex<Node>>) -> Result<String> {
     Ok("0x0".to_string())
 }
 
-fn get_uncle(_: Params, _: &Arc<Mutex<Node>>) -> Result<Option<String>> {
+async fn get_uncle(_: Params<'_>, _: &Arc<Mutex<Node>>) -> Result<Option<String>> {
     Ok(None)
 }
 
-fn mining(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
+async fn mining(_: Params<'_>, _: &Arc<Mutex<Node>>) -> Result<bool> {
     Ok(false)
 }
 
-fn protocol_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
+async fn protocol_version(_: Params<'_>, _: &Arc<Mutex<Node>>) -> Result<String> {
     Ok("0x41".to_string())
 }
 
-fn syncing(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
+async fn syncing(_: Params<'_>, _: &Arc<Mutex<Node>>) -> Result<bool> {
     Ok(false)
 }
 
-fn net_peer_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
+async fn net_peer_count(_: Params<'_>, _: &Arc<Mutex<Node>>) -> Result<String> {
     Ok("0x0".to_string())
 }
 
-fn net_listening(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
+async fn net_listening(_: Params<'_>, _: &Arc<Mutex<Node>>) -> Result<bool> {
     Ok(true)
 }
 

@@ -225,15 +225,17 @@ impl Node {
         self.peer_id
     }
 
-    pub fn call_contract(
-        &self,
+    pub async fn call_contract(
+        &mut self,
         block_number: BlockNumber,
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
     ) -> Result<Vec<u8>> {
         let block = self
-            .get_block_by_view(self.get_view(block_number))?
+            .consensus
+            .get_block_by_view(self.get_view(block_number))
+            .await?
             .ok_or_else(|| anyhow!("block not found"))?;
         let state = self
             .consensus
@@ -255,8 +257,8 @@ impl Node {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn estimate_gas(
-        &self,
+    pub async fn estimate_gas(
+        &mut self,
         block_number: BlockNumber,
         from_addr: Address,
         to_addr: Option<Address>,
@@ -268,7 +270,8 @@ impl Node {
         // TODO: optimise this to get header directly once persistance is merged
         // (which will provide a header index)
         let block = self
-            .get_block_by_view(self.get_view(block_number))?
+            .get_block_by_view(self.get_view(block_number))
+            .await?
             .ok_or_else(|| anyhow!("block not found"))?;
         let state = self
             .consensus
@@ -296,35 +299,50 @@ impl Node {
         self.consensus.get_chain_tip()
     }
 
-    pub fn get_account(&self, address: Address, block_number: BlockNumber) -> Result<Account> {
+    pub async fn get_account(
+        &mut self,
+        address: Address,
+        block_number: BlockNumber,
+    ) -> Result<Account> {
         self.consensus
-            .try_get_state_at(self.get_view(block_number))?
+            .try_get_state_at(self.get_view(block_number))
+            .await?
             .get_account(address)
     }
 
-    pub fn get_account_storage(
-        &self,
+    pub async fn get_account_storage(
+        &mut self,
         address: Address,
         index: H256,
         block_number: BlockNumber,
     ) -> Result<H256> {
         self.consensus
-            .try_get_state_at(self.get_view(block_number))?
+            .try_get_state_at(self.get_view(block_number))
+            .await?
             .get_account_storage(address, index)
     }
 
-    pub fn get_native_balance(&self, address: Address, block_number: BlockNumber) -> Result<U256> {
+    pub async fn get_native_balance(
+        &mut self,
+        address: Address,
+        block_number: BlockNumber,
+    ) -> Result<U256> {
         self.consensus
-            .try_get_state_at(self.get_view(block_number))?
+            .try_get_state_at(self.get_view(block_number))
+            .await?
             .get_native_balance(address, false)
     }
 
     pub fn get_latest_block(&self) -> Result<Option<Block>> {
-        self.get_block_by_view(self.get_chain_tip())
+        self.consensus
+            .get_block_by_view_locally(self.get_chain_tip())
     }
 
-    pub fn get_block_by_number(&self, block_number: BlockNumber) -> Result<Option<Block>> {
-        self.get_block_by_view(self.get_view(block_number))
+    pub async fn get_block_by_number(
+        &mut self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Block>> {
+        self.get_block_by_view(self.get_view(block_number)).await
     }
 
     pub fn get_finalized_height(&self) -> u64 {
@@ -335,16 +353,16 @@ impl Node {
         self.consensus.get_genesis_hash()
     }
 
-    pub fn get_block_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
-        self.consensus.get_block_hash_by_view(view)
+    pub async fn get_block_hash_by_view(&mut self, view: u64) -> Result<Option<Hash>> {
+        self.consensus.get_block_hash_by_view(view).await
     }
 
-    pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        self.consensus.get_block_by_view(view)
+    pub async fn get_block_by_view(&mut self, view: u64) -> Result<Option<Block>> {
+        self.consensus.get_block_by_view(view).await
     }
 
-    pub fn get_block_by_hash(&self, hash: Hash) -> Result<Option<Block>> {
-        self.consensus.get_block(&hash)
+    pub async fn get_block_by_hash(&mut self, hash: Hash) -> Result<Option<Block>> {
+        self.consensus.get_block(&hash).await
     }
 
     pub fn get_block_hash_from_transaction(&self, tx_hash: Hash) -> Result<Option<Hash>> {
@@ -372,8 +390,8 @@ impl Node {
 
     fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
         let block = match request.0 {
-            crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
-            crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view),
+            crate::message::BlockRef::Hash(hash) => self.consensus.get_block_locally(hash),
+            crate::message::BlockRef::View(view) => self.consensus.get_block_by_view_locally(view),
         }?;
         let Some(block) = block else {
             debug!("ignoring block request for unknown block: {:?}", request.0);

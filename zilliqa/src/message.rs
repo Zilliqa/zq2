@@ -247,7 +247,7 @@ impl AggregateQc {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub enum BlockRef {
     Hash(Hash),
     View(u64),

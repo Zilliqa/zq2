@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::{panic::AssertUnwindSafe, sync::Arc};
+use tokio::sync::Mutex;
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
@@ -29,45 +30,47 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     )
 }
 
-fn get_otterscan_api_level(_: Params, _: &Arc<Mutex<Node>>) -> Result<u64> {
+async fn get_otterscan_api_level(_: Params<'_>, _: &Arc<Mutex<Node>>) -> Result<u64> {
     // https://github.com/otterscan/otterscan/blob/0a819f3557fe19c0f47327858261881ec5f56d6c/src/params.ts#L1
     Ok(8)
 }
 
-fn get_block_details(
-    params: Params,
+async fn get_block_details(
+    params: Params<'_>,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<OtterscanBlockDetails>> {
     let block: u64 = params.one()?;
 
     let block = node
         .lock()
-        .unwrap()
-        .get_block_by_view(block)?
+        .await
+        .get_block_by_view(block)
+        .await?
         .as_ref()
         .map(OtterscanBlockDetails::from);
 
     Ok(block)
 }
 
-fn get_block_details_by_hash(
-    params: Params,
+async fn get_block_details_by_hash(
+    params: Params<'_>,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<OtterscanBlockDetails>> {
     let block_hash: H256 = params.one()?;
 
     let block = node
         .lock()
-        .unwrap()
-        .get_block_by_hash(Hash(block_hash.0))?
+        .await
+        .get_block_by_hash(Hash(block_hash.0))
+        .await?
         .as_ref()
         .map(OtterscanBlockDetails::from);
 
     Ok(block)
 }
 
-fn get_block_transactions(
-    params: Params,
+async fn get_block_transactions(
+    params: Params<'_>,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<OtterscanBlockTransactions>> {
     let mut params = params.sequence();
@@ -75,18 +78,20 @@ fn get_block_transactions(
     let page_number: usize = params.next()?;
     let page_size: usize = params.next()?;
 
-    let node = node.lock().unwrap();
+    let mut node = node.lock().await;
 
-    let Some(block) = node.get_block_by_view(block_num)? else { return Ok(None); };
+    let Some(block) = node.get_block_by_view(block_num).await? else { return Ok(None); };
 
     let start = usize::min(page_number * page_size, block.transactions.len());
     let end = usize::min((page_number + 1) * page_size, block.transactions.len());
 
     let txn_results = block.transactions[start..end].iter().map(|hash| {
         // There are some redundant calls between these two functions - We could optimise by combining them.
-        let txn = get_transaction_inner(*hash, &node)?
+        let txn = get_transaction_inner(*hash, &mut node)
+            .await?
             .ok_or_else(|| anyhow!("transaction not found: {hash}"))?;
-        let receipt = get_transaction_receipt_inner(*hash, &node)?
+        let receipt = get_transaction_receipt_inner(*hash, &mut node)
+            .await?
             .ok_or_else(|| anyhow!("receipt not found: {hash}"))?;
 
         Ok::<_, anyhow::Error>((txn, receipt))
@@ -105,29 +110,30 @@ fn get_block_transactions(
     }))
 }
 
-fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
+async fn has_code(params: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<bool> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
     let empty = node
         .lock()
-        .unwrap()
-        .get_account(Address(address), block_number)?
+        .await
+        .get_account(Address(address), block_number)
+        .await?
         .code
         .is_empty();
 
     Ok(!empty)
 }
 
-fn search_transactions_inner(
+async fn search_transactions_inner(
     node: &Arc<Mutex<Node>>,
     address: Address,
     block_number: u64,
     page_size: usize,
     reverse: bool,
 ) -> Result<OtterscanTransactions> {
-    let mut touched = node.lock().unwrap().get_touched_transactions(address)?;
+    let mut touched = node.lock().await.get_touched_transactions(address)?;
 
     // If searching in reverse, we should start with the most recent transaction and work backwards.
     if reverse {
@@ -144,7 +150,8 @@ fn search_transactions_inner(
     let mut finished = true;
 
     for hash in touched {
-        let txn: EthTransaction = get_transaction_inner(hash, &node.lock().unwrap())
+        let txn: EthTransaction = get_transaction_inner(hash, &mut node.lock().await)
+            .await
             .unwrap()
             .unwrap();
 
@@ -170,16 +177,20 @@ fn search_transactions_inner(
 
         let timestamp = node
             .lock()
-            .unwrap()
-            .get_block_by_hash(Hash(txn.block_hash.unwrap_or_default().0))?
+            .await
+            .get_block_by_hash(Hash(txn.block_hash.unwrap_or_default().0))
+            .await?
             .unwrap()
             .timestamp();
 
         transactions.push(txn);
 
-        let node = node.lock().unwrap();
+        let mut node = node.lock().await;
         let receipt = EthTransactionReceiptWithTimestamp {
-            receipt: get_transaction_receipt_inner(hash, &node).unwrap().unwrap(),
+            receipt: get_transaction_receipt_inner(hash, &mut node)
+                .await
+                .unwrap()
+                .unwrap(),
             timestamp: timestamp
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
@@ -213,8 +224,8 @@ fn search_transactions_inner(
     })
 }
 
-fn search_transactions_after(
-    params: Params,
+async fn search_transactions_after(
+    params: Params<'_>,
     node: &Arc<Mutex<Node>>,
 ) -> Result<OtterscanTransactions> {
     let mut params = params.sequence();
@@ -222,11 +233,11 @@ fn search_transactions_after(
     let block_number: u64 = params.next()?;
     let page_size: usize = params.next()?;
 
-    search_transactions_inner(node, Address(address), block_number, page_size, false)
+    search_transactions_inner(node, Address(address), block_number, page_size, false).await
 }
 
-fn search_transactions_before(
-    params: Params,
+async fn search_transactions_before(
+    params: Params<'_>,
     node: &Arc<Mutex<Node>>,
 ) -> Result<OtterscanTransactions> {
     let mut params = params.sequence();
@@ -239,5 +250,5 @@ fn search_transactions_before(
         block_number = u64::MAX;
     }
 
-    search_transactions_inner(node, Address(address), block_number, page_size, true)
+    search_transactions_inner(&node, Address(address), block_number, page_size, true).await
 }

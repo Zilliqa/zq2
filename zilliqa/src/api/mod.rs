@@ -40,7 +40,7 @@ macro_rules! declare_module {
         $node:expr,
         [ $(($name:expr, $method:expr)),* $(,)? ] $(,)?
     ) => {{
-        let mut module: jsonrpsee::RpcModule<std::sync::Arc<std::sync::Mutex<crate::node::Node>>> = jsonrpsee::RpcModule::new($node);
+        let mut module: jsonrpsee::RpcModule<std::sync::Arc<tokio::sync::Mutex<crate::node::Node>>> = jsonrpsee::RpcModule::new($node);
         let meter = opentelemetry::global::meter("");
 
         $(
@@ -50,7 +50,10 @@ macro_rules! declare_module {
                 .init();
             let cx = opentelemetry::Context::new();
             module
-                .register_method($name, move |params, context| {
+                .register_async_method($name, move |params, context| {
+                    let rpc_server_duration = rpc_server_duration.clone();
+                    let cx = cx.clone();
+                    async move {
                     let mut attributes = vec![
                         opentelemetry::KeyValue::new("rpc.system", "jsonrpc"),
                         opentelemetry::KeyValue::new("rpc.service", "zilliqa.eth"),
@@ -61,7 +64,10 @@ macro_rules! declare_module {
 
                     let start = std::time::SystemTime::now();
 
-                    let result = std::panic::catch_unwind(|| $method(params, context)).unwrap_or_else(|_| {
+                    // Ignore unwind safety here.
+                    // The !UnwindSafe primarily stems from tokio::sync::Notified, used
+                    // inside BlockStore.
+                    let result = futures::FutureExt::catch_unwind(AssertUnwindSafe($method(params, &context))).await.unwrap_or_else(|_| {
                         Err(anyhow::anyhow!("Unhandled panic in RPC handler {}", $name))
                     });
 
@@ -87,7 +93,7 @@ macro_rules! declare_module {
                         &attributes,
                     );
                     result
-                })
+                }})
                 .unwrap();
         )*
 
@@ -95,7 +101,8 @@ macro_rules! declare_module {
     }}
 }
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use declare_module;
 use jsonrpsee::RpcModule;

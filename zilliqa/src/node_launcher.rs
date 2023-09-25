@@ -1,10 +1,7 @@
 use crate::{health::HealthLayer, message::ExternalMessage};
 use jsonrpsee::RpcModule;
-use std::{
-    net::Ipv4Addr,
-    sync::{Arc, Mutex},
-};
-use tokio::sync::mpsc::UnboundedSender;
+use std::{net::Ipv4Addr, sync::Arc};
+use tokio::sync::{mpsc::UnboundedSender, Mutex};
 
 use crate::{api, cfg::NodeConfig, crypto::SecretKey, node, p2p_node::OutboundMessageTuple};
 
@@ -118,7 +115,7 @@ impl NodeLauncher {
             select! {
                 message = self.inbound_message_receiver.next() => {
                     let (source, message) = message.expect("message stream should be infinite");
-                    self.node.lock().unwrap().handle_message(source, message).unwrap();
+                    self.node.lock().await.handle_message(source, message).unwrap();
                 },
                 () = &mut sleep => {
                     trace!("timeout elapsed");
@@ -127,7 +124,7 @@ impl NodeLauncher {
                         self.outbound_message_sender.send((None, self.config.eth_chain_id, Message::External(ExternalMessage::JoinCommittee(self.secret_key.node_public_key())))).unwrap();
                         joined = true;
                     } else {
-                        self.node.lock().unwrap().handle_timeout().unwrap();
+                        self.node.lock().await.handle_timeout().unwrap();
                     }
                     sleep.as_mut().reset(Instant::now() + self.consensus_timeout);
                 },

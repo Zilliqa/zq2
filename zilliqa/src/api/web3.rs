@@ -1,5 +1,6 @@
 use super::to_hex::ToHex;
-use std::sync::{Arc, Mutex};
+use std::{panic::AssertUnwindSafe, sync::Arc};
+use tokio::sync::Mutex;
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
@@ -14,12 +15,12 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     )
 }
 
-fn client_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
+async fn client_version(_: Params<'_>, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
     // Format: "<name>/<version>"
     Ok(concat!("zilliqa2/v", env!("CARGO_PKG_VERSION")))
 }
 
-fn sha3(params: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
+async fn sha3(params: Params<'_>, _: &Arc<Mutex<Node>>) -> Result<String> {
     let data: String = params.one()?;
     let data = data
         .strip_prefix("0x")
