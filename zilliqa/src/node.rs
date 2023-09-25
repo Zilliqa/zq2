@@ -352,7 +352,7 @@ impl Node {
     pub fn get_transaction_receipts_in_block(
         &self,
         block_hash: Hash,
-    ) -> Result<Option<Vec<TransactionReceipt>>> {
+    ) -> Result<Vec<TransactionReceipt>> {
         self.consensus.get_transaction_receipts_in_block(block_hash)
     }
 

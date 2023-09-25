@@ -324,29 +324,24 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
         }
     };
 
-    // Get the transaction hashes from each block. This is an iterator of (txn_index, txn_hash, block_number, block_hash).
-    let txn_hashes = blocks
+    // Get the receipts for each transaction. This is an iterator of (receipt, txn_index, txn_hash, block_number, block_hash).
+    let receipts = blocks
         .map(|block: Result<_>| {
             let block = block?;
             let block_number = block.view();
             let block_hash = block.hash();
-            // TODO: Consider pre-filtering blocks at this point based on the log bloom filters.
+            let receipts = node.get_transaction_receipts_in_block(block_hash)?;
+
             Ok(block
                 .transactions
                 .into_iter()
                 .enumerate()
-                .map(move |(i, t)| (i, t, block_number, block_hash)))
+                .zip(receipts)
+                .map(move |((txn_index, txn_hash), receipt)| {
+                    (receipt, txn_index, txn_hash, block_number, block_hash)
+                }))
         })
         .flatten_ok();
-
-    // Get the receipts for each transaction hash. This is an iterator of (receipt, txn_index, txn_hash, block_number, block_hash).
-    let receipts = txn_hashes.map(|h: Result<_>| {
-        let (txn_index, txn_hash, block_number, block_hash) = h?;
-        let receipt = node
-            .get_transaction_receipt(txn_hash)?
-            .ok_or_else(|| anyhow!("missing receipt: {txn_hash}"))?;
-        Ok((receipt, txn_index, txn_hash, block_number, block_hash))
-    });
 
     // Get the logs from each receipt and filter them based on the provided parameters. This is an iterator of (log, log_index, txn_index, txn_hash, block_number, block_hash).
     let logs = receipts
