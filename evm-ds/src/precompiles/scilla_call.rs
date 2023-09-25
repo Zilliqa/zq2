@@ -87,7 +87,9 @@ fn scilla_call_common(
     let transitions = code["contract_info"]["transitions"].to_owned();
     let Some(transitions) = transitions.as_array() else {
         return Err(PrecompileFailure::Error {
-            exit_status: ExitError::Other(Cow::Borrowed("Unable to get transitions array from contract json")),
+            exit_status: ExitError::Other(Cow::Borrowed(
+                "Unable to get transitions array from contract json",
+            )),
         });
     };
     let mut output_json = build_result_json(input, passed_transition_name, transitions)?;
@@ -116,7 +118,9 @@ fn build_result_json(
         if name.eq(expected_transition) {
             let Some(args) = transition["params"].as_array() else {
                 return Err(PrecompileFailure::Error {
-                    exit_status: ExitError::Other(Cow::Borrowed("Unable to get transition args from contract json")),
+                    exit_status: ExitError::Other(Cow::Borrowed(
+                        "Unable to get transition args from contract json",
+                    )),
                 });
             };
             for arg_obj in args {
@@ -135,7 +139,9 @@ fn build_result_json(
 
     let Ok(decoded_values) = decode(&solidity_args, input) else {
         return Err(PrecompileFailure::Error {
-            exit_status: ExitError::Other(Cow::Borrowed("Unable to get all arguments from precompile input")),
+            exit_status: ExitError::Other(Cow::Borrowed(
+                "Unable to get all arguments from precompile input",
+            )),
         });
     };
 

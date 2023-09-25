@@ -17,10 +17,7 @@ use crate::{
 
 use super::{
     to_hex::ToHex,
-    types::{
-        CallParams, EstimateGasParams, EthBlock, EthTransaction, EthTransactionReceipt,
-        HashOrTransaction, Log,
-    },
+    types::eth::{self, CallParams, EstimateGasParams, HashOrTransaction},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -81,11 +78,13 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let call_params: CallParams = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
-    let return_value = node.lock().unwrap().call_contract(
+    let ret = node.lock().unwrap().call_contract(
         block_number,
         Address(call_params.from),
         call_params.to.map(Address),
         call_params.data.clone(),
+        U256::from(call_params.value),
+        false,
     )?;
 
     trace!(
@@ -94,10 +93,10 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.from,
         call_params.to,
         call_params.data,
-        return_value.to_hex()
+        ret.return_value.to_hex()
     );
 
-    Ok(return_value.to_hex())
+    Ok(ret.return_value.to_hex())
 }
 
 fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -195,7 +194,7 @@ fn get_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(node.lock().unwrap().get_gas_price().to_hex())
 }
 
-fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
+fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::Block>> {
     let mut params = params.sequence();
     let block_number: BlockNumber = params.next()?;
     let full: bool = params.next()?;
@@ -208,7 +207,7 @@ fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option
     Ok(block)
 }
 
-fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<EthBlock>> {
+fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::Block>> {
     let mut params = params.sequence();
     let hash: H256 = params.next()?;
     let full: bool = params.next()?;
@@ -222,7 +221,7 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<E
     Ok(block)
 }
 
-fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<EthBlock> {
+fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
     if !full {
         Ok(block.into())
     } else {
@@ -235,7 +234,7 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<E
             })
             .map(|t| Ok(HashOrTransaction::Transaction(t?)))
             .collect::<Result<_>>()?;
-        Ok(EthBlock {
+        Ok(eth::Block {
             transactions,
             ..block.into()
         })
@@ -276,7 +275,7 @@ fn get_block_transaction_count_by_number(
 fn get_transaction_by_hash(
     params: Params,
     node: &Arc<Mutex<Node>>,
-) -> Result<Option<EthTransaction>> {
+) -> Result<Option<eth::Transaction>> {
     trace!("get_transaction_by_hash: params: {:?}", params);
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
@@ -288,8 +287,10 @@ fn get_transaction_by_hash(
 pub(super) fn get_transaction_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
-) -> Result<Option<EthTransaction>> {
-    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else { return Ok(None); };
+) -> Result<Option<eth::Transaction>> {
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else {
+        return Ok(None);
+    };
 
     // The block can either be null or some based on whether the tx exists
     let block = if let Some(receipt) = node.get_transaction_receipt(hash)? {
@@ -309,7 +310,7 @@ pub(super) fn get_transaction_inner(
             chain_id: _,
         } => (v, r, s),
     };
-    let transaction = EthTransaction {
+    let transaction = eth::Transaction {
         block_hash: block.as_ref().map(|b| b.hash().0.into()),
         block_number: block.as_ref().map(|b| b.view()),
         from: signed_transaction.from_addr.0,
@@ -333,18 +334,24 @@ pub(super) fn get_transaction_inner(
 pub(super) fn get_transaction_receipt_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
-) -> Result<Option<EthTransactionReceipt>> {
-    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else { return Ok(None); };
+) -> Result<Option<eth::TransactionReceipt>> {
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else {
+        return Ok(None);
+    };
     // TODO: Return error if receipt or block does not exist.
 
-    let Some(receipt) = node.get_transaction_receipt(hash)? else { return Ok(None); };
+    let Some(receipt) = node.get_transaction_receipt(hash)? else {
+        return Ok(None);
+    };
 
     info!(
         "get_transaction_receipt_inner: hash: {:?} result: {:?}",
         hash, receipt
     );
 
-    let Some(block) = node.get_block_by_hash(receipt.block_hash)? else { return Ok(None); };
+    let Some(block) = node.get_block_by_hash(receipt.block_hash)? else {
+        return Ok(None);
+    };
 
     let transaction_hash = H256(hash.0);
     let transaction_index = block.transactions.iter().position(|t| *t == hash).unwrap() as u64;
@@ -358,7 +365,7 @@ pub(super) fn get_transaction_receipt_inner(
         .into_iter()
         .enumerate()
         .map(|(log_index, log)| {
-            let log = Log {
+            let log = eth::Log {
                 removed: false,
                 log_index: log_index as u64,
                 transaction_index,
@@ -377,7 +384,7 @@ pub(super) fn get_transaction_receipt_inner(
         .collect();
 
     let transaction = signed_transaction.transaction;
-    let receipt = EthTransactionReceipt {
+    let receipt = eth::TransactionReceipt {
         transaction_hash,
         transaction_index,
         block_hash,
@@ -400,7 +407,7 @@ pub(super) fn get_transaction_receipt_inner(
 fn get_transaction_receipt(
     params: Params,
     node: &Arc<Mutex<Node>>,
-) -> Result<Option<EthTransactionReceipt>> {
+) -> Result<Option<eth::TransactionReceipt>> {
     trace!("get_transaction_receipt: params: {:?}", params);
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);

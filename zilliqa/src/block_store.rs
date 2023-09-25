@@ -43,7 +43,9 @@ impl BlockStore {
         if let Some(block) = block_cache.get(&hash) {
             return Ok(Some(block.clone()));
         }
-        let Some(block) = self.blocks.get(hash.as_bytes())? else { return Ok(None); };
+        let Some(block) = self.blocks.get(hash.as_bytes())? else {
+            return Ok(None);
+        };
         let block: Block = bincode::deserialize(&block)?;
         block_cache.put(hash, block.clone());
         Ok(Some(block))

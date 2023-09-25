@@ -11,6 +11,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
+use crate::tracing_logging::LoggingEventListener;
+
 // This file contains all of the structs used to communicate between evm-ds and the outside world
 
 // Convenience function to print long vectors, truncating if they are massive
@@ -60,7 +62,7 @@ pub struct EvmCallArgs {
     pub continuations: Arc<Mutex<Continuations>>,  // All continuations
     pub enable_cps: bool,
     pub tx_trace_enabled: bool,
-    pub tx_trace: String,
+    pub tx_trace: Arc<Mutex<LoggingEventListener>>,
 }
 
 #[derive(Debug)]
@@ -317,7 +319,7 @@ pub struct EvmResult {
     pub return_value: Vec<u8>,
     pub apply: Vec<Apply>,
     pub logs: Vec<Log>,
-    pub tx_trace: String,
+    pub tx_trace: Arc<Mutex<LoggingEventListener>>,
     pub remaining_gas: u64,
     pub continuation_id: u64,
     pub trap_data: Option<TrapData>,

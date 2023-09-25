@@ -1,9 +1,10 @@
+use primitive_types::{H160, U256};
 use serde::{Deserialize, Serialize};
 
 // File to keep all of the misc logging and tracing code
 // made when calling the evm
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CallContext {
     #[serde(rename = "type")]
     pub call_type: String, // only 'call' (not create, delegate, static)
@@ -36,7 +37,7 @@ impl CallContext {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OtterscanCallContext {
     #[serde(rename = "type")]
     pub call_type: String,
@@ -47,7 +48,7 @@ pub struct OtterscanCallContext {
     pub input: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StructLog {
     pub depth: usize,
     pub error: String,
@@ -64,7 +65,7 @@ pub struct StructLog {
 // Created in this way.
 // Each new call gets added to the end of the stack and becomes the current context.
 // On returning from a call, the end of the stack gets put into the item above's calls
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct LoggingEventListener {
     pub call_tracer: Vec<CallContext>,
     pub raw_tracer: StructLogTopLevel,
@@ -75,7 +76,18 @@ pub struct LoggingEventListener {
     pub enabled: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+impl LoggingEventListener {
+    pub fn addresses_sent_funds_to<T: std::convert::From<primitive_types::H160>>(&self) -> Vec<T> {
+        // call types 0 and 1 are for transfer and self destruct
+        self.otter_internal_tracer
+            .iter()
+            .filter(|op| op.call_type == 0 || op.call_type == 1)
+            .map(|op| op.to.into())
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StructLogTopLevel {
     pub gas: u64,
     #[serde(rename = "returnValue")]
@@ -84,13 +96,13 @@ pub struct StructLogTopLevel {
     pub struct_logs: Vec<StructLog>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InternalOperationOtter {
     #[serde(rename = "type")]
     pub call_type: usize,
-    pub from: String,
-    pub to: String,
-    pub value: String,
+    pub from: H160,
+    pub to: H160,
+    pub value: U256,
 }
 
 impl LoggingEventListener {
@@ -110,6 +122,10 @@ impl LoggingEventListener {
 impl evm::runtime::tracing::EventListener for LoggingEventListener {
     fn event(&mut self, event: evm::runtime::tracing::Event) {
         if !self.enabled {
+            return;
+        }
+
+        if self.call_tracer.is_empty() {
             return;
         }
 
@@ -166,10 +182,10 @@ impl evm::runtime::tracing::EventListener for LoggingEventListener {
                 input,
             } => {
                 intern_trace = Some(InternalOperationOtter {
-                    call_type: call_depth,
-                    from: format!("{:?}", address),
-                    to: format!("{:?}", target),
-                    value: format!("{:0X?}", balance),
+                    call_type: 0,
+                    from: address,
+                    to: target,
+                    value: balance,
                 });
 
                 self.otter_call_tracer.push(OtterscanCallContext {
@@ -195,9 +211,9 @@ impl evm::runtime::tracing::EventListener for LoggingEventListener {
             } => {
                 intern_trace = Some(InternalOperationOtter {
                     call_type: 1,
-                    from: format!("{:?}", address),
-                    to: format!("{:?}", target),
-                    value: format!("{:0X?}", balance),
+                    from: address,
+                    to: target,
+                    value: balance,
                 });
 
                 self.otter_call_tracer.push(OtterscanCallContext {
@@ -219,9 +235,9 @@ impl evm::runtime::tracing::EventListener for LoggingEventListener {
             } => {
                 intern_trace = Some(InternalOperationOtter {
                     call_type: if is_create2 { 3 } else { 2 },
-                    from: format!("{:?}", address),
-                    to: format!("{:?}", target),
-                    value: format!("{:0X?}", balance),
+                    from: address,
+                    to: target,
+                    value: balance,
                 });
 
                 self.otter_call_tracer.push(OtterscanCallContext {

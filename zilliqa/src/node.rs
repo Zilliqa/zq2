@@ -6,6 +6,8 @@ use crate::{
 };
 use primitive_types::H256;
 
+use evm_ds::protos::evm_proto::{self as EvmProto};
+
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 
@@ -231,7 +233,9 @@ impl Node {
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
-    ) -> Result<Vec<u8>> {
+        amount: U256,
+        tracing: bool,
+    ) -> Result<EvmProto::EvmResult> {
         let block = self
             .get_block_by_view(self.get_view(block_number))?
             .ok_or_else(|| anyhow!("block not found"))?;
@@ -244,9 +248,11 @@ impl Node {
             from_addr,
             to_addr,
             data,
+            amount,
             self.config.eth_chain_id,
             block.header,
             true,
+            tracing,
         )
     }
 

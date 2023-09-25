@@ -5,6 +5,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use evm_ds::tracing_logging::LoggingEventListener;
+
 use crate::evm_backend::EvmBackend;
 use anyhow::{anyhow, Result};
 use ethabi::Token;
@@ -98,6 +100,8 @@ pub struct TransactionApplyResult {
     pub contract_address: Option<Address>,
     /// The logs emitted by the transaction execution.
     pub logs: Vec<EvmProto::Log>,
+    /// The traces from the EVM, if enabled
+    pub traces: Arc<Mutex<LoggingEventListener>>,
 }
 
 impl State {
@@ -160,6 +164,7 @@ impl State {
         payload: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
+        tracing: bool,
         estimate: bool,
         print_enabled: bool,
     ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
@@ -175,6 +180,8 @@ impl State {
 
         let mut code: Vec<u8> = account.code;
         let mut data: Vec<u8> = payload;
+        let mut traces: Arc<Mutex<LoggingEventListener>> =
+            Arc::new(Mutex::new(LoggingEventListener::new(tracing)));
 
         // The backend is provided to the evm as a way to read accounts and state during execution
         let mut backend = EvmBackend::new(self, U256::zero(), caller.0, chain_id, current_block);
@@ -185,7 +192,7 @@ impl State {
             data = vec![];
             to = Address(calculate_contract_address(from_addr.0, &backend));
             created_contract_addr = Some(to);
-            debug!("Calculated contract address for creation: {}", to);
+            info!("Calculated contract address for creation: {}", to);
         }
 
         let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];
@@ -208,8 +215,8 @@ impl State {
             node_continuation: None,
             continuations: continuations.clone(),
             enable_cps: true,
-            tx_trace_enabled: false,
-            tx_trace: "".to_string(),
+            tx_trace_enabled: true,
+            tx_trace: traces.clone(),
         });
         let mut result;
         let mut run_succeeded;
@@ -250,7 +257,13 @@ impl State {
                 );
             }
 
-            continuation_stack.push(push_transfer(from_addr, to, amount, continuations.clone()));
+            continuation_stack.push(push_transfer(
+                from_addr,
+                to,
+                amount,
+                continuations.clone(),
+                traces.clone(),
+            ));
         }
 
         if print_enabled {
@@ -302,7 +315,7 @@ impl State {
                             address: addr_to_create,
                             code: vec![],
                             data: create.call_data,
-                            tx_trace: Default::default(),
+                            tx_trace: traces.clone(),
                             continuations: continuations.clone(),
                             node_continuation: None,
                             evm_context: Default::default(),
@@ -344,7 +357,7 @@ impl State {
                             code: code_next,
                             data: call_data_next,
                             apparent_value: value,
-                            tx_trace: Default::default(),
+                            tx_trace: traces.clone(),
                             continuations: continuations.clone(),
                             node_continuation: None,
                             evm_context: Default::default(),
@@ -364,6 +377,7 @@ impl State {
                                 call_addr,
                                 value,
                                 continuations.clone(),
+                                traces.clone(),
                             ));
                         }
                     }
@@ -434,6 +448,7 @@ impl State {
                 Address::COLLECTED_FEES,
                 gas_deduction.into(),
                 continuations,
+                traces,
             ));
             let call_args = continuation_stack.pop().unwrap();
 
@@ -448,6 +463,7 @@ impl State {
 
             backend.origin = call_args.caller;
             let mut gas_result = run_evm_impl_direct(call_args, &backend);
+            traces = gas_result.tx_trace.clone();
 
             if !gas_result.succeeded() {
                 let fail_string = format!(
@@ -472,6 +488,7 @@ impl State {
         backend_result.return_value = result.return_value;
         backend_result.remaining_gas = result.remaining_gas;
         backend_result.logs = result.logs;
+        backend_result.tx_trace = traces.clone();
 
         if print_enabled {
             debug!(
@@ -499,6 +516,7 @@ impl State {
             payload,
             0,
             BlockHeader::default(),
+            false,
             true,
             false,
         )
@@ -510,6 +528,7 @@ impl State {
         txn: SignedTransaction,
         chain_id: u64,
         current_block: BlockHeader,
+        tracing: bool,
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash();
         info!(?hash, ?txn, "executing txn");
@@ -533,6 +552,7 @@ impl State {
             txn.transaction.payload,
             chain_id,
             current_block,
+            tracing,
             false,
             true,
         );
@@ -565,6 +585,7 @@ impl State {
                     success,
                     contract_address: contract_addr,
                     logs: result.logs,
+                    traces: result.tx_trace.clone(),
                 })
             }
             Err(e) => {
@@ -574,6 +595,7 @@ impl State {
                     success: false,
                     contract_address: None,
                     logs: Default::default(),
+                    traces: Default::default(),
                 })
             }
         }
@@ -638,16 +660,20 @@ impl State {
             debug!("Calling contract to get balance...");
         }
 
-        let balance = self.call_contract(
-            Address::ZERO,
-            Some(Address::NATIVE_TOKEN),
-            data,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
-            // dummy values.
-            0,
-            BlockHeader::default(),
-            print_enabled,
-        )?;
+        let balance = self
+            .call_contract(
+                Address::ZERO,
+                Some(Address::NATIVE_TOKEN),
+                data,
+                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+                // dummy values.
+                U256::zero(),
+                0,
+                BlockHeader::default(),
+                false,
+                print_enabled,
+            )?
+            .return_value;
         let balance = U256::from_big_endian(&balance);
 
         trace!("Queried balance of addr {} is: {}", address, balance);
@@ -688,16 +714,20 @@ impl State {
     pub fn get_gas_price(&self) -> Result<u64> {
         let data = contracts::gas_price::GET_GAS.encode_input(&[]).unwrap();
 
-        let gas_price = self.call_contract(
-            Address::ZERO,
-            Some(Address::GAS_PRICE),
-            data,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
-            // dummy values.
-            0,
-            BlockHeader::default(),
-            false,
-        )?;
+        let gas_price = self
+            .call_contract(
+                Address::ZERO,
+                Some(Address::GAS_PRICE),
+                data,
+                U256::zero(),
+                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+                // dummy values.
+                0,
+                BlockHeader::default(),
+                false,
+                false,
+            )?
+            .return_value;
         let gas_price = U256::from_big_endian(&gas_price);
 
         trace!("Queried GAS! is: {}", gas_price);
@@ -726,6 +756,7 @@ impl State {
             // some dummy values.
             0,
             BlockHeader::default(),
+            false,
             true,
             false,
         );
@@ -734,6 +765,8 @@ impl State {
             Ok((result, _)) => {
                 // Apply the state changes only if success
                 let success = result.succeeded();
+
+                info!("Set native balance result: {:?}", result);
 
                 if success {
                     self.apply_delta(result.apply)?;
@@ -777,6 +810,7 @@ impl State {
             data,
             chain_id,
             current_block,
+            false,
             true,
             print_enabled,
         );
@@ -817,15 +851,18 @@ impl State {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn call_contract(
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
+        amount: U256,
         chain_id: u64,
         current_block: BlockHeader,
         print_enabled: bool,
-    ) -> Result<Vec<u8>> {
+        tracing: bool,
+    ) -> Result<EvmProto::EvmResult> {
         if print_enabled {
             debug!("Calling contract from: {:?} to: {:?}", from_addr, to_addr);
         }
@@ -835,10 +872,11 @@ impl State {
             to_addr,
             0,
             u64::MAX,
-            U256::zero(),
+            amount,
             data,
             chain_id,
             current_block,
+            tracing,
             true,
             print_enabled,
         );
@@ -847,7 +885,7 @@ impl State {
             debug!("finished contact call");
         }
 
-        result.map(|ret| ret.0.return_value)
+        Ok(result?.0)
     }
 }
 
@@ -858,6 +896,7 @@ pub fn push_transfer(
     to: Address,
     amount: U256,
     continuations: Arc<Mutex<EvmProto::Continuations>>,
+    traces: Arc<Mutex<LoggingEventListener>>,
 ) -> EvmProto::EvmCallArgs {
     trace!(
         "Pushing transfer from: {} -> to: {} amount: {}",
@@ -880,12 +919,12 @@ pub fn push_transfer(
         data: balance_data,
         apparent_value: Default::default(),
         gas_limit: u64::MAX,
-        tx_trace: Default::default(),
+        tx_trace: traces,
         continuations,
         enable_cps: true,
         node_continuation: None,
         evm_context: "fund_transfer".to_string(),
         is_static: false,
-        tx_trace_enabled: false,
+        tx_trace_enabled: true,
     }
 }

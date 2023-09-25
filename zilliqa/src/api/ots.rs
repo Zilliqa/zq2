@@ -1,17 +1,16 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
+use evm_ds::tracing_logging::InternalOperationOtter;
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
+use tracing::trace;
 
 use crate::{crypto::Hash, message::BlockNumber, node::Node, state::Address, time::SystemTime};
 
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},
-    types::{
-        EthTransaction, EthTransactionReceiptWithTimestamp, OtterscanBlockDetails,
-        OtterscanBlockTransactions, OtterscanBlockWithTransactions, OtterscanTransactions,
-    },
+    types::ots,
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -25,6 +24,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("ots_hasCode", has_code),
             ("ots_searchTransactionsAfter", search_transactions_after),
             ("ots_searchTransactionsBefore", search_transactions_before),
+            ("ots_getInternalOperations", get_internal_operations),
         ],
     )
 }
@@ -34,10 +34,7 @@ fn get_otterscan_api_level(_: Params, _: &Arc<Mutex<Node>>) -> Result<u64> {
     Ok(8)
 }
 
-fn get_block_details(
-    params: Params,
-    node: &Arc<Mutex<Node>>,
-) -> Result<Option<OtterscanBlockDetails>> {
+fn get_block_details(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<ots::BlockDetails>> {
     let block: u64 = params.one()?;
 
     let block = node
@@ -45,7 +42,7 @@ fn get_block_details(
         .unwrap()
         .get_block_by_view(block)?
         .as_ref()
-        .map(OtterscanBlockDetails::from);
+        .map(ots::BlockDetails::from);
 
     Ok(block)
 }
@@ -53,7 +50,7 @@ fn get_block_details(
 fn get_block_details_by_hash(
     params: Params,
     node: &Arc<Mutex<Node>>,
-) -> Result<Option<OtterscanBlockDetails>> {
+) -> Result<Option<ots::BlockDetails>> {
     let block_hash: H256 = params.one()?;
 
     let block = node
@@ -61,7 +58,7 @@ fn get_block_details_by_hash(
         .unwrap()
         .get_block_by_hash(Hash(block_hash.0))?
         .as_ref()
-        .map(OtterscanBlockDetails::from);
+        .map(ots::BlockDetails::from);
 
     Ok(block)
 }
@@ -69,7 +66,7 @@ fn get_block_details_by_hash(
 fn get_block_transactions(
     params: Params,
     node: &Arc<Mutex<Node>>,
-) -> Result<Option<OtterscanBlockTransactions>> {
+) -> Result<Option<ots::BlockTransactions>> {
     let mut params = params.sequence();
     let block_num: u64 = params.next()?;
     let page_number: usize = params.next()?;
@@ -77,7 +74,9 @@ fn get_block_transactions(
 
     let node = node.lock().unwrap();
 
-    let Some(block) = node.get_block_by_view(block_num)? else { return Ok(None); };
+    let Some(block) = node.get_block_by_view(block_num)? else {
+        return Ok(None);
+    };
 
     let start = usize::min(page_number * page_size, block.transactions.len());
     let end = usize::min((page_number + 1) * page_size, block.transactions.len());
@@ -94,12 +93,12 @@ fn get_block_transactions(
     let (transactions, receipts): (Vec<_>, Vec<_>) =
         itertools::process_results(txn_results, |iter| iter.unzip())?;
 
-    let full_block = OtterscanBlockWithTransactions {
+    let full_block = ots::BlockWithTransactions {
         transactions,
         block: (&block).into(),
     };
 
-    Ok(Some(OtterscanBlockTransactions {
+    Ok(Some(ots::BlockTransactions {
         full_block,
         receipts,
     }))
@@ -126,7 +125,7 @@ fn search_transactions_inner(
     block_number: u64,
     page_size: usize,
     reverse: bool,
-) -> Result<OtterscanTransactions> {
+) -> Result<ots::Transactions> {
     let mut touched = node.lock().unwrap().get_touched_transactions(address)?;
 
     // If searching in reverse, we should start with the most recent transaction and work backwards.
@@ -144,7 +143,7 @@ fn search_transactions_inner(
     let mut finished = true;
 
     for hash in touched {
-        let txn: EthTransaction = get_transaction_inner(hash, &node.lock().unwrap())
+        let txn = get_transaction_inner(hash, &node.lock().unwrap())
             .unwrap()
             .unwrap();
 
@@ -178,7 +177,7 @@ fn search_transactions_inner(
         transactions.push(txn);
 
         let node = node.lock().unwrap();
-        let receipt = EthTransactionReceiptWithTimestamp {
+        let receipt = ots::TransactionReceiptWithTimestamp {
             receipt: get_transaction_receipt_inner(hash, &node).unwrap().unwrap(),
             timestamp: timestamp
                 .duration_since(SystemTime::UNIX_EPOCH)
@@ -205,7 +204,7 @@ fn search_transactions_inner(
         (finished, block_number == 0)
     };
 
-    Ok(OtterscanTransactions {
+    Ok(ots::Transactions {
         transactions,
         receipts,
         first_page,
@@ -213,10 +212,7 @@ fn search_transactions_inner(
     })
 }
 
-fn search_transactions_after(
-    params: Params,
-    node: &Arc<Mutex<Node>>,
-) -> Result<OtterscanTransactions> {
+fn search_transactions_after(params: Params, node: &Arc<Mutex<Node>>) -> Result<ots::Transactions> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let block_number: u64 = params.next()?;
@@ -228,7 +224,7 @@ fn search_transactions_after(
 fn search_transactions_before(
     params: Params,
     node: &Arc<Mutex<Node>>,
-) -> Result<OtterscanTransactions> {
+) -> Result<ots::Transactions> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let mut block_number: u64 = params.next()?;
@@ -240,4 +236,43 @@ fn search_transactions_before(
     }
 
     search_transactions_inner(node, Address(address), block_number, page_size, true)
+}
+
+fn get_internal_operations(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Vec<InternalOperationOtter>> {
+    trace!("get_internal_operations called");
+    let hash: H256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+
+    let node = node.lock().unwrap();
+
+    let tx = node.get_transaction_by_hash(hash)?;
+
+    let receipt = get_transaction_receipt_inner(hash, &node)?;
+
+    if tx.is_none() || receipt.is_none() {
+        return Err(anyhow!("transaction not yet executed: {hash}"));
+    }
+
+    let tx = tx.unwrap();
+    let receipt = receipt.unwrap();
+
+    let call_result = node.call_contract(
+        receipt.block_number.into(),
+        tx.from_addr,
+        tx.transaction.to_addr,
+        tx.transaction.payload,
+        tx.transaction.amount.into(),
+        true,
+    );
+
+    Ok(call_result
+        .unwrap()
+        .tx_trace
+        .lock()
+        .unwrap()
+        .otter_internal_tracer
+        .clone())
 }
