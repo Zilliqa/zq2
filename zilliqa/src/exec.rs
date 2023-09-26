@@ -422,6 +422,18 @@ impl State {
                                 ));
                             prior_node_continuation.succeeded = run_succeeded;
                             prior_node_continuation.logs = result.logs.clone();
+
+                            // We also need to write down the data + address of the contract we
+                            // just created
+                            backend.create_account(
+                                prior_node_continuation.get_address().into(),
+                                result.return_value.clone(),
+                            );
+
+                            trace!(
+                                "Writing back contract created at: {:?}",
+                                prior_node_continuation.get_address()
+                            );
                         }
                     }
                 }
