@@ -53,6 +53,7 @@ impl BlockStore {
         trace!("Get block with view {view}");
         let Some(hash) = self.canonical_block_numbers.get(view.to_be_bytes())? else { return Ok(None); };
         let hash = Hash::from_bytes(hash)?;
+        trace!("I refer to the hash, its {hash}");
         self.get_block(hash)
     }
 
@@ -87,6 +88,7 @@ impl BlockStore {
     }
 
     pub fn set_canonical(&mut self, view: u64, hash: Hash) -> Result<()> {
+        trace!(view = view, hash = ?hash, "set canonical block view");
         self.canonical_block_numbers
             .insert(view.to_be_bytes(), &hash.0)?;
         Ok(())

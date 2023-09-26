@@ -261,15 +261,20 @@ impl Consensus {
         // recurse down the chain to find the last committee
         let view_tip = self.get_chain_tip();
 
-        for view in (0..view_tip).rev() {
+        trace!("view tip is: {}", view_tip);
+
+        for view in (0..=view_tip).rev() {
+
             let block = self.get_block_by_view(view);
 
             if let Ok(Some(block)) = block {
+                trace!("found block for view and returning committee: {} {:?}", view, block.committee);
                 return Ok(block.committee);
             }
 
             trace!("block not found for view: {} so recursing down.", view);
         }
+        trace!("so... no block found for view: {}", view_tip);
         Err(anyhow!("no block found for view: {}", view_tip))
 
        // let block = self
@@ -320,13 +325,21 @@ impl Consensus {
     }
 
     fn download_blocks_up_to(&mut self, to: u64) -> Result<()> {
+
+        trace!("downloading blocks up to {}", to);
+
         for view in (self.view + 1)..to {
             self.view = view;
             self.block_store.request_block_by_view(view)?;
         }
         // This seems incorrect/not relevant
         info!("*** Downloading missing blocks...view is going from {} to {}", self.view, to + 1);
-        self.view = to + 1;
+
+        if to > self.view {
+            self.view = to + 1;
+        }
+
+        //self.view = to + 1;
 
         Ok(())
     }
@@ -705,6 +718,7 @@ impl Consensus {
         // check if the sender's qc is higher than our high_qc or even higher than our view
         self.update_high_qc_and_view(false, new_view.qc.clone())?;
 
+        // Shouldn't this be the committee of the corresponding view(?)
         let committee_size = self.committee()?.len();
         let NewViewVote {
             mut signatures,
@@ -724,6 +738,9 @@ impl Consensus {
             });
 
         let mut supermajority = false;
+
+        // the index is not checked here...
+
         // if the vote is new, store it
         if !cosigned[index] {
             signatures.push(new_view.signature);
@@ -732,7 +749,8 @@ impl Consensus {
             cosigned_weight += sender.weight;
             qcs.push(new_view.qc);
             // TODO: New views broken
-            supermajority = cosigned_weight * 3 > 99999 /* total weight of what committee? */ * 2;
+            //supermajority = cosigned_weight * 3 > 99999 /* total weight of what committee? */ * 2;
+            supermajority = cosigned_weight >= 300;
             let num_signers = signers.len();
             trace!(
                 num_signers,
@@ -756,6 +774,8 @@ impl Consensus {
                     let parent = self
                         .get_block(&parent_hash)?
                         .ok_or_else(|| anyhow!("missing block"))?;
+
+                    // why does this have no txn?
                     let proposal = Block::from_agg(
                         self.secret_key,
                         self.view,
@@ -766,6 +786,9 @@ impl Consensus {
                         SystemTime::max(SystemTime::now(), parent.timestamp()),
                         self.get_next_committee()?,
                     );
+
+                    trace!(proposal_hash = ?proposal.hash(), "creating proposal block");
+
                     // as a future improvement, process the proposal before broadcasting it
                     return Ok(Some(proposal));
                     // we don't want to keep the collected votes if we proposed a new block
@@ -894,6 +917,7 @@ impl Consensus {
             }
         }
 
+        // does this happen unneccessarily here?
         self.download_blocks_up_to(new_high_qc_block_view)?;
 
         Ok(())
