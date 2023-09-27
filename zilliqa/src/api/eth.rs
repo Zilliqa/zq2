@@ -1,5 +1,6 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
+use futures::future::try_join_all;
 use std::{panic::AssertUnwindSafe, sync::Arc};
 use tokio::sync::{Mutex, MutexGuard};
 
@@ -213,11 +214,11 @@ async fn get_block_by_number(
     let mut node = node.lock().await;
     let block = node.get_block_by_number(block_number).await?;
 
-    let block = block
-        .map(|b| convert_block(&mut node, &b, full).await)
-        .transpose()?;
-
-    Ok(block)
+    if let Some(block) = block {
+        Some(convert_block(&mut node, &block, full).await).transpose()
+    } else {
+        Ok(None)
+    }
 }
 
 async fn get_block_by_hash(
@@ -229,33 +230,26 @@ async fn get_block_by_hash(
     let full: bool = params.next()?;
 
     let mut node = node.lock().await;
-    let block = node
-        .get_block_by_hash(Hash(hash.0))
-        .await?
-        .map(|b| convert_block(&mut node, &b, full).await)
-        .transpose()?;
-
-    Ok(block)
+    if let Some(block) = node.get_block_by_hash(Hash(hash.0)).await? {
+        Some(convert_block(&mut node, &block, full).await).transpose()
+    } else {
+        Ok(None)
+    }
 }
 
-async fn convert_block(
-    node: &mut MutexGuard<'_, Node>,
-    block: &Block,
-    full: bool,
-) -> Result<EthBlock> {
+async fn convert_block(node: &MutexGuard<'_, Node>, block: &Block, full: bool) -> Result<EthBlock> {
     if !full {
         Ok(block.into())
     } else {
-        let transactions = block
-            .transactions
-            .iter()
-            .map(|h| {
-                get_transaction_inner(*h, node)
-                    .await?
-                    .ok_or_else(|| anyhow!("missing transaction: {}", h))
-            })
-            .map(|t| Ok(HashOrTransaction::Transaction(t?)))
-            .collect::<Result<_>>()?;
+        let transactions = try_join_all(block.transactions.iter().map(|h| async move {
+            get_transaction_inner(*h, node)
+                .await?
+                .ok_or_else(|| anyhow!("missing transaction: {}", h))
+        }))
+        .await?
+        .into_iter()
+        .map(|t| Ok(HashOrTransaction::Transaction(t)))
+        .collect::<Result<_>>()?;
         Ok(EthBlock {
             transactions,
             ..block.into()
@@ -269,7 +263,7 @@ async fn get_block_transaction_count_by_hash(
 ) -> Result<Option<String>> {
     let hash: H256 = params.one()?;
 
-    let mut node = node.lock().await;
+    let node = node.lock().await;
     let block = node.get_block_by_hash(Hash(hash.0)).await?;
 
     Ok(block.map(|b| b.transactions.len().to_hex()))
@@ -281,7 +275,7 @@ async fn get_block_transaction_count_by_number(
 ) -> Result<Option<String>> {
     let block_number: BlockNumber = params.one()?;
 
-    let mut node = node.lock().await;
+    let node = node.lock().await;
     let block = match block_number {
         BlockNumber::Number(number) => node.get_block_by_view(number).await,
         BlockNumber::Earliest => node.get_block_by_view(0).await,
@@ -308,7 +302,7 @@ async fn get_transaction_by_hash(
 
 pub(super) async fn get_transaction_inner(
     hash: Hash,
-    node: &mut MutexGuard<'_, Node>,
+    node: &MutexGuard<'_, Node>,
 ) -> Result<Option<EthTransaction>> {
     let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else { return Ok(None); };
 
@@ -353,7 +347,7 @@ pub(super) async fn get_transaction_inner(
 
 pub(super) async fn get_transaction_receipt_inner(
     hash: Hash,
-    node: &mut MutexGuard<'_, Node>,
+    node: &MutexGuard<'_, Node>,
 ) -> Result<Option<EthTransactionReceipt>> {
     let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else { return Ok(None); };
     // TODO: Return error if receipt or block does not exist.

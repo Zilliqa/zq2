@@ -319,7 +319,7 @@ impl Consensus {
         Ok(None)
     }
 
-    fn download_blocks_up_to(&mut self, to: u64) -> Result<()> {
+    fn download_blocks_up_to(&self, to: u64) -> Result<()> {
         for view in (self.view + 1)..to {
             self.view = view;
             self.block_store.request_block_by_view(view)?;
@@ -329,7 +329,7 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn timeout(&mut self) -> Result<(PeerId, NewView)> {
+    pub fn timeout(&self) -> Result<(PeerId, NewView)> {
         self.view += 1;
 
         let leader = self.get_leader(self.view)?.peer_id;
@@ -347,7 +347,7 @@ impl Consensus {
         self.secret_key.to_libp2p_keypair().public().to_peer_id()
     }
 
-    pub fn proposal(&mut self, proposal: Proposal) -> Result<Option<(PeerId, Vote)>> {
+    pub fn proposal(&self, proposal: Proposal) -> Result<Option<(PeerId, Vote)>> {
         let (block, transactions) = proposal.into_parts();
         trace!(block_view = block.view(), "handling block proposal");
 
@@ -1005,7 +1005,7 @@ impl Consensus {
     }
 
     /// Check the validity of a block
-    fn check_block(&mut self, block: &Block) -> Result<()> {
+    fn check_block(&self, block: &Block) -> Result<()> {
         block.verify_hash()?;
 
         if block.view() == 0 {
@@ -1073,7 +1073,7 @@ impl Consensus {
     }
 
     // Checks for the validity of a block and adds it to our block store if valid.
-    pub fn receive_block(&mut self, block: Block) -> Result<()> {
+    pub fn receive_block(&self, block: Block) -> Result<()> {
         if self.block_store.contains_block(block.hash())? {
             return Ok(());
         }
@@ -1101,7 +1101,7 @@ impl Consensus {
         Ok(())
     }
 
-    fn add_block(&mut self, block: Block) -> Result<()> {
+    fn add_block(&self, block: Block) -> Result<()> {
         let hash = block.hash();
         debug!(?hash, ?block.header.view, "added block");
         self.block_store.process_block(block)?;
@@ -1128,7 +1128,7 @@ impl Consensus {
         Ok(&block.qc)
     }
 
-    pub async fn get_block(&mut self, hash: &Hash) -> Result<Option<Block>> {
+    pub async fn get_block(&self, hash: &Hash) -> Result<Option<Block>> {
         self.block_store.get_block(*hash).await
     }
 
@@ -1136,7 +1136,7 @@ impl Consensus {
         self.block_store.get_block_locally(hash)
     }
 
-    pub async fn get_block_by_view(&mut self, view: u64) -> Result<Option<Block>> {
+    pub async fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
         self.block_store.get_block_by_view(view).await
     }
 
@@ -1144,7 +1144,7 @@ impl Consensus {
         self.block_store.get_block_by_view_locally(view)
     }
 
-    pub async fn get_block_hash_by_view(&mut self, view: u64) -> Result<Option<Hash>> {
+    pub async fn get_block_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
         self.block_store.get_hash_by_view(view).await
     }
 
@@ -1166,14 +1166,14 @@ impl Consensus {
         &self.state
     }
 
-    pub async fn state_at(&mut self, view: u64) -> Result<Option<State>> {
+    pub async fn state_at(&self, view: u64) -> Result<Option<State>> {
         Ok(self
             .get_block_by_view(view)
             .await?
             .map(|block| self.state.at_root(H256(block.state_root_hash().0))))
     }
 
-    pub async fn try_get_state_at(&mut self, view: u64) -> Result<State> {
+    pub async fn try_get_state_at(&self, view: u64) -> Result<State> {
         self.state_at(view)
             .await?
             .ok_or_else(|| anyhow!("No block at height {view}"))
@@ -1183,7 +1183,7 @@ impl Consensus {
         Ok(self.new_transactions.contains_key(hash) || self.transactions.contains_key(hash.0)?)
     }
 
-    fn get_highest_from_agg<'a>(&mut self, agg: &'a AggregateQc) -> Result<&'a QuorumCertificate> {
+    fn get_highest_from_agg<'a>(&self, agg: &'a AggregateQc) -> Result<&'a QuorumCertificate> {
         agg.qcs
             .iter()
             .map(|qc| self.get_block_locally(qc.block_hash))

@@ -27,7 +27,7 @@ pub struct BlockStore {
     blocks: Tree,
     block_cache: Mutex<LruCache<Hash, Block>>,
     message_sender: MessageSender,
-    pending_requests: HashMap<BlockRef, Vec<Arc<Notify>>>,
+    pending_requests: Mutex<HashMap<BlockRef, Vec<Arc<Notify>>>>,
     request_timeout: Duration,
 }
 
@@ -39,7 +39,7 @@ impl BlockStore {
             blocks: db.open_tree(b"blocks_tree")?,
             block_cache: Mutex::new(LruCache::new(NonZeroUsize::new(5).unwrap())),
             message_sender,
-            pending_requests: HashMap::new(),
+            pending_requests: Mutex::new(HashMap::new()),
             request_timeout: Duration::from_secs(2),
         })
     }
@@ -52,7 +52,7 @@ impl BlockStore {
     /// Returns the block with the given hash. If it is not known locally,
     /// requests it from the network.
     /// Returns None if the network request times out.
-    pub async fn get_block(&mut self, hash: Hash) -> Result<Option<Block>> {
+    pub async fn get_block(&self, hash: Hash) -> Result<Option<Block>> {
         if !self.contains_block(hash)? {
             let timeout = self.request_timeout;
             let request = self.request_block(hash)?;
@@ -78,7 +78,7 @@ impl BlockStore {
         Ok(Some(block))
     }
 
-    pub async fn get_hash_by_view(&mut self, view: u64) -> Result<Option<Hash>> {
+    pub async fn get_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
         if !self
             .canonical_block_numbers
             .contains_key(view.to_be_bytes())?
@@ -100,7 +100,7 @@ impl BlockStore {
             .transpose()
     }
 
-    pub async fn get_block_by_view(&mut self, view: u64) -> Result<Option<Block>> {
+    pub async fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
         let Some(hash) = self.get_hash_by_view(view).await? else { return Ok(None) };
         self.get_block(hash).await
     }
@@ -112,12 +112,15 @@ impl BlockStore {
 
     /// Helper method to create and store the Notify for when the request completes,
     /// and returns a copy locally awaiting
-    fn register_request(&mut self, key: BlockRef) -> Arc<Notify> {
+    fn register_request(&self, key: BlockRef) -> Arc<Notify> {
         let notify = Arc::new(Notify::new());
-        if let Some(notifies) = self.pending_requests.get_mut(&key) {
+        if let Some(notifies) = self.pending_requests.lock().unwrap().get_mut(&key) {
             notifies.push(notify.clone());
         } else {
-            self.pending_requests.insert(key, vec![notify.clone()]);
+            self.pending_requests
+                .lock()
+                .unwrap()
+                .insert(key, vec![notify.clone()]);
         }
         notify
     }
@@ -134,7 +137,7 @@ impl BlockStore {
     /// No-op if the block is already known locally.
     /// Returns a Notify which can be waited on (with `.notified().await`) if
     /// you need to block on the result. It can also be safely dropped.
-    pub fn request_block(&mut self, hash: Hash) -> Result<Arc<Notify>> {
+    pub fn request_block(&self, hash: Hash) -> Result<Arc<Notify>> {
         if !self.blocks.contains_key(hash.as_bytes())? {
             let block_ref = BlockRef::Hash(hash);
             self.message_sender
@@ -151,7 +154,7 @@ impl BlockStore {
     /// No-op if the hash is already known locally.
     /// Returns a Notify which can be waited on (with `.notified().await`) if
     /// you need to block on the result. It can also be safely dropped.
-    pub async fn request_hash_by_view(&mut self, view: u64) -> Result<Arc<Notify>> {
+    pub async fn request_hash_by_view(&self, view: u64) -> Result<Arc<Notify>> {
         if !self
             .canonical_block_numbers
             .contains_key(view.to_be_bytes())?
@@ -167,7 +170,7 @@ impl BlockStore {
     /// No-op if the block is already known locally.
     /// Returns a Notify which can be waited on (with `.notified().await`) if
     /// you need to block on the result. It can also be safely dropped.
-    pub fn request_block_by_view(&mut self, view: u64) -> Result<Arc<Notify>> {
+    pub fn request_block_by_view(&self, view: u64) -> Result<Arc<Notify>> {
         trace!("Request block with view {view}");
         if let Some(hash) = self.canonical_block_numbers.get(view.to_be_bytes())? {
             let hash = Hash::from_bytes(hash)?;
@@ -183,7 +186,7 @@ impl BlockStore {
         }
     }
 
-    pub fn set_canonical(&mut self, view: u64, hash: Hash) -> Result<()> {
+    pub fn set_canonical(&self, view: u64, hash: Hash) -> Result<()> {
         self.canonical_block_numbers
             .insert(view.to_be_bytes(), &hash.0)?;
         Ok(())
@@ -191,7 +194,7 @@ impl BlockStore {
 
     /// Permanently stores a block.
     /// Additionally resolves any futures that were pending on a request for this block.
-    pub fn process_block(&mut self, block: Block) -> Result<()> {
+    pub fn process_block(&self, block: Block) -> Result<()> {
         trace!(view = block.view(), hash = ?block.hash(), "insert block");
         self.block_headers
             .insert(block.hash().as_bytes(), bincode::serialize(&block.header)?)?;
@@ -199,13 +202,16 @@ impl BlockStore {
             .insert(block.hash().as_bytes(), bincode::serialize(&block)?)?;
         // TODO: Is this correct?
         self.set_canonical(block.view(), block.hash())?;
-        for notify in self
-            .pending_requests
+        // This is the only place where we lock both of these in one function,
+        // hence this cannot lead to deadlock
+        let mut pending_requests = self.pending_requests.lock().unwrap();
+        let mut block_cache = self.block_cache.lock().unwrap();
+        for notify in pending_requests
             .remove(&BlockRef::Hash(block.hash()))
             .unwrap_or_default()
             .into_iter()
             .chain(
-                self.pending_requests
+                pending_requests
                     .remove(&BlockRef::View(block.view()))
                     .unwrap_or_default()
                     .into_iter(),
@@ -213,10 +219,7 @@ impl BlockStore {
         {
             notify.notify_one();
             // we know we were requesting this block so put it into the cache for immediate access
-            self.block_cache
-                .lock()
-                .unwrap()
-                .put(block.hash(), block.clone());
+            block_cache.put(block.hash(), block.clone());
         }
         Ok(())
     }

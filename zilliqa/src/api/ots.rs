@@ -1,3 +1,4 @@
+use futures::future::join_all;
 use std::{panic::AssertUnwindSafe, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -78,24 +79,30 @@ async fn get_block_transactions(
     let page_number: usize = params.next()?;
     let page_size: usize = params.next()?;
 
-    let mut node = node.lock().await;
+    let node = node.lock().await;
 
     let Some(block) = node.get_block_by_view(block_num).await? else { return Ok(None); };
 
     let start = usize::min(page_number * page_size, block.transactions.len());
     let end = usize::min((page_number + 1) * page_size, block.transactions.len());
 
-    let txn_results = block.transactions[start..end].iter().map(|hash| {
-        // There are some redundant calls between these two functions - We could optimise by combining them.
-        let txn = get_transaction_inner(*hash, &mut node)
-            .await?
-            .ok_or_else(|| anyhow!("transaction not found: {hash}"))?;
-        let receipt = get_transaction_receipt_inner(*hash, &mut node)
-            .await?
-            .ok_or_else(|| anyhow!("receipt not found: {hash}"))?;
+    let txn_results = join_all(
+        block.transactions[start..end]
+            .iter()
+            .map(|hash| async move {
+                // There are some redundant calls between these two functions - We could optimise by combining them.
+                let txn = get_transaction_inner(*hash, &node)
+                    .await?
+                    .ok_or_else(|| anyhow!("transaction not found: {hash}"))?;
+                let receipt = get_transaction_receipt_inner(*hash, &node)
+                    .await?
+                    .ok_or_else(|| anyhow!("receipt not found: {hash}"))?;
 
-        Ok::<_, anyhow::Error>((txn, receipt))
-    });
+                Ok::<_, anyhow::Error>((txn, receipt))
+            }),
+    )
+    .await;
+
     let (transactions, receipts): (Vec<_>, Vec<_>) =
         itertools::process_results(txn_results, |iter| iter.unzip())?;
 

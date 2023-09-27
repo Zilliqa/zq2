@@ -226,7 +226,7 @@ impl Node {
     }
 
     pub async fn call_contract(
-        &mut self,
+        &self,
         block_number: BlockNumber,
         from_addr: Address,
         to_addr: Option<Address>,
@@ -258,7 +258,7 @@ impl Node {
 
     #[allow(clippy::too_many_arguments)]
     pub async fn estimate_gas(
-        &mut self,
+        &self,
         block_number: BlockNumber,
         from_addr: Address,
         to_addr: Option<Address>,
@@ -300,7 +300,7 @@ impl Node {
     }
 
     pub async fn get_account(
-        &mut self,
+        &self,
         address: Address,
         block_number: BlockNumber,
     ) -> Result<Account> {
@@ -311,7 +311,7 @@ impl Node {
     }
 
     pub async fn get_account_storage(
-        &mut self,
+        &self,
         address: Address,
         index: H256,
         block_number: BlockNumber,
@@ -323,7 +323,7 @@ impl Node {
     }
 
     pub async fn get_native_balance(
-        &mut self,
+        &self,
         address: Address,
         block_number: BlockNumber,
     ) -> Result<U256> {
@@ -338,10 +338,7 @@ impl Node {
             .get_block_by_view_locally(self.get_chain_tip())
     }
 
-    pub async fn get_block_by_number(
-        &mut self,
-        block_number: BlockNumber,
-    ) -> Result<Option<Block>> {
+    pub async fn get_block_by_number(&self, block_number: BlockNumber) -> Result<Option<Block>> {
         self.get_block_by_view(self.get_view(block_number)).await
     }
 
@@ -353,15 +350,15 @@ impl Node {
         self.consensus.get_genesis_hash()
     }
 
-    pub async fn get_block_hash_by_view(&mut self, view: u64) -> Result<Option<Hash>> {
+    pub async fn get_block_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
         self.consensus.get_block_hash_by_view(view).await
     }
 
-    pub async fn get_block_by_view(&mut self, view: u64) -> Result<Option<Block>> {
+    pub async fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
         self.consensus.get_block_by_view(view).await
     }
 
-    pub async fn get_block_by_hash(&mut self, hash: Hash) -> Result<Option<Block>> {
+    pub async fn get_block_by_hash(&self, hash: Hash) -> Result<Option<Block>> {
         self.consensus.get_block(&hash).await
     }
 
