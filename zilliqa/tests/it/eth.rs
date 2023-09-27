@@ -4,7 +4,9 @@ use std::fmt::Debug;
 use ethers::{
     abi::FunctionExt,
     providers::{Middleware, Provider},
-    types::{transaction::eip2718::TypedTransaction, BlockId, BlockNumber, TransactionRequest},
+    types::{
+        transaction::eip2718::TypedTransaction, BlockId, BlockNumber, Filter, TransactionRequest,
+    },
     utils::keccak256,
 };
 
@@ -215,6 +217,195 @@ async fn get_account_transaction_count(mut network: Network) {
     // Check the wallet has a transaction count of zero at the previous block
     let count = count_at_block(provider, (wallet.address(), block_number - 1)).await;
     assert_eq!(count, 0);
+}
+
+#[zilliqa_macros::test]
+async fn get_logs(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let (hash, contract) = deploy_contract(
+        "tests/it/contracts/EmitEvents.sol",
+        "EmitEvents",
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+
+    let emit_first = contract.function("emitEvents").unwrap();
+    let call_tx = TransactionRequest::new()
+        .to(contract_address)
+        .data(emit_first.encode_input(&[]).unwrap());
+
+    let call_tx_hash = wallet
+        .send_transaction(call_tx, None)
+        .await
+        .unwrap()
+        .tx_hash();
+    // Wait until the transaction has succeeded.
+    network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_transaction_receipt(call_tx_hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    let receipt = wallet
+        .get_transaction_receipt(call_tx_hash)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Make sure searching by both block hash and block number work.
+    assert_eq!(
+        wallet
+            .get_logs(&Filter::new().at_block_hash(receipt.block_hash.unwrap()))
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        wallet
+            .get_logs(&Filter::new().select(receipt.block_number.unwrap()))
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let base = Filter::new().at_block_hash(receipt.block_hash.unwrap());
+
+    // Make sure filtering by address works.
+    assert_eq!(
+        wallet
+            .get_logs(&base.clone().address(wallet.address()))
+            .await
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(
+        wallet
+            .get_logs(&base.clone().address(contract_address))
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // Make sure filtering by topic works.
+    let transfer = contract.event("Transfer").unwrap().signature();
+    let approval = contract.event("Approval").unwrap().signature();
+    let nonsense = H256::from_low_u64_be(123);
+
+    // Filter by topic0.
+    assert_eq!(
+        wallet
+            .get_logs(&base.clone().topic0(transfer))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        wallet
+            .get_logs(&base.clone().topic0(approval))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        wallet
+            .get_logs(&base.clone().topic0(nonsense))
+            .await
+            .unwrap()
+            .len(),
+        0
+    );
+    // Multiple topics in the same position act as an OR filter.
+    assert_eq!(
+        wallet
+            .get_logs(&base.clone().topic0(vec![transfer, approval]))
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    // Including extra topics in the OR filter doesn't make a difference.
+    assert_eq!(
+        wallet
+            .get_logs(&base.clone().topic0(vec![transfer, approval, nonsense]))
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // Filter by topic1 (same value for both logs).
+    let one = H256::from_low_u64_be(1);
+    assert_eq!(
+        wallet
+            .get_logs(&base.clone().topic1(one))
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // Filter by topic2 (different value for each log).
+    let two = H256::from_low_u64_be(2);
+    let three = H256::from_low_u64_be(3);
+    assert_eq!(
+        wallet
+            .get_logs(&base.clone().topic2(two))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        wallet
+            .get_logs(&base.clone().topic2(three))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        wallet
+            .get_logs(&base.clone().topic2(vec![two, three]))
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // Filter by multiple topics.
+    assert_eq!(
+        wallet
+            .get_logs(
+                &base
+                    .clone()
+                    .topic0(vec![transfer, approval])
+                    .topic1(one)
+                    .topic2(vec![two, three])
+            )
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 #[zilliqa_macros::test]
