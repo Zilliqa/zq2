@@ -323,6 +323,12 @@ impl Display for BlockNumber {
     }
 }
 
+impl From<u64> for BlockNumber {
+    fn from(num: u64) -> Self {
+        Self::Number(num)
+    }
+}
+
 impl<'de> Deserialize<'de> for BlockNumber {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

@@ -3,17 +3,16 @@ use std::{panic::AssertUnwindSafe, sync::Arc};
 use tokio::sync::Mutex;
 
 use anyhow::{anyhow, Result};
+use evm_ds::tracing_logging::InternalOperationOtter;
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
+use tracing::trace;
 
 use crate::{crypto::Hash, message::BlockNumber, node::Node, state::Address, time::SystemTime};
 
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},
-    types::{
-        EthTransaction, EthTransactionReceiptWithTimestamp, OtterscanBlockDetails,
-        OtterscanBlockTransactions, OtterscanBlockWithTransactions, OtterscanTransactions,
-    },
+    types::ots,
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -27,6 +26,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("ots_hasCode", has_code),
             ("ots_searchTransactionsAfter", search_transactions_after),
             ("ots_searchTransactionsBefore", search_transactions_before),
+            ("ots_getInternalOperations", get_internal_operations),
         ],
     )
 }
@@ -39,7 +39,7 @@ async fn get_otterscan_api_level(_: Params<'_>, _: &Arc<Mutex<Node>>) -> Result<
 async fn get_block_details(
     params: Params<'_>,
     node: &Arc<Mutex<Node>>,
-) -> Result<Option<OtterscanBlockDetails>> {
+) -> Result<Option<ots::BlockDetails>> {
     let block: u64 = params.one()?;
 
     let block = node
@@ -48,7 +48,7 @@ async fn get_block_details(
         .get_block_by_view(block)
         .await?
         .as_ref()
-        .map(OtterscanBlockDetails::from);
+        .map(ots::BlockDetails::from);
 
     Ok(block)
 }
@@ -56,7 +56,7 @@ async fn get_block_details(
 async fn get_block_details_by_hash(
     params: Params<'_>,
     node: &Arc<Mutex<Node>>,
-) -> Result<Option<OtterscanBlockDetails>> {
+) -> Result<Option<ots::BlockDetails>> {
     let block_hash: H256 = params.one()?;
 
     let block = node
@@ -65,7 +65,7 @@ async fn get_block_details_by_hash(
         .get_block_by_hash(Hash(block_hash.0))
         .await?
         .as_ref()
-        .map(OtterscanBlockDetails::from);
+        .map(ots::BlockDetails::from);
 
     Ok(block)
 }
@@ -73,7 +73,7 @@ async fn get_block_details_by_hash(
 async fn get_block_transactions(
     params: Params<'_>,
     node: &Arc<Mutex<Node>>,
-) -> Result<Option<OtterscanBlockTransactions>> {
+) -> Result<Option<ots::BlockTransactions>> {
     let mut params = params.sequence();
     let block_num: u64 = params.next()?;
     let page_number: usize = params.next()?;
@@ -86,32 +86,31 @@ async fn get_block_transactions(
     let start = usize::min(page_number * page_size, block.transactions.len());
     let end = usize::min((page_number + 1) * page_size, block.transactions.len());
 
-    let txn_results = join_all(
-        block.transactions[start..end]
-            .iter()
-            .map(|hash| async move {
-                // There are some redundant calls between these two functions - We could optimise by combining them.
-                let txn = get_transaction_inner(*hash, &node)
-                    .await?
-                    .ok_or_else(|| anyhow!("transaction not found: {hash}"))?;
-                let receipt = get_transaction_receipt_inner(*hash, &node)
-                    .await?
-                    .ok_or_else(|| anyhow!("receipt not found: {hash}"))?;
+    let txn_results = join_all(block.transactions[start..end].iter().map(|hash| {
+        let node = &node;
+        async move {
+            // There are some redundant calls between these two functions - We could optimise by combining them.
+            let txn = get_transaction_inner(*hash, &node)
+                .await?
+                .ok_or_else(|| anyhow!("transaction not found: {hash}"))?;
+            let receipt = get_transaction_receipt_inner(*hash, &node)
+                .await?
+                .ok_or_else(|| anyhow!("receipt not found: {hash}"))?;
 
-                Ok::<_, anyhow::Error>((txn, receipt))
-            }),
-    )
+            Ok::<_, anyhow::Error>((txn, receipt))
+        }
+    }))
     .await;
 
     let (transactions, receipts): (Vec<_>, Vec<_>) =
         itertools::process_results(txn_results, |iter| iter.unzip())?;
 
-    let full_block = OtterscanBlockWithTransactions {
+    let full_block = ots::BlockWithTransactions {
         transactions,
         block: (&block).into(),
     };
 
-    Ok(Some(OtterscanBlockTransactions {
+    Ok(Some(ots::BlockTransactions {
         full_block,
         receipts,
     }))
@@ -139,7 +138,7 @@ async fn search_transactions_inner(
     block_number: u64,
     page_size: usize,
     reverse: bool,
-) -> Result<OtterscanTransactions> {
+) -> Result<ots::Transactions> {
     let mut touched = node.lock().await.get_touched_transactions(address)?;
 
     // If searching in reverse, we should start with the most recent transaction and work backwards.
@@ -157,7 +156,7 @@ async fn search_transactions_inner(
     let mut finished = true;
 
     for hash in touched {
-        let txn: EthTransaction = get_transaction_inner(hash, &mut node.lock().await)
+        let txn = get_transaction_inner(hash, &mut node.lock().await)
             .await
             .unwrap()
             .unwrap();
@@ -193,7 +192,7 @@ async fn search_transactions_inner(
         transactions.push(txn);
 
         let mut node = node.lock().await;
-        let receipt = EthTransactionReceiptWithTimestamp {
+        let receipt = ots::TransactionReceiptWithTimestamp {
             receipt: get_transaction_receipt_inner(hash, &mut node)
                 .await
                 .unwrap()
@@ -223,7 +222,7 @@ async fn search_transactions_inner(
         (finished, block_number == 0)
     };
 
-    Ok(OtterscanTransactions {
+    Ok(ots::Transactions {
         transactions,
         receipts,
         first_page,
@@ -234,7 +233,7 @@ async fn search_transactions_inner(
 async fn search_transactions_after(
     params: Params<'_>,
     node: &Arc<Mutex<Node>>,
-) -> Result<OtterscanTransactions> {
+) -> Result<ots::Transactions> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let block_number: u64 = params.next()?;
@@ -246,7 +245,7 @@ async fn search_transactions_after(
 async fn search_transactions_before(
     params: Params<'_>,
     node: &Arc<Mutex<Node>>,
-) -> Result<OtterscanTransactions> {
+) -> Result<ots::Transactions> {
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let mut block_number: u64 = params.next()?;
@@ -258,4 +257,45 @@ async fn search_transactions_before(
     }
 
     search_transactions_inner(&node, Address(address), block_number, page_size, true).await
+}
+
+async fn get_internal_operations(
+    params: Params<'_>,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Vec<InternalOperationOtter>> {
+    trace!("get_internal_operations called");
+    let hash: H256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+
+    let node = node.lock().await;
+
+    let tx = node.get_transaction_by_hash(hash)?;
+
+    let receipt = get_transaction_receipt_inner(hash, &node).await?;
+
+    if tx.is_none() || receipt.is_none() {
+        return Err(anyhow!("transaction not yet executed: {hash}"));
+    }
+
+    let tx = tx.unwrap();
+    let receipt = receipt.unwrap();
+
+    let call_result = node
+        .call_contract(
+            receipt.block_number.into(),
+            tx.from_addr,
+            tx.transaction.to_addr,
+            tx.transaction.payload,
+            tx.transaction.amount.into(),
+            true,
+        )
+        .await;
+
+    Ok(call_result
+        .unwrap()
+        .tx_trace
+        .lock()
+        .unwrap()
+        .otter_internal_tracer
+        .clone())
 }

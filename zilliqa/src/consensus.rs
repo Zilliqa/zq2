@@ -1,5 +1,4 @@
 use ethabi::{Event, Log, RawLog};
-use primitive_types::H256;
 use std::path::Path;
 
 use crate::message::{ExternalMessage, InternalMessage};
@@ -7,10 +6,15 @@ use crate::node::MessageSender;
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
+use primitive_types::H256;
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::ops::Add;
-use std::{collections::BTreeMap, error::Error, fmt::Display};
+use std::{
+    collections::{BTreeMap, HashSet},
+    error::Error,
+    fmt::Display,
+};
 use tracing::*;
 
 use crate::message::Committee;
@@ -457,10 +461,16 @@ impl Consensus {
         // already executed it in the process of proposing this block.
         if !self.transactions.contains_key(hash.0)? {
             let mut listener = TouchedAddressEventListener::default();
+
             let result = evm_ds::evm::tracing::using(&mut listener, || {
-                self.state
-                    .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
+                self.state.apply_transaction(
+                    txn.clone(),
+                    self.config.eth_chain_id,
+                    current_block,
+                    false,
+                )
             })?;
+
             for address in listener.touched {
                 self.touched_address_index.merge(address.0, hash.0)?;
             }
@@ -483,43 +493,91 @@ impl Consensus {
             .map(|opt| opt.unwrap_or_default())
     }
 
+    // Get valid TXs to execute while also cleaning the mempool of TXs that are invalid
     pub fn get_txns_to_execute(&mut self) -> Vec<SignedTransaction> {
-        // Note: push back Txns that have an incorrect nonce
-        let to_exec = self.new_transactions
-            .values()
-            .cloned()
-            .filter(|tx| {
-                if self.state.has_account(tx.from_addr)
-                    && self.state.must_get_account(tx.from_addr).nonce < tx.transaction.nonce
-                {
-                    // Incremement the value if it exists, otherwise set it to 1
-                    let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
-                    let _ = retries.add(1);
-                    warn!(
-                        "Transaction nonce for tx {} is incorrect: {} when acct nonce is {}, tries: {}/{}",
+        let mut tx_from_addrs: HashSet<Address> = HashSet::new();
+        let mut tx_hashes_invalid: Vec<Hash> = Vec::new();
+        let mut ret: Vec<SignedTransaction> = Vec::new();
+
+        if self.config.consensus.block_tx_limit < 1 {
+            warn!("Block TX limit is set to 0, no TXs will be added to the block");
+        }
+
+        for (_hash, tx) in self.new_transactions.iter() {
+            if ret.len() >= self.config.consensus.block_tx_limit {
+                break;
+            }
+
+            // All TXs must have some balance
+            if self
+                .state
+                .get_native_balance(tx.from_addr, false)
+                .unwrap()
+                .is_zero()
+            {
+                warn!(
+                    "Transaction from address {} has no balance and will be dropped",
+                    tx.from_addr
+                );
+                tx_hashes_invalid.push(tx.hash());
+                continue;
+            }
+
+            // If the TX nonce is too low, remove it
+            let nonce = self.state.must_get_account(tx.from_addr).nonce;
+            if tx.transaction.nonce < nonce {
+                warn!(
+                    "Transaction nonce for tx {} is too low: {} when acct nonce is {}",
+                    tx.hash(),
+                    tx.transaction.nonce,
+                    nonce
+                );
+                tx_hashes_invalid.push(tx.hash());
+                continue;
+            }
+
+            // If it is higher, mark it for a retry
+            if tx.transaction.nonce > nonce {
+                let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
+                let _ = retries.add(1);
+                warn!(
+                        "Transaction nonce for tx {} is too high: {} when acct nonce is {}, tries: {}/{}",
                         tx.hash(),
                         tx.transaction.nonce,
                         self.state.must_get_account(tx.from_addr).nonce,
                         retries,
                         self.config.tx_retries
                     );
-                    return false;
-                }
-                true
-            })
-            .collect();
 
-        // retries might have been exceeded for some Tx, so dump them
-        self.new_transactions_waiting.retain(|tx, retries| {
-            if *retries >= self.config.tx_retries {
-                warn!(?tx, "Tranaction has exceeded retries and has been removed");
-                self.new_transactions.remove(tx);
+                if *retries >= self.config.tx_retries {
+                    warn!(?tx, "Tranaction has exceeded retries and will been removed");
+                    tx_hashes_invalid.push(tx.hash());
+                    continue;
+                }
             }
 
-            *retries < self.config.tx_retries
-        });
+            // Tx nonce is good to add, we need to check that there isn't already a tx with the same
+            // from address, though (no need to drop though)
+            if tx_from_addrs.contains(&tx.from_addr) {
+                warn!(
+                    "Transaction from address {} already exists in block and will not be added",
+                    tx.from_addr
+                );
+                continue;
+            }
 
-        to_exec
+            // Tx appears to be good, add it to the list
+            tx_from_addrs.insert(tx.from_addr);
+            ret.push(tx.clone());
+        }
+
+        // Remove invalid txs
+        for hash in tx_hashes_invalid {
+            self.new_transactions.remove(&hash);
+            self.new_transactions_waiting.remove(&hash);
+        }
+
+        ret
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
@@ -660,10 +718,11 @@ impl Consensus {
         let Some((index, sender)) = committee
             .iter()
             .enumerate()
-            .find(|(_, v)| v.public_key == new_view.public_key) else {
-                debug!("ignoring new view from unknown node (buffer?)");
-                return Ok(None);
-            };
+            .find(|(_, v)| v.public_key == new_view.public_key)
+        else {
+            debug!("ignoring new view from unknown node (buffer?)");
+            return Ok(None);
+        };
         new_view.verify(sender.public_key)?;
 
         // check if the sender's qc is higher than our high_qc or even higher than our view
@@ -781,20 +840,18 @@ impl Consensus {
     pub fn get_transaction_receipts_in_block(
         &self,
         block_hash: Hash,
-    ) -> Result<Option<Vec<TransactionReceipt>>> {
+    ) -> Result<Vec<TransactionReceipt>> {
         self.transaction_receipts
             .get(block_hash.0)?
             .map(|encoded| Ok(bincode::deserialize::<Vec<TransactionReceipt>>(&encoded)?))
-            .transpose()
+            .unwrap_or_else(|| Ok(vec![]))
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
         let Some(block_hash) = self.get_block_hash_from_transaction(hash)? else {
             return Ok(None);
         };
-        let Some(block_receipts) = self.get_transaction_receipts_in_block(block_hash)? else {
-            return Ok(None);
-        };
+        let block_receipts = self.get_transaction_receipts_in_block(block_hash)?;
         Ok(block_receipts
             .into_iter()
             .find(|receipt| receipt.tx_hash == *hash))
@@ -806,9 +863,7 @@ impl Consensus {
         event: Event,
         emitter: Address,
     ) -> Result<Vec<Log>> {
-        let Some(receipts) = self.get_transaction_receipts_in_block(hash)? else {
-            return Ok(vec![]); // no transations in block, most likely
-        };
+        let receipts = self.get_transaction_receipts_in_block(hash)?;
 
         let logs: Result<Vec<_>, _> = receipts
             .into_iter()
@@ -990,11 +1045,12 @@ impl Consensus {
             )?;
             for log in shard_logs {
                 let Some(shard_id) = log
-                .params
-                .into_iter()
-                .find(|param| param.name == "id")
-                .and_then(|param| param.value.into_uint()) else {
-                return Err(anyhow!("LaunchShard event does not contain an id!"))
+                    .params
+                    .into_iter()
+                    .find(|param| param.name == "id")
+                    .and_then(|param| param.value.into_uint())
+                else {
+                    return Err(anyhow!("LaunchShard event does not contain an id!"));
                 };
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::LaunchShard(shard_id.as_u64()))?;
@@ -1117,7 +1173,9 @@ impl Consensus {
     }
 
     fn get_high_qc_from_block<'a>(&self, block: &'a Block) -> Result<&'a QuorumCertificate> {
-        let Some(agg) = &block.agg else { return Ok(&block.qc); };
+        let Some(agg) = &block.agg else {
+            return Ok(&block.qc);
+        };
 
         let high_qc = self.get_highest_from_agg(agg)?;
 

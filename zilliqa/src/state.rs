@@ -1,14 +1,16 @@
 use core::fmt;
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
-use generic_array::{
-    sequence::Split,
-    typenum::{U12, U20},
-    GenericArray,
-};
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use rlp::RlpStream;
-use sha3::{Digest, Keccak256};
+use sha3::{
+    digest::generic_array::{
+        sequence::Split,
+        typenum::{U12, U20},
+        GenericArray,
+    },
+    Digest, Keccak256,
+};
 use sled::Tree;
 use std::convert::TryInto;
 use std::fmt::{Display, LowerHex};
@@ -80,6 +82,8 @@ impl State {
 
         for (address, balance) in config.genesis_accounts {
             state.set_native_balance(address, balance.parse()?)?;
+            let account_new = state.get_account(address)?;
+            state.save_account(address, account_new)?;
         }
 
         Ok(state)

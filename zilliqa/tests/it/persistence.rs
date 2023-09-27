@@ -86,7 +86,10 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     // should run enough samples to still have decent test coverage, we simply skip the rest of the
     // test if this happens.
     let Ok((newnode, _)) = result else {
-        warn!("Failed to release database lock. Skipping test, with seed {}.", network.seed);
+        warn!(
+            "Failed to release database lock. Skipping test, with seed {}.",
+            network.seed
+        );
         return;
     };
     let inner = newnode.inner.lock().unwrap();
