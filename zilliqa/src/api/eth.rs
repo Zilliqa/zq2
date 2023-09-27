@@ -92,10 +92,10 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.from,
         call_params.to,
         call_params.data,
-        ret.return_value.to_hex()
+        ret.to_hex()
     );
 
-    Ok(ret.return_value.to_hex())
+    Ok(ret.to_hex())
 }
 
 fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {

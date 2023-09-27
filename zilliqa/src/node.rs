@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use evm_ds::protos::evm_proto::{self as EvmProto};
 use libp2p::PeerId;
 use primitive_types::{H256, U256};
 use tokio::sync::mpsc::UnboundedSender;
@@ -266,7 +265,7 @@ impl Node {
         data: Vec<u8>,
         amount: U256,
         tracing: bool,
-    ) -> Result<EvmProto::EvmResult> {
+    ) -> Result<Vec<u8>> {
         let block = self
             .get_block_by_number(self.get_number(block_number))?
             .ok_or_else(|| anyhow!("block not found"))?;
@@ -310,7 +309,7 @@ impl Node {
         let block = self
             .get_block_by_number(self.get_number(block_number))?
             .ok_or_else(|| anyhow!("block not found"))?;
-        let state = self
+        let mut state = self
             .consensus
             .state()
             .at_root(H256(block.state_root_hash().0));

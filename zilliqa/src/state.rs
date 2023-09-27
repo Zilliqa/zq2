@@ -47,16 +47,16 @@ impl State {
                 contracts::shard_registry::BYTECODE.to_vec(),
                 &[Token::Uint(config.consensus_timeout.as_millis().into())],
             )?;
-            state.force_deploy_contract(shard_data, Some(contract_addr::SHARD_CONTRACT))?;
+            state.deploy_genesis_contract(contract_addr::SHARD_CONTRACT, shard_data)?;
         };
 
         let native_token_data = contracts::native_token::CONSTRUCTOR
             .encode_input(contracts::native_token::BYTECODE.to_vec(), &[])?;
-        state.force_deploy_contract(native_token_data, Some(contract_addr::NATIVE_TOKEN))?;
+        state.deploy_genesis_contract(contract_addr::NATIVE_TOKEN, native_token_data)?;
 
         let gas_price_data = contracts::gas_price::CONSTRUCTOR
             .encode_input(contracts::gas_price::BYTECODE.to_vec(), &[])?;
-        state.force_deploy_contract(gas_price_data, Some(contract_addr::GAS_PRICE))?;
+        state.deploy_genesis_contract(contract_addr::GAS_PRICE, gas_price_data)?;
 
         let _ = state.set_gas_price(default_gas_price().into());
 

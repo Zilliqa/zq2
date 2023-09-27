@@ -260,7 +260,7 @@ fn get_internal_operations(
     let tx = tx.tx.into_transaction();
     let receipt = receipt.unwrap();
 
-    let call_result = node.call_contract(
+    let _call_result = node.call_contract(
         receipt.block_number.into(),
         from,
         tx.to_addr(),
@@ -269,11 +269,5 @@ fn get_internal_operations(
         true,
     );
 
-    Ok(call_result
-        .unwrap()
-        .tx_trace
-        .lock()
-        .unwrap()
-        .otter_internal_tracer
-        .clone())
+    todo!()
 }

@@ -12,7 +12,7 @@ use ethers::{
         BlockId, BlockNumber, Eip1559TransactionRequest, Eip2930TransactionRequest, Filter,
         Transaction, TransactionReceipt, TransactionRequest,
     },
-    utils::keccak256,
+    utils::keccak256, signers::LocalWallet, middleware::SignerMiddleware,
 };
 use futures::future::join_all;
 use primitive_types::{H160, H256};
@@ -169,6 +169,11 @@ async fn get_block_transaction_count(mut network: Network) {
 #[zilliqa_macros::test]
 async fn get_account_transaction_count(mut network: Network) {
     let wallet = network.genesis_wallet().await;
+    println!("wallet address is {:?}", wallet.address());
+    println!(
+        "and balance is {:?}",
+        wallet.get_balance(wallet.address(), None).await.unwrap()
+    );
     let provider = wallet.provider();
 
     async fn count_at_block(provider: &Provider<LocalRpcClient>, params: (H160, U64)) -> u64 {
@@ -426,6 +431,7 @@ async fn get_storage_at(mut network: Network) {
     )
     .await;
 
+    println!("deployment hash is {hash:?}");
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let contract_address = receipt.contract_address.unwrap();
 
@@ -503,6 +509,38 @@ async fn send_transaction(
     mut tx: TypedTransaction,
 ) -> (Transaction, TransactionReceipt) {
     let wallet = network.genesis_wallet().await;
+    wallet.fill_transaction(&mut tx, None).await.unwrap();
+    let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
+    let expected_hash = tx.hash(&sig);
+    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    assert_eq!(hash, expected_hash);
+
+    network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    let tx = wallet.get_transaction(hash).await.unwrap().unwrap();
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+
+    (tx, receipt)
+}
+
+/// Helper method for send transaction tests.
+async fn send_transaction_wallet(
+    network: &mut Network,
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+    mut tx: TypedTransaction,
+) -> (Transaction, TransactionReceipt) {
     wallet.fill_transaction(&mut tx, None).await.unwrap();
     let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
     let expected_hash = tx.hash(&sig);
@@ -782,18 +820,26 @@ async fn gas_charged_on_revert(mut network: Network) {
     // Revert on out-of-gas. Ensure entire gas limit is consumed.
     let balance_before_call = wallet.get_balance(wallet.address(), None).await.unwrap();
 
+    println!("time to fail out of gas");
+
     let fail_out_of_gas_call = TransactionRequest::new()
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(true)]).unwrap())
         .gas(SMALL_GAS_LIMIT);
-    let (_, receipt) = send_transaction(&mut network, fail_out_of_gas_call.into()).await;
+    let (tx, receipt) = send_transaction_wallet(&mut network, &wallet, fail_out_of_gas_call.into()).await;
+    println!("Sent: {tx:?}");
 
     assert_eq!(receipt.status.unwrap().as_u32(), 0);
     let balance_after_call = wallet.get_balance(wallet.address(), None).await.unwrap();
+    println!("{:?}", receipt.gas_used);
     assert_eq!(
-        balance_after_call,
-        balance_before_call - gas_price * SMALL_GAS_LIMIT
+        dbg!(balance_after_call),
+        dbg!(balance_before_call) - dbg!(gas_price) * dbg!(SMALL_GAS_LIMIT)
     );
+
+
+    // 324518553658426726783067512576256
+    // 324518553658426726783111761576256
 }
 
 #[zilliqa_macros::test]
