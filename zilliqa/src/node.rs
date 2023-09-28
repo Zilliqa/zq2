@@ -119,10 +119,21 @@ impl Node {
         match message {
             Message::External(external_message) => match external_message {
                 ExternalMessage::Proposal(m) => {
+
+                    let m_view = m.header.view;
+
                     if let Some((leader, vote)) = self.consensus.proposal(m)? {
                         self.reset_timeout.send(())?;
                         self.message_sender
                             .send_external_message(leader, ExternalMessage::Vote(vote))?;
+                    } else {
+                        if m_view % 5 == 0 {
+                            info!("We had nothing to respond to proposal, lets try to join committee");
+                            self.message_sender.send_external_message(
+                                from,
+                                ExternalMessage::JoinCommittee(self.consensus.public_key())
+                            )?;
+                        }
                     }
                 }
                 ExternalMessage::Vote(m) => {
@@ -152,6 +163,14 @@ impl Node {
                 ExternalMessage::JoinCommittee(public_key) => {
                     self.add_peer(from, public_key)?;
                 }
+                ExternalMessage::Hello(public_key) => {
+                    if public_key != self.consensus.public_key() {
+                        match self.consensus.timeout(true) {
+                            Some((leader, action)) => { self.message_sender.send_external_message(leader, action)?}
+                            None => {}
+                        }
+                    }
+                }
             },
             Message::Internal(internal_message) => match internal_message {
                 InternalMessage::AddPeer(public_key) => {
@@ -167,12 +186,12 @@ impl Node {
     }
 
     pub fn handle_timeout(&mut self) -> Result<()> {
-        match self.consensus.timeout() {
-            Ok((leader, new_view)) => {
+        match self.consensus.timeout(false) {
+            Some((leader, response)) => {
                 self.message_sender
-                    .send_external_message(leader, ExternalMessage::NewView(Box::new(new_view)))?;
+                    .send_external_message(leader, response)?;
             }
-            Err(_) => {
+            None => {
                 warn!("timeout failed");
             }
         }

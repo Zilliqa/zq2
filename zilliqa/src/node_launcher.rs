@@ -112,8 +112,6 @@ impl NodeLauncher {
 
         self.node_launched = true;
 
-        let mut joined = false;
-
         loop {
             select! {
                 message = self.inbound_message_receiver.next() => {
@@ -123,12 +121,8 @@ impl NodeLauncher {
                 () = &mut sleep => {
                     trace!("timeout elapsed");
 
-                    if !joined {
-                        self.outbound_message_sender.send((None, self.config.eth_chain_id, Message::External(ExternalMessage::JoinCommittee(self.secret_key.node_public_key())))).unwrap();
-                        joined = true;
-                    } else {
-                        self.node.lock().unwrap().handle_timeout().unwrap();
-                    }
+                    self.node.lock().unwrap().handle_timeout().unwrap();
+                    self.outbound_message_sender.send((None, self.config.eth_chain_id, Message::External(ExternalMessage::Hello(self.secret_key.node_public_key())))).unwrap();
                     sleep.as_mut().reset(Instant::now() + self.consensus_timeout);
                 },
                 r = self.reset_timeout_receiver.next() => {

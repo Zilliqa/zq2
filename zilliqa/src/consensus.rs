@@ -247,6 +247,10 @@ impl Consensus {
         Ok(consensus)
     }
 
+    pub fn public_key(&self) -> NodePublicKey {
+        self.secret_key.node_public_key()
+    }
+
     pub fn get_chain_tip(&self) -> u64 {
         self.view.saturating_sub(1)
     }
@@ -256,6 +260,7 @@ impl Consensus {
         peer_id: PeerId,
         public_key: NodePublicKey,
     ) -> Result<Option<(Option<PeerId>, ExternalMessage)>> {
+        trace!(%peer_id, "adding peer to consensus");
         if self.pending_peers.contains(&Validator {
             peer_id,
             public_key,
@@ -311,12 +316,37 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn timeout(&mut self) -> Result<(PeerId, NewView)> {
+    pub fn timeout(&mut self, peers_joined: bool) -> Option<((PeerId, ExternalMessage))> {
+
+        if self.view == 1  {
+            if self.config.allow_single_node_network || peers_joined {
+            let genesis = self
+                .get_block_by_view(0).unwrap()
+                .ok_or_else(|| anyhow!("missing block")).unwrap();
+            // If we're in the genesis committee, vote again.
+            if genesis
+                .committee
+                .iter()
+                .any(|v| v.peer_id == self.peer_id())
+            {
+                warn!("timeout in view 1, we should vote for genesis block rather than incrementing view");
+                let leader = self.get_leader(self.view).unwrap();
+                let vote = self.vote_from_block(&genesis);
+                return Some((leader.peer_id, ExternalMessage::Vote(vote)));
+            }
+                // Not genesis node
+                return None;
+            } else {
+                warn!("timeout in view 1, we will wait for a new peer to join the network");
+                return None;
+            }
+        }
+
         self.view += 1;
 
         info!("***** TIMEOUT: View is now {}", self.view);
 
-        let leader = self.get_leader(self.view)?.peer_id;
+        let leader = self.get_leader(self.view).unwrap().peer_id;
 
         let new_view = NewView::new(
             self.secret_key,
@@ -324,7 +354,7 @@ impl Consensus {
             self.view,
             self.secret_key.node_public_key(),
         );
-        Ok((leader, new_view))
+        Some((leader, ExternalMessage::NewView(Box::new(new_view))))
     }
 
     pub fn peer_id(&self) -> PeerId {
@@ -370,7 +400,7 @@ impl Consensus {
 
         // If the proposed block is safe, vote for it and advance to the next round.
         if self.check_safe_block(&block)? {
-            trace!("block is safe");
+            trace!("block {} aka {} is safe", block.view(), block.hash());
 
             let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
             for txn in &transactions {
@@ -415,7 +445,7 @@ impl Consensus {
             self.save_highest_view(block.hash(), proposal_view)?;
 
             if !block.committee.iter().any(|v| v.peer_id == self.peer_id()) {
-                trace!("can't vote for block proposal, we aren't in the committee");
+                trace!("can't vote for block proposal, we aren't in the committee of length {:?}", block.committee.len());
                 Ok(None)
             } else {
                 let vote = self.vote_from_block(&block);
@@ -686,7 +716,7 @@ impl Consensus {
         let parent = match parent {
             Ok(Some(parent)) => parent,
             _ => {
-                warn!("parent not found during leader for view");
+                warn!("parent not found during leader for view {}", view);
                 return None;
             }
         };
@@ -1188,13 +1218,14 @@ impl Consensus {
 
         // This block's timestamp must be at most `self.allowed_timestamp_skew` away from the current time. Note this
         // can be either forwards or backwards in time.
+        // Genesis is an exception for now since the timestamp can differ across nodes
         let difference = block
             .timestamp()
             .elapsed()
             .unwrap_or_else(|err| err.duration());
-        if difference > self.config.allowed_timestamp_skew {
+        if difference > self.config.allowed_timestamp_skew && parent.view() > 0 {
             return Err(anyhow!(
-                "timestamp difference greater than allowed skew: {difference:?}"
+                "timestamp difference greater than allowed skew: {difference:?}. Blocks {0:?} and {1:?}", block.view(), parent.view(),
             ));
         }
 
