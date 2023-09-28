@@ -4,7 +4,7 @@ use super::to_hex::ToHex;
 
 pub mod eth;
 pub mod ots;
-pub mod zilliqa;
+pub mod zil;
 
 pub fn hex<S: Serializer, T: ToHex>(data: T, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(&data.to_hex())

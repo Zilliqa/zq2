@@ -1,4 +1,3 @@
-[[nodes]]
 otlp_collector_endpoint = "http://otel-collector:4317"
 
 [[nodes]]

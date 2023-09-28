@@ -121,7 +121,7 @@ Please open an issue or PR for APIs that you think should be included.
 | `GetCurrentDSEpoch` | 🔴 |
 | `GetNodeType` | 🔴 |
 | `GetNetworkId` | 🟢 |
-| `CreateTransaction` | 🔴 |
+| `CreateTransaction` | 🟠 |
 | `GetTransaction` | 🔴 |
 | `GetSoftConfirmedTransaction` | 🔴 |
 | `GetDsBlock` | 🔴 |
