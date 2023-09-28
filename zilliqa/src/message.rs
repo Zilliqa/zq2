@@ -524,6 +524,11 @@ impl Block {
         timestamp: SystemTime,
         committee: Committee,
     ) -> Block {
+
+        if committee.len() <= 1 && view > 50 {
+            panic!("committee size must be greater than 1 for non genesis blocks");
+        }
+
         // FIXME: Just concatenating the keys is dumb.
         let committee_keys: Vec<_> = committee
             .0
@@ -567,6 +572,11 @@ impl Block {
         timestamp: SystemTime,
         committee: Committee,
     ) -> Block {
+
+        if committee.len() <= 1 && view > 50 {
+            panic!("committee size must be greater than 1 for non genesis blocks");
+        }
+
         // FIXME: Just concatenating the keys is dumb.
         let committee_keys: Vec<_> = committee
             .0
