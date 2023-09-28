@@ -10,7 +10,11 @@ use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::ops::Add;
-use std::{collections::{BTreeMap, HashSet}, error::Error, fmt::Display};
+use std::{
+    collections::{BTreeMap, HashSet},
+    error::Error,
+    fmt::Display,
+};
 use tracing::*;
 
 use crate::message::Committee;
@@ -298,7 +302,6 @@ impl Consensus {
     }
 
     fn download_blocks_up_to(&mut self, to: u64) -> Result<()> {
-
         for view in (self.view + 1)..to {
             self.view = view;
             self.block_store.request_block_by_view(view)?;
@@ -317,23 +320,24 @@ impl Consensus {
     }
 
     pub fn timeout(&mut self, peers_joined: bool) -> Option<(PeerId, ExternalMessage)> {
-
-        if self.view == 1  {
+        if self.view == 1 {
             if self.config.allow_single_node_network || peers_joined {
-            let genesis = self
-                .get_block_by_view(0).unwrap()
-                .ok_or_else(|| anyhow!("missing block")).unwrap();
-            // If we're in the genesis committee, vote again.
-            if genesis
-                .committee
-                .iter()
-                .any(|v| v.peer_id == self.peer_id())
-            {
-                warn!("timeout in view 1, we should vote for genesis block rather than incrementing view");
-                let leader = self.get_leader(self.view).unwrap();
-                let vote = self.vote_from_block(&genesis);
-                return Some((leader.peer_id, ExternalMessage::Vote(vote)));
-            }
+                let genesis = self
+                    .get_block_by_view(0)
+                    .unwrap()
+                    .ok_or_else(|| anyhow!("missing block"))
+                    .unwrap();
+                // If we're in the genesis committee, vote again.
+                if genesis
+                    .committee
+                    .iter()
+                    .any(|v| v.peer_id == self.peer_id())
+                {
+                    warn!("timeout in view 1, we should vote for genesis block rather than incrementing view");
+                    let leader = self.get_leader(self.view).unwrap();
+                    let vote = self.vote_from_block(&genesis);
+                    return Some((leader.peer_id, ExternalMessage::Vote(vote)));
+                }
                 // Not genesis node
                 return None;
             } else {
@@ -445,7 +449,10 @@ impl Consensus {
             self.save_highest_view(block.hash(), proposal_view)?;
 
             if !block.committee.iter().any(|v| v.peer_id == self.peer_id()) {
-                trace!("can't vote for block proposal, we aren't in the committee of length {:?}", block.committee.len());
+                trace!(
+                    "can't vote for block proposal, we aren't in the committee of length {:?}",
+                    block.committee.len()
+                );
                 Ok(None)
             } else {
                 let vote = self.vote_from_block(&block);

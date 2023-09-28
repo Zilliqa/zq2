@@ -119,7 +119,6 @@ impl Node {
         match message {
             Message::External(external_message) => match external_message {
                 ExternalMessage::Proposal(m) => {
-
                     let m_view = m.header.view;
 
                     if let Some((leader, vote)) = self.consensus.proposal(m)? {
@@ -130,7 +129,7 @@ impl Node {
                         info!("We had nothing to respond to proposal, lets try to join committee");
                         self.message_sender.send_external_message(
                             from,
-                            ExternalMessage::JoinCommittee(self.consensus.public_key())
+                            ExternalMessage::JoinCommittee(self.consensus.public_key()),
                         )?;
                     }
                 }
@@ -163,9 +162,8 @@ impl Node {
                 }
                 ExternalMessage::Hello(public_key) => {
                     if public_key != self.consensus.public_key() {
-                        match self.consensus.timeout(true) {
-                            Some((leader, action)) => { self.message_sender.send_external_message(leader, action)?}
-                            None => {}
+                        if let Some((leader, action)) = self.consensus.timeout(true) {
+                            self.message_sender.send_external_message(leader, action)?
                         }
                     }
                 }
