@@ -90,7 +90,6 @@ impl BlockStore {
     }
 
     pub fn set_canonical(&mut self, view: u64, hash: Hash) -> Result<()> {
-        trace!(view = view, hash = ?hash, "set canonical block view");
         self.canonical_block_numbers
             .insert(view.to_be_bytes(), &hash.0)?;
         Ok(())

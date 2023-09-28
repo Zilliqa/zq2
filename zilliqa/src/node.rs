@@ -6,6 +6,8 @@ use crate::{
 };
 use primitive_types::H256;
 
+use evm_ds::protos::evm_proto::{self as EvmProto};
+
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 
@@ -113,7 +115,7 @@ impl Node {
     pub fn handle_message(&mut self, from: PeerId, message: Message) -> Result<()> {
         let to = self.peer_id;
         let message_name = message.name();
-        debug!(%from, %to, %message_name, "handling message");
+        tracing::debug!(%from, %to, %message_name, "handling message");
         match message {
             Message::External(external_message) => match external_message {
                 ExternalMessage::Proposal(m) => {
@@ -123,7 +125,6 @@ impl Node {
                             .send_external_message(leader, ExternalMessage::Vote(vote))?;
                     }
                 }
-                // todo: move this into consensus proper
                 ExternalMessage::Vote(m) => {
                     if let Some((block, transactions)) = self.consensus.vote(m)? {
                         self.message_sender.broadcast_external_message(
@@ -211,7 +212,7 @@ impl Node {
         self.consensus.view()
     }
 
-    fn get_view(&self, block_number: BlockNumber) -> u64 {
+    pub fn get_view(&self, block_number: BlockNumber) -> u64 {
         match block_number {
             BlockNumber::Number(n) => n,
             BlockNumber::Earliest => 0,
@@ -232,7 +233,9 @@ impl Node {
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
-    ) -> Result<Vec<u8>> {
+        amount: U256,
+        tracing: bool,
+    ) -> Result<EvmProto::EvmResult> {
         let block = self
             .get_block_by_view(self.get_view(block_number))?
             .ok_or_else(|| anyhow!("block not found"))?;
@@ -245,9 +248,11 @@ impl Node {
             from_addr,
             to_addr,
             data,
+            amount,
             self.config.eth_chain_id,
             block.header,
             true,
+            tracing,
         )
     }
 
@@ -347,7 +352,7 @@ impl Node {
     pub fn get_transaction_receipts_in_block(
         &self,
         block_hash: Hash,
-    ) -> Result<Option<Vec<TransactionReceipt>>> {
+    ) -> Result<Vec<TransactionReceipt>> {
         self.consensus.get_transaction_receipts_in_block(block_hash)
     }
 

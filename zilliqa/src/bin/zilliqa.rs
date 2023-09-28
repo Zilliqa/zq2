@@ -21,14 +21,6 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // //let format = fmt::format()
-    //.//with_level(true) // don't include levels in formatted output
-    //.//with_target(true) // don't include targets
-    //.//with_thread_ids(false) // include the thread ID of the current thread
-    //.//with_thread_names(false) // include the name of the current thread
-    //.//compact(); // use the `Compact` formatting style
-
-    //tracing_subscriber::fmt().with_max_level(Level::TRACE).event_format(format).init();
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();

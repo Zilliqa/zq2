@@ -186,7 +186,6 @@ impl InternalMessage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuorumCertificate {
     /// An aggregated signature from `n - f` distinct replicas, built by signing a block hash in a specific view.
-    /// 'in a specific view - but its not included?'
     pub signature: NodeSignature,
     pub cosigned: BitVec,
     pub block_hash: Hash,
@@ -321,6 +320,12 @@ impl Display for BlockNumber {
                 Self::Pending => "pending".to_string(),
             }
         )
+    }
+}
+
+impl From<u64> for BlockNumber {
+    fn from(num: u64) -> Self {
+        Self::Number(num)
     }
 }
 
@@ -524,10 +529,6 @@ impl Block {
         timestamp: SystemTime,
         committee: Committee,
     ) -> Block {
-        if committee.len() <= 1 && view > 50 {
-            panic!("committee size must be greater than 1 for non genesis blocks");
-        }
-
         // FIXME: Just concatenating the keys is dumb.
         let committee_keys: Vec<_> = committee
             .0
@@ -571,10 +572,6 @@ impl Block {
         timestamp: SystemTime,
         committee: Committee,
     ) -> Block {
-        if committee.len() <= 1 && view > 50 {
-            panic!("committee size must be greater than 1 for non genesis blocks");
-        }
-
         // FIXME: Just concatenating the keys is dumb.
         let committee_keys: Vec<_> = committee
             .0
