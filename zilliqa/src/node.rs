@@ -126,14 +126,12 @@ impl Node {
                         self.reset_timeout.send(())?;
                         self.message_sender
                             .send_external_message(leader, ExternalMessage::Vote(vote))?;
-                    } else {
-                        if m_view % 5 == 0 {
-                            info!("We had nothing to respond to proposal, lets try to join committee");
-                            self.message_sender.send_external_message(
-                                from,
-                                ExternalMessage::JoinCommittee(self.consensus.public_key())
-                            )?;
-                        }
+                    } else if m_view % 5 == 0 {
+                        info!("We had nothing to respond to proposal, lets try to join committee");
+                        self.message_sender.send_external_message(
+                            from,
+                            ExternalMessage::JoinCommittee(self.consensus.public_key())
+                        )?;
                     }
                 }
                 ExternalMessage::Vote(m) => {

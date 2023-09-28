@@ -316,7 +316,7 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn timeout(&mut self, peers_joined: bool) -> Option<((PeerId, ExternalMessage))> {
+    pub fn timeout(&mut self, peers_joined: bool) -> Option<(PeerId, ExternalMessage)> {
 
         if self.view == 1  {
             if self.config.allow_single_node_network || peers_joined {
