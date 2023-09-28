@@ -510,41 +510,91 @@ impl Consensus {
             .map(|opt| opt.unwrap_or_default())
     }
 
+    // Get valid TXs to execute while also cleaning the mempool of TXs that are invalid
     pub fn get_txns_to_execute(&mut self) -> Vec<SignedTransaction> {
-        // Note: push back Txns that have an incorrect nonce
-        let to_exec = self.new_transactions
-            .values().filter(|&tx| {
-            if self.state.has_account(tx.from_addr)
-                && self.state.must_get_account(tx.from_addr).nonce < tx.transaction.nonce
+        let mut tx_from_addrs: HashSet<Address> = HashSet::new();
+        let mut tx_hashes_invalid: Vec<Hash> = Vec::new();
+        let mut ret: Vec<SignedTransaction> = Vec::new();
+
+        if self.config.consensus.block_tx_limit < 1 {
+            warn!("Block TX limit is set to 0, no TXs will be added to the block");
+        }
+
+        for (_hash, tx) in self.new_transactions.iter() {
+            if ret.len() >= self.config.consensus.block_tx_limit {
+                break;
+            }
+
+            // All TXs must have some balance
+            if self
+                .state
+                .get_native_balance(tx.from_addr, false)
+                .unwrap()
+                .is_zero()
             {
-                // Incremement the value if it exists, otherwise set it to 1
+                warn!(
+                    "Transaction from address {} has no balance and will be dropped",
+                    tx.from_addr
+                );
+                tx_hashes_invalid.push(tx.hash());
+                continue;
+            }
+
+            // If the TX nonce is too low, remove it
+            let nonce = self.state.must_get_account(tx.from_addr).nonce;
+            if tx.transaction.nonce < nonce {
+                warn!(
+                    "Transaction nonce for tx {} is too low: {} when acct nonce is {}",
+                    tx.hash(),
+                    tx.transaction.nonce,
+                    nonce
+                );
+                tx_hashes_invalid.push(tx.hash());
+                continue;
+            }
+
+            // If it is higher, mark it for a retry
+            if tx.transaction.nonce > nonce {
                 let retries = self.new_transactions_waiting.entry(tx.hash()).or_insert(0);
                 let _ = retries.add(1);
                 warn!(
-                        "Transaction nonce for tx {} is incorrect: {} when acct nonce is {}, tries: {}/{}",
+                        "Transaction nonce for tx {} is too high: {} when acct nonce is {}, tries: {}/{}",
                         tx.hash(),
                         tx.transaction.nonce,
                         self.state.must_get_account(tx.from_addr).nonce,
                         retries,
                         self.config.tx_retries
                     );
-                return false;
-            }
-            true
-        }).cloned()
-            .collect();
 
-        // retries might have been exceeded for some Tx, so dump them
-        self.new_transactions_waiting.retain(|tx, retries| {
-            if *retries >= self.config.tx_retries {
-                warn!(?tx, "Tranaction has exceeded retries and has been removed");
-                self.new_transactions.remove(tx);
+                if *retries >= self.config.tx_retries {
+                    warn!(?tx, "Tranaction has exceeded retries and will been removed");
+                    tx_hashes_invalid.push(tx.hash());
+                    continue;
+                }
             }
 
-            *retries < self.config.tx_retries
-        });
+            // Tx nonce is good to add, we need to check that there isn't already a tx with the same
+            // from address, though (no need to drop though)
+            if tx_from_addrs.contains(&tx.from_addr) {
+                warn!(
+                    "Transaction from address {} already exists in block and will not be added",
+                    tx.from_addr
+                );
+                continue;
+            }
 
-        to_exec
+            // Tx appears to be good, add it to the list
+            tx_from_addrs.insert(tx.from_addr);
+            ret.push(tx.clone());
+        }
+
+        // Remove invalid txs
+        for hash in tx_hashes_invalid {
+            self.new_transactions.remove(&hash);
+            self.new_transactions_waiting.remove(&hash);
+        }
+
+        ret
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
