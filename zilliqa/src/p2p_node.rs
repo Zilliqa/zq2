@@ -205,7 +205,6 @@ impl P2pNode {
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id })) => {
                         for addr in listen_addrs {
-                            info!(%peer_id, %addr, "identity info received");
                             self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                         }
                         // Mark the address observed for us by the external peer as confirmed.

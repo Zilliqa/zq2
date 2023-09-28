@@ -500,10 +500,16 @@ impl Consensus {
         // already executed it in the process of proposing this block.
         if !self.transactions.contains_key(hash.0)? {
             let mut listener = TouchedAddressEventListener::default();
+
             let result = evm_ds::evm::tracing::using(&mut listener, || {
-                self.state
-                    .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block)
+                self.state.apply_transaction(
+                    txn.clone(),
+                    self.config.eth_chain_id,
+                    current_block,
+                    false,
+                )
             })?;
+
             for address in listener.touched {
                 self.touched_address_index.merge(address.0, hash.0)?;
             }
@@ -688,7 +694,7 @@ impl Consensus {
 
                     // randomly don't send the proposal
                     let random_number = rand::random::<u8>() % 100;
-                    if random_number == 0 && self.view > 20 {
+                    if random_number == 0 && self.view > 100 {
                         warn!("**************************** randomly not sending proposal ****************************");
                         //self.view += 1;
                         return Ok(None);
@@ -953,20 +959,18 @@ impl Consensus {
     pub fn get_transaction_receipts_in_block(
         &self,
         block_hash: Hash,
-    ) -> Result<Option<Vec<TransactionReceipt>>> {
+    ) -> Result<Vec<TransactionReceipt>> {
         self.transaction_receipts
             .get(block_hash.0)?
             .map(|encoded| Ok(bincode::deserialize::<Vec<TransactionReceipt>>(&encoded)?))
-            .transpose()
+            .unwrap_or_else(|| Ok(vec![]))
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
         let Some(block_hash) = self.get_block_hash_from_transaction(hash)? else {
             return Ok(None);
         };
-        let Some(block_receipts) = self.get_transaction_receipts_in_block(block_hash)? else {
-            return Ok(None);
-        };
+        let block_receipts = self.get_transaction_receipts_in_block(block_hash)?;
         Ok(block_receipts
             .into_iter()
             .find(|receipt| receipt.tx_hash == *hash))
@@ -978,9 +982,7 @@ impl Consensus {
         event: Event,
         emitter: Address,
     ) -> Result<Vec<Log>> {
-        let Some(receipts) = self.get_transaction_receipts_in_block(hash)? else {
-            return Ok(vec![]); // no transations in block, most likely
-        };
+        let receipts = self.get_transaction_receipts_in_block(hash)?;
 
         let logs: Result<Vec<_>, _> = receipts
             .into_iter()
