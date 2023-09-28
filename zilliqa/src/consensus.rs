@@ -10,7 +10,7 @@ use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::ops::Add;
-use std::{collections::BTreeMap, error::Error, fmt::Display};
+use std::{collections::{BTreeMap, HashSet}, error::Error, fmt::Display};
 use tracing::*;
 
 use crate::message::Committee;
