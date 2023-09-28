@@ -21,7 +21,6 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-
     // //let format = fmt::format()
     //.//with_level(true) // don't include levels in formatted output
     //.//with_target(true) // don't include targets

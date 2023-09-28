@@ -325,7 +325,6 @@ impl Consensus {
     }
 
     fn download_blocks_up_to(&mut self, to: u64) -> Result<()> {
-
         //trace!("downloading blocks up to {}", to);
 
         for view in (self.view + 1)..to {
@@ -335,7 +334,11 @@ impl Consensus {
 
         if to > self.view {
             // This seems incorrect/not relevant
-            info!("*** Downloading missing blocks...view is going from {} to {}", self.view, to + 1);
+            info!(
+                "*** Downloading missing blocks...view is going from {} to {}",
+                self.view,
+                to + 1
+            );
             self.view = to + 1;
         }
 
@@ -448,7 +451,10 @@ impl Consensus {
             self.download_blocks_up_to(proposal_view.saturating_sub(1))?;
             self.view = proposal_view + 1;
 
-            info!("*** setting view to proposal view... view is now {}", self.view);
+            info!(
+                "*** setting view to proposal view... view is now {}",
+                self.view
+            );
 
             //// randomly increase the view by one with probability 1 in 100
             //// get random nunmber between 0 and 99
@@ -523,9 +529,7 @@ impl Consensus {
     pub fn get_txns_to_execute(&mut self) -> Vec<SignedTransaction> {
         // Note: push back Txns that have an incorrect nonce
         let to_exec = self.new_transactions
-            .values()
-            .cloned()
-            .filter(|tx| {
+            .values().filter(|&tx| {
                 if self.state.has_account(tx.from_addr)
                     && self.state.must_get_account(tx.from_addr).nonce < tx.transaction.nonce
                 {
@@ -543,7 +547,7 @@ impl Consensus {
                     return false;
                 }
                 true
-            })
+            }).cloned()
             .collect();
 
         // retries might have been exceeded for some Tx, so dump them
@@ -560,7 +564,9 @@ impl Consensus {
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
-        let Some(block) = self.get_block(&vote.block_hash)? else { return Ok(None); }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
+        let Some(block) = self.get_block(&vote.block_hash)? else {
+            return Ok(None);
+        }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
         let block_hash = block.hash();
         let block_view = block.view();
         trace!(block_view, self.view, %block_hash, "handling vote");
@@ -568,8 +574,17 @@ impl Consensus {
         // if we are not the leader of the round in which the vote counts
         // The vote is in the happy path (?) - so the view is block view + 1
         if !self.are_we_leader_for_view(block_hash, block_view + 1) {
-            let committee_is = self.committee_for_view(block_hash, block_view + 1)?.iter().map(|v| v.peer_id).collect::<Vec<_>>();
-            trace!(vote_view = block_view + 1, ?block_hash, ?committee_is, "skipping vote, not the leader");
+            let committee_is = self
+                .committee_for_view(block_hash, block_view + 1)?
+                .iter()
+                .map(|v| v.peer_id)
+                .collect::<Vec<_>>();
+            trace!(
+                vote_view = block_view + 1,
+                ?block_hash,
+                ?committee_is,
+                "skipping vote, not the leader"
+            );
             return Ok(None);
         }
         // if the vote is too old and does not count anymore
@@ -599,7 +614,10 @@ impl Consensus {
             });
 
         if supermajority_reached {
-            trace!("(vote) supermajority already reached in this round {}", self.view);
+            trace!(
+                "(vote) supermajority already reached in this round {}",
+                self.view
+            );
             return Ok(None);
         }
 
@@ -698,13 +716,19 @@ impl Consensus {
         }
 
         if !self.pending_peers.is_empty() {
-            info!("adding {} pending peers to committee", self.pending_peers.len());
+            info!(
+                "adding {} pending peers to committee",
+                self.pending_peers.len()
+            );
         }
 
         committee.add_validators(self.pending_peers.drain(..));
 
-        if committee.len() <=1 {
-            warn!("committee is too small {}, something might be wrong", committee.len());
+        if committee.len() <= 1 {
+            warn!(
+                "committee is too small {}, something might be wrong",
+                committee.len()
+            );
         }
 
         committee
@@ -731,7 +755,7 @@ impl Consensus {
         Some(parent.committee.leader(view).peer_id)
     }
 
-    fn committee_for_view(&mut self, parent_hash: Hash, view: u64) -> Result<Committee> {
+    fn committee_for_view(&mut self, parent_hash: Hash, _view: u64) -> Result<Committee> {
         let parent = self.get_block(&parent_hash);
 
         let parent = match parent {
@@ -780,10 +804,11 @@ impl Consensus {
         let Some((index, sender)) = committee
             .iter()
             .enumerate()
-            .find(|(_, v)| v.public_key == new_view.public_key) else {
-                debug!("ignoring new view from unknown node (buffer?) - committee size is : {:?} hash is: {:?} high hash is: {:?}", committee.len(), new_view.qc.block_hash, self.high_qc.block_hash);
-                return Ok(None);
-            };
+            .find(|(_, v)| v.public_key == new_view.public_key)
+        else {
+            debug!("ignoring new view from unknown node (buffer?) - committee size is : {:?} hash is: {:?} high hash is: {:?}", committee.len(), new_view.qc.block_hash, self.high_qc.block_hash);
+            return Ok(None);
+        };
         new_view.verify(sender.public_key)?;
 
         // check if the sender's qc is higher than our high_qc or even higher than our view
@@ -841,8 +866,11 @@ impl Consensus {
                 "storing vote for new view"
             );
             if supermajority {
-                if (self.view < new_view.view) {
-                    info!("forcibly updating view to {} as majority is ahead", new_view.view);
+                if self.view < new_view.view {
+                    info!(
+                        "forcibly updating view to {} as majority is ahead",
+                        new_view.view
+                    );
                     self.view = new_view.view;
                 }
 
@@ -994,7 +1022,9 @@ impl Consensus {
         } else {
             let current_high_qc_view = self
                 .get_block(&self.high_qc.block_hash)?
-                .ok_or_else(|| anyhow!("missing block corresponding to our high qc - this should never happen"))?
+                .ok_or_else(|| {
+                    anyhow!("missing block corresponding to our high qc - this should never happen")
+                })?
                 .view();
             // If `from_agg` then we always release the lock because the supermajority has a different high_qc.
             if from_agg || new_high_qc_block_view > current_high_qc_view {
@@ -1043,14 +1073,19 @@ impl Consensus {
         // todo: the block extends from another block through a chain of parent hashes and not qcs
         let mut current = block.clone();
         while current.view() > ancestor.view() {
-            let Some(next) = self.get_block(&current.parent_hash())? else { return Err(MissingBlockError::from(current.parent_hash()).into()); };
+            let Some(next) = self.get_block(&current.parent_hash())? else {
+                return Err(MissingBlockError::from(current.parent_hash()).into());
+            };
             current = next;
         }
         Ok(current.view() == 0 || current.hash() == ancestor.hash())
     }
 
     fn check_safe_block(&mut self, proposal: &Block) -> Result<bool> {
-        let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else { trace!("could not get qc for block: {}", proposal.qc.block_hash); return Ok(false); };
+        let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else {
+            trace!("could not get qc for block: {}", proposal.qc.block_hash);
+            return Ok(false);
+        };
         // We don't vote on blocks older than our view
         let outdated = proposal.view() < self.view;
         let proposal_hash = proposal.hash();
@@ -1093,9 +1128,18 @@ impl Consensus {
     }
 
     fn check_and_commit(&mut self, proposal_hash: Hash) -> Result<()> {
-        let Some(proposal) = self.get_block(&proposal_hash)? else { trace!("block not found: {proposal_hash}"); return Ok(()); };
-        let Some(prev_1) = self.get_block(&proposal.qc.block_hash)? else { trace!("parent not found: {}", proposal.qc.block_hash); return Ok(()); };
-        let Some(prev_2) = self.get_block(&prev_1.qc.block_hash)? else { trace!("grandparent not found: {}", prev_1.qc.block_hash); return Ok(()); };
+        let Some(proposal) = self.get_block(&proposal_hash)? else {
+            trace!("block not found: {proposal_hash}");
+            return Ok(());
+        };
+        let Some(prev_1) = self.get_block(&proposal.qc.block_hash)? else {
+            trace!("parent not found: {}", proposal.qc.block_hash);
+            return Ok(());
+        };
+        let Some(prev_2) = self.get_block(&prev_1.qc.block_hash)? else {
+            trace!("grandparent not found: {}", prev_1.qc.block_hash);
+            return Ok(());
+        };
 
         if prev_1.view() == 0 || prev_1.view() == prev_2.view() + 1 {
             let committed_block = prev_2;
@@ -1105,7 +1149,9 @@ impl Consensus {
             let mut current = committed_block.clone();
             // commit blocks back to the last finalized block
             while current.view() > self.finalized_view {
-                let Some(new) = self.get_block(&current.parent_hash())? else { return Ok(()); };
+                let Some(new) = self.get_block(&current.parent_hash())? else {
+                    return Ok(());
+                };
                 current = new;
             }
             if current.hash() == finalized_block.hash() {
@@ -1139,11 +1185,12 @@ impl Consensus {
             )?;
             for log in shard_logs {
                 let Some(shard_id) = log
-                .params
-                .into_iter()
-                .find(|param| param.name == "id")
-                .and_then(|param| param.value.into_uint()) else {
-                return Err(anyhow!("LaunchShard event does not contain an id!"))
+                    .params
+                    .into_iter()
+                    .find(|param| param.name == "id")
+                    .and_then(|param| param.value.into_uint())
+                else {
+                    return Err(anyhow!("LaunchShard event does not contain an id!"));
                 };
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::LaunchShard(shard_id.as_u64()))?;
@@ -1161,7 +1208,9 @@ impl Consensus {
             return Ok(());
         }
 
-        let Some(finalized_block) = self.get_block_by_view(self.finalized_view)? else { return Err(MissingBlockError::from(self.finalized_view).into()); };
+        let Some(finalized_block) = self.get_block_by_view(self.finalized_view)? else {
+            return Err(MissingBlockError::from(self.finalized_view).into());
+        };
         if block.view() < finalized_block.view() {
             return Err(anyhow!(
                 "block is too old: view is {} but we have finalized {}",
@@ -1170,7 +1219,9 @@ impl Consensus {
             ));
         }
 
-        let Some(parent) = self.get_block(&block.parent_hash())? else { return Err(MissingBlockError::from(block.parent_hash()).into()); };
+        let Some(parent) = self.get_block(&block.parent_hash())? else {
+            return Err(MissingBlockError::from(block.parent_hash()).into());
+        };
 
         // Derive the proposer from the block's parent view
         let proposer = parent.committee.leader(block.view());
@@ -1178,7 +1229,11 @@ impl Consensus {
 
         //let proposer =
 
-        trace!("I think the block proposer is: {}, we are {}", proposer.peer_id, self.peer_id());
+        trace!(
+            "I think the block proposer is: {}, we are {}",
+            proposer.peer_id,
+            self.peer_id()
+        );
         // Verify the proposer's signature on the block
         let verified = proposer
             .public_key
@@ -1201,7 +1256,9 @@ impl Consensus {
 
         // Retrieve the highest among the aggregated QCs and check if it equals the block's QC.
         let block_high_qc = self.get_high_qc_from_block(block)?;
-        let Some(block_high_qc_block) = self.get_block(&block_high_qc.block_hash)? else { return Err(MissingBlockError::from(block_high_qc.block_hash).into()); };
+        let Some(block_high_qc_block) = self.get_block(&block_high_qc.block_hash)? else {
+            return Err(MissingBlockError::from(block_high_qc.block_hash).into());
+        };
         // Prevent the creation of forks from the already committed chain
         if block_high_qc_block.view() < finalized_block.view() {
             return Err(anyhow!("invalid block"));
@@ -1275,7 +1332,9 @@ impl Consensus {
     }
 
     fn get_high_qc_from_block<'a>(&self, block: &'a Block) -> Result<&'a QuorumCertificate> {
-        let Some(agg) = &block.agg else { return Ok(&block.qc); };
+        let Some(agg) = &block.agg else {
+            return Ok(&block.qc);
+        };
 
         let high_qc = self.get_highest_from_agg(agg)?;
 
@@ -1387,7 +1446,12 @@ impl Consensus {
         Ok(block.committee.leader(view))
     }
 
-    fn check_quorum_in_bits(&self, view: u64, cosigned: &BitSlice, committee: &Committee) -> Result<()> {
+    fn check_quorum_in_bits(
+        &self,
+        _view: u64,
+        cosigned: &BitSlice,
+        committee: &Committee,
+    ) -> Result<()> {
         // This might not be correct - should pass a view, probably
         //let committee = self.committee()?;
         //let committee = &self
@@ -1407,7 +1471,12 @@ impl Consensus {
         Ok(())
     }
 
-    fn check_quorum_in_indices(&self, view: u64, signers: &[u16], committee: &Committee) -> Result<()> {
+    fn check_quorum_in_indices(
+        &self,
+        _view: u64,
+        signers: &[u16],
+        committee: &Committee,
+    ) -> Result<()> {
         // This might not be correct - should pass a view, probably
         //let committee = self.committee()?;
         //let committee = &self
