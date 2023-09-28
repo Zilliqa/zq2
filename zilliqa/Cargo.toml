@@ -66,6 +66,7 @@ tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 zilliqa-macros = { path = "../zilliqa-macros" }
 hyper = "0.14.27"
+prost = "0.12.1"
 
 [dev-dependencies]
 async-trait = "0.1.73"

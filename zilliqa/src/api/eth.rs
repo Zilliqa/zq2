@@ -424,6 +424,11 @@ pub(super) fn get_transaction_inner(
             s,
             chain_id: _,
         } => (v, r, s),
+        SigningInfo::Zilliqa { signature, .. } => (
+            0,
+            signature.r().to_bytes().into(),
+            signature.s().to_bytes().into(),
+        ),
     };
     let transaction = eth::Transaction {
         block_hash: block.as_ref().map(|b| b.hash().0.into()),

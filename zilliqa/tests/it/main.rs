@@ -3,6 +3,7 @@ mod eth;
 mod native_contracts;
 mod persistence;
 mod web3;
+mod zil;
 use std::env;
 use std::ops::DerefMut;
 use zilliqa::cfg::ConsensusConfig;
