@@ -4,6 +4,7 @@ mod native_contracts;
 mod persistence;
 mod web3;
 mod zil;
+use ethers::solc::SHANGHAI_SOLC;
 use std::env;
 use std::ops::DerefMut;
 use zilliqa::cfg::ConsensusConfig;
@@ -518,11 +519,20 @@ async fn deploy_contract(
     let mut contract_file = tempfile::Builder::new().suffix(".sol").tempfile().unwrap();
     std::io::Write::write_all(&mut contract_file, &contract_source).unwrap();
 
-    let sc = ethers::solc::Solc::default();
+    let sc: ethers::solc::Solc = ethers::solc::Solc::default();
 
     let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
     let compiler_input = compiler_input.first_mut().unwrap();
     compiler_input.settings.evm_version = Some(EvmVersion::Shanghai);
+
+    if let Ok(version) = sc.version() {
+        if version.cmp(&SHANGHAI_SOLC).is_lt() {
+            panic!(
+                "Solc Version {} required, currently set {}",
+                SHANGHAI_SOLC, version
+            );
+        }
+    }
 
     let out = sc
         .compile::<CompilerInput>(compiler_input)
