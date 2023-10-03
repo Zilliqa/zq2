@@ -130,6 +130,8 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let address: H160 = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
+    println!("get_balance: answer: {:?}", node.lock().unwrap().get_native_balance(Address(address), block_number)?);
+
     Ok(node
         .lock()
         .unwrap()

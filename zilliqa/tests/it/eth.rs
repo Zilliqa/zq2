@@ -574,3 +574,103 @@ async fn eth_call(mut network: Network) {
 
     assert_eq!(H256::from_slice(value.as_ref()), H256::from_low_u64_be(99));
 }
+
+#[zilliqa_macros::test]
+async fn nonces_rejected_too_high(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let to: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    let mut tx = TransactionRequest::pay(to, 100);
+
+    // Tx nonce of 1 should never get mined
+    tx.nonce = Some(1.into());
+
+    // Transform the transaction to its final form, so we can caculate the expected hash.
+    let mut tx: TypedTransaction = tx.into();
+
+    wallet.fill_transaction(&mut tx, None).await.unwrap();
+    let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
+    let expected_hash = H256::from_slice(&keccak256(tx.rlp_signed(&sig)));
+
+    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+
+    let wait = network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await;
+
+    // Times out trying to mine
+    assert_eq!(wait.is_err(), true);
+}
+
+#[zilliqa_macros::test]
+async fn nonces_respected_ordered(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let to: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+
+    let mut txs_to_send: Vec<TypedTransaction> = Vec::new();
+    let tx_send_amount = 10;
+    let tx_send_iterations = 1000;
+
+    // collect up a bunch of TXs to send at once, but in reverse order
+    for i in (0..tx_send_iterations).rev() {
+       //println!("Sending tx {}", i);
+       let mut tx = TransactionRequest::pay(to, tx_send_amount);
+       tx.nonce = Some(i.into());
+       let mut tx: TypedTransaction = tx.into();
+
+       wallet.fill_transaction(&mut tx, None).await.unwrap();
+       txs_to_send.push(tx);
+       //let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
+       //let expected_hash = H256::from_slice(&keccak256(tx.rlp_signed(&sig)));
+    }
+
+    // collect the promises and await on them
+    let mut promises = Vec::new();
+
+    // Send all of them
+    for tx in txs_to_send {
+        println!("Sending tx {}", tx.nonce().unwrap().as_u64());
+        let prom = wallet.send_transaction(tx, None);
+        promises.push(prom);
+    }
+
+    // Wait for all of them to be completed
+    for prom in promises {
+        let hash = prom.await.unwrap().tx_hash();
+    }
+
+    println!("All txs sent");
+
+    //assert_eq!(hash, expected_hash);
+
+    // Wait until target account has got all the TXs
+    let wait = network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_balance(to, None)
+                    .await
+                    .unwrap() == (tx_send_amount * tx_send_iterations + 1).into()
+
+            },
+            100,
+        )
+        .await;
+
+    // doesn't time out trying to mine
+    assert_eq!(wait.is_err(), false);
+}
