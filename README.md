@@ -42,7 +42,15 @@ You may also want to set `RUST_LOG=zilliqa=trace` to see the most detailed level
 
 Automated bootstrap of a 4 nodes Zilliqa 2.0 aka zq2 network.
 
+Build the images first:
+
+```bash
+docker build . -t zq2-node0
 ```
+
+Then run:
+
+```bash
 docker-compose up
 ```
 
