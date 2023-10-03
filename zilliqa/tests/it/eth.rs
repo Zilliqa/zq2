@@ -49,7 +49,7 @@ async fn call_block_number(mut network: Network) {
     // Advance the network to the next block.
     network
         .run_until_async(
-            || async { wallet.get_block_number().await.unwrap().as_u64() > block_number },
+            |_| async { wallet.get_block_number().await.unwrap().as_u64() > block_number },
             50,
         )
         .await
@@ -110,7 +110,7 @@ async fn get_block_transaction_count(mut network: Network) {
     }
     network
         .run_until_async(
-            || async { wallet.get_block_number().await.unwrap().as_u64() > 1 },
+            |_| async { wallet.get_block_number().await.unwrap().as_u64() > 1 },
             50,
         )
         .await
@@ -125,7 +125,7 @@ async fn get_block_transaction_count(mut network: Network) {
 
     network
         .run_until_async(
-            || async {
+            |_| async {
                 provider
                     .get_transaction_receipt(hash)
                     .await
@@ -176,7 +176,7 @@ async fn get_account_transaction_count(mut network: Network) {
 
     network
         .run_until_async(
-            || async { wallet.get_block_number().await.unwrap().as_u64() > 1 },
+            |_| async { wallet.get_block_number().await.unwrap().as_u64() > 1 },
             50,
         )
         .await
@@ -191,7 +191,7 @@ async fn get_account_transaction_count(mut network: Network) {
 
     network
         .run_until_async(
-            || async {
+            |_| async {
                 provider
                     .get_transaction_receipt(hash)
                     .await
@@ -247,7 +247,7 @@ async fn get_logs(mut network: Network) {
     // Wait until the transaction has succeeded.
     network
         .run_until_async(
-            || async {
+            |_| async {
                 wallet
                     .get_transaction_receipt(call_tx_hash)
                     .await
@@ -459,7 +459,7 @@ async fn get_storage_at(mut network: Network) {
     // Advance the network to the next block.
     network
         .run_until_async(
-            || async {
+            |_| async {
                 wallet
                     .get_transaction_receipt(update_tx_hash)
                     .await
@@ -513,7 +513,7 @@ async fn send_transaction(mut network: Network) {
 
     network
         .run_until_async(
-            || async {
+            |_| async {
                 wallet
                     .get_transaction_receipt(hash)
                     .await
@@ -545,7 +545,7 @@ async fn eth_call(mut network: Network) {
 
     network
         .run_until_async(
-            || async {
+            |_| async {
                 wallet
                     .get_transaction_receipt(hash)
                     .await

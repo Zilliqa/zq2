@@ -213,11 +213,11 @@ async fn get_block_by_number(
     let block_number: BlockNumber = params.next()?;
     let full: bool = params.next()?;
 
-    let mut node = node.lock().await;
+    let node = node.lock().await;
     let block = node.get_block_by_number(block_number).await?;
 
     if let Some(block) = block {
-        Some(convert_block(&mut node, &block, full).await).transpose()
+        Some(convert_block(&node, &block, full).await).transpose()
     } else {
         Ok(None)
     }
@@ -231,9 +231,9 @@ async fn get_block_by_hash(
     let hash: H256 = params.next()?;
     let full: bool = params.next()?;
 
-    let mut node = node.lock().await;
+    let node = node.lock().await;
     if let Some(block) = node.get_block_by_hash(Hash(hash.0)).await? {
-        Some(convert_block(&mut node, &block, full).await).transpose()
+        Some(convert_block(&node, &block, full).await).transpose()
     } else {
         Ok(None)
     }
@@ -424,9 +424,9 @@ async fn get_transaction_by_hash(
     trace!("get_transaction_by_hash: params: {:?}", params);
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
-    let mut node = node.lock().await;
+    let node = node.lock().await;
 
-    get_transaction_inner(hash, &mut node).await
+    get_transaction_inner(hash, &node).await
 }
 
 pub(super) async fn get_transaction_inner(
@@ -544,8 +544,8 @@ async fn get_transaction_receipt(
     trace!("get_transaction_receipt: params: {:?}", params);
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
-    let mut node = node.lock().await;
-    get_transaction_receipt_inner(hash, &mut node).await
+    let node = node.lock().await;
+    get_transaction_receipt_inner(hash, &node).await
 }
 
 async fn send_raw_transaction(params: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<String> {

@@ -3,8 +3,11 @@ mod eth;
 mod native_contracts;
 mod persistence;
 mod web3;
+use async_fn_traits::AsyncFn2;
+use futures::Stream;
 use std::env;
 use std::ops::DerefMut;
+use std::pin::Pin;
 use zilliqa::cfg::ConsensusConfig;
 use zilliqa::cfg::NodeConfig;
 use zilliqa::crypto::{Hash, NodePublicKey, SecretKey};
@@ -18,7 +21,7 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -35,7 +38,7 @@ use ethers::{
     signers::LocalWallet,
     types::H256,
 };
-use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt};
 use jsonrpsee::{
     types::{Id, RequestSer, Response, ResponsePayload},
     RpcModule,
@@ -48,7 +51,10 @@ use rand_chacha::ChaCha8Rng;
 use serde::Deserialize;
 use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
-use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::{
+    mpsc::{self, UnboundedSender},
+    Mutex as TokioMutex, MutexGuard as TokioMutexGuard,
+};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
 
@@ -63,6 +69,43 @@ struct AbiContract {
     abi: ethabi::Contract,
 }
 
+/// Like BoxStream but with an added Sync bound.
+type SyncBoxStream<T> = Pin<Box<dyn Stream<Item = T> + Sync + Send + 'static>>;
+
+type Wallet = SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>;
+
+/// Used for closures inside Network::run_until_async()
+#[derive(Clone, Default)]
+pub struct Context {
+    index: Option<usize>,
+    hash: Option<H256>,
+    wallet: Option<Wallet>,
+}
+
+impl Context {
+    pub fn index(i: usize) -> Self {
+        Self {
+            index: Some(i),
+            ..Default::default()
+        }
+    }
+
+    pub fn wallet_and_hash(w: Wallet, h: H256) -> Self {
+        Self {
+            hash: Some(h),
+            wallet: Some(w),
+            ..Default::default()
+        }
+    }
+
+    pub fn wallet(w: Wallet) -> Self {
+        Self {
+            wallet: Some(w),
+            ..Default::default()
+        }
+    }
+}
+
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
 // type
 #[allow(clippy::type_complexity)]
@@ -73,17 +116,12 @@ fn node(
     index: usize,
     datadir: Option<TempDir>,
     genesis_account: H160,
-) -> Result<(
-    TestNode,
-    BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
-)> {
+) -> Result<(TestNode, SyncBoxStream<(PeerId, Option<PeerId>, Message)>)> {
     let (message_sender, message_receiver) = mpsc::unbounded_channel();
     let message_receiver = UnboundedReceiverStream::new(message_receiver);
     // Augment the `message_receiver` stream to include the sender's `PeerId`.
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
-    let message_receiver = message_receiver
-        .map(move |(dest, _, message)| (peer_id, dest, message))
-        .boxed();
+    let message_receiver = message_receiver.map(move |(dest, _, message)| (peer_id, dest, message));
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     std::mem::forget(reset_timeout_receiver);
 
@@ -111,8 +149,8 @@ fn node(
         message_sender,
         reset_timeout_sender,
     )?;
-    let node = Arc::new(Mutex::new(node));
-    let rpc_module: RpcModule<Arc<Mutex<Node>>> = zilliqa::api::rpc_module(node.clone());
+    let node = Arc::new(TokioMutex::new(node));
+    let rpc_module: RpcModule<Arc<TokioMutex<Node>>> = zilliqa::api::rpc_module(node.clone());
 
     Ok((
         TestNode {
@@ -123,7 +161,7 @@ fn node(
             dir: datadir,
             rpc_module,
         },
-        message_receiver,
+        Box::pin(message_receiver),
     ))
 }
 
@@ -132,8 +170,8 @@ struct TestNode {
     index: usize,
     secret_key: SecretKey,
     peer_id: PeerId,
-    rpc_module: RpcModule<Arc<Mutex<Node>>>,
-    inner: Arc<Mutex<Node>>,
+    rpc_module: RpcModule<Arc<TokioMutex<Node>>>,
+    inner: Arc<TokioMutex<Node>>,
     dir: Option<TempDir>,
 }
 
@@ -146,7 +184,7 @@ struct Network {
     nodes: Vec<TestNode>,
     /// A stream of messages from each node. The stream items are a tuple of (source, destination, message).
     /// If the destination is `None`, the message is a broadcast.
-    receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, Message)>>,
+    receivers: Vec<SyncBoxStream<(PeerId, Option<PeerId>, Message)>>,
     resend_message: UnboundedSender<(PeerId, Option<PeerId>, Message)>,
     rng: Arc<Mutex<ChaCha8Rng>>,
     /// The seed input for the node - because rng.get_seed() returns a different, internal
@@ -198,7 +236,7 @@ impl Network {
 
         let (resend_message, receive_resend_message) =
             mpsc::unbounded_channel::<(PeerId, Option<PeerId>, Message)>();
-        let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
+        let receive_resend_message = Box::pin(UnboundedReceiverStream::new(receive_resend_message));
         receivers.push(receive_resend_message);
 
         // Pause time so we can control it.
@@ -229,21 +267,14 @@ impl Network {
         }
     }
 
-    pub fn add_node(&mut self, genesis: bool) -> usize {
+    pub async fn add_node(&mut self, genesis: bool) -> usize {
         let secret_key = SecretKey::new_from_rng(self.rng.lock().unwrap().deref_mut()).unwrap();
         let (genesis_committee, genesis_hash) = if genesis {
             (self.genesis_committee.clone(), None)
         } else {
             (
                 vec![],
-                Some(
-                    self.nodes[0]
-                        .inner
-                        .lock()
-                        .unwrap()
-                        .get_genesis_hash()
-                        .unwrap(),
-                ),
+                Some(self.nodes[0].inner.lock().await.get_genesis_hash().unwrap()),
             )
         };
         let (node, receiver) = node(
@@ -346,23 +377,25 @@ impl Network {
                     .find(|n| n.peer_id == destination)
                     .unwrap();
                 let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
-                span.in_scope(|| {
+                span.in_scope(|| async {
                     node.inner
                         .lock()
-                        .unwrap()
+                        .await
                         .handle_message(source, message)
                         .unwrap();
-                });
+                })
+                .await;
             } else {
                 for node in &self.nodes {
                     let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
-                    span.in_scope(|| {
+                    span.in_scope(|| async {
                         node.inner
                             .lock()
-                            .unwrap()
+                            .await
                             .handle_message(source, message.clone())
                             .unwrap();
-                    });
+                    })
+                    .await;
                 }
             }
         }
@@ -388,14 +421,38 @@ impl Network {
         Ok(())
     }
 
-    pub async fn run_until_async<Fut: Future<Output = bool>>(
+    // pub async fn run_until_async<'borrow, 'a: 'borrow, Fut: Future<Output = bool> + 'borrow>(
+    //     &'a mut self,
+    //     condition: impl Fn(&'borrow Network) -> Fut,
+    //     mut timeout: usize,
+    // ) -> Result<()> {
+    //     let initial_timeout = timeout;
+
+    //     while !condition(self).await {
+    //         if timeout == 0 {
+    //             return Err(anyhow!(
+    //                 "condition was still false after {initial_timeout} ticks"
+    //             ));
+    //         }
+    //         self.tick().await;
+    //         timeout -= 1;
+    //     }
+
+    //     Ok(())
+    // }
+
+    pub async fn run_until_async(
         &mut self,
-        mut condition: impl FnMut() -> Fut,
+        condition: impl for<'a> AsyncFn2<&'a Network, Context, Output = bool>,
+        context: Context,
         mut timeout: usize,
     ) -> Result<()> {
         let initial_timeout = timeout;
 
-        while !condition().await {
+        while {
+            let cond_fut = condition(self, context.clone());
+            !cond_fut.await
+        } {
             if timeout == 0 {
                 return Err(anyhow!(
                     "condition was still false after {initial_timeout} ticks"
@@ -408,12 +465,16 @@ impl Network {
         Ok(())
     }
 
-    pub fn random_index(&mut self) -> usize {
+    pub fn random_index(&self) -> usize {
         self.rng.lock().unwrap().gen_range(0..self.nodes.len())
     }
 
-    pub fn get_node(&self, index: usize) -> MutexGuard<Node> {
-        self.nodes[index].inner.lock().unwrap()
+    pub async fn get_node(&self, index: usize) -> TokioMutexGuard<Node> {
+        self.nodes[index].inner.lock().await
+    }
+
+    pub fn get_node_arc(&self, index: usize) -> Arc<TokioMutex<Node>> {
+        self.nodes[index].inner.clone()
     }
 
     pub fn remove_node(&mut self, idx: usize) -> TestNode {
@@ -421,13 +482,11 @@ impl Network {
         self.nodes.remove(idx)
     }
 
-    pub fn node_at(&mut self, index: usize) -> MutexGuard<Node> {
-        self.nodes[index].inner.lock().unwrap()
+    pub async fn node_at(&self, index: usize) -> TokioMutexGuard<Node> {
+        self.nodes[index].inner.lock().await
     }
 
-    pub async fn genesis_wallet(
-        &mut self,
-    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+    pub async fn genesis_wallet(&mut self) -> Wallet {
         let wallet: LocalWallet = self.genesis_key.clone().into();
 
         let node = self
@@ -446,9 +505,7 @@ impl Network {
             .unwrap()
     }
 
-    pub async fn random_wallet(
-        &mut self,
-    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+    pub async fn random_wallet(&mut self) -> Wallet {
         let wallet: LocalWallet = SigningKey::random(self.rng.lock().unwrap().deref_mut()).into();
 
         let node = self
@@ -518,7 +575,7 @@ const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
 async fn deploy_contract(
     path: &str,
     contract: &str,
-    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+    wallet: Wallet,
     network: &mut Network,
 ) -> (H256, Contract) {
     let full_path = format!("{}{}", PROJECT_ROOT, path);
@@ -571,17 +628,18 @@ async fn deploy_contract(
             .unwrap()
             .tx_hash();
 
+        async fn got_tx_hash(_: &Network, context: Context) -> bool {
+            context
+                .wallet
+                .unwrap()
+                .get_transaction_receipt(context.hash.unwrap())
+                .await
+                .unwrap()
+                .is_some()
+        }
+
         network
-            .run_until_async(
-                || async {
-                    wallet
-                        .get_transaction_receipt(hash)
-                        .await
-                        .unwrap()
-                        .is_some()
-                },
-                50,
-            )
+            .run_until_async(got_tx_hash, Context::wallet_and_hash(wallet, hash), 50)
             .await
             .unwrap();
 
@@ -594,7 +652,7 @@ async fn deploy_contract(
 #[derive(Debug, Clone)]
 pub struct LocalRpcClient {
     id: Arc<AtomicU64>,
-    rpc_module: RpcModule<Arc<Mutex<Node>>>,
+    rpc_module: RpcModule<Arc<TokioMutex<Node>>>,
 }
 
 #[async_trait]

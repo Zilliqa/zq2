@@ -90,10 +90,10 @@ async fn get_block_transactions(
         let node = &node;
         async move {
             // There are some redundant calls between these two functions - We could optimise by combining them.
-            let txn = get_transaction_inner(*hash, &node)
+            let txn = get_transaction_inner(*hash, node)
                 .await?
                 .ok_or_else(|| anyhow!("transaction not found: {hash}"))?;
-            let receipt = get_transaction_receipt_inner(*hash, &node)
+            let receipt = get_transaction_receipt_inner(*hash, node)
                 .await?
                 .ok_or_else(|| anyhow!("receipt not found: {hash}"))?;
 
@@ -156,7 +156,7 @@ async fn search_transactions_inner(
     let mut finished = true;
 
     for hash in touched {
-        let txn = get_transaction_inner(hash, &mut node.lock().await)
+        let txn = get_transaction_inner(hash, &node.lock().await)
             .await
             .unwrap()
             .unwrap();
@@ -191,9 +191,9 @@ async fn search_transactions_inner(
 
         transactions.push(txn);
 
-        let mut node = node.lock().await;
+        let node = node.lock().await;
         let receipt = ots::TransactionReceiptWithTimestamp {
-            receipt: get_transaction_receipt_inner(hash, &mut node)
+            receipt: get_transaction_receipt_inner(hash, &node)
                 .await
                 .unwrap()
                 .unwrap(),
@@ -256,7 +256,7 @@ async fn search_transactions_before(
         block_number = u64::MAX;
     }
 
-    search_transactions_inner(&node, Address(address), block_number, page_size, true).await
+    search_transactions_inner(node, Address(address), block_number, page_size, true).await
 }
 
 async fn get_internal_operations(

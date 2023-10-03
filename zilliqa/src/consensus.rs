@@ -160,7 +160,7 @@ impl Consensus {
             None => sled::Config::new().temporary(true).open()?,
         };
 
-        let mut block_store = BlockStore::new(&db, message_sender.clone())?;
+        let block_store = BlockStore::new(&db, message_sender.clone())?;
 
         let state_trie = db.open_tree(STATE_TRIE_TREE)?;
 
@@ -323,7 +323,7 @@ impl Consensus {
         Ok(None)
     }
 
-    fn download_blocks_up_to(&self, to: u64) -> Result<()> {
+    fn download_blocks_up_to(&mut self, to: u64) -> Result<()> {
         for view in (self.view + 1)..to {
             self.view = view;
             self.block_store.request_block_by_view(view)?;
@@ -333,7 +333,7 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn timeout(&self) -> Result<(PeerId, NewView)> {
+    pub fn timeout(&mut self) -> Result<(PeerId, NewView)> {
         self.view += 1;
 
         let leader = self.get_leader(self.view)?.peer_id;
@@ -351,7 +351,7 @@ impl Consensus {
         self.secret_key.to_libp2p_keypair().public().to_peer_id()
     }
 
-    pub fn proposal(&self, proposal: Proposal) -> Result<Option<(PeerId, Vote)>> {
+    pub fn proposal(&mut self, proposal: Proposal) -> Result<Option<(PeerId, Vote)>> {
         let (block, transactions) = proposal.into_parts();
         trace!(block_view = block.view(), "handling block proposal");
 
@@ -1129,7 +1129,7 @@ impl Consensus {
     }
 
     // Checks for the validity of a block and adds it to our block store if valid.
-    pub fn receive_block(&self, block: Block) -> Result<()> {
+    pub fn receive_block(&mut self, block: Block) -> Result<()> {
         if self.block_store.contains_block(block.hash())? {
             return Ok(());
         }

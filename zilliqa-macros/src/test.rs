@@ -44,7 +44,7 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                     let _guard = tracing_subscriber::util::SubscriberInitExt::set_default(subscriber);
 
                     println!("Reproduce this test run by setting ZQ_TEST_RNG_SEED={seed}");
-                    let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
+                    let rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
                     let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed);
                     // Call the original test function
                     #inner_name(network).await;

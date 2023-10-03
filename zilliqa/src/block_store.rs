@@ -116,13 +116,11 @@ impl BlockStore {
     /// and returns a copy locally awaiting
     fn register_request(&self, key: BlockRef) -> Arc<Notify> {
         let notify = Arc::new(Notify::new());
-        if let Some(notifies) = self.pending_requests.lock().unwrap().get_mut(&key) {
+        let mut pending_requests = self.pending_requests.lock().unwrap();
+        if let Some(notifies) = pending_requests.get_mut(&key) {
             notifies.push(notify.clone());
         } else {
-            self.pending_requests
-                .lock()
-                .unwrap()
-                .insert(key, vec![notify.clone()]);
+            pending_requests.insert(key, vec![notify.clone()]);
         }
         notify
     }
