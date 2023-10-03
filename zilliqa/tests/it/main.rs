@@ -528,7 +528,7 @@ async fn deploy_contract(
     if let Ok(version) = sc.version() {
         if version.cmp(&SHANGHAI_SOLC).is_lt() {
             panic!(
-                "Solc Version {} required, currently set {}",
+                "solc version {} required, currently set {}",
                 SHANGHAI_SOLC, version
             );
         }
