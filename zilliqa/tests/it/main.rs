@@ -499,6 +499,7 @@ fn format_message(
 }
 
 const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
+const EVM_VERSION: EvmVersion = EvmVersion::Shanghai;
 
 async fn deploy_contract(
     path: &str,
@@ -519,14 +520,15 @@ async fn deploy_contract(
     let mut contract_file = tempfile::Builder::new().suffix(".sol").tempfile().unwrap();
     std::io::Write::write_all(&mut contract_file, &contract_source).unwrap();
 
-    let sc: ethers::solc::Solc = ethers::solc::Solc::default();
+    let sc = ethers::solc::Solc::default();
 
     let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
     let compiler_input = compiler_input.first_mut().unwrap();
-    compiler_input.settings.evm_version = Some(EvmVersion::Shanghai);
+    compiler_input.settings.evm_version = Some(EVM_VERSION);
 
     if let Ok(version) = sc.version() {
-        if version.cmp(&SHANGHAI_SOLC).is_lt() {
+        // gets the minimum EvmVersion that is compatible the given EVM_VERSION and version arguments
+        if EVM_VERSION.normalize_version(&version) != Some(EVM_VERSION) {
             panic!(
                 "solc version {} required, currently set {}",
                 SHANGHAI_SOLC, version
