@@ -385,8 +385,14 @@ impl Network {
                     "condition was still false after {initial_timeout} ticks"
                 ));
             }
+            use std::time::Instant;
+            let now3 = Instant::now();
+
             self.tick().await;
             timeout -= 1;
+
+            let elapsed3 = now3.elapsed();
+            println!("Elapsed3: {:.2?}", elapsed3);
         }
 
         Ok(())

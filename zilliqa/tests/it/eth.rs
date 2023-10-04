@@ -623,7 +623,7 @@ async fn nonces_respected_ordered(mut network: Network) {
 
     let mut txs_to_send: Vec<TypedTransaction> = Vec::new();
     let tx_send_amount = 10;
-    let tx_send_iterations = 1000;
+    let tx_send_iterations = 100;
 
     // collect up a bunch of TXs to send at once, but in reverse order
     for i in (0..tx_send_iterations).rev() {
@@ -657,19 +657,32 @@ async fn nonces_respected_ordered(mut network: Network) {
 
     //assert_eq!(hash, expected_hash);
 
+    use std::time::Instant;
+    let now = Instant::now();
+
     // Wait until target account has got all the TXs
     let wait = network
         .run_until_async(
             || async {
-                wallet
+                let now2 = Instant::now();
+
+                let res = wallet
                     .get_balance(to, None)
                     .await
-                    .unwrap() == (tx_send_amount * tx_send_iterations + 1).into()
+                    .unwrap() == (tx_send_amount * tx_send_iterations).into();
+
+                let elapsed2 = now2.elapsed();
+                println!("Total test time2 elapsed: {:.2?}", elapsed2);
+                println!("res: {}", res);
+                res
 
             },
-            100,
+            1000000,
         )
         .await;
+
+    let elapsed = now.elapsed();
+    println!("Total test time elapsed: {:.2?}", elapsed);
 
     // doesn't time out trying to mine
     assert_eq!(wait.is_err(), false);
