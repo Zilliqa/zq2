@@ -633,10 +633,7 @@ async fn nonces_respected_ordered(mut network: Network) {
         let mut tx: TypedTransaction = tx.into();
 
         wallet.fill_transaction(&mut tx, None).await.unwrap();
-        println!("tx gas price: {}", tx.gas_price().unwrap().as_u64());
         txs_to_send.push(tx);
-        //let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
-        //let expected_hash = H256::from_slice(&keccak256(tx.rlp_signed(&sig)));
     }
 
     // collect the promises and await on them
@@ -644,7 +641,6 @@ async fn nonces_respected_ordered(mut network: Network) {
 
     // Send all of them
     for tx in txs_to_send {
-        println!("Sending tx {}", tx.nonce().unwrap().as_u64());
         let prom = wallet.send_transaction(tx, None);
         promises.push(prom);
     }
@@ -654,36 +650,19 @@ async fn nonces_respected_ordered(mut network: Network) {
         let hash = prom.await.unwrap().tx_hash();
     }
 
-    println!("All txs sent");
-
-    //assert_eq!(hash, expected_hash);
-
-    use std::time::Instant;
-    let now = Instant::now();
-
     // Wait until target account has got all the TXs
     let wait = network
         .run_until_async(
             || async {
-                let now2 = Instant::now();
-
-                let res = wallet
+                wallet
                     .get_balance(to, None)
                     .await
-                    .unwrap() == (tx_send_amount * tx_send_iterations).into();
-
-                let elapsed2 = now2.elapsed();
-                println!("Total test time2 elapsed: {:.2?}", elapsed2);
-                println!("res: {}", res);
-                res
+                    .unwrap() == (tx_send_amount * tx_send_iterations).into()
 
             },
-            1000000,
+            10000,
         )
         .await;
-
-    let elapsed = now.elapsed();
-    println!("Total test time elapsed: {:.2?}", elapsed);
 
     // doesn't time out trying to mine
     assert_eq!(wait.is_err(), false);
@@ -728,20 +707,16 @@ async fn priority_fees_tx(mut network: Network) {
 
     // Send all of them
     for tx in txs_to_send {
-        println!("Sending tx {}", tx.nonce().unwrap().as_u64());
         let prom = wallet.send_transaction(tx, None);
         promises.push(prom);
     }
 
-    // Wait for all of them to be completed
+    // Wait for all of them to be completed. We need to tick since they get broadcast around
+    // as messages too and you can't guarantee which miner will try to create a block
     for prom in promises {
         let hash = prom.await.unwrap().tx_hash();
         network.tick().await;
     }
-
-    //for i in (1..tx_send_iterations*100) {
-    //    network.tick().await;
-    //}
 
     // Now send the first one
     let mut tx = TransactionRequest::pay(to, tx_send_amount);
@@ -764,9 +739,6 @@ async fn priority_fees_tx(mut network: Network) {
             100,
         )
         .await;
-
-    //let elapsed = now.elapsed();
-    //println!("Total test time elapsed: {:.2?}", elapsed);
 
     // doesn't time out trying to mine
     assert_eq!(wait.is_err(), false);

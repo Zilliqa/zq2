@@ -17,8 +17,6 @@ use std::{
     cmp::Ordering,
     sync::Arc,
     sync::Mutex,
-    //rc::Rc,
-    //cell::RefCell,
 };
 use tracing::*;
 
@@ -293,7 +291,6 @@ impl Consensus {
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
             new_transactions_priority: BTreeMap::new(),
-            //new_transactions_waiting: BTreeMap::new(),
             transactions: db.open_tree(TXS_TREE)?,
             transaction_receipts: db.open_tree(RECEIPTS_TREE)?,
             state,
@@ -515,7 +512,6 @@ impl Consensus {
 
         // If we have the transaction in the mempool, remove it.
         self.remove_tx_from_mempool(&hash);
-        //self.new_transactions.remove(&hash);
 
         // Ensure the transaction has a valid signature
         txn.verify()?;
@@ -561,7 +557,6 @@ impl Consensus {
     // prioritised by nonce (so popping gives lowest), then by gas price and gas limit (highest)
     pub fn get_txns_to_execute(&mut self) -> Vec<SignedTransaction> {
         let mut ret: Vec<SignedTransaction> = Vec::new();
-        //let mut txs_to_remove: Vec<Hash> = Vec::new();
 
         if self.config.consensus.block_tx_limit < 1 {
             warn!("Block TX limit is set to 0, no TXs will be added to the block");
@@ -572,9 +567,7 @@ impl Consensus {
         for (from_addr, txs) in self.new_transactions_priority.iter_mut() {
             // get the nonce of the account, or zero if none
             let mut iter_nonce = self.state.must_get_account(*from_addr).nonce;
-            //let mut iter_nonce = account_nonce;
             let mut remove_all_txs = false;
-            //let mut nonce_too_low = false;
 
             // Clear all nonces from the priority queue that are too low
             while let Some(txn) = txs.pop() {
@@ -587,14 +580,6 @@ impl Consensus {
                 }
             }
 
-            trace!("Considering {:?} priority txs for inclusion", txs.len());
-
-            if txs.len() >= 19 {
-                for item in txs.iter() {
-                    warn!("xxyy xxyy: {:?}", item);
-                }
-            }
-
             // Push as many txs as have a sequential nonce into the map
             // We have to pop, as iterating over a binary heap is not in order.
             // So we put it all back afterward
@@ -602,7 +587,6 @@ impl Consensus {
             let mut temp_vec = Vec::new();
             while let Some(txn) = txs.pop() {
                 temp_vec.push(txn.clone());
-                warn!(?txn, "TX in priority queue");
 
                 // if we have reached the block limit, break
                 if ret.len() >= self.config.consensus.block_tx_limit {
@@ -632,13 +616,6 @@ impl Consensus {
                         remove_all_txs = true;
                     }
 
-                    //// Attempt to get a mutable reference to the inner value
-                    //if let Some(inner_value) = Arc::get_mut(&mut txn.retries.clone()) {
-
-                    //} else {
-                    //    warn!("Failed to get a mutable reference to the inner value.");
-                    //}
-
                     // all other TXs will have a higher nonce, so we can break
                     break;
                 }
@@ -665,15 +642,9 @@ impl Consensus {
             if remove_all_txs {
                 trace!("removing txs for from address {}", from_addr);
                 while let Some(tx) = txs.pop() {
-                    //temp_elements.push(tx);
                     self.new_transactions.remove(&tx.hash);
                 }
             }
-
-            // as cleanup, remove TXs with nonces that are too low
-            //if nonce_too_low {
-            //    txs.retain(|tx| tx.nonce >= account_nonce);
-            //}
         }
 
         // As cleanup, remove any `From` where the heap is empty
@@ -712,7 +683,7 @@ impl Consensus {
             .enumerate()
             .find(|(_, v)| v.public_key == vote.public_key)
             .unwrap();
-        //vote.verify()?;
+        vote.verify()?;
 
         let committee_size = block.committee.len();
         let (mut signatures, mut cosigned, mut cosigned_weight, mut supermajority_reached) =
@@ -934,14 +905,6 @@ impl Consensus {
             .entry(txn.from_addr)
             .or_insert(BinaryHeap::new())
             .push(txn_order);
-
-        warn!("xxyy: {:?}", self.new_transactions_priority.entry(txn.from_addr).or_insert(BinaryHeap::new()));
-
-        for item in self.new_transactions_priority.entry(txn.from_addr).or_insert(BinaryHeap::new()).iter() {
-            warn!("xxyy: {:?}", item);
-        }
-
-        warn!("xxyy");
 
         self.new_transactions.insert(txn.hash(), txn);
 
