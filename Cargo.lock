@@ -6491,6 +6491,7 @@ dependencies = [
  "once_cell",
  "opentelemetry",
  "opentelemetry-otlp",
+ "paste",
  "primitive-types",
  "rand",
  "rand_chacha",

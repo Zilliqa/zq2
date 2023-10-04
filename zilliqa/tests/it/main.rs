@@ -4,6 +4,7 @@ mod native_contracts;
 mod persistence;
 mod web3;
 use async_fn_traits::AsyncFn2;
+use ethers::types::U64;
 use futures::Stream;
 use std::env;
 use std::ops::DerefMut;
@@ -33,7 +34,7 @@ use async_trait::async_trait;
 use ethers::utils::secret_key_to_address;
 use ethers::{
     abi::Contract,
-    prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, SignerMiddleware},
+    prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, Middleware, SignerMiddleware},
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::LocalWallet,
     types::H256,
@@ -78,6 +79,7 @@ type Wallet = SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>;
 #[derive(Clone, Default)]
 pub struct Context {
     index: Option<usize>,
+    block_number: Option<U64>,
     hash: Option<H256>,
     wallet: Option<Wallet>,
 }
@@ -90,17 +92,32 @@ impl Context {
         }
     }
 
-    pub fn wallet_and_hash(w: Wallet, h: H256) -> Self {
+    pub fn block_number(block_number: U64) -> Self {
         Self {
-            hash: Some(h),
-            wallet: Some(w),
+            block_number: Some(block_number),
             ..Default::default()
         }
     }
 
-    pub fn wallet(w: Wallet) -> Self {
+    pub fn wallet_and_hash(wallet: Wallet, hash: H256) -> Self {
         Self {
-            wallet: Some(w),
+            hash: Some(hash),
+            wallet: Some(wallet),
+            ..Default::default()
+        }
+    }
+
+    pub fn wallet_and_block(wallet: Wallet, block_number: U64) -> Self {
+        Self {
+            block_number: Some(block_number),
+            wallet: Some(wallet),
+            ..Default::default()
+        }
+    }
+
+    pub fn wallet(wallet: Wallet) -> Self {
+        Self {
+            wallet: Some(wallet),
             ..Default::default()
         }
     }
@@ -166,7 +183,7 @@ fn node(
 }
 
 /// A node within a test [Network].
-struct TestNode {
+pub struct TestNode {
     index: usize,
     secret_key: SecretKey,
     peer_id: PeerId,
@@ -175,7 +192,7 @@ struct TestNode {
     dir: Option<TempDir>,
 }
 
-struct Network {
+pub struct Network {
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
     /// Child shards.
     pub children: HashMap<u64, Network>,
@@ -361,7 +378,7 @@ impl Network {
             if let InternalMessage::LaunchShard(network_id) = internal_message {
                 if let Some(network) = self.children.get_mut(&network_id) {
                     trace!("Launching shard node for {network_id} - adding new node to shard");
-                    network.add_node(true);
+                    network.add_node(true).await;
                 } else {
                     info!("Launching node in new shard network {network_id}");
                     self.children
@@ -420,26 +437,6 @@ impl Network {
 
         Ok(())
     }
-
-    // pub async fn run_until_async<'borrow, 'a: 'borrow, Fut: Future<Output = bool> + 'borrow>(
-    //     &'a mut self,
-    //     condition: impl Fn(&'borrow Network) -> Fut,
-    //     mut timeout: usize,
-    // ) -> Result<()> {
-    //     let initial_timeout = timeout;
-
-    //     while !condition(self).await {
-    //         if timeout == 0 {
-    //             return Err(anyhow!(
-    //                 "condition was still false after {initial_timeout} ticks"
-    //             ));
-    //         }
-    //         self.tick().await;
-    //         timeout -= 1;
-    //     }
-
-    //     Ok(())
-    // }
 
     pub async fn run_until_async(
         &mut self,
@@ -620,26 +617,18 @@ async fn deploy_contract(
     let deployer = factory.deploy(()).unwrap();
     let abi = deployer.abi().clone();
     {
-        use ethers::providers::Middleware;
-
         let hash = wallet
             .send_transaction(deployer.tx, None)
             .await
             .unwrap()
             .tx_hash();
 
-        async fn got_tx_hash(_: &Network, context: Context) -> bool {
-            context
-                .wallet
-                .unwrap()
-                .get_transaction_receipt(context.hash.unwrap())
-                .await
-                .unwrap()
-                .is_some()
-        }
-
         network
-            .run_until_async(got_tx_hash, Context::wallet_and_hash(wallet, hash), 50)
+            .run_until_async(
+                test_predicates::got_tx_hash,
+                Context::wallet_and_hash(wallet, hash),
+                50,
+            )
             .await
             .unwrap();
 
@@ -689,4 +678,50 @@ impl JsonRpcClient for LocalRpcClient {
 
         Ok(r)
     }
+}
+
+pub mod test_predicates {
+    use super::*;
+    pub async fn got_tx_hash(_: &Network, context: Context) -> bool {
+        context
+            .wallet
+            .unwrap()
+            .get_transaction_receipt(context.hash.unwrap())
+            .await
+            .unwrap()
+            .is_some()
+    }
+
+    pub async fn wallet_block_above(_: &Network, context: Context) -> bool {
+        context.wallet.unwrap().get_block_number().await.unwrap() >= context.block_number.unwrap()
+    }
+
+    macro_rules! produced_blocks_named {
+        ($n:literal, $name: ident) => {
+            async fn $name(network: &Network, context: Context) -> bool {
+                network
+                    .get_node(context.index.unwrap())
+                    .await
+                    .get_latest_block()
+                    .unwrap()
+                    .map_or(0, |b| b.view())
+                    >= $n
+            }
+        };
+    }
+    pub(crate) use produced_blocks_named;
+
+    /// Generate a produced_blocks function (with an optional suffix) in the local scope
+    /// which checks if a random node in the network has produced n blocks, for some literal n
+    macro_rules! produced_blocks {
+        ($n:literal) => {
+            test_predicates::produced_blocks_named!($n, produced_blocks)
+        };
+        ($n:literal, $name: ident) => {
+            paste::paste! {
+                test_predicates::produced_blocks_named!($n, [<produced_blocks_ $name>])
+            }
+        };
+    }
+    pub(crate) use produced_blocks;
 }

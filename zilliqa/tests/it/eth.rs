@@ -13,7 +13,7 @@ use ethers::{
 use primitive_types::{H160, H256};
 use serde::Serialize;
 
-use crate::{deploy_contract, LocalRpcClient, Network};
+use crate::{deploy_contract, test_predicates, Context, LocalRpcClient, Network};
 
 #[zilliqa_macros::test]
 async fn call_block_number(mut network: Network) {
@@ -22,7 +22,7 @@ async fn call_block_number(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/CallMe.sol",
         "CallMe",
-        &wallet,
+        wallet.clone(),
         &mut network,
     )
     .await;
@@ -49,7 +49,8 @@ async fn call_block_number(mut network: Network) {
     // Advance the network to the next block.
     network
         .run_until_async(
-            |_| async { wallet.get_block_number().await.unwrap().as_u64() > block_number },
+            test_predicates::wallet_block_above,
+            Context::wallet_and_block(wallet.clone(), U64([block_number])),
             50,
         )
         .await
@@ -108,9 +109,11 @@ async fn get_block_transaction_count(mut network: Network) {
             .unwrap()
             .as_u64()
     }
+
     network
         .run_until_async(
-            |_| async { wallet.get_block_number().await.unwrap().as_u64() > 1 },
+            test_predicates::wallet_block_above,
+            Context::wallet_and_block(wallet.clone(), U64([1])),
             50,
         )
         .await
@@ -125,13 +128,8 @@ async fn get_block_transaction_count(mut network: Network) {
 
     network
         .run_until_async(
-            |_| async {
-                provider
-                    .get_transaction_receipt(hash)
-                    .await
-                    .unwrap()
-                    .is_some()
-            },
+            test_predicates::got_tx_hash,
+            Context::wallet_and_hash(wallet.clone(), hash),
             50,
         )
         .await
@@ -176,7 +174,8 @@ async fn get_account_transaction_count(mut network: Network) {
 
     network
         .run_until_async(
-            |_| async { wallet.get_block_number().await.unwrap().as_u64() > 1 },
+            test_predicates::wallet_block_above,
+            Context::wallet_and_block(wallet.clone(), U64([1])),
             50,
         )
         .await
@@ -191,13 +190,8 @@ async fn get_account_transaction_count(mut network: Network) {
 
     network
         .run_until_async(
-            |_| async {
-                provider
-                    .get_transaction_receipt(hash)
-                    .await
-                    .unwrap()
-                    .is_some()
-            },
+            test_predicates::got_tx_hash,
+            Context::wallet_and_hash(wallet.clone(), hash),
             50,
         )
         .await
@@ -226,7 +220,7 @@ async fn get_logs(mut network: Network) {
     let (hash, contract) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
         "EmitEvents",
-        &wallet,
+        wallet.clone(),
         &mut network,
     )
     .await;
@@ -247,13 +241,8 @@ async fn get_logs(mut network: Network) {
     // Wait until the transaction has succeeded.
     network
         .run_until_async(
-            |_| async {
-                wallet
-                    .get_transaction_receipt(call_tx_hash)
-                    .await
-                    .unwrap()
-                    .is_some()
-            },
+            test_predicates::got_tx_hash,
+            Context::wallet_and_hash(wallet.clone(), call_tx_hash),
             50,
         )
         .await
@@ -416,7 +405,7 @@ async fn get_storage_at(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/Storage.sol",
         "Storage",
-        &wallet,
+        wallet.clone(),
         &mut network,
     )
     .await;
@@ -459,13 +448,8 @@ async fn get_storage_at(mut network: Network) {
     // Advance the network to the next block.
     network
         .run_until_async(
-            |_| async {
-                wallet
-                    .get_transaction_receipt(update_tx_hash)
-                    .await
-                    .unwrap()
-                    .is_some()
-            },
+            test_predicates::got_tx_hash,
+            Context::wallet_and_hash(wallet.clone(), update_tx_hash),
             50,
         )
         .await
@@ -513,13 +497,8 @@ async fn send_transaction(mut network: Network) {
 
     network
         .run_until_async(
-            |_| async {
-                wallet
-                    .get_transaction_receipt(hash)
-                    .await
-                    .unwrap()
-                    .is_some()
-            },
+            test_predicates::got_tx_hash,
+            Context::wallet_and_hash(wallet.clone(), hash),
             50,
         )
         .await
@@ -538,20 +517,15 @@ async fn eth_call(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/SetGetContractValue.sol",
         "SetGetContractValue",
-        &wallet,
+        wallet.clone(),
         &mut network,
     )
     .await;
 
     network
         .run_until_async(
-            |_| async {
-                wallet
-                    .get_transaction_receipt(hash)
-                    .await
-                    .unwrap()
-                    .is_some()
-            },
+            test_predicates::got_tx_hash,
+            Context::wallet_and_hash(wallet.clone(), hash),
             50,
         )
         .await

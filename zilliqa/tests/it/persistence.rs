@@ -1,6 +1,6 @@
-use crate::{Network, TestNode};
+use crate::{test_predicates, Context, Network, TestNode};
 use ethers::providers::Middleware;
-use ethers::types::TransactionRequest;
+use ethers::types::{TransactionRequest, H256};
 use ethers::utils::secret_key_to_address;
 use primitive_types::H160;
 use tracing::*;
@@ -22,13 +22,22 @@ async fn block_and_tx_data_persistence(mut network: Network) {
 
     let index = network.random_index();
 
+    async fn node_got_tx_hash(network: &Network, context: Context) -> bool {
+        network
+            .get_node(context.index.unwrap())
+            .await
+            .get_transaction_receipt(Hash(context.hash.unwrap().0))
+            .unwrap()
+            .is_some()
+    }
+
     network
-        .run_until(
-            |n| {
-                n.get_node(index)
-                    .get_transaction_receipt(hash)
-                    .unwrap()
-                    .is_some()
+        .run_until_async(
+            node_got_tx_hash,
+            Context {
+                index: Some(index),
+                hash: Some(H256(hash.0)),
+                ..Default::default()
             },
             50,
         )
@@ -36,32 +45,24 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         .unwrap();
 
     // make one block without txs
+    test_predicates::produced_blocks!(3);
     network
-        .run_until(
-            |n| {
-                let block = n
-                    .get_node(index)
-                    .get_latest_block()
-                    .unwrap()
-                    .map_or(0, |b| b.view());
-                block >= 3
-            },
-            50,
-        )
+        .run_until_async(produced_blocks, Context::index(index), 50)
         .await
         .unwrap();
 
     let node = network.remove_node(index);
 
-    let inner = node.inner.lock().unwrap();
+    let inner = node.inner.lock().await;
     let last_view = inner.view() - 1;
     let receipt = inner.get_transaction_receipt(hash).unwrap().unwrap();
     let finalized_view = inner.get_finalized_height();
     let block_with_tx = inner
         .get_block_by_hash(receipt.block_hash)
+        .await
         .unwrap()
         .unwrap();
-    let last_block = inner.get_block_by_view(last_view).unwrap().unwrap();
+    let last_block = inner.get_block_by_view(last_view).await.unwrap().unwrap();
     let tx = inner.get_transaction_by_hash(hash).unwrap().unwrap();
     // sanity check
     assert_eq!(tx.hash(), hash);
@@ -92,19 +93,20 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         );
         return;
     };
-    let inner = newnode.inner.lock().unwrap();
+    let inner = newnode.inner.lock().await;
 
     // ensure finalized height was saved
     assert_eq!(inner.get_finalized_height(), finalized_view);
 
     // ensure all blocks created were saved up till the last one
-    let loaded_last_block = inner.get_block_by_view(last_view).unwrap();
+    let loaded_last_block = inner.get_block_by_view(last_view).await.unwrap();
     assert!(loaded_last_block.is_some());
     assert_eq!(loaded_last_block.unwrap().hash(), last_block.hash());
 
     // ensure tx was saved, including its receipt
     let loaded_tx_block = inner
         .get_block_by_view(block_with_tx.view())
+        .await
         .unwrap()
         .unwrap();
     assert_eq!(loaded_tx_block.hash(), block_with_tx.hash());
