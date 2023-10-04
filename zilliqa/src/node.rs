@@ -194,7 +194,7 @@ impl Node {
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
         let hash = txn.hash();
 
-        //info!(?hash, "seen new txn {:?}", txn);
+        info!(?hash, "seen new txn {:?}", txn);
 
         // Make sure TX hasn't been seen before
         if !self.consensus.seen_tx_already(&hash)? {

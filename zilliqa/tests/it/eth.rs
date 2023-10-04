@@ -25,7 +25,7 @@ async fn call_block_number(mut network: Network) {
         &wallet,
         &mut network,
     )
-    .await;
+        .await;
 
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
 
@@ -229,7 +229,7 @@ async fn get_logs(mut network: Network) {
         &wallet,
         &mut network,
     )
-    .await;
+        .await;
 
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let contract_address = receipt.contract_address.unwrap();
@@ -419,7 +419,7 @@ async fn get_storage_at(mut network: Network) {
         &wallet,
         &mut network,
     )
-    .await;
+        .await;
 
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let contract_address = receipt.contract_address.unwrap();
@@ -541,7 +541,7 @@ async fn eth_call(mut network: Network) {
         &wallet,
         &mut network,
     )
-    .await;
+        .await;
 
     network
         .run_until_async(
@@ -627,15 +627,16 @@ async fn nonces_respected_ordered(mut network: Network) {
 
     // collect up a bunch of TXs to send at once, but in reverse order
     for i in (0..tx_send_iterations).rev() {
-       //println!("Sending tx {}", i);
-       let mut tx = TransactionRequest::pay(to, tx_send_amount);
-       tx.nonce = Some(i.into());
-       let mut tx: TypedTransaction = tx.into();
+        //println!("Sending tx {}", i);
+        let mut tx = TransactionRequest::pay(to, tx_send_amount);
+        tx.nonce = Some(i.into());
+        let mut tx: TypedTransaction = tx.into();
 
-       wallet.fill_transaction(&mut tx, None).await.unwrap();
-       txs_to_send.push(tx);
-       //let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
-       //let expected_hash = H256::from_slice(&keccak256(tx.rlp_signed(&sig)));
+        wallet.fill_transaction(&mut tx, None).await.unwrap();
+        println!("tx gas price: {}", tx.gas_price().unwrap().as_u64());
+        txs_to_send.push(tx);
+        //let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
+        //let expected_hash = H256::from_slice(&keccak256(tx.rlp_signed(&sig)));
     }
 
     // collect the promises and await on them
@@ -683,6 +684,89 @@ async fn nonces_respected_ordered(mut network: Network) {
 
     let elapsed = now.elapsed();
     println!("Total test time elapsed: {:.2?}", elapsed);
+
+    // doesn't time out trying to mine
+    assert_eq!(wait.is_err(), false);
+}
+
+#[zilliqa_macros::test]
+async fn priority_fees_tx(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let to: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+
+    let mut txs_to_send: Vec<TypedTransaction> = Vec::new();
+    let tx_send_amount = 10;
+    let tx_send_iterations = 10;
+
+    // collect up a bunch of TXs to send at once, with two per nonce (one with a priority fee)
+    // but not including the first one to allow the mempool time to see them all
+    for i in (1..tx_send_iterations) {
+
+        // This first one with a transfer amount of 1 should never get mined
+        let mut tx = TransactionRequest::pay(to, 1);
+        tx.nonce = Some(i.into());
+        let mut tx: TypedTransaction = tx.into();
+        wallet.fill_transaction(&mut tx, None).await.unwrap();
+        let next_gas_price = tx.gas_price().unwrap() * 2; // double gas price for next one
+        txs_to_send.push(tx);
+
+        // Second priority tx
+        let mut tx = TransactionRequest::pay(to, tx_send_amount);
+        tx.nonce = Some(i.into());
+        tx.gas_price = Some(next_gas_price);
+        let mut tx: TypedTransaction = tx.into();
+
+        wallet.fill_transaction(&mut tx, None).await.unwrap();
+        txs_to_send.push(tx);
+    }
+
+    // collect the promises and await on them
+    let mut promises = Vec::new();
+
+    // Send all of them
+    for tx in txs_to_send {
+        println!("Sending tx {}", tx.nonce().unwrap().as_u64());
+        let prom = wallet.send_transaction(tx, None);
+        promises.push(prom);
+    }
+
+    // Wait for all of them to be completed
+    for prom in promises {
+        let hash = prom.await.unwrap().tx_hash();
+        network.tick().await;
+    }
+
+    //for i in (1..tx_send_iterations*100) {
+    //    network.tick().await;
+    //}
+
+    // Now send the first one
+    let mut tx = TransactionRequest::pay(to, tx_send_amount);
+    tx.nonce = Some(0.into());
+    let mut tx: TypedTransaction = tx.into();
+
+    wallet.fill_transaction(&mut tx, None).await.unwrap();
+    wallet.send_transaction(tx, None).await.unwrap();
+
+    // Wait until target account has got all the TXs
+    let wait = network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_balance(to, None)
+                    .await
+                    .unwrap() == (tx_send_amount * tx_send_iterations).into()
+
+            },
+            100,
+        )
+        .await;
+
+    //let elapsed = now.elapsed();
+    //println!("Total test time elapsed: {:.2?}", elapsed);
 
     // doesn't time out trying to mine
     assert_eq!(wait.is_err(), false);

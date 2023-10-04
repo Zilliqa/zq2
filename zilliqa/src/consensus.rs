@@ -16,6 +16,9 @@ use std::{
     fmt::Display,
     cmp::Ordering,
     sync::Arc,
+    sync::Mutex,
+    //rc::Rc,
+    //cell::RefCell,
 };
 use tracing::*;
 
@@ -110,13 +113,13 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
-#[derive(Eq, PartialEq, Debug, Clone)]
+#[derive(Debug, Clone)]
 struct TxnOrder {
     pub nonce: u64,
     pub gas_price: u64,
     pub gas_limit: u64,
     pub hash: Hash,
-    pub retries: Arc<u64>, // so we can modify the element in a heap
+    pub retries: Arc<Mutex<u64>>, // so we can modify the element in a heap
 }
 
 impl TxnOrder {
@@ -126,17 +129,28 @@ impl TxnOrder {
             gas_price: txn.transaction.gas_price,
             gas_limit: txn.transaction.gas_limit,
             hash: txn.hash(),
-            retries: 0.into(),
+            retries: Arc::new(Mutex::new(0)),
         }
     }
 }
+
+impl PartialEq for TxnOrder {
+    fn eq(&self, other: &Self) -> bool {
+        self.nonce == other.nonce
+            && self.gas_price == other.gas_price
+            && self.gas_limit == other.gas_limit
+            && self.hash == other.hash
+    }
+}
+
+impl Eq for TxnOrder {}
 
 // Implement a custom ordering for TxnOrder
 impl Ord for TxnOrder {
     fn cmp(&self, other: &Self) -> Ordering {
 
         if self.hash == other.hash {
-            warn!("TXnOrder hash collision");
+            warn!("TXnOrder hash collision {:?} vs {:?}", self, other);
             return Ordering::Equal;
         }
 
@@ -145,7 +159,7 @@ impl Ord for TxnOrder {
             // If nonce is equal, compare by gas_price * fee (desire higher)
             let self_fee = self.gas_price * self.gas_limit;
             let other_fee = other.gas_price * other.gas_limit;
-            self_fee.cmp(&other_fee).reverse()
+            self_fee.cmp(&other_fee)
         } else {
             nonce_ordering
         }
@@ -155,12 +169,6 @@ impl Ord for TxnOrder {
 impl PartialOrd for TxnOrder {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
-
-        //if self.hash == other.hash {
-        //    Ordering::Equal
-        //} else {
-        //    self.peer_id.cmp(&other.peer_id)
-        //}
     }
 }
 
@@ -491,7 +499,8 @@ impl Consensus {
 
         let from_addr = removed.from_addr;
 
-        // loop over priority txs and remove the tx
+        // loop over priority txs and remove the tx (this shold be O(log n)) as it will almost cert
+        // be a leaf node
         if let Some(priority_txs) = self.new_transactions_priority.get_mut(&from_addr) {
             priority_txs.retain(|tx| tx.hash != *tx_hash);
         }
@@ -548,6 +557,8 @@ impl Consensus {
     }
 
     // Get valid TXs to execute while also cleaning the mempool of TXs that are invalid
+    // to do this, we refer to a binary heap which for each from address, contains a list of TXs
+    // prioritised by nonce (so popping gives lowest), then by gas price and gas limit (highest)
     pub fn get_txns_to_execute(&mut self) -> Vec<SignedTransaction> {
         let mut ret: Vec<SignedTransaction> = Vec::new();
         //let mut txs_to_remove: Vec<Hash> = Vec::new();
@@ -556,7 +567,6 @@ impl Consensus {
             warn!("Block TX limit is set to 0, no TXs will be added to the block");
         }
 
-        trace!("Considering priority txs for inclusion");
 
         // Loop over the prioritised txs, putting them in so long as they are valid
         for (from_addr, txs) in self.new_transactions_priority.iter_mut() {
@@ -577,23 +587,30 @@ impl Consensus {
                 }
             }
 
+            trace!("Considering {:?} priority txs for inclusion", txs.len());
+
+            if txs.len() >= 19 {
+                for item in txs.iter() {
+                    warn!("xxyy xxyy: {:?}", item);
+                }
+            }
+
             // Push as many txs as have a sequential nonce into the map
-            for txn in txs.iter() {
+            // We have to pop, as iterating over a binary heap is not in order.
+            // So we put it all back afterward
+            //for txn in txs.iter() {
+            let mut temp_vec = Vec::new();
+            while let Some(txn) = txs.pop() {
+                temp_vec.push(txn.clone());
                 warn!(?txn, "TX in priority queue");
+
+                // if we have reached the block limit, break
                 if ret.len() >= self.config.consensus.block_tx_limit {
                     break;
                 }
 
-                //// If the nonce is too low than the account nonce, we will remove it later, but need to
-                //// continue iterating
-                //if txn.nonce < account_nonce {
-                //    trace!("TX nonce {} too low, account nonce {}, will be removed later", txn.nonce, account_nonce);
-                //    //nonce_too_low = true;
-                //    continue;
-                //}
-
                 // if it is less than the iter nonce, we can skip it
-                // this just means there are 'priority txs' with the
+                // this just means there are 'priority txs' with the same nonce but different fees
                 if txn.nonce < iter_nonce {
                     trace!("lower priority tx ignored {} vs {}", txn.nonce, iter_nonce);
                     continue;
@@ -602,20 +619,25 @@ impl Consensus {
                 // If the nonce is too high, we mark a retry
                 if txn.nonce > iter_nonce {
                     //txn.retries += 1;
-                    trace!("TX nonce {} too high, iter nonce {}, marking retry {} of {}", txn.nonce, iter_nonce, txn.retries, self.config.tx_retries);
 
-                    // Attempt to get a mutable reference to the inner value
-                    if let Some(inner_value) = Arc::get_mut(&mut txn.retries.clone()) {
-                        *inner_value += 1; // Increment the value by 1
+                    //let mut retries = txn.retries.borrow_mut();
+                    let mut retries = txn.retries.lock().unwrap();
+                    *retries += 1; // Increment the value by 1
 
-                        if *inner_value >= self.config.tx_retries {
-                            warn!(?txn, "Tranaction has exceeded retries and all pending from this account will been removed");
-                            //txs_to_remove.push(txn.hash);
-                            remove_all_txs = true;
-                        }
-                    } else {
-                        warn!("Failed to get a mutable reference to the inner value.");
+                    trace!("TX nonce {} too high, iter nonce {}, marking retry {} of {}", txn.nonce, iter_nonce, *retries, self.config.tx_retries);
+
+                    if *retries >= self.config.tx_retries {
+                        warn!(?txn, "Tranaction has exceeded retries and all pending from this account will been removed");
+                        //txs_to_remove.push(txn.hash);
+                        remove_all_txs = true;
                     }
+
+                    //// Attempt to get a mutable reference to the inner value
+                    //if let Some(inner_value) = Arc::get_mut(&mut txn.retries.clone()) {
+
+                    //} else {
+                    //    warn!("Failed to get a mutable reference to the inner value.");
+                    //}
 
                     // all other TXs will have a higher nonce, so we can break
                     break;
@@ -624,6 +646,7 @@ impl Consensus {
                 // tx nonce == iter nonce, so we can add it
                 match self.new_transactions.get(&txn.hash) {
                     Some(tx) => {
+                        trace!("Adding tx to execute: {:?}", tx);
                         ret.push(tx.clone());
                         iter_nonce += 1;
                     }
@@ -633,6 +656,9 @@ impl Consensus {
                     }
                 }
             }
+
+            // Put the txs back in the heap
+            txs.extend(temp_vec.into_iter());
 
             // If we need to remove the txs (retries timed out), remove it from the new_transactions and delete the entry
             // in the priority map
@@ -895,34 +921,29 @@ impl Consensus {
     }
 
     pub fn new_transaction(&mut self, txn: SignedTransaction) -> Result<()> {
+
+        // If we already have the tx, ignore it
+        if self.new_transactions.contains_key(&txn.hash()) {
+            return Ok(());
+        }
+
         txn.verify()?; // sanity check
         let txn_order = TxnOrder::new(&txn);
 
         let heap = self.new_transactions_priority
             .entry(txn.from_addr)
-            .or_insert(BinaryHeap::new());
-            //.push(txn_order);
+            .or_insert(BinaryHeap::new())
+            .push(txn_order);
 
-        heap.push(txn_order);
+        warn!("xxyy: {:?}", self.new_transactions_priority.entry(txn.from_addr).or_insert(BinaryHeap::new()));
 
-        let len = heap.len();
-
-        warn!("priority: {:?}", self.new_transactions_priority);
-        warn!("priority len: {:?}", len);
-
-        let mut entry = self.new_transactions_priority.entry(txn.from_addr).or_insert(BinaryHeap::new());
-
-        // pop the end and push it back on again
-        if len == 4 {
-            let first = entry.pop().unwrap();
-            //let last = entry.pop_first().unwrap();
-            warn!("XXXXXXXXXXX first: {:?}, ", first );
-            entry.push(first);
+        for item in self.new_transactions_priority.entry(txn.from_addr).or_insert(BinaryHeap::new()).iter() {
+            warn!("xxyy: {:?}", item);
         }
 
+        warn!("xxyy");
+
         self.new_transactions.insert(txn.hash(), txn);
-        //self.new_transactions_priority.get_mut(&txn.from_addr).
-            //.push();
 
         Ok(())
     }

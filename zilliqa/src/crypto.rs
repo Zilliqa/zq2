@@ -82,9 +82,9 @@ impl NodePublicKey {
     }
 
     pub fn verify(&self, message: &[u8], signature: NodeSignature) -> Result<()> {
-        //if !self.0.verify(signature.0, message) {
-        //    return Err(anyhow!("invalid signature"));
-        //}
+        if !self.0.verify(signature.0, message) {
+            return Err(anyhow!("invalid signature"));
+        }
 
         Ok(())
     }
