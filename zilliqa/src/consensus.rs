@@ -601,7 +601,6 @@ impl Consensus {
 
                 // If the nonce is too high, we mark a retry
                 if txn.nonce > iter_nonce {
-
                     let mut retries = txn.retries.lock().unwrap();
                     *retries += 1; // Increment the value by 1
 
