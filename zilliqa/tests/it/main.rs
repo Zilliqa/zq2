@@ -3,7 +3,9 @@ mod eth;
 mod native_contracts;
 mod persistence;
 mod web3;
+mod zil;
 use async_fn_traits::AsyncFn2;
+use ethers::solc::SHANGHAI_SOLC;
 use ethers::types::U64;
 use futures::Stream;
 use std::env;
@@ -568,6 +570,7 @@ fn format_message(
 }
 
 const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
+const EVM_VERSION: EvmVersion = EvmVersion::Shanghai;
 
 async fn deploy_contract(
     path: &str,
@@ -592,7 +595,17 @@ async fn deploy_contract(
 
     let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
     let compiler_input = compiler_input.first_mut().unwrap();
-    compiler_input.settings.evm_version = Some(EvmVersion::Shanghai);
+    compiler_input.settings.evm_version = Some(EVM_VERSION);
+
+    if let Ok(version) = sc.version() {
+        // gets the minimum EvmVersion that is compatible the given EVM_VERSION and version arguments
+        if EVM_VERSION.normalize_version(&version) != Some(EVM_VERSION) {
+            panic!(
+                "solc version {} required, currently set {}",
+                SHANGHAI_SOLC, version
+            );
+        }
+    }
 
     let out = sc
         .compile::<CompilerInput>(compiler_input)

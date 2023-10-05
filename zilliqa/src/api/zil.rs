@@ -1,21 +1,28 @@
 //! The Zilliqa API, as documented at <https://dev.zilliqa.com/api/introduction/api-introduction>.
 
-use std::{panic::AssertUnwindSafe, sync::Arc};
+use std::{fmt::Display, panic::AssertUnwindSafe, str::FromStr, sync::Arc};
 use tokio::sync::Mutex;
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, U256};
+use serde::{Deserialize, Deserializer};
 use serde_json::json;
 
-use crate::{message::BlockNumber, node::Node, state::Address};
+use crate::{
+    message::BlockNumber,
+    node::Node,
+    schnorr,
+    state::{Address, SignedTransaction, SigningInfo, Transaction, ZilliqaOtherPayload},
+};
 
-use super::types::zilliqa;
+use super::types::zil;
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
         node,
         [
+            ("CreateTransaction", create_transaction),
             ("GetBalance", get_balance),
             ("GetCurrentMiniEpoch", get_current_mini_epoch),
             ("GetLatestTxBlock", get_latest_tx_block),
@@ -24,6 +31,100 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetVersion", get_git_commit),
         ],
     )
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TransactionParams {
+    version: u32,
+    nonce: u64,
+    to_addr: H160,
+    #[serde(deserialize_with = "from_str")]
+    amount: u128,
+    pub_key: String,
+    #[serde(deserialize_with = "from_str")]
+    gas_price: u128,
+    #[serde(deserialize_with = "from_str")]
+    gas_limit: u64,
+    #[serde(default)]
+    code: String,
+    #[serde(default)]
+    data: String,
+    signature: String,
+}
+
+fn from_str<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: FromStr,
+    T::Err: Display,
+{
+    let s = String::deserialize(deserializer)?;
+    s.parse().map_err(serde::de::Error::custom)
+}
+
+async fn create_transaction(
+    params: Params<'_>,
+    node: &Arc<Mutex<Node>>,
+) -> Result<serde_json::Value> {
+    let transaction: TransactionParams = params.one()?;
+    let mut node = node.lock().await;
+
+    let version = transaction.version & 0xfff;
+    let chain_id = transaction.version >> 16;
+
+    if (chain_id as u64) != (node.config.eth_chain_id - 0x8000) {
+        return Err(anyhow!(
+            "unexpected chain ID, expected: {}, got: {chain_id}",
+            node.config.eth_chain_id - 0x8000
+        ));
+    }
+
+    if version != 1 {
+        return Err(anyhow!("unexpected version, expected: 1, got: {version}"));
+    }
+
+    let pub_key = hex::decode(transaction.pub_key)?;
+
+    let pub_key = schnorr::PublicKey::from_sec1_bytes(&pub_key)?;
+    let signature = schnorr::Signature::from_str(&transaction.signature)?;
+
+    let (payload, other_payload) = if !transaction.code.is_empty() {
+        (
+            transaction.code.into_bytes(),
+            ZilliqaOtherPayload::Data(transaction.data.into_bytes()),
+        )
+    } else {
+        (
+            transaction.data.into_bytes(),
+            ZilliqaOtherPayload::Code(transaction.code.into_bytes()),
+        )
+    };
+
+    let transaction = SignedTransaction::new(
+        Transaction {
+            // Zilliqa nonces are 1-indexed rather than zero indexed.
+            nonce: transaction.nonce - 1,
+            gas_price: transaction.gas_price as u64,
+            gas_limit: transaction.gas_limit,
+            to_addr: (!transaction.to_addr.is_zero()).then_some(Address(transaction.to_addr)),
+            // Zilliqa amounts are represented in units of (10^-12) ZILs, whereas our internal representation is in
+            // units of (10^-18) ZILs. Account for this difference by multiplying the amount by (10^6).
+            amount: transaction.amount * 10u128.pow(6),
+            payload,
+        },
+        SigningInfo::Zilliqa {
+            pub_key,
+            signature,
+            raw_version: transaction.version,
+            other_payload,
+        },
+    )?;
+
+    let transaction_hash = node.create_transaction(transaction)?;
+    let transaction_hash = hex::encode(transaction_hash.0);
+
+    Ok(json!({"TranID": transaction_hash}))
 }
 
 async fn get_balance(params: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
@@ -49,7 +150,7 @@ async fn get_current_mini_epoch(_: Params<'_>, node: &Arc<Mutex<Node>>) -> Resul
     Ok(node.lock().await.view().to_string())
 }
 
-async fn get_latest_tx_block(_: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<zilliqa::TxBlock> {
+async fn get_latest_tx_block(_: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<zil::TxBlock> {
     let node = node.lock().await;
     let block = node
         .get_block_by_number(BlockNumber::Latest)
