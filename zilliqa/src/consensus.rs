@@ -583,7 +583,6 @@ impl Consensus {
             // Push as many txs as have a sequential nonce into the map
             // We have to pop, as iterating over a binary heap is not in order.
             // So we put it all back afterward
-            //for txn in txs.iter() {
             let mut temp_vec = Vec::new();
             while let Some(txn) = txs.pop() {
                 temp_vec.push(txn.clone());
