@@ -601,9 +601,7 @@ impl Consensus {
 
                 // If the nonce is too high, we mark a retry
                 if txn.nonce > iter_nonce {
-                    //txn.retries += 1;
 
-                    //let mut retries = txn.retries.borrow_mut();
                     let mut retries = txn.retries.lock().unwrap();
                     *retries += 1; // Increment the value by 1
 
@@ -617,7 +615,6 @@ impl Consensus {
 
                     if *retries >= self.config.tx_retries {
                         warn!(?txn, "Tranaction has exceeded retries and all pending from this account will been removed");
-                        //txs_to_remove.push(txn.hash);
                         remove_all_txs = true;
                     }
 
