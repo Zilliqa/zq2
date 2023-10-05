@@ -25,7 +25,7 @@ async fn call_block_number(mut network: Network) {
         &wallet,
         &mut network,
     )
-        .await;
+    .await;
 
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
 
@@ -229,7 +229,7 @@ async fn get_logs(mut network: Network) {
         &wallet,
         &mut network,
     )
-        .await;
+    .await;
 
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let contract_address = receipt.contract_address.unwrap();
@@ -419,7 +419,7 @@ async fn get_storage_at(mut network: Network) {
         &wallet,
         &mut network,
     )
-        .await;
+    .await;
 
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let contract_address = receipt.contract_address.unwrap();
@@ -541,7 +541,7 @@ async fn eth_call(mut network: Network) {
         &wallet,
         &mut network,
     )
-        .await;
+    .await;
 
     network
         .run_until_async(
@@ -592,7 +592,7 @@ async fn nonces_rejected_too_high(mut network: Network) {
 
     wallet.fill_transaction(&mut tx, None).await.unwrap();
     let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
-    let expected_hash = H256::from_slice(&keccak256(tx.rlp_signed(&sig)));
+    let _expected_hash = H256::from_slice(&keccak256(tx.rlp_signed(&sig)));
 
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
 
@@ -610,7 +610,7 @@ async fn nonces_rejected_too_high(mut network: Network) {
         .await;
 
     // Times out trying to mine
-    assert_eq!(wait.is_err(), true);
+    assert!(wait.is_err());
 }
 
 #[zilliqa_macros::test]
@@ -647,25 +647,22 @@ async fn nonces_respected_ordered(mut network: Network) {
 
     // Wait for all of them to be completed
     for prom in promises {
-        let hash = prom.await.unwrap().tx_hash();
+        let _hash = prom.await.unwrap().tx_hash();
     }
 
     // Wait until target account has got all the TXs
     let wait = network
         .run_until_async(
             || async {
-                wallet
-                    .get_balance(to, None)
-                    .await
-                    .unwrap() == (tx_send_amount * tx_send_iterations).into()
-
+                wallet.get_balance(to, None).await.unwrap()
+                    == (tx_send_amount * tx_send_iterations).into()
             },
             10000,
         )
         .await;
 
     // doesn't time out trying to mine
-    assert_eq!(wait.is_err(), false);
+    assert!(wait.is_ok());
 }
 
 #[zilliqa_macros::test]
@@ -682,8 +679,7 @@ async fn priority_fees_tx(mut network: Network) {
 
     // collect up a bunch of TXs to send at once, with two per nonce (one with a priority fee)
     // but not including the first one to allow the mempool time to see them all
-    for i in (1..tx_send_iterations) {
-
+    for i in 1..tx_send_iterations {
         // This first one with a transfer amount of 1 should never get mined
         let mut tx = TransactionRequest::pay(to, 1);
         tx.nonce = Some(i.into());
@@ -714,7 +710,7 @@ async fn priority_fees_tx(mut network: Network) {
     // Wait for all of them to be completed. We need to tick since they get broadcast around
     // as messages too and you can't guarantee which miner will try to create a block
     for prom in promises {
-        let hash = prom.await.unwrap().tx_hash();
+        let _hash = prom.await.unwrap().tx_hash();
         network.tick().await;
     }
 
@@ -730,16 +726,13 @@ async fn priority_fees_tx(mut network: Network) {
     let wait = network
         .run_until_async(
             || async {
-                wallet
-                    .get_balance(to, None)
-                    .await
-                    .unwrap() == (tx_send_amount * tx_send_iterations).into()
-
+                wallet.get_balance(to, None).await.unwrap()
+                    == (tx_send_amount * tx_send_iterations).into()
             },
             100,
         )
         .await;
 
     // doesn't time out trying to mine
-    assert_eq!(wait.is_err(), false);
+    assert!(wait.is_ok());
 }

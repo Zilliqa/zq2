@@ -9,12 +9,12 @@ use libp2p::PeerId;
 use primitive_types::H256;
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
-use std::ops::Add;
+
 use std::{
-    collections::{BTreeMap, HashSet, BinaryHeap},
+    cmp::Ordering,
+    collections::{BTreeMap, BinaryHeap},
     error::Error,
     fmt::Display,
-    cmp::Ordering,
     sync::Arc,
     sync::Mutex,
 };
@@ -146,7 +146,6 @@ impl Eq for TxnOrder {}
 // Implement a custom ordering for TxnOrder
 impl Ord for TxnOrder {
     fn cmp(&self, other: &Self) -> Ordering {
-
         if self.hash == other.hash {
             warn!("TXnOrder hash collision {:?} vs {:?}", self, other);
             return Ordering::Equal;
@@ -486,9 +485,7 @@ impl Consensus {
 
     pub fn remove_tx_from_mempool(&mut self, tx_hash: &Hash) {
         let removed = match self.new_transactions.remove(tx_hash) {
-            Some(tx) => {
-                tx
-            }
+            Some(tx) => tx,
             None => {
                 return;
             }
@@ -562,7 +559,6 @@ impl Consensus {
             warn!("Block TX limit is set to 0, no TXs will be added to the block");
         }
 
-
         // Loop over the prioritised txs, putting them in so long as they are valid
         for (from_addr, txs) in self.new_transactions_priority.iter_mut() {
             // get the nonce of the account, or zero if none
@@ -572,7 +568,11 @@ impl Consensus {
             // Clear all nonces from the priority queue that are too low
             while let Some(txn) = txs.pop() {
                 if txn.nonce < iter_nonce {
-                    trace!("TX nonce {} too low, iter nonce {}, will be removed", txn.nonce, iter_nonce);
+                    trace!(
+                        "TX nonce {} too low, iter nonce {}, will be removed",
+                        txn.nonce,
+                        iter_nonce
+                    );
                     continue;
                 } else {
                     txs.push(txn);
@@ -608,7 +608,13 @@ impl Consensus {
                     let mut retries = txn.retries.lock().unwrap();
                     *retries += 1; // Increment the value by 1
 
-                    trace!("TX nonce {} too high, iter nonce {}, marking retry {} of {}", txn.nonce, iter_nonce, *retries, self.config.tx_retries);
+                    trace!(
+                        "TX nonce {} too high, iter nonce {}, marking retry {} of {}",
+                        txn.nonce,
+                        iter_nonce,
+                        *retries,
+                        self.config.tx_retries
+                    );
 
                     if *retries >= self.config.tx_retries {
                         warn!(?txn, "Tranaction has exceeded retries and all pending from this account will been removed");
@@ -628,7 +634,10 @@ impl Consensus {
                         iter_nonce += 1;
                     }
                     None => {
-                        warn!("Transaction {} not found in mempool, but was in priority txs", txn.hash);
+                        warn!(
+                            "Transaction {} not found in mempool, but was in priority txs",
+                            txn.hash
+                        );
                         remove_all_txs = true;
                     }
                 }
@@ -648,9 +657,10 @@ impl Consensus {
         }
 
         // As cleanup, remove any `From` where the heap is empty
-        self.new_transactions_priority.retain(|_, binary_heap| !binary_heap.is_empty());
+        self.new_transactions_priority
+            .retain(|_, binary_heap| !binary_heap.is_empty());
 
-        if ret.len() > 0 {
+        if !ret.is_empty() {
             trace!("Added {} priority txs to block", ret.len());
         }
 
@@ -892,7 +902,6 @@ impl Consensus {
     }
 
     pub fn new_transaction(&mut self, txn: SignedTransaction) -> Result<()> {
-
         // If we already have the tx, ignore it
         if self.new_transactions.contains_key(&txn.hash()) {
             return Ok(());
@@ -901,9 +910,9 @@ impl Consensus {
         txn.verify()?; // sanity check
         let txn_order = TxnOrder::new(&txn);
 
-        let heap = self.new_transactions_priority
+        self.new_transactions_priority
             .entry(txn.from_addr)
-            .or_insert(BinaryHeap::new())
+            .or_default()
             .push(txn_order);
 
         self.new_transactions.insert(txn.hash(), txn);
