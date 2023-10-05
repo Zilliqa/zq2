@@ -15,8 +15,6 @@ use std::{
     collections::{BTreeMap, BinaryHeap},
     error::Error,
     fmt::Display,
-    sync::Arc,
-    sync::Mutex,
 };
 use tracing::*;
 
@@ -117,7 +115,7 @@ struct TxnOrder {
     pub gas_price: u64,
     pub gas_limit: u64,
     pub hash: Hash,
-    pub retries: Arc<Mutex<u64>>, // so we can modify the element in a heap
+    pub retries: u64,
 }
 
 impl TxnOrder {
@@ -127,7 +125,7 @@ impl TxnOrder {
             gas_price: txn.transaction.gas_price,
             gas_limit: txn.transaction.gas_limit,
             hash: txn.hash(),
-            retries: Arc::new(Mutex::new(0)),
+            retries: 0,
         }
     }
 }
@@ -584,7 +582,8 @@ impl Consensus {
             // We have to pop, as iterating over a binary heap is not in order.
             // So we put it all back afterward
             let mut temp_vec = Vec::new();
-            while let Some(txn) = txs.pop() {
+            while let Some(mut txn) = txs.pop() {
+                txn.retries += 1;
                 temp_vec.push(txn.clone());
 
                 // if we have reached the block limit, break
@@ -599,20 +598,17 @@ impl Consensus {
                     continue;
                 }
 
-                // If the nonce is too high, we mark a retry
+                // If the nonce is too high, we will take another pass
                 if txn.nonce > iter_nonce {
-                    let mut retries = txn.retries.lock().unwrap();
-                    *retries += 1; // Increment the value by 1
-
                     trace!(
-                        "TX nonce {} too high, iter nonce {}, marking retry {} of {}",
+                        "TX nonce {} too high, iter nonce {}, retry {} of {}",
                         txn.nonce,
                         iter_nonce,
-                        *retries,
+                        txn.retries,
                         self.config.tx_retries
                     );
 
-                    if *retries >= self.config.tx_retries {
+                    if txn.retries >= self.config.tx_retries {
                         warn!(?txn, "Tranaction has exceeded retries and all pending from this account will been removed");
                         remove_all_txs = true;
                     }
