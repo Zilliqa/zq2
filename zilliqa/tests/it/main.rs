@@ -448,10 +448,7 @@ impl Network {
     ) -> Result<()> {
         let initial_timeout = timeout;
 
-        while {
-            let cond_fut = condition(self, context.clone());
-            !cond_fut.await
-        } {
+        while !condition(self, context.clone()).await {
             if timeout == 0 {
                 return Err(anyhow!(
                     "condition was still false after {initial_timeout} ticks"
@@ -470,10 +467,6 @@ impl Network {
 
     pub async fn get_node(&self, index: usize) -> TokioMutexGuard<Node> {
         self.nodes[index].inner.lock().await
-    }
-
-    pub fn get_node_arc(&self, index: usize) -> Arc<TokioMutex<Node>> {
-        self.nodes[index].inner.clone()
     }
 
     pub fn remove_node(&mut self, idx: usize) -> TestNode {

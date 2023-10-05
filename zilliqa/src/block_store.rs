@@ -56,7 +56,6 @@ impl BlockStore {
         if !self.contains_block(hash)? {
             let timeout = self.request_timeout;
             let request = self.request_block(hash)?;
-            // request.notified().await;
             select! {
                 _ = request.notified() => {},
                 _ = tokio::time::sleep(timeout) => {},
@@ -86,7 +85,6 @@ impl BlockStore {
             .contains_key(view.to_be_bytes())?
         {
             let timeout = self.request_timeout;
-            // self.request_hash_by_view(view).await;
             select! {
                 _ = self.request_hash_by_view(view) => {},
                 _ = tokio::time::sleep(timeout) => {},

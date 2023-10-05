@@ -64,9 +64,11 @@ macro_rules! declare_module {
 
                     let start = std::time::SystemTime::now();
 
-                    // Ignore unwind safety here.
+                    // Ignore unwind safety here. There's no easy way to fix it and it
+                    // doesn't seem likely to be an issue.
                     // The !UnwindSafe primarily stems from tokio::sync::Notified, used
-                    // inside BlockStore.
+                    // for block requests over the network inside BlockStore. I believe
+                    // that state poisoning will, at worst, cause a request to fail.
                     let result = futures::FutureExt::catch_unwind(AssertUnwindSafe($method(params, &context))).await.unwrap_or_else(|_| {
                         Err(anyhow::anyhow!("Unhandled panic in RPC handler {}", $name))
                     });
