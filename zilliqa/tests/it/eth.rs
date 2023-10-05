@@ -128,7 +128,7 @@ async fn get_block_transaction_count(mut network: Network) {
 
     network
         .run_until_async(
-            test_predicates::got_tx_hash,
+            test_predicates::got_tx_receipt,
             Context::wallet_and_hash(wallet.clone(), hash),
             50,
         )
@@ -190,7 +190,7 @@ async fn get_account_transaction_count(mut network: Network) {
 
     network
         .run_until_async(
-            test_predicates::got_tx_hash,
+            test_predicates::got_tx_receipt,
             Context::wallet_and_hash(wallet.clone(), hash),
             50,
         )
@@ -241,7 +241,7 @@ async fn get_logs(mut network: Network) {
     // Wait until the transaction has succeeded.
     network
         .run_until_async(
-            test_predicates::got_tx_hash,
+            test_predicates::got_tx_receipt,
             Context::wallet_and_hash(wallet.clone(), call_tx_hash),
             50,
         )
@@ -448,7 +448,7 @@ async fn get_storage_at(mut network: Network) {
     // Advance the network to the next block.
     network
         .run_until_async(
-            test_predicates::got_tx_hash,
+            test_predicates::got_tx_receipt,
             Context::wallet_and_hash(wallet.clone(), update_tx_hash),
             50,
         )
@@ -497,7 +497,7 @@ async fn send_transaction(mut network: Network) {
 
     network
         .run_until_async(
-            test_predicates::got_tx_hash,
+            test_predicates::got_tx_receipt,
             Context::wallet_and_hash(wallet.clone(), hash),
             50,
         )
@@ -524,7 +524,7 @@ async fn eth_call(mut network: Network) {
 
     network
         .run_until_async(
-            test_predicates::got_tx_hash,
+            test_predicates::got_tx_receipt,
             Context::wallet_and_hash(wallet.clone(), hash),
             50,
         )

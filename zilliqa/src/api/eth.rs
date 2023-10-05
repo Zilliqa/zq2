@@ -313,10 +313,10 @@ struct GetLogsParams {
     block_hash: Option<H256>,
 }
 
-async fn get_logs(params: Params<'_>, node_arc: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
+async fn get_logs(params: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
     let params: GetLogsParams = params.one()?;
 
-    let node = node_arc.lock().await;
+    let node = node.lock().await;
 
     // Find the range of blocks we care about. This is an iterator of blocks.
     let blocks = match (params.block_hash, params.from_block, params.to_block) {
@@ -351,8 +351,6 @@ async fn get_logs(params: Params<'_>, node_arc: &Arc<Mutex<Node>>) -> Result<Vec
             ));
         }
     };
-
-    let node = node_arc.lock().await;
 
     // Get the receipts for each transaction. This is an iterator of (receipt, txn_index, txn_hash, block_number, block_hash).
     let receipts = blocks

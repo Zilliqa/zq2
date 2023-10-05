@@ -625,7 +625,7 @@ async fn deploy_contract(
 
         network
             .run_until_async(
-                test_predicates::got_tx_hash,
+                test_predicates::got_tx_receipt,
                 Context::wallet_and_hash(wallet, hash),
                 50,
             )
@@ -682,7 +682,7 @@ impl JsonRpcClient for LocalRpcClient {
 
 pub mod test_predicates {
     use super::*;
-    pub async fn got_tx_hash(_: &Network, context: Context) -> bool {
+    pub async fn got_tx_receipt(_: &Network, context: Context) -> bool {
         context
             .wallet
             .unwrap()

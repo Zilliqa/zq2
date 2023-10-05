@@ -66,7 +66,7 @@ async fn launch_shard(mut network: Network) {
 
     network
         .run_until_async(
-            test_predicates::got_tx_hash,
+            test_predicates::got_tx_receipt,
             Context::wallet_and_hash(wallet.clone(), hash),
             50,
         )
