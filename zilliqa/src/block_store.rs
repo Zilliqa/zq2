@@ -51,11 +51,15 @@ impl BlockStore {
         Ok(Some(block))
     }
 
+    pub fn get_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
+        self.canonical_block_numbers
+            .get(view.to_be_bytes())?
+            .map(Hash::from_bytes)
+            .transpose()
+    }
+
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        let Some(hash) = self.canonical_block_numbers.get(view.to_be_bytes())? else {
-            return Ok(None);
-        };
-        let hash = Hash::from_bytes(hash)?;
+        let Some(hash) = self.get_hash_by_view(view)? else { return Ok(None) };
         self.get_block(hash)
     }
 
