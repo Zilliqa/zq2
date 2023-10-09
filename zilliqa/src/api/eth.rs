@@ -3,10 +3,12 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{anyhow, Result};
+use itertools::{Either, Itertools};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
-use tracing::log::*;
+use serde::Deserialize;
+use tracing::*;
 
 use crate::{
     crypto::Hash,
@@ -17,7 +19,7 @@ use crate::{
 
 use super::{
     to_hex::ToHex,
-    types::eth::{self, CallParams, EstimateGasParams, HashOrTransaction},
+    types::eth::{self, CallParams, EstimateGasParams, HashOrTransaction, OneOrMany},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -44,6 +46,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 "eth_getBlockTransactionCountByNumber",
                 get_block_transaction_count_by_number
             ),
+            ("eth_getLogs", get_logs),
             ("eth_getTransactionByHash", get_transaction_by_hash),
             ("eth_getTransactionReceipt", get_transaction_receipt),
             ("eth_sendRawTransaction", send_raw_transaction),
@@ -272,6 +275,118 @@ fn get_block_transaction_count_by_number(
     Ok(block.map(|b| b.transactions.len().to_hex()))
 }
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct GetLogsParams {
+    from_block: Option<BlockNumber>,
+    to_block: Option<BlockNumber>,
+    address: Option<OneOrMany<H160>>,
+    /// Topics matches a prefix of the list of topics from each log. An empty element slice matches any topic. Non-empty
+    /// elements represent an alternative that matches any of the contained topics.
+    ///
+    /// Examples (from Erigon):
+    /// * `[]`                          matches any topic list
+    /// * `[[A]]`                       matches topic A in first position
+    /// * `[[], [B]]` or `[None, [B]]`  matches any topic in first position AND B in second position
+    /// * `[[A], [B]]`                  matches topic A in first position AND B in second position
+    /// * `[[A, B], [C, D]]`            matches topic (A OR B) in first position AND (C OR D) in second position
+    topics: Vec<OneOrMany<H256>>,
+    block_hash: Option<H256>,
+}
+
+fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
+    let params: GetLogsParams = params.one()?;
+
+    let node = node.lock().unwrap();
+
+    // Find the range of blocks we care about. This is an iterator of blocks.
+    let blocks = match (params.block_hash, params.from_block, params.to_block) {
+        (Some(block_hash), None, None) => Either::Left(std::iter::once(Ok(node
+            .get_block_by_hash(Hash(block_hash.0))?
+            .ok_or_else(|| anyhow!("block not found"))?))),
+        (None, from, to) => {
+            let from = node.get_view(from.unwrap_or(BlockNumber::Latest));
+            let to = node.get_view(to.unwrap_or(BlockNumber::Latest));
+
+            if from > to {
+                return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
+            }
+
+            Either::Right((from..=to).map(|view| {
+                node.get_block_by_view(view)?
+                    .ok_or_else(|| anyhow!("missing block: {view}"))
+            }))
+        }
+        _ => {
+            return Err(anyhow!(
+                "only one of `blockHash` or (`fromBlock` and/or `toBlock`) are allowed"
+            ));
+        }
+    };
+
+    // Get the receipts for each transaction. This is an iterator of (receipt, txn_index, txn_hash, block_number, block_hash).
+    let receipts = blocks
+        .map(|block: Result<_>| {
+            let block = block?;
+            let block_number = block.view();
+            let block_hash = block.hash();
+            let receipts = node.get_transaction_receipts_in_block(block_hash)?;
+
+            Ok(block
+                .transactions
+                .into_iter()
+                .enumerate()
+                .zip(receipts)
+                .map(move |((txn_index, txn_hash), receipt)| {
+                    (receipt, txn_index, txn_hash, block_number, block_hash)
+                }))
+        })
+        .flatten_ok();
+
+    // Get the logs from each receipt and filter them based on the provided parameters. This is an iterator of (log, log_index, txn_index, txn_hash, block_number, block_hash).
+    let logs = receipts
+        .map(|r: Result<_>| {
+            let (receipt, txn_index, txn_hash, block_number, block_hash) = r?;
+            Ok(receipt
+                .logs
+                .into_iter()
+                .enumerate()
+                .map(move |(i, l)| (l, i, txn_index, txn_hash, block_number, block_hash)))
+        })
+        .flatten_ok()
+        .filter_ok(|(log, _, _, _, _, _)| {
+            params
+                .address
+                .as_ref()
+                .map(|a| a.contains(&log.address))
+                .unwrap_or(true)
+        })
+        .filter_ok(|(log, _, _, _, _, _)| {
+            params
+                .topics
+                .iter()
+                .zip(log.topics.iter())
+                .all(|(filter_topic, log_topic)| {
+                    filter_topic.is_empty() || filter_topic.contains(log_topic)
+                })
+        });
+
+    // Finally convert the iterator to our response format.
+    let logs = logs.map(|l: Result<_>| {
+        let (log, log_index, txn_index, txn_hash, block_number, block_hash) = l?;
+        Ok(eth::Log::new(
+            log,
+            log_index,
+            txn_index,
+            txn_hash,
+            block_number,
+            block_hash,
+        ))
+    });
+
+    logs.collect()
+}
+
 fn get_transaction_by_hash(
     params: Params,
     node: &Arc<Mutex<Node>>,
@@ -309,6 +424,11 @@ pub(super) fn get_transaction_inner(
             s,
             chain_id: _,
         } => (v, r, s),
+        SigningInfo::Zilliqa { signature, .. } => (
+            0,
+            signature.r().to_bytes().into(),
+            signature.s().to_bytes().into(),
+        ),
     };
     let transaction = eth::Transaction {
         block_hash: block.as_ref().map(|b| b.hash().0.into()),
@@ -353,10 +473,7 @@ pub(super) fn get_transaction_receipt_inner(
         return Ok(None);
     };
 
-    let transaction_hash = H256(hash.0);
-    let transaction_index = block.transactions.iter().position(|t| *t == hash).unwrap() as u64;
-    let block_hash = H256::from_slice(block.hash().as_bytes());
-    let block_number = block.view();
+    let transaction_index = block.transactions.iter().position(|t| *t == hash).unwrap();
 
     let mut logs_bloom = [0; 256];
 
@@ -365,17 +482,14 @@ pub(super) fn get_transaction_receipt_inner(
         .into_iter()
         .enumerate()
         .map(|(log_index, log)| {
-            let log = eth::Log {
-                removed: false,
-                log_index: log_index as u64,
+            let log = eth::Log::new(
+                log,
+                log_index,
                 transaction_index,
-                transaction_hash,
-                block_hash,
-                block_number,
-                address: log.address,
-                data: log.data,
-                topics: log.topics,
-            };
+                hash,
+                block.view(),
+                block.hash(),
+            );
 
             log.bloom(&mut logs_bloom);
 
@@ -385,10 +499,10 @@ pub(super) fn get_transaction_receipt_inner(
 
     let transaction = signed_transaction.transaction;
     let receipt = eth::TransactionReceipt {
-        transaction_hash,
-        transaction_index,
-        block_hash,
-        block_number,
+        transaction_hash: H256(hash.0),
+        transaction_index: transaction_index as u64,
+        block_hash: H256(block.hash().0),
+        block_number: block.view(),
         from: signed_transaction.from_addr.0,
         to: transaction.to_addr.map(|a| a.0),
         cumulative_gas_used: 0,

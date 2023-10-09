@@ -1,4 +1,7 @@
-use crate::state::{default_gas, default_gas_price, Address};
+use crate::{
+    crypto::Hash,
+    state::{default_gas, default_gas_price, Address},
+};
 use primitive_types::{H160, H256, U256};
 use serde::{
     de::{self, Unexpected},
@@ -186,6 +189,27 @@ pub struct Log {
 }
 
 impl Log {
+    pub fn new(
+        log: evm_ds::protos::evm_proto::Log,
+        log_index: usize,
+        transaction_index: usize,
+        transaction_hash: Hash,
+        block_number: u64,
+        block_hash: Hash,
+    ) -> Log {
+        Log {
+            removed: false,
+            log_index: log_index as u64,
+            transaction_index: transaction_index as u64,
+            transaction_hash: H256(transaction_hash.0),
+            block_hash: H256(block_hash.0),
+            block_number,
+            address: log.address,
+            data: log.data,
+            topics: log.topics,
+        }
+    }
+
     pub fn bloom(&self, bloom: &mut [u8; 256]) {
         m3_2048(bloom, self.address.as_bytes());
         for topic in &self.topics {
@@ -205,6 +229,33 @@ fn m3_2048(bloom: &mut [u8; 256], data: &[u8]) {
         let byte = m / 8;
         let bit = m % 8;
         bloom[255 - byte] |= 1 << bit;
+    }
+}
+
+/// A type for representing null, a single item or an array of items.
+#[derive(Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum OneOrMany<T> {
+    Null,
+    One(T),
+    Many(Vec<T>),
+}
+
+impl<T: PartialEq> OneOrMany<T> {
+    pub fn contains(&self, x: &T) -> bool {
+        match self {
+            OneOrMany::Null => false,
+            OneOrMany::One(item) => item == x,
+            OneOrMany::Many(items) => items.contains(x),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            OneOrMany::Null => true,
+            OneOrMany::One(_) => false,
+            OneOrMany::Many(items) => items.is_empty(),
+        }
     }
 }
 

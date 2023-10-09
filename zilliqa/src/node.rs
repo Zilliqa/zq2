@@ -212,7 +212,7 @@ impl Node {
         self.consensus.view()
     }
 
-    fn get_view(&self, block_number: BlockNumber) -> u64 {
+    pub fn get_view(&self, block_number: BlockNumber) -> u64 {
         match block_number {
             BlockNumber::Number(n) => n,
             BlockNumber::Earliest => 0,
@@ -360,7 +360,7 @@ impl Node {
     pub fn get_transaction_receipts_in_block(
         &self,
         block_hash: Hash,
-    ) -> Result<Option<Vec<TransactionReceipt>>> {
+    ) -> Result<Vec<TransactionReceipt>> {
         self.consensus.get_transaction_receipts_in_block(block_hash)
     }
 

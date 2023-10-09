@@ -306,6 +306,7 @@ impl State {
 
                         cont.feedback_type = EvmProto::Type::Create;
                         cont.feedback_data = Some(EvmProto::FeedbackData::Address(addr_to_create));
+                        trace!("Contract is creating at: {}", addr_to_create);
 
                         call_args.node_continuation = Some(cont);
 
@@ -313,8 +314,8 @@ impl State {
                         let call_args_next = EvmProto::EvmCallArgs {
                             caller: create.caller,
                             address: addr_to_create,
-                            code: vec![],
-                            data: create.call_data,
+                            code: create.call_data,
+                            data: vec![],
                             tx_trace: traces.clone(),
                             continuations: continuations.clone(),
                             node_continuation: None,
@@ -421,6 +422,18 @@ impl State {
                                 ));
                             prior_node_continuation.succeeded = run_succeeded;
                             prior_node_continuation.logs = result.logs.clone();
+
+                            // We also need to write down the data + address of the contract we
+                            // just created
+                            backend.create_account(
+                                prior_node_continuation.get_address().into(),
+                                result.return_value.clone(),
+                            );
+
+                            trace!(
+                                "Writing back contract created at: {:?}",
+                                prior_node_continuation.get_address()
+                            );
                         }
                     }
                 }

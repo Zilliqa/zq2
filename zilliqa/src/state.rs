@@ -1,8 +1,13 @@
 use core::fmt;
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
-use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use k256::{
+    ecdsa::{RecoveryId, Signature, VerifyingKey},
+    elliptic_curve::sec1::ToEncodedPoint,
+};
+use prost::Message;
 use rlp::RlpStream;
+use sha2::Sha256;
 use sha3::{
     digest::generic_array::{
         sequence::Split,
@@ -22,7 +27,13 @@ use evm_ds::protos::evm_proto::Log;
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 
-use crate::{cfg::ConsensusConfig, contracts, crypto, db::SledDb};
+use crate::{
+    cfg::ConsensusConfig,
+    contracts, crypto,
+    db::SledDb,
+    schnorr,
+    zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
+};
 
 #[derive(Debug)]
 pub struct State {
@@ -330,9 +341,9 @@ impl SignedTransaction {
     }
     pub fn hash(&self) -> crypto::Hash {
         let txn = &self.transaction;
-        match self.signing_info {
+        match &self.signing_info {
             SigningInfo::Eth { v, r, s, chain_id } => {
-                let use_eip155 = v >= (chain_id * 2) + 35;
+                let use_eip155 = *v >= (chain_id * 2) + 35;
                 let mut rlp = RlpStream::new_list(if use_eip155 { 9 } else { 6 });
                 rlp.append(&txn.nonce)
                     .append(&txn.gas_price)
@@ -356,12 +367,26 @@ impl SignedTransaction {
                         &bytes[first_non_zero..]
                     }
 
-                    rlp.append(&v)
+                    rlp.append(v)
                         .append(&strip_leading_zeroes(r.as_slice()))
                         .append(&strip_leading_zeroes(s.as_slice()));
                 };
 
                 crypto::Hash(Keccak256::digest(rlp.out()).into())
+            }
+            SigningInfo::Zilliqa {
+                pub_key,
+                signature: _,
+                raw_version,
+                other_payload,
+            } => {
+                let txn_data = encode_zilliqa_transaction(
+                    &self.transaction,
+                    *pub_key,
+                    *raw_version,
+                    other_payload,
+                );
+                crypto::Hash(Sha256::digest(txn_data).into())
             }
         }
     }
@@ -374,6 +399,32 @@ impl SignedTransaction {
 
         Ok(())
     }
+}
+
+fn encode_zilliqa_transaction(
+    txn: &Transaction,
+    pub_key: schnorr::PublicKey,
+    raw_version: u32,
+    other_payload: &ZilliqaOtherPayload,
+) -> Vec<u8> {
+    let (code, data) = match other_payload {
+        ZilliqaOtherPayload::Data(data) => (txn.payload.clone(), data.clone()),
+        ZilliqaOtherPayload::Code(code) => (code.clone(), txn.payload.clone()),
+    };
+    let oneof8 = (!code.is_empty()).then_some(Code::Code(code));
+    let oneof9 = (!data.is_empty()).then_some(Data::Data(data));
+    let proto = ProtoTransactionCoreInfo {
+        version: raw_version,
+        toaddr: txn.to_addr.unwrap_or(Address::ZERO).as_bytes().to_vec(),
+        senderpubkey: Some(pub_key.to_sec1_bytes().into()),
+        amount: Some((txn.amount / 10u128.pow(6)).to_be_bytes().to_vec().into()),
+        gasprice: Some((txn.gas_price as u128).to_be_bytes().to_vec().into()),
+        gaslimit: txn.gas_limit,
+        oneof2: Some(Nonce::Nonce(txn.nonce + 1)),
+        oneof8,
+        oneof9,
+    };
+    proto.encode_to_vec()
 }
 
 fn verify(txn: &Transaction, signing_info: &SigningInfo) -> Result<Address> {
@@ -414,6 +465,23 @@ fn verify(txn: &Transaction, signing_info: &SigningInfo) -> Result<Address> {
 
             Ok(from_addr)
         }
+        SigningInfo::Zilliqa {
+            pub_key,
+            signature,
+            raw_version,
+            other_payload,
+        } => {
+            let txn_data = encode_zilliqa_transaction(txn, *pub_key, *raw_version, other_payload);
+
+            schnorr::verify(&txn_data, *pub_key, *signature)
+                .ok_or_else(|| anyhow!("invalid signature"))?;
+
+            let hashed = Sha256::digest(pub_key.to_encoded_point(true).as_bytes());
+            let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
+            let from_addr = Address::from_bytes(bytes.into());
+
+            Ok(from_addr)
+        }
     }
 }
 
@@ -425,6 +493,21 @@ pub enum SigningInfo {
         s: [u8; 32],
         chain_id: u64,
     },
+    Zilliqa {
+        pub_key: schnorr::PublicKey,
+        signature: schnorr::Signature,
+        raw_version: u32,
+        /// Zilliqa transactions can be sent with both `code` and `data` set, but only one of these is actualy used.
+        /// Annoyingly, both are considered when calculating the transaction's hash and signature. This field stores
+        /// the *other* one, so we can correctly generate the transaction hash and signature.
+        other_payload: ZilliqaOtherPayload,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ZilliqaOtherPayload {
+    Code(Vec<u8>),
+    Data(Vec<u8>),
 }
 
 /// A transaction body, broadcast before execution and then persisted as part of a block after the transaction is executed.
