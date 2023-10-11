@@ -491,8 +491,8 @@ impl Consensus {
 
         let from_addr = removed.from_addr;
 
-        // loop over priority txs and remove the tx (this shold be O(log n)) as it will almost cert
-        // be a leaf node
+        // loop over priority txs and remove the tx (this shold be O(log n) as it will almost cert
+        // be a leaf node)
         if let Some(priority_txs) = self.new_transactions_priority.get_mut(&from_addr) {
             priority_txs.retain(|tx| tx.hash != *tx_hash);
         }
