@@ -677,7 +677,7 @@ async fn priority_fees_tx(mut network: Network) {
     let tx_send_iterations = 10;
 
     // collect up a bunch of TXs to send at once, with two per nonce (one with a priority fee)
-    // but not including the first one to allow the mempool time to see them all
+    // but starting from nonce 1 to allow the mempool time to see them all without being able to mine them yet
     for i in 1..tx_send_iterations {
         // This first one with a transfer amount of 1 should never get mined
         let mut tx = TransactionRequest::pay(to, 1);
