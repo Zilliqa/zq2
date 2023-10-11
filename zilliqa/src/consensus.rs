@@ -252,7 +252,7 @@ impl Consensus {
         // If we're at genesis, add the genesis block.
         if latest_block.view() == 0 {
             consensus.add_block(latest_block.clone())?;
-            consensus.save_highest_view(latest_block.hash(), latest_block.view())?;
+            consensus.save_highest_view(latest_block.hash(), latest_block.number(), latest_block.view())?;
             // treat genesis as finalized
             consensus.finalize(latest_block.clone())?;
             consensus.view = 1;
@@ -355,15 +355,6 @@ impl Consensus {
     }
 
     pub fn timeout(&mut self) -> Option<(PeerId, ExternalMessage)> {
-
-        // calculate what the view should be, if it is not current, we increment
-        // Determine what the next view will be based on the number of timeouts we've had.
-        //if self.timeouts > 3 {
-        //    warn!("Too many successive timeouts, exponential backoff. timeouts {} View: {} high QC: {}", self.timeouts, self.view, self.high_qc.block_hash);
-        //    if !(is_power_of_two(self.timeouts)) {
-        //        return None;
-        //    }
-        //}
 
         // We never want to timeout while on view 1
         if self.view == 1 {
@@ -516,7 +507,7 @@ impl Consensus {
                 );
             }
 
-            self.save_highest_view(block.hash(), proposal_view)?;
+            self.save_highest_view(block.hash(), block.number(), proposal_view)?;
 
             if !block.committee.iter().any(|v| v.peer_id == self.peer_id()) {
                 trace!(
@@ -1079,8 +1070,8 @@ impl Consensus {
         Ok(logs?)
     }
 
-    fn save_highest_view(&mut self, block_hash: Hash, view: u64) -> Result<()> {
-        self.block_store.set_canonical(view, block_hash)?;
+    fn save_highest_view(&mut self, block_hash: Hash, number: u64, view: u64) -> Result<()> {
+        self.block_store.set_canonical(number, view, block_hash)?;
         Ok(())
     }
 

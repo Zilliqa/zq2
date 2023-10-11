@@ -633,6 +633,10 @@ impl Block {
         self.header.view
     }
 
+    pub fn number(&self) -> u64 {
+        self.header.number
+    }
+
     pub fn hash(&self) -> Hash {
         self.header.hash
     }
