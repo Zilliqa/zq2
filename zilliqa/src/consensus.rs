@@ -611,6 +611,7 @@ impl Consensus {
                     if txn.retries >= self.config.tx_retries {
                         warn!(?txn, "Tranaction has exceeded retries and all pending from this account will been removed");
                         remove_all_txs = true;
+                        temp_vec.pop();
                     }
 
                     // all other TXs will have a higher nonce, so we can break
@@ -629,13 +630,10 @@ impl Consensus {
                             "Transaction {} not found in mempool, but was in priority txs",
                             txn.hash
                         );
-                        remove_all_txs = true;
+                        temp_vec.pop();
                     }
                 }
             }
-
-            // Put the txs back in the heap
-            txs.extend(temp_vec.into_iter());
 
             // If we need to remove the txs (retries timed out), remove it from the new_transactions and delete the entry
             // in the priority map
@@ -645,6 +643,10 @@ impl Consensus {
                     self.new_transactions.remove(&tx.hash);
                 }
             }
+
+            // Put the txs back in the heap
+            txs.extend(temp_vec.into_iter());
+
         }
 
         // As cleanup, remove any `From` where the heap is empty

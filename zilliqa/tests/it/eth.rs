@@ -1,5 +1,6 @@
 use ethabi::ethereum_types::U64;
 use std::fmt::Debug;
+use futures::future::join_all;
 
 use ethers::{
     abi::FunctionExt,
@@ -627,7 +628,6 @@ async fn nonces_respected_ordered(mut network: Network) {
 
     // collect up a bunch of TXs to send at once, but in reverse order
     for i in (0..tx_send_iterations).rev() {
-        //println!("Sending tx {}", i);
         let mut tx = TransactionRequest::pay(to, tx_send_amount);
         tx.nonce = Some(i.into());
         let mut tx: TypedTransaction = tx.into();
@@ -646,9 +646,7 @@ async fn nonces_respected_ordered(mut network: Network) {
     }
 
     // Wait for all of them to be completed
-    for prom in promises {
-        let _hash = prom.await.unwrap().tx_hash();
-    }
+    join_all(promises).await;
 
     // Wait until target account has got all the TXs
     let wait = network
