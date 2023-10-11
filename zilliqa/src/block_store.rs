@@ -8,7 +8,7 @@ use tracing::*;
 
 use crate::{
     crypto::Hash,
-    message::{Block, BlockRef, BlockRequest},
+    message::{Block, BlockRef, BlockRequest, BlocksRequest},
     node::MessageSender,
 };
 
@@ -52,7 +52,9 @@ impl BlockStore {
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
+        trace!("Get block with view {view}");
         let Some(hash) = self.canonical_block_numbers.get(view.to_be_bytes())? else {
+            trace!("I don't know the hash");
             return Ok(None);
         };
         let hash = Hash::from_bytes(hash)?;
@@ -73,6 +75,16 @@ impl BlockStore {
                 )))
                 .unwrap();
         }
+        Ok(())
+    }
+
+    pub fn request_blocks(&mut self, view: u64) -> Result<()> {
+        self.message_sender
+            .broadcast_external_message(ExternalMessage::BlocksRequest(BlocksRequest(
+                BlockRef::View(view),
+            )))
+            .unwrap();
+
         Ok(())
     }
 

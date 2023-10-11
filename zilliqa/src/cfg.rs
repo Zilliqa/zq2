@@ -45,8 +45,6 @@ pub struct NodeConfig {
     pub tx_retries: u64,
     /// The maximum duration between a recieved block's timestamp and the current time. Defaults to 10 seconds.
     pub allowed_timestamp_skew: Duration,
-    /// Whether to allow a single node to generate its own chain.
-    pub allow_single_node_network: bool,
     /// The location of persistence data. If not set, uses a temporary path.
     pub data_dir: Option<String>,
 }
@@ -92,7 +90,6 @@ impl Default for NodeConfig {
             // Default to the "Zilliqa local development" chain ID.
             eth_chain_id: 700 + 0x8000,
             allowed_timestamp_skew: Duration::from_secs(10),
-            allow_single_node_network: false,
             data_dir: None,
             tx_retries: 1000,
         }

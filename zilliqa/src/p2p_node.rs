@@ -260,10 +260,10 @@ impl P2pNode {
                     let topic = Self::shard_id_to_topic(shard_id);
 
                     // Push messages back into queue if there are no peers and it is not to self
-                    if self.swarm.behaviour().gossipsub.all_peers().collect_vec().is_empty() && dest != Some(from) && dest.is_some()  {
-                        let _ = self.outbound_message_sender.send((dest, shard_id, message));
-                        continue;
-                    }
+                    //if dest != Some(from) && self.swarm.behaviour().gossipsub.all_peers().collect_vec().is_empty()  {
+                    //    let _ = self.outbound_message_sender.send((dest, shard_id, message));
+                    //    continue;
+                    //}
 
                     match message {
                         Message::Internal(internal_message) => match internal_message {

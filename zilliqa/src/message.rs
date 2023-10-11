@@ -117,8 +117,15 @@ impl NewView {
 pub struct BlockRequest(pub BlockRef);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlocksRequest(pub BlockRef);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
     pub block: Block,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlocksResponse {
+    pub blocks: Vec<Block>,
 }
 
 // #[allow(clippy::large_enum_variant)] // Pending refactor once join_network is merged
@@ -137,10 +144,11 @@ pub enum ExternalMessage {
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
+    BlocksRequest(BlocksRequest),
+    BlocksResponse(BlocksResponse),
     NewTransaction(SignedTransaction),
     RequestResponse,
     JoinCommittee(NodePublicKey),
-    Hello(NodePublicKey),
 }
 
 /// A message intended only for local communication between shard nodes and/or the parent p2p node,
@@ -168,10 +176,11 @@ impl ExternalMessage {
             ExternalMessage::NewView(_) => "NewView",
             ExternalMessage::BlockRequest(_) => "BlockRequest",
             ExternalMessage::BlockResponse(_) => "BlockResponse",
+            ExternalMessage::BlocksRequest(_) => "BlocksRequest",
+            ExternalMessage::BlocksResponse(_) => "BlocksResponse",
             ExternalMessage::NewTransaction(_) => "NewTransaction",
             ExternalMessage::RequestResponse => "RequestResponse",
             ExternalMessage::JoinCommittee(_) => "JoinCommittee",
-            ExternalMessage::Hello(_) => "Hello",
         }
     }
 }
@@ -253,12 +262,14 @@ impl AggregateQc {
 pub enum BlockRef {
     Hash(Hash),
     View(u64),
+    Number(u64),
 }
 
 /// The [Copy]-able subset of a block.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BlockHeader {
-    pub view: u64, // the proposer's index can be derived from the block's view
+    pub view: u64, // only useful to consensus: the proposer's index can be derived from the block's view
+    pub number: u64,
     pub hash: Hash,
     pub parent_hash: Hash,
     pub signature: NodeSignature,
@@ -275,6 +286,7 @@ impl BlockHeader {
     pub fn genesis(state_root_hash: Hash) -> Self {
         Self {
             view: 0,
+            number: 0,
             hash: BlockHeader::genesis_hash(),
             parent_hash: Hash::ZERO,
             signature: NodeSignature::identity(),
@@ -289,6 +301,7 @@ impl Default for BlockHeader {
     fn default() -> Self {
         Self {
             view: 0,
+            number: 0,
             hash: Hash::ZERO,
             parent_hash: Hash::ZERO,
             signature: NodeSignature::identity(),
@@ -441,6 +454,7 @@ pub struct Block {
 impl Block {
     pub fn genesis(committee: Committee, state_root_hash: Hash) -> Block {
         let view = 0u64;
+        let number = 0u64;
         let qc = QuorumCertificate {
             signature: NodeSignature::identity(),
             cosigned: bitvec![u8, bitvec::order::Msb0; 1; 0],
@@ -468,6 +482,7 @@ impl Block {
         Block {
             header: BlockHeader {
                 view,
+                number,
                 hash: digest,
                 parent_hash,
                 signature: NodeSignature::identity(),
@@ -524,6 +539,7 @@ impl Block {
     pub fn from_qc(
         secret_key: SecretKey,
         view: u64,
+        number: u64,
         qc: QuorumCertificate,
         parent_hash: Hash,
         state_root_hash: Hash,
@@ -550,6 +566,7 @@ impl Block {
         Block {
             header: BlockHeader {
                 view,
+                number,
                 hash: digest,
                 parent_hash,
                 signature,
@@ -567,6 +584,7 @@ impl Block {
     pub fn from_agg(
         secret_key: SecretKey,
         view: u64,
+        number: u64,
         qc: QuorumCertificate,
         agg: AggregateQc,
         parent_hash: Hash,
@@ -593,6 +611,7 @@ impl Block {
         Block {
             header: BlockHeader {
                 view,
+                number: number,
                 hash: digest,
                 parent_hash,
                 signature,

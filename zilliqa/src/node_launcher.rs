@@ -111,19 +111,22 @@ impl NodeLauncher {
         tokio::pin!(sleep);
 
         self.node_launched = true;
+        //let mut successive_timeouts = 0;
 
         loop {
             select! {
                 message = self.inbound_message_receiver.next() => {
                     let (source, message) = message.expect("message stream should be infinite");
+                    //if message.is_external() {
+                    //}
+                    //successive_timeouts = 0;
                     self.node.lock().unwrap().handle_message(source, message).unwrap();
                 },
                 () = &mut sleep => {
-                    trace!("timeout elapsed");
+                    //trace!("timeout {} elapsed", self.consensus_timeout.as_secs());
 
                     self.node.lock().unwrap().handle_timeout().unwrap();
-                    self.outbound_message_sender.send((None, self.config.eth_chain_id, Message::External(ExternalMessage::Hello(self.secret_key.node_public_key())))).unwrap();
-                    sleep.as_mut().reset(Instant::now() + self.consensus_timeout);
+                    sleep.as_mut().reset(Instant::now() + Duration::from_secs(1));
                 },
                 r = self.reset_timeout_receiver.next() => {
                     let () = r.expect("reset timeout stream should be infinite");

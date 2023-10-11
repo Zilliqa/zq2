@@ -9,6 +9,7 @@ use primitive_types::H256;
 use evm_ds::protos::evm_proto::{self as EvmProto};
 
 use anyhow::{anyhow, Result};
+use k256::pkcs8::der::EncodeValue;
 use libp2p::PeerId;
 
 use primitive_types::U256;
@@ -18,7 +19,7 @@ use tracing::*;
 use crate::{
     consensus::Consensus,
     crypto::{Hash, NodePublicKey, SecretKey},
-    message::{Block, BlockRequest, BlockResponse, ExternalMessage, Proposal},
+    message::{Block, BlockRequest, BlockResponse, BlocksRequest, BlocksResponse, ExternalMessage, Proposal},
     state::{Account, Address},
 };
 
@@ -114,6 +115,7 @@ impl Node {
     // TODO: Multithreading - `&mut self` -> `&self`
     pub fn handle_message(&mut self, from: PeerId, message: Message) -> Result<()> {
         let to = self.peer_id;
+        let to_self = from == to;
         let message_name = message.name();
         tracing::debug!(%from, %to, %message_name, "handling message");
         match message {
@@ -125,8 +127,8 @@ impl Node {
                         self.reset_timeout.send(())?;
                         self.message_sender
                             .send_external_message(leader, ExternalMessage::Vote(vote))?;
-                    } else if m_view % 5 == 0 {
-                        info!("We had nothing to respond to proposal, lets try to join committee");
+                    } else {
+                        info!("We had nothing to respond to proposal, lets try to join committee for view {m_view:}");
                         self.message_sender.send_external_message(
                             from,
                             ExternalMessage::JoinCommittee(self.consensus.public_key()),
@@ -148,10 +150,32 @@ impl Node {
                     }
                 }
                 ExternalMessage::BlockRequest(m) => {
-                    self.handle_block_request(from, m)?;
+                    if !to_self {
+                        self.handle_block_request(from, m)?;
+                    } else {
+                        debug!("ignoring block request to self");
+                    }
                 }
                 ExternalMessage::BlockResponse(m) => {
-                    self.handle_block_response(from, m)?;
+                    if !to_self {
+                        self.handle_block_response(from, m)?;
+                    } else {
+                        debug!("ignoring block response to self");
+                    }
+                }
+                ExternalMessage::BlocksRequest(m) => {
+                    if !to_self {
+                        self.handle_blocks_request(from, m)?;
+                    } else {
+                        debug!("ignoring blocks request to self");
+                    }
+                }
+                ExternalMessage::BlocksResponse(m) => {
+                    if !to_self {
+                        self.handle_blocks_response(from, m)?;
+                    } else {
+                        debug!("ignoring blocks response to self");
+                    }
                 }
                 ExternalMessage::RequestResponse => {}
                 ExternalMessage::NewTransaction(t) => {
@@ -159,13 +183,6 @@ impl Node {
                 }
                 ExternalMessage::JoinCommittee(public_key) => {
                     self.add_peer(from, public_key)?;
-                }
-                ExternalMessage::Hello(public_key) => {
-                    if public_key != self.consensus.public_key() {
-                        if let Some((leader, action)) = self.consensus.timeout(true) {
-                            self.message_sender.send_external_message(leader, action)?
-                        }
-                    }
                 }
             },
             Message::Internal(internal_message) => match internal_message {
@@ -182,13 +199,12 @@ impl Node {
     }
 
     pub fn handle_timeout(&mut self) -> Result<()> {
-        match self.consensus.timeout(false) {
+        match self.consensus.timeout() {
             Some((leader, response)) => {
                 self.message_sender
                     .send_external_message(leader, response)?;
             }
             None => {
-                warn!("timeout failed");
             }
         }
         Ok(())
@@ -387,6 +403,7 @@ impl Node {
         let block = match request.0 {
             crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
             crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view),
+            crate::message::BlockRef::Number(number) => self.consensus.get_block_by_view(number),
         }?;
         let Some(block) = block else {
             debug!("ignoring block request for unknown block: {:?}", request.0);
@@ -403,6 +420,62 @@ impl Node {
 
     fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
         self.consensus.receive_block(response.block)?;
+
+        Ok(())
+    }
+
+    fn handle_blocks_request(&mut self, source: PeerId, request: BlocksRequest) -> Result<()> {
+        let block = match request.0 {
+            crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
+            crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view),
+            crate::message::BlockRef::Number(number) => self.consensus.get_block_by_view(number),
+        }?;
+
+        let block = match block {
+            Some(block) => block,
+            None => {
+                debug!("ignoring blocks request for unknown block: {:?}", request.0);
+                return Ok(());
+            }
+        };
+
+        let block_number = block.header.number;
+        let mut blocks: Vec<Block> = Vec::new();
+
+        for i in block_number..block_number+100
+        {
+            let block = self.consensus.get_block_by_view(i);
+            if let Ok(Some(block)) = block {
+                blocks.push(block);
+            } else {
+                break;
+            }
+        };
+
+        trace!("Responding to new blocks request of {:?} starting {} with {} blocks", request, block_number, blocks.len());
+
+        self.message_sender.send_external_message(
+            source,
+            ExternalMessage::BlocksResponse(BlocksResponse { blocks }),
+        )?;
+
+        Ok(())
+    }
+
+    fn handle_blocks_response(&mut self, _: PeerId, response: BlocksResponse) -> Result<()> {
+        trace!("Received blocks response of length {}", response.blocks.len());
+        let mut was_new = false;
+
+        for block in response.blocks {
+            was_new = self.consensus.receive_block(block)?;
+        }
+
+        if was_new {
+            trace!("Requesting additional blocks after successful block download");
+            self.consensus.download_blocks_up_to_head()?;
+        }
+
+        //self.consensus.receive_block(response.block)?;
 
         Ok(())
     }
