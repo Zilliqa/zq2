@@ -646,7 +646,6 @@ impl Consensus {
 
             // Put the txs back in the heap
             txs.extend(temp_vec.into_iter());
-
         }
 
         // As cleanup, remove any `From` where the heap is empty
