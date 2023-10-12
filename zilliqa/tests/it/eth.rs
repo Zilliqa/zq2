@@ -1,6 +1,6 @@
 use ethabi::ethereum_types::U64;
-use std::fmt::Debug;
 use futures::future::join_all;
+use std::fmt::Debug;
 
 use ethers::{
     abi::FunctionExt,
