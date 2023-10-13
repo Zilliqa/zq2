@@ -7,6 +7,36 @@ use crate::Network;
 
 use ethers::{providers::Middleware, types::TransactionRequest};
 
+//// Test that a node that joins later can sync up to the latest block and become a
+//// validator/produce a block
+//#[zilliqa_macros::test]
+//async fn sync_and_block_production(mut network: Network) { }
+
+// Test that a node can die and rejoin and still sync up to the latest block
+
+// Test that all nodes can die and the network can restart (even if they startup at different
+// times)
+
+// Test that even with some consensus messages being dropped, the network can still proceed
+#[zilliqa_macros::test]
+async fn block_production_even_when_lossy(mut network: Network) {
+
+    network
+        .run_until(
+            |n| {
+                let index = n.random_index();
+                n.get_node(index)
+                    .get_latest_block()
+                    .unwrap()
+                    .map_or(0, |b| b.view())
+                    >= 5
+            },
+            50,
+        )
+        .await
+        .unwrap();
+}
+
 #[zilliqa_macros::test]
 async fn block_production(mut network: Network) {
     network
