@@ -1,40 +1,136 @@
 use crate::CombinedJson;
 use ethabi::Token;
+use std::env;
+use std::thread::sleep;
+use std::time::Duration;
 
 use zilliqa::state::Address;
 
 use crate::Network;
 
 use ethers::{providers::Middleware, types::TransactionRequest};
+use tracing::info;
 
-//// Test that a node that joins later can sync up to the latest block and become a
-//// validator/produce a block
-//#[zilliqa_macros::test]
-//async fn sync_and_block_production(mut network: Network) { }
+// Test that a node that joins later can sync up to the latest block and become a
 
+/*
 // Test that a node can die and rejoin and still sync up to the latest block
-
-// Test that all nodes can die and the network can restart (even if they startup at different
-// times)
-
-// Test that even with some consensus messages being dropped, the network can still proceed
 #[zilliqa_macros::test]
-async fn block_production_even_when_lossy(mut network: Network) {
+async fn node_can_sync_join_block_production(mut network: Network) {
+    let start_block = 5;
 
+    // wait until at least 5 blocks have been produced
     network
         .run_until(
             |n| {
                 let index = n.random_index();
                 n.get_node(index)
-                    .get_latest_block()
-                    .unwrap()
-                    .map_or(0, |b| b.view())
-                    >= 5
+                    .get_finalized_height()
+                    >= start_block
             },
             50,
         )
         .await
         .unwrap();
+
+    // Add a new node, then make sure they eventually are the producer of
+    // a block
+    info!("Adding node to network");
+    let index = network.add_node();
+
+    network
+        .run_until(
+            |n| {
+                let block = n.node_at(index)
+                        .get_latest_block()
+                        .unwrap()
+                        .unwrap();
+
+                    block.committee.leader_index(block.view()) == index
+            },
+            50000,
+        )
+        .await
+        .expect("expected to find our joined node has become a block producer");
+}
+*/
+
+// Test that all nodes can die and the network can restart (even if they startup at different
+// times)
+#[zilliqa_macros::test]
+async fn network_can_die_restart(mut network: Network) {
+    let start_block = 5;
+    let finish_block = 10;
+
+    // wait until at least 5 blocks have been produced
+    network
+        .run_until(
+            |n| {
+                let index = n.random_index();
+                n.get_node(index)
+                    .get_finalized_height()
+                    >= start_block
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Forcibly restart the network, with a random time delay between each node
+    network.restart();
+
+    // Panic if it can't progress to the target block
+    network
+        .run_until(
+            |n| {
+                let index = n.random_index();
+                n.get_node(index)
+                    .get_finalized_height()
+                    >= finish_block
+            },
+            5000,
+        )
+        .await
+        .expect("Failed to progress to target block");
+}
+
+fn get_block_number(n: &mut Network) -> u64 {
+    let index = n.random_index();
+    n.get_node(index).get_finalized_height()
+}
+
+// test that even with some consensus messages being dropped, the network can still proceed
+// note: this drops all messages, not just consensus messages, but there should only be
+// consensus messages in the network anyway
+#[zilliqa_macros::test]
+async fn block_production_even_when_lossy_network(mut network: Network) {
+    let failure_rate = 0.1;
+    let start_block = 5;
+    let finish_block = 8;
+
+    // wait until at least 5 blocks have been produced
+    network
+        .run_until(
+            |n| {
+                let index = n.random_index();
+                n.get_node(index)
+                    .get_finalized_height()
+                    >= start_block
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // now, wait until block 15 has been produced, but dropping 10% of the messages.
+    for i in 0..1000000 {
+        network.randomly_drop_messages_then_tick(failure_rate).await;
+        if get_block_number(&mut network) >= finish_block {
+            break;
+        }
+    }
+
+    assert_eq!(get_block_number(&mut network) >= finish_block, true, "block number should be at least {}, but was {}", finish_block, get_block_number(&mut network));
 }
 
 #[zilliqa_macros::test]

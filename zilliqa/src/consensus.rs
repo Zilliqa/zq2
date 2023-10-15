@@ -311,7 +311,7 @@ impl Consensus {
         Ok(None)
     }
 
-    fn head_block(&self) -> Block {
+    pub fn head_block(&self) -> Block {
         // Our high QC should point to our HEAD, default to genesis otherwise
         match self.block_store.get_block(self.high_qc.block_hash) {
             Ok(Some(block)) => block,
@@ -394,6 +394,7 @@ impl Consensus {
         let next_exponential_backoff_timeout = consensus_timeout * 2u64.pow((view_difference+1) as u32);
 
         if time_since_last_view_change < exponential_backoff_timeout {
+            trace!("Not proceeding with view change - time since last: {}, timeout requires: {}", time_since_last_view_change, exponential_backoff_timeout);
             return None;
         }
 
@@ -717,8 +718,8 @@ impl Consensus {
             return Ok(None);
         }
 
-        if index > 4 {
-            panic!("we don't expect more than 4 validators currently");
+        if index > 5 {
+            panic!("we don't expect more than 5 validators currently");
         }
 
         // if the vote is new, store it
@@ -892,8 +893,8 @@ impl Consensus {
 
         let committee_size = committee.len();
 
-        if committee_size > 4 {
-            panic!("we don't expect more than 4 validators currently");
+        if committee_size > 5 {
+            panic!("we don't expect more than 5 validators currently");
         }
 
         let NewViewVote {
@@ -915,8 +916,8 @@ impl Consensus {
 
         let mut supermajority = false;
 
-        if index > 4 {
-            panic!("we don't expect more than 4 validators");
+        if index > 5 {
+            panic!("we don't expect more than 5 validators");
         }
 
         // the index is not checked here...

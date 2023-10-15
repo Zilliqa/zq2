@@ -125,7 +125,7 @@ impl NodeLauncher {
                 () = &mut sleep => {
                     //trace!("timeout {} elapsed", self.consensus_timeout.as_secs());
 
-                    self.node.lock().unwrap().handle_timeout().unwrap();
+                    self.node.lock().unwrap().handle_timeout();
                     sleep.as_mut().reset(Instant::now() + Duration::from_secs(1));
                 },
                 r = self.reset_timeout_receiver.next() => {

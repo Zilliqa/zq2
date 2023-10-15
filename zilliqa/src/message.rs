@@ -425,7 +425,11 @@ impl Committee {
     }
 
     pub fn leader(&self, view: u64) -> Validator {
-        *self.0.iter().nth(view as usize % self.0.len()).unwrap()
+        *self.0.iter().nth(self.leader_index(view)).unwrap()
+    }
+
+    pub fn leader_index(&self, view: u64) -> usize {
+        view as usize % self.0.len()
     }
 
     pub fn total_weight(&self) -> u128 {

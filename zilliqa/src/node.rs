@@ -198,16 +198,18 @@ impl Node {
         Ok(())
     }
 
-    pub fn handle_timeout(&mut self) -> Result<()> {
+    // handle timeout - true if something happened
+    pub fn handle_timeout(&mut self) -> bool {
         match self.consensus.timeout() {
             Some((leader, response)) => {
                 self.message_sender
-                    .send_external_message(leader, response)?;
+                    .send_external_message(leader, response).unwrap();
+                return true;
             }
             None => {
             }
         }
-        Ok(())
+        return false;
     }
 
     pub fn add_peer(&mut self, peer: PeerId, public_key: NodePublicKey) -> Result<()> {
@@ -471,7 +473,7 @@ impl Node {
         }
 
         if was_new {
-            trace!("Requesting additional blocks after successful block download");
+            trace!("Requesting additional blocks after successful block download. Start: {}", self.consensus.head_block().header.number);
             self.consensus.download_blocks_up_to_head()?;
         }
 

@@ -9,9 +9,14 @@ use std::ops::DerefMut;
 use zilliqa::cfg::ConsensusConfig;
 use zilliqa::message::InternalMessage;
 
+extern crate fs_extra;
+use fs_extra::dir::*;
+use fs_extra::error::*;
+
 use std::collections::HashMap;
 use std::{
     fmt::Debug,
+    fs,
     rc::Rc,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -32,6 +37,7 @@ use ethers::{
     types::H256,
 };
 use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
+use itertools::Itertools;
 use jsonrpsee::{
     types::{Id, RequestSer, Response, ResponsePayload},
     RpcModule,
@@ -104,6 +110,7 @@ fn node(
                         .unwrap()
                         .to_string(),
                 )],
+                consensus_timeout: Duration::from_secs(1),
                 ..Default::default()
             },
             ..Default::default()
@@ -140,6 +147,8 @@ struct TestNode {
 
 struct Network {
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    /// Save the funded genesis address for use in restarts.
+    pub genesis_address: H160,
     /// Child shards.
     pub children: HashMap<u64, Network>,
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
@@ -165,12 +174,16 @@ impl Network {
         // up with indices in the committee, making logs easier to read.
         keys.sort_unstable_by_key(|key| key.to_libp2p_keypair().public().to_peer_id());
 
+        // save for later use if we restart
+
         let validator = (
             keys[0].node_public_key(),
             keys[0].to_libp2p_keypair().public().to_peer_id(),
         );
         let genesis_committee = vec![validator];
         let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
+
+        let genesis_address = secret_key_to_address(&genesis_key);
 
         let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
             .into_iter()
@@ -181,7 +194,8 @@ impl Network {
                     key,
                     i,
                     Some(tempfile::tempdir().unwrap()),
-                    secret_key_to_address(&genesis_key),
+                    genesis_address,
+                    //secret_key_to_address(&genesis_key),
                 )
                 .unwrap()
             })
@@ -204,6 +218,7 @@ impl Network {
         // Pause time so we can control it.
         zilliqa::time::pause_at_epoch();
 
+        // remove this.
         for node in &nodes[1..] {
             // Simulate every node broadcasting a `JoinCommittee` message.
             resend_message
@@ -219,6 +234,7 @@ impl Network {
 
         Network {
             genesis_committee,
+            genesis_address,
             nodes,
             receivers,
             resend_message,
@@ -260,6 +276,140 @@ impl Network {
         index
     }
 
+    pub fn restart(&mut self) {
+        // We copy the data dirs from the original network, and re-use the same private keys.
+
+        // The tempdir object has to be held in the vector or the OS
+        // will delete it when it goes out of scope.
+        /* let mut directories: Vec<TempDir> = vec![]; */
+        let mut options = CopyOptions::new();
+        options.copy_inside = true;
+
+        /*
+        for node in &self.nodes {
+            let new_data_dir = tempfile::tempdir().unwrap();
+
+            for mut entry in fs::read_dir(node.dir.as_ref().unwrap().path()) {
+                let entry = entry.next().unwrap().unwrap();
+                info!("Copying {:?} to {:?}", entry, new_data_dir);
+
+                copy(&entry.path(), &new_data_dir.path(), &options).unwrap();
+            }
+
+            directories.push(new_data_dir);
+        }
+        */
+
+        // Now reconstruct the nodes with the copied data dirs and private keys.
+        //let mut nodes: Vec<TestNode> = vec![];
+
+        //let validator = (
+        //    keys[0].node_public_key(),
+        //    keys[0].to_libp2p_keypair().public().to_peer_id(),
+        //);
+        //let genesis_committee = vec![validator];
+        //let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
+
+        // Collect the keys from the validators
+        let keys = self.nodes.iter().map(|n| n.secret_key).collect::<Vec<_>>();
+
+        let validator = (
+            keys[0].node_public_key(),
+            keys[0].to_libp2p_keypair().public().to_peer_id(),
+        );
+        let genesis_committee = vec![validator];
+
+        // Get genesis key
+        //let gen_key =
+
+        let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
+            .into_iter()
+            .enumerate()
+            .map(|(i, key)| {
+
+                let new_data_dir = tempfile::tempdir().unwrap();
+
+                for mut entry in fs::read_dir(self.nodes[i].dir.as_ref().unwrap().path()) {
+                    let entry = entry.next().unwrap().unwrap();
+                    info!("Copying {:?} to {:?}", entry, new_data_dir);
+
+                    copy(&entry.path(), &new_data_dir.path(), &options).unwrap();
+                }
+
+                node(
+                    genesis_committee.clone(),
+                    key,
+                    i,
+                    Some(new_data_dir),
+                    self.genesis_address,
+                )
+                    .unwrap()
+            })
+            .unzip();
+
+        for node in &nodes {
+            trace!(
+                "Node {}: {} (dir: {})",
+                node.index,
+                node.peer_id,
+                node.dir.as_ref().unwrap().path().to_string_lossy(),
+            );
+        }
+
+        let (resend_message, receive_resend_message) =
+            mpsc::unbounded_channel::<(PeerId, Option<PeerId>, Message)>();
+        let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
+        receivers.push(receive_resend_message);
+
+        self.nodes = nodes;
+        self.receivers = receivers;
+        self.resend_message = resend_message;
+
+        info!("Finished the restart!!!");
+
+        println!("done");
+        //panic!("done");
+
+        // Now trigger a timeout in all of the nodes until we see network activity again
+        // this could of course spin forever
+        loop {
+            for node in &self.nodes {
+                if node.inner.lock().unwrap().handle_timeout() {
+                    return;
+                }
+                zilliqa::time::advance(Duration::from_millis(1));
+            }
+        }
+    }
+
+    // Drop the first message in each node queue with N% probability per tick
+    pub async fn randomly_drop_messages_then_tick(&mut self, failure_rate: f64) {
+
+        if failure_rate > 1.0 || failure_rate < 0.0 {
+            panic!("failure rate is a probability and must be between 0 and 1");
+        }
+
+        for (_i, receiver) in self.receivers.iter_mut().enumerate() {
+           let drop = self.rng.lock().unwrap().gen_bool(failure_rate);
+           if drop {
+               // Don't really care too much what the reciever has, just pop something off if
+               // possible
+               match tokio::task::unconstrained(receiver.next()).now_or_never() {
+                   Some(None) => {
+                       unreachable!("stream was terminated, this should be impossible");
+                   }
+                   Some(Some(message)) => {
+                       //messages.push(message);
+                       info!("***** Randomly dropping message: {:?}", message);
+                   }
+                   _ => {}
+               }
+           }
+        }
+
+        self.tick().await;
+    }
+
     pub async fn tick(&mut self) {
         // Advance time.
         zilliqa::time::advance(Duration::from_millis(1));
@@ -276,6 +426,7 @@ impl Network {
                         messages.push(message);
                     }
                     Some(None) => {
+                        warn!("Stream was unreachable!");
                         unreachable!("stream was terminated, this should be impossible");
                     }
                     None => {
@@ -295,6 +446,12 @@ impl Network {
         );
 
         if messages.is_empty() {
+            warn!("Messages were empty - advance time and trigger timeout in all nodes!");
+            zilliqa::time::advance(Duration::from_millis(500));
+
+            for node in &self.nodes {
+                node.inner.lock().unwrap().handle_timeout();
+            }
             return;
         }
         // Pick a random message
