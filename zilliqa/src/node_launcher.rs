@@ -117,16 +117,12 @@ impl NodeLauncher {
             select! {
                 message = self.inbound_message_receiver.next() => {
                     let (source, message) = message.expect("message stream should be infinite");
-                    //if message.is_external() {
-                    //}
-                    //successive_timeouts = 0;
                     self.node.lock().unwrap().handle_message(source, message).unwrap();
                 },
                 () = &mut sleep => {
-                    //trace!("timeout {} elapsed", self.consensus_timeout.as_secs());
-
+                    // No messages for a while, so check if consensus wants to timeout
                     self.node.lock().unwrap().handle_timeout();
-                    sleep.as_mut().reset(Instant::now() + Duration::from_secs(1));
+                    sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
                 },
                 r = self.reset_timeout_receiver.next() => {
                     let () = r.expect("reset timeout stream should be infinite");

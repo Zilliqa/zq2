@@ -54,9 +54,7 @@ impl BlockStore {
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        trace!("Get block with view {view}");
         let Some(hash) = self.canonical_block_views.get(view.to_be_bytes())? else {
-            trace!("I don't know the hash");
             return Ok(None);
         };
         let hash = Hash::from_bytes(hash)?;
@@ -64,9 +62,7 @@ impl BlockStore {
     }
 
     pub fn get_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        trace!("Get block with number {number}");
         let Some(hash) = self.canonical_block_numbers.get(number.to_be_bytes())? else {
-            trace!("I don't know the hash");
             return Ok(None);
         };
         let hash = Hash::from_bytes(hash)?;
@@ -74,13 +70,10 @@ impl BlockStore {
     }
 
     pub fn request_block_by_view(&mut self, view: u64) -> Result<()> {
-        trace!("Request block with view {view}");
         if let Some(hash) = self.canonical_block_views.get(view.to_be_bytes())? {
             let hash = Hash::from_bytes(hash)?;
-            trace!("I know the hash, its {hash}");
             self.request_block(hash)?;
         } else {
-            trace!("I don't know the hash");
             self.message_sender
                 .broadcast_external_message(ExternalMessage::BlockRequest(BlockRequest(
                     BlockRef::View(view),

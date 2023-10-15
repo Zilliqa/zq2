@@ -67,10 +67,6 @@ pub struct Validator {
     pub weight: u128,
 }
 
-fn is_power_of_two(n: u64) -> bool {
-    n != 0 && (n & (n - 1)) == 0
-}
-
 impl PartialEq for Validator {
     fn eq(&self, other: &Self) -> bool {
         self.peer_id == other.peer_id
@@ -125,8 +121,8 @@ pub struct Consensus {
     high_qc: QuorumCertificate,
     view: u64,
     finalized_view: u64,
-    timeouts: u64,
     last_timeout: SystemTime,
+    consensus_timeout: Duration,
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<Validator>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
@@ -236,7 +232,6 @@ impl Consensus {
             high_qc: latest_block.qc.clone(),
             view: latest_block.view(),
             finalized_view: latest_block.view().saturating_sub(1),
-            timeouts: 0,
             last_timeout: SystemTime::now(),
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
@@ -323,21 +318,7 @@ impl Consensus {
     pub fn download_blocks_up_to_head(&mut self) -> Result<()> {
 
         let head_block = self.head_block();
-
         self.block_store.request_blocks(head_block.header.number)?;
-
-        //for view in (self.view + 1)..to {
-        //    self.view = view;
-        //}
-
-        //if to > self.view {
-        //    info!(
-        //        "*** Downloading missing blocks...view is going from {} to {}",
-        //        self.view,
-        //        to + 1
-        //    );
-        //    self.view = to + 1;
-        //}
 
         Ok(())
     }
@@ -381,26 +362,24 @@ impl Consensus {
             return None;
         }
 
-        //self.timeouts += 1;
         // Now consider whether we want to timeout - the timeout duration doubles every time, so it
-        // is timeout * 2^(view - last)
-
+        // Should eventually have all nodes on the same view
+        let consensus_timeout_ms = self.consensus_timeout.as_millis();
         let head_block = self.head_block();
         let head_block_view = head_block.view();
-        let time_since_last_view_change = SystemTime::now().duration_since(self.last_timeout).unwrap().as_secs();
+        let time_since_last_view_change = SystemTime::now().duration_since(self.last_timeout).unwrap().as_millis();
         let view_difference = self.view.saturating_sub(head_block_view);
-        let consensus_timeout = 5;
-        let exponential_backoff_timeout = consensus_timeout * 2u64.pow(view_difference as u32);
-        let next_exponential_backoff_timeout = consensus_timeout * 2u64.pow((view_difference+1) as u32);
+        let exponential_backoff_timeout = consensus_timeout_ms * 2u64.pow(view_difference as u32);
+        let next_exponential_backoff_timeout = consensus_timeout_ms * 2u64.pow((view_difference+1) as u32);
 
         if time_since_last_view_change < exponential_backoff_timeout {
             trace!("Not proceeding with view change - time since last: {}, timeout requires: {}", time_since_last_view_change, exponential_backoff_timeout);
             return None;
         }
 
-        trace!("considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", self.view, time_since_last_view_change, exponential_backoff_timeout, head_block_view, head_block.hash());
+        trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", self.view, time_since_last_view_change, exponential_backoff_timeout, head_block_view, head_block.hash());
 
-        info!("***** TIMEOUT: View is now {} -> {}. Next view change in {}s", self.view, self.view + 1, next_exponential_backoff_timeout);
+        info!("***** TIMEOUT: View is now {} -> {}. Next view change in {}ms", self.view, self.view + 1, next_exponential_backoff_timeout);
 
         self.download_blocks_up_to_head();
         self.set_view(self.view + 1);
@@ -435,14 +414,6 @@ impl Consensus {
             Err(e) => {
                 if let Some(e) = e.downcast_ref::<MissingBlockError>() {
                     info!(?e, "missing block when checking block proposal");
-                    //match e.0 {
-                    //    BlockRef::Hash(hash) => self.block_store.request_block(hash)?,
-                    //    BlockRef::View(view) => self.block_store.request_block_by_view(view)?,
-                    //    BlockRef::Number(number) => self.block_store.request_block_by_view(number)?,
-                    //}
-
-                    // don't add block that is loose, instead
-                    //self.add_block(block)?;
                     return Ok(None);
                 } else {
                     return Err(e);
@@ -498,7 +469,7 @@ impl Consensus {
                     self.state.root_hash()
                 ));
             }
-            //self.download_blocks_up_to(proposal_view.saturating_sub(1))?;
+
             if self.view != proposal_view + 1 {
                 self.set_view(proposal_view + 1);
 
@@ -739,7 +710,6 @@ impl Consensus {
             );
             if supermajority_reached {
                 self.block_store.request_block_by_view(block_view)?;
-                //self.download_blocks_up_to(block_view)?;
 
                 // if we are already in the round in which the vote counts and have reached supermajority
                 if block_view + 1 == self.view {
@@ -928,11 +898,9 @@ impl Consensus {
             cosigned.set(index, true);
             cosigned_weight += sender.weight;
             qcs.push(new_view.qc);
-            // TODO: New views broken
 
             supermajority = cosigned_weight * 3 > committee.total_weight() * 2;
-            //supermajority = cosigned_weight * 3 > 99999 /* total weight of what committee? */ * 2;
-            //supermajority = cosigned_weight >= 300;
+
             let num_signers = signers.len();
             trace!(
                 num_signers,
@@ -950,8 +918,6 @@ impl Consensus {
                     );
                     self.set_view(new_view.view);
                 }
-
-                //self.download_blocks_up_to(new_view.view - 1)?;
 
                 // if we are already in the round in which the vote counts and have reached supermajority
                 if new_view.view == self.view {
@@ -1348,7 +1314,7 @@ impl Consensus {
             return Err(anyhow!("timestamp decreased from parent"));
         }
 
-        // This block's timestamp must be at most `self.allowed_timestamp_skew` away from the current time. Note this
+        // This block's timestamp should be at most `self.allowed_timestamp_skew` away from the current time. Note this
         // can be either forwards or backwards in time.
         // Genesis is an exception for now since the timestamp can differ across nodes
         let difference = block
@@ -1359,9 +1325,6 @@ impl Consensus {
             warn!(
                 "timestamp difference greater than allowed skew: {difference:?}. Blocks {0:?} and {1:?}", block.view(), parent.view(),
             );
-            //return Err(anyhow!(
-            //    "timestamp difference greater than allowed skew: {difference:?}. Blocks {0:?} and {1:?}", block.view(), parent.view(),
-            //));
         }
 
         // Blocks must be in sequential order
@@ -1394,18 +1357,6 @@ impl Consensus {
             Err(e) => {
                 warn!("Error when receiving block {}", e);
                 return Err(e);
-                // TODO: Downcasting is a bit ugly here - We should probably have an error enum instead.
-                //if let Some(e) = e.downcast_ref::<MissingBlockError>() {
-                //    // We don't call `update_high_qc_and_view` here because the block might be a fork of the finalized chain
-                //    self.add_block(block)?;
-                //    match e.0 {
-                //        BlockRef::Hash(hash) => self.block_store.request_block(hash),
-                //        BlockRef::View(view) => self.block_store.request_block_by_view(view),
-                //        BlockRef::Number(number) => self.block_store.request_block_by_view(number),
-                //    }?
-                //} else {
-                //    return Err(e);
-                //}
             }
         }
 
@@ -1522,6 +1473,7 @@ impl Consensus {
             .map(|i| committee.get_by_index(*i as usize).unwrap().public_key)
             .collect();
 
+        // TODO: Implement batch verification - this will not work atm.
         //verify_messages(agg.signature, &messages, &public_keys)
         Ok(())
     }

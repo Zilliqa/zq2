@@ -174,7 +174,6 @@ impl Network {
         // up with indices in the committee, making logs easier to read.
         keys.sort_unstable_by_key(|key| key.to_libp2p_keypair().public().to_peer_id());
 
-        // save for later use if we restart
 
         let validator = (
             keys[0].node_public_key(),
@@ -183,6 +182,7 @@ impl Network {
         let genesis_committee = vec![validator];
         let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
+        // save for later use if we restart
         let genesis_address = secret_key_to_address(&genesis_key);
 
         let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
@@ -195,7 +195,6 @@ impl Network {
                     i,
                     Some(tempfile::tempdir().unwrap()),
                     genesis_address,
-                    //secret_key_to_address(&genesis_key),
                 )
                 .unwrap()
             })
@@ -218,19 +217,19 @@ impl Network {
         // Pause time so we can control it.
         zilliqa::time::pause_at_epoch();
 
-        // remove this.
-        for node in &nodes[1..] {
-            // Simulate every node broadcasting a `JoinCommittee` message.
-            resend_message
-                .send((
-                    node.peer_id,
-                    None,
-                    Message::External(ExternalMessage::JoinCommittee(
-                        node.secret_key.node_public_key(),
-                    )),
-                ))
-                .unwrap();
-        }
+        //// remove this.
+        //for node in &nodes[1..] {
+        //    // Simulate every node broadcasting a `JoinCommittee` message.
+        //    resend_message
+        //        .send((
+        //            node.peer_id,
+        //            None,
+        //            Message::External(ExternalMessage::JoinCommittee(
+        //                node.secret_key.node_public_key(),
+        //            )),
+        //        ))
+        //        .unwrap();
+        //}
 
         Network {
             genesis_committee,
@@ -279,36 +278,10 @@ impl Network {
     pub fn restart(&mut self) {
         // We copy the data dirs from the original network, and re-use the same private keys.
 
-        // The tempdir object has to be held in the vector or the OS
+        // Note: the tempdir object has to be held in the vector or the OS
         // will delete it when it goes out of scope.
-        /* let mut directories: Vec<TempDir> = vec![]; */
         let mut options = CopyOptions::new();
         options.copy_inside = true;
-
-        /*
-        for node in &self.nodes {
-            let new_data_dir = tempfile::tempdir().unwrap();
-
-            for mut entry in fs::read_dir(node.dir.as_ref().unwrap().path()) {
-                let entry = entry.next().unwrap().unwrap();
-                info!("Copying {:?} to {:?}", entry, new_data_dir);
-
-                copy(&entry.path(), &new_data_dir.path(), &options).unwrap();
-            }
-
-            directories.push(new_data_dir);
-        }
-        */
-
-        // Now reconstruct the nodes with the copied data dirs and private keys.
-        //let mut nodes: Vec<TestNode> = vec![];
-
-        //let validator = (
-        //    keys[0].node_public_key(),
-        //    keys[0].to_libp2p_keypair().public().to_peer_id(),
-        //);
-        //let genesis_committee = vec![validator];
-        //let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
         // Collect the keys from the validators
         let keys = self.nodes.iter().map(|n| n.secret_key).collect::<Vec<_>>();
@@ -319,14 +292,12 @@ impl Network {
         );
         let genesis_committee = vec![validator];
 
-        // Get genesis key
-        //let gen_key =
-
         let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
 
+                // Copy the persistence over
                 let new_data_dir = tempfile::tempdir().unwrap();
 
                 for mut entry in fs::read_dir(self.nodes[i].dir.as_ref().unwrap().path()) {
@@ -365,13 +336,8 @@ impl Network {
         self.receivers = receivers;
         self.resend_message = resend_message;
 
-        info!("Finished the restart!!!");
-
-        println!("done");
-        //panic!("done");
-
         // Now trigger a timeout in all of the nodes until we see network activity again
-        // this could of course spin forever
+        // this could of course spin forever, but the test itself should time out.
         loop {
             for node in &self.nodes {
                 if node.inner.lock().unwrap().handle_timeout() {

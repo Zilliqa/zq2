@@ -477,8 +477,6 @@ impl Node {
             self.consensus.download_blocks_up_to_head()?;
         }
 
-        //self.consensus.receive_block(response.block)?;
-
         Ok(())
     }
 }

@@ -268,8 +268,8 @@ pub enum BlockRef {
 /// The [Copy]-able subset of a block.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BlockHeader {
-    pub view: u64, // only useful to consensus: the proposer's index can be derived from the block's view
-    pub number: u64,
+    pub view: u64, // only useful to consensus: the proposer can be derived from the block's view
+    pub number: u64, // distinct from view, this is the normal incrementing block number
     pub hash: Hash,
     pub parent_hash: Hash,
     pub signature: NodeSignature,
