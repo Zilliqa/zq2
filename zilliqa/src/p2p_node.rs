@@ -1,7 +1,7 @@
 //! A node in the Zilliqa P2P network. May coordinate multiple shard nodes.
 
 use crate::cfg::{ConsensusConfig, NodeConfig};
-use itertools::Itertools;
+
 use std::{collections::HashMap, iter};
 use tokio::{sync::mpsc::UnboundedSender, task::JoinSet};
 

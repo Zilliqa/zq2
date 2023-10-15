@@ -19,7 +19,10 @@ use tracing::*;
 use crate::{
     consensus::Consensus,
     crypto::{Hash, NodePublicKey, SecretKey},
-    message::{Block, BlockRequest, BlockResponse, BlocksRequest, BlocksResponse, ExternalMessage, Proposal},
+    message::{
+        Block, BlockRequest, BlockResponse, BlocksRequest, BlocksResponse, ExternalMessage,
+        Proposal,
+    },
     state::{Account, Address},
 };
 
@@ -200,16 +203,13 @@ impl Node {
 
     // handle timeout - true if something happened
     pub fn handle_timeout(&mut self) -> bool {
-        match self.consensus.timeout() {
-            Some((leader, response)) => {
-                self.message_sender
-                    .send_external_message(leader, response).unwrap();
-                return true;
-            }
-            None => {
-            }
+        if let Some((leader, response)) = self.consensus.timeout() {
+            self.message_sender
+                .send_external_message(leader, response)
+                .unwrap();
+            return true;
         }
-        return false;
+        false
     }
 
     pub fn add_peer(&mut self, peer: PeerId, public_key: NodePublicKey) -> Result<()> {
@@ -444,17 +444,21 @@ impl Node {
         let block_number = block.header.number;
         let mut blocks: Vec<Block> = Vec::new();
 
-        for i in block_number..block_number+100
-        {
+        for i in block_number..block_number + 100 {
             let block = self.consensus.get_block_by_view(i);
             if let Ok(Some(block)) = block {
                 blocks.push(block);
             } else {
                 break;
             }
-        };
+        }
 
-        trace!("Responding to new blocks request of {:?} starting {} with {} blocks", request, block_number, blocks.len());
+        trace!(
+            "Responding to new blocks request of {:?} starting {} with {} blocks",
+            request,
+            block_number,
+            blocks.len()
+        );
 
         self.message_sender.send_external_message(
             source,
@@ -465,7 +469,10 @@ impl Node {
     }
 
     fn handle_blocks_response(&mut self, _: PeerId, response: BlocksResponse) -> Result<()> {
-        trace!("Received blocks response of length {}", response.blocks.len());
+        trace!(
+            "Received blocks response of length {}",
+            response.blocks.len()
+        );
         let mut was_new = false;
 
         for block in response.blocks {
@@ -473,7 +480,10 @@ impl Node {
         }
 
         if was_new {
-            trace!("Requesting additional blocks after successful block download. Start: {}", self.consensus.head_block().header.number);
+            trace!(
+                "Requesting additional blocks after successful block download. Start: {}",
+                self.consensus.head_block().header.number
+            );
             self.consensus.download_blocks_up_to_head()?;
         }
 

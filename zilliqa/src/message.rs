@@ -615,7 +615,7 @@ impl Block {
         Block {
             header: BlockHeader {
                 view,
-                number: number,
+                number,
                 hash: digest,
                 parent_hash,
                 signature,

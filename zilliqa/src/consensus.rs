@@ -4,19 +4,19 @@ use std::path::Path;
 
 use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::MessageSender;
-use tokio::time::Instant;
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::ops::Add;
+
 use std::{
     collections::{BTreeMap, HashSet},
     error::Error,
     fmt::Display,
 };
-use std::time::Duration;
+
 use tracing::*;
 
 use crate::message::Committee;
@@ -24,7 +24,7 @@ use crate::{
     block_store::BlockStore,
     cfg::NodeConfig,
     contracts,
-    crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
+    crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     exec::TouchedAddressEventListener,
     exec::TransactionApplyResult,
     message::{
@@ -122,7 +122,6 @@ pub struct Consensus {
     view: u64,
     finalized_view: u64,
     last_timeout: SystemTime,
-    consensus_timeout: Duration,
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<Validator>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
@@ -247,7 +246,11 @@ impl Consensus {
         // If we're at genesis, add the genesis block.
         if latest_block.view() == 0 {
             consensus.add_block(latest_block.clone())?;
-            consensus.save_highest_view(latest_block.hash(), latest_block.number(), latest_block.view())?;
+            consensus.save_highest_view(
+                latest_block.hash(),
+                latest_block.number(),
+                latest_block.view(),
+            )?;
             // treat genesis as finalized
             consensus.finalize(latest_block.clone())?;
             consensus.view = 1;
@@ -310,13 +313,18 @@ impl Consensus {
         // Our high QC should point to our HEAD, default to genesis otherwise
         match self.block_store.get_block(self.high_qc.block_hash) {
             Ok(Some(block)) => block,
-            _ => {warn!("QC of {} failed to retrieve block. Defaulting.", self.high_qc.block_hash); self.block_store.get_block_by_view(0).unwrap().unwrap() },
+            _ => {
+                warn!(
+                    "QC of {} failed to retrieve block. Defaulting.",
+                    self.high_qc.block_hash
+                );
+                self.block_store.get_block_by_view(0).unwrap().unwrap()
+            }
         }
     }
 
     // This function is called when we suspect that we are out of sync with the network/need to catchup
     pub fn download_blocks_up_to_head(&mut self) -> Result<()> {
-
         let head_block = self.head_block();
         self.block_store.request_blocks(head_block.header.number)?;
 
@@ -329,14 +337,12 @@ impl Consensus {
             self.last_timeout = SystemTime::now();
         } else if view == self.view {
             warn!("Tried to set view to same view - this is incorrect");
-        }
-        else {
+        } else {
             warn!("Tried to set view to lower view - this is incorrect");
         }
     }
 
     pub fn timeout(&mut self) -> Option<(PeerId, ExternalMessage)> {
-
         // We never want to timeout while on view 1
         if self.view == 1 {
             let genesis = self
@@ -356,7 +362,7 @@ impl Consensus {
                 return Some((leader.peer_id, ExternalMessage::Vote(vote)));
             } else {
                 info!("We are on view 1 but we are not a validator, so we are waiting.");
-                self.download_blocks_up_to_head();
+                let _ = self.download_blocks_up_to_head();
             }
 
             return None;
@@ -364,24 +370,37 @@ impl Consensus {
 
         // Now consider whether we want to timeout - the timeout duration doubles every time, so it
         // Should eventually have all nodes on the same view
-        let consensus_timeout_ms = self.consensus_timeout.as_millis();
+        let consensus_timeout_ms = self.config.consensus.consensus_timeout.as_millis() as u64;
         let head_block = self.head_block();
         let head_block_view = head_block.view();
-        let time_since_last_view_change = SystemTime::now().duration_since(self.last_timeout).unwrap().as_millis();
+        let time_since_last_view_change = SystemTime::now()
+            .duration_since(self.last_timeout)
+            .unwrap()
+            .as_millis() as u64;
         let view_difference = self.view.saturating_sub(head_block_view);
         let exponential_backoff_timeout = consensus_timeout_ms * 2u64.pow(view_difference as u32);
-        let next_exponential_backoff_timeout = consensus_timeout_ms * 2u64.pow((view_difference+1) as u32);
+        let next_exponential_backoff_timeout =
+            consensus_timeout_ms * 2u64.pow((view_difference + 1) as u32);
 
         if time_since_last_view_change < exponential_backoff_timeout {
-            trace!("Not proceeding with view change - time since last: {}, timeout requires: {}", time_since_last_view_change, exponential_backoff_timeout);
+            trace!(
+                "Not proceeding with view change - time since last: {}, timeout requires: {}",
+                time_since_last_view_change,
+                exponential_backoff_timeout
+            );
             return None;
         }
 
         trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", self.view, time_since_last_view_change, exponential_backoff_timeout, head_block_view, head_block.hash());
 
-        info!("***** TIMEOUT: View is now {} -> {}. Next view change in {}ms", self.view, self.view + 1, next_exponential_backoff_timeout);
+        info!(
+            "***** TIMEOUT: View is now {} -> {}. Next view change in {}ms",
+            self.view,
+            self.view + 1,
+            next_exponential_backoff_timeout
+        );
 
-        self.download_blocks_up_to_head();
+        let _ = self.download_blocks_up_to_head();
         self.set_view(self.view + 1);
 
         let leader = self.get_leader(self.view).unwrap().peer_id;
@@ -435,7 +454,6 @@ impl Consensus {
         // If the proposed block is safe, vote for it and advance to the next round.
         if self.check_safe_block(&block)? {
             trace!("block {} aka {} is safe", block.view(), block.hash());
-            self.timeouts = 0;
 
             let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
             for txn in &transactions {
@@ -1076,9 +1094,6 @@ impl Consensus {
                 );
                 self.high_qc = new_high_qc;
                 self.set_view(new_high_qc_block_view + 1);
-
-                trace!("Resetting timeout.");
-                self.timeouts = 0;
             }
         }
 
@@ -1306,7 +1321,11 @@ impl Consensus {
         };
         // Prevent the creation of forks from the already committed chain
         if block_high_qc_block.view() < finalized_block.view() {
-            return Err(anyhow!("invalid block - high QC view is {} while finalized is {}", block_high_qc_block.view(), finalized_block.view()));
+            return Err(anyhow!(
+                "invalid block - high QC view is {} while finalized is {}",
+                block_high_qc_block.view(),
+                finalized_block.view()
+            ));
         }
 
         // This block's timestamp must be greater than or equal to the parent block's timestamp.
@@ -1330,7 +1349,9 @@ impl Consensus {
         // Blocks must be in sequential order
         if block.header.number != parent.header.number + 1 {
             return Err(anyhow!(
-                "block view is not sequential: {} != {} + 1", block.header.number, parent.header.number
+                "block view is not sequential: {} != {} + 1",
+                block.header.number,
+                parent.header.number
             ));
         }
 
@@ -1465,9 +1486,9 @@ impl Consensus {
                 bytes
             })
             .collect();
-        let messages: Vec<_> = messages.iter().map(|m| m.as_slice()).collect();
+        let _messages: Vec<_> = messages.iter().map(|m| m.as_slice()).collect();
 
-        let public_keys: Vec<_> = agg
+        let _public_keys: Vec<_> = agg
             .signers
             .iter()
             .map(|i| committee.get_by_index(*i as usize).unwrap().public_key)

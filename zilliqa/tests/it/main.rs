@@ -11,7 +11,7 @@ use zilliqa::message::InternalMessage;
 
 extern crate fs_extra;
 use fs_extra::dir::*;
-use fs_extra::error::*;
+
 
 use std::collections::HashMap;
 use std::{
@@ -37,7 +37,7 @@ use ethers::{
     types::H256,
 };
 use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
-use itertools::Itertools;
+
 use jsonrpsee::{
     types::{Id, RequestSer, Response, ResponsePayload},
     RpcModule,
@@ -174,7 +174,6 @@ impl Network {
         // up with indices in the committee, making logs easier to read.
         keys.sort_unstable_by_key(|key| key.to_libp2p_keypair().public().to_peer_id());
 
-
         let validator = (
             keys[0].node_public_key(),
             keys[0].to_libp2p_keypair().public().to_peer_id(),
@@ -296,15 +295,14 @@ impl Network {
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
-
                 // Copy the persistence over
                 let new_data_dir = tempfile::tempdir().unwrap();
 
-                for mut entry in fs::read_dir(self.nodes[i].dir.as_ref().unwrap().path()) {
+                while let Ok(mut entry) = fs::read_dir(self.nodes[i].dir.as_ref().unwrap().path()) {
                     let entry = entry.next().unwrap().unwrap();
                     info!("Copying {:?} to {:?}", entry, new_data_dir);
 
-                    copy(&entry.path(), &new_data_dir.path(), &options).unwrap();
+                    copy(&entry.path(), new_data_dir.path(), &options).unwrap();
                 }
 
                 node(
@@ -314,7 +312,7 @@ impl Network {
                     Some(new_data_dir),
                     self.genesis_address,
                 )
-                    .unwrap()
+                .unwrap()
             })
             .unzip();
 
@@ -350,27 +348,26 @@ impl Network {
 
     // Drop the first message in each node queue with N% probability per tick
     pub async fn randomly_drop_messages_then_tick(&mut self, failure_rate: f64) {
-
-        if failure_rate > 1.0 || failure_rate < 0.0 {
+        if !(0.0..=1.0).contains(&failure_rate) {
             panic!("failure rate is a probability and must be between 0 and 1");
         }
 
         for (_i, receiver) in self.receivers.iter_mut().enumerate() {
-           let drop = self.rng.lock().unwrap().gen_bool(failure_rate);
-           if drop {
-               // Don't really care too much what the reciever has, just pop something off if
-               // possible
-               match tokio::task::unconstrained(receiver.next()).now_or_never() {
-                   Some(None) => {
-                       unreachable!("stream was terminated, this should be impossible");
-                   }
-                   Some(Some(message)) => {
-                       //messages.push(message);
-                       info!("***** Randomly dropping message: {:?}", message);
-                   }
-                   _ => {}
-               }
-           }
+            let drop = self.rng.lock().unwrap().gen_bool(failure_rate);
+            if drop {
+                // Don't really care too much what the reciever has, just pop something off if
+                // possible
+                match tokio::task::unconstrained(receiver.next()).now_or_never() {
+                    Some(None) => {
+                        unreachable!("stream was terminated, this should be impossible");
+                    }
+                    Some(Some(message)) => {
+                        //messages.push(message);
+                        info!("***** Randomly dropping message: {:?}", message);
+                    }
+                    _ => {}
+                }
+            }
         }
 
         self.tick().await;

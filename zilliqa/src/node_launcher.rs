@@ -1,4 +1,4 @@
-use crate::{health::HealthLayer, message::ExternalMessage};
+use crate::health::HealthLayer;
 use jsonrpsee::RpcModule;
 use std::{
     net::Ipv4Addr,

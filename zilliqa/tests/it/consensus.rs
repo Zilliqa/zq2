@@ -1,15 +1,15 @@
 use crate::CombinedJson;
 use ethabi::Token;
-use std::env;
-use std::thread::sleep;
-use std::time::Duration;
+
+
+
 
 use zilliqa::state::Address;
 
 use crate::Network;
 
 use ethers::{providers::Middleware, types::TransactionRequest};
-use tracing::info;
+
 
 // Test that a node that joins later can sync up to the latest block and become a
 
@@ -67,9 +67,7 @@ async fn network_can_die_restart(mut network: Network) {
         .run_until(
             |n| {
                 let index = n.random_index();
-                n.get_node(index)
-                    .get_finalized_height()
-                    >= start_block
+                n.get_node(index).get_finalized_height() >= start_block
             },
             50,
         )
@@ -84,9 +82,7 @@ async fn network_can_die_restart(mut network: Network) {
         .run_until(
             |n| {
                 let index = n.random_index();
-                n.get_node(index)
-                    .get_finalized_height()
-                    >= finish_block
+                n.get_node(index).get_finalized_height() >= finish_block
             },
             5000,
         )
@@ -113,9 +109,7 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
         .run_until(
             |n| {
                 let index = n.random_index();
-                n.get_node(index)
-                    .get_finalized_height()
-                    >= start_block
+                n.get_node(index).get_finalized_height() >= start_block
             },
             50,
         )
@@ -123,14 +117,19 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
         .unwrap();
 
     // now, wait until block 15 has been produced, but dropping 10% of the messages.
-    for i in 0..1000000 {
+    for _i in 0..1000000 {
         network.randomly_drop_messages_then_tick(failure_rate).await;
         if get_block_number(&mut network) >= finish_block {
             break;
         }
     }
 
-    assert_eq!(get_block_number(&mut network) >= finish_block, true, "block number should be at least {}, but was {}", finish_block, get_block_number(&mut network));
+    assert!(
+        get_block_number(&mut network) >= finish_block,
+        "block number should be at least {}, but was {}",
+        finish_block,
+        get_block_number(&mut network)
+    );
 }
 
 #[zilliqa_macros::test]
