@@ -61,21 +61,13 @@ impl State {
             accounts: PatriciaTrie::new(db),
         };
 
-        let shard_data = if config.is_main {
-            contracts::shard_registry::CONSTRUCTOR.encode_input(
+        if config.is_main {
+            let shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
                 contracts::shard_registry::CREATION_CODE.to_vec(),
                 &[Token::Uint(config.consensus_timeout.as_millis().into())],
-            )?
-        } else {
-            contracts::shard::CONSTRUCTOR.encode_input(
-                contracts::shard::CREATION_CODE.to_vec(),
-                &[
-                    Token::Uint(config.main_shard_id.unwrap().into()),
-                    Token::Uint(config.consensus_timeout.as_millis().into()),
-                ],
-            )?
+            )?;
+            state.force_deploy_contract(shard_data, Some(Address::SHARD_CONTRACT))?;
         };
-        state.force_deploy_contract(shard_data, Some(Address::SHARD_CONTRACT))?;
 
         let native_token_data = contracts::native_token::CONSTRUCTOR
             .encode_input(contracts::native_token::CREATION_CODE.to_vec(), &[])?;
