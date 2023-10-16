@@ -12,7 +12,6 @@ use zilliqa::message::InternalMessage;
 extern crate fs_extra;
 use fs_extra::dir::*;
 
-
 use std::collections::HashMap;
 use std::{
     fmt::Debug,
@@ -583,7 +582,7 @@ fn format_message(
             ExternalMessage::Proposal(proposal) => format!(
                 "{} [{}] ({:?})",
                 message.name(),
-                proposal.header.view,
+                proposal.header.number,
                 proposal
                     .committee
                     .iter()
@@ -594,7 +593,7 @@ fn format_message(
                 format!("{} [{:?}]", message.name(), request.0)
             }
             ExternalMessage::BlockResponse(response) => {
-                format!("{} [{}]", message.name(), response.block.view())
+                format!("{} [{}]", message.name(), response.block.number())
             }
             _ => message.name().to_owned(),
         },

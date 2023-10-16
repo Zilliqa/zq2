@@ -9,7 +9,6 @@ use primitive_types::H256;
 use evm_ds::protos::evm_proto::{self as EvmProto};
 
 use anyhow::{anyhow, Result};
-use k256::pkcs8::der::EncodeValue;
 use libp2p::PeerId;
 
 use primitive_types::U256;
@@ -241,11 +240,12 @@ impl Node {
         Ok(hash)
     }
 
-    pub fn view(&self) -> u64 {
-        self.consensus.view()
+    pub fn number(&self) -> u64 {
+        self.consensus.head_block().header.number
     }
 
-    pub fn get_view(&self, block_number: BlockNumber) -> u64 {
+    // todo: this doesn't respect two-chain finalization
+    pub fn get_number(&self, block_number: BlockNumber) -> u64 {
         match block_number {
             BlockNumber::Number(n) => n,
             BlockNumber::Earliest => 0,
@@ -270,7 +270,7 @@ impl Node {
         tracing: bool,
     ) -> Result<EvmProto::EvmResult> {
         let block = self
-            .get_block_by_view(self.get_view(block_number))?
+            .get_block_by_number(self.get_number(block_number))?
             .ok_or_else(|| anyhow!("block not found"))?;
         let state = self
             .consensus
@@ -307,7 +307,7 @@ impl Node {
         // TODO: optimise this to get header directly once persistance is merged
         // (which will provide a header index)
         let block = self
-            .get_block_by_view(self.get_view(block_number))?
+            .get_block_by_number(self.get_number(block_number))?
             .ok_or_else(|| anyhow!("block not found"))?;
         let state = self
             .consensus
@@ -332,12 +332,12 @@ impl Node {
     }
 
     pub fn get_chain_tip(&self) -> u64 {
-        self.consensus.get_chain_tip()
+        self.consensus.head_block().header.number
     }
 
     pub fn get_account(&self, address: Address, block_number: BlockNumber) -> Result<Account> {
         self.consensus
-            .try_get_state_at(self.get_view(block_number))?
+            .try_get_state_at(self.get_number(block_number))?
             .get_account(address)
     }
 
@@ -348,30 +348,31 @@ impl Node {
         block_number: BlockNumber,
     ) -> Result<H256> {
         self.consensus
-            .try_get_state_at(self.get_view(block_number))?
+            .try_get_state_at(self.get_number(block_number))?
             .get_account_storage(address, index)
     }
 
     pub fn get_native_balance(&self, address: Address, block_number: BlockNumber) -> Result<U256> {
         self.consensus
-            .try_get_state_at(self.get_view(block_number))?
+            .try_get_state_at(self.get_number(block_number))?
             .get_native_balance(address, false)
     }
 
     pub fn get_latest_block(&self) -> Result<Option<Block>> {
-        self.get_block_by_view(self.get_chain_tip())
+        self.get_block_by_number(self.get_chain_tip())
     }
 
-    pub fn get_block_by_number(&self, block_number: BlockNumber) -> Result<Option<Block>> {
-        self.get_block_by_view(self.get_view(block_number))
+    pub fn get_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
+        //self.get_block_by_number(self.get_number(block_number))
+        self.consensus.get_block_by_number(block_number)
     }
 
     pub fn get_finalized_height(&self) -> u64 {
         self.consensus.finalized_view()
     }
 
-    pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        self.consensus.get_block_by_view(view)
+    pub fn get_block_by_view_reserved(&self, view: u64) -> Result<Option<Block>> {
+        self.consensus.get_block_by_number(view) // TODO: deleteme
     }
 
     pub fn get_block_by_hash(&self, hash: Hash) -> Result<Option<Block>> {
@@ -404,8 +405,8 @@ impl Node {
     fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
         let block = match request.0 {
             crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
-            crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view),
-            crate::message::BlockRef::Number(number) => self.consensus.get_block_by_view(number),
+            crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view), // todo: consider removing
+            crate::message::BlockRef::Number(number) => self.consensus.get_block_by_number(number),
         }?;
         let Some(block) = block else {
             debug!("ignoring block request for unknown block: {:?}", request.0);
@@ -430,7 +431,7 @@ impl Node {
         let block = match request.0 {
             crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
             crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view),
-            crate::message::BlockRef::Number(number) => self.consensus.get_block_by_view(number),
+            crate::message::BlockRef::Number(number) => self.consensus.get_block_by_number(number),
         }?;
 
         let block = match block {
@@ -445,7 +446,7 @@ impl Node {
         let mut blocks: Vec<Block> = Vec::new();
 
         for i in block_number..block_number + 100 {
-            let block = self.consensus.get_block_by_view(i);
+            let block = self.consensus.get_block_by_number(i);
             if let Ok(Some(block)) = block {
                 blocks.push(block);
             } else {

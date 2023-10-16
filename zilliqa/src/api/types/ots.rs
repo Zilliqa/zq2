@@ -92,7 +92,7 @@ impl From<&message::Block> for Block {
     fn from(block: &message::Block) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Block {
-            number: block.view(),
+            number: block.number(),
             hash: H256(block.hash().0),
             parent_hash: H256(block.parent_hash().0),
             nonce: 0,

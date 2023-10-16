@@ -144,13 +144,13 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Va
 }
 
 fn get_current_mini_epoch(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    Ok(node.lock().unwrap().view().to_string())
+    Ok(node.lock().unwrap().number().to_string())
 }
 
 fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBlock> {
     let node = node.lock().unwrap();
     let block = node
-        .get_block_by_number(BlockNumber::Latest)?
+        .get_block_by_number(node.get_number(BlockNumber::Latest))?
         .ok_or_else(|| anyhow!("no blocks"))?;
 
     Ok((&block).into())

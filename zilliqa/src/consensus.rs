@@ -204,7 +204,7 @@ impl Consensus {
                 Block::genesis(Committee::new(genesis_validator), state.root_hash()?)
             }
         };
-        trace!("Loading state at height {}", latest_block.view());
+        trace!("Loading state at height {}", latest_block.number());
 
         let block_hash_reverse_index = db.open_tree(TX_BLOCK_INDEX)?;
 
@@ -263,9 +263,9 @@ impl Consensus {
         self.secret_key.node_public_key()
     }
 
-    pub fn get_chain_tip(&self) -> u64 {
-        self.view.saturating_sub(1)
-    }
+    //pub fn get_chain_tip(&self) -> u64 {
+    //    self.view.saturating_sub(1)
+    //}
 
     pub fn add_peer(
         &mut self,
@@ -300,7 +300,8 @@ impl Consensus {
                 .any(|v| v.peer_id == self.peer_id())
             {
                 trace!("voting for genesis block");
-                let leader = self.get_leader(self.view)?;
+                //let leader = self.get_leader(self.view)?;
+                let leader = genesis.committee.leader(self.view);
                 let vote = self.vote_from_block(&genesis);
                 return Ok(Some((Some(leader.peer_id), ExternalMessage::Vote(vote))));
             }
@@ -331,6 +332,7 @@ impl Consensus {
         Ok(())
     }
 
+    // Set view only here - that way the last_timeout should be set iff view is set
     fn set_view(&mut self, view: u64) {
         if view > self.view {
             self.view = view;
@@ -357,7 +359,7 @@ impl Consensus {
                 .any(|v| v.peer_id == self.peer_id())
             {
                 info!("timeout in view 1, we will vote for genesis block rather than incrementing view");
-                let leader = self.get_leader(self.view).unwrap();
+                let leader = genesis.committee.leader(self.view);
                 let vote = self.vote_from_block(&genesis);
                 return Some((leader.peer_id, ExternalMessage::Vote(vote)));
             } else {
@@ -403,7 +405,8 @@ impl Consensus {
         let _ = self.download_blocks_up_to_head();
         self.set_view(self.view + 1);
 
-        let leader = self.get_leader(self.view).unwrap().peer_id;
+        //let leader = self.get_leader(self.view).unwrap().peer_id;
+        let leader = self.head_block().committee.leader(self.view).peer_id;
 
         let new_view = NewView::new(
             self.secret_key,
@@ -421,7 +424,7 @@ impl Consensus {
 
     pub fn proposal(&mut self, proposal: Proposal) -> Result<Option<(PeerId, Vote)>> {
         let (block, transactions) = proposal.into_parts();
-        trace!(block_view = block.view(), "handling block proposal");
+        trace!(block_view = block.view(), block_number = block.number(), "handling block proposal");
 
         if self.block_store.contains_block(block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
@@ -453,7 +456,7 @@ impl Consensus {
 
         // If the proposed block is safe, vote for it and advance to the next round.
         if self.check_safe_block(&block)? {
-            trace!("block {} aka {} is safe", block.view(), block.hash());
+            trace!("block view {} number {} aka {} is safe", block.view(), block.number(), block.hash());
 
             let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
             for txn in &transactions {
@@ -727,7 +730,7 @@ impl Consensus {
                 "storing vote"
             );
             if supermajority_reached {
-                self.block_store.request_block_by_view(block_view)?;
+                self.block_store.request_block_by_view(block_view)?; // Is this required?
 
                 // if we are already in the round in which the vote counts and have reached supermajority
                 if block_view + 1 == self.view {
@@ -833,14 +836,14 @@ impl Consensus {
         Some(parent.committee.leader(view).peer_id)
     }
 
-    fn committee_for_view(&mut self, parent_hash: Hash, _view: u64) -> Result<Committee> {
+    fn committee_for_hash(&mut self, parent_hash: Hash) -> Result<Committee> {
         let parent = self.get_block(&parent_hash);
 
         let parent = match parent {
             Ok(Some(parent)) => parent,
             _ => {
-                warn!("parent not found during leader for view");
-                return Err(anyhow!("parent not found during leader for view"));
+                warn!("parent not found during leader for hash");
+                return Err(anyhow!("parent not found during leader for hash"));
             }
         };
 
@@ -864,7 +867,7 @@ impl Consensus {
         }
 
         // Get the committee for the qc hash (should be highest?) for this view
-        let committee = self.committee_for_view(new_view.qc.block_hash, new_view.view)?;
+        let committee = self.committee_for_hash(new_view.qc.block_hash)?;
         // verify the sender's signature on the block hash
         let Some((index, sender)) = committee
             .iter()
@@ -1133,6 +1136,7 @@ impl Consensus {
 
     fn block_extends_from(&self, block: &Block, ancestor: &Block) -> Result<bool> {
         // todo: the block extends from another block through a chain of parent hashes and not qcs
+        // make ticket for this
         let mut current = block.clone();
         while current.view() > ancestor.view() {
             let Some(next) = self.get_block(&current.parent_hash())? else {
@@ -1286,7 +1290,7 @@ impl Consensus {
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 
-        // Derive the proposer from the block's parent view
+        // Derive the proposer from the block's view
         let proposer = parent.committee.leader(block.view());
 
         trace!(
@@ -1304,12 +1308,12 @@ impl Consensus {
         }
 
         // Check if the co-signers of the block's QC represent the supermajority.
-        self.check_quorum_in_bits(block.view(), &block.qc.cosigned, &parent.committee)?;
+        self.check_quorum_in_bits(&block.qc.cosigned, &parent.committee)?;
         // Verify the block's QC signature
         self.verify_qc_signature(&block.qc)?;
         if let Some(agg) = &block.agg {
             // Check if the signers of the block's aggregate QC represent the supermajority
-            self.check_quorum_in_indices(block.view(), &agg.signers, &parent.committee)?;
+            self.check_quorum_in_indices(&agg.signers, &parent.committee)?;
             // Verify the aggregate QC's signature
             self.batch_verify_agg_signature(agg, &parent.committee)?;
         }
@@ -1349,7 +1353,7 @@ impl Consensus {
         // Blocks must be in sequential order
         if block.header.number != parent.header.number + 1 {
             return Err(anyhow!(
-                "block view is not sequential: {} != {} + 1",
+                "block number is not sequential: {} != {} + 1",
                 block.header.number,
                 parent.header.number
             ));
@@ -1421,6 +1425,10 @@ impl Consensus {
         self.block_store.get_block_by_view(view)
     }
 
+    pub fn get_block_by_number(&self, number: u64) -> Result<Option<Block>> {
+        self.block_store.get_block_by_number(number)
+    }
+
     pub fn view(&self) -> u64 {
         self.view
     }
@@ -1433,15 +1441,15 @@ impl Consensus {
         &self.state
     }
 
-    pub fn state_at(&self, view: u64) -> Result<Option<State>> {
+    pub fn state_at(&self, number: u64) -> Result<Option<State>> {
         Ok(self
-            .get_block_by_view(view)?
+            .block_store.get_block_by_number(number)?
             .map(|block| self.state.at_root(H256(block.state_root_hash().0))))
     }
 
-    pub fn try_get_state_at(&self, view: u64) -> Result<State> {
-        self.state_at(view)?
-            .ok_or_else(|| anyhow!("No block at height {view}"))
+    pub fn try_get_state_at(&self, number: u64) -> Result<State> {
+        self.state_at(number)?
+            .ok_or_else(|| anyhow!("No block at height {number}"))
     }
 
     pub fn seen_tx_already(&self, hash: &Hash) -> Result<bool> {
@@ -1499,7 +1507,7 @@ impl Consensus {
         Ok(())
     }
 
-    fn get_leader(&self, view: u64) -> Result<Validator> {
+    fn get_leader_reserved(&self, view: u64) -> Result<Validator> {
         // currently it's a simple round robin but later
         // we will select the leader based on the weights
         // Get the previous block, so we know the committee, then calculate the leader from there.
@@ -1517,7 +1525,6 @@ impl Consensus {
 
     fn check_quorum_in_bits(
         &self,
-        _view: u64,
         cosigned: &BitSlice,
         committee: &Committee,
     ) -> Result<()> {
@@ -1536,7 +1543,6 @@ impl Consensus {
 
     fn check_quorum_in_indices(
         &self,
-        _view: u64,
         signers: &[u16],
         committee: &Committee,
     ) -> Result<()> {

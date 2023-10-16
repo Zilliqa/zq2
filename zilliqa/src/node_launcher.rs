@@ -30,11 +30,8 @@ pub struct NodeLauncher {
     pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
     pub inbound_message_sender: UnboundedSender<(PeerId, Message)>,
     pub inbound_message_receiver: UnboundedReceiverStream<(PeerId, Message)>,
-    outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
     pub reset_timeout_receiver: UnboundedReceiverStream<()>,
-    secret_key: SecretKey,
     node_launched: bool,
-    consensus_timeout: Duration,
 }
 
 impl NodeLauncher {
@@ -90,10 +87,7 @@ impl NodeLauncher {
             inbound_message_sender,
             inbound_message_receiver,
             reset_timeout_receiver,
-            outbound_message_sender,
             node_launched: false,
-            consensus_timeout: config.consensus.consensus_timeout,
-            secret_key,
             config,
         })
     }
@@ -127,7 +121,7 @@ impl NodeLauncher {
                 r = self.reset_timeout_receiver.next() => {
                     let () = r.expect("reset timeout stream should be infinite");
                     trace!("timeout reset");
-                    sleep.as_mut().reset(Instant::now() + self.config.consensus.consensus_timeout);
+                    sleep.as_mut().reset(Instant::now() + Duration::from_millis(5000));
                 },
             }
         }

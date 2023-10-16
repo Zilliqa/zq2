@@ -1,15 +1,11 @@
 use crate::CombinedJson;
 use ethabi::Token;
 
-
-
-
 use zilliqa::state::Address;
 
 use crate::Network;
 
 use ethers::{providers::Middleware, types::TransactionRequest};
-
 
 // Test that a node that joins later can sync up to the latest block and become a
 
@@ -46,7 +42,7 @@ async fn node_can_sync_join_block_production(mut network: Network) {
                         .unwrap()
                         .unwrap();
 
-                    block.committee.leader_index(block.view()) == index
+                    block.committee.leader_index(block.number()) == index
             },
             50000,
         )
@@ -141,7 +137,7 @@ async fn block_production(mut network: Network) {
                 n.get_node(index)
                     .get_latest_block()
                     .unwrap()
-                    .map_or(0, |b| b.view())
+                    .map_or(0, |b| b.number())
                     >= 5
             },
             50,
@@ -157,7 +153,7 @@ async fn block_production(mut network: Network) {
                 n.node_at(index)
                     .get_latest_block()
                     .unwrap()
-                    .map_or(0, |b| b.view())
+                    .map_or(0, |b| b.number())
                     >= 10
             },
             500,
@@ -254,7 +250,7 @@ async fn launch_shard(mut network: Network) {
                 n.get_node(index)
                     .get_latest_block()
                     .unwrap()
-                    .map_or(0, |b| b.view())
+                    .map_or(0, |b| b.number())
                     >= 5
             },
             50,

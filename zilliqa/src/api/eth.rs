@@ -68,7 +68,7 @@ fn accounts(_: Params, _: &Arc<Mutex<Node>>) -> Result<[(); 0]> {
 }
 
 fn block_number(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    if let Some(block) = node.lock().unwrap().view().checked_sub(1) {
+    if let Some(block) = node.lock().unwrap().number().checked_sub(1) {
         Ok(block.to_hex())
     } else {
         Err(anyhow!("no blocks"))
@@ -199,7 +199,7 @@ fn get_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
 fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::Block>> {
     let mut params = params.sequence();
-    let block_number: BlockNumber = params.next()?;
+    let block_number: u64 = params.next()?;
     let full: bool = params.next()?;
 
     let node = node.lock().unwrap();
@@ -264,8 +264,8 @@ fn get_block_transaction_count_by_number(
 
     let node = node.lock().unwrap();
     let block = match block_number {
-        BlockNumber::Number(number) => node.get_block_by_view(number),
-        BlockNumber::Earliest => node.get_block_by_view(0),
+        BlockNumber::Number(number) => node.get_block_by_number(number),
+        BlockNumber::Earliest => node.get_block_by_number(0),
         BlockNumber::Latest => node.get_latest_block(),
         _ => {
             return Err(anyhow!("unsupported block number: {block_number:?}"));
@@ -305,16 +305,16 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             .get_block_by_hash(Hash(block_hash.0))?
             .ok_or_else(|| anyhow!("block not found"))?))),
         (None, from, to) => {
-            let from = node.get_view(from.unwrap_or(BlockNumber::Latest));
-            let to = node.get_view(to.unwrap_or(BlockNumber::Latest));
+            let from = node.get_number(from.unwrap_or(BlockNumber::Latest));
+            let to = node.get_number(to.unwrap_or(BlockNumber::Latest));
 
             if from > to {
                 return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
             }
 
-            Either::Right((from..=to).map(|view| {
-                node.get_block_by_view(view)?
-                    .ok_or_else(|| anyhow!("missing block: {view}"))
+            Either::Right((from..=to).map(|number| {
+                node.get_block_by_number(number)?
+                    .ok_or_else(|| anyhow!("missing block: {number}"))
             }))
         }
         _ => {
@@ -328,7 +328,7 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
     let receipts = blocks
         .map(|block: Result<_>| {
             let block = block?;
-            let block_number = block.view();
+            let block_number = block.number();
             let block_hash = block.hash();
             let receipts = node.get_transaction_receipts_in_block(block_hash)?;
 
@@ -432,7 +432,7 @@ pub(super) fn get_transaction_inner(
     };
     let transaction = eth::Transaction {
         block_hash: block.as_ref().map(|b| b.hash().0.into()),
-        block_number: block.as_ref().map(|b| b.view()),
+        block_number: block.as_ref().map(|b| b.number()),
         from: signed_transaction.from_addr.0,
         gas: 0,
         gas_price: transaction.gas_price,
@@ -487,7 +487,7 @@ pub(super) fn get_transaction_receipt_inner(
                 log_index,
                 transaction_index,
                 hash,
-                block.view(),
+                block.number(),
                 block.hash(),
             );
 
@@ -502,7 +502,7 @@ pub(super) fn get_transaction_receipt_inner(
         transaction_hash: H256(hash.0),
         transaction_index: transaction_index as u64,
         block_hash: H256(block.hash().0),
-        block_number: block.view(),
+        block_number: block.number(),
         from: signed_transaction.from_addr.0,
         to: transaction.to_addr.map(|a| a.0),
         cumulative_gas_used: 0,

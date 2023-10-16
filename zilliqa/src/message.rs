@@ -474,8 +474,10 @@ impl Block {
             .flat_map(|v| v.public_key.as_bytes())
             .collect();
 
+        // Could the hash be all zeroes for genesis perhaps?
         let digest = Hash::compute([
             &view.to_be_bytes(),
+            &number.to_be_bytes(),
             qc.compute_hash().as_bytes(),
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
@@ -516,6 +518,7 @@ impl Block {
         let computed_hash = if let Some(agg) = &self.agg {
             Hash::compute([
                 &self.view().to_be_bytes(),
+                &self.number().to_be_bytes(),
                 self.qc.compute_hash().as_bytes(),
                 agg.compute_hash().as_bytes(),
                 self.parent_hash().as_bytes(),
@@ -525,6 +528,7 @@ impl Block {
         } else {
             Hash::compute([
                 &self.view().to_be_bytes(),
+                &self.number().to_be_bytes(),
                 self.qc.compute_hash().as_bytes(),
                 self.parent_hash().as_bytes(),
                 self.state_root_hash().as_bytes(),
@@ -560,6 +564,7 @@ impl Block {
 
         let digest = Hash::compute([
             &view.to_be_bytes(),
+            &number.to_be_bytes(),
             qc.compute_hash().as_bytes(),
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
@@ -605,6 +610,7 @@ impl Block {
 
         let digest = Hash::compute([
             &view.to_be_bytes(),
+            &number.to_be_bytes(),
             qc.compute_hash().as_bytes(),
             agg.compute_hash().as_bytes(),
             parent_hash.as_bytes(),
