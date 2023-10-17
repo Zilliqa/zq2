@@ -297,11 +297,15 @@ impl Network {
                 // Copy the persistence over
                 let new_data_dir = tempfile::tempdir().unwrap();
 
-                while let Ok(mut entry) = fs::read_dir(self.nodes[i].dir.as_ref().unwrap().path()) {
+                info!("Copying data dir over");
+
+                if let Ok(mut entry) = fs::read_dir(self.nodes[i].dir.as_ref().unwrap().path()) {
                     let entry = entry.next().unwrap().unwrap();
                     info!("Copying {:?} to {:?}", entry, new_data_dir);
 
-                    copy(&entry.path(), new_data_dir.path(), &options).unwrap();
+                    copy(entry.path(), new_data_dir.path(), &options).unwrap();
+                } else {
+                    warn!("Failed to copy data dir over");
                 }
 
                 node(

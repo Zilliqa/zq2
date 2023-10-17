@@ -68,11 +68,12 @@ fn accounts(_: Params, _: &Arc<Mutex<Node>>) -> Result<[(); 0]> {
 }
 
 fn block_number(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    if let Some(block) = node.lock().unwrap().number().checked_sub(1) {
-        Ok(block.to_hex())
-    } else {
-        Err(anyhow!("no blocks"))
-    }
+    Ok(node.lock().unwrap().number().to_hex())
+    //if let Some(block) = node.lock().unwrap().number().checked_sub(1) {
+    //    Ok(block.to_hex())
+    //} else {
+    //    Err(anyhow!("no blocks when requesting block number"))
+    //}
 }
 
 fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {

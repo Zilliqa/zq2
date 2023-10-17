@@ -101,11 +101,10 @@ impl NodeLauncher {
             return Err(anyhow!("Node already running!"));
         }
 
-        let sleep = time::sleep(self.config.consensus.consensus_timeout);
+        let sleep = time::sleep(Duration::from_millis(5));
         tokio::pin!(sleep);
 
         self.node_launched = true;
-        //let mut successive_timeouts = 0;
 
         loop {
             select! {

@@ -272,6 +272,9 @@ impl Node {
         let block = self
             .get_block_by_number(self.get_number(block_number))?
             .ok_or_else(|| anyhow!("block not found"))?;
+
+        trace!("call_contract: block={:?}", block);
+
         let state = self
             .consensus
             .state()

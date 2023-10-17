@@ -53,6 +53,14 @@ impl BlockStore {
         Ok(Some(block))
     }
 
+    //pub fn get_highest_block(&self) -> Result<Option<Block>> {
+    //    let Some(hash) = self.canonical_block_numbers.ma else {
+    //        return Ok(None);
+    //    };
+    //    let hash = Hash::from_bytes(hash.1)?;
+    //    self.get_block(hash)
+    //}
+
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
         let Some(hash) = self.canonical_block_views.get(view.to_be_bytes())? else {
             return Ok(None);
@@ -83,14 +91,12 @@ impl BlockStore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn request_block_by_number(&mut self, number: u64) -> Result<()> {
-        trace!("Request block with number {number}");
         if let Some(hash) = self.canonical_block_numbers.get(number.to_be_bytes())? {
             let hash = Hash::from_bytes(hash)?;
-            trace!("I know the hash, its {hash}");
             self.request_block(hash)?;
         } else {
-            trace!("I don't know the hash");
             self.message_sender
                 .broadcast_external_message(ExternalMessage::BlockRequest(BlockRequest(
                     BlockRef::Number(number),
@@ -128,6 +134,7 @@ impl BlockStore {
             .insert(number.to_be_bytes(), &hash.0)?;
         self.canonical_block_views
             .insert(view.to_be_bytes(), &hash.0)?;
+
         Ok(())
     }
 

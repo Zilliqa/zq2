@@ -50,6 +50,7 @@ const ADDR_TOUCHED_INDEX: &[u8] = b"addresses_touched_index";
 // single keys stored in default tree in DB
 /// value: u64
 const LATEST_FINALIZED_VIEW: &[u8] = b"latest_finalized_view";
+const HIGHEST_BLOCK_NUMBER: &[u8] = b"highest_block_number";
 
 #[derive(Debug)]
 struct NewViewVote {
@@ -311,17 +312,36 @@ impl Consensus {
     }
 
     pub fn head_block(&self) -> Block {
-        // Our high QC should point to our HEAD, default to genesis otherwise
-        match self.block_store.get_block(self.high_qc.block_hash) {
-            Ok(Some(block)) => block,
-            _ => {
-                warn!(
-                    "QC of {} failed to retrieve block. Defaulting.",
-                    self.high_qc.block_hash
-                );
-                self.block_store.get_block_by_view(0).unwrap().unwrap()
-            }
-        }
+        let highest_block_number = self
+            .db
+            .get(HIGHEST_BLOCK_NUMBER)
+            .unwrap()
+            .map(|b| Ok::<_, anyhow::Error>(u64::from_be_bytes(b.as_ref().try_into()?)))
+            .transpose()
+            .unwrap()
+            .unwrap();
+
+        trace!(
+            "head block request: highest block number: {}",
+            highest_block_number
+        );
+
+        self.block_store
+            .get_block_by_number(highest_block_number)
+            .unwrap()
+            .unwrap()
+
+        //// Our high QC should point to our HEAD - 1, we can walk , default to genesis otherwise
+        //match self.block_store.get_block(self.high_qc.block_hash) {
+        //    Ok(Some(block)) => block,
+        //    _ => {
+        //        warn!(
+        //            "QC of {} failed to retrieve block. Defaulting.",
+        //            self.high_qc.block_hash
+        //        );
+        //        self.block_store.get_block_by_view(0).unwrap().unwrap()
+        //    }
+        //}
     }
 
     // This function is called when we suspect that we are out of sync with the network/need to catchup
@@ -334,13 +354,20 @@ impl Consensus {
 
     // Set view only here - that way the last_timeout should be set iff view is set
     fn set_view(&mut self, view: u64) {
-        if view > self.view {
-            self.view = view;
-            self.last_timeout = SystemTime::now();
-        } else if view == self.view {
-            warn!("Tried to set view to same view - this is incorrect");
-        } else {
-            warn!("Tried to set view to lower view - this is incorrect");
+        match view.cmp(&self.view) {
+            std::cmp::Ordering::Less => {
+                warn!(
+                    "Tried to set view {} to lower view {} - this is incorrect",
+                    self.view, view
+                );
+            }
+            std::cmp::Ordering::Equal => {
+                warn!("Tried to set view to same view - this is incorrect");
+            }
+            std::cmp::Ordering::Greater => {
+                self.view = view;
+                self.last_timeout = SystemTime::now();
+            }
         }
     }
 
@@ -424,7 +451,11 @@ impl Consensus {
 
     pub fn proposal(&mut self, proposal: Proposal) -> Result<Option<(PeerId, Vote)>> {
         let (block, transactions) = proposal.into_parts();
-        trace!(block_view = block.view(), block_number = block.number(), "handling block proposal");
+        trace!(
+            block_view = block.view(),
+            block_number = block.number(),
+            "handling block proposal"
+        );
 
         if self.block_store.contains_block(block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
@@ -456,7 +487,12 @@ impl Consensus {
 
         // If the proposed block is safe, vote for it and advance to the next round.
         if self.check_safe_block(&block)? {
-            trace!("block view {} number {} aka {} is safe", block.view(), block.number(), block.hash());
+            trace!(
+                "block view {} number {} aka {} is safe",
+                block.view(),
+                block.number(),
+                block.hash()
+            );
 
             let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
             for txn in &transactions {
@@ -1060,6 +1096,8 @@ impl Consensus {
 
     fn save_highest_view(&mut self, block_hash: Hash, number: u64, view: u64) -> Result<()> {
         self.block_store.set_canonical(number, view, block_hash)?;
+        self.db
+            .insert(HIGHEST_BLOCK_NUMBER, &number.to_be_bytes())?;
         Ok(())
     }
 
@@ -1360,7 +1398,9 @@ impl Consensus {
         }
 
         if !self.block_extends_from(block, &finalized_block)? {
-            return Err(anyhow!("invalid block"));
+            return Err(anyhow!(
+                "invalid block, does not extend from finalized block"
+            ));
         }
         Ok(())
     }
@@ -1443,7 +1483,8 @@ impl Consensus {
 
     pub fn state_at(&self, number: u64) -> Result<Option<State>> {
         Ok(self
-            .block_store.get_block_by_number(number)?
+            .block_store
+            .get_block_by_number(number)?
             .map(|block| self.state.at_root(H256(block.state_root_hash().0))))
     }
 
@@ -1507,27 +1548,7 @@ impl Consensus {
         Ok(())
     }
 
-    fn get_leader_reserved(&self, view: u64) -> Result<Validator> {
-        // currently it's a simple round robin but later
-        // we will select the leader based on the weights
-        // Get the previous block, so we know the committee, then calculate the leader from there.
-        let block = self.get_block_by_view(view - 1)?;
-
-        let block = match block {
-            Some(block) => block,
-            None => self
-                .get_block_by_view(0)?
-                .ok_or_else(|| anyhow!("missing genesis block!"))?,
-        };
-
-        Ok(block.committee.leader(view))
-    }
-
-    fn check_quorum_in_bits(
-        &self,
-        cosigned: &BitSlice,
-        committee: &Committee,
-    ) -> Result<()> {
+    fn check_quorum_in_bits(&self, cosigned: &BitSlice, committee: &Committee) -> Result<()> {
         let cosigned_sum: u128 = committee
             .iter()
             .enumerate()
@@ -1541,11 +1562,7 @@ impl Consensus {
         Ok(())
     }
 
-    fn check_quorum_in_indices(
-        &self,
-        signers: &[u16],
-        committee: &Committee,
-    ) -> Result<()> {
+    fn check_quorum_in_indices(&self, signers: &[u16], committee: &Committee) -> Result<()> {
         let signed_sum: u128 = signers
             .iter()
             .map(|i| committee.get_by_index(*i as usize).unwrap().weight)
