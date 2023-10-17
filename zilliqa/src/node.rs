@@ -337,6 +337,14 @@ impl Node {
         self.consensus.finalized_view()
     }
 
+    pub fn get_genesis_hash(&self) -> Result<Hash> {
+        self.consensus.get_genesis_hash()
+    }
+
+    pub fn get_block_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
+        self.consensus.get_block_hash_by_view(view)
+    }
+
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
         self.consensus.get_block_by_view(view)
     }

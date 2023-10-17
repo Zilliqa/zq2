@@ -8,7 +8,11 @@ use ethers::solc::SHANGHAI_SOLC;
 use std::env;
 use std::ops::DerefMut;
 use zilliqa::cfg::ConsensusConfig;
-use zilliqa::message::InternalMessage;
+use zilliqa::cfg::NodeConfig;
+use zilliqa::crypto::{Hash, NodePublicKey, SecretKey};
+use zilliqa::message::{ExternalMessage, InternalMessage};
+use zilliqa::node::Node;
+use zilliqa::state::Address;
 
 use std::collections::HashMap;
 use std::{
@@ -20,6 +24,7 @@ use std::{
     },
     time::Duration,
 };
+use zilliqa::message::Message;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -48,13 +53,6 @@ use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
-use zilliqa::state::Address;
-use zilliqa::{
-    cfg::NodeConfig,
-    crypto::{NodePublicKey, SecretKey},
-    message::{ExternalMessage, Message},
-    node::Node,
-};
 
 #[derive(Deserialize)]
 struct CombinedJson {
@@ -72,6 +70,7 @@ struct AbiContract {
 #[allow(clippy::type_complexity)]
 fn node(
     genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    genesis_hash: Option<Hash>,
     secret_key: SecretKey,
     index: usize,
     datadir: Option<TempDir>,
@@ -97,6 +96,7 @@ fn node(
                 .map(|d| d.path().to_str().unwrap().to_string()),
             consensus: ConsensusConfig {
                 genesis_committee,
+                genesis_hash,
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: vec![(
                     Address(genesis_account),
@@ -179,6 +179,7 @@ impl Network {
             .map(|(i, key)| {
                 node(
                     genesis_committee.clone(),
+                    None,
                     key,
                     i,
                     Some(tempfile::tempdir().unwrap()),
@@ -230,10 +231,26 @@ impl Network {
         }
     }
 
-    pub fn add_node(&mut self) -> usize {
+    pub fn add_node(&mut self, genesis: bool) -> usize {
         let secret_key = SecretKey::new_from_rng(self.rng.lock().unwrap().deref_mut()).unwrap();
+        let (genesis_committee, genesis_hash) = if genesis {
+            (self.genesis_committee.clone(), None)
+        } else {
+            (
+                vec![],
+                Some(
+                    self.nodes[0]
+                        .inner
+                        .lock()
+                        .unwrap()
+                        .get_genesis_hash()
+                        .unwrap(),
+                ),
+            )
+        };
         let (node, receiver) = node(
-            self.genesis_committee.clone(),
+            genesis_committee,
+            genesis_hash,
             secret_key,
             self.nodes.len(),
             None,
@@ -315,7 +332,7 @@ impl Network {
             if let InternalMessage::LaunchShard(network_id) = internal_message {
                 if let Some(network) = self.children.get_mut(&network_id) {
                     trace!("Launching shard node for {network_id} - adding new node to shard");
-                    network.add_node();
+                    network.add_node(true);
                 } else {
                     info!("Launching node in new shard network {network_id}");
                     self.children
