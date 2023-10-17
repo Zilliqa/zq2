@@ -1,3 +1,4 @@
+use crate::crypto::Hash;
 use std::time::Duration;
 
 use libp2p::{Multiaddr, PeerId};
@@ -63,7 +64,11 @@ pub struct ConsensusConfig {
     /// The maximum number of times to retry out of order TXs before dropping them
     pub block_tx_limit: usize,
     /// The genesis committee (public key, peer id) pairs. Only allowed to have one member at the moment
+    /// Genesis data. Specifying a committee node is necessary for nodes participating in the consensus at
+    /// genesis. Only the hash can be specified for nodes joining afterwards.
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    pub genesis_hash: Option<Hash>,
+    /// Accounts that will be pre-funded at genesis.
     pub genesis_accounts: Vec<(Address, String)>,
 }
 
@@ -76,6 +81,7 @@ impl Default for ConsensusConfig {
             block_tx_limit: 1000,
             tx_retries: 1000,
             genesis_committee: vec![],
+            genesis_hash: None,
             genesis_accounts: Vec::new(),
         }
     }

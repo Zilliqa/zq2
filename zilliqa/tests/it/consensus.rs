@@ -24,7 +24,7 @@ async fn block_production(mut network: Network) {
         .await
         .unwrap();
 
-    let index = network.add_node();
+    let index = network.add_node(false);
 
     network
         .run_until(
@@ -39,6 +39,7 @@ async fn block_production(mut network: Network) {
         )
         .await
         .unwrap();
+    println!("Second block run completed");
 }
 
 #[zilliqa_macros::test]
