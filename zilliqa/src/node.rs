@@ -374,8 +374,21 @@ impl Node {
         self.consensus.finalized_view()
     }
 
-    pub fn get_block_by_view_reserved(&self, view: u64) -> Result<Option<Block>> {
-        self.consensus.get_block_by_number(view) // TODO: deleteme
+    pub fn get_genesis_hash(&self) -> Result<Hash> {
+        Ok(self
+            .consensus
+            .get_block_by_number(0)
+            .unwrap()
+            .unwrap()
+            .hash())
+    }
+
+    //pub fn get_block_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
+    //    self.consensus.block_store.get_block_hash_by_view(view)
+    //}
+
+    pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
+        self.consensus.get_block_by_view(view)
     }
 
     pub fn get_block_by_hash(&self, hash: Hash) -> Result<Option<Block>> {

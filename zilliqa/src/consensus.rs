@@ -116,7 +116,7 @@ pub struct Consensus {
     secret_key: SecretKey,
     config: NodeConfig,
     message_sender: MessageSender,
-    block_store: BlockStore,
+    pub block_store: BlockStore,
     votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128, bool)>,
     new_views: BTreeMap<u64, NewViewVote>,
     high_qc: QuorumCertificate,
@@ -164,7 +164,7 @@ impl Consensus {
             None => sled::Config::new().temporary(true).open()?,
         };
 
-        let block_store = BlockStore::new(&db, message_sender.clone())?;
+        let mut block_store = BlockStore::new(&db, message_sender.clone())?;
 
         let state_trie = db.open_tree(STATE_TRIE_TREE)?;
 
@@ -187,25 +187,45 @@ impl Consensus {
             State::new_with_genesis(state_trie, config.consensus.clone())?
         };
 
-        let latest_block = match latest_block {
-            Some(l) => l,
-            None => {
-                if config.consensus.genesis_committee.len() != 1 {
-                    return Err(anyhow!(
-                        "genesis committee must have length 1, not {}",
-                        config.consensus.genesis_committee.len()
-                    ));
-                }
-                let (public_key, peer_id) = config.consensus.genesis_committee[0];
-                let genesis_validator = Validator {
-                    public_key,
-                    peer_id,
-                    weight: 100,
-                };
-                Block::genesis(Committee::new(genesis_validator), state.root_hash()?)
-            }
-        };
-        trace!("Loading state at height {}", latest_block.number());
+        // todo: refactor this I think
+        let (latest_block, latest_block_view, latest_block_number, latest_block_hash) =
+            match latest_block {
+                Some(l) => (Some(l.clone()), l.view(), l.number(), l.hash()),
+                None => match (
+                    config.consensus.genesis_committee.len(),
+                    config.consensus.genesis_hash,
+                ) {
+                    (0, Some(hash)) => {
+                        block_store.request_block(hash)?;
+                        (None, 0, 0, hash)
+                    }
+                    (1, hash) => {
+                        let (public_key, peer_id) = config.consensus.genesis_committee[0];
+                        let genesis_validator = Validator {
+                            public_key,
+                            peer_id,
+                            weight: 100,
+                        };
+                        let genesis =
+                            Block::genesis(Committee::new(genesis_validator), state.root_hash()?);
+                        if let Some(hash) = hash {
+                            if genesis.hash() != hash {
+                                return Err(anyhow!("Both genesis committee and genesis hash were specified, but the hashes do not match"));
+                            }
+                        }
+                        (Some(genesis.clone()), 0, 0, genesis.hash())
+                    }
+                    (0, None) => {
+                        return Err(anyhow!("At least one of genesis_committee or genesis_hash must be specified in config"));
+                    }
+                    _ => {
+                        return Err(anyhow!(
+                            "genesis committee must have length 0 or 1, not {}",
+                            config.consensus.genesis_committee.len()
+                        ));
+                    }
+                },
+            };
 
         let block_hash_reverse_index = db.open_tree(TX_BLOCK_INDEX)?;
 
@@ -222,6 +242,10 @@ impl Consensus {
             Some(bincode::serialize(&vec).unwrap())
         });
 
+        let high_qc = latest_block
+            .as_ref()
+            .map_or(QuorumCertificate::genesis(1024), |b| b.qc.clone());
+
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -229,9 +253,9 @@ impl Consensus {
             message_sender,
             votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
-            high_qc: latest_block.qc.clone(),
-            view: latest_block.view(),
-            finalized_view: latest_block.view().saturating_sub(1),
+            high_qc,
+            view: latest_block_view,
+            finalized_view: latest_block_view.saturating_sub(1),
             last_timeout: SystemTime::now(),
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
@@ -245,15 +269,17 @@ impl Consensus {
         };
 
         // If we're at genesis, add the genesis block.
-        if latest_block.view() == 0 {
-            consensus.add_block(latest_block.clone())?;
+        if latest_block_view == 0 {
+            if let Some(genesis) = latest_block {
+                consensus.add_block(genesis.clone())?;
+            }
             consensus.save_highest_view(
-                latest_block.hash(),
-                latest_block.number(),
-                latest_block.view(),
+                latest_block_hash,
+                latest_block_view,
+                latest_block_number,
             )?;
             // treat genesis as finalized
-            consensus.finalize(latest_block.clone())?;
+            consensus.finalize(latest_block_hash, latest_block_view)?;
             consensus.view = 1;
         }
 
@@ -263,10 +289,6 @@ impl Consensus {
     pub fn public_key(&self) -> NodePublicKey {
         self.secret_key.node_public_key()
     }
-
-    //pub fn get_chain_tip(&self) -> u64 {
-    //    self.view.saturating_sub(1)
-    //}
 
     pub fn add_peer(
         &mut self,
@@ -291,9 +313,12 @@ impl Consensus {
         debug!(%peer_id, "added pending peer");
 
         if self.view == 1 {
-            let genesis = self
-                .get_block_by_view(0)?
-                .ok_or_else(|| anyhow!("missing block"))?;
+            let Some(genesis) = self.get_block_by_view(0)? else {
+                // if we don't have genesis that means we only have its hash
+                // ergo we weren't, and can't be, part of the network at genesis and
+                // can't vote for it anyway
+                return Ok(None);
+            };
             // If we're in the genesis committee, vote again.
             if genesis
                 .committee
@@ -1259,7 +1284,7 @@ impl Consensus {
                 current = new;
             }
             if current.hash() == finalized_block.hash() {
-                self.finalize(committed_block)?;
+                self.finalize(committed_block.hash(), committed_block.view())?;
                 // discard blocks that can't be committed anymore
             }
         } else {
@@ -1275,15 +1300,14 @@ impl Consensus {
 
     /// Intended to be used with the oldest pending block, to move the
     /// finalized tip forward by one. Does not update view/height.
-    pub fn finalize(&mut self, newly_finalized_block: Block) -> Result<()> {
-        let view = newly_finalized_block.view();
+    pub fn finalize(&mut self, hash: Hash, view: u64) -> Result<()> {
         self.finalized_view = view;
         self.db.insert(LATEST_FINALIZED_VIEW, &view.to_be_bytes())?;
 
         if self.config.consensus.is_main {
             // Check for new shards to join
             let shard_logs = self.get_logs_in_block(
-                newly_finalized_block.hash(),
+                hash,
                 contracts::shard_registry::SHARD_ADDED_EVT.clone(),
                 Address::SHARD_CONTRACT,
             )?;

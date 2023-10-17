@@ -73,6 +73,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let dir = (|mut node: TestNode| node.dir.take())(node).unwrap(); // move dir out and drop the rest of node
     let result = crate::node(
         network.genesis_committee,
+        None,
         SecretKey::new().unwrap(),
         0,
         Some(dir),

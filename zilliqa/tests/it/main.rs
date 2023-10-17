@@ -4,10 +4,15 @@ mod native_contracts;
 mod persistence;
 mod web3;
 mod zil;
+use ethers::solc::SHANGHAI_SOLC;
 use std::env;
 use std::ops::DerefMut;
 use zilliqa::cfg::ConsensusConfig;
-use zilliqa::message::InternalMessage;
+use zilliqa::cfg::NodeConfig;
+use zilliqa::crypto::{Hash, NodePublicKey, SecretKey};
+use zilliqa::message::{ExternalMessage, InternalMessage};
+use zilliqa::node::Node;
+use zilliqa::state::Address;
 
 extern crate fs_extra;
 use fs_extra::dir::*;
@@ -23,6 +28,7 @@ use std::{
     },
     time::Duration,
 };
+use zilliqa::message::Message;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -52,13 +58,6 @@ use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
-use zilliqa::state::Address;
-use zilliqa::{
-    cfg::NodeConfig,
-    crypto::{NodePublicKey, SecretKey},
-    message::{ExternalMessage, Message},
-    node::Node,
-};
 
 #[derive(Deserialize)]
 struct CombinedJson {
@@ -76,6 +75,7 @@ struct AbiContract {
 #[allow(clippy::type_complexity)]
 fn node(
     genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    genesis_hash: Option<Hash>,
     secret_key: SecretKey,
     index: usize,
     datadir: Option<TempDir>,
@@ -101,6 +101,7 @@ fn node(
                 .map(|d| d.path().to_str().unwrap().to_string()),
             consensus: ConsensusConfig {
                 genesis_committee,
+                genesis_hash,
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: vec![(
                     Address(genesis_account),
@@ -189,6 +190,7 @@ impl Network {
             .map(|(i, key)| {
                 node(
                     genesis_committee.clone(),
+                    None,
                     key,
                     i,
                     Some(tempfile::tempdir().unwrap()),
@@ -242,10 +244,26 @@ impl Network {
         }
     }
 
-    pub fn add_node(&mut self) -> usize {
+    pub fn add_node(&mut self, genesis: bool) -> usize {
         let secret_key = SecretKey::new_from_rng(self.rng.lock().unwrap().deref_mut()).unwrap();
+        let (genesis_committee, genesis_hash) = if genesis {
+            (self.genesis_committee.clone(), None)
+        } else {
+            (
+                vec![],
+                Some(
+                    self.nodes[0]
+                        .inner
+                        .lock()
+                        .unwrap()
+                        .get_genesis_hash()
+                        .unwrap(),
+                ),
+            )
+        };
         let (node, receiver) = node(
-            self.genesis_committee.clone(),
+            genesis_committee,
+            genesis_hash,
             secret_key,
             self.nodes.len(),
             None,
@@ -310,6 +328,7 @@ impl Network {
 
                 node(
                     genesis_committee.clone(),
+                    None,
                     key,
                     i,
                     Some(new_data_dir),
@@ -437,7 +456,7 @@ impl Network {
             if let InternalMessage::LaunchShard(network_id) = internal_message {
                 if let Some(network) = self.children.get_mut(&network_id) {
                     trace!("Launching shard node for {network_id} - adding new node to shard");
-                    network.add_node();
+                    network.add_node(true);
                 } else {
                     info!("Launching node in new shard network {network_id}");
                     self.children
@@ -621,6 +640,7 @@ fn format_message(
 }
 
 const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
+const EVM_VERSION: EvmVersion = EvmVersion::Shanghai;
 
 async fn deploy_contract(
     path: &str,
@@ -645,7 +665,17 @@ async fn deploy_contract(
 
     let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
     let compiler_input = compiler_input.first_mut().unwrap();
-    compiler_input.settings.evm_version = Some(EvmVersion::Shanghai);
+    compiler_input.settings.evm_version = Some(EVM_VERSION);
+
+    if let Ok(version) = sc.version() {
+        // gets the minimum EvmVersion that is compatible the given EVM_VERSION and version arguments
+        if EVM_VERSION.normalize_version(&version) != Some(EVM_VERSION) {
+            panic!(
+                "solc version {} required, currently set {}",
+                SHANGHAI_SOLC, version
+            );
+        }
+    }
 
     let out = sc
         .compile::<CompilerInput>(compiler_input)
