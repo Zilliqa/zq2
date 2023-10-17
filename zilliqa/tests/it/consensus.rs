@@ -1,9 +1,9 @@
 use crate::CombinedJson;
-use ethabi::Token;
-use zilliqa::state::Address;
 use crate::Network;
-use tracing::*;
+use ethabi::Token;
 use ethers::{providers::Middleware, types::TransactionRequest};
+use tracing::*;
+use zilliqa::state::Address;
 
 // Test that a node that joins later can sync up to the latest block and become a
 
