@@ -152,8 +152,8 @@ impl Ord for TxnOrder {
         let nonce_ordering = other.nonce.cmp(&self.nonce);
         if nonce_ordering == Ordering::Equal {
             // If nonce is equal, compare by gas_price * fee (desire higher)
-            let self_fee = self.gas_price * self.gas_limit;
-            let other_fee = other.gas_price * other.gas_limit;
+            let self_fee = self.gas_price;
+            let other_fee = other.gas_price;
             self_fee.cmp(&other_fee)
         } else {
             nonce_ordering
