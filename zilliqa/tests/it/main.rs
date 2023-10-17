@@ -217,20 +217,6 @@ impl Network {
         // Pause time so we can control it.
         zilliqa::time::pause_at_epoch();
 
-        //// remove this.
-        //for node in &nodes[1..] {
-        //    // Simulate every node broadcasting a `JoinCommittee` message.
-        //    resend_message
-        //        .send((
-        //            node.peer_id,
-        //            None,
-        //            Message::External(ExternalMessage::JoinCommittee(
-        //                node.secret_key.node_public_key(),
-        //            )),
-        //        ))
-        //        .unwrap();
-        //}
-
         Network {
             genesis_committee,
             genesis_address,

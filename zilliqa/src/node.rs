@@ -366,7 +366,6 @@ impl Node {
     }
 
     pub fn get_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
-        //self.get_block_by_number(self.get_number(block_number))
         self.consensus.get_block_by_number(block_number)
     }
 
@@ -382,10 +381,6 @@ impl Node {
             .unwrap()
             .hash())
     }
-
-    //pub fn get_block_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
-    //    self.consensus.block_store.get_block_hash_by_view(view)
-    //}
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
         self.consensus.get_block_by_view(view)

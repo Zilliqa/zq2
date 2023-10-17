@@ -65,7 +65,7 @@ struct NewViewVote {
 pub struct Validator {
     pub public_key: NodePublicKey,
     pub peer_id: PeerId,
-    pub weight: u128,
+    pub weight: u128, // Validators are weighted by their stake for leader selection and also signing power
 }
 
 impl PartialEq for Validator {
@@ -111,6 +111,36 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
+/// The consensus algorithm is pipelined fast-hotstuff, as given in this paper: https://arxiv.org/pdf/2010.11454.pdf
+///
+/// The algorithm can be condensed down into the following explaination:
+/// - Blocks must contain either a QuorumCertificate (QC), or an aggregated QuorumCertificate (aggQC).
+/// - A QuorumCertificate is an aggregation of signatures of threshold validators against a block hash (the previous block)
+/// - An aggQC is an aggregation of threshold QC.
+/// - at each time step, a.k.a 'view' a leader is chosen (based on view number) from the validators (committee) to propose a block
+/// - committee members vote (create a signature) on the block proposal
+/// - after threshold signatures are aggregated, a QC is formed which points to the block proposal
+///
+/// Happy path:
+/// - Start at genesis, there is only a block with a dummy QC which everyone sees (exceptional case).
+/// - everyone advances view to 1
+/// - validators vote on genesis
+/// - a high QC (QC pointing to the highest known hash) is formed from the validators votes on genesis
+/// - everyone advances view to 2
+/// - next leader proposes a block
+/// - validators vote on genesis -> new high QC... and so on.
+///
+/// Unhappy path:
+/// - In the unhappy path, there is the possibility of forks (for example if you executed the block proposal).
+/// - In this case, the view will time out with no leader successfully proposing a block.
+/// - From this point forward, block view =/= block number
+/// - The view will increment on all or some nodes. The timeout for view increments doubles each time,
+///    which guarantees all nodes eventually are on the same view
+/// - Nodes send a NewView message, which is a signature over the view, and their highQC
+/// - This is collected to form an aggQC
+/// - This aggQC is used to propose a block
+/// - The votes on that block form the next highQC
+///
 #[derive(Debug)]
 pub struct Consensus {
     secret_key: SecretKey,
@@ -187,8 +217,6 @@ impl Consensus {
             State::new_with_genesis(state_trie, config.consensus.clone())?
         };
 
-        info!("Latest blcok is {:?}", latest_block);
-
         let (latest_block, latest_block_view, latest_block_number, latest_block_hash) =
             match latest_block {
                 Some(l) => (Some(l.clone()), l.view(), l.number(), l.hash()),
@@ -197,12 +225,10 @@ impl Consensus {
                     config.consensus.genesis_hash,
                 ) {
                     (0, Some(hash)) => {
-                        info!("path 1");
                         block_store.request_block(hash)?;
                         (None, 0, 0, hash)
                     }
                     (1, hash) => {
-                        info!("path 2");
                         let (public_key, peer_id) = config.consensus.genesis_committee[0];
                         let genesis_validator = Validator {
                             public_key,
@@ -219,11 +245,9 @@ impl Consensus {
                         (Some(genesis.clone()), 0, 0, genesis.hash())
                     }
                     (0, None) => {
-                        info!("path 3");
                         return Err(anyhow!("At least one of genesis_committee or genesis_hash must be specified in config"));
                     }
                     _ => {
-                        info!("path 4");
                         return Err(anyhow!(
                             "genesis committee must have length 0 or 1, not {}",
                             config.consensus.genesis_committee.len()
@@ -331,7 +355,6 @@ impl Consensus {
                 .any(|v| v.peer_id == self.peer_id())
             {
                 trace!("voting for genesis block");
-                //let leader = self.get_leader(self.view)?;
                 let leader = genesis.committee.leader(self.view);
                 let vote = self.vote_from_block(&genesis);
                 return Ok(Some((Some(leader.peer_id), ExternalMessage::Vote(vote))));
@@ -450,7 +473,6 @@ impl Consensus {
         let _ = self.download_blocks_up_to_head();
         self.set_view(self.view + 1);
 
-        //let leader = self.get_leader(self.view).unwrap().peer_id;
         let leader = self.head_block().committee.leader(self.view).peer_id;
 
         let new_view = NewView::new(

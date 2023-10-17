@@ -30,7 +30,6 @@ async fn call_block_number(mut network: Network) {
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
 
     let function = abi.function("currentBlock").unwrap();
-    println!("contract addr: {:?}", function);
     let call_tx = TransactionRequest::new()
         .to(receipt.contract_address.unwrap())
         .data(function.encode_input(&[]).unwrap());
