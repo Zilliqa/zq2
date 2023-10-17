@@ -187,7 +187,8 @@ impl Consensus {
             State::new_with_genesis(state_trie, config.consensus.clone())?
         };
 
-        // todo: refactor this I think
+        info!("Latest blcok is {:?}", latest_block);
+
         let (latest_block, latest_block_view, latest_block_number, latest_block_hash) =
             match latest_block {
                 Some(l) => (Some(l.clone()), l.view(), l.number(), l.hash()),
@@ -196,10 +197,12 @@ impl Consensus {
                     config.consensus.genesis_hash,
                 ) {
                     (0, Some(hash)) => {
+                        info!("path 1");
                         block_store.request_block(hash)?;
                         (None, 0, 0, hash)
                     }
                     (1, hash) => {
+                        info!("path 2");
                         let (public_key, peer_id) = config.consensus.genesis_committee[0];
                         let genesis_validator = Validator {
                             public_key,
@@ -216,9 +219,11 @@ impl Consensus {
                         (Some(genesis.clone()), 0, 0, genesis.hash())
                     }
                     (0, None) => {
+                        info!("path 3");
                         return Err(anyhow!("At least one of genesis_committee or genesis_hash must be specified in config"));
                     }
                     _ => {
+                        info!("path 4");
                         return Err(anyhow!(
                             "genesis committee must have length 0 or 1, not {}",
                             config.consensus.genesis_committee.len()
@@ -355,18 +360,6 @@ impl Consensus {
             .get_block_by_number(highest_block_number)
             .unwrap()
             .unwrap()
-
-        //// Our high QC should point to our HEAD - 1, we can walk , default to genesis otherwise
-        //match self.block_store.get_block(self.high_qc.block_hash) {
-        //    Ok(Some(block)) => block,
-        //    _ => {
-        //        warn!(
-        //            "QC of {} failed to retrieve block. Defaulting.",
-        //            self.high_qc.block_hash
-        //        );
-        //        self.block_store.get_block_by_view(0).unwrap().unwrap()
-        //    }
-        //}
     }
 
     // This function is called when we suspect that we are out of sync with the network/need to catchup

@@ -1,10 +1,8 @@
 use crate::CombinedJson;
 use ethabi::Token;
-
 use zilliqa::state::Address;
-
 use crate::Network;
-
+use tracing::*;
 use ethers::{providers::Middleware, types::TransactionRequest};
 
 // Test that a node that joins later can sync up to the latest block and become a
@@ -145,7 +143,8 @@ async fn block_production(mut network: Network) {
         .await
         .unwrap();
 
-    let index = network.add_node(false);
+    info!("Adding networked node.");
+    let index = network.add_node(true);
 
     network
         .run_until(
