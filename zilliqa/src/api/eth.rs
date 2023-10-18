@@ -195,11 +195,11 @@ fn get_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
 fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::Block>> {
     let mut params = params.sequence();
-    let block_number: u64 = params.next()?;
+    let block_number: BlockNumber = params.next()?;
     let full: bool = params.next()?;
 
     let node = node.lock().unwrap();
-    let block = node.get_block_by_number(block_number)?;
+    let block = node.get_block_by_blocknum(block_number)?;
 
     let block = block.map(|b| convert_block(&node, &b, full)).transpose()?;
 
@@ -259,16 +259,11 @@ fn get_block_transaction_count_by_number(
     let block_number: BlockNumber = params.one()?;
 
     let node = node.lock().unwrap();
-    let block = match block_number {
-        BlockNumber::Number(number) => node.get_block_by_number(number),
-        BlockNumber::Earliest => node.get_block_by_number(0),
-        BlockNumber::Latest => node.get_latest_block(),
-        _ => {
-            return Err(anyhow!("unsupported block number: {block_number:?}"));
-        }
-    }?;
+    let block = node.get_block_by_blocknum(block_number)?;
 
-    Ok(block.map(|b| b.transactions.len().to_hex()))
+    Ok(Some(
+        block.map_or(0, |block| block.transactions.len()).to_hex(),
+    ))
 }
 
 #[derive(Deserialize, Default)]

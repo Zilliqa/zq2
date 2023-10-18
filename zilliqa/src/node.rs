@@ -365,6 +365,11 @@ impl Node {
         self.get_block_by_number(self.get_chain_tip())
     }
 
+    pub fn get_block_by_blocknum(&self, block_number: BlockNumber) -> Result<Option<Block>> {
+        let block_number = self.get_number(block_number);
+        self.consensus.get_block_by_number(block_number)
+    }
+
     pub fn get_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
         self.consensus.get_block_by_number(block_number)
     }

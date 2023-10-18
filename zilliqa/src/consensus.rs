@@ -571,7 +571,7 @@ impl Consensus {
             if self.view != proposal_view + 1 {
                 self.set_view(proposal_view + 1);
 
-                info!(
+                debug!(
                     "*** setting view to proposal view... view is now {}",
                     self.view
                 );
