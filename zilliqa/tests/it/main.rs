@@ -63,6 +63,8 @@ struct CombinedJson {
 #[serde(rename_all = "kebab-case")]
 struct AbiContract {
     abi: ethabi::Contract,
+    bin: String,
+    bin_runtime: String,
 }
 
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the

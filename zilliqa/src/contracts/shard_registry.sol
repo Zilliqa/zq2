@@ -8,6 +8,10 @@ contract ShardRegistry is Shard {
     mapping(uint => uint) indices;
     address[] shards;
 
+    // We construct this at genesis so we cannot know the genesis hash. Hence we pass 0.
+    //
+    // However, on the main shard, there is no higher source of trust to verify the genesis
+    // than the chain itself (which also contains this contract), so this is not a problem.
     constructor(uint16 consensusTimeoutMs) Shard(block.chainid, consensusTimeoutMs, 0) {
         addShard(block.chainid, address(this));
     }
