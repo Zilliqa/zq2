@@ -26,8 +26,12 @@ sudo add-apt-repository ppa:ethereum/ethereum > /dev/null 2>&1
 sudo apt-get update > /dev/null 2>&1
 sudo apt-get install solc libsecp256k1-dev ansi2txt > /dev/null 2>&1
 
+echo "Installing tests"
+
 # Install tests
 npm install > /dev/null 2>&1
+
+echo "Running tests"
 
 # Run tests
 npx hardhat test --parallel
