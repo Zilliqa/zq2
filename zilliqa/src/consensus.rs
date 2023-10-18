@@ -443,7 +443,7 @@ impl Consensus {
         let consensus_timeout_ms = self.config.consensus.consensus_timeout.as_millis() as u64;
         let head_block = self.head_block();
         let head_block_view = head_block.view();
-        trace!("Time since last change is: {}", self.last_timeout);
+        trace!("Time since last change is: {:?}", self.last_timeout);
         let time_since_last_view_change = SystemTime::now()
             .duration_since(self.last_timeout)
             .unwrap()
