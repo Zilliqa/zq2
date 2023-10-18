@@ -444,9 +444,10 @@ impl Consensus {
         let head_block = self.head_block();
         let head_block_view = head_block.view();
         trace!("Time since last change is: {:?}", self.last_timeout);
+        println!("Time since last change is: {:?}", self.last_timeout);
         let time_since_last_view_change = SystemTime::now()
             .duration_since(self.last_timeout)
-            .unwrap()
+            .expect("last timeout seems to be in the future...")
             .as_millis() as u64;
         let view_difference = self.view.saturating_sub(head_block_view);
         let exponential_backoff_timeout = consensus_timeout_ms * 2u64.pow(view_difference as u32);
