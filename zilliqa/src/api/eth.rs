@@ -1,6 +1,6 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
-use futures::future::{join_all, try_join_all};
+use futures::future::join_all;
 use std::{panic::AssertUnwindSafe, sync::Arc};
 use tokio::sync::{Mutex, MutexGuard};
 
@@ -247,15 +247,13 @@ async fn convert_block(
     if !full {
         Ok(block.into())
     } else {
-        let transactions = try_join_all(block.transactions.iter().map(|h| async move {
-            get_transaction_inner(*h, node)
+        let mut transactions: Vec<HashOrTransaction> = Vec::new();
+        for tx_hash in &block.transactions {
+            let tx = get_transaction_inner(*tx_hash, node)
                 .await?
-                .ok_or_else(|| anyhow!("missing transaction: {}", h))
-        }))
-        .await?
-        .into_iter()
-        .map(|t| Ok(HashOrTransaction::Transaction(t)))
-        .collect::<Result<_>>()?;
+                .ok_or_else(|| anyhow!("missing transaction: {}", tx_hash))?;
+            transactions.push(HashOrTransaction::Transaction(tx));
+        }
         Ok(eth::Block {
             transactions,
             ..block.into()
