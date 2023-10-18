@@ -74,7 +74,6 @@ async fn launch_shard(mut network: Network) {
     );
     let shard_wallet = shard_network.genesis_wallet().await;
 
-    // ...and merge it as part of the main network, and re-borrow the reference
     network.children.insert(child_shard_id, shard_network);
     network
         .children
@@ -189,7 +188,8 @@ async fn launch_shard(mut network: Network) {
 
     let included_block = wallet.get_block_number().await.unwrap();
 
-    // 5. Finalize the block and run checks
+    // 5. Finalize the block on the main shard and check each main shard node has
+    // spawned a child shard node in response
     network
         .run_until_async(
             || async { wallet.get_block_number().await.unwrap() >= included_block + 2 },
@@ -198,7 +198,6 @@ async fn launch_shard(mut network: Network) {
         .await
         .unwrap();
 
-    // check every node from the parent network has spawned a node for the child shard
     network
         .run_until(
             |n| {
@@ -210,7 +209,7 @@ async fn launch_shard(mut network: Network) {
         .await
         .unwrap();
 
-    // check shard is still producing blocks
+    // 6. Check shard is still producing blocks
     let check_child_block = shard_wallet
         .get_block(BlockNumber::Latest)
         .await
