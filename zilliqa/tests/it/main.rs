@@ -9,7 +9,7 @@ use std::env;
 use std::ops::DerefMut;
 use zilliqa::cfg::ConsensusConfig;
 use zilliqa::cfg::NodeConfig;
-use zilliqa::crypto::{Hash, NodePublicKey, SecretKey};
+use zilliqa::crypto::{NodePublicKey, SecretKey};
 use zilliqa::message::{ExternalMessage, InternalMessage};
 use zilliqa::node::Node;
 use zilliqa::state::Address;
@@ -44,7 +44,6 @@ use jsonrpsee::{
 };
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
-use primitive_types::H160;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
 use serde::Deserialize;
@@ -64,19 +63,16 @@ struct CombinedJson {
 struct AbiContract {
     abi: ethabi::Contract,
     bin: String,
-    bin_runtime: String,
 }
 
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
 // type
 #[allow(clippy::type_complexity)]
 fn node(
-    genesis_committee: Vec<(NodePublicKey, PeerId)>,
-    genesis_hash: Option<Hash>,
+    config: NodeConfig,
     secret_key: SecretKey,
     index: usize,
     datadir: Option<TempDir>,
-    genesis_account: H160,
 ) -> Result<(
     TestNode,
     BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
@@ -96,20 +92,7 @@ fn node(
             data_dir: datadir
                 .as_ref()
                 .map(|d| d.path().to_str().unwrap().to_string()),
-            consensus: ConsensusConfig {
-                genesis_committee,
-                genesis_hash,
-                // Give a genesis account 1 billion ZIL.
-                genesis_accounts: vec![(
-                    Address(genesis_account),
-                    1_000_000_000u128
-                        .checked_mul(10u128.pow(18))
-                        .unwrap()
-                        .to_string(),
-                )],
-                ..Default::default()
-            },
-            ..Default::default()
+            ..config
         },
         secret_key,
         message_sender,
@@ -145,6 +128,7 @@ struct Network {
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
     /// Child shards.
     pub children: HashMap<u64, Network>,
+    pub is_main: bool,
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
     // the borrow checker happy.
     nodes: Vec<TestNode>,
@@ -160,7 +144,18 @@ struct Network {
 }
 
 impl Network {
+    /// Create a main shard network.
     pub fn new(rng: Arc<Mutex<ChaCha8Rng>>, nodes: usize, seed: u64) -> Network {
+        Self::new_shard(rng, nodes, true, NodeConfig::default().eth_chain_id, seed)
+    }
+
+    pub fn new_shard(
+        rng: Arc<Mutex<ChaCha8Rng>>,
+        nodes: usize,
+        is_main: bool,
+        shard_id: u64,
+        seed: u64,
+    ) -> Network {
         let mut keys: Vec<_> = (0..nodes)
             .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
             .collect();
@@ -175,19 +170,24 @@ impl Network {
         let genesis_committee = vec![validator];
         let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
+        let config = NodeConfig {
+            eth_chain_id: shard_id,
+            consensus: ConsensusConfig {
+                genesis_committee: genesis_committee.clone(),
+                genesis_hash: None,
+                is_main,
+                // Give a genesis account 1 billion ZIL.
+                genesis_accounts: Self::genesis_accounts(&genesis_key),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
         let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
-                node(
-                    genesis_committee.clone(),
-                    None,
-                    key,
-                    i,
-                    Some(tempfile::tempdir().unwrap()),
-                    secret_key_to_address(&genesis_key),
-                )
-                .unwrap()
+                node(config.clone(), key, i, Some(tempfile::tempdir().unwrap())).unwrap()
             })
             .unzip();
 
@@ -224,6 +224,7 @@ impl Network {
         Network {
             genesis_committee,
             nodes,
+            is_main,
             receivers,
             resend_message,
             rng,
@@ -231,6 +232,16 @@ impl Network {
             children: HashMap::new(),
             genesis_key,
         }
+    }
+
+    fn genesis_accounts(genesis_key: &SigningKey) -> Vec<(Address, String)> {
+        vec![(
+            Address(secret_key_to_address(genesis_key)),
+            1_000_000_000u128
+                .checked_mul(10u128.pow(18))
+                .unwrap()
+                .to_string(),
+        )]
     }
 
     pub fn add_node(&mut self, genesis: bool) -> usize {
@@ -250,15 +261,17 @@ impl Network {
                 ),
             )
         };
-        let (node, receiver) = node(
-            genesis_committee,
-            genesis_hash,
-            secret_key,
-            self.nodes.len(),
-            None,
-            secret_key_to_address(&self.genesis_key),
-        )
-        .unwrap();
+        let config = NodeConfig {
+            consensus: ConsensusConfig {
+                genesis_committee,
+                genesis_hash,
+                is_main: self.is_main,
+                genesis_accounts: Self::genesis_accounts(&self.genesis_key),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (node, receiver) = node(config, secret_key, self.nodes.len(), None).unwrap();
 
         self.resend_message
             .send((
@@ -331,14 +344,16 @@ impl Network {
         );
 
         if let Message::Internal(internal_message) = message {
-            if let InternalMessage::LaunchShard(network_id) = internal_message {
-                if let Some(network) = self.children.get_mut(&network_id) {
-                    trace!("Launching shard node for {network_id} - adding new node to shard");
+            if let InternalMessage::LaunchShard(shard_id) = internal_message {
+                if let Some(network) = self.children.get_mut(&shard_id) {
+                    trace!("Launching shard node for {shard_id} - adding new node to shard");
                     network.add_node(true);
                 } else {
-                    info!("Launching node in new shard network {network_id}");
-                    self.children
-                        .insert(network_id, Network::new(self.rng.clone(), 1, self.seed));
+                    info!("Launching node in new shard network {shard_id}");
+                    self.children.insert(
+                        shard_id,
+                        Network::new_shard(self.rng.clone(), 1, false, shard_id, self.seed),
+                    );
                 }
             }
         } else {
