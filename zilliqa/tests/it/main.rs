@@ -214,9 +214,6 @@ impl Network {
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
-        // Pause time so we can control it.
-        zilliqa::time::pause_at_epoch();
-
         Network {
             genesis_committee,
             genesis_address,
