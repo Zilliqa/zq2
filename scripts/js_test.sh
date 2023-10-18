@@ -36,7 +36,7 @@ retVal=$?
 
 pkill -INT zilliqa
 if [ $retVal -ne 0 ]; then
-    cat /tmp/zil_log_out.txt
+    cat /tmp/zil_log_out.txt | ansi2txt
     echo "!!!!!! Error with JS integration test !!!!!!"
     exit 1
 fi
