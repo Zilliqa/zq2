@@ -340,32 +340,25 @@ impl Network {
                 }
             }
         } else {
-            // ExternalMessage
-            if let Some(destination) = destination {
-                let node = self
+            let nodes: Vec<&TestNode> = if let Some(destination) = destination {
+                vec![self
                     .nodes
                     .iter()
                     .find(|n| n.peer_id == destination)
-                    .unwrap();
-                let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
+                    .unwrap()]
+            } else {
+                self.nodes.iter().collect()
+            };
+
+            for (index, node) in nodes.iter().enumerate() {
+                let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                 span.in_scope(|| {
                     node.inner
                         .lock()
                         .unwrap()
-                        .handle_message(source, message)
+                        .handle_message(source, message.clone())
                         .unwrap();
                 });
-            } else {
-                for node in &self.nodes {
-                    let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
-                    span.in_scope(|| {
-                        node.inner
-                            .lock()
-                            .unwrap()
-                            .handle_message(source, message.clone())
-                            .unwrap();
-                    });
-                }
             }
         }
     }

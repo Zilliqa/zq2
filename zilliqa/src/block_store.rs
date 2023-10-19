@@ -59,7 +59,9 @@ impl BlockStore {
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        let Some(hash) = self.get_hash_by_view(view)? else { return Ok(None) };
+        let Some(hash) = self.get_hash_by_view(view)? else {
+            return Ok(None);
+        };
         self.get_block(hash)
     }
 
