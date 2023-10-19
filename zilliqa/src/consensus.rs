@@ -1550,6 +1550,9 @@ impl Consensus {
         }
 
         if !self.block_extends_from(block, &finalized_block)? {
+
+            warn!("invalid block {:?}, does note extend finalized block {:?} our head is {:?}", block, finalized_block, self.head_block());
+
             return Err(anyhow!(
                 "invalid block, does not extend from finalized block"
             ));
