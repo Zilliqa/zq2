@@ -9,8 +9,6 @@ use bitvec::bitvec;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
-
-
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BinaryHeap},
