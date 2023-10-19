@@ -27,7 +27,7 @@ node --version
 
 sudo add-apt-repository ppa:ethereum/ethereum > /dev/null 2>&1
 sudo apt-get update > /dev/null 2>&1
-sudo apt-get install solc libsecp256k1-dev ansi2txt > /dev/null 2>&1
+sudo apt-get install solc libsecp256k1-dev > /dev/null 2>&1
 
 echo "install ansi dedup"
 git clone https://github.com/drakkan/ansi2txt.git
@@ -49,7 +49,7 @@ retVal=$?
 
 pkill -INT zilliqa
 if [ $retVal -ne 0 ]; then
-    cat /tmp/zil_log_out.txt | ansi2txt
+    cat /tmp/zil_log_out.txt
     echo "!!!!!! Error with JS integration test !!!!!!"
     exit 1
 fi
