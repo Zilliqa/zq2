@@ -203,9 +203,6 @@ impl Network {
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
-        // Pause time so we can control it.
-        zilliqa::time::pause_at_epoch();
-
         for node in &nodes[1..] {
             // Simulate every node broadcasting a `JoinCommittee` message.
             resend_message

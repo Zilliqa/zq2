@@ -19,6 +19,9 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
     quote! {
         #[tokio::test(flavor = "multi_thread")]
         async fn #test_name() {
+            // Always make sure to pause time so we can control it, before the test begins
+            zilliqa::time::pause_at_epoch();
+
             // The original test function
             #input
 
