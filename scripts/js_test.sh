@@ -18,13 +18,22 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
+echo "Installing nvm"
 nvm install 16.0
+
+echo "Using nvm"
 nvm use 16.0
 node --version
 
 sudo add-apt-repository ppa:ethereum/ethereum > /dev/null 2>&1
 sudo apt-get update > /dev/null 2>&1
 sudo apt-get install solc libsecp256k1-dev ansi2txt > /dev/null 2>&1
+
+echo "install ansi dedup"
+git clone https://github.com/drakkan/ansi2txt.git
+cd ansi2txt
+cargo build --release
+cp target/release/ansi2txt /usr/local/bin/
 
 echo "Installing tests"
 
@@ -34,7 +43,7 @@ npm install > /dev/null 2>&1
 echo "Running tests"
 
 # Run tests
-npx hardhat test --parallel
+npx hardhat test
 
 retVal=$?
 
