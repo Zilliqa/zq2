@@ -233,7 +233,7 @@ async fn launch_shard(mut network: Network) {
                     .unwrap()
                     >= check_child_block + 5
             },
-            500,
+            1000,
         )
         .await
         .unwrap();
