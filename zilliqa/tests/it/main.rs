@@ -470,7 +470,7 @@ impl Network {
                             .lock()
                             .unwrap()
                             .handle_message(source, message.clone())
-                            .unwrap();
+                            .expect("messages should not Err usually");
                     });
                 }
             }
