@@ -284,7 +284,7 @@ impl Consensus {
             new_views: BTreeMap::new(),
             high_qc,
             view: latest_block_view,
-            finalized_view: latest_block_view.saturating_sub(1),
+            finalized_view: latest_block_view.saturating_sub(2),
             last_timeout: SystemTime::now(),
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
