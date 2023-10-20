@@ -1255,7 +1255,7 @@ impl Consensus {
             .timestamp()
             .elapsed()
             .unwrap_or_else(|err| err.duration());
-        if difference > self.config.allowed_timestamp_skew {
+        if difference > self.config.allowed_timestamp_skew && block.view() != 0 {
             return Err(anyhow!(
                 "timestamp difference greater than allowed skew: {difference:?}. Block timestamp is {:?}", block.timestamp()
             ));
