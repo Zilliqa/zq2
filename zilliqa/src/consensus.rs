@@ -366,7 +366,7 @@ impl Consensus {
                 // if we don't have genesis that means we only have its hash
                 // ergo we weren't, and can't be, part of the network at genesis and
                 // can't vote for it anyway
-                return Ok(None)
+                return Ok(None);
             };
             // If we're in the genesis committee, vote again.
             if genesis
@@ -1257,7 +1257,7 @@ impl Consensus {
             .unwrap_or_else(|err| err.duration());
         if difference > self.config.allowed_timestamp_skew {
             return Err(anyhow!(
-                "timestamp difference greater than allowed skew: {difference:?}"
+                "timestamp difference greater than allowed skew: {difference:?}. Block timestamp is {:?}", block.timestamp()
             ));
         }
 
