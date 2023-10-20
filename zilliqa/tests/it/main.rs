@@ -159,6 +159,9 @@ struct Network {
 
 impl Network {
     pub fn new(rng: Arc<Mutex<ChaCha8Rng>>, nodes: usize, seed: u64) -> Network {
+        // Pause time so we can control it.
+        zilliqa::time::pause_at_epoch();
+
         let mut keys: Vec<_> = (0..nodes)
             .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
             .collect();
@@ -202,9 +205,6 @@ impl Network {
             mpsc::unbounded_channel::<(PeerId, Option<PeerId>, Message)>();
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
-
-        // Pause time so we can control it.
-        zilliqa::time::pause_at_epoch();
 
         for node in &nodes[1..] {
             // Simulate every node broadcasting a `JoinCommittee` message.
