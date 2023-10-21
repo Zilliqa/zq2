@@ -286,7 +286,7 @@ impl State {
             result = run_evm_impl_direct(call_args.clone(), &backend);
 
             if print_enabled {
-                info!("Evm invocation complete - applying result {:?}", result);
+                debug!("Evm invocation complete - applying result {:?}", result);
             }
 
             // Apply the results to the backend so they can be used in the next continuation
@@ -849,7 +849,7 @@ impl State {
 
                 let res = gas - result.remaining_gas + gas_price;
 
-                info!(
+                debug!(
                     "gas estimation: {} {} {} -> {}",
                     gas, result.remaining_gas, gas_price, res
                 );

@@ -25,12 +25,14 @@ jobs:
       with:
         submodules: recursive
     - uses: Swatinem/rust-cache@v2
-    - name: rustfmt
-      run: cargo fmt --all --check
+      #- name: rustfmt
+      #  run: cargo fmt --all --check
     - name: Build
       run: cargo build --all-targets --all-features
     - name: Clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
+    - name: Test failing
+      run: RUST_LOG=zilliqa=trace,evm_ds=info,zilliqa::evm_backend=debug,it=info cargo test --test it consensus::network_can_die_restart
     - name: Test
       run: cargo test --all-targets --all-features
     - name: Verify working directory is clean

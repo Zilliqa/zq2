@@ -1,4 +1,4 @@
-use crate::{health::HealthLayer, message::ExternalMessage};
+use crate::health::HealthLayer;
 use jsonrpsee::RpcModule;
 use std::{
     net::Ipv4Addr,
@@ -30,11 +30,8 @@ pub struct NodeLauncher {
     pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
     pub inbound_message_sender: UnboundedSender<(PeerId, Message)>,
     pub inbound_message_receiver: UnboundedReceiverStream<(PeerId, Message)>,
-    outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
     pub reset_timeout_receiver: UnboundedReceiverStream<()>,
-    secret_key: SecretKey,
     node_launched: bool,
-    consensus_timeout: Duration,
 }
 
 impl NodeLauncher {
@@ -90,10 +87,7 @@ impl NodeLauncher {
             inbound_message_sender,
             inbound_message_receiver,
             reset_timeout_receiver,
-            outbound_message_sender,
             node_launched: false,
-            consensus_timeout: config.consensus.consensus_timeout,
-            secret_key,
             config,
         })
     }
@@ -107,12 +101,10 @@ impl NodeLauncher {
             return Err(anyhow!("Node already running!"));
         }
 
-        let sleep = time::sleep(self.config.consensus.consensus_timeout);
+        let sleep = time::sleep(Duration::from_millis(5));
         tokio::pin!(sleep);
 
         self.node_launched = true;
-
-        let mut joined = false;
 
         loop {
             select! {
@@ -121,20 +113,14 @@ impl NodeLauncher {
                     self.node.lock().unwrap().handle_message(source, message).unwrap();
                 },
                 () = &mut sleep => {
-                    trace!("timeout elapsed");
-
-                    if !joined {
-                        self.outbound_message_sender.send((None, self.config.eth_chain_id, Message::External(ExternalMessage::JoinCommittee(self.secret_key.node_public_key())))).unwrap();
-                        joined = true;
-                    } else {
-                        self.node.lock().unwrap().handle_timeout().unwrap();
-                    }
-                    sleep.as_mut().reset(Instant::now() + self.consensus_timeout);
+                    // No messages for a while, so check if consensus wants to timeout
+                    self.node.lock().unwrap().handle_timeout();
+                    sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
                 },
                 r = self.reset_timeout_receiver.next() => {
                     let () = r.expect("reset timeout stream should be infinite");
                     trace!("timeout reset");
-                    sleep.as_mut().reset(Instant::now() + self.config.consensus.consensus_timeout);
+                    sleep.as_mut().reset(Instant::now() + Duration::from_millis(5000));
                 },
             }
         }

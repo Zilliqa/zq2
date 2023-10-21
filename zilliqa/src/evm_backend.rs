@@ -167,7 +167,7 @@ impl<'a> Backend for EvmBackend<'a> {
     }
 
     fn block_number(&self) -> U256 {
-        self.current_block.view.into()
+        self.current_block.number.into()
     }
 
     fn block_coinbase(&self) -> H160 {
