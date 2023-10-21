@@ -218,22 +218,6 @@ impl Network {
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
-<<<<<<< HEAD
-=======
-        for node in &nodes[1..] {
-            // Simulate every node broadcasting a `JoinCommittee` message.
-            resend_message
-                .send((
-                    node.peer_id,
-                    None,
-                    Message::External(ExternalMessage::JoinCommittee(
-                        node.secret_key.node_public_key(),
-                    )),
-                ))
-                .unwrap();
-        }
-
->>>>>>> main
         Network {
             genesis_committee,
             genesis_address,
