@@ -3,7 +3,8 @@ echo "The CI is running this script."
 # Start network early.
 pwd
 cargo build --all-targets > /dev/null 2>&1
-RUST_LOG=zilliqa=trace ./target/debug/z2 internal run > /tmp/zil_log_out.txt 2>&1 &
+#RUST_LOG=zilliqa=trace ./target/debug/z2 internal run > /tmp/zil_log_out.txt 2>&1 &
+RUST_LOG=zilliqa=trace ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 -c config-example.toml
 sleep 15;
 
 # Pull submodule
