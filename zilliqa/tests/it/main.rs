@@ -159,6 +159,9 @@ struct Network {
 
 impl Network {
     pub fn new(rng: Arc<Mutex<ChaCha8Rng>>, nodes: usize, seed: u64) -> Network {
+        // Pause time so we can control it.
+        zilliqa::time::pause_at_epoch();
+
         let mut keys: Vec<_> = (0..nodes)
             .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
             .collect();
@@ -202,9 +205,6 @@ impl Network {
             mpsc::unbounded_channel::<(PeerId, Option<PeerId>, Message)>();
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
-
-        // Pause time so we can control it.
-        zilliqa::time::pause_at_epoch();
 
         for node in &nodes[1..] {
             // Simulate every node broadcasting a `JoinCommittee` message.
@@ -340,32 +340,25 @@ impl Network {
                 }
             }
         } else {
-            // ExternalMessage
-            if let Some(destination) = destination {
-                let node = self
+            let nodes: Vec<&TestNode> = if let Some(destination) = destination {
+                vec![self
                     .nodes
                     .iter()
                     .find(|n| n.peer_id == destination)
-                    .unwrap();
-                let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
+                    .unwrap()]
+            } else {
+                self.nodes.iter().collect()
+            };
+
+            for (index, node) in nodes.iter().enumerate() {
+                let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                 span.in_scope(|| {
                     node.inner
                         .lock()
                         .unwrap()
-                        .handle_message(source, message)
+                        .handle_message(source, message.clone())
                         .unwrap();
                 });
-            } else {
-                for node in &self.nodes {
-                    let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
-                    span.in_scope(|| {
-                        node.inner
-                            .lock()
-                            .unwrap()
-                            .handle_message(source, message.clone())
-                            .unwrap();
-                    });
-                }
             }
         }
     }
