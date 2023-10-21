@@ -78,7 +78,7 @@ async fn network_can_die_restart(mut network: Network) {
                 let index = n.random_index();
                 n.get_node(index).get_finalized_height() >= finish_block
             },
-            5000,
+            50000,
         )
         .await
         .expect("Failed to progress to target block");

@@ -31,7 +31,6 @@ mod time_impl {
         pub fn now() -> Self {
             let paused = PAUSED.load(Ordering::Acquire);
             if paused {
-                info!("using paused system time!");
                 // Time has been paused, get the fake time.
                 let current_time = *CURRENT_TIME.get_or_init(Mutex::default).lock().unwrap();
                 SystemTime(std::time::SystemTime::UNIX_EPOCH + current_time)
@@ -68,6 +67,11 @@ mod time_impl {
 
     /// Pause the fake time at the unix epoch.
     pub fn pause_at_epoch() {
+        // Do not pause if it already paused
+        if PAUSED.load(Ordering::Acquire) {
+            return;
+        }
+
         PAUSED.store(true, Ordering::Release);
         let mut current_time = CURRENT_TIME.get_or_init(Mutex::default).lock().unwrap();
         *current_time = Duration::ZERO;

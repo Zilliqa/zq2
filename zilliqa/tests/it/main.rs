@@ -218,6 +218,22 @@ impl Network {
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
+<<<<<<< HEAD
+=======
+        for node in &nodes[1..] {
+            // Simulate every node broadcasting a `JoinCommittee` message.
+            resend_message
+                .send((
+                    node.peer_id,
+                    None,
+                    Message::External(ExternalMessage::JoinCommittee(
+                        node.secret_key.node_public_key(),
+                    )),
+                ))
+                .unwrap();
+        }
+
+>>>>>>> main
         Network {
             genesis_committee,
             genesis_address,
@@ -451,21 +467,26 @@ impl Network {
                 }
             }
         } else {
-            // ExternalMessage
-            if let Some(destination) = destination {
-                let node = self
+            let nodes: Vec<&TestNode> = if let Some(destination) = destination {
+                vec![self
                     .nodes
                     .iter()
                     .find(|n| n.peer_id == destination)
-                    .unwrap();
-                let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
+                    .unwrap()]
+            } else {
+                self.nodes.iter().collect()
+            };
+
+            for (index, node) in nodes.iter().enumerate() {
+                let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                 span.in_scope(|| {
                     node.inner
                         .lock()
                         .unwrap()
-                        .handle_message(source, message)
+                        .handle_message(source, message.clone())
                         .unwrap();
                 });
+<<<<<<< HEAD
             } else {
                 for node in &self.nodes {
                     let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
@@ -477,6 +498,8 @@ impl Network {
                             .expect("messages should not Err usually");
                     });
                 }
+=======
+>>>>>>> main
             }
         }
     }

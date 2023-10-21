@@ -460,7 +460,7 @@ impl Consensus {
                 );
             }
             std::cmp::Ordering::Equal => {
-                warn!("Tried to set view to same view - this is incorrect");
+                trace!("Tried to set view to same view - this is incorrect");
             }
             std::cmp::Ordering::Greater => {
                 self.view = view;
@@ -1329,6 +1329,7 @@ impl Consensus {
         let mut current = block.clone();
         while current.view() > ancestor.view() {
             let Some(next) = self.get_block(&current.parent_hash())? else {
+                warn!("Missing block when traversing to find ancestor! Current parent hash: {:?} {:?}", current.parent_hash(), current);
                 return Err(MissingBlockError::from(current.parent_hash()).into());
             };
             current = next;
@@ -1549,7 +1550,7 @@ impl Consensus {
 
         if !self.block_extends_from(block, &finalized_block)? {
 
-            warn!("invalid block {:?}, does note extend finalized block {:?} our head is {:?}", block, finalized_block, self.head_block());
+            warn!("invalid block {:?}, does not extend finalized block {:?} our head is {:?}", block, finalized_block, self.head_block());
 
             return Err(anyhow!(
                 "invalid block, does not extend from finalized block"
