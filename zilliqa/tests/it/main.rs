@@ -470,20 +470,6 @@ impl Network {
                         .handle_message(source, message.clone())
                         .unwrap();
                 });
-<<<<<<< HEAD
-            } else {
-                for node in &self.nodes {
-                    let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
-                    span.in_scope(|| {
-                        node.inner
-                            .lock()
-                            .unwrap()
-                            .handle_message(source, message.clone())
-                            .expect("messages should not Err usually");
-                    });
-                }
-=======
->>>>>>> main
             }
         }
     }
