@@ -4,7 +4,7 @@ use crate::{
     db::Db,
     message::{BlockNumber, InternalMessage},
     p2p_node::OutboundMessageTuple,
-    state::{SignedTransaction, TransactionReceipt},
+    transaction::{RecoveredTransaction, SignedTransaction, TransactionReceipt},
 };
 use primitive_types::H256;
 use std::sync::Arc;
@@ -229,7 +229,7 @@ impl Node {
     }
 
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
-        let hash = txn.hash();
+        let hash = txn.calculate_hash();
 
         info!(?hash, "seen new txn {:?}", txn);
 
@@ -414,7 +414,7 @@ impl Node {
         self.consensus.get_transaction_receipt(&tx_hash)
     }
 
-    pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<SignedTransaction>> {
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<RecoveredTransaction>> {
         self.consensus.get_transaction_by_hash(hash)
     }
 

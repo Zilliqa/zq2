@@ -111,7 +111,11 @@ pub struct Transaction {
     #[serde(serialize_with = "hex")]
     pub gas: u64,
     #[serde(serialize_with = "hex")]
-    pub gas_price: u64,
+    pub gas_price: u128,
+    #[serde(serialize_with = "option_hex")]
+    pub max_fee_per_gas: Option<u128>,
+    #[serde(serialize_with = "option_hex")]
+    pub max_priority_fee_per_gas: Option<u128>,
     #[serde(serialize_with = "hex")]
     pub hash: H256,
     #[serde(serialize_with = "hex")]
@@ -130,6 +134,11 @@ pub struct Transaction {
     pub r: [u8; 32],
     #[serde(serialize_with = "hex")]
     pub s: [u8; 32],
+    #[serde(serialize_with = "option_hex")]
+    pub chain_id: Option<u64>,
+    pub access_list: Option<Vec<(H160, Vec<H256>)>>,
+    #[serde(rename = "type", serialize_with = "hex")]
+    pub transaction_type: u64,
 }
 
 /// A transaction receipt object, returned by the Ethereum API.

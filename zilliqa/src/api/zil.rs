@@ -16,7 +16,8 @@ use crate::{
     message::BlockNumber,
     node::Node,
     schnorr,
-    state::{Address, SignedTransaction, SigningInfo, Transaction, ZilliqaOtherPayload},
+    state::Address,
+    transaction::{SignedTransaction, TxZilliqa},
 };
 
 use super::types::zil;
@@ -70,7 +71,7 @@ fn create_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
     let transaction: TransactionParams = params.one()?;
     let mut node = node.lock().unwrap();
 
-    let version = transaction.version & 0xfff;
+    let version = transaction.version & 0xffff;
     let chain_id = transaction.version >> 16;
 
     if (chain_id as u64) != (node.config.eth_chain_id - 0x8000) {
@@ -84,42 +85,25 @@ fn create_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
         return Err(anyhow!("unexpected version, expected: 1, got: {version}"));
     }
 
-    let pub_key = hex::decode(transaction.pub_key)?;
+    let key = hex::decode(transaction.pub_key)?;
 
-    let pub_key = schnorr::PublicKey::from_sec1_bytes(&pub_key)?;
-    let signature = schnorr::Signature::from_str(&transaction.signature)?;
+    let key = schnorr::PublicKey::from_sec1_bytes(&key)?;
+    let sig = schnorr::Signature::from_str(&transaction.signature)?;
 
-    let (payload, other_payload) = if !transaction.code.is_empty() {
-        (
-            transaction.code.into_bytes(),
-            ZilliqaOtherPayload::Data(transaction.data.into_bytes()),
-        )
-    } else {
-        (
-            transaction.data.into_bytes(),
-            ZilliqaOtherPayload::Code(transaction.code.into_bytes()),
-        )
-    };
-
-    let transaction = SignedTransaction::new(
-        Transaction {
-            // Zilliqa nonces are 1-indexed rather than zero indexed.
-            nonce: transaction.nonce - 1,
-            gas_price: transaction.gas_price as u64,
+    let transaction = SignedTransaction::Zilliqa {
+        tx: TxZilliqa {
+            chain_id: chain_id as u16,
+            nonce: transaction.nonce,
+            gas_price: transaction.gas_price,
             gas_limit: transaction.gas_limit,
-            to_addr: (!transaction.to_addr.is_zero()).then_some(Address(transaction.to_addr)),
-            // Zilliqa amounts are represented in units of (10^-12) ZILs, whereas our internal representation is in
-            // units of (10^-18) ZILs. Account for this difference by multiplying the amount by (10^6).
-            amount: transaction.amount * 10u128.pow(6),
-            payload,
+            to_addr: Address(transaction.to_addr),
+            amount: transaction.amount,
+            code: transaction.code,
+            data: transaction.data,
         },
-        SigningInfo::Zilliqa {
-            pub_key,
-            signature,
-            raw_version: transaction.version,
-            other_payload,
-        },
-    )?;
+        key,
+        sig,
+    };
 
     let transaction_hash = node.create_transaction(transaction)?;
     let transaction_hash = hex::encode(transaction_hash.0);
