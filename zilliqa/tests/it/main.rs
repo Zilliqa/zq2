@@ -167,7 +167,6 @@ struct Network {
 
 impl Network {
     pub fn new(rng: Arc<Mutex<ChaCha8Rng>>, nodes: usize, seed: u64) -> Network {
-
         // Make sure first thing is to pause system time
         zilliqa::time::pause_at_epoch();
 

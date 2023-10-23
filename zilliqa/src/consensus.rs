@@ -185,7 +185,7 @@ impl PartialOrd for TxnOrder {
 /// - a high QC (QC pointing to the highest known hash) is formed from the validators votes on genesis
 /// - everyone advances view to 2
 /// - next leader proposes a block
-/// - validators vote on genesis -> new high QC... and so on.
+/// - validators vote on block 1 -> new high QC... and so on.
 ///
 /// Unhappy path:
 /// - In the unhappy path, there is the possibility of forks (for example if you executed the block proposal).
@@ -331,8 +331,7 @@ impl Consensus {
         //let high_qc = block_store.get_high_qc()?.unwrap_or_default(QuorumCertificate::genesis(1024));
 
         let (start_view, high_qc) = {
-            match block_store.get_high_qc()?
-            {
+            match block_store.get_high_qc()? {
                 Some(qc) => {
                     let high_block = block_store
                         .get_block(qc.block_hash)?
@@ -925,8 +924,6 @@ impl Consensus {
                 "storing vote"
             );
             if supermajority_reached {
-                self.block_store.request_block_by_view(block_view)?; // Is this required?
-
                 // if we are already in the round in which the vote counts and have reached supermajority
                 if block_view + 1 == self.view {
                     let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
@@ -1577,8 +1574,12 @@ impl Consensus {
         }
 
         if !self.block_extends_from(block, &finalized_block)? {
-
-            warn!("invalid block {:?}, does not extend finalized block {:?} our head is {:?}", block, finalized_block, self.head_block());
+            warn!(
+                "invalid block {:?}, does not extend finalized block {:?} our head is {:?}",
+                block,
+                finalized_block,
+                self.head_block()
+            );
 
             return Err(anyhow!(
                 "invalid block, does not extend from finalized block"

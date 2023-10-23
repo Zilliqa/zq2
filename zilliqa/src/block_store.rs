@@ -8,7 +8,7 @@ use tracing::*;
 
 use crate::{
     crypto::Hash,
-    message::{Block, QuorumCertificate, BlockRef, BlockRequest, BlocksRequest},
+    message::{Block, BlockRef, BlockRequest, BlocksRequest, QuorumCertificate},
     node::MessageSender,
 };
 
@@ -133,7 +133,8 @@ impl BlockStore {
     }
 
     pub fn set_high_qc(&mut self, high_qc: QuorumCertificate) -> Result<()> {
-        self.high_qc.insert("".as_bytes(), bincode::serialize(&high_qc)?)?;
+        self.high_qc
+            .insert("".as_bytes(), bincode::serialize(&high_qc)?)?;
 
         Ok(())
     }
