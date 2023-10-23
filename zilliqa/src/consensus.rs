@@ -364,7 +364,7 @@ impl Consensus {
                 // if we don't already have genesis that means we only have its hash
                 // ergo we weren't, and can't be, part of the network at genesis and
                 // can't vote for it anyway
-                return Ok(None)
+                return Ok(None);
             };
             // If we're in the genesis committee, vote again.
             if genesis

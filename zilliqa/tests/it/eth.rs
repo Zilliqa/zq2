@@ -573,13 +573,8 @@ async fn nonces_rejected_too_high(mut network: Network) {
 
     let wait = network
         .run_until_async(
-            || async {
-                wallet
-                    .get_transaction_receipt(hash)
-                    .await
-                    .unwrap()
-                    .is_some()
-            },
+            test_predicates::got_tx_receipt,
+            Context::wallet_and_hash(wallet.clone(), hash),
             50,
         )
         .await;
@@ -623,11 +618,24 @@ async fn nonces_respected_ordered(mut network: Network) {
     join_all(promises).await;
 
     // Wait until target account has got all the TXs
+    async fn balance_is_enough(_: &Network, context: Context) -> bool {
+        context
+            .wallet
+            .unwrap()
+            .get_balance(context.address.unwrap(), None)
+            .await
+            .unwrap()
+            == context.index.unwrap().into()
+    }
+
     let wait = network
         .run_until_async(
-            || async {
-                wallet.get_balance(to, None).await.unwrap()
-                    == (tx_send_amount * tx_send_iterations).into()
+            balance_is_enough,
+            Context {
+                index: Some((tx_send_amount * tx_send_iterations) as usize),
+                address: Some(to),
+                wallet: Some(wallet),
+                ..Default::default()
             },
             10000,
         )
