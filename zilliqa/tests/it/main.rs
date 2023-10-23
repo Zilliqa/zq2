@@ -418,7 +418,7 @@ impl Network {
         );
 
         if messages.is_empty() {
-            warn!("Messages were empty - advance time and trigger timeout in all nodes!");
+            trace!("Messages were empty - advance time and trigger timeout in all nodes!");
             zilliqa::time::advance(Duration::from_millis(500));
 
             for node in &self.nodes {

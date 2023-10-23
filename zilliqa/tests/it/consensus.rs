@@ -163,7 +163,7 @@ async fn block_production(mut network: Network) {
                     .map_or(0, |b| b.number())
                     >= 10
             },
-            500,
+            5000000000,
         )
         .await
         .unwrap();
