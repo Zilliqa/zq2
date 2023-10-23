@@ -30,8 +30,9 @@ use crate::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, NewView, Proposal,
         QuorumCertificate, Vote,
     },
-    state::{Address, SignedTransaction, State, TransactionReceipt},
+    state::{Address, State},
     time::SystemTime,
+    transaction::{RecoveredTransaction, SignedTransaction, TransactionReceipt},
 };
 
 // database tree names
@@ -113,19 +114,20 @@ impl From<Hash> for MissingBlockError {
 #[derive(Debug, Clone)]
 struct TxnOrder {
     pub nonce: u64,
-    pub gas_price: u64,
+    pub gas_price: u128,
     pub gas_limit: u64,
     pub hash: Hash,
     pub retries: u64,
 }
 
 impl TxnOrder {
-    fn new(txn: &SignedTransaction) -> Self {
+    fn new(hash: Hash, txn: &SignedTransaction) -> Self {
+        let txn = txn.clone().into_transaction();
         TxnOrder {
-            nonce: txn.transaction.nonce,
-            gas_price: txn.transaction.gas_price,
-            gas_limit: txn.transaction.gas_limit,
-            hash: txn.hash(),
+            nonce: txn.nonce(),
+            gas_price: txn.max_fee_per_gas(),
+            gas_limit: txn.gas_limit(),
+            hash,
             retries: 0,
         }
     }
@@ -212,11 +214,12 @@ pub struct Consensus {
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<Validator>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
-    new_transactions: BTreeMap<Hash, SignedTransaction>,
+    new_transactions: BTreeMap<Hash, RecoveredTransaction>,
     /// Transactions ordered by priority, map of address of TXn (from account) to ordered TXns to be executed.
     new_transactions_priority: BTreeMap<Address, BinaryHeap<TxnOrder>>,
     /// Transactions that have been executed and included in a block, and the blocks the are
-    /// included in.
+    /// included in. Note that we store [SignedTransaction]s in this database, which do not include the signer. We need
+    /// to re-recover the signer when we deserialize transactions.
     transactions: Tree,
     transaction_receipts: Tree,
     /// The account store.
@@ -636,8 +639,10 @@ impl Consensus {
 
             let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
             for txn in &transactions {
-                if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
-                    let tx_hash = txn.hash();
+                if let Some(result) =
+                    self.apply_transaction(txn.clone().recover_signer()?, parent.header)?
+                {
+                    let tx_hash = txn.calculate_hash();
                     self.block_hash_reverse_index
                         .insert(tx_hash.0, &block.hash().0)?;
                     let receipt = TransactionReceipt {
@@ -650,7 +655,7 @@ impl Consensus {
                     info!(?receipt, "applied transaction {:?}", receipt);
                     block_receipts.push(receipt);
                     self.transactions
-                        .insert(txn.hash().0, bincode::serialize(&txn)?)?;
+                        .insert(txn.calculate_hash().0, bincode::serialize(&txn)?)?;
                 }
             }
             // If we were the proposer we would've already processed the transactions
@@ -706,27 +711,22 @@ impl Consensus {
             }
         };
 
-        let from_addr = removed.from_addr;
-
         // loop over priority txs and remove the tx (this shold be O(log n) as it will almost cert
         // be a leaf node)
-        if let Some(priority_txs) = self.new_transactions_priority.get_mut(&from_addr) {
+        if let Some(priority_txs) = self.new_transactions_priority.get_mut(&removed.signer) {
             priority_txs.retain(|tx| tx.hash != *tx_hash);
         }
     }
 
     pub fn apply_transaction(
         &mut self,
-        txn: SignedTransaction,
+        txn: RecoveredTransaction,
         current_block: BlockHeader,
     ) -> Result<Option<TransactionApplyResult>> {
-        let hash = txn.hash();
+        let hash = txn.hash;
 
         // If we have the transaction in the mempool, remove it.
         self.remove_tx_from_mempool(&hash);
-
-        // Ensure the transaction has a valid signature
-        txn.verify()?;
 
         // If we haven't applied the transaction yet, do so. This ensures we don't execute the transaction twice if we
         // already executed it in the process of proposing this block.
@@ -734,12 +734,8 @@ impl Consensus {
             let mut listener = TouchedAddressEventListener::default();
 
             let result = evm_ds::evm::tracing::using(&mut listener, || {
-                self.state.apply_transaction(
-                    txn.clone(),
-                    self.config.eth_chain_id,
-                    current_block,
-                    false,
-                )
+                self.state
+                    .apply_transaction(txn, self.config.eth_chain_id, current_block, false)
             })?;
 
             for address in listener.touched {
@@ -767,8 +763,8 @@ impl Consensus {
     // Get valid TXs to execute while also cleaning the mempool of TXs that are invalid
     // to do this, we refer to a binary heap which for each from address, contains a list of TXs
     // prioritised by nonce (so popping gives lowest), then by gas price and gas limit (highest)
-    pub fn get_txns_to_execute(&mut self) -> Vec<SignedTransaction> {
-        let mut ret: Vec<SignedTransaction> = Vec::new();
+    pub fn get_txns_to_execute(&mut self) -> Vec<RecoveredTransaction> {
+        let mut ret = Vec::new();
 
         if self.config.consensus.block_tx_limit < 1 {
             warn!("Block TX limit is set to 0, no TXs will be added to the block");
@@ -963,11 +959,13 @@ impl Consensus {
                         .into_iter()
                         .filter_map(|tx| {
                             let result = self.apply_transaction(tx.clone(), parent_header);
-                            result.transpose().map(|r| r.map(|_| tx.clone()))
+                            result.transpose().map(|r| r.map(|_| tx.tx.clone()))
                         })
                         .collect::<Result<_>>()?;
-                    let applied_transaction_hashes: Vec<_> =
-                        applied_transactions.iter().map(|tx| tx.hash()).collect();
+                    let applied_transaction_hashes: Vec<_> = applied_transactions
+                        .iter()
+                        .map(|tx| tx.calculate_hash())
+                        .collect();
 
                     let proposal = Block::from_qc(
                         self.secret_key,
@@ -1201,32 +1199,34 @@ impl Consensus {
     }
 
     pub fn new_transaction(&mut self, txn: SignedTransaction) -> Result<()> {
+        let txn = txn.recover_signer()?;
         // If we already have the tx, ignore it
-        if self.new_transactions.contains_key(&txn.hash()) {
+        if self.new_transactions.contains_key(&txn.hash) {
             return Ok(());
         }
 
-        txn.verify()?; // sanity check
-        let txn_order = TxnOrder::new(&txn);
+        let txn_order = TxnOrder::new(txn.hash, &txn.tx);
 
         self.new_transactions_priority
-            .entry(txn.from_addr)
+            .entry(txn.signer)
             .or_default()
             .push(txn_order);
 
-        self.new_transactions.insert(txn.hash(), txn);
+        self.new_transactions.insert(txn.hash, txn);
 
         Ok(())
     }
 
-    pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<SignedTransaction>> {
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<RecoveredTransaction>> {
         if let Some(txn) = self.new_transactions.get(&hash) {
             return Ok(Some(txn.clone()));
         }
 
         self.transactions
             .get(hash.0)?
-            .map(|encoded| Ok(bincode::deserialize::<SignedTransaction>(&encoded)?))
+            .map(|encoded| bincode::deserialize::<SignedTransaction>(&encoded))
+            .transpose()?
+            .map(|tx| tx.recover_signer())
             .transpose()
     }
 

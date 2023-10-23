@@ -9,8 +9,8 @@ use std::{fmt::Display, str::FromStr};
 use crate::{
     consensus::Validator,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
-    state::SignedTransaction,
     time::SystemTime,
+    transaction::SignedTransaction,
 };
 
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
@@ -44,7 +44,11 @@ impl Proposal {
                 qc: self.qc,
                 agg: self.agg,
                 committee: self.committee,
-                transactions: self.transactions.iter().map(|txn| txn.hash()).collect(),
+                transactions: self
+                    .transactions
+                    .iter()
+                    .map(|txn| txn.calculate_hash())
+                    .collect(),
             },
             self.transactions,
         )
