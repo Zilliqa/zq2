@@ -4,7 +4,7 @@ echo "The CI is running this script."
 pwd
 cargo build --all-targets > /dev/null 2>&1
 RUST_LOG=zilliqa=trace ./target/debug/z2 internal run > /tmp/zil_log_out.txt 2>&1 &
-sleep 15;
+sleep 10;
 
 # Pull submodule
 cd evm_js_tests
