@@ -207,9 +207,9 @@ pub struct Consensus {
     votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128, bool)>,
     new_views: BTreeMap<u64, NewViewVote>,
     high_qc: QuorumCertificate,
-    view: u64,
+    view: View,
     finalized_view: u64,
-    last_timeout: SystemTime,
+    //last_timeout: Instant,
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<Validator>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
@@ -229,6 +229,41 @@ pub struct Consensus {
     touched_address_index: Tree,
     /// Lookup of block hashes for transaction hashes.
     block_hash_reverse_index: Tree,
+}
+
+// View in consensus should be have access monitored so last_timeout is always correct
+struct View {
+    view: u64,
+    last_timeout: SystemTime,
+}
+
+impl View {
+    pub fn view(&self) -> u64 {
+        self.view
+    }
+
+    pub fn set_view(&mut self, view: u64) {
+        match view.cmp(&self.view) {
+            std::cmp::Ordering::Less => {
+                // todo: this can happen if agg is true - how to handle?
+                warn!(
+                    "Tried to set view {} to lower view {} - this is incorrect",
+                    self.view, view
+                );
+            }
+            std::cmp::Ordering::Equal => {
+                trace!("Tried to set view to same view - this is incorrect");
+            }
+            std::cmp::Ordering::Greater => {
+                self.view = view;
+                self.last_timeout = SystemTime::now();
+            }
+        }
+    }
+
+    pub fn last_timeout(&self) -> Instant {
+        return self.last_timeout.clone()
+    }
 }
 
 impl Consensus {
@@ -904,10 +939,6 @@ impl Consensus {
             return Ok(None);
         }
 
-        if index > 5 {
-            panic!("we don't expect more than 5 validators currently");
-        }
-
         // if the vote is new, store it
         if !cosigned[index] {
             signatures.push(vote.signature);
@@ -1020,7 +1051,7 @@ impl Consensus {
         let parent = match parent {
             Ok(Some(parent)) => parent,
             _ => {
-                warn!("parent not found during leader for view {}", view);
+                warn!("parent not found while determining leader for view {}", view);
                 return None;
             }
         };
@@ -1034,8 +1065,8 @@ impl Consensus {
         let parent = match parent {
             Ok(Some(parent)) => parent,
             _ => {
-                warn!("parent not found during leader for hash");
-                return Err(anyhow!("parent not found during leader for hash"));
+                warn!("parent not found during committee_for_hash");
+                return Err(anyhow!("parent not found during committee_for_hash"));
             }
         };
 
@@ -1076,10 +1107,6 @@ impl Consensus {
 
         let committee_size = committee.len();
 
-        if committee_size > 5 {
-            panic!("we don't expect more than 5 validators currently");
-        }
-
         let NewViewVote {
             mut signatures,
             mut signers,
@@ -1098,10 +1125,6 @@ impl Consensus {
             });
 
         let mut supermajority = false;
-
-        if index > 5 {
-            panic!("we don't expect more than 5 validators");
-        }
 
         // the index is not checked here...
         // if the vote is new, store it
