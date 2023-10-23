@@ -62,7 +62,7 @@ async fn launch_shard(mut network: Network) {
     // This is necessary to maintain a supermajority once the main shard nodes join.
     // The size can be reduced once nodes stop joining the committee before they're
     // fully caught up.
-    let child_shard_nodes = 10;
+    let child_shard_nodes = 8;
 
     // 1. Construct and launch a shard network
     let mut shard_network = Network::new_shard(
@@ -218,22 +218,28 @@ async fn launch_shard(mut network: Network) {
         .number
         .unwrap();
 
+    println!(
+        "\n\n\n\n============================\n\n STARTING LAST PHASE!\ncheck_child_block: {}\n\n",
+        check_child_block
+    );
+
     network
         .children
         .get_mut(&child_shard_id)
         .unwrap()
         .run_until_async(
             || async {
-                shard_wallet
+                let block = shard_wallet
                     .get_block(BlockNumber::Latest)
                     .await
                     .unwrap()
                     .unwrap()
                     .number
-                    .unwrap()
-                    >= check_child_block + 5
+                    .unwrap();
+                println!("check block: {}", block);
+                block >= check_child_block + 5
             },
-            1000,
+            500,
         )
         .await
         .unwrap();

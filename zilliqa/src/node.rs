@@ -96,6 +96,11 @@ impl Node {
         reset_timeout: UnboundedSender<()>,
     ) -> Result<Node> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+        println!(
+            "NODE SEKRET KEY: {}, PeerID: {}",
+            secret_key.to_hex(),
+            peer_id
+        );
         let message_sender = MessageSender {
             our_shard: config.eth_chain_id,
             our_peer_id: peer_id,

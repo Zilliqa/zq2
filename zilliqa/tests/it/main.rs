@@ -87,6 +87,7 @@ fn node(
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     std::mem::forget(reset_timeout_receiver);
 
+    println!("Creating node {index}...");
     let node = Node::new(
         NodeConfig {
             data_dir: datadir
@@ -423,6 +424,8 @@ impl Network {
             self.tick().await;
             timeout -= 1;
         }
+
+        println!("Condition true after {} ticks", initial_timeout - timeout);
 
         Ok(())
     }
