@@ -8,7 +8,7 @@ use tracing::*;
 
 use crate::{
     crypto::Hash,
-    message::{Block, BlockRef, BlockRequest, BlocksRequest},
+    message::{Block, QuorumCertificate, BlockRef, BlockRequest, BlocksRequest},
     node::MessageSender,
 };
 
@@ -20,6 +20,7 @@ pub struct BlockStore {
     canonical_block_numbers: Tree,
     canonical_block_views: Tree,
     blocks: Tree,
+    high_qc: Tree,
     block_cache: RefCell<LruCache<Hash, Block>>,
     message_sender: MessageSender,
 }
@@ -31,6 +32,7 @@ impl BlockStore {
             canonical_block_numbers: db.open_tree(b"canonical_block_numbers_tree")?,
             canonical_block_views: db.open_tree(b"canonical_block_views_tree")?,
             blocks: db.open_tree(b"blocks_tree")?,
+            high_qc: db.open_tree(b"high_qc_tree")?,
             block_cache: RefCell::new(LruCache::new(NonZeroUsize::new(5).unwrap())),
             message_sender,
         })
@@ -128,6 +130,21 @@ impl BlockStore {
             .insert(view.to_be_bytes(), &hash.0)?;
 
         Ok(())
+    }
+
+    pub fn set_high_qc(&mut self, high_qc: QuorumCertificate) -> Result<()> {
+        self.high_qc.insert("".as_bytes(), bincode::serialize(&high_qc)?)?;
+
+        Ok(())
+    }
+
+    pub fn get_high_qc(&mut self) -> Result<Option<QuorumCertificate>> {
+        let Some(result) = self.high_qc.get("".as_bytes())? else {
+            return Ok(None);
+        };
+
+        let result: QuorumCertificate = bincode::deserialize(&result)?;
+        Ok(Some(result))
     }
 
     pub fn process_block(&mut self, block: Block) -> Result<()> {

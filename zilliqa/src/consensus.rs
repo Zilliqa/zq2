@@ -328,9 +328,26 @@ impl Consensus {
             Some(bincode::serialize(&vec).unwrap())
         });
 
-        let high_qc = latest_block
-            .as_ref()
-            .map_or(QuorumCertificate::genesis(1024), |b| b.qc.clone());
+        //let high_qc = block_store.get_high_qc()?.unwrap_or_default(QuorumCertificate::genesis(1024));
+
+        let (start_view, high_qc) = {
+            match block_store.get_high_qc()?
+            {
+                Some(qc) => {
+                    let high_block = block_store
+                        .get_block(qc.block_hash)?
+                        .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
+
+                    let start_view = high_block.view() + 1;
+                    info!("During recovery, starting consensus at view {}", start_view);
+                    (start_view, qc)
+                }
+                None => {
+                    let start_view = 0;
+                    (start_view, QuorumCertificate::genesis(1024))
+                }
+            }
+        };
 
         let mut consensus = Consensus {
             secret_key,
@@ -340,8 +357,8 @@ impl Consensus {
             votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
             high_qc,
-            view: latest_block_view,
-            finalized_view: latest_block_view.saturating_sub(2),
+            view: start_view,
+            finalized_view: start_view.saturating_sub(1),
             last_timeout: SystemTime::now(),
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
@@ -454,6 +471,7 @@ impl Consensus {
     fn set_view(&mut self, view: u64) {
         match view.cmp(&self.view) {
             std::cmp::Ordering::Less => {
+                // todo: this can happen if agg is true - how to handle?
                 warn!(
                     "Tried to set view {} to lower view {} - this is incorrect",
                     self.view, view
@@ -563,10 +581,12 @@ impl Consensus {
             Ok(()) => {}
             Err(e) => {
                 if let Some(e) = e.downcast_ref::<MissingBlockError>() {
+                    warn!("missing finalized block1");
                     info!(?e, "missing block when checking block proposal");
                     return Ok(None);
                 } else {
-                    return Err(e);
+                    warn!(?e, "invalid block proposal received!");
+                    return Ok(None);
                 }
             }
         }
@@ -1268,6 +1288,7 @@ impl Consensus {
         if self.high_qc.block_hash == Hash::ZERO {
             // This seems like a potential bug???
             trace!("received high qc for the zero hash, setting.");
+            self.block_store.set_high_qc(new_high_qc.clone())?;
             self.high_qc = new_high_qc;
         } else {
             let current_high_qc_view = self
@@ -1284,6 +1305,7 @@ impl Consensus {
                     new_high_qc_block_view + 1,
                     current_high_qc_view,
                 );
+                self.block_store.set_high_qc(new_high_qc.clone())?;
                 self.high_qc = new_high_qc;
                 self.set_view(new_high_qc_block_view + 1);
             }
@@ -1334,6 +1356,9 @@ impl Consensus {
             };
             current = next;
         }
+
+        //warn!("Completing, but with hashes: {} and {} and view {} and view {}", current.hash(), ancestor.hash(), current.view(), ancestor.view());
+
         Ok(current.view() == 0 || current.hash() == ancestor.hash())
     }
 
@@ -1465,6 +1490,7 @@ impl Consensus {
         }
 
         let Some(finalized_block) = self.get_block_by_view(self.finalized_view)? else {
+            warn!("missing finalized block0");
             return Err(MissingBlockError::from(self.finalized_view).into());
         };
         if block.view() < finalized_block.view() {
@@ -1476,6 +1502,7 @@ impl Consensus {
         }
 
         let Some(parent) = self.get_block(&block.parent_hash())? else {
+            warn!("missing finalized block3");
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 
@@ -1510,6 +1537,7 @@ impl Consensus {
         // Retrieve the highest among the aggregated QCs and check if it equals the block's QC.
         let block_high_qc = self.get_high_qc_from_block(block)?;
         let Some(block_high_qc_block) = self.get_block(&block_high_qc.block_hash)? else {
+            warn!("missing finalized block4");
             return Err(MissingBlockError::from(block_high_qc.block_hash).into());
         };
         // Prevent the creation of forks from the already committed chain
@@ -1574,8 +1602,10 @@ impl Consensus {
                 self.add_block(block)?;
             }
             Err(e) => {
-                warn!("Error when receiving block {}", e);
-                return Err(e);
+                //warn!("Error when receiving block {}", e);
+                warn!(?e, "invalid block received during sync!");
+                //return Err(e);
+                return Ok(false);
             }
         }
 
