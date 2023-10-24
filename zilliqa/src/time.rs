@@ -19,7 +19,6 @@ mod time_impl {
         },
         time::Duration,
     };
-    use tracing::info;
 
     /// A fake implementation of [std::time::SystemTime]. The value of `SystemTime::now` can be controlled with [advance_time].
     #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -35,7 +34,6 @@ mod time_impl {
                 let current_time = *CURRENT_TIME.get_or_init(Mutex::default).lock().unwrap();
                 SystemTime(std::time::SystemTime::UNIX_EPOCH + current_time)
             } else {
-                info!("using real system time!");
                 // Time has not been paused, use the real time.
                 SystemTime(std::time::SystemTime::now())
             }
