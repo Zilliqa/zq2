@@ -117,14 +117,14 @@ impl NewView {
 pub struct BlockRequest(pub BlockRef);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlocksRequest(pub BlockRef);
+pub struct BlockBatchRequest(pub BlockRef);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
     pub block: Block,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlocksResponse {
+pub struct BlockBatchResponse {
     pub blocks: Vec<Block>,
 }
 
@@ -144,8 +144,8 @@ pub enum ExternalMessage {
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
-    BlocksRequest(BlocksRequest),
-    BlocksResponse(BlocksResponse),
+    BlockBatchRequest(BlockBatchRequest),
+    BlockBatchResponse(BlockBatchResponse),
     NewTransaction(SignedTransaction),
     RequestResponse,
     JoinCommittee(NodePublicKey),
@@ -176,8 +176,8 @@ impl ExternalMessage {
             ExternalMessage::NewView(_) => "NewView",
             ExternalMessage::BlockRequest(_) => "BlockRequest",
             ExternalMessage::BlockResponse(_) => "BlockResponse",
-            ExternalMessage::BlocksRequest(_) => "BlocksRequest",
-            ExternalMessage::BlocksResponse(_) => "BlocksResponse",
+            ExternalMessage::BlockBatchRequest(_) => "BlockBatchRequest",
+            ExternalMessage::BlockBatchResponse(_) => "BlockBatchResponse",
             ExternalMessage::NewTransaction(_) => "NewTransaction",
             ExternalMessage::RequestResponse => "RequestResponse",
             ExternalMessage::JoinCommittee(_) => "JoinCommittee",

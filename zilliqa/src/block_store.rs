@@ -8,7 +8,7 @@ use tracing::*;
 
 use crate::{
     crypto::Hash,
-    message::{Block, BlockRef, BlockRequest, BlocksRequest, QuorumCertificate},
+    message::{Block, BlockRef, BlockRequest, BlockBatchRequest, QuorumCertificate},
     node::MessageSender,
 };
 
@@ -102,7 +102,7 @@ impl BlockStore {
 
     pub fn request_blocks(&mut self, number: u64) -> Result<()> {
         self.message_sender
-            .broadcast_external_message(ExternalMessage::BlocksRequest(BlocksRequest(
+            .broadcast_external_message(ExternalMessage::BlockBatchRequest(BlockBatchRequest(
                 BlockRef::Number(number),
             )))
             .unwrap();

@@ -19,7 +19,7 @@ use crate::{
     consensus::Consensus,
     crypto::{Hash, NodePublicKey, SecretKey},
     message::{
-        Block, BlockRequest, BlockResponse, BlocksRequest, BlocksResponse, ExternalMessage,
+        Block, BlockRequest, BlockResponse, BlockBatchRequest, BlockBatchResponse, ExternalMessage,
         Proposal,
     },
     state::{Account, Address},
@@ -165,14 +165,14 @@ impl Node {
                         debug!("ignoring block response to self");
                     }
                 }
-                ExternalMessage::BlocksRequest(m) => {
+                ExternalMessage::BlockBatchRequest(m) => {
                     if !to_self {
-                        self.handle_blocks_request(from, m)?;
+                        self.handle_block_batch_request(from, m)?;
                     } else {
                         debug!("ignoring blocks request to self");
                     }
                 }
-                ExternalMessage::BlocksResponse(m) => {
+                ExternalMessage::BlockBatchResponse(m) => {
                     if !to_self {
                         self.handle_blocks_response(from, m)?;
                     } else {
@@ -443,7 +443,7 @@ impl Node {
         Ok(())
     }
 
-    fn handle_blocks_request(&mut self, source: PeerId, request: BlocksRequest) -> Result<()> {
+    fn handle_block_batch_request(&mut self, source: PeerId, request: BlockBatchRequest) -> Result<()> {
         let block = match request.0 {
             crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
             crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view),
@@ -479,13 +479,13 @@ impl Node {
 
         self.message_sender.send_external_message(
             source,
-            ExternalMessage::BlocksResponse(BlocksResponse { blocks }),
+            ExternalMessage::BlockBatchResponse(BlockBatchResponse { blocks }),
         )?;
 
         Ok(())
     }
 
-    fn handle_blocks_response(&mut self, _: PeerId, response: BlocksResponse) -> Result<()> {
+    fn handle_blocks_response(&mut self, _: PeerId, response: BlockBatchResponse) -> Result<()> {
         trace!(
             "Received blocks response of length {}",
             response.blocks.len()

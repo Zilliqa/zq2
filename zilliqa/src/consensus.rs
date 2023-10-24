@@ -209,7 +209,6 @@ pub struct Consensus {
     high_qc: QuorumCertificate,
     view: View,
     finalized_view: u64,
-    //last_timeout: Instant,
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<Validator>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
@@ -232,13 +231,22 @@ pub struct Consensus {
 }
 
 // View in consensus should be have access monitored so last_timeout is always correct
+#[derive(Debug)]
 struct View {
     view: u64,
     last_timeout: SystemTime,
 }
 
 impl View {
-    pub fn view(&self) -> u64 {
+
+    pub fn new(view: u64) -> Self {
+        View {
+            view,
+            last_timeout: SystemTime::now(),
+        }
+    }
+
+    pub fn get_view(&self) -> u64 {
         self.view
     }
 
@@ -261,7 +269,7 @@ impl View {
         }
     }
 
-    pub fn last_timeout(&self) -> Instant {
+    pub fn last_timeout(&self) -> SystemTime {
         return self.last_timeout.clone()
     }
 }
@@ -363,8 +371,6 @@ impl Consensus {
             Some(bincode::serialize(&vec).unwrap())
         });
 
-        //let high_qc = block_store.get_high_qc()?.unwrap_or_default(QuorumCertificate::genesis(1024));
-
         let (start_view, high_qc) = {
             match block_store.get_high_qc()? {
                 Some(qc) => {
@@ -377,7 +383,7 @@ impl Consensus {
                     (start_view, qc)
                 }
                 None => {
-                    let start_view = 0;
+                    let start_view = 1;
                     (start_view, QuorumCertificate::genesis(1024))
                 }
             }
@@ -391,9 +397,8 @@ impl Consensus {
             votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
             high_qc,
-            view: start_view,
+            view: View::new(start_view),
             finalized_view: start_view.saturating_sub(1),
-            last_timeout: SystemTime::now(),
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
             new_transactions_priority: BTreeMap::new(),
@@ -417,7 +422,6 @@ impl Consensus {
             )?;
             // treat genesis as finalized
             consensus.finalize(latest_block_hash, latest_block_view)?;
-            consensus.view = 1;
         }
 
         Ok(consensus)
@@ -449,7 +453,7 @@ impl Consensus {
 
         debug!(%peer_id, "added pending peer");
 
-        if self.view == 1 {
+        if self.view.get_view() == 1 {
             let Some(genesis) = self.get_block_by_view(0)? else {
                 // if we don't have genesis that means we only have its hash
                 // ergo we weren't, and can't be, part of the network at genesis and
@@ -463,7 +467,7 @@ impl Consensus {
                 .any(|v| v.peer_id == self.peer_id())
             {
                 trace!("voting for genesis block");
-                let leader = genesis.committee.leader(self.view);
+                let leader = genesis.committee.leader(self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
                 return Ok(Some((Some(leader.peer_id), ExternalMessage::Vote(vote))));
             }
@@ -501,29 +505,9 @@ impl Consensus {
         Ok(())
     }
 
-    // Set view only here - that way the last_timeout should be set iff view is set
-    fn set_view(&mut self, view: u64) {
-        match view.cmp(&self.view) {
-            std::cmp::Ordering::Less => {
-                // todo: this can happen if agg is true - how to handle?
-                warn!(
-                    "Tried to set view {} to lower view {} - this is incorrect",
-                    self.view, view
-                );
-            }
-            std::cmp::Ordering::Equal => {
-                trace!("Tried to set view to same view - this is incorrect");
-            }
-            std::cmp::Ordering::Greater => {
-                self.view = view;
-                self.last_timeout = SystemTime::now();
-            }
-        }
-    }
-
     pub fn timeout(&mut self) -> Option<(PeerId, ExternalMessage)> {
         // We never want to timeout while on view 1
-        if self.view == 1 {
+        if self.view.get_view() == 1 {
             let genesis = self
                 .get_block_by_view(0)
                 .unwrap()
@@ -536,7 +520,7 @@ impl Consensus {
                 .any(|v| v.peer_id == self.peer_id())
             {
                 info!("timeout in view 1, we will vote for genesis block rather than incrementing view");
-                let leader = genesis.committee.leader(self.view);
+                let leader = genesis.committee.leader(self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
                 return Some((leader.peer_id, ExternalMessage::Vote(vote)));
             } else {
@@ -553,10 +537,10 @@ impl Consensus {
         let head_block = self.head_block();
         let head_block_view = head_block.view();
         let time_since_last_view_change = SystemTime::now()
-            .duration_since(self.last_timeout)
+            .duration_since(self.view.last_timeout())
             .expect("last timeout seems to be in the future...")
             .as_millis() as u64;
-        let view_difference = self.view.saturating_sub(head_block_view);
+        let view_difference = self.view.get_view().saturating_sub(head_block_view);
         let exponential_backoff_timeout = consensus_timeout_ms * 2u64.pow(view_difference as u32);
         let next_exponential_backoff_timeout =
             consensus_timeout_ms * 2u64.pow((view_difference + 1) as u32);
@@ -570,24 +554,24 @@ impl Consensus {
             return None;
         }
 
-        trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", self.view, time_since_last_view_change, exponential_backoff_timeout, head_block_view, head_block.hash());
+        trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", self.view.get_view(), time_since_last_view_change, exponential_backoff_timeout, head_block_view, head_block.hash());
 
         info!(
             "***** TIMEOUT: View is now {} -> {}. Next view change in {}ms",
-            self.view,
-            self.view + 1,
+            self.view.get_view(),
+            self.view.get_view() + 1,
             next_exponential_backoff_timeout
         );
 
         let _ = self.download_blocks_up_to_head();
-        self.set_view(self.view + 1);
+        self.view.set_view(self.view.get_view() + 1);
 
-        let leader = self.head_block().committee.leader(self.view).peer_id;
+        let leader = self.head_block().committee.leader(self.view.get_view()).peer_id;
 
         let new_view = NewView::new(
             self.secret_key,
             self.high_qc.clone(),
-            self.view,
+            self.view.get_view(),
             self.secret_key.node_public_key(),
         );
 
@@ -678,12 +662,12 @@ impl Consensus {
                 ));
             }
 
-            if self.view != proposal_view + 1 {
-                self.set_view(proposal_view + 1);
+            if self.view.get_view() != proposal_view + 1 {
+                self.view.set_view(proposal_view + 1);
 
                 debug!(
                     "*** setting view to proposal view... view is now {}",
-                    self.view
+                    self.view.get_view()
                 );
             }
 
@@ -697,7 +681,7 @@ impl Consensus {
                 Ok(None)
             } else {
                 let vote = self.vote_from_block(&block);
-                let next_leader = block.committee.leader(self.view).peer_id;
+                let next_leader = block.committee.leader(self.view.get_view()).peer_id;
 
                 trace!(proposal_view, ?next_leader, "voting for block");
 
@@ -893,7 +877,8 @@ impl Consensus {
         }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
         let block_hash = block.hash();
         let block_view = block.view();
-        trace!(block_view, self.view, %block_hash, "handling vote");
+        let current_view = self.view.get_view();
+        trace!(block_view, current_view, %block_hash, "handling vote");
 
         // if we are not the leader of the round in which the vote counts
         // The vote is in the happy path (?) - so the view is block view + 1
@@ -906,7 +891,7 @@ impl Consensus {
             return Ok(None);
         }
         // if the vote is too old and does not count anymore
-        if block_view + 1 < self.view {
+        if block_view + 1 < self.view.get_view() {
             trace!("vote is too old");
             return Ok(None);
         }
@@ -934,7 +919,7 @@ impl Consensus {
         if supermajority_reached {
             trace!(
                 "(vote) supermajority already reached in this round {}",
-                self.view
+                self.view.get_view()
             );
             return Ok(None);
         }
@@ -946,17 +931,18 @@ impl Consensus {
             cosigned_weight += sender.weight;
 
             supermajority_reached = cosigned_weight * 3 > block.committee.total_weight() * 2;
+            let current_view = self.view.get_view();
             trace!(
                 cosigned_weight,
                 supermajority_reached,
                 total_weight = block.committee.total_weight(),
-                self.view,
+                current_view,
                 vote_view = block_view + 1,
                 "storing vote"
             );
             if supermajority_reached {
                 // if we are already in the round in which the vote counts and have reached supermajority
-                if block_view + 1 == self.view {
+                if block_view + 1 == self.view.get_view() {
                     let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
                     let parent_hash = qc.block_hash;
                     let parent = self
@@ -980,7 +966,7 @@ impl Consensus {
 
                     let proposal = Block::from_qc(
                         self.secret_key,
-                        self.view,
+                        self.view.get_view(),
                         parent.header.number + 1,
                         qc,
                         parent_hash,
@@ -1084,8 +1070,8 @@ impl Consensus {
             return Ok(None);
         }
         // if the vote is too old and does not count anymore
-        if new_view.view < self.view {
-            trace!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", self.view, new_view.view);
+        if new_view.view < self.view.get_view() {
+            trace!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", self.view.get_view(), new_view.view);
             return Ok(None);
         }
 
@@ -1138,25 +1124,26 @@ impl Consensus {
             supermajority = cosigned_weight * 3 > committee.total_weight() * 2;
 
             let num_signers = signers.len();
+            let current_view = self.view.get_view();
             trace!(
                 num_signers,
                 cosigned_weight,
                 supermajority,
-                self.view,
+                current_view,
                 new_view.view,
                 "storing vote for new view"
             );
             if supermajority {
-                if self.view < new_view.view {
+                if self.view.get_view() < new_view.view {
                     info!(
                         "forcibly updating view to {} as majority is ahead",
                         new_view.view
                     );
-                    self.set_view(new_view.view);
+                    self.view.set_view(new_view.view);
                 }
 
                 // if we are already in the round in which the vote counts and have reached supermajority
-                if new_view.view == self.view {
+                if new_view.view == self.view.get_view() {
                     // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
                     let agg =
                         self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, signers)?;
@@ -1170,7 +1157,7 @@ impl Consensus {
                     // why does this have no txn?
                     let proposal = Block::from_agg(
                         self.secret_key,
-                        self.view,
+                        self.view.get_view(),
                         parent.header.number + 1,
                         high_qc.clone(),
                         agg,
@@ -1180,7 +1167,7 @@ impl Consensus {
                         self.get_next_committee(parent.committee),
                     );
 
-                    trace!(proposal_hash = ?proposal.hash(), view = self.view, "######### creating proposal block from new view");
+                    trace!(proposal_hash = ?proposal.hash(), view = self.view.get_view(), "######### creating proposal block from new view");
 
                     // as a future improvement, process the proposal before broadcasting it
                     return Ok(Some(proposal));
@@ -1321,13 +1308,13 @@ impl Consensus {
             if from_agg || new_high_qc_block_view > current_high_qc_view {
                 trace!(
                     "updating view from {} to {}, high QC view is {}",
-                    self.view,
+                    self.view.get_view(),
                     new_high_qc_block_view + 1,
                     current_high_qc_view,
                 );
                 self.block_store.set_high_qc(new_high_qc.clone())?;
                 self.high_qc = new_high_qc;
-                self.set_view(new_high_qc_block_view + 1);
+                self.view.set_view(new_high_qc_block_view + 1);
             }
         }
 
@@ -1388,7 +1375,7 @@ impl Consensus {
             return Ok(false);
         };
         // We don't vote on blocks older than our view
-        let outdated = proposal.view() < self.view;
+        let outdated = proposal.view() < self.view.get_view();
         let proposal_hash = proposal.hash();
         match proposal.agg {
             // we check elsewhere that qc is the highest among the qcs in the agg
@@ -1412,7 +1399,7 @@ impl Consensus {
                     self.check_and_commit(proposal.hash())?;
 
                     if outdated {
-                        trace!("proposal is outdated: {} < {}", proposal.view(), self.view);
+                        trace!("proposal is outdated: {} < {}", proposal.view(), self.view.get_view());
                     }
 
                     Ok(!outdated)
@@ -1678,7 +1665,7 @@ impl Consensus {
     }
 
     pub fn view(&self) -> u64 {
-        self.view
+        self.view.get_view()
     }
 
     pub fn finalized_view(&self) -> u64 {
