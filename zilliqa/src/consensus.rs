@@ -499,7 +499,8 @@ impl Consensus {
     // This function is called when we suspect that we are out of sync with the network/need to catchup
     pub fn download_blocks_up_to_head(&mut self) -> Result<()> {
         let head_block = self.head_block();
-        self.block_store.request_blocks(head_block.header.number)?;
+        self.block_store
+            .request_blocks(head_block.header.number + 1)?;
 
         Ok(())
     }
@@ -546,7 +547,8 @@ impl Consensus {
 
         if time_since_last_view_change < exponential_backoff_timeout {
             trace!(
-                "Not proceeding with view change - time since last: {}, timeout requires: {}",
+                "Not proceeding with view change. Current view: {} - time since last: {}, timeout requires: {}",
+                self.view.get_view(),
                 time_since_last_view_change,
                 exponential_backoff_timeout
             );
