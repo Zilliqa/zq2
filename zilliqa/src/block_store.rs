@@ -8,7 +8,7 @@ use tracing::*;
 
 use crate::{
     crypto::Hash,
-    message::{Block, BlockRef, BlockRequest, BlockBatchRequest, QuorumCertificate},
+    message::{Block, BlockBatchRequest, BlockRef, BlockRequest, QuorumCertificate},
     node::MessageSender,
 };
 

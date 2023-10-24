@@ -19,7 +19,7 @@ use crate::{
     consensus::Consensus,
     crypto::{Hash, NodePublicKey, SecretKey},
     message::{
-        Block, BlockRequest, BlockResponse, BlockBatchRequest, BlockBatchResponse, ExternalMessage,
+        Block, BlockBatchRequest, BlockBatchResponse, BlockRequest, BlockResponse, ExternalMessage,
         Proposal,
     },
     state::{Account, Address},
@@ -443,7 +443,11 @@ impl Node {
         Ok(())
     }
 
-    fn handle_block_batch_request(&mut self, source: PeerId, request: BlockBatchRequest) -> Result<()> {
+    fn handle_block_batch_request(
+        &mut self,
+        source: PeerId,
+        request: BlockBatchRequest,
+    ) -> Result<()> {
         let block = match request.0 {
             crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
             crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view),

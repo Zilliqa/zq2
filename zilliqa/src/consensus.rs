@@ -238,7 +238,6 @@ struct View {
 }
 
 impl View {
-
     pub fn new(view: u64) -> Self {
         View {
             view,
@@ -270,7 +269,7 @@ impl View {
     }
 
     pub fn last_timeout(&self) -> SystemTime {
-        return self.last_timeout.clone()
+        self.last_timeout
     }
 }
 
@@ -566,7 +565,11 @@ impl Consensus {
         let _ = self.download_blocks_up_to_head();
         self.view.set_view(self.view.get_view() + 1);
 
-        let leader = self.head_block().committee.leader(self.view.get_view()).peer_id;
+        let leader = self
+            .head_block()
+            .committee
+            .leader(self.view.get_view())
+            .peer_id;
 
         let new_view = NewView::new(
             self.secret_key,
@@ -1037,7 +1040,10 @@ impl Consensus {
         let parent = match parent {
             Ok(Some(parent)) => parent,
             _ => {
-                warn!("parent not found while determining leader for view {}", view);
+                warn!(
+                    "parent not found while determining leader for view {}",
+                    view
+                );
                 return None;
             }
         };
@@ -1399,7 +1405,11 @@ impl Consensus {
                     self.check_and_commit(proposal.hash())?;
 
                     if outdated {
-                        trace!("proposal is outdated: {} < {}", proposal.view(), self.view.get_view());
+                        trace!(
+                            "proposal is outdated: {} < {}",
+                            proposal.view(),
+                            self.view.get_view()
+                        );
                     }
 
                     Ok(!outdated)

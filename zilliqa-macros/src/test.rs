@@ -27,7 +27,7 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                 vec![seed.to_str().unwrap().parse().unwrap()]
             } else {
                 let samples: usize = std::env::var_os("ZQ_TEST_SAMPLES")
-                    .map(|s| s.to_str().unwrap_or(&"1").parse().unwrap_or(1))
+                    .map(|s| s.to_str().unwrap_or("1").parse().unwrap_or(1))
                     .unwrap_or(1);
                 // Generate random seeds using the thread-local RNG.
                 rand::Rng::sample_iter(rand::thread_rng(), rand::distributions::Standard).take(samples).collect()
