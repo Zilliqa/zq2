@@ -42,7 +42,6 @@ impl Setup {
                 r#"
                     [[nodes]]
                     {}data_dir = "{DATADIR_PREFIX}{i}"
-                    eth_chain_id = 0x8001
                     consensus.genesis_committee = [ [ "{first_key}", "{first_peer_id}" ] ]
                     consensus.genesis_accounts = [
                         ["7E5F4552091A69125d5DfCb7b8C2659029395Bdf", "5000000000000000000000"],
