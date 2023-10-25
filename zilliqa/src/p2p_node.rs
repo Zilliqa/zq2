@@ -18,11 +18,11 @@ use libp2p::{
     futures::StreamExt,
     gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
     identify,
-    kad::{store::MemoryStore, Kademlia},
+    kad::{self, store::MemoryStore},
     mdns,
     multiaddr::{Multiaddr, Protocol},
     noise,
-    swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
+    swarm::{self, NetworkBehaviour, SwarmEvent},
     tcp, yamux, PeerId, Swarm, Transport,
 };
 
@@ -42,7 +42,7 @@ struct Behaviour {
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
     identify: identify::Behaviour,
-    kademlia: Kademlia<MemoryStore>,
+    kademlia: kad::Behaviour<MemoryStore>,
 }
 
 /// (destination, shard_id, message)
@@ -97,10 +97,15 @@ impl P2pNode {
                 "/ipfs/id/1.0.0".to_owned(),
                 key_pair.public(),
             )),
-            kademlia: Kademlia::new(peer_id, MemoryStore::new(peer_id)),
+            kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
         };
 
-        let swarm = SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id).build();
+        let swarm = Swarm::new(
+            transport,
+            behaviour,
+            peer_id,
+            swarm::Config::with_tokio_executor(),
+        );
 
         Ok(Self {
             shard_nodes: HashMap::new(),
