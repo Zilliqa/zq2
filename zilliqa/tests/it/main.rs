@@ -349,7 +349,7 @@ impl Network {
                 if node.inner.lock().unwrap().handle_timeout() {
                     return;
                 }
-                zilliqa::time::advance(Duration::from_millis(1));
+                zilliqa::time::advance(Duration::from_millis(500));
             }
         }
     }

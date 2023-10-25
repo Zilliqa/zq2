@@ -1372,8 +1372,6 @@ impl Consensus {
             current = next;
         }
 
-        //warn!("Completing, but with hashes: {} and {} and view {} and view {}", current.hash(), ancestor.hash(), current.view(), ancestor.view());
-
         Ok(current.view() == 0 || current.hash() == ancestor.hash())
     }
 
@@ -1625,9 +1623,7 @@ impl Consensus {
                 self.add_block(block)?;
             }
             Err(e) => {
-                //warn!("Error when receiving block {}", e);
                 warn!(?e, "invalid block received during sync!");
-                //return Err(e);
                 return Ok(false);
             }
         }

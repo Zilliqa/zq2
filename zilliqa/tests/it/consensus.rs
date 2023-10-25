@@ -5,52 +5,6 @@ use ethers::{providers::Middleware, types::TransactionRequest};
 use tracing::*;
 use zilliqa::state::Address;
 
-// Test that a node that joins later can sync up to the latest block and become a
-
-/*
-// Test that a node can die and rejoin and still sync up to the latest block
-#[zilliqa_macros::test]
-async fn node_can_sync_join_block_production(mut network: Network) {
-    let start_block = 5;
-
-    // wait until at least 5 blocks have been produced
-    network
-        .run_until(
-            |n| {
-                let index = n.random_index();
-                n.get_node(index)
-                    .get_finalized_height()
-                    >= start_block
-            },
-            50,
-        )
-        .await
-        .unwrap();
-
-    // Add a new node, then make sure they eventually are the producer of
-    // a block
-    info!("Adding node to network");
-    let index = network.add_node();
-
-    network
-        .run_until(
-            |n| {
-                let block = n.node_at(index)
-                        .get_latest_block()
-                        .unwrap()
-                        .unwrap();
-
-                    block.committee.leader_index(block.number()) == index
-            },
-            50000,
-        )
-        .await
-        .expect("expected to find our joined node has become a block producer");
-}
-*/
-
-//fn network_can_die_restart() {}
-
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)
 #[zilliqa_macros::test]
@@ -86,7 +40,7 @@ async fn network_can_die_restart(mut network: Network) {
                 let index = n.random_index();
                 n.get_node(index).get_finalized_height() >= finish_block
             },
-            50000,
+            1000,
         )
         .await
         .expect("Failed to progress to target block");
@@ -119,7 +73,7 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
         .unwrap();
 
     // now, wait until block 15 has been produced, but dropping 10% of the messages.
-    for _i in 0..1000000 {
+    for _ in 0..1000 {
         network.randomly_drop_messages_then_tick(failure_rate).await;
         if get_block_number(&mut network) >= finish_block {
             break;
