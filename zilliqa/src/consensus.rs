@@ -2,8 +2,10 @@ use ethabi::{Event, Log, RawLog};
 use primitive_types::H256;
 use std::path::Path;
 
-use crate::message::{ExternalMessage, InternalMessage};
-use crate::node::MessageSender;
+use crate::{
+    message::{ExternalMessage, InternalMessage},
+    node::MessageSender,
+};
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
@@ -18,16 +20,14 @@ use std::{
 
 use tracing::*;
 
-use crate::message::Committee;
 use crate::{
     block_store::BlockStore,
     cfg::NodeConfig,
     contracts,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
-    exec::TouchedAddressEventListener,
-    exec::TransactionApplyResult,
+    exec::{TouchedAddressEventListener, TransactionApplyResult},
     message::{
-        AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, NewView, Proposal,
+        AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, Committee, NewView, Proposal,
         QuorumCertificate, Vote,
     },
     state::{Address, SignedTransaction, State, TransactionReceipt},

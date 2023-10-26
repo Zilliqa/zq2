@@ -1,15 +1,17 @@
-use evm::backend::Backend;
-use evm::executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType};
-use evm::{Context, ExitError, ExitSucceed};
+use evm::{
+    backend::Backend,
+    executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType},
+    Context, ExitError, ExitSucceed,
+};
 use std::borrow::Cow;
 
 use crate::precompiles::scilla_common::{
     get_contract_addr_and_name, substitute_scilla_type_with_sol,
 };
-use ethers::abi::param_type::ParamType;
-use ethers::abi::token::Token;
-use ethers::abi::{decode, encode, Address, Bytes, Uint};
-use ethers::types::I256;
+use ethers::{
+    abi::{decode, encode, param_type::ParamType, token::Token, Address, Bytes, Uint},
+    types::I256,
+};
 use serde_json::Value;
 
 // TODO: revisit these consts

@@ -17,10 +17,13 @@ use sha3::{
     Digest, Keccak256,
 };
 use sled::Tree;
-use std::convert::TryInto;
-use std::fmt::{Display, LowerHex};
-use std::sync::Arc;
-use std::{hash::Hash, str::FromStr};
+use std::{
+    convert::TryInto,
+    fmt::{Display, LowerHex},
+    hash::Hash,
+    str::FromStr,
+    sync::Arc,
+};
 
 use anyhow::{anyhow, Result};
 use evm_ds::protos::evm_proto::Log;

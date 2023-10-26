@@ -1,6 +1,8 @@
-use evm::backend::Backend;
-use evm::executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType};
-use evm::{Context, ExitError, ExitSucceed};
+use evm::{
+    backend::Backend,
+    executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType},
+    Context, ExitError, ExitSucceed,
+};
 use primitive_types::{H160, H256};
 use std::borrow::Cow;
 

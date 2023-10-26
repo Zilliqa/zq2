@@ -7,10 +7,9 @@ use evm::executor::stack::{
     StackExecutor, StackExecutorHandle, StackState,
 };
 
-use evm::backend::Backend;
 use evm::{
-    Capture, Config, Context, CreateScheme, ExitError, ExitReason, Handler, Opcode, Resolve,
-    Runtime, Stack, Transfer,
+    backend::Backend, Capture, Config, Context, CreateScheme, ExitError, ExitReason, Handler,
+    Opcode, Resolve, Runtime, Stack, Transfer,
 };
 use primitive_types::{H160, H256, U256};
 

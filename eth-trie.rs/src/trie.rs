@@ -5,10 +5,12 @@ use keccak_hash::{keccak, H256, KECCAK_NULL_RLP};
 use log::warn;
 use rlp::{Prototype, Rlp, RlpStream};
 
-use crate::db::{MemoryDB, DB};
-use crate::errors::TrieError;
-use crate::nibbles::Nibbles;
-use crate::node::{empty_children, BranchNode, Node};
+use crate::{
+    db::{MemoryDB, DB},
+    errors::TrieError,
+    nibbles::Nibbles,
+    node::{empty_children, BranchNode, Node},
+};
 
 pub type TrieResult<T> = Result<T, TrieError>;
 const HASHED_LENGTH: usize = 32;
@@ -925,18 +927,20 @@ where
 
 #[cfg(test)]
 mod tests {
-    use rand::distributions::Alphanumeric;
-    use rand::seq::SliceRandom;
-    use rand::{thread_rng, Rng};
-    use std::collections::{HashMap, HashSet};
-    use std::sync::Arc;
+    use rand::{distributions::Alphanumeric, seq::SliceRandom, thread_rng, Rng};
+    use std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+    };
 
     use keccak_hash::{H256, KECCAK_NULL_RLP};
 
     use super::{EthTrie, Trie};
-    use crate::db::{MemoryDB, DB};
-    use crate::errors::TrieError;
-    use crate::nibbles::Nibbles;
+    use crate::{
+        db::{MemoryDB, DB},
+        errors::TrieError,
+        nibbles::Nibbles,
+    };
 
     #[test]
     fn test_trie_insert() {

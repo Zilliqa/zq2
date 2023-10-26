@@ -20,11 +20,10 @@ use evm_ds::{
 use primitive_types::{H160, U256};
 use tracing::*;
 
-use crate::state::SignedTransaction;
 use crate::{
     contracts,
     message::BlockHeader,
-    state::{Address, State},
+    state::{Address, SignedTransaction, State},
 };
 
 #[derive(Default)]

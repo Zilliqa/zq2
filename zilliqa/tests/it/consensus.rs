@@ -1,5 +1,4 @@
-use crate::CombinedJson;
-use crate::Network;
+use crate::{CombinedJson, Network};
 use ethabi::Token;
 use ethers::{providers::Middleware, types::TransactionRequest};
 use tracing::*;
