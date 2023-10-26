@@ -1,10 +1,11 @@
 use eyre::Result;
 use futures::future::JoinAll;
-use std::path::Path;
-use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
-use tokio::sync::mpsc;
+use std::{path::Path, process::Stdio};
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    process::Command,
+    sync::mpsc,
+};
 
 pub struct Process {
     pub index: usize,

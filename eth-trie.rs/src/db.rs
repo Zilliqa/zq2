@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-use std::error::Error;
-use std::sync::Arc;
+use std::{collections::HashMap, error::Error, sync::Arc};
 
 use parking_lot::RwLock;
 

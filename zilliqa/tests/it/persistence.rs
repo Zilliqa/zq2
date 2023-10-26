@@ -1,11 +1,8 @@
 use crate::{Network, TestNode};
-use ethers::providers::Middleware;
-use ethers::types::TransactionRequest;
-use ethers::utils::secret_key_to_address;
+use ethers::{providers::Middleware, types::TransactionRequest, utils::secret_key_to_address};
 use primitive_types::H160;
 use tracing::*;
-use zilliqa::crypto::Hash;
-use zilliqa::crypto::SecretKey;
+use zilliqa::crypto::{Hash, SecretKey};
 
 #[zilliqa_macros::test]
 async fn block_and_tx_data_persistence(mut network: Network) {

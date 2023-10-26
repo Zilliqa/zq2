@@ -7,9 +7,11 @@ use evm::{
     ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed, Memory, Stack, Transfer, Valids,
 };
 use primitive_types::{H160, H256, U256};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::ops::Range;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    ops::Range,
+    sync::{Arc, Mutex},
+};
 
 use crate::tracing_logging::LoggingEventListener;
 

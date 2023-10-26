@@ -9,8 +9,7 @@ mod scilla_common;
 pub mod scilla_read;
 pub mod sha2_256;
 
-use std::collections::BTreeMap;
-use std::str::FromStr;
+use std::{collections::BTreeMap, str::FromStr};
 
 use evm::executor::stack::PrecompileFn;
 
