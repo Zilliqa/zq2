@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use crate::message::BlockNumber;
 use anyhow::Result;
 use jsonrpsee::{types::Params, RpcModule};
 
@@ -12,13 +13,13 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
 }
 
 fn get_header_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::Block>> {
-    let block: u64 = params.one()?;
+    let block: BlockNumber = params.one()?;
 
     // Erigon headers are a subset of the full block response. We choose to just return the full block.
     let header = node
         .lock()
         .unwrap()
-        .get_block_by_view(block)?
+        .get_block_by_blocknum(block)?
         .as_ref()
         .map(eth::Block::from);
 

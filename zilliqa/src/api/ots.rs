@@ -40,7 +40,7 @@ fn get_block_details(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<o
     let block = node
         .lock()
         .unwrap()
-        .get_block_by_view(block)?
+        .get_block_by_number(block)?
         .as_ref()
         .map(ots::BlockDetails::from);
 
@@ -74,7 +74,7 @@ fn get_block_transactions(
 
     let node = node.lock().unwrap();
 
-    let Some(block) = node.get_block_by_view(block_num)? else {
+    let Some(block) = node.get_block_by_number(block_num)? else {
         return Ok(None);
     };
 

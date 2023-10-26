@@ -16,8 +16,8 @@ impl From<&Block> for TxBlock {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         TxBlock {
             header: TxBlockHeader {
-                block_num: block.view(),
-                ds_block_num: (block.view() / 100) + 1,
+                block_num: block.number(),
+                ds_block_num: (block.number() / 100) + 1,
                 gas_limit: 1,
                 gas_used: 0,
                 mb_info_hash: H256::zero(),
