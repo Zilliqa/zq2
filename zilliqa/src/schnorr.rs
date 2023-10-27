@@ -76,9 +76,7 @@ pub fn verify(message: &[u8], public_key: PublicKey, signature: Signature) -> Op
 mod tests {
     use k256::{elliptic_curve::PrimeField, FieldBytes, PublicKey, Scalar, SecretKey};
 
-    use super::verify;
-
-    use super::sign_inner;
+    use super::{sign_inner, verify};
 
     #[test]
     fn signing() {

@@ -1,7 +1,6 @@
-use ethabi::ethereum_types::U64;
-use futures::future::join_all;
 use std::fmt::Debug;
 
+use ethabi::ethereum_types::U64;
 use ethers::{
     abi::FunctionExt,
     providers::{Middleware, Provider},
@@ -10,7 +9,7 @@ use ethers::{
     },
     utils::keccak256,
 };
-
+use futures::future::join_all;
 use primitive_types::{H160, H256};
 use serde::Serialize;
 

@@ -1,10 +1,9 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, fmt::Display, str::FromStr};
 
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
-use std::{fmt::Display, str::FromStr};
 
 use crate::{
     consensus::Validator,

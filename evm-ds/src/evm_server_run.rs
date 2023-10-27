@@ -10,19 +10,16 @@ use evm::{
     executor::stack::{MemoryStackState, MemoryStackSubstate, StackSubstateMetadata},
     CreateScheme, Handler, Machine, Runtime,
 };
-use tracing::*;
-
 use primitive_types::*;
+use tracing::*;
 
 use crate::{
     cps_executor::{CpsCallInterrupt, CpsCreateInterrupt, CpsExecutor, CpsReason},
     precompiles::get_precompiles,
     pretty_printer::log_evm_result,
+    protos::evm_proto as EvmProto,
+    tracing_logging::{CallContext, LoggingEventListener},
 };
-
-use crate::protos::evm_proto as EvmProto;
-
-use crate::tracing_logging::{CallContext, LoggingEventListener};
 
 #[allow(clippy::too_many_arguments)]
 fn build_exit_result<B: Backend>(

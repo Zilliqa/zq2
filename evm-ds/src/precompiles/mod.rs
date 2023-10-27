@@ -12,7 +12,6 @@ pub mod sha2_256;
 use std::{collections::BTreeMap, str::FromStr};
 
 use evm::executor::stack::PrecompileFn;
-
 use primitive_types::*;
 
 pub fn get_precompiles() -> BTreeMap<H160, PrecompileFn> {

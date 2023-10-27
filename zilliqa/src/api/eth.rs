@@ -10,16 +10,15 @@ use rlp::Rlp;
 use serde::Deserialize;
 use tracing::*;
 
+use super::{
+    to_hex::ToHex,
+    types::eth::{self, CallParams, EstimateGasParams, HashOrTransaction, OneOrMany},
+};
 use crate::{
     crypto::Hash,
     message::{Block, BlockNumber},
     node::Node,
     state::{Address, SignedTransaction, SigningInfo, Transaction},
-};
-
-use super::{
-    to_hex::ToHex,
-    types::eth::{self, CallParams, EstimateGasParams, HashOrTransaction, OneOrMany},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {

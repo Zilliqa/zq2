@@ -4,8 +4,9 @@ mod native_contracts;
 mod persistence;
 mod web3;
 mod zil;
-use ethers::solc::SHANGHAI_SOLC;
 use std::{env, ops::DerefMut};
+
+use ethers::solc::SHANGHAI_SOLC;
 use zilliqa::{
     cfg::{ConsensusConfig, NodeConfig},
     crypto::{Hash, NodePublicKey, SecretKey},
@@ -15,8 +16,6 @@ use zilliqa::{
 };
 
 extern crate fs_extra;
-use fs_extra::dir::*;
-
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -28,11 +27,9 @@ use std::{
     },
     time::Duration,
 };
-use zilliqa::message::Message;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-
 use ethers::{
     abi::Contract,
     prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, SignerMiddleware},
@@ -41,8 +38,8 @@ use ethers::{
     types::H256,
     utils::secret_key_to_address,
 };
+use fs_extra::dir::*;
 use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
-
 use jsonrpsee::{
     types::{Id, RequestSer, Response, ResponsePayload},
     RpcModule,
@@ -57,6 +54,7 @@ use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
+use zilliqa::message::Message;
 
 #[derive(Deserialize)]
 struct CombinedJson {

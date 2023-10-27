@@ -1,9 +1,10 @@
+use std::borrow::Cow;
+
 use evm::{
     backend::Backend,
     executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType},
     Context, ExitError, ExitSucceed,
 };
-use std::borrow::Cow;
 
 const IDENTITY_BASE: u64 = 15;
 const IDENTITY_PER_WORD: u64 = 3;

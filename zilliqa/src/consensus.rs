@@ -1,23 +1,18 @@
-use ethabi::{Event, Log, RawLog};
-use primitive_types::H256;
-use std::path::Path;
-
-use crate::{
-    message::{ExternalMessage, InternalMessage},
-    node::MessageSender,
-};
-use anyhow::{anyhow, Result};
-use bitvec::bitvec;
-use libp2p::PeerId;
-use serde::{Deserialize, Serialize};
-use sled::{Db, Tree};
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BinaryHeap},
     error::Error,
     fmt::Display,
+    path::Path,
 };
 
+use anyhow::{anyhow, Result};
+use bitvec::bitvec;
+use ethabi::{Event, Log, RawLog};
+use libp2p::PeerId;
+use primitive_types::H256;
+use serde::{Deserialize, Serialize};
+use sled::{Db, Tree};
 use tracing::*;
 
 use crate::{
@@ -27,9 +22,10 @@ use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     exec::{TouchedAddressEventListener, TransactionApplyResult},
     message::{
-        AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, Committee, NewView, Proposal,
-        QuorumCertificate, Vote,
+        AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, Committee, ExternalMessage,
+        InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
     },
+    node::MessageSender,
     state::{Address, SignedTransaction, State, TransactionReceipt},
     time::SystemTime,
 };
