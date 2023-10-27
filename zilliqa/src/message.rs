@@ -62,7 +62,12 @@ pub struct Vote {
 }
 
 impl Vote {
-    pub fn new(secret_key: SecretKey, block_hash: Hash, public_key: NodePublicKey, view: u64) -> Self {
+    pub fn new(
+        secret_key: SecretKey,
+        block_hash: Hash,
+        public_key: NodePublicKey,
+        view: u64,
+    ) -> Self {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(block_hash.as_bytes());
         bytes.extend_from_slice(&view.to_be_bytes());
@@ -89,8 +94,7 @@ impl Vote {
 
         warn!("Verify vote: {:?}", self);
 
-        self.public_key
-            .verify(&bytes, self.signature)
+        self.public_key.verify(&bytes, self.signature)
     }
 }
 
@@ -233,7 +237,12 @@ impl QuorumCertificate {
         }
     }
 
-    pub fn new(signatures: &[NodeSignature], cosigned: BitVec, block_hash: Hash, view: u64) -> Self {
+    pub fn new(
+        signatures: &[NodeSignature],
+        cosigned: BitVec,
+        block_hash: Hash,
+        view: u64,
+    ) -> Self {
         QuorumCertificate {
             signature: NodeSignature::aggregate(signatures).unwrap(),
             cosigned,

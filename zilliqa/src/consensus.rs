@@ -948,7 +948,8 @@ impl Consensus {
             if supermajority_reached {
                 // if we are already in the round in which the vote counts and have reached supermajority
                 if block_view + 1 == self.view.get_view() {
-                    let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone(), vote.view);
+                    let qc =
+                        self.qc_from_bits(block_hash, &signatures, cosigned.clone(), vote.view);
                     let parent_hash = qc.block_hash;
                     let parent = self
                         .get_block(&parent_hash)?
@@ -1641,7 +1642,12 @@ impl Consensus {
     }
 
     fn vote_from_block(&self, block: &Block) -> Vote {
-        Vote::new(self.secret_key, block.hash(),self.secret_key.node_public_key(), block.view())
+        Vote::new(
+            self.secret_key,
+            block.hash(),
+            self.secret_key.node_public_key(),
+            block.view(),
+        )
     }
 
     fn get_high_qc_from_block<'a>(&self, block: &'a Block) -> Result<&'a QuorumCertificate> {
