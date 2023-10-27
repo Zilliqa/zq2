@@ -1,8 +1,9 @@
-use crate::{CombinedJson, Network};
 use ethabi::Token;
 use ethers::{providers::Middleware, types::TransactionRequest};
 use tracing::*;
 use zilliqa::state::Address;
+
+use crate::{CombinedJson, Network};
 
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)

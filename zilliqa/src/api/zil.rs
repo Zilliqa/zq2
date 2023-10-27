@@ -12,14 +12,13 @@ use primitive_types::{H160, U256};
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
 
+use super::types::zil;
 use crate::{
     message::BlockNumber,
     node::Node,
     schnorr,
     state::{Address, SignedTransaction, SigningInfo, Transaction, ZilliqaOtherPayload},
 };
-
-use super::types::zil;
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(

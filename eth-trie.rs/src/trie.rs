@@ -927,13 +927,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use rand::{distributions::Alphanumeric, seq::SliceRandom, thread_rng, Rng};
     use std::{
         collections::{HashMap, HashSet},
         sync::Arc,
     };
 
     use keccak_hash::{H256, KECCAK_NULL_RLP};
+    use rand::{distributions::Alphanumeric, seq::SliceRandom, thread_rng, Rng};
 
     use super::{EthTrie, Trie};
     use crate::{

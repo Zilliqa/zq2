@@ -1,7 +1,3 @@
-use crate::{
-    crypto::Hash,
-    state::{default_gas, default_gas_price, Address},
-};
 use primitive_types::{H160, H256, U256};
 use serde::{
     de::{self, Unexpected},
@@ -9,9 +5,13 @@ use serde::{
 };
 use sha3::{Digest, Keccak256};
 
-use crate::{message, time::SystemTime};
-
 use super::{bool_as_int, hex, option_hex, vec_hex};
+use crate::{
+    crypto::Hash,
+    message,
+    state::{default_gas, default_gas_price, Address},
+    time::SystemTime,
+};
 
 #[derive(Clone, Serialize)]
 #[serde(untagged)]

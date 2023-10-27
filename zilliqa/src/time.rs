@@ -11,7 +11,6 @@ pub use time_impl::*;
 
 #[cfg(feature = "fake_time")]
 mod time_impl {
-    use serde::{Deserialize, Serialize};
     use std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -19,6 +18,8 @@ mod time_impl {
         },
         time::Duration,
     };
+
+    use serde::{Deserialize, Serialize};
 
     /// A fake implementation of [std::time::SystemTime]. The value of `SystemTime::now` can be controlled with [advance_time].
     #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

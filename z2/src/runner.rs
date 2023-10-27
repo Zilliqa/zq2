@@ -1,6 +1,7 @@
+use std::{path::Path, process::Stdio};
+
 use eyre::Result;
 use futures::future::JoinAll;
-use std::{path::Path, process::Stdio};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,

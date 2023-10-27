@@ -1,9 +1,8 @@
 use primitive_types::{H160, H256};
 use serde::Serialize;
 
-use crate::{message, time::SystemTime};
-
 use super::{eth, hex};
+use crate::{message, time::SystemTime};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -1,18 +1,19 @@
+use std::borrow::Cow;
+
+use ethers::{
+    abi::{decode, encode, param_type::ParamType, token::Token, Address, Bytes, Uint},
+    types::I256,
+};
 use evm::{
     backend::Backend,
     executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType},
     Context, ExitError, ExitSucceed,
 };
-use std::borrow::Cow;
+use serde_json::Value;
 
 use crate::precompiles::scilla_common::{
     get_contract_addr_and_name, substitute_scilla_type_with_sol,
 };
-use ethers::{
-    abi::{decode, encode, param_type::ParamType, token::Token, Address, Bytes, Uint},
-    types::I256,
-};
-use serde_json::Value;
 
 // TODO: revisit these consts
 const BASE_COST: u64 = 15;

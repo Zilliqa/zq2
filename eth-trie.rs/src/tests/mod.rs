@@ -1,8 +1,9 @@
 #[cfg(test)]
 mod trie_tests {
+    use std::sync::Arc;
+
     use hex::FromHex;
     use rand::Rng;
-    use std::sync::Arc;
 
     use crate::{
         db::MemoryDB,

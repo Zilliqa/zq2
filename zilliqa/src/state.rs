@@ -1,12 +1,24 @@
 use core::fmt;
+use std::{
+    convert::TryInto,
+    fmt::{Display, LowerHex},
+    hash::Hash,
+    str::FromStr,
+    sync::Arc,
+};
+
+use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
+use evm_ds::protos::evm_proto::Log;
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::sec1::ToEncodedPoint,
 };
+use primitive_types::{H160, H256};
 use prost::Message;
 use rlp::RlpStream;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sha3::{
     digest::generic_array::{
@@ -17,18 +29,6 @@ use sha3::{
     Digest, Keccak256,
 };
 use sled::Tree;
-use std::{
-    convert::TryInto,
-    fmt::{Display, LowerHex},
-    hash::Hash,
-    str::FromStr,
-    sync::Arc,
-};
-
-use anyhow::{anyhow, Result};
-use evm_ds::protos::evm_proto::Log;
-use primitive_types::{H160, H256};
-use serde::{Deserialize, Serialize};
 
 use crate::{
     cfg::ConsensusConfig,

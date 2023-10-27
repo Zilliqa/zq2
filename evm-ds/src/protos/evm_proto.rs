@@ -1,19 +1,19 @@
-pub use crate::evm::executor::stack::Log;
-use crate::evm::CreateScheme;
 use core::fmt;
-use derivative::Derivative;
-use evm::{
-    executor::stack::{MemoryStackAccount, MemoryStackSubstate},
-    ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed, Memory, Stack, Transfer, Valids,
-};
-use primitive_types::{H160, H256, U256};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     ops::Range,
     sync::{Arc, Mutex},
 };
 
-use crate::tracing_logging::LoggingEventListener;
+use derivative::Derivative;
+use evm::{
+    executor::stack::{MemoryStackAccount, MemoryStackSubstate},
+    ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed, Memory, Stack, Transfer, Valids,
+};
+use primitive_types::{H160, H256, U256};
+
+pub use crate::evm::executor::stack::Log;
+use crate::{evm::CreateScheme, tracing_logging::LoggingEventListener};
 
 // This file contains all of the structs used to communicate between evm-ds and the outside world
 
