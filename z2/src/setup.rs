@@ -24,7 +24,7 @@ impl Setup {
     pub fn new(how_many: usize) -> Result<Self> {
         let mut secret_keys = Vec::new();
         for i in 0..how_many {
-            let key = generate_secret_key()?;
+            let key = generate_secret_key_from_index(i + 1)?;
             println!("[#{i}] = {}", key.to_hex());
             secret_keys.push(key);
         }
@@ -79,4 +79,13 @@ impl Setup {
 
 pub fn generate_secret_key() -> Result<SecretKey> {
     SecretKey::new().map_err(|err| eyre!(Box::new(err)))
+}
+
+pub fn generate_secret_key_from_index(index: usize) -> Result<SecretKey> {
+    assert_ne!(
+        index, 0,
+        "index must be non-zero when generating secret key"
+    );
+    let padded_key = format!("{:0>64}", index);
+    SecretKey::from_hex(&padded_key).map_err(|err| eyre!(Box::new(err)))
 }
