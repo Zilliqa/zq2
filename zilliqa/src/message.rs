@@ -5,6 +5,7 @@ use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{fmt::Display, str::FromStr};
+use tracing::warn;
 
 use crate::{
     consensus::Validator,
@@ -53,24 +54,43 @@ impl Proposal {
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Vote {
-    /// A signature on the block_hash.
-    pub signature: NodeSignature,
+    /// A signature on the block_hash and view.
+    signature: NodeSignature,
     pub block_hash: Hash,
     pub public_key: NodePublicKey,
+    pub view: u64,
 }
 
 impl Vote {
-    pub fn new(secret_key: SecretKey, block_hash: Hash, public_key: NodePublicKey) -> Self {
+    pub fn new(secret_key: SecretKey, block_hash: Hash, public_key: NodePublicKey, view: u64) -> Self {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(block_hash.as_bytes());
+        bytes.extend_from_slice(&view.to_be_bytes());
+
+        warn!("sign vote {:?} {:?}", block_hash, view);
+
         Vote {
-            signature: secret_key.sign(block_hash.as_bytes()),
+            signature: secret_key.sign(&bytes),
             block_hash,
             public_key,
+            view,
         }
     }
 
+    // Make this a getter to force the use of ::new
+    pub fn signature(&self) -> NodeSignature {
+        self.signature
+    }
+
     pub fn verify(&self) -> Result<()> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(self.block_hash.as_bytes());
+        bytes.extend_from_slice(&self.view.to_be_bytes());
+
+        warn!("Verify vote: {:?}", self);
+
         self.public_key
-            .verify(self.block_hash.as_bytes(), self.signature)
+            .verify(&bytes, self.signature)
     }
 }
 
@@ -200,6 +220,7 @@ pub struct QuorumCertificate {
     pub signature: NodeSignature,
     pub cosigned: BitVec,
     pub block_hash: Hash,
+    pub view: u64,
 }
 
 impl QuorumCertificate {
@@ -208,14 +229,16 @@ impl QuorumCertificate {
             signature: NodeSignature::identity(),
             cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
             block_hash: Hash::ZERO,
+            view: 0,
         }
     }
 
-    pub fn new(signatures: &[NodeSignature], cosigned: BitVec, block_hash: Hash) -> Self {
+    pub fn new(signatures: &[NodeSignature], cosigned: BitVec, block_hash: Hash, view: u64) -> Self {
         QuorumCertificate {
             signature: NodeSignature::aggregate(signatures).unwrap(),
             cosigned,
             block_hash,
+            view,
         }
     }
 
@@ -463,6 +486,7 @@ impl Block {
             signature: NodeSignature::identity(),
             cosigned: bitvec![u8, bitvec::order::Msb0; 1; 0],
             block_hash: Hash::ZERO,
+            view: 0,
         };
         let parent_hash = Hash::ZERO;
         let timestamp = SystemTime::UNIX_EPOCH;
@@ -499,6 +523,7 @@ impl Block {
                 signature: NodeSignature::identity(),
                 cosigned: bitvec![u8, bitvec::order::Msb0; 1; 0],
                 block_hash: Hash::ZERO,
+                view: 0,
             },
             agg: None,
             transactions: vec![],
