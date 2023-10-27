@@ -1,14 +1,95 @@
 use crate::CombinedJson;
-use ethabi::Token;
-
-use zilliqa::state::Address;
-
 use crate::Network;
-
+use ethabi::Token;
 use ethers::{
     providers::Middleware,
     types::{BlockNumber, TransactionRequest},
 };
+use tracing::*;
+use zilliqa::state::Address;
+
+// Test that all nodes can die and the network can restart (even if they startup at different
+// times)
+#[zilliqa_macros::test]
+async fn network_can_die_restart(mut network: Network) {
+    let start_block = 5;
+    let finish_block = 10;
+
+    let samples: usize = std::env::var_os("ZQ_TEST_SAMPLES")
+        .map(|s| s.to_str().unwrap_or("1").parse().unwrap_or(1))
+        .unwrap_or(1);
+
+    println!("{}", samples);
+
+    // wait until at least 5 blocks have been produced
+    network
+        .run_until(
+            |n| {
+                let index = n.random_index();
+                n.get_node(index).get_finalized_height() >= start_block
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Forcibly restart the network, with a random time delay between each node
+    network.restart();
+
+    // Panic if it can't progress to the target block
+    network
+        .run_until(
+            |n| {
+                let index = n.random_index();
+                n.get_node(index).get_finalized_height() >= finish_block
+            },
+            1000,
+        )
+        .await
+        .expect("Failed to progress to target block");
+}
+
+fn get_block_number(n: &mut Network) -> u64 {
+    let index = n.random_index();
+    n.get_node(index).get_finalized_height()
+}
+
+// test that even with some consensus messages being dropped, the network can still proceed
+// note: this drops all messages, not just consensus messages, but there should only be
+// consensus messages in the network anyway
+#[zilliqa_macros::test]
+async fn block_production_even_when_lossy_network(mut network: Network) {
+    let failure_rate = 0.1;
+    let start_block = 5;
+    let finish_block = 8;
+
+    // wait until at least 5 blocks have been produced
+    network
+        .run_until(
+            |n| {
+                let index = n.random_index();
+                n.get_node(index).get_finalized_height() >= start_block
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // now, wait until block 15 has been produced, but dropping 10% of the messages.
+    for _ in 0..1000 {
+        network.randomly_drop_messages_then_tick(failure_rate).await;
+        if get_block_number(&mut network) >= finish_block {
+            break;
+        }
+    }
+
+    assert!(
+        get_block_number(&mut network) >= finish_block,
+        "block number should be at least {}, but was {}",
+        finish_block,
+        get_block_number(&mut network)
+    );
+}
 
 #[zilliqa_macros::test]
 async fn block_production(mut network: Network) {
@@ -19,7 +100,7 @@ async fn block_production(mut network: Network) {
                 n.get_node(index)
                     .get_latest_block()
                     .unwrap()
-                    .map_or(0, |b| b.view())
+                    .map_or(0, |b| b.number())
                     >= 5
             },
             50,
@@ -27,7 +108,8 @@ async fn block_production(mut network: Network) {
         .await
         .unwrap();
 
-    let index = network.add_node(false);
+    info!("Adding networked node.");
+    let index = network.add_node(true);
 
     network
         .run_until(
@@ -35,14 +117,13 @@ async fn block_production(mut network: Network) {
                 n.node_at(index)
                     .get_latest_block()
                     .unwrap()
-                    .map_or(0, |b| b.view())
+                    .map_or(0, |b| b.number())
                     >= 10
             },
             500,
         )
         .await
         .unwrap();
-    println!("Second block run completed");
 }
 
 #[zilliqa_macros::test]
@@ -218,26 +299,20 @@ async fn launch_shard(mut network: Network) {
         .number
         .unwrap();
 
-    println!(
-        "\n\n\n\n============================\n\n STARTING LAST PHASE!\ncheck_child_block: {}\n\n",
-        check_child_block
-    );
-
     network
         .children
         .get_mut(&child_shard_id)
         .unwrap()
         .run_until_async(
             || async {
-                let block = shard_wallet
+                shard_wallet
                     .get_block(BlockNumber::Latest)
                     .await
                     .unwrap()
                     .unwrap()
                     .number
-                    .unwrap();
-                println!("check block: {}", block);
-                block >= check_child_block + 5
+                    .unwrap()
+                    >= check_child_block + 5
             },
             500,
         )
