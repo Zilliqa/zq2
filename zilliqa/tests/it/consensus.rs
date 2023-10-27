@@ -2,6 +2,7 @@ use crate::CombinedJson;
 use crate::Network;
 use ethabi::Token;
 use ethers::{providers::Middleware, types::TransactionRequest};
+use primitive_types::H160;
 use tracing::*;
 use zilliqa::state::Address;
 
@@ -11,12 +12,6 @@ use zilliqa::state::Address;
 async fn network_can_die_restart(mut network: Network) {
     let start_block = 5;
     let finish_block = 10;
-
-    let samples: usize = std::env::var_os("ZQ_TEST_SAMPLES")
-        .map(|s| s.to_str().unwrap_or("1").parse().unwrap_or(1))
-        .unwrap_or(1);
-
-    println!("{}", samples);
 
     // wait until at least 5 blocks have been produced
     network
@@ -213,6 +208,64 @@ async fn launch_shard(mut network: Network) {
                     .unwrap()
                     .map_or(0, |b| b.number())
                     >= 5
+            },
+            50,
+        )
+        .await
+        .unwrap();
+}
+
+// test that when a fork occurs in the network, the node which has forked correctly reverts its state
+// and progresses.
+#[zilliqa_macros::test]
+async fn handle_forking_correctly(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    let start_block = 5;
+
+    // wait until at least 5 blocks have been produced
+    network
+        .run_until(
+            |n| {
+                let index = n.random_index();
+                n.get_node(index).get_finalized_height() >= start_block
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Now, we submit a transaction to the network, which will be included in the next block.
+    // The next tick we do will drop the propose message going to all but node 0, after which we
+    // should find find that node 0 executes the tx and the other nodes do not.
+    // following this, the network should correct so that node 0 is forced to revert that block
+    // and the TX will get included in the next block.
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    //network.randomly_drop_messages_then_tick(failure_rate).await;
+    network.drop_propose_messages_except_one().await;
+
+    // Check that node 0 has executed the transaction while the others haven't
+
+    //for _ in 0..1000 {
+    //    if get_block_number(&mut network) >= finish_block {
+    //        break;
+    //    }
+    //}
+
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
             },
             50,
         )

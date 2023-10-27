@@ -354,6 +354,138 @@ impl Network {
         }
     }
 
+    fn collect_messages(&mut self) -> Vec<(PeerId, Option<PeerId>, Message)> {
+        let mut messages = vec![];
+        for (_i, receiver) in self.receivers.iter_mut().enumerate() {
+            loop {
+                match tokio::task::unconstrained(receiver.next()).now_or_never() {
+                    Some(Some(message)) => {
+                        messages.push(message);
+                    }
+                    Some(None) => {
+                        warn!("Stream was unreachable!");
+                        unreachable!("stream was terminated, this should be impossible");
+                    }
+                    None => {
+                        break;
+                    }
+                }
+            }
+        }
+        messages
+    }
+
+    // Take all the currently ready messages from the stream,
+    // remove N-1 propose messages we see where network size = N and the remaining one is
+    // the first node in the vector
+    pub async fn drop_propose_messages_except_one(&mut self) {
+        let mut counter = 0;
+        let mut proposals_seen = 0;
+        let mut broadcast_handled = false;
+
+        loop {
+            // Generate some messages
+            self.tick().await;
+
+            counter += 1;
+
+            if counter >= 100 {
+                panic!("Possibly looping forever looking for propose messages.");
+            }
+
+            //let mut messages = Vec::new();
+            let mut messages = self.collect_messages();
+
+            //for (_i, receiver) in self.receivers.iter_mut().enumerate() {
+            //    loop {
+            //        match tokio::task::unconstrained(receiver.next()).now_or_never() {
+            //            Some(Some(message)) => {
+            //                messages.push(message);
+            //            }
+            //            Some(None) => {
+            //                warn!("Stream was unreachable!");
+            //                unreachable!("stream was terminated, this should be impossible");
+            //            }
+            //            None => {
+            //                break;
+            //            }
+            //        }
+            //    }
+            //}
+
+            if messages.is_empty() {
+                warn!("Messages were empty - advance time faster!");
+                zilliqa::time::advance(Duration::from_millis(50));
+                continue;
+            }
+
+            // Filter path
+            //messages.iter().filter(|(s, d, m)| {
+            //    if let Message::External(external_message) = m {
+            //        if let Some(dest) = d {
+            //        if let ExternalMessage::Proposal(_) = external_message {
+            //            println!("Found proposal message from {} to {:?} message: {:?}", s, d, m);
+            //            let matches_allowed = *dest == self.nodes[0].peer_id;
+
+            //            if !matches_allowed {
+            //                proposals_seen += 1;
+            //            }
+            //            return matches_allowed;
+            //        }
+            //        }
+            //    }
+            //    true
+            //});
+
+            // filter out all the propose messages, except node 0. If the proposal is a broadcast,
+            // repackage it as direct messages to all nodes except node 0.
+            let mut removed_items = Vec::new();
+
+            messages.retain(|(s, d, m)| {
+                if let Message::External(external_message) = m {
+                    if let ExternalMessage::Proposal(_) = external_message {
+                        removed_items.push((*s, *d, *m));
+                        false;
+                    }
+                }
+                true
+            });
+
+            for (s, d, m) in removed_items {
+                // If specifically to a node, only allow node 0
+                if let Some(dest) = d {
+                    // We actually want to allow this message, put it back into the queue
+                    if *dest == self.nodes[0].peer_id {
+                        self.resend_message.send((*s, *d, *m)).unwrap();
+                        continue;
+                    }
+
+                    // This counts as it getting dropped
+                    proposals_seen += 1;
+                } else {
+                    // Broadcast seen! Push it back into the queue with specific destination of node 0
+                    self.resend_message
+                        .send((*s, Some(self.nodes[0].peer_id), *m))
+                        .unwrap();
+                    broadcast_handled = true;
+                    break;
+                }
+            }
+
+            // Requeue the other messages
+            for message in messages {
+                self.resend_message.send(message).unwrap();
+            }
+
+            // All but one allowed through, we can now quit
+            if proposals_seen == self.nodes.len() - 1 || broadcast_handled {
+                break;
+            }
+        }
+
+        // Now process all available messages to make sure the nodes execute them
+    }
+
     // Drop the first message in each node queue with N% probability per tick
     pub async fn randomly_drop_messages_then_tick(&mut self, failure_rate: f64) {
         if !(0.0..=1.0).contains(&failure_rate) {
@@ -361,21 +493,22 @@ impl Network {
         }
 
         for (_i, receiver) in self.receivers.iter_mut().enumerate() {
-            let drop = self.rng.lock().unwrap().gen_bool(failure_rate);
-            if drop {
-                // Don't really care too much what the reciever has, just pop something off if
-                // possible
-                match tokio::task::unconstrained(receiver.next()).now_or_never() {
-                    Some(None) => {
-                        unreachable!("stream was terminated, this should be impossible");
-                    }
-                    Some(Some(message)) => {
-                        //messages.push(message);
-                        info!("***** Randomly dropping message: {:?}", message);
-                    }
-                    _ => {}
-                }
-            }
+            // Peek at the messages in the queue
+
+            //let drop = self.rng.lock().unwrap().gen_bool(failure_rate);
+            //if drop {
+            //    // Don't really care too much what the reciever has, just pop something off if
+            //    // possible
+            //    match tokio::task::unconstrained(receiver.next()).now_or_never() {
+            //        Some(None) => {
+            //            unreachable!("stream was terminated, this should be impossible");
+            //        }
+            //        Some(Some(message)) => {
+            //            info!("***** Randomly dropping message: {:?}", message);
+            //        }
+            //        _ => {}
+            //    }
+            //}
         }
 
         self.tick().await;
