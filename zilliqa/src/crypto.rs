@@ -16,6 +16,7 @@ use serde::{
     Deserialize, Serialize,
 };
 use sha3::{Digest, Keccak256};
+use primitive_types::H256;
 
 use crate::state::Address;
 
@@ -265,6 +266,12 @@ impl Hash {
             hasher.update(preimage.as_ref());
         }
         Self(hasher.finalize().into())
+    }
+}
+
+impl From<H256> for Hash {
+    fn from(value: H256) -> Self {
+        Self(value.into())
     }
 }
 

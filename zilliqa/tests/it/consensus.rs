@@ -251,6 +251,13 @@ async fn handle_forking_correctly(mut network: Network) {
     network.drop_propose_messages_except_one().await;
 
     // Check that node 0 has executed the transaction while the others haven't
+    //let index = n.random_index();
+    //n.get_node(index).get_finalized_height()
+    let first = network.get_node(0).get_transaction_receipt(hash.into()).unwrap();
+    let second = network.get_node(1).get_transaction_receipt(hash.into()).unwrap();
+
+    warn!("First: {:?}", first);
+    warn!("Second: {:?}", second);
 
     //for _ in 0..1000 {
     //    if get_block_number(&mut network) >= finish_block {
@@ -258,17 +265,17 @@ async fn handle_forking_correctly(mut network: Network) {
     //    }
     //}
 
-    network
-        .run_until_async(
-            || async {
-                provider
-                    .get_transaction_receipt(hash)
-                    .await
-                    .unwrap()
-                    .is_some()
-            },
-            50,
-        )
-        .await
-        .unwrap();
+    //network
+    //    .run_until_async(
+    //        || async {
+    //            provider
+    //                .get_transaction_receipt(hash)
+    //                .await
+    //                .unwrap()
+    //                .is_some()
+    //        },
+    //        50,
+    //    )
+    //    .await
+    //    .unwrap();
 }

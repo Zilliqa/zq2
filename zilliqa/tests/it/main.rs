@@ -356,6 +356,10 @@ impl Network {
 
     fn collect_messages(&mut self) -> Vec<(PeerId, Option<PeerId>, Message)> {
         let mut messages = vec![];
+
+        // Poll the receiver with `unconstrained` to ensure it won't be pre-empted. This makes sure we always
+        // get an item if it has been sent. It does not lead to starvation, because we evaluate the returned
+        // future with `.now_or_never()` which instantly returns `None` if the future is not ready.
         for (_i, receiver) in self.receivers.iter_mut().enumerate() {
             loop {
                 match tokio::task::unconstrained(receiver.next()).now_or_never() {
@@ -444,7 +448,7 @@ impl Network {
             messages.retain(|(s, d, m)| {
                 if let Message::External(external_message) = m {
                     if let ExternalMessage::Proposal(_) = external_message {
-                        removed_items.push((*s, *d, *m));
+                        removed_items.push((s.clone(), d.clone(), m.clone()));
                         false;
                     }
                 }
@@ -455,8 +459,8 @@ impl Network {
                 // If specifically to a node, only allow node 0
                 if let Some(dest) = d {
                     // We actually want to allow this message, put it back into the queue
-                    if *dest == self.nodes[0].peer_id {
-                        self.resend_message.send((*s, *d, *m)).unwrap();
+                    if dest == self.nodes[0].peer_id {
+                        self.resend_message.send((s, Some(dest), m)).unwrap();
                         continue;
                     }
 
@@ -465,25 +469,31 @@ impl Network {
                 } else {
                     // Broadcast seen! Push it back into the queue with specific destination of node 0
                     self.resend_message
-                        .send((*s, Some(self.nodes[0].peer_id), *m))
+                        .send((s, Some(self.nodes[0].peer_id), m))
                         .unwrap();
                     broadcast_handled = true;
                     break;
                 }
             }
 
+            // All but one allowed through, we can now quit
+            if proposals_seen == self.nodes.len() - 1 || broadcast_handled {
+                // Now process all available messages to make sure the nodes execute them
+                trace!("Processing all remaining messages");
+
+                for message in messages {
+                    self.handle_message(message);
+                }
+
+                break;
+            }
+
             // Requeue the other messages
             for message in messages {
                 self.resend_message.send(message).unwrap();
             }
-
-            // All but one allowed through, we can now quit
-            if proposals_seen == self.nodes.len() - 1 || broadcast_handled {
-                break;
-            }
         }
 
-        // Now process all available messages to make sure the nodes execute them
     }
 
     // Drop the first message in each node queue with N% probability per tick
@@ -495,20 +505,20 @@ impl Network {
         for (_i, receiver) in self.receivers.iter_mut().enumerate() {
             // Peek at the messages in the queue
 
-            //let drop = self.rng.lock().unwrap().gen_bool(failure_rate);
-            //if drop {
-            //    // Don't really care too much what the reciever has, just pop something off if
-            //    // possible
-            //    match tokio::task::unconstrained(receiver.next()).now_or_never() {
-            //        Some(None) => {
-            //            unreachable!("stream was terminated, this should be impossible");
-            //        }
-            //        Some(Some(message)) => {
-            //            info!("***** Randomly dropping message: {:?}", message);
-            //        }
-            //        _ => {}
-            //    }
-            //}
+            let drop = self.rng.lock().unwrap().gen_bool(failure_rate);
+            if drop {
+                // Don't really care too much what the reciever has, just pop something off if
+                // possible
+                match tokio::task::unconstrained(receiver.next()).now_or_never() {
+                    Some(None) => {
+                        unreachable!("stream was terminated, this should be impossible");
+                    }
+                    Some(Some(message)) => {
+                        info!("***** Randomly dropping message: {:?}", message);
+                    }
+                    _ => {}
+                }
+            }
         }
 
         self.tick().await;
@@ -520,25 +530,23 @@ impl Network {
 
         // Take all the currently ready messages from the stream.
         let mut messages = Vec::new();
-        for (_i, receiver) in self.receivers.iter_mut().enumerate() {
-            loop {
-                // Poll the receiver with `unconstrained` to ensure it won't be pre-empted. This makes sure we always
-                // get an item if it has been sent. It does not lead to starvation, because we evaluate the returned
-                // future with `.now_or_never()` which instantly returns `None` if the future is not ready.
-                match tokio::task::unconstrained(receiver.next()).now_or_never() {
-                    Some(Some(message)) => {
-                        messages.push(message);
-                    }
-                    Some(None) => {
-                        warn!("Stream was unreachable!");
-                        unreachable!("stream was terminated, this should be impossible");
-                    }
-                    None => {
-                        break;
-                    }
-                }
-            }
-        }
+        messages = self.collect_messages();
+        //for (_i, receiver) in self.receivers.iter_mut().enumerate() {
+        //    loop {
+        //        //match tokio::task::unconstrained(receiver.next()).now_or_never() {
+        //        //    Some(Some(message)) => {
+        //        //        messages.push(message);
+        //        //    }
+        //        //    Some(None) => {
+        //        //        warn!("Stream was unreachable!");
+        //        //        unreachable!("stream was terminated, this should be impossible");
+        //        //    }
+        //        //    None => {
+        //        //        break;
+        //        //    }
+        //        //}
+        //    }
+        //}
 
         trace!(
             "{} possible messages to send ({:?})",
@@ -571,7 +579,11 @@ impl Network {
             format_message(&self.nodes, source, destination, &message)
         );
 
-        if let Message::Internal(internal_message) = message {
+        self.handle_message((source, destination, message))
+    }
+
+    fn handle_message(&mut self, message: (PeerId, Option<PeerId>, Message)) {
+        if let Message::Internal(internal_message) = message.2 {
             if let InternalMessage::LaunchShard(network_id) = internal_message {
                 if let Some(network) = self.children.get_mut(&network_id) {
                     trace!("Launching shard node for {network_id} - adding new node to shard");
@@ -583,7 +595,7 @@ impl Network {
                 }
             }
         } else {
-            let nodes: Vec<&TestNode> = if let Some(destination) = destination {
+            let nodes: Vec<&TestNode> = if let Some(destination) = message.1 {
                 vec![self
                     .nodes
                     .iter()
@@ -599,7 +611,7 @@ impl Network {
                     node.inner
                         .lock()
                         .unwrap()
-                        .handle_message(source, message.clone())
+                        .handle_message(message.0, message.2.clone())
                         .unwrap();
                 });
             }
