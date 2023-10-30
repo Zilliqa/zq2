@@ -58,7 +58,7 @@ fn get_block_number(n: &mut Network) -> u64 {
 // note: this drops all messages, not just consensus messages, but there should only be
 // consensus messages in the network anyway
 #[zilliqa_macros::test]
-async fn block_production_even_when_lossy_network(mut network: Network) {
+async fn block_aproduction_even_when_lossy_network(mut network: Network) {
     let failure_rate = 0.1;
     let start_block = 5;
     let finish_block = 8;
@@ -111,6 +111,8 @@ async fn block_production(mut network: Network) {
     info!("Adding networked node.");
     let index = network.add_node(true);
 
+    println!("\n\n\n\n\n\n\n\n\n\n\n==================================================\n\n\n\n\n\n\n Restarting with new node. \n\n\n\n\n\n\n\n\n\n ========================================\n\n\n\n\n\n\n\n\n\n\n\n\n");
+
     network
         .run_until(
             |n| {
@@ -120,7 +122,7 @@ async fn block_production(mut network: Network) {
                     .map_or(0, |b| b.number())
                     >= 10
             },
-            500,
+            100,
         )
         .await
         .unwrap();
