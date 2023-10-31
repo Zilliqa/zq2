@@ -382,7 +382,7 @@ impl Network {
     // Take all the currently ready messages from the stream,
     // remove N-1 propose messages we see where network size = N and the remaining one is
     // the first node in the vector
-    // Only perform this when the propose message contains one or more txs.
+    // *** Only perform this when the propose message contains one or more txs.
     pub async fn drop_propose_messages_except_one(&mut self) {
         let mut counter = 0;
         let mut proposals_seen = 0;
@@ -412,6 +412,7 @@ impl Network {
 
             trace!("messages all size: {}", messages.len());
 
+            // Remove the matching messages
             messages.retain(|(s, d, m)| {
                 if let Message::External(external_message) = m {
                     if let ExternalMessage::Proposal(prop) = external_message {
@@ -425,15 +426,12 @@ impl Network {
                 true
             });
 
-            trace!("messages all size after retain: {}", messages.len());
-
+            // Handle the removed proposes correctly for both cases of broadcast and single cast
             for (s, d, m) in removed_items {
                 // If specifically to a node, only allow node 0
                 if let Some(dest) = d {
-                    trace!("Non broadcast proposal seen, requeueing with dest of node 0");
                     // We actually want to allow this message, put it back into the queue
                     if dest == self.nodes[0].peer_id {
-                        //self.resend_message.send((s, Some(dest), m)).unwrap();
                         messages.push((s, Some(dest), m));
                         continue;
                     }
@@ -442,14 +440,9 @@ impl Network {
                     proposals_seen += 1;
                 } else {
                     // Broadcast seen! Push it back into the queue with specific destination of node 0
-                    //self.resend_message
-                    //    .send((s, Some(self.nodes[0].peer_id), m))
-                    //    .unwrap();
-
                     messages.push((s, Some(self.nodes[0].peer_id), m));
 
                     broadcast_handled = true;
-                    trace!("Broadcast proposal seen, requeueing with dest of node 0");
                     break;
                 }
             }
@@ -463,11 +456,8 @@ impl Network {
                 );
 
                 for message in messages {
-                    trace!("******** Processing message: {:?}", message);
                     self.handle_message(message);
                 }
-
-                trace!("Done.");
 
                 break;
             }

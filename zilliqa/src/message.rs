@@ -295,7 +295,7 @@ impl fmt::Display for BlockHeader {
 
 // Helper function to format SystemTime as a string
 fn format_system_time(time: SystemTime) -> String {
-    let utc_time = Utc.timestamp(
+    let utc_time = Utc.timestamp_opt(
         time.duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64,
