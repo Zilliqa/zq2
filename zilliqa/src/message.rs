@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
@@ -288,19 +289,28 @@ impl fmt::Display for BlockHeader {
         write!(f, "Block Hash: {} ", self.hash)?;
         write!(f, "Parent Hash: {} ", self.parent_hash)?;
         write!(f, "State Root Hash: {} ", self.state_root_hash)?;
-        write!(f, "Timestamp: {} ", format_system_time(self.timestamp))?;
+        write!(
+            f,
+            "Timestamp: {} ",
+            format_system_time(Some(self.timestamp))
+        )?;
         Ok(())
     }
 }
 
 // Helper function to format SystemTime as a string
-fn format_system_time(time: SystemTime) -> String {
-    let utc_time = Utc.timestamp_opt(
-        time.duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64,
-        0,
-    );
+fn format_system_time(timestamp_opt: Option<SystemTime>) -> String {
+    let utc_time = timestamp_opt
+        .map(|time| {
+            Utc.timestamp(
+                time.duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_else(|_| Duration::from_secs(0))
+                    .as_secs() as i64,
+                0,
+            )
+        })
+        .unwrap_or_else(Utc::now); // Use current time if timestamp is None
+
     utc_time.to_rfc3339()
 }
 
