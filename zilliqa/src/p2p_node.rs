@@ -1,7 +1,7 @@
 //! A node in the Zilliqa P2P network. May coordinate multiple shard nodes.
 
 use crate::cfg::{ConsensusConfig, NodeConfig};
-use itertools::Itertools;
+
 use std::{collections::HashMap, iter};
 use tokio::{sync::mpsc::UnboundedSender, task::JoinSet};
 
@@ -18,11 +18,11 @@ use libp2p::{
     futures::StreamExt,
     gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
     identify,
-    kad::{store::MemoryStore, Kademlia},
+    kad::{self, store::MemoryStore},
     mdns,
     multiaddr::{Multiaddr, Protocol},
     noise,
-    swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
+    swarm::{self, NetworkBehaviour, SwarmEvent},
     tcp, yamux, PeerId, Swarm, Transport,
 };
 
@@ -42,7 +42,7 @@ struct Behaviour {
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
     identify: identify::Behaviour,
-    kademlia: Kademlia<MemoryStore>,
+    kademlia: kad::Behaviour<MemoryStore>,
 }
 
 /// Messages circulating over the p2p network.
@@ -112,10 +112,15 @@ impl P2pNode {
                 "/ipfs/id/1.0.0".to_owned(),
                 key_pair.public(),
             )),
-            kademlia: Kademlia::new(peer_id, MemoryStore::new(peer_id)),
+            kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
         };
 
-        let swarm = SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id).build();
+        let swarm = Swarm::new(
+            transport,
+            behaviour,
+            peer_id,
+            swarm::Config::with_tokio_executor(),
+        );
 
         Ok(Self {
             shard_nodes: HashMap::new(),
@@ -256,7 +261,6 @@ impl P2pNode {
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id })) => {
                         for addr in listen_addrs {
-                            info!(%peer_id, %addr, "identity info received");
                             self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                         }
                         // Mark the address observed for us by the external peer as confirmed.
@@ -317,12 +321,6 @@ impl P2pNode {
                     let from = self.peer_id;
 
                     let topic = Self::shard_id_to_topic(shard_id);
-
-                    // Push messages back into queue if there are no peers
-                    if self.swarm.behaviour().gossipsub.all_peers().collect_vec().is_empty() {
-                        let _ = self.outbound_message_sender.send((dest, shard_id, message));
-                        continue;
-                    }
 
                     match dest {
                         Some(dest) => {

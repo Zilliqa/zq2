@@ -117,8 +117,15 @@ impl NewView {
 pub struct BlockRequest(pub BlockRef);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockBatchRequest(pub BlockRef);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
     pub block: Block,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockBatchResponse {
+    pub blocks: Vec<Block>,
 }
 
 /// A message intended to be sent over the network as part of p2p communication.
@@ -129,6 +136,8 @@ pub enum ExternalMessage {
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
+    BlockBatchRequest(BlockBatchRequest),
+    BlockBatchResponse(BlockBatchResponse),
     NewTransaction(SignedTransaction),
     RequestResponse,
     JoinCommittee(NodePublicKey),
@@ -149,6 +158,8 @@ impl ExternalMessage {
             ExternalMessage::NewView(_) => "NewView",
             ExternalMessage::BlockRequest(_) => "BlockRequest",
             ExternalMessage::BlockResponse(_) => "BlockResponse",
+            ExternalMessage::BlockBatchRequest(_) => "BlockBatchRequest",
+            ExternalMessage::BlockBatchResponse(_) => "BlockBatchResponse",
             ExternalMessage::NewTransaction(_) => "NewTransaction",
             ExternalMessage::RequestResponse => "RequestResponse",
             ExternalMessage::JoinCommittee(_) => "JoinCommittee",
@@ -232,12 +243,14 @@ impl AggregateQc {
 pub enum BlockRef {
     Hash(Hash),
     View(u64),
+    Number(u64),
 }
 
 /// The [Copy]-able subset of a block.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BlockHeader {
-    pub view: u64, // the proposer's index can be derived from the block's view
+    pub view: u64, // only useful to consensus: the proposer can be derived from the block's view
+    pub number: u64, // distinct from view, this is the normal incrementing block number
     pub hash: Hash,
     pub parent_hash: Hash,
     pub signature: NodeSignature,
@@ -254,6 +267,7 @@ impl BlockHeader {
     pub fn genesis(state_root_hash: Hash) -> Self {
         Self {
             view: 0,
+            number: 0,
             hash: BlockHeader::genesis_hash(),
             parent_hash: Hash::ZERO,
             signature: NodeSignature::identity(),
@@ -268,6 +282,7 @@ impl Default for BlockHeader {
     fn default() -> Self {
         Self {
             view: 0,
+            number: 0,
             hash: Hash::ZERO,
             parent_hash: Hash::ZERO,
             signature: NodeSignature::identity(),
@@ -391,7 +406,11 @@ impl Committee {
     }
 
     pub fn leader(&self, view: u64) -> Validator {
-        *self.0.iter().nth(view as usize % self.0.len()).unwrap()
+        *self.0.iter().nth(self.leader_index(view)).unwrap()
+    }
+
+    pub fn leader_index(&self, view: u64) -> usize {
+        view as usize % self.0.len()
     }
 
     pub fn total_weight(&self) -> u128 {
@@ -420,6 +439,7 @@ pub struct Block {
 impl Block {
     pub fn genesis(committee: Committee, state_root_hash: Hash) -> Block {
         let view = 0u64;
+        let number = 0u64;
         let qc = QuorumCertificate {
             signature: NodeSignature::identity(),
             cosigned: bitvec![u8, bitvec::order::Msb0; 1; 0],
@@ -435,8 +455,10 @@ impl Block {
             .flat_map(|v| v.public_key.as_bytes())
             .collect();
 
+        // Could the hash be all zeroes for genesis perhaps?
         let digest = Hash::compute([
             &view.to_be_bytes(),
+            &number.to_be_bytes(),
             qc.compute_hash().as_bytes(),
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
@@ -447,6 +469,7 @@ impl Block {
         Block {
             header: BlockHeader {
                 view,
+                number,
                 hash: digest,
                 parent_hash,
                 signature: NodeSignature::identity(),
@@ -476,6 +499,7 @@ impl Block {
         let computed_hash = if let Some(agg) = &self.agg {
             Hash::compute([
                 &self.view().to_be_bytes(),
+                &self.number().to_be_bytes(),
                 self.qc.compute_hash().as_bytes(),
                 agg.compute_hash().as_bytes(),
                 self.parent_hash().as_bytes(),
@@ -485,6 +509,7 @@ impl Block {
         } else {
             Hash::compute([
                 &self.view().to_be_bytes(),
+                &self.number().to_be_bytes(),
                 self.qc.compute_hash().as_bytes(),
                 self.parent_hash().as_bytes(),
                 self.state_root_hash().as_bytes(),
@@ -503,6 +528,7 @@ impl Block {
     pub fn from_qc(
         secret_key: SecretKey,
         view: u64,
+        number: u64,
         qc: QuorumCertificate,
         parent_hash: Hash,
         state_root_hash: Hash,
@@ -519,6 +545,7 @@ impl Block {
 
         let digest = Hash::compute([
             &view.to_be_bytes(),
+            &number.to_be_bytes(),
             qc.compute_hash().as_bytes(),
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
@@ -529,6 +556,7 @@ impl Block {
         Block {
             header: BlockHeader {
                 view,
+                number,
                 hash: digest,
                 parent_hash,
                 signature,
@@ -546,6 +574,7 @@ impl Block {
     pub fn from_agg(
         secret_key: SecretKey,
         view: u64,
+        number: u64,
         qc: QuorumCertificate,
         agg: AggregateQc,
         parent_hash: Hash,
@@ -562,6 +591,7 @@ impl Block {
 
         let digest = Hash::compute([
             &view.to_be_bytes(),
+            &number.to_be_bytes(),
             qc.compute_hash().as_bytes(),
             agg.compute_hash().as_bytes(),
             parent_hash.as_bytes(),
@@ -572,6 +602,7 @@ impl Block {
         Block {
             header: BlockHeader {
                 view,
+                number,
                 hash: digest,
                 parent_hash,
                 signature,
@@ -591,6 +622,10 @@ impl Block {
 
     pub fn view(&self) -> u64 {
         self.header.view
+    }
+
+    pub fn number(&self) -> u64 {
+        self.header.number
     }
 
     pub fn hash(&self) -> Hash {

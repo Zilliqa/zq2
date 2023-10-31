@@ -15,9 +15,13 @@ use zilliqa::message::{ExternalMessage, InternalMessage};
 use zilliqa::node::Node;
 use zilliqa::state::Address;
 
+extern crate fs_extra;
+use fs_extra::dir::*;
+
 use std::collections::HashMap;
 use std::{
     fmt::Debug,
+    fs,
     rc::Rc,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -38,6 +42,7 @@ use ethers::{
     types::H256,
 };
 use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
+
 use jsonrpsee::{
     types::{Id, RequestSer, Response, ResponsePayload},
     RpcModule,
@@ -129,6 +134,7 @@ fn node(
                         .unwrap()
                         .to_string(),
                 )],
+                consensus_timeout: Duration::from_secs(1),
                 ..Default::default()
             },
             ..Default::default()
@@ -167,6 +173,8 @@ struct TestNode {
 
 struct Network {
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    /// Save the funded genesis address for use in restarts.
+    pub genesis_address: H160,
     /// Child shards.
     pub children: HashMap<u64, Network>,
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
@@ -185,6 +193,9 @@ struct Network {
 
 impl Network {
     pub fn new(rng: Arc<Mutex<ChaCha8Rng>>, nodes: usize, seed: u64) -> Network {
+        // Make sure first thing is to pause system time
+        zilliqa::time::pause_at_epoch();
+
         let mut keys: Vec<_> = (0..nodes)
             .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
             .collect();
@@ -199,6 +210,9 @@ impl Network {
         let genesis_committee = vec![validator];
         let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
+        // save for later use if we restart
+        let genesis_address = secret_key_to_address(&genesis_key);
+
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
@@ -209,7 +223,7 @@ impl Network {
                     key,
                     i,
                     Some(tempfile::tempdir().unwrap()),
-                    secret_key_to_address(&genesis_key),
+                    genesis_address,
                 )
                 .unwrap()
             })
@@ -233,24 +247,9 @@ impl Network {
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
-        // Pause time so we can control it.
-        zilliqa::time::pause_at_epoch();
-
-        for node in &nodes[1..] {
-            // Simulate every node broadcasting a `JoinCommittee` message.
-            resend_message
-                .send((
-                    node.peer_id,
-                    None,
-                    AnyMessage::External(ExternalMessage::JoinCommittee(
-                        node.secret_key.node_public_key(),
-                    )),
-                ))
-                .unwrap();
-        }
-
         Network {
             genesis_committee,
+            genesis_address,
             nodes,
             receivers,
             resend_message,
@@ -309,6 +308,114 @@ impl Network {
         index
     }
 
+    pub fn restart(&mut self) {
+        // We copy the data dirs from the original network, and re-use the same private keys.
+
+        // Note: the tempdir object has to be held in the vector or the OS
+        // will delete it when it goes out of scope.
+        let mut options = CopyOptions::new();
+        options.copy_inside = true;
+
+        // Collect the keys from the validators
+        let keys = self.nodes.iter().map(|n| n.secret_key).collect::<Vec<_>>();
+
+        let validator = (
+            keys[0].node_public_key(),
+            keys[0].to_libp2p_keypair().public().to_peer_id(),
+        );
+        let genesis_committee = vec![validator];
+
+        let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
+            .into_iter()
+            .enumerate()
+            .map(|(i, key)| {
+                // Copy the persistence over
+                let new_data_dir = tempfile::tempdir().unwrap();
+
+                info!("Copying data dir over");
+
+                if let Ok(mut entry) = fs::read_dir(self.nodes[i].dir.as_ref().unwrap().path()) {
+                    let entry = entry.next().unwrap().unwrap();
+                    info!("Copying {:?} to {:?}", entry, new_data_dir);
+
+                    copy(entry.path(), new_data_dir.path(), &options).unwrap();
+                } else {
+                    warn!("Failed to copy data dir over");
+                }
+
+                node(
+                    genesis_committee.clone(),
+                    None,
+                    key,
+                    i,
+                    Some(new_data_dir),
+                    self.genesis_address,
+                )
+                .unwrap()
+            })
+            .multiunzip();
+
+        let mut receivers: Vec<_> = external_receivers
+            .into_iter()
+            .chain(local_receivers.into_iter())
+            .collect();
+
+        for node in &nodes {
+            trace!(
+                "Node {}: {} (dir: {})",
+                node.index,
+                node.peer_id,
+                node.dir.as_ref().unwrap().path().to_string_lossy(),
+            );
+        }
+
+        let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
+        let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
+        receivers.push(receive_resend_message);
+
+        self.nodes = nodes;
+        self.receivers = receivers;
+        self.resend_message = resend_message;
+
+        // Now trigger a timeout in all of the nodes until we see network activity again
+        // this could of course spin forever, but the test itself should time out.
+        loop {
+            for node in &self.nodes {
+                if node.inner.lock().unwrap().handle_timeout() {
+                    return;
+                }
+                zilliqa::time::advance(Duration::from_millis(500));
+            }
+        }
+    }
+
+    // Drop the first message in each node queue with N% probability per tick
+    pub async fn randomly_drop_messages_then_tick(&mut self, failure_rate: f64) {
+        if !(0.0..=1.0).contains(&failure_rate) {
+            panic!("failure rate is a probability and must be between 0 and 1");
+        }
+
+        for (_i, receiver) in self.receivers.iter_mut().enumerate() {
+            let drop = self.rng.lock().unwrap().gen_bool(failure_rate);
+            if drop {
+                // Don't really care too much what the reciever has, just pop something off if
+                // possible
+                match tokio::task::unconstrained(receiver.next()).now_or_never() {
+                    Some(None) => {
+                        unreachable!("stream was terminated, this should be impossible");
+                    }
+                    Some(Some(message)) => {
+                        //messages.push(message);
+                        info!("***** Randomly dropping message: {:?}", message);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        self.tick().await;
+    }
+
     pub async fn tick(&mut self) {
         // Advance time.
         zilliqa::time::advance(Duration::from_millis(1));
@@ -325,6 +432,7 @@ impl Network {
                         messages.push(message);
                     }
                     Some(None) => {
+                        warn!("Stream was unreachable!");
                         unreachable!("stream was terminated, this should be impossible");
                     }
                     None => {
@@ -344,6 +452,12 @@ impl Network {
         );
 
         if messages.is_empty() {
+            trace!("Messages were empty - advance time and trigger timeout in all nodes!");
+            zilliqa::time::advance(Duration::from_millis(500));
+
+            for node in &self.nodes {
+                node.inner.lock().unwrap().handle_timeout();
+            }
             return;
         }
         // Pick a random message
@@ -378,32 +492,24 @@ impl Network {
                 }
             }
             AnyMessage::External(external_message) => {
-                if let Some(destination) = destination {
-                    let node = self
+                let nodes: Vec<&TestNode> = if let Some(destination) = destination {
+                    vec![self
                         .nodes
                         .iter()
                         .find(|n| n.peer_id == destination)
-                        .unwrap();
-                    let span = tracing::span!(tracing::Level::INFO, "handle_message", node.index);
+                        .unwrap()]
+                } else {
+                    self.nodes.iter().collect()
+                };
+                for (index, node) in nodes.iter().enumerate() {
+                    let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                     span.in_scope(|| {
                         node.inner
                             .lock()
                             .unwrap()
-                            .handle_network_message(source, external_message)
+                            .handle_network_message(source, external_message.clone())
                             .unwrap();
                     });
-                } else {
-                    for node in &self.nodes {
-                        let span =
-                            tracing::span!(tracing::Level::INFO, "handle_message", node.index);
-                        span.in_scope(|| {
-                            node.inner
-                                .lock()
-                                .unwrap()
-                                .handle_network_message(source, external_message.clone())
-                                .unwrap();
-                        });
-                    }
                 }
             }
         }
@@ -520,7 +626,7 @@ fn format_message(
             ExternalMessage::Proposal(proposal) => format!(
                 "{} [{}] ({:?})",
                 message.name(),
-                proposal.header.view,
+                proposal.header.number,
                 proposal
                     .committee
                     .iter()
@@ -531,7 +637,7 @@ fn format_message(
                 format!("{} [{:?}]", message.name(), request.0)
             }
             ExternalMessage::BlockResponse(response) => {
-                format!("{} [{}]", message.name(), response.block.view())
+                format!("{} [{}]", message.name(), response.block.number())
             }
             _ => message.name().to_owned(),
         },
