@@ -1,19 +1,19 @@
 use std::collections::BTreeSet;
-use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
-use chrono::{TimeZone, Utc};
 use libp2p::PeerId;
 use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{fmt, fmt::Display, fmt::Formatter, str::FromStr};
+use time::format_description;
 
 use crate::{
     consensus::Validator,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     state::SignedTransaction,
+    time::OffsetDateTime,
     time::SystemTime,
 };
 
@@ -292,26 +292,20 @@ impl fmt::Display for BlockHeader {
         write!(
             f,
             "Timestamp: {} ",
-            format_system_time(Some(self.timestamp))
+            systemtime_strftime(self.timestamp, "%d/%m/%Y %T".to_string()).unwrap()
         )?;
         Ok(())
     }
 }
 
 // Helper function to format SystemTime as a string
-fn format_system_time(timestamp_opt: Option<SystemTime>) -> String {
-    let utc_time = timestamp_opt
-        .map(|time| {
-            Utc.timestamp(
-                time.duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap_or_else(|_| Duration::from_secs(0))
-                    .as_secs() as i64,
-                0,
-            )
-        })
-        .unwrap_or_else(Utc::now); // Use current time if timestamp is None
-
-    utc_time.to_rfc3339()
+// https://stackoverflow.com/questions/45386585
+fn systemtime_strftime<T>(dt: T, format: String) -> Result<String, time::error::Format>
+where
+    T: Into<OffsetDateTime>,
+{
+    let f = format_description::parse(&format).unwrap();
+    dt.into().format(&f)
 }
 
 impl BlockHeader {

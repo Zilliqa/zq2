@@ -6,7 +6,7 @@ mod web3;
 mod zil;
 use ethers::solc::SHANGHAI_SOLC;
 use std::env;
-use std::ops::{DerefMut, Index};
+use std::ops::DerefMut;
 use zilliqa::cfg::ConsensusConfig;
 use zilliqa::cfg::NodeConfig;
 use zilliqa::crypto::{Hash, NodePublicKey, SecretKey};
@@ -410,17 +410,13 @@ impl Network {
             // repackage it as direct messages to all nodes except node 0.
             let mut removed_items = Vec::new();
 
-            trace!("messages all size: {}", messages.len());
-
             // Remove the matching messages
             messages.retain(|(s, d, m)| {
-                if let Message::External(external_message) = m {
-                    if let ExternalMessage::Proposal(prop) = external_message {
-                        if !prop.transactions.is_empty() {
-                            removed_items.push((*s, *d, m.clone()));
-                            trace!("Removing message.");
-                            return false;
-                        }
+                if let Message::External(ExternalMessage::Proposal(prop)) = m {
+                    if !prop.transactions.is_empty() {
+                        removed_items.push((*s, *d, m.clone()));
+                        trace!("Removing message.");
+                        return false;
                     }
                 }
                 true
@@ -502,8 +498,7 @@ impl Network {
         zilliqa::time::advance(Duration::from_millis(1));
 
         // Take all the currently ready messages from the stream.
-        let mut messages = Vec::new();
-        messages = self.collect_messages();
+        let mut messages = self.collect_messages();
 
         trace!(
             "{} possible messages to send ({:?})",

@@ -6,6 +6,18 @@
 #[cfg(not(feature = "fake_time"))]
 pub type SystemTime = std::time::SystemTime;
 
+pub type OffsetDateTime = time::OffsetDateTime;
+//pub type format_description = time::format_description;
+
+impl From<time_impl::SystemTime> for OffsetDateTime {
+    fn from(time: time_impl::SystemTime) -> Self {
+        let duration = time
+            .duration_since(time_impl::SystemTime::UNIX_EPOCH)
+            .unwrap();
+        time::OffsetDateTime::from_unix_timestamp(duration.as_secs() as i64).unwrap()
+    }
+}
+
 #[cfg(feature = "fake_time")]
 pub use time_impl::*;
 
