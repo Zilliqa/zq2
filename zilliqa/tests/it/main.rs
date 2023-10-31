@@ -6,7 +6,7 @@ mod web3;
 mod zil;
 use ethers::solc::SHANGHAI_SOLC;
 use std::env;
-use std::ops::DerefMut;
+use std::ops::{DerefMut, Index};
 use zilliqa::cfg::ConsensusConfig;
 use zilliqa::cfg::NodeConfig;
 use zilliqa::crypto::{Hash, NodePublicKey, SecretKey};
@@ -382,6 +382,7 @@ impl Network {
     // Take all the currently ready messages from the stream,
     // remove N-1 propose messages we see where network size = N and the remaining one is
     // the first node in the vector
+    // Only perform this when the propose message contains one or more txs.
     pub async fn drop_propose_messages_except_one(&mut self) {
         let mut counter = 0;
         let mut proposals_seen = 0;
@@ -400,67 +401,41 @@ impl Network {
             //let mut messages = Vec::new();
             let mut messages = self.collect_messages();
 
-            //for (_i, receiver) in self.receivers.iter_mut().enumerate() {
-            //    loop {
-            //        match tokio::task::unconstrained(receiver.next()).now_or_never() {
-            //            Some(Some(message)) => {
-            //                messages.push(message);
-            //            }
-            //            Some(None) => {
-            //                warn!("Stream was unreachable!");
-            //                unreachable!("stream was terminated, this should be impossible");
-            //            }
-            //            None => {
-            //                break;
-            //            }
-            //        }
-            //    }
-            //}
-
             if messages.is_empty() {
                 warn!("Messages were empty - advance time faster!");
                 zilliqa::time::advance(Duration::from_millis(50));
                 continue;
             }
 
-            // Filter path
-            //messages.iter().filter(|(s, d, m)| {
-            //    if let Message::External(external_message) = m {
-            //        if let Some(dest) = d {
-            //        if let ExternalMessage::Proposal(_) = external_message {
-            //            println!("Found proposal message from {} to {:?} message: {:?}", s, d, m);
-            //            let matches_allowed = *dest == self.nodes[0].peer_id;
-
-            //            if !matches_allowed {
-            //                proposals_seen += 1;
-            //            }
-            //            return matches_allowed;
-            //        }
-            //        }
-            //    }
-            //    true
-            //});
-
             // filter out all the propose messages, except node 0. If the proposal is a broadcast,
             // repackage it as direct messages to all nodes except node 0.
             let mut removed_items = Vec::new();
 
+            trace!("messages all size: {}", messages.len());
+
             messages.retain(|(s, d, m)| {
                 if let Message::External(external_message) = m {
-                    if let ExternalMessage::Proposal(_) = external_message {
-                        removed_items.push((s.clone(), d.clone(), m.clone()));
-                        false;
+                    if let ExternalMessage::Proposal(prop) = external_message {
+                        if prop.transactions.len() > 0 {
+                            removed_items.push((s.clone(), d.clone(), m.clone()));
+                            trace!("Removing message.");
+                            return false;
+                        }
                     }
                 }
                 true
             });
 
+            trace!("messages all size after retain: {}", messages.len());
+
             for (s, d, m) in removed_items {
                 // If specifically to a node, only allow node 0
                 if let Some(dest) = d {
+                    trace!("Non broadcast proposal seen, requeueing with dest of node 0");
                     // We actually want to allow this message, put it back into the queue
                     if dest == self.nodes[0].peer_id {
-                        self.resend_message.send((s, Some(dest), m)).unwrap();
+                        //self.resend_message.send((s, Some(dest), m)).unwrap();
+                        messages.push((s, Some(dest), m));
                         continue;
                     }
 
@@ -468,10 +443,14 @@ impl Network {
                     proposals_seen += 1;
                 } else {
                     // Broadcast seen! Push it back into the queue with specific destination of node 0
-                    self.resend_message
-                        .send((s, Some(self.nodes[0].peer_id), m))
-                        .unwrap();
+                    //self.resend_message
+                    //    .send((s, Some(self.nodes[0].peer_id), m))
+                    //    .unwrap();
+
+                    messages.push((s, Some(self.nodes[0].peer_id), m));
+
                     broadcast_handled = true;
+                    trace!("Broadcast proposal seen, requeueing with dest of node 0");
                     break;
                 }
             }
@@ -479,11 +458,14 @@ impl Network {
             // All but one allowed through, we can now quit
             if proposals_seen == self.nodes.len() - 1 || broadcast_handled {
                 // Now process all available messages to make sure the nodes execute them
-                trace!("Processing all remaining messages");
+                trace!("Processing all remaining messages of len {}", messages.len());
 
                 for message in messages {
+                    trace!("******** Processing message: {:?}", message);
                     self.handle_message(message);
                 }
+
+                trace!("Done.");
 
                 break;
             }
@@ -531,22 +513,6 @@ impl Network {
         // Take all the currently ready messages from the stream.
         let mut messages = Vec::new();
         messages = self.collect_messages();
-        //for (_i, receiver) in self.receivers.iter_mut().enumerate() {
-        //    loop {
-        //        //match tokio::task::unconstrained(receiver.next()).now_or_never() {
-        //        //    Some(Some(message)) => {
-        //        //        messages.push(message);
-        //        //    }
-        //        //    Some(None) => {
-        //        //        warn!("Stream was unreachable!");
-        //        //        unreachable!("stream was terminated, this should be impossible");
-        //        //    }
-        //        //    None => {
-        //        //        break;
-        //        //    }
-        //        //}
-        //    }
-        //}
 
         trace!(
             "{} possible messages to send ({:?})",
@@ -561,8 +527,12 @@ impl Network {
             trace!("Messages were empty - advance time and trigger timeout in all nodes!");
             zilliqa::time::advance(Duration::from_millis(500));
 
-            for node in &self.nodes {
-                node.inner.lock().unwrap().handle_timeout();
+            for (index, node) in self.nodes.iter().enumerate() {
+                let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
+
+                span.in_scope(|| {
+                    node.inner.lock().unwrap().handle_timeout();
+                });
             }
             return;
         }
@@ -605,7 +575,8 @@ impl Network {
                 self.nodes.iter().collect()
             };
 
-            for (index, node) in nodes.iter().enumerate() {
+            for node in &nodes {
+                let index = self.nodes.iter().position(|n| n.peer_id == node.peer_id).unwrap_or(9999);
                 let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                 span.in_scope(|| {
                     node.inner

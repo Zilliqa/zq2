@@ -36,6 +36,12 @@ use crate::{
 };
 
 #[derive(Debug)]
+/// The state of the blockchain, consisting of:
+/// -  state - a database of Map<Address, Map<key,value>>
+/// -  accounts, Map<Address, Account>
+/// where an address is a 20-byte array representing a user.
+/// where Account is (nonce, code, storage_root)
+/// the storage root is used to index into the state
 pub struct State {
     db: Arc<SledDb>,
     accounts: PatriciaTrie<SledDb>,
@@ -400,6 +406,12 @@ impl SignedTransaction {
         Ok(())
     }
 }
+
+//impl From<TypedTransaction> for SignedTransaction {
+//    fn from(tx: TypedTransaction) -> SignedTransaction {
+//        SignedTransaction::new(Transaction{}, SigningInfo::Eth {v: tx.sighash()});
+//    }
+//}
 
 fn encode_zilliqa_transaction(
     txn: &Transaction,

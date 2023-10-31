@@ -218,6 +218,7 @@ pub struct Consensus {
     /// Transactions that have been executed and included in a block, and the blocks the are
     /// included in.
     transactions: Tree,
+    /// map of block hash to transaction receipts
     transaction_receipts: Tree,
     /// The account store.
     state: State,
@@ -499,8 +500,23 @@ impl Consensus {
     // This function is called when we suspect that we are out of sync with the network/need to catchup
     pub fn download_blocks_up_to_head(&mut self) -> Result<()> {
         let head_block = self.head_block();
+
+        let random_validator_peer = {
+            // Remove self from potential people to send to
+            let mut other_peers = head_block.committee.clone();
+            other_peers.remove_by_peer_id(self.peer_id());
+            //if other_peers.is_empty() {
+            //    return None;
+            //}
+            //Some(other_peers.choose_random())
+            match other_peers.len() {
+                0 => None,
+                _ => Some(other_peers.choose_random().peer_id),
+            }
+        };
+
         self.block_store
-            .request_blocks(head_block.header.number + 1)?;
+            .request_blocks(random_validator_peer, head_block.header.number + 1)?;
 
         Ok(())
     }
@@ -589,6 +605,8 @@ impl Consensus {
 
     pub fn proposal(&mut self, proposal: Proposal) -> Result<Option<(PeerId, Vote)>> {
         let (block, transactions) = proposal.into_parts();
+        let head_block = self.head_block();
+
         trace!(
             block_view = block.view(),
             block_number = block.number(),
@@ -597,6 +615,11 @@ impl Consensus {
 
         if self.block_store.contains_block(block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
+            return Ok(None);
+        }
+
+        if block.view() <= head_block.header.view {
+            warn!("Rejecting block - view not greater than our current head block! {} vs {}", block.view(), head_block.header.view);
             return Ok(None);
         }
 
@@ -635,6 +658,21 @@ impl Consensus {
             );
 
             let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
+
+            if transactions.len() > 0 {
+                trace!("applying {} transactions to state", transactions.len());
+            }
+
+            // Must make sure state root hash is set to the parent's state root hash before applying transactions
+            if self.state.root_hash()? != parent.state_root_hash() {
+                warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}", parent.state_root_hash(), self.state.root_hash()?);
+            }
+
+            if head_block.hash() != parent.hash() || block.number() != head_block.header.number + 1 {
+                warn!("******* Fork detected! \nHead block: {} \nBlock prop: {}", head_block, block);
+                self.deal_with_fork(&block)?;
+            }
+
             for txn in &transactions {
                 if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
                     let tx_hash = txn.hash();
@@ -651,8 +689,11 @@ impl Consensus {
                     block_receipts.push(receipt);
                     self.transactions
                         .insert(txn.hash().0, bincode::serialize(&txn)?)?;
+                } else {
+                    warn!("Failed to apply TX! Something might be wrong");
                 }
             }
+
             // If we were the proposer we would've already processed the transactions
             if !self.transaction_receipts.contains_key(block.hash().0)? {
                 self.transaction_receipts
@@ -988,7 +1029,7 @@ impl Consensus {
                         (signatures, cosigned, cosigned_weight, supermajority_reached),
                     );
                     // as a future improvement, process the proposal before broadcasting it
-                    trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, "######### vote successful, we are proposing block");
+                    trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
 
                     return Ok(Some((proposal, applied_transactions)));
                     // we don't want to keep the collected votes if we proposed a new block
@@ -1175,7 +1216,7 @@ impl Consensus {
                         self.get_next_committee(parent.committee),
                     );
 
-                    trace!(proposal_hash = ?proposal.hash(), view = self.view.get_view(), "######### creating proposal block from new view");
+                    trace!(proposal_hash = ?proposal.hash(), view = self.view.get_view(), height = proposal.header.number, "######### creating proposal block from new view");
 
                     // as a future improvement, process the proposal before broadcasting it
                     return Ok(Some(proposal));
@@ -1389,6 +1430,7 @@ impl Consensus {
                 Ok(true) => {
                     let block_hash = proposal_hash;
                     self.check_and_commit(block_hash)?;
+                    trace!("check block aggregate is outdated? {}", outdated);
                     Ok(!outdated)
                 }
                 Ok(false) => {
@@ -1411,6 +1453,8 @@ impl Consensus {
                             self.view.get_view()
                         );
                     }
+
+                    trace!("check block is outdated? {}", outdated);
 
                     Ok(!outdated)
                 } else {
@@ -1527,7 +1571,7 @@ impl Consensus {
         let proposer = parent.committee.leader(block.view());
 
         trace!(
-            "I think the block proposer is: {}, we are {}",
+            "(check block) I think the block proposer is: {}, we are {}",
             proposer.peer_id,
             self.peer_id()
         );
@@ -1618,7 +1662,7 @@ impl Consensus {
 
         match self.check_block(&block) {
             Ok(()) => {
-                trace!("updating high QC and view, blocks seems good!");
+                trace!("updating high QC and view, blocks seems good! {} {} {}", block.hash(), block.number(), block.view());
                 self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
                 self.add_block(block)?;
             }
@@ -1633,7 +1677,7 @@ impl Consensus {
 
     fn add_block(&mut self, block: Block) -> Result<()> {
         let hash = block.hash();
-        debug!(?hash, ?block.header.view, "added block");
+        debug!(?hash, ?block.header.view, ?block.header.number, "added block");
         self.block_store.process_block(block)?;
         Ok(())
     }
@@ -1773,6 +1817,52 @@ impl Consensus {
 
         if signed_sum * 3 <= committee.total_weight() * 2 {
             return Err(anyhow!("no quorum"));
+        }
+
+        Ok(())
+    }
+
+    /// Deal with the fork to this block. The block is assumed to be valid to switch to.
+    /// This will make it so the block is ready to become the new head
+    fn deal_with_fork(&mut self, block: &Block) -> Result<()> {
+        // Start at the head block and recursively unwind the changes that have been made
+        // until the head block is the parent of this block.
+        while self.head_block().header.number >= block.header.number {
+            let head_block = self.head_block();
+            let parent_block = self
+                .get_block(&head_block.parent_hash())?
+                .ok_or_else(|| anyhow!("missing block parent when reverting blocks!"))?;
+
+            if head_block.header.view == 0 {
+                panic!("genesis block is not supposed to be reverted");
+            }
+
+            trace!("Reverting block {}", head_block);
+            // block store doesn't require anything, it will just hold blocks that may now be invalid
+            // block transactions need to be removed from self.transactions and re-injected
+            for tx_hash in &head_block.transactions {
+                let orig_tx = self.get_transaction_by_hash(*tx_hash).unwrap().unwrap();
+                self.transactions.remove(tx_hash.0);
+
+                // Put tx back in.
+                self.new_transaction(orig_tx).unwrap();
+
+                // block hash reverse index, remove tx hash too
+                self.block_hash_reverse_index.remove(tx_hash.0);
+            }
+
+            // TX receipts are indexed by block
+            self.transaction_receipts.remove(head_block.hash().0);
+
+            // State is easily set - must be to the parent block, though
+            self.state.set_to_root(H256(parent_block.state_root_hash().0));
+
+            // Persistence - only need to update head block pointer as it should be impossible
+            // to change finalized height
+            let new_highest = head_block.header.number.saturating_sub(1);
+            self.db.insert(HIGHEST_BLOCK_NUMBER, &new_highest.to_be_bytes())?;
+
+            // touched address index: TODO
         }
 
         Ok(())
