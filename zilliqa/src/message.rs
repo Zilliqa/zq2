@@ -2,12 +2,12 @@ use std::collections::BTreeSet;
 
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
-use serde::{Deserialize, Deserializer, Serialize};
-use sha3::{Digest, Keccak256};
-use std::{fmt::Display, str::FromStr, fmt::Formatter, fmt};
+use chrono::{TimeZone, Utc};
 use libp2p::PeerId;
 use rand::Rng;
-use chrono::{Utc, TimeZone};
+use serde::{Deserialize, Deserializer, Serialize};
+use sha3::{Digest, Keccak256};
+use std::{fmt, fmt::Display, fmt::Formatter, str::FromStr};
 
 use crate::{
     consensus::Validator,
@@ -295,7 +295,12 @@ impl fmt::Display for BlockHeader {
 
 // Helper function to format SystemTime as a string
 fn format_system_time(time: SystemTime) -> String {
-    let utc_time = Utc.timestamp(time.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64, 0);
+    let utc_time = Utc.timestamp(
+        time.duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64,
+        0,
+    );
     utc_time.to_rfc3339()
 }
 
@@ -494,7 +499,15 @@ impl Display for Block {
             write!(f, "Agg QC view: {} ", agg.view)?;
         }
         write!(f, "Transactions: {:?} ", self.transactions)?;
-        write!(f, "Committee: {:?} ", self.committee.0.iter().map(|c| c.peer_id).collect::<Vec<_>>())?;
+        write!(
+            f,
+            "Committee: {:?} ",
+            self.committee
+                .0
+                .iter()
+                .map(|c| c.peer_id)
+                .collect::<Vec<_>>()
+        )?;
         Ok(())
     }
 }

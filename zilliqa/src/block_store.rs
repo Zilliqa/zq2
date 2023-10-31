@@ -102,7 +102,10 @@ impl BlockStore {
     }
 
     pub fn request_blocks(&mut self, peer: Option<PeerId>, number: u64) -> Result<()> {
-        let request = ExternalMessage::BlockBatchRequest(BlockBatchRequest(BlockRef::Number(number)));
+        let request =
+            ExternalMessage::BlockBatchRequest(BlockBatchRequest(BlockRef::Number(number)));
+
+        // We can request blocks from a single peer or from all peers.
         match peer {
             Some(peer) => {
                 self.message_sender
@@ -115,11 +118,6 @@ impl BlockStore {
                     .unwrap();
             }
         }
-        //self.message_sender
-        //    .send_external_message(peer, ExternalMessage::BlockBatchRequest(BlockBatchRequest(
-        //        BlockRef::Number(number),
-        //    )))
-        //    .unwrap();
 
         Ok(())
     }

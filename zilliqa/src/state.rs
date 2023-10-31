@@ -407,12 +407,6 @@ impl SignedTransaction {
     }
 }
 
-//impl From<TypedTransaction> for SignedTransaction {
-//    fn from(tx: TypedTransaction) -> SignedTransaction {
-//        SignedTransaction::new(Transaction{}, SigningInfo::Eth {v: tx.sighash()});
-//    }
-//}
-
 fn encode_zilliqa_transaction(
     txn: &Transaction,
     pub_key: schnorr::PublicKey,

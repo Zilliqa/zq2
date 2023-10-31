@@ -497,7 +497,9 @@ impl Consensus {
             .unwrap()
     }
 
-    // This function is called when we suspect that we are out of sync with the network/need to catchup
+    /// This function is called when we suspect that we are out of sync with the network/need to catchup.
+    /// We ask peers for their chain above our head, if the network is syncronised there should be nothing
+    /// to return.
     pub fn download_blocks_up_to_head(&mut self) -> Result<()> {
         let head_block = self.head_block();
 
@@ -505,10 +507,7 @@ impl Consensus {
             // Remove self from potential people to send to
             let mut other_peers = head_block.committee.clone();
             other_peers.remove_by_peer_id(self.peer_id());
-            //if other_peers.is_empty() {
-            //    return None;
-            //}
-            //Some(other_peers.choose_random())
+
             match other_peers.len() {
                 0 => None,
                 _ => Some(other_peers.choose_random().peer_id),
@@ -619,7 +618,11 @@ impl Consensus {
         }
 
         if block.view() <= head_block.header.view {
-            warn!("Rejecting block - view not greater than our current head block! {} vs {}", block.view(), head_block.header.view);
+            warn!(
+                "Rejecting block - view not greater than our current head block! {} vs {}",
+                block.view(),
+                head_block.header.view
+            );
             return Ok(None);
         }
 
@@ -659,7 +662,7 @@ impl Consensus {
 
             let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
 
-            if transactions.len() > 0 {
+            if !transactions.is_empty() {
                 trace!("applying {} transactions to state", transactions.len());
             }
 
@@ -668,8 +671,12 @@ impl Consensus {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}", parent.state_root_hash(), self.state.root_hash()?);
             }
 
-            if head_block.hash() != parent.hash() || block.number() != head_block.header.number + 1 {
-                warn!("******* Fork detected! \nHead block: {} \nBlock prop: {}", head_block, block);
+            if head_block.hash() != parent.hash() || block.number() != head_block.header.number + 1
+            {
+                warn!(
+                    "******* Fork detected! \nHead block: {} \nBlock prop: {}",
+                    head_block, block
+                );
                 self.deal_with_fork(&block)?;
             }
 
@@ -1662,7 +1669,12 @@ impl Consensus {
 
         match self.check_block(&block) {
             Ok(()) => {
-                trace!("updating high QC and view, blocks seems good! {} {} {}", block.hash(), block.number(), block.view());
+                trace!(
+                    "updating high QC and view, blocks seems good! {} {} {}",
+                    block.hash(),
+                    block.number(),
+                    block.view()
+                );
                 self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
                 self.add_block(block)?;
             }
@@ -1842,25 +1854,27 @@ impl Consensus {
             // block transactions need to be removed from self.transactions and re-injected
             for tx_hash in &head_block.transactions {
                 let orig_tx = self.get_transaction_by_hash(*tx_hash).unwrap().unwrap();
-                self.transactions.remove(tx_hash.0);
+                let _ = self.transactions.remove(tx_hash.0);
 
                 // Put tx back in.
                 self.new_transaction(orig_tx).unwrap();
 
                 // block hash reverse index, remove tx hash too
-                self.block_hash_reverse_index.remove(tx_hash.0);
+                let _ = self.block_hash_reverse_index.remove(tx_hash.0);
             }
 
             // TX receipts are indexed by block
-            self.transaction_receipts.remove(head_block.hash().0);
+            let _ = self.transaction_receipts.remove(head_block.hash().0);
 
             // State is easily set - must be to the parent block, though
-            self.state.set_to_root(H256(parent_block.state_root_hash().0));
+            self.state
+                .set_to_root(H256(parent_block.state_root_hash().0));
 
             // Persistence - only need to update head block pointer as it should be impossible
             // to change finalized height
             let new_highest = head_block.header.number.saturating_sub(1);
-            self.db.insert(HIGHEST_BLOCK_NUMBER, &new_highest.to_be_bytes())?;
+            self.db
+                .insert(HIGHEST_BLOCK_NUMBER, &new_highest.to_be_bytes())?;
 
             // touched address index: TODO
         }

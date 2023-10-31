@@ -398,7 +398,6 @@ impl Network {
                 panic!("Possibly looping forever looking for propose messages.");
             }
 
-            //let mut messages = Vec::new();
             let mut messages = self.collect_messages();
 
             if messages.is_empty() {
@@ -416,8 +415,8 @@ impl Network {
             messages.retain(|(s, d, m)| {
                 if let Message::External(external_message) = m {
                     if let ExternalMessage::Proposal(prop) = external_message {
-                        if prop.transactions.len() > 0 {
-                            removed_items.push((s.clone(), d.clone(), m.clone()));
+                        if !prop.transactions.is_empty() {
+                            removed_items.push((*s, *d, m.clone()));
                             trace!("Removing message.");
                             return false;
                         }
@@ -458,7 +457,10 @@ impl Network {
             // All but one allowed through, we can now quit
             if proposals_seen == self.nodes.len() - 1 || broadcast_handled {
                 // Now process all available messages to make sure the nodes execute them
-                trace!("Processing all remaining messages of len {}", messages.len());
+                trace!(
+                    "Processing all remaining messages of len {}",
+                    messages.len()
+                );
 
                 for message in messages {
                     trace!("******** Processing message: {:?}", message);
@@ -475,7 +477,6 @@ impl Network {
                 self.resend_message.send(message).unwrap();
             }
         }
-
     }
 
     // Drop the first message in each node queue with N% probability per tick
@@ -576,7 +577,11 @@ impl Network {
             };
 
             for node in &nodes {
-                let index = self.nodes.iter().position(|n| n.peer_id == node.peer_id).unwrap_or(9999);
+                let index = self
+                    .nodes
+                    .iter()
+                    .position(|n| n.peer_id == node.peer_id)
+                    .unwrap_or(9999);
                 let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                 span.in_scope(|| {
                     node.inner

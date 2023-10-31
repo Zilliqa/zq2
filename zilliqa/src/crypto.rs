@@ -10,13 +10,13 @@ use anyhow::{anyhow, Result};
 use bls12_381::G2Affine;
 use bls_signatures::Serialize as BlsSerialize;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
+use primitive_types::H256;
 use rand_core;
 use serde::{
     de::{self, Unexpected},
     Deserialize, Serialize,
 };
 use sha3::{Digest, Keccak256};
-use primitive_types::H256;
 
 use crate::state::Address;
 

@@ -1,7 +1,7 @@
 use crate::CombinedJson;
 use crate::Network;
 use ethabi::Token;
-use ethers::{providers::Middleware, types::TransactionRequest, types::H256, types::transaction::eip2718::TypedTransaction, utils::keccak256};
+use ethers::{providers::Middleware, types::TransactionRequest};
 use primitive_types::H160;
 use tracing::*;
 use zilliqa::state::Address;
@@ -220,7 +220,7 @@ async fn launch_shard(mut network: Network) {
 #[zilliqa_macros::test]
 async fn handle_forking_correctly(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    let provider = wallet.provider();
+    let _provider = wallet.provider();
 
     let start_block = 5;
 
@@ -236,19 +236,6 @@ async fn handle_forking_correctly(mut network: Network) {
         .await
         .unwrap();
 
-    // Now, we submit a transaction to the network, which will be included in the next block.
-    // The next tick we do will drop the propose message going to all but node 0, after which we
-    // should find find that node 0 executes the tx and the other nodes do not.
-    // following this, the network should correct so that node 0 is forced to revert that block
-    // and the TX will get included in the next block.
-   // let pending_tx = wallet
-   //     .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
-   //     .await
-   //     .unwrap();
-        //.tx_hash();
-
-    //let tx = wallet.
-
     // Send a single TX to the network
     let hash = wallet
         .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
@@ -256,21 +243,17 @@ async fn handle_forking_correctly(mut network: Network) {
         .unwrap()
         .tx_hash();
 
-    //// Add the TX to everyone mempool so the next propose block is guaranteed to include it
-    //for node in network.nodes.iter_mut() {
-    //    node.inner.get_mut().unwrap().create_transaction(tx.into());
-    //    //node.add_to_mempool(tx.clone()).await;
-    //}
-
-    //network.randomly_drop_messages_then_tick(failure_rate).await;
-    warn!("Dropping messages...");
     network.drop_propose_messages_except_one().await;
 
     // Check that node 0 has executed the transaction while the others haven't
-    //let index = n.random_index();
-    //n.get_node(index).get_finalized_height()
-    let first = network.get_node(0).get_transaction_receipt(hash.into()).unwrap();
-    let second = network.get_node(1).get_transaction_receipt(hash.into()).unwrap();
+    let first = network
+        .get_node(0)
+        .get_transaction_receipt(hash.into())
+        .unwrap();
+    let second = network
+        .get_node(1)
+        .get_transaction_receipt(hash.into())
+        .unwrap();
 
     // Only the first node should have executed the transaction
     assert!(first.is_some());
@@ -278,7 +261,6 @@ async fn handle_forking_correctly(mut network: Network) {
 
     let original_receipt = first.unwrap();
 
-    trace!("nathan.");
     trace!("Running until the network has reverted the block");
     // Now we should be able to run the network until we get a different tx receipt from the first
     // node, which indicates that it has reverted the block
@@ -286,7 +268,6 @@ async fn handle_forking_correctly(mut network: Network) {
         .run_until(
             |n| {
                 let receipt = n.get_node(0).get_transaction_receipt(hash.into());
-                trace!("receipt: {:?}", receipt);
                 match receipt {
                     Ok(Some(receipt)) => receipt.block_hash != original_receipt.block_hash,
                     _ => false,
