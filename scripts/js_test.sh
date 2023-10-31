@@ -45,10 +45,10 @@ echo "Running tests"
 npx hardhat test
 
 retVal=$?
-
+    cat /tmp/zil_log_out.txt | /usr/local/bin/ansi2txt
 pkill -INT zilliqa
 if [ $retVal -ne 0 ]; then
-    cat /tmp/zil_log_out.txt | /usr/local/bin/ansi2txt
+
     echo "!!!!!! Error with JS integration test !!!!!!"
     exit 1
 fi
