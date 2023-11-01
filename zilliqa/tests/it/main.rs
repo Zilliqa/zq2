@@ -415,7 +415,6 @@ impl Network {
                 if let Message::External(ExternalMessage::Proposal(prop)) = m {
                     if !prop.transactions.is_empty() {
                         removed_items.push((*s, *d, m.clone()));
-                        trace!("Removing message.");
                         return false;
                     }
                 }

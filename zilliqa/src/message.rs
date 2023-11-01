@@ -292,7 +292,7 @@ impl fmt::Display for BlockHeader {
         write!(
             f,
             "Timestamp: {} ",
-            systemtime_strftime(self.timestamp, "%d/%m/%Y %T".to_string()).unwrap()
+            systemtime_strftime(self.timestamp).unwrap()
         )?;
         Ok(())
     }
@@ -300,11 +300,12 @@ impl fmt::Display for BlockHeader {
 
 // Helper function to format SystemTime as a string
 // https://stackoverflow.com/questions/45386585
-fn systemtime_strftime<T>(dt: T, format: String) -> Result<String, time::error::Format>
+fn systemtime_strftime<T>(dt: T) -> Result<String, time::error::Format>
 where
     T: Into<OffsetDateTime>,
 {
-    let f = format_description::parse(&format).unwrap();
+    let f = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]").unwrap();
+    //let f = format_description::parse(&format).unwrap();
     dt.into().format(&f)
 }
 

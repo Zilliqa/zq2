@@ -22,6 +22,8 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
             // The original test function
             #input
 
+            let run_sequentially = std::env::var_os("ZQ_RUN_SEQUENTIALLY").is_some();
+
             // Work out what RNG seeds to run the test with.
             let seeds: Vec<u64> = if let Some(seed) = std::env::var_os("ZQ_TEST_RNG_SEED") {
                 vec![seed.to_str().unwrap().parse().unwrap()]
@@ -29,26 +31,36 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                 let samples: usize = std::env::var_os("ZQ_TEST_SAMPLES")
                     .map(|s| s.to_str().unwrap().parse().expect(&format!("Failed to parse ZQ_TEST_SAMPLES env var: {:?}", s)))
                     .unwrap_or(1);
-                // Generate random seeds using the thread-local RNG.
-                rand::Rng::sample_iter(rand::thread_rng(), rand::distributions::Standard).take(samples).collect()
+                (0..samples).map(|x| x as u64).collect()
             };
 
             let mut set = tokio::task::JoinSet::new();
 
             for seed in seeds {
-                set.spawn(async move {
+                println!("Reproduce this test run by setting ZQ_TEST_RNG_SEED={seed}");
+                let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
+                let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed);
+
+                if run_sequentially {
                     // Set up a tracing subscriber, so we can see logs from failed test cases.
                     let subscriber = tracing_subscriber::fmt()
                         .with_ansi(false)
                         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env());
                     let _guard = tracing_subscriber::util::SubscriberInitExt::set_default(subscriber);
 
-                    println!("Reproduce this test run by setting ZQ_TEST_RNG_SEED={seed}");
-                    let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
-                    let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed);
-                    // Call the original test function
                     #inner_name(network).await;
-                });
+                } else {
+                    set.spawn(async move {
+                        // Set up a tracing subscriber, so we can see logs from failed test cases.
+                        let subscriber = tracing_subscriber::fmt()
+                            .with_ansi(false)
+                            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env());
+                        let _guard = tracing_subscriber::util::SubscriberInitExt::set_default(subscriber);
+
+                        // Call the original test function
+                        #inner_name(network).await;
+                    });
+                }
             }
 
             while let Some(result) = set.join_next().await {

@@ -708,6 +708,12 @@ impl Consensus {
             }
 
             if self.state.root_hash()? != block_state_root {
+                warn!(
+                    "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {}",
+                    self.state.root_hash()?,
+                    block_state_root,
+                    block
+                );
                 return Err(anyhow!(
                     "state root hash mismatch, expected: {:?}, actual: {:?}",
                     block_state_root,
@@ -778,7 +784,8 @@ impl Consensus {
 
         // If we haven't applied the transaction yet, do so. This ensures we don't execute the transaction twice if we
         // already executed it in the process of proposing this block.
-        if !self.transactions.contains_key(hash.0)? {
+        //if !self.transactions.contains_key(hash.0)? {
+        if true {
             let mut listener = TouchedAddressEventListener::default();
 
             let result = evm_ds::evm::tracing::using(&mut listener, || {
@@ -1004,6 +1011,11 @@ impl Consensus {
                     let parent_header = parent.header;
 
                     let previous_state_root_hash = self.state.root_hash()?;
+
+                    if previous_state_root_hash != parent.state_root_hash() {
+                        warn!("when proposing, state root hash mismatch, expected: {:?}, actual: {:?}", parent.state_root_hash(), previous_state_root_hash);
+                        self.state.set_to_root(H256(parent.state_root_hash().0));
+                    }
 
                     let transactions = self.get_txns_to_execute();
 
@@ -1867,6 +1879,7 @@ impl Consensus {
             let _ = self.transaction_receipts.remove(head_block.hash().0);
 
             // State is easily set - must be to the parent block, though
+            trace!("Setting state to: {}", parent_block.state_root_hash());
             self.state
                 .set_to_root(H256(parent_block.state_root_hash().0));
 
