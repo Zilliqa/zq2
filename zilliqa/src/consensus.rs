@@ -785,30 +785,26 @@ impl Consensus {
         // If we haven't applied the transaction yet, do so. This ensures we don't execute the transaction twice if we
         // already executed it in the process of proposing this block.
         //if !self.transactions.contains_key(hash.0)? {
-        if true {
-            let mut listener = TouchedAddressEventListener::default();
+        let mut listener = TouchedAddressEventListener::default();
 
-            let result = evm_ds::evm::tracing::using(&mut listener, || {
-                self.state.apply_transaction(
-                    txn.clone(),
-                    self.config.eth_chain_id,
-                    current_block,
-                    false,
-                )
-            })?;
+        let result = evm_ds::evm::tracing::using(&mut listener, || {
+            self.state.apply_transaction(
+                txn.clone(),
+                self.config.eth_chain_id,
+                current_block,
+                false,
+            )
+        })?;
 
-            for address in listener.touched {
-                self.touched_address_index.merge(address.0, hash.0)?;
-            }
-
-            if !result.success {
-                info!("Transaction was a failure...");
-            }
-
-            Ok(Some(result))
-        } else {
-            Ok(None)
+        for address in listener.touched {
+            self.touched_address_index.merge(address.0, hash.0)?;
         }
+
+        if !result.success {
+            info!("Transaction was a failure...");
+        }
+
+        Ok(Some(result))
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {

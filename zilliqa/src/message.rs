@@ -305,7 +305,6 @@ where
     T: Into<OffsetDateTime>,
 {
     let f = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]").unwrap();
-    //let f = format_description::parse(&format).unwrap();
     dt.into().format(&f)
 }
 

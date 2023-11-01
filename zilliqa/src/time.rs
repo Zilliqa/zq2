@@ -7,7 +7,6 @@
 pub type SystemTime = std::time::SystemTime;
 
 pub type OffsetDateTime = time::OffsetDateTime;
-//pub type format_description = time::format_description;
 
 impl From<time_impl::SystemTime> for OffsetDateTime {
     fn from(time: time_impl::SystemTime) -> Self {
