@@ -74,6 +74,6 @@ prost = "0.12.1"
 async-trait = "0.1.74"
 ethers = { version = "2.0.10", default-features = false, features = ["ethers-solc", "legacy"] }
 rand_chacha = "0.3.1"
-tempfile = "3.8.0"
+tempfile = "3.8.1"
 ureq = "2.8.0"
 zilliqa = { path = ".", default-features = false, features = ["fake_time"] }
