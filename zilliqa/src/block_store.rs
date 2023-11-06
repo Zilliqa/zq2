@@ -8,7 +8,7 @@ use tracing::*;
 use crate::{
     crypto::Hash,
     db::Db,
-    message::{Block, BlockRef, BlockRequest},
+    message::{Block, BlockBatchRequest, BlockRef, BlockRequest},
     node::MessageSender,
 };
 
@@ -45,23 +45,49 @@ impl BlockStore {
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        let Some(hash) = self.db.get_canonical_block_number(view)? else { return Ok(None); };
+        let Some(hash) = self.db.get_canonical_block_view(view)? else { return Ok(None); };
+        self.get_block(hash)
+    }
+
+    pub fn get_block_by_number(&self, number: u64) -> Result<Option<Block>> {
+        let Some(hash) = self.db.get_canonical_block_number(number)? else { return Ok(None); };
         self.get_block(hash)
     }
 
     pub fn request_block_by_view(&mut self, view: u64) -> Result<()> {
-        trace!("Request block with view {view}");
-        if let Some(hash) = self.db.get_canonical_block_number(view)? {
-            trace!("I know the hash, its {hash}");
+        if let Some(hash) = self.db.get_canonical_block_view(view)? {
             self.request_block(hash)?;
         } else {
-            trace!("I don't know the hash");
             self.message_sender
                 .broadcast_external_message(ExternalMessage::BlockRequest(BlockRequest(
                     BlockRef::View(view),
                 )))
                 .unwrap();
         }
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn request_block_by_number(&mut self, number: u64) -> Result<()> {
+        if let Some(hash) = self.db.get_canonical_block_number(number)? {
+            self.request_block(hash)?;
+        } else {
+            self.message_sender
+                .broadcast_external_message(ExternalMessage::BlockRequest(BlockRequest(
+                    BlockRef::Number(number),
+                )))
+                .unwrap();
+        }
+        Ok(())
+    }
+
+    pub fn request_blocks(&mut self, number: u64) -> Result<()> {
+        self.message_sender
+            .broadcast_external_message(ExternalMessage::BlockBatchRequest(BlockBatchRequest(
+                BlockRef::Number(number),
+            )))
+            .unwrap();
+
         Ok(())
     }
 
@@ -78,17 +104,18 @@ impl BlockStore {
         Ok(())
     }
 
-    pub fn set_canonical(&mut self, view: u64, hash: Hash) -> Result<()> {
-        self.db.put_canonical_block_number(view, hash)?;
+    pub fn set_canonical(&mut self, number: u64, view: u64, hash: Hash) -> Result<()> {
+        self.db.put_canonical_block_view(view, hash)?;
+        self.db.put_canonical_block_number(number, hash)?;
         Ok(())
     }
 
     pub fn process_block(&mut self, block: Block) -> Result<()> {
-        trace!(view = block.view(), hash = ?block.hash(), "insert block");
+        trace!(number = block.number(), hash = ?block.hash(), "insert block");
         self.db.insert_block_header(&block.hash(), &block.header)?;
         self.db.insert_block(&block.hash(), &block)?;
         // TODO: Is this correct?
-        self.set_canonical(block.view(), block.hash())?;
+        self.set_canonical(block.number(), block.view(), block.hash())?;
         Ok(())
     }
 }

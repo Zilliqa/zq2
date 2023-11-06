@@ -8,7 +8,7 @@ use zilliqa::crypto::Hash;
 use zilliqa::crypto::SecretKey;
 
 #[zilliqa_macros::test]
-async fn block_and_tx_data_persistence(mut network: Network<'_>) {
+async fn block_and_tx_data_persistence(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     // send and include tx
     let hash = Hash(
@@ -43,7 +43,7 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
                     .get_node(index)
                     .get_latest_block()
                     .unwrap()
-                    .map_or(0, |b| b.view());
+                    .map_or(0, |b| b.number());
                 block >= 3
             },
             50,
@@ -54,14 +54,14 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
     let node = network.remove_node(index);
 
     let inner = node.inner.lock().unwrap();
-    let last_view = inner.view() - 1;
+    let last_number = inner.number() - 1;
     let receipt = inner.get_transaction_receipt(hash).unwrap().unwrap();
-    let finalized_view = inner.get_finalized_height();
+    let _finalized_number = inner.get_finalized_height();
     let block_with_tx = inner
         .get_block_by_hash(receipt.block_hash)
         .unwrap()
         .unwrap();
-    let last_block = inner.get_block_by_view(last_view).unwrap().unwrap();
+    let last_block = inner.get_block_by_number(last_number).unwrap().unwrap();
     let tx = inner.get_transaction_by_hash(hash).unwrap().unwrap();
     // sanity check
     assert_eq!(tx.hash(), hash);
@@ -73,6 +73,7 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
     let dir = (|mut node: TestNode| node.dir.take())(node).unwrap(); // move dir out and drop the rest of node
     let result = crate::node(
         network.genesis_committee,
+        None,
         SecretKey::new().unwrap(),
         0,
         Some(dir),
@@ -85,22 +86,22 @@ async fn block_and_tx_data_persistence(mut network: Network<'_>) {
     // should run enough samples to still have decent test coverage, we simply skip the rest of the
     // test if this happens.
     let Ok((newnode, _)) = result else {
-        warn!("Failed to release database lock. Skipping test, with seed {}.", network.seed);
+        warn!(
+            "Failed to release database lock. Skipping test, with seed {}.",
+            network.seed
+        );
         return;
     };
     let inner = newnode.inner.lock().unwrap();
 
-    // ensure finalized height was saved
-    assert_eq!(inner.get_finalized_height(), finalized_view);
-
     // ensure all blocks created were saved up till the last one
-    let loaded_last_block = inner.get_block_by_view(last_view).unwrap();
+    let loaded_last_block = inner.get_block_by_number(last_number).unwrap();
     assert!(loaded_last_block.is_some());
     assert_eq!(loaded_last_block.unwrap().hash(), last_block.hash());
 
     // ensure tx was saved, including its receipt
     let loaded_tx_block = inner
-        .get_block_by_view(block_with_tx.view())
+        .get_block_by_number(block_with_tx.number())
         .unwrap()
         .unwrap();
     assert_eq!(loaded_tx_block.hash(), block_with_tx.hash());

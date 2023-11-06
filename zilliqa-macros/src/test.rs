@@ -27,7 +27,7 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                 vec![seed.to_str().unwrap().parse().unwrap()]
             } else {
                 let samples: usize = std::env::var_os("ZQ_TEST_SAMPLES")
-                    .map(|s| s.to_str().unwrap().parse().unwrap())
+                    .map(|s| s.to_str().unwrap().parse().expect(&format!("Failed to parse ZQ_TEST_SAMPLES env var: {:?}", s)))
                     .unwrap_or(1);
                 // Generate random seeds using the thread-local RNG.
                 rand::Rng::sample_iter(rand::thread_rng(), rand::distributions::Standard).take(samples).collect()
@@ -45,7 +45,7 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
 
                     println!("Reproduce this test run by setting ZQ_TEST_RNG_SEED={seed}");
                     let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
-                    let network = crate::Network::new(&mut rng, 4, seed);
+                    let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed);
                     // Call the original test function
                     #inner_name(network).await;
                 });

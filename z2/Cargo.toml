@@ -21,12 +21,12 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4.4.2", features = ["derive"] }
+clap = { version = "4.4.6", features = ["derive"] }
 eyre = "0.6.8"
-futures = "0.3.28"
+futures = "0.3.29"
 rand_core = "0.6.4"
-serde = { version="1.0.188", features = [ "derive" ] }
-tempfile = "3.8.0"
-tokio = { version = "1.32.0", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process"] }
+serde = { version="1.0.189", features = [ "derive" ] }
+tempfile = "3.8.1"
+tokio = { version = "1.33.0", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process"] }
 tokio-stream = "0.1.14"
 zilliqa = { path = "../zilliqa" }

@@ -1,10 +1,12 @@
 //! A node in the Zilliqa P2P network. May coordinate multiple shard nodes.
 
+use crate::cfg::{ConsensusConfig, NodeConfig};
+
 use std::{collections::HashMap, iter};
 use tokio::{sync::mpsc::UnboundedSender, task::JoinSet};
 
 use crate::{
-    cfg::NodeConfig,
+    cfg::Config,
     crypto::SecretKey,
     networking::{request_response, MessageCodec, MessageProtocol, ProtocolSupport},
     node_launcher::NodeLauncher,
@@ -16,11 +18,11 @@ use libp2p::{
     futures::StreamExt,
     gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
     identify,
-    kad::{store::MemoryStore, Kademlia},
+    kad::{self, store::MemoryStore},
     mdns,
     multiaddr::{Multiaddr, Protocol},
     noise,
-    swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
+    swarm::{self, NetworkBehaviour, SwarmEvent},
     tcp, yamux, PeerId, Swarm, Transport,
 };
 
@@ -40,7 +42,7 @@ struct Behaviour {
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
     identify: identify::Behaviour,
-    kademlia: Kademlia<MemoryStore>,
+    kademlia: kad::Behaviour<MemoryStore>,
 }
 
 /// (destination, shard_id, message)
@@ -50,10 +52,9 @@ pub struct P2pNode {
     shard_nodes: HashMap<TopicHash, UnboundedSender<(PeerId, Message)>>,
     shard_threads: JoinSet<Result<()>>,
     secret_key: SecretKey,
+    config: Config,
     peer_id: PeerId,
-    p2p_port: u16,
     swarm: Swarm<Behaviour>,
-    bootstrap_address: Option<(PeerId, Multiaddr)>,
     /// Shard nodes get a copy of a handle to this sender, to propagate messages to the p2p network.
     outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
     /// The p2p node keeps a handle to this receiver, to obtain messages from shards and propagate
@@ -62,11 +63,7 @@ pub struct P2pNode {
 }
 
 impl P2pNode {
-    pub fn new(
-        secret_key: SecretKey,
-        p2p_port: u16,
-        bootstrap_address: Option<(PeerId, Multiaddr)>,
-    ) -> Result<Self> {
+    pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
         let (outbound_message_sender, outbound_message_receiver) = mpsc::unbounded_channel();
         let outbound_message_receiver = UnboundedReceiverStream::new(outbound_message_receiver);
 
@@ -100,19 +97,23 @@ impl P2pNode {
                 "/ipfs/id/1.0.0".to_owned(),
                 key_pair.public(),
             )),
-            kademlia: Kademlia::new(peer_id, MemoryStore::new(peer_id)),
+            kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
         };
 
-        let swarm = SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id).build();
+        let swarm = Swarm::new(
+            transport,
+            behaviour,
+            peer_id,
+            swarm::Config::with_tokio_executor(),
+        );
 
         Ok(Self {
             shard_nodes: HashMap::new(),
-            secret_key,
             peer_id,
-            p2p_port,
+            secret_key,
+            config,
             swarm,
             shard_threads: JoinSet::new(),
-            bootstrap_address,
             outbound_message_sender,
             outbound_message_receiver,
         })
@@ -120,6 +121,24 @@ impl P2pNode {
 
     pub fn shard_id_to_topic(shard_id: u64) -> IdentTopic {
         IdentTopic::new(shard_id.to_string())
+    }
+
+    /// Temporary method until light nodes are implemented, which will allow
+    /// connecting to the other shard and obtaining consensus parameters.
+    /// For now, we copy the (presumably main shard's) existing config and use it
+    /// as a default to construct a child shard.
+    fn generate_child_config(parent: &NodeConfig, shard_id: u64) -> NodeConfig {
+        let parent = parent.clone();
+        NodeConfig {
+            json_rpc_port: parent.json_rpc_port + 1,
+            eth_chain_id: shard_id,
+            consensus: ConsensusConfig {
+                is_main: false,
+                main_shard_id: Some(parent.eth_chain_id),
+                ..parent.consensus
+            },
+            ..parent
+        }
     }
 
     pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
@@ -157,11 +176,11 @@ impl P2pNode {
 
     pub async fn start(&mut self) -> Result<()> {
         let mut addr: Multiaddr = "/ip4/0.0.0.0".parse().unwrap();
-        addr.push(Protocol::Tcp(self.p2p_port));
+        addr.push(Protocol::Tcp(self.config.p2p_port));
 
         self.swarm.listen_on(addr)?;
 
-        if let Some((peer, address)) = &self.bootstrap_address {
+        if let Some((peer, address)) = &self.config.bootstrap_address {
             self.swarm
                 .behaviour_mut()
                 .kademlia
@@ -191,7 +210,6 @@ impl P2pNode {
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id })) => {
                         for addr in listen_addrs {
-                            info!(%peer_id, %addr, "identity info received");
                             self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                         }
                         // Mark the address observed for us by the external peer as confirmed.
@@ -248,8 +266,14 @@ impl P2pNode {
 
                     match message {
                         Message::Internal(internal_message) => match internal_message {
-                            InternalMessage::LaunchShard(config) => {
-                                self.add_shard_node(config).await?;
+                            InternalMessage::LaunchShard(shard_id) => {
+                                let shard_config = self.config.nodes
+                                    .iter()
+                                    .find(|shard_config| shard_config.eth_chain_id == shard_id)
+                                    .cloned()
+                                    .unwrap_or_else(
+                                        || Self::generate_child_config(self.config.nodes.first().unwrap(), shard_id));
+                                self.add_shard_node(shard_config.clone()).await?;
                             },
                             _ => {
                                 warn!(?message_type, "Unexpected internal message in outbound message queue");

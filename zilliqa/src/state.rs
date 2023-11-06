@@ -1,14 +1,23 @@
+use core::fmt;
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
-use generic_array::{
-    sequence::Split,
-    typenum::{U12, U20},
-    GenericArray,
+use ethabi::Token;
+use k256::{
+    ecdsa::{RecoveryId, Signature, VerifyingKey},
+    elliptic_curve::sec1::ToEncodedPoint,
 };
-use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use prost::Message;
 use rlp::RlpStream;
-use sha3::{Digest, Keccak256};
+use sha2::Sha256;
+use sha3::{
+    digest::generic_array::{
+        sequence::Split,
+        typenum::{U12, U20},
+        GenericArray,
+    },
+    Digest, Keccak256,
+};
 use std::convert::TryInto;
-use std::fmt::Display;
+use std::fmt::{Display, LowerHex};
 use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
 
@@ -17,7 +26,13 @@ use evm_ds::protos::evm_proto::Log;
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 
-use crate::{contracts, crypto, db::TrieStorage};
+use crate::{
+    cfg::ConsensusConfig,
+    contracts, crypto,
+    db::TrieStorage,
+    schnorr,
+    zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
+};
 
 #[derive(Debug)]
 pub struct State {
@@ -26,25 +41,59 @@ pub struct State {
 }
 
 impl State {
-    pub fn new_genesis(trie: TrieStorage, genesis_accounts: &[(Address, String)]) -> Result<State> {
+    pub fn new(trie: TrieStorage) -> State {
+        let db = Arc::new(trie);
+        Self {
+            db: db.clone(),
+            accounts: PatriciaTrie::new(db),
+        }
+    }
+
+    pub fn new_at_root(trie: TrieStorage, root_hash: H256) -> Self {
+        Self::new(trie).at_root(root_hash)
+    }
+
+    pub fn new_with_genesis(trie: TrieStorage, config: ConsensusConfig) -> Result<State> {
         let db = Arc::new(trie);
         let mut state = Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
         };
 
+        let shard_data = if config.is_main {
+            contracts::shard_registry::CONSTRUCTOR.encode_input(
+                contracts::shard_registry::CREATION_CODE.to_vec(),
+                &[Token::Uint(config.consensus_timeout.as_millis().into())],
+            )?
+        } else {
+            contracts::shard::CONSTRUCTOR.encode_input(
+                contracts::shard::CREATION_CODE.to_vec(),
+                &[
+                    Token::Uint(config.main_shard_id.unwrap().into()),
+                    Token::Uint(config.consensus_timeout.as_millis().into()),
+                ],
+            )?
+        };
+        state.force_deploy_contract(shard_data, Some(Address::SHARD_CONTRACT))?;
+
         let native_token_data = contracts::native_token::CONSTRUCTOR
             .encode_input(contracts::native_token::CREATION_CODE.to_vec(), &[])?;
-        state.force_deploy_contract(native_token_data, Address::NATIVE_TOKEN)?;
+        state.force_deploy_contract(native_token_data, Some(Address::NATIVE_TOKEN))?;
 
         let gas_price_data = contracts::gas_price::CONSTRUCTOR
             .encode_input(contracts::gas_price::CREATION_CODE.to_vec(), &[])?;
-        state.force_deploy_contract(gas_price_data, Address::GAS_PRICE)?;
+        state.force_deploy_contract(gas_price_data, Some(Address::GAS_PRICE))?;
 
         let _ = state.set_gas_price(default_gas_price().into());
 
-        for (address, balance) in genesis_accounts {
-            state.set_native_balance(*address, balance.parse()?)?;
+        if config.genesis_accounts.is_empty() {
+            panic!("No genesis accounts provided");
+        }
+
+        for (address, balance) in config.genesis_accounts {
+            state.set_native_balance(address, balance.parse()?)?;
+            let account_new = state.get_account(address)?;
+            state.save_account(address, account_new)?;
         }
 
         Ok(state)
@@ -204,8 +253,14 @@ impl State {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Address(pub H160);
+
+impl fmt::Debug for Address {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
 
 impl From<H160> for Address {
     fn from(h: H160) -> Address {
@@ -222,13 +277,13 @@ impl Address {
     /// Address of the native token ERC-20 contract.
     pub const NATIVE_TOKEN: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"));
 
+    pub const SHARD_CONTRACT: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD"));
+
     /// Address of the gas contract
     pub const GAS_PRICE: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0GAS"));
 
     /// Gas fees go here
     pub const COLLECTED_FEES: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0FEE"));
-
-    pub const SHARD_REGISTRY: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD"));
 
     pub fn is_balance_transfer(to: Address) -> bool {
         to == Address::NATIVE_TOKEN
@@ -254,7 +309,7 @@ impl Address {
 
 impl Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        LowerHex::fmt(&self.0, f)
     }
 }
 
@@ -291,12 +346,11 @@ impl SignedTransaction {
             signing_info,
         })
     }
-
     pub fn hash(&self) -> crypto::Hash {
         let txn = &self.transaction;
-        match self.signing_info {
+        match &self.signing_info {
             SigningInfo::Eth { v, r, s, chain_id } => {
-                let use_eip155 = v >= (chain_id * 2) + 35;
+                let use_eip155 = *v >= (chain_id * 2) + 35;
                 let mut rlp = RlpStream::new_list(if use_eip155 { 9 } else { 6 });
                 rlp.append(&txn.nonce)
                     .append(&txn.gas_price)
@@ -320,12 +374,26 @@ impl SignedTransaction {
                         &bytes[first_non_zero..]
                     }
 
-                    rlp.append(&v)
+                    rlp.append(v)
                         .append(&strip_leading_zeroes(r.as_slice()))
                         .append(&strip_leading_zeroes(s.as_slice()));
                 };
 
                 crypto::Hash(Keccak256::digest(rlp.out()).into())
+            }
+            SigningInfo::Zilliqa {
+                pub_key,
+                signature: _,
+                raw_version,
+                other_payload,
+            } => {
+                let txn_data = encode_zilliqa_transaction(
+                    &self.transaction,
+                    *pub_key,
+                    *raw_version,
+                    other_payload,
+                );
+                crypto::Hash(Sha256::digest(txn_data).into())
             }
         }
     }
@@ -338,6 +406,32 @@ impl SignedTransaction {
 
         Ok(())
     }
+}
+
+fn encode_zilliqa_transaction(
+    txn: &Transaction,
+    pub_key: schnorr::PublicKey,
+    raw_version: u32,
+    other_payload: &ZilliqaOtherPayload,
+) -> Vec<u8> {
+    let (code, data) = match other_payload {
+        ZilliqaOtherPayload::Data(data) => (txn.payload.clone(), data.clone()),
+        ZilliqaOtherPayload::Code(code) => (code.clone(), txn.payload.clone()),
+    };
+    let oneof8 = (!code.is_empty()).then_some(Code::Code(code));
+    let oneof9 = (!data.is_empty()).then_some(Data::Data(data));
+    let proto = ProtoTransactionCoreInfo {
+        version: raw_version,
+        toaddr: txn.to_addr.unwrap_or(Address::ZERO).as_bytes().to_vec(),
+        senderpubkey: Some(pub_key.to_sec1_bytes().into()),
+        amount: Some((txn.amount / 10u128.pow(6)).to_be_bytes().to_vec().into()),
+        gasprice: Some((txn.gas_price as u128).to_be_bytes().to_vec().into()),
+        gaslimit: txn.gas_limit,
+        oneof2: Some(Nonce::Nonce(txn.nonce + 1)),
+        oneof8,
+        oneof9,
+    };
+    proto.encode_to_vec()
 }
 
 fn verify(txn: &Transaction, signing_info: &SigningInfo) -> Result<Address> {
@@ -378,6 +472,23 @@ fn verify(txn: &Transaction, signing_info: &SigningInfo) -> Result<Address> {
 
             Ok(from_addr)
         }
+        SigningInfo::Zilliqa {
+            pub_key,
+            signature,
+            raw_version,
+            other_payload,
+        } => {
+            let txn_data = encode_zilliqa_transaction(txn, *pub_key, *raw_version, other_payload);
+
+            schnorr::verify(&txn_data, *pub_key, *signature)
+                .ok_or_else(|| anyhow!("invalid signature"))?;
+
+            let hashed = Sha256::digest(pub_key.to_encoded_point(true).as_bytes());
+            let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
+            let from_addr = Address::from_bytes(bytes.into());
+
+            Ok(from_addr)
+        }
     }
 }
 
@@ -389,6 +500,21 @@ pub enum SigningInfo {
         s: [u8; 32],
         chain_id: u64,
     },
+    Zilliqa {
+        pub_key: schnorr::PublicKey,
+        signature: schnorr::Signature,
+        raw_version: u32,
+        /// Zilliqa transactions can be sent with both `code` and `data` set, but only one of these is actualy used.
+        /// Annoyingly, both are considered when calculating the transaction's hash and signature. This field stores
+        /// the *other* one, so we can correctly generate the transaction hash and signature.
+        other_payload: ZilliqaOtherPayload,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ZilliqaOtherPayload {
+    Code(Vec<u8>),
+    Data(Vec<u8>),
 }
 
 /// A transaction body, broadcast before execution and then persisted as part of a block after the transaction is executed.
@@ -406,6 +532,7 @@ pub struct Transaction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionReceipt {
     pub block_hash: crypto::Hash,
+    pub tx_hash: crypto::Hash,
     pub success: bool,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
