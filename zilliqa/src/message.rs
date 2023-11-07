@@ -284,14 +284,14 @@ pub struct BlockHeader {
 
 impl fmt::Display for BlockHeader {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "View: {} ", self.view)?;
-        write!(f, "Block Number: {} ", self.number)?;
-        write!(f, "Block Hash: {} ", self.hash)?;
-        write!(f, "Parent Hash: {} ", self.parent_hash)?;
-        write!(f, "State Root Hash: {} ", self.state_root_hash)?;
+        write!(f, "View: {}, ", self.view)?;
+        write!(f, "Block Number: {}, ", self.number)?;
+        write!(f, "Block Hash: {}, ", self.hash)?;
+        write!(f, "Parent Hash: {}, ", self.parent_hash)?;
+        write!(f, "State Root Hash: {}, ", self.state_root_hash)?;
         write!(
             f,
-            "Timestamp: {} ",
+            "Timestamp: {}, ",
             systemtime_strftime(self.timestamp).unwrap()
         )?;
         Ok(())
@@ -498,14 +498,14 @@ pub struct Block {
 impl Display for Block {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "Header: {} ", self.header)?;
-        write!(f, "QC hash: {} ", self.qc.block_hash)?;
+        write!(f, "QC hash: {}, ", self.qc.block_hash)?;
         if let Some(agg) = &self.agg {
-            write!(f, "Agg QC view: {} ", agg.view)?;
+            write!(f, "Agg QC view: {}, ", agg.view)?;
         }
-        write!(f, "Transactions: {:?} ", self.transactions)?;
+        write!(f, "Transactions: {:?}, ", self.transactions)?;
         write!(
             f,
-            "Committee: {:?} ",
+            "Committee: {:?}, ",
             self.committee
                 .0
                 .iter()

@@ -666,11 +666,6 @@ impl Consensus {
                 trace!("applying {} transactions to state", transactions.len());
             }
 
-            // Must make sure state root hash is set to the parent's state root hash before applying transactions
-            if self.state.root_hash()? != parent.state_root_hash() {
-                warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}", parent.state_root_hash(), self.state.root_hash()?);
-            }
-
             if head_block.hash() != parent.hash() || block.number() != head_block.header.number + 1
             {
                 warn!(
@@ -678,6 +673,11 @@ impl Consensus {
                     head_block, block
                 );
                 self.deal_with_fork(&block)?;
+            }
+
+            // Must make sure state root hash is set to the parent's state root hash before applying transactions
+            if self.state.root_hash()? != parent.state_root_hash() {
+                warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}", parent.state_root_hash(), self.state.root_hash()?);
             }
 
             for txn in &transactions {
