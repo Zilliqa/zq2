@@ -223,6 +223,24 @@ impl QuorumCertificate {
         }
     }
 
+    // Verifying an aggregated signature is a case of verifying the aggregated public key
+    // against the aggregated signature
+    pub fn verify(&self, public_keys: Vec<NodePublicKey>) -> bool {
+        // First verify that the signature itself is the aggregated signature of all hashes - pubkeys
+        //if !NodeSignature::verify_agg_signature(self.signature, self.block_hash, public_keys) {
+        //    return anyhow!("Invalid generated signature found in QC!");
+        //}
+
+        // Select which public keys have gone into creating this signature
+        let mut public_keys = public_keys
+            .into_iter()
+            .zip(self.cosigned.iter())
+            .filter_map(|(pk, cosigned)| if *cosigned { Some(pk) } else { None })
+            .collect::<Vec<_>>();
+
+        NodeSignature::verify_aggregate(&self.signature, self.block_hash.as_bytes(), public_keys).is_ok()
+    }
+
     pub fn compute_hash(&self) -> Hash {
         Hash::compute([
             &self.signature.to_bytes(),
@@ -284,14 +302,14 @@ pub struct BlockHeader {
 
 impl fmt::Display for BlockHeader {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "View: {} ", self.view)?;
-        write!(f, "Block Number: {} ", self.number)?;
-        write!(f, "Block Hash: {} ", self.hash)?;
-        write!(f, "Parent Hash: {} ", self.parent_hash)?;
-        write!(f, "State Root Hash: {} ", self.state_root_hash)?;
+        write!(f, "View: {}, ", self.view)?;
+        write!(f, "Block Number: {}, ", self.number)?;
+        write!(f, "Block Hash: {}, ", self.hash)?;
+        write!(f, "Parent Hash: {}, ", self.parent_hash)?;
+        write!(f, "State Root Hash: {}, ", self.state_root_hash)?;
         write!(
             f,
-            "Timestamp: {} ",
+            "Timestamp: {}, ",
             systemtime_strftime(self.timestamp).unwrap()
         )?;
         Ok(())
@@ -479,6 +497,10 @@ impl Committee {
         let index = rng.gen_range(0..self.0.len());
         self.get_by_index(index).unwrap()
     }
+
+    pub fn public_keys(&self) -> Vec<NodePublicKey> {
+        self.0.iter().map(|v| v.public_key).collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -497,15 +519,15 @@ pub struct Block {
 
 impl Display for Block {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Header: {} ", self.header)?;
-        write!(f, "QC hash: {} ", self.qc.block_hash)?;
+        write!(f, "Header: {}", self.header)?;
+        write!(f, "QC hash: {}, ", self.qc.block_hash)?;
         if let Some(agg) = &self.agg {
-            write!(f, "Agg QC view: {} ", agg.view)?;
+            write!(f, "Agg QC view: {}, ", agg.view)?;
         }
-        write!(f, "Transactions: {:?} ", self.transactions)?;
+        write!(f, "Transactions: {:?}, ", self.transactions)?;
         write!(
             f,
-            "Committee: {:?} ",
+            "Committee: {:?}, ",
             self.committee
                 .0
                 .iter()

@@ -666,11 +666,6 @@ impl Consensus {
                 trace!("applying {} transactions to state", transactions.len());
             }
 
-            // Must make sure state root hash is set to the parent's state root hash before applying transactions
-            if self.state.root_hash()? != parent.state_root_hash() {
-                warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}", parent.state_root_hash(), self.state.root_hash()?);
-            }
-
             if head_block.hash() != parent.hash() || block.number() != head_block.header.number + 1
             {
                 warn!(
@@ -679,6 +674,12 @@ impl Consensus {
                 );
                 self.deal_with_fork(&block)?;
             }
+
+            // Must make sure state root hash is set to the parent's state root hash before applying transactions
+            if self.state.root_hash()? != parent.state_root_hash() {
+                warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}", parent.state_root_hash(), self.state.root_hash()?);
+            }
+
 
             for txn in &transactions {
                 if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
@@ -1409,11 +1410,17 @@ impl Consensus {
         cosigned: BitVec,
     ) -> QuorumCertificate {
         // we've already verified the signatures upon receipt of the responses so there's no need to do it again
-        QuorumCertificate {
-            signature: NodeSignature::aggregate(signatures).unwrap(),
+        //QuorumCertificate {
+        //    signature: NodeSignature::aggregate(signatures).unwrap(),
+        //    cosigned,
+        //    block_hash,
+        //}
+
+        QuorumCertificate::new(
+            signatures,
             cosigned,
             block_hash,
-        }
+        )
     }
 
     fn block_extends_from(&self, block: &Block, ancestor: &Block) -> Result<bool> {
@@ -1602,7 +1609,7 @@ impl Consensus {
         // Check if the co-signers of the block's QC represent the supermajority.
         self.check_quorum_in_bits(&block.qc.cosigned, &parent.committee)?;
         // Verify the block's QC signature
-        self.verify_qc_signature(&block.qc)?;
+        self.verify_qc_signature(&block.qc, block.committee.public_keys())?;
         if let Some(agg) = &block.agg {
             // Check if the signers of the block's aggregate QC represent the supermajority
             self.check_quorum_in_indices(&agg.signers, &parent.committee)?;
@@ -1703,11 +1710,12 @@ impl Consensus {
     }
 
     fn vote_from_block(&self, block: &Block) -> Vote {
-        Vote {
-            block_hash: block.hash(),
-            signature: self.secret_key.sign(block.hash().as_bytes()),
-            public_key: self.secret_key.node_public_key(),
-        }
+        Vote::new(self.secret_key, block.hash(), self.secret_key.node_public_key())
+        //Vote {
+        //    block_hash: block.hash(),
+        //    signature: self.secret_key.sign(block.hash().as_bytes()),
+        //    public_key: self.secret_key.node_public_key(),
+        //}
     }
 
     fn get_high_qc_from_block<'a>(&self, block: &'a Block) -> Result<&'a QuorumCertificate> {
@@ -1784,9 +1792,14 @@ impl Consensus {
             .map(|(qc, _)| qc)
     }
 
-    fn verify_qc_signature(&self, _: &QuorumCertificate) -> Result<()> {
-        // TODO: Build aggregate signature from public keys and validate `qc.block_hash` against `qc.signature`.
-        Ok(())
+    fn verify_qc_signature(&self, qc: &QuorumCertificate, public_keys: Vec<NodePublicKey>) -> Result<()> {
+        match qc.verify(public_keys) {
+            true => Ok(()),
+            false => {
+                warn!("invalid qc signature found when verifying!");
+                Err(anyhow!("invalid qc signature found!"))
+            }
+        }
     }
 
     fn batch_verify_agg_signature(&self, agg: &AggregateQc, committee: &Committee) -> Result<()> {
