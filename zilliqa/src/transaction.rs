@@ -230,6 +230,9 @@ impl EthSignature {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// A [SignedTransaction] which has had the signer recovered. The transaction's hash is also calculated and cached.
+///
+/// [Serialize] and [Deserialize] are deliberately not implemented for this type. [SignedTransaction]s should be sent
+/// accross the network the signer should be verified and recovered independently.
 pub struct RecoveredTransaction {
     pub tx: SignedTransaction,
     pub signer: Address,
