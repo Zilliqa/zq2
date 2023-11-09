@@ -92,7 +92,7 @@ impl Vote {
         bytes.extend_from_slice(self.block_hash.as_bytes());
         bytes.extend_from_slice(&self.view.to_be_bytes());
 
-        warn!("Verify vote: {:?}", self);
+        trace!("Verify vote: {:?}", self);
 
         self.public_key.verify(&bytes, self.signature)
     }
