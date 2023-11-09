@@ -28,12 +28,6 @@ sudo add-apt-repository ppa:ethereum/ethereum > /dev/null 2>&1
 sudo apt-get update > /dev/null 2>&1
 sudo apt-get install solc libsecp256k1-dev > /dev/null 2>&1
 
-echo "install ansi dedup"
-git clone https://github.com/drakkan/ansi2txt.git
-cd ansi2txt
-cargo build --release
-cp target/release/ansi2txt /usr/local/bin/
-
 echo "Installing tests"
 
 # Install tests
@@ -45,9 +39,9 @@ echo "Running tests"
 npx hardhat test
 
 retVal=$?
-    cat /tmp/zil_log_out.txt | /usr/local/bin/ansi2txt
 pkill -INT zilliqa
 if [ $retVal -ne 0 ]; then
+    cat /tmp/zil_log_out.txt
 
     echo "!!!!!! Error with JS integration test !!!!!!"
     exit 1
