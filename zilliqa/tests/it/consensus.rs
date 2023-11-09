@@ -12,12 +12,6 @@ async fn network_can_die_restart(mut network: Network) {
     let start_block = 5;
     let finish_block = 10;
 
-    let samples: usize = std::env::var_os("ZQ_TEST_SAMPLES")
-        .map(|s| s.to_str().unwrap_or("1").parse().unwrap_or(1))
-        .unwrap_or(1);
-
-    println!("{}", samples);
-
     // wait until at least 5 blocks have been produced
     network
         .run_until(

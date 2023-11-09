@@ -1,3 +1,3 @@
-edition="2021"
-imports_granularity = "crate"
+edition = "2021"
+imports_granularity = "Crate"
 group_imports = "StdExternalCrate"
