@@ -1209,11 +1209,10 @@ impl Consensus {
             return Ok(Some(txn.clone()));
         }
 
-        Ok(self
-            .db
+        self.db
             .get_transaction(&hash)?
             .map(|tx| tx.recover_signer())
-            .transpose()?)
+            .transpose()
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {

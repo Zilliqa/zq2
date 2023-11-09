@@ -573,124 +573,127 @@ fn parse_transaction(bytes: &[u8]) -> Result<SignedTransaction> {
     // If it starts with a value in the range [0, 0x7f] then it is a new transaction type, if it starts with a value in
     // the range [0xc0, 0xfe] then it is a legacy transaction type."
     match bytes[0] {
-        0xc0..=0xfe => {
-            let rlp = Rlp::new(bytes);
-            let nonce = rlp.val_at(0)?;
-            let gas_price = rlp.val_at(1)?;
-            let gas_limit = rlp.val_at(2)?;
-            let to_addr = rlp.val_at::<Vec<u8>>(3)?;
-            let amount = rlp.val_at(4)?;
-            let payload = rlp.val_at(5)?;
-            let v = rlp.val_at::<u64>(6)?;
-            let r = left_pad_arr(&rlp.val_at::<Vec<_>>(7)?)?;
-            let s = left_pad_arr(&rlp.val_at::<Vec<_>>(8)?)?;
-
-            // If `v` is greater than `35`, then this is an EIP-155 value which includes the chain ID. If not, it must
-            // be set to either `27` or `28`.
-            let (y_is_odd, chain_id) = if v >= 35 {
-                // The last bit of `v - 35` tells us whether Y is odd; the other bits tell us the chain ID.
-                ((v - 35) % 2 != 0, Some((v - 35) / 2))
-            } else if v == 27 {
-                (false, None)
-            } else if v == 28 {
-                (true, None)
-            } else {
-                return Err(anyhow!("invalid signature with v={v}"));
-            };
-
-            let sig = EthSignature { r, s, y_is_odd };
-
-            let tx = TxLegacy {
-                chain_id,
-                nonce,
-                gas_price,
-                gas_limit,
-                to_addr: (!to_addr.is_empty()).then_some(Address::from_slice(&to_addr)),
-                amount,
-                payload,
-            };
-
-            Ok(SignedTransaction::Legacy { tx, sig })
-        }
-        0x01 => {
-            let rlp = Rlp::new(&bytes[1..]);
-            let chain_id = rlp.val_at(0)?;
-            let nonce = rlp.val_at(1)?;
-            let gas_price = rlp.val_at(2)?;
-            let gas_limit = rlp.val_at(3)?;
-            let to_addr = rlp.val_at::<Vec<u8>>(4)?;
-            let amount = rlp.val_at(5)?;
-            let payload = rlp.val_at(6)?;
-            let access_list = rlp
-                .at(7)?
-                .iter()
-                .map(|rlp| Ok((rlp.val_at::<H160>(0)?, rlp.list_at::<H256>(1)?)))
-                .collect::<Result<Vec<_>>>()?;
-            let y_is_odd = rlp.val_at::<bool>(8)?;
-            let r = left_pad_arr(&rlp.val_at::<Vec<_>>(9)?)?;
-            let s = left_pad_arr(&rlp.val_at::<Vec<_>>(10)?)?;
-
-            let sig = EthSignature { r, s, y_is_odd };
-
-            let tx = TxEip2930 {
-                chain_id,
-                nonce,
-                gas_price,
-                gas_limit,
-                to_addr: (!to_addr.is_empty()).then_some(Address::from_slice(&to_addr)),
-                amount,
-                payload,
-                access_list: access_list
-                    .into_iter()
-                    .map(|(a, s)| (Address(a), s))
-                    .collect(),
-            };
-
-            Ok(SignedTransaction::Eip2930 { tx, sig })
-        }
-        0x02 => {
-            let rlp = Rlp::new(&bytes[1..]);
-            let chain_id = rlp.val_at(0)?;
-            let nonce = rlp.val_at(1)?;
-            let max_priority_fee_per_gas = rlp.val_at(2)?;
-            let max_fee_per_gas = rlp.val_at(3)?;
-            let gas_limit = rlp.val_at(4)?;
-            let to_addr = rlp.val_at::<Vec<u8>>(5)?;
-            let amount = rlp.val_at(6)?;
-            let payload = rlp.val_at(7)?;
-            let access_list = rlp
-                .at(8)?
-                .iter()
-                .map(|rlp| Ok((rlp.val_at::<H160>(0)?, rlp.list_at::<H256>(1)?)))
-                .collect::<Result<Vec<_>>>()?;
-            let y_is_odd = rlp.val_at::<bool>(9)?;
-            let r = left_pad_arr(&rlp.val_at::<Vec<_>>(10)?)?;
-            let s = left_pad_arr(&rlp.val_at::<Vec<_>>(11)?)?;
-
-            let sig = EthSignature { r, s, y_is_odd };
-
-            let tx = TxEip1559 {
-                chain_id,
-                nonce,
-                max_priority_fee_per_gas,
-                max_fee_per_gas,
-                gas_limit,
-                to_addr: (!to_addr.is_empty()).then_some(Address::from_slice(&to_addr)),
-                amount,
-                payload,
-                access_list: access_list
-                    .into_iter()
-                    .map(|(a, s)| (Address(a), s))
-                    .collect(),
-            };
-
-            Ok(SignedTransaction::Eip1559 { tx, sig })
-        }
+        0xc0..=0xfe => parse_legacy_transaction(Rlp::new(bytes)),
+        0x01 => parse_eip2930_transaction(Rlp::new(&bytes[1..])),
+        0x02 => parse_eip1559_transaction(Rlp::new(&bytes[1..])),
         _ => Err(anyhow!(
             "invalid transaction with starting byte {}",
             bytes[0]
         )),
     }
+}
+
+fn parse_legacy_transaction(rlp: Rlp<'_>) -> Result<SignedTransaction> {
+    let nonce = rlp.val_at(0)?;
+    let gas_price = rlp.val_at(1)?;
+    let gas_limit = rlp.val_at(2)?;
+    let to_addr = rlp.val_at::<Vec<u8>>(3)?;
+    let amount = rlp.val_at(4)?;
+    let payload = rlp.val_at(5)?;
+    let v = rlp.val_at::<u64>(6)?;
+    let r = left_pad_arr(&rlp.val_at::<Vec<_>>(7)?)?;
+    let s = left_pad_arr(&rlp.val_at::<Vec<_>>(8)?)?;
+
+    // If `v` is greater than `35`, then this is an EIP-155 value which includes the chain ID. If not, it must
+    // be set to either `27` or `28`.
+    let (y_is_odd, chain_id) = if v >= 35 {
+        // The last bit of `v - 35` tells us whether Y is odd; the other bits tell us the chain ID.
+        ((v - 35) % 2 != 0, Some((v - 35) / 2))
+    } else if v == 27 {
+        (false, None)
+    } else if v == 28 {
+        (true, None)
+    } else {
+        return Err(anyhow!("invalid signature with v={v}"));
+    };
+
+    let sig = EthSignature { r, s, y_is_odd };
+
+    let tx = TxLegacy {
+        chain_id,
+        nonce,
+        gas_price,
+        gas_limit,
+        to_addr: (!to_addr.is_empty()).then_some(Address::from_slice(&to_addr)),
+        amount,
+        payload,
+    };
+
+    Ok(SignedTransaction::Legacy { tx, sig })
+}
+
+fn parse_eip2930_transaction(rlp: Rlp<'_>) -> Result<SignedTransaction> {
+    let chain_id = rlp.val_at(0)?;
+    let nonce = rlp.val_at(1)?;
+    let gas_price = rlp.val_at(2)?;
+    let gas_limit = rlp.val_at(3)?;
+    let to_addr = rlp.val_at::<Vec<u8>>(4)?;
+    let amount = rlp.val_at(5)?;
+    let payload = rlp.val_at(6)?;
+    let access_list = rlp
+        .at(7)?
+        .iter()
+        .map(|rlp| Ok((rlp.val_at::<H160>(0)?, rlp.list_at::<H256>(1)?)))
+        .collect::<Result<Vec<_>>>()?;
+    let y_is_odd = rlp.val_at::<bool>(8)?;
+    let r = left_pad_arr(&rlp.val_at::<Vec<_>>(9)?)?;
+    let s = left_pad_arr(&rlp.val_at::<Vec<_>>(10)?)?;
+
+    let sig = EthSignature { r, s, y_is_odd };
+
+    let tx = TxEip2930 {
+        chain_id,
+        nonce,
+        gas_price,
+        gas_limit,
+        to_addr: (!to_addr.is_empty()).then_some(Address::from_slice(&to_addr)),
+        amount,
+        payload,
+        access_list: access_list
+            .into_iter()
+            .map(|(a, s)| (Address(a), s))
+            .collect(),
+    };
+
+    Ok(SignedTransaction::Eip2930 { tx, sig })
+}
+
+fn parse_eip1559_transaction(rlp: Rlp<'_>) -> Result<SignedTransaction> {
+    let chain_id = rlp.val_at(0)?;
+    let nonce = rlp.val_at(1)?;
+    let max_priority_fee_per_gas = rlp.val_at(2)?;
+    let max_fee_per_gas = rlp.val_at(3)?;
+    let gas_limit = rlp.val_at(4)?;
+    let to_addr = rlp.val_at::<Vec<u8>>(5)?;
+    let amount = rlp.val_at(6)?;
+    let payload = rlp.val_at(7)?;
+    let access_list = rlp
+        .at(8)?
+        .iter()
+        .map(|rlp| Ok((rlp.val_at::<H160>(0)?, rlp.list_at::<H256>(1)?)))
+        .collect::<Result<Vec<_>>>()?;
+    let y_is_odd = rlp.val_at::<bool>(9)?;
+    let r = left_pad_arr(&rlp.val_at::<Vec<_>>(10)?)?;
+    let s = left_pad_arr(&rlp.val_at::<Vec<_>>(11)?)?;
+
+    let sig = EthSignature { r, s, y_is_odd };
+
+    let tx = TxEip1559 {
+        chain_id,
+        nonce,
+        max_priority_fee_per_gas,
+        max_fee_per_gas,
+        gas_limit,
+        to_addr: (!to_addr.is_empty()).then_some(Address::from_slice(&to_addr)),
+        amount,
+        payload,
+        access_list: access_list
+            .into_iter()
+            .map(|(a, s)| (Address(a), s))
+            .collect(),
+    };
+
+    Ok(SignedTransaction::Eip1559 { tx, sig })
 }
 
 fn left_pad_arr<const N: usize>(v: &[u8]) -> Result<[u8; N]> {
