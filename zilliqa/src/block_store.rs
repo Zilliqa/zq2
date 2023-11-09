@@ -39,18 +39,24 @@ impl BlockStore {
         if let Some(block) = block_cache.get(&hash) {
             return Ok(Some(block.clone()));
         }
-        let Some(block) = self.db.get_block(&hash)? else { return Ok(None); };
+        let Some(block) = self.db.get_block(&hash)? else {
+            return Ok(None);
+        };
         block_cache.put(hash, block.clone());
         Ok(Some(block))
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        let Some(hash) = self.db.get_canonical_block_view(view)? else { return Ok(None); };
+        let Some(hash) = self.db.get_canonical_block_view(view)? else {
+            return Ok(None);
+        };
         self.get_block(hash)
     }
 
     pub fn get_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        let Some(hash) = self.db.get_canonical_block_number(number)? else { return Ok(None); };
+        let Some(hash) = self.db.get_canonical_block_number(number)? else {
+            return Ok(None);
+        };
         self.get_block(hash)
     }
 

@@ -420,7 +420,6 @@ impl Consensus {
     }
 
     pub fn head_block(&self) -> Block {
-        // TODOAAA: error handling
         let highest_block_number = self.db.get_highest_block_number().unwrap().unwrap();
 
         trace!(

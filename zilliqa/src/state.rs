@@ -99,14 +99,6 @@ impl State {
         Ok(state)
     }
 
-    pub fn new_from_root(trie: TrieStorage, root_hash: H256) -> Self {
-        let db = Arc::new(trie);
-        Self {
-            db: db.clone(),
-            accounts: PatriciaTrie::new(db).at_root(root_hash),
-        }
-    }
-
     pub fn at_root(&self, root_hash: H256) -> Self {
         let db = self.db.clone();
         Self {
