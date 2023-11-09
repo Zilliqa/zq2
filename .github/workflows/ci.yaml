@@ -34,7 +34,8 @@ jobs:
     - name: Verify working directory is clean
       run: git diff --exit-code
     - name: rustfmt
-      run: cargo fmt --all --check
+      # Run rustfmt with nightly, so we can use unstable features
+      run: cargo +nightly fmt --all --check
 
   e2e_test:
     runs-on: ubuntu-latest
