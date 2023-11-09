@@ -5,7 +5,7 @@ use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{fmt::Display, str::FromStr};
-use tracing::warn;
+use tracing::*;
 
 use crate::{
     consensus::Validator,
