@@ -1853,10 +1853,6 @@ impl Consensus {
                 .get_block(&head_block.parent_hash())?
                 .ok_or_else(|| anyhow!("missing block parent when reverting blocks!"))?;
 
-            if head_block.header.view == 0 {
-                panic!("genesis block is not supposed to be reverted");
-            }
-
             trace!("Reverting block {}", head_block);
             // block store doesn't require anything, it will just hold blocks that may now be invalid
             // block transactions need to be removed from self.transactions and re-injected
