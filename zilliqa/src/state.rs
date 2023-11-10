@@ -401,6 +401,8 @@ impl SignedTransaction {
     }
 }
 
+impl Display for SignedTransaction {
+}
 fn encode_zilliqa_transaction(
     txn: &Transaction,
     pub_key: schnorr::PublicKey,

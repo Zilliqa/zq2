@@ -1019,7 +1019,7 @@ impl Consensus {
 
         committee.add_validators(self.pending_peers.drain(..));
 
-        if committee.len() <= 1 {
+        if committee.len() <= 1 && false {
             warn!(
                 "committee is too small {}, something might be wrong",
                 committee.len()
