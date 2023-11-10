@@ -257,7 +257,7 @@ impl State {
                 );
             }
 
-            continuation_stack.push(push_transfer(
+            continuation_stack.push(self.push_transfer(
                 from_addr,
                 to,
                 amount,
@@ -373,7 +373,7 @@ impl State {
 
                         // If the call also has a value transfer, we need to execute that first
                         if !value.is_zero() {
-                            continuation_stack.push(push_transfer(
+                            continuation_stack.push(self.push_transfer(
                                 caller,
                                 call_addr,
                                 value,
@@ -456,7 +456,7 @@ impl State {
 
             let gas_deduction = (gas_limit - result.remaining_gas) as u128 * gas_price;
 
-            continuation_stack.push(push_transfer(
+            continuation_stack.push(self.push_transfer(
                 from_addr,
                 Address::COLLECTED_FEES,
                 gas_deduction.into(),
@@ -905,44 +905,47 @@ impl State {
 
         Ok(result?.0)
     }
-}
 
-// Convenience function to create a balance transfer for the call stack. Note we do NOT use the
-// setBalance function as this should only be used at genesis
-pub fn push_transfer(
-    from: Address,
-    to: Address,
-    amount: U256,
-    continuations: Arc<Mutex<EvmProto::Continuations>>,
-    traces: Arc<Mutex<LoggingEventListener>>,
-) -> EvmProto::EvmCallArgs {
-    trace!(
-        "Pushing transfer from: {} -> to: {} amount: {}",
-        from,
-        to,
-        amount
-    );
+    // Convenience function to create a balance transfer for the call stack. Note we do NOT use the
+    // setBalance function as this should only be used at genesis
+    pub fn push_transfer(
+        &self,
+        from: Address,
+        to: Address,
+        amount: U256,
+        continuations: Arc<Mutex<EvmProto::Continuations>>,
+        traces: Arc<Mutex<LoggingEventListener>>,
+    ) -> EvmProto::EvmCallArgs {
+        trace!(
+            "Pushing transfer from: {} -> to: {} amount: {}",
+            from,
+            to,
+            amount
+        );
 
-    let balance_data = contracts::native_token::TRANSFER
-        .encode_input(&[Token::Address(to.0), Token::Uint(amount)])
-        .unwrap();
+        let native_token_code = self.get_account(Address::NATIVE_TOKEN).unwrap().code;
 
-    EvmProto::EvmCallArgs {
-        caller: from.0,
-        gas_scaling_factor: 1,
-        scaling_factor: None,
-        estimate: false,
-        address: Address::NATIVE_TOKEN.0,
-        code: contracts::native_token::CODE.clone(),
-        data: balance_data,
-        apparent_value: Default::default(),
-        gas_limit: u64::MAX,
-        tx_trace: traces,
-        continuations,
-        enable_cps: true,
-        node_continuation: None,
-        evm_context: "fund_transfer".to_string(),
-        is_static: false,
-        tx_trace_enabled: true,
+        let balance_data = contracts::native_token::TRANSFER
+            .encode_input(&[Token::Address(to.0), Token::Uint(amount)])
+            .unwrap();
+
+        EvmProto::EvmCallArgs {
+            caller: from.0,
+            gas_scaling_factor: 1,
+            scaling_factor: None,
+            estimate: false,
+            address: Address::NATIVE_TOKEN.0,
+            code: native_token_code,
+            data: balance_data,
+            apparent_value: Default::default(),
+            gas_limit: u64::MAX,
+            tx_trace: traces,
+            continuations,
+            enable_cps: true,
+            node_continuation: None,
+            evm_context: "fund_transfer".to_string(),
+            is_static: false,
+            tx_trace_enabled: true,
+        }
     }
 }
