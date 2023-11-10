@@ -17,3 +17,4 @@ pub mod schnorr;
 pub mod state;
 pub mod time;
 pub mod zq1_proto;
+pub mod convenience_functions;

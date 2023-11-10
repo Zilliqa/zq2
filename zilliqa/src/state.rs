@@ -21,6 +21,7 @@ use std::convert::TryInto;
 use std::fmt::{Display, LowerHex};
 use std::sync::Arc;
 use std::{hash::Hash, str::FromStr};
+use std::{fmt::Formatter};
 
 use anyhow::{anyhow, Result};
 use evm_ds::protos::evm_proto::Log;
@@ -32,6 +33,7 @@ use crate::{
     contracts, crypto,
     db::SledDb,
     schnorr,
+    convenience_functions::*,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
 
@@ -409,6 +411,19 @@ impl SignedTransaction {
 }
 
 impl Display for SignedTransaction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Transaction: {} ", self.transaction)?;
+        write!(f, "From Addr: {}, ", self.from_addr)?;
+        match self.signing_info {
+            SigningInfo::Eth { .. } => {
+                write!(f, "Eth signature, ")?;
+            }
+            SigningInfo::Zilliqa { .. } => {
+                write!(f, "Zil signature, ")?;
+            }
+        }
+        Ok(())
+    }
 }
 fn encode_zilliqa_transaction(
     txn: &Transaction,
@@ -528,6 +543,19 @@ pub struct Transaction {
     pub to_addr: Option<Address>,
     pub amount: u128,
     pub payload: Vec<u8>,
+}
+
+impl Display for Transaction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Nonce: {} ", self.nonce)?;
+        write!(f, "gas_price: {} ", self.gas_price)?;
+        write!(f, "gas_limit: {} ", self.gas_limit)?;
+        write!(f, "to_addr: {:?} ", self.to_addr)?;
+        write!(f, "amount: {}, ", self.amount)?;
+        write!(f, "payload: ")?;
+        shortened_vec(&self.payload, f);
+        Ok(())
+    }
 }
 
 /// A transaction receipt stores data about the execution of a transaction.

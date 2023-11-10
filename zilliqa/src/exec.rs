@@ -508,6 +508,10 @@ impl State {
                 "*** Loop complete - returning final results {:?} {:?}",
                 backend_result, created_contract_addr
             );
+
+            if !backend_result.succeeded() {
+                warn!("Tx failed to execute! Return value: {:?}", backend_result.exit_reason);
+            }
         }
 
         Ok((backend_result, created_contract_addr))
@@ -544,7 +548,7 @@ impl State {
         tracing: bool,
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash();
-        info!(?hash, ?txn, "executing txn");
+        info!(?hash, %txn, "executing txn");
 
         let gas_price = self.get_gas_price()?;
 
