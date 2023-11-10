@@ -14,6 +14,13 @@ use std::{hash::Hash, str::FromStr};
 use crate::{cfg::ConsensusConfig, contracts, crypto, db::SledDb};
 
 #[derive(Debug)]
+/// The state of the blockchain, consisting of:
+/// -  state - a database of Map<Address, Map<key,value>>
+/// -  accounts, Map<Address, Account>
+/// where an address is a 20-byte array representing a user.
+/// where Account is (nonce, code, storage_root)
+/// the storage root is used to index into the state
+/// all the keys are hashed and stored in the same sled tree
 pub struct State {
     db: Arc<SledDb>,
     accounts: PatriciaTrie<SledDb>,

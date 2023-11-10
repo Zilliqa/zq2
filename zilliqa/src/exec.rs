@@ -471,7 +471,7 @@ impl State {
                     "our balance is: {}",
                     self.get_native_balance(from_addr, false).unwrap()
                 );
-                debug!("our caller is: {}", call_args.caller);
+                debug!("our caller is: {:?}", call_args.caller);
             }
 
             backend.origin = call_args.caller;
