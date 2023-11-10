@@ -2,6 +2,7 @@ use crate::message::ExternalMessage;
 use std::{cell::RefCell, num::NonZeroUsize, sync::Arc};
 
 use anyhow::Result;
+use libp2p::PeerId;
 use lru::LruCache;
 use tracing::*;
 
@@ -87,12 +88,23 @@ impl BlockStore {
         Ok(())
     }
 
-    pub fn request_blocks(&mut self, number: u64) -> Result<()> {
-        self.message_sender
-            .broadcast_external_message(ExternalMessage::BlockBatchRequest(BlockBatchRequest(
-                BlockRef::Number(number),
-            )))
-            .unwrap();
+    pub fn request_blocks(&mut self, peer: Option<PeerId>, number: u64) -> Result<()> {
+        let request =
+            ExternalMessage::BlockBatchRequest(BlockBatchRequest(BlockRef::Number(number)));
+
+        // We can request blocks from a single peer or from all peers.
+        match peer {
+            Some(peer) => {
+                self.message_sender
+                    .send_external_message(peer, request)
+                    .unwrap();
+            }
+            None => {
+                self.message_sender
+                    .broadcast_external_message(request)
+                    .unwrap();
+            }
+        }
 
         Ok(())
     }

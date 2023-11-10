@@ -499,12 +499,13 @@ impl Node {
             response.blocks.len()
         );
         let mut was_new = false;
+        let length_recvd = response.blocks.len();
 
         for block in response.blocks {
             was_new = self.consensus.receive_block(block)?;
         }
 
-        if was_new {
+        if was_new && length_recvd > 1 {
             trace!(
                 "Requesting additional blocks after successful block download. Start: {}",
                 self.consensus.head_block().header.number

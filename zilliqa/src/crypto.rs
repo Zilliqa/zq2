@@ -10,6 +10,7 @@ use anyhow::{anyhow, Result};
 use bls12_381::G2Affine;
 use bls_signatures::Serialize as BlsSerialize;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
+use primitive_types::H256;
 use rand_core;
 use serde::{
     de::{self, Unexpected},
@@ -265,6 +266,12 @@ impl Hash {
             hasher.update(preimage.as_ref());
         }
         Self(hasher.finalize().into())
+    }
+}
+
+impl From<H256> for Hash {
+    fn from(value: H256) -> Self {
+        Self(value.into())
     }
 }
 

@@ -43,6 +43,12 @@ macro_rules! get_and_insert_methods {
             }
 
             #[allow(dead_code)]
+            pub fn [<remove_ $name>](&self, key: &$key) -> Result<()> {
+                self.$name.remove(key.as_bytes())?;
+                Ok(())
+            }
+
+            #[allow(dead_code)]
             pub fn [<get_ $name>](&self, key: &$key) -> Result<Option<$val>> {
                 Ok(
                     self.$name
