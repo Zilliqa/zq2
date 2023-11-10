@@ -6,4 +6,3 @@ use proc_macro::TokenStream;
 pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     test::test_macro(args.into(), item.into()).into()
 }
-
