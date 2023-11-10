@@ -2,14 +2,18 @@ use std::collections::BTreeSet;
 
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
+use libp2p::PeerId;
+use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
-use std::{fmt::Display, str::FromStr};
+use std::{fmt, fmt::Display, fmt::Formatter, str::FromStr};
+use time::format_description;
 
 use crate::{
     consensus::Validator,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     state::SignedTransaction,
+    time::OffsetDateTime,
     time::SystemTime,
 };
 
@@ -278,6 +282,32 @@ pub struct BlockHeader {
     pub timestamp: SystemTime,
 }
 
+impl fmt::Display for BlockHeader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "View: {}, ", self.view)?;
+        write!(f, "Block Number: {}, ", self.number)?;
+        write!(f, "Block Hash: {}, ", self.hash)?;
+        write!(f, "Parent Hash: {}, ", self.parent_hash)?;
+        write!(f, "State Root Hash: {}, ", self.state_root_hash)?;
+        write!(
+            f,
+            "Timestamp: {}, ",
+            systemtime_strftime(self.timestamp).unwrap()
+        )?;
+        Ok(())
+    }
+}
+
+// Helper function to format SystemTime as a string
+// https://stackoverflow.com/questions/45386585
+fn systemtime_strftime<T>(dt: T) -> Result<String, time::error::Format>
+where
+    T: Into<OffsetDateTime>,
+{
+    let f = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]").unwrap();
+    dt.into().format(&f)
+}
+
 impl BlockHeader {
     pub fn genesis_hash() -> Hash {
         Hash::compute([&0_u64.to_be_bytes(), Hash::ZERO.as_bytes()])
@@ -439,6 +469,16 @@ impl Committee {
     pub fn add_validators(&mut self, validators: impl IntoIterator<Item = Validator>) {
         self.0.extend(validators);
     }
+
+    pub fn remove_by_peer_id(&mut self, peer_id: PeerId) {
+        self.0.retain(|v| v.peer_id != peer_id);
+    }
+
+    pub fn choose_random(&mut self) -> Validator {
+        let mut rng = rand::thread_rng();
+        let index = rng.gen_range(0..self.0.len());
+        self.get_by_index(index).unwrap()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -453,6 +493,27 @@ pub struct Block {
     pub transactions: Vec<Hash>,
     /// The consensus committee for this block.
     pub committee: Committee,
+}
+
+impl Display for Block {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Header: {} ", self.header)?;
+        write!(f, "QC hash: {}, ", self.qc.block_hash)?;
+        if let Some(agg) = &self.agg {
+            write!(f, "Agg QC view: {}, ", agg.view)?;
+        }
+        write!(f, "Transactions: {:?}, ", self.transactions)?;
+        write!(
+            f,
+            "Committee: {:?}, ",
+            self.committee
+                .0
+                .iter()
+                .map(|c| c.peer_id)
+                .collect::<Vec<_>>()
+        )?;
+        Ok(())
+    }
 }
 
 impl Block {
