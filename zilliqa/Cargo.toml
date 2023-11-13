@@ -65,7 +65,7 @@ sled = "0.34.7"
 time = "0.3.0"
 tokio = { version = "1.33.0", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 tokio-stream = "0.1.14"
-toml = "0.8.6"
+toml = "0.8.8"
 tower = "0.4.13"
 tower-http = { version = "0.4.4", features = ["cors"] }
 tracing = "0.1.40"
