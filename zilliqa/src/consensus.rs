@@ -1,6 +1,5 @@
 use ethabi::{Event, Log, RawLog};
 use primitive_types::H256;
-use std::path::Path;
 
 use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::MessageSender;
@@ -8,7 +7,7 @@ use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
-use sled::{Db, Tree};
+use std::sync::Arc;
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BinaryHeap},
@@ -24,6 +23,7 @@ use crate::{
     cfg::NodeConfig,
     contracts,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
+    db::Db,
     exec::TouchedAddressEventListener,
     exec::TransactionApplyResult,
     message::{
@@ -33,23 +33,6 @@ use crate::{
     state::{Address, SignedTransaction, State, TransactionReceipt},
     time::SystemTime,
 };
-
-// database tree names
-/// Key: trie hash; value: trie node
-const STATE_TRIE_TREE: &[u8] = b"state_trie";
-/// Key: transaction hash; value: transaction data
-const TXS_TREE: &[u8] = b"txs_tree";
-/// Key: block_hash; value: receipt for all transactions in it
-const RECEIPTS_TREE: &[u8] = b"receipts_tree";
-/// Key: tx_hash; value: corresponding block_hash
-const TX_BLOCK_INDEX: &[u8] = b"tx_block_index";
-/// Key: address; value: Vec<tx hash where this address was touched>
-const ADDR_TOUCHED_INDEX: &[u8] = b"addresses_touched_index";
-
-// single keys stored in default tree in DB
-/// value: u64
-const LATEST_FINALIZED_VIEW: &[u8] = b"latest_finalized_view";
-const HIGHEST_BLOCK_NUMBER: &[u8] = b"highest_block_number";
 
 #[derive(Debug)]
 struct NewViewVote {
@@ -213,22 +196,12 @@ pub struct Consensus {
     pending_peers: Vec<Validator>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
     new_transactions: BTreeMap<Hash, SignedTransaction>,
-    /// Transactions ordered by priority, map of address of TXn (from account) to ordered TXns to be executed.
-    new_transactions_priority: BTreeMap<Address, BinaryHeap<TxnOrder>>,
-    /// Transactions that have been executed and included in a block, and the blocks the are
-    /// included in.
-    transactions: Tree,
-    /// map of block hash to transaction receipts
-    transaction_receipts: Tree,
     /// The account store.
     state: State,
     /// The persistence database
-    db: Db,
-    /// An index of address to a list of transaction hashes, for which this address appeared somewhere in the
-    /// transaction trace. The list of transations is ordered by execution order.
-    touched_address_index: Tree,
-    /// Lookup of block hashes for transaction hashes.
-    block_hash_reverse_index: Tree,
+    db: Arc<Db>,
+    /// Transactions ordered by priority, map of address of TXn (from account) to ordered TXns to be executed.
+    new_transactions_priority: BTreeMap<Address, BinaryHeap<TxnOrder>>,
 }
 
 // View in consensus should be have access monitored so last_timeout is always correct
@@ -279,6 +252,7 @@ impl Consensus {
         secret_key: SecretKey,
         config: NodeConfig,
         message_sender: MessageSender,
+        db: Arc<Db>,
     ) -> Result<Self> {
         trace!(
             "Opening database in {:?} for shard {}",
@@ -286,22 +260,10 @@ impl Consensus {
             config.eth_chain_id
         );
 
-        let db = match &config.data_dir {
-            Some(path) => {
-                let path = Path::new(path).join(config.eth_chain_id.to_string());
-                sled::open(path)?
-            }
-            None => sled::Config::new().temporary(true).open()?,
-        };
-
-        let mut block_store = BlockStore::new(&db, message_sender.clone())?;
-
-        let state_trie = db.open_tree(STATE_TRIE_TREE)?;
+        let mut block_store = BlockStore::new(db.clone(), message_sender.clone())?;
 
         let latest_block = db
-            .get(LATEST_FINALIZED_VIEW)?
-            .map(|b| Ok::<_, anyhow::Error>(u64::from_be_bytes(b.as_ref().try_into()?)))
-            .transpose()?
+            .get_latest_finalized_view()?
             .map(|view| {
                 block_store
                     .get_block_by_view(view)?
@@ -311,10 +273,10 @@ impl Consensus {
 
         let mut state = if let Some(latest_block) = &latest_block {
             trace!("Loading state from latest block");
-            State::new_at_root(state_trie, H256(latest_block.state_root_hash().0))
+            State::new_at_root(db.state_trie()?, H256(latest_block.state_root_hash().0))
         } else {
             trace!("Contructing new state from genesis");
-            State::new_with_genesis(state_trie, config.consensus.clone())?
+            State::new_with_genesis(db.state_trie()?, config.consensus.clone())?
         };
 
         let (latest_block, latest_block_view, latest_block_number, latest_block_hash) =
@@ -356,23 +318,8 @@ impl Consensus {
                 },
             };
 
-        let block_hash_reverse_index = db.open_tree(TX_BLOCK_INDEX)?;
-
-        let touched_address_index = db.open_tree(ADDR_TOUCHED_INDEX)?;
-        touched_address_index.set_merge_operator(|_k, old_value, additional_value| {
-            // We unwrap all errors as we assume that the serialization should always be correct.
-            // TODO: maybe use a smarter packing rather than calling bincode twice every time?
-            let mut vec = if let Some(old_value) = old_value {
-                bincode::deserialize::<Vec<Hash>>(old_value).unwrap()
-            } else {
-                vec![]
-            };
-            vec.push(Hash(additional_value.try_into().unwrap()));
-            Some(bincode::serialize(&vec).unwrap())
-        });
-
         let (start_view, high_qc) = {
-            match block_store.get_high_qc()? {
+            match db.get_high_qc()? {
                 Some(qc) => {
                     let high_block = block_store
                         .get_block(qc.block_hash)?
@@ -401,13 +348,9 @@ impl Consensus {
             finalized_view: start_view.saturating_sub(1),
             pending_peers: Vec::new(),
             new_transactions: BTreeMap::new(),
-            new_transactions_priority: BTreeMap::new(),
-            transactions: db.open_tree(TXS_TREE)?,
-            transaction_receipts: db.open_tree(RECEIPTS_TREE)?,
             state,
             db,
-            block_hash_reverse_index,
-            touched_address_index,
+            new_transactions_priority: BTreeMap::new(),
         };
 
         // If we're at genesis, add the genesis block.
@@ -477,14 +420,7 @@ impl Consensus {
     }
 
     pub fn head_block(&self) -> Block {
-        let highest_block_number = self
-            .db
-            .get(HIGHEST_BLOCK_NUMBER)
-            .unwrap()
-            .map(|b| Ok::<_, anyhow::Error>(u64::from_be_bytes(b.as_ref().try_into()?)))
-            .transpose()
-            .unwrap()
-            .unwrap();
+        let highest_block_number = self.db.get_highest_block_number().unwrap().unwrap();
 
         trace!(
             "head block request: highest block number: {}",
@@ -683,8 +619,8 @@ impl Consensus {
             for txn in &transactions {
                 if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
                     let tx_hash = txn.hash();
-                    self.block_hash_reverse_index
-                        .insert(tx_hash.0, &block.hash().0)?;
+                    self.db
+                        .insert_block_hash_reverse_index(&tx_hash, &block.hash())?;
                     let receipt = TransactionReceipt {
                         block_hash: block.hash(),
                         tx_hash,
@@ -693,18 +629,17 @@ impl Consensus {
                         logs: result.logs,
                     };
                     info!(?receipt, "applied transaction {:?}", receipt);
+                    self.db.insert_transaction(&txn.hash(), txn)?;
                     block_receipts.push(receipt);
-                    self.transactions
-                        .insert(txn.hash().0, bincode::serialize(&txn)?)?;
                 } else {
                     warn!("Failed to apply TX! Something might be wrong");
                 }
             }
 
             // If we were the proposer we would've already processed the transactions
-            if !self.transaction_receipts.contains_key(block.hash().0)? {
-                self.transaction_receipts
-                    .insert(block.hash().0, bincode::serialize(&block_receipts)?)?;
+            if !self.db.contains_transaction_receipt(&block.hash())? {
+                self.db
+                    .insert_transaction_receipt(&block.hash(), &block_receipts)?;
             }
 
             if self.state.root_hash()? != block_state_root {
@@ -782,9 +717,6 @@ impl Consensus {
         // Ensure the transaction has a valid signature
         txn.verify()?;
 
-        // If we haven't applied the transaction yet, do so. This ensures we don't execute the transaction twice if we
-        // already executed it in the process of proposing this block.
-        //if !self.transactions.contains_key(hash.0)? {
         let mut listener = TouchedAddressEventListener::default();
 
         let result = evm_ds::evm::tracing::using(&mut listener, || {
@@ -797,7 +729,7 @@ impl Consensus {
         })?;
 
         for address in listener.touched {
-            self.touched_address_index.merge(address.0, hash.0)?;
+            self.db.add_touched_address(Address(address), hash)?;
         }
 
         if !result.success {
@@ -808,11 +740,7 @@ impl Consensus {
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
-        self.touched_address_index
-            .get(address.0)?
-            .map(|encoded| Ok(bincode::deserialize::<Vec<Hash>>(&encoded)?))
-            .transpose()
-            .map(|opt| opt.unwrap_or_default())
+        self.db.get_touched_address_index(address)
     }
 
     // Get valid TXs to execute while also cleaning the mempool of TXs that are invalid
@@ -1280,34 +1208,17 @@ impl Consensus {
             return Ok(Some(txn.clone()));
         }
 
-        self.transactions
-            .get(hash.0)?
-            .map(|encoded| Ok(bincode::deserialize::<SignedTransaction>(&encoded)?))
-            .transpose()
-    }
-
-    pub fn get_block_hash_from_transaction(&self, tx_hash: &Hash) -> Result<Option<Hash>> {
-        self.block_hash_reverse_index
-            .get(tx_hash.0)?
-            .map(|ivec| ivec.as_ref().try_into())
-            .transpose()
-    }
-
-    pub fn get_transaction_receipts_in_block(
-        &self,
-        block_hash: Hash,
-    ) -> Result<Vec<TransactionReceipt>> {
-        self.transaction_receipts
-            .get(block_hash.0)?
-            .map(|encoded| Ok(bincode::deserialize::<Vec<TransactionReceipt>>(&encoded)?))
-            .unwrap_or_else(|| Ok(vec![]))
+        self.db.get_transaction(&hash)
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
-        let Some(block_hash) = self.get_block_hash_from_transaction(hash)? else {
+        let Some(block_hash) = self.db.get_block_hash_reverse_index(hash)? else {
             return Ok(None);
         };
-        let block_receipts = self.get_transaction_receipts_in_block(block_hash)?;
+        let block_receipts = self
+            .db
+            .get_transaction_receipt(&block_hash)?
+            .unwrap_or_default();
         Ok(block_receipts
             .into_iter()
             .find(|receipt| receipt.tx_hash == *hash))
@@ -1319,7 +1230,7 @@ impl Consensus {
         event: Event,
         emitter: Address,
     ) -> Result<Vec<Log>> {
-        let receipts = self.get_transaction_receipts_in_block(hash)?;
+        let receipts = self.db.get_transaction_receipt(&hash)?.unwrap_or_default();
 
         let logs: Result<Vec<_>, _> = receipts
             .into_iter()
@@ -1338,8 +1249,7 @@ impl Consensus {
 
     fn save_highest_view(&mut self, block_hash: Hash, number: u64, view: u64) -> Result<()> {
         self.block_store.set_canonical(number, view, block_hash)?;
-        self.db
-            .insert(HIGHEST_BLOCK_NUMBER, &number.to_be_bytes())?;
+        self.db.put_highest_block_number(number)?;
         Ok(())
     }
 
@@ -1359,7 +1269,7 @@ impl Consensus {
         if self.high_qc.block_hash == Hash::ZERO {
             // This seems like a potential bug???
             trace!("received high qc for the zero hash, setting.");
-            self.block_store.set_high_qc(new_high_qc.clone())?;
+            self.db.set_high_qc(new_high_qc.clone())?;
             self.high_qc = new_high_qc;
         } else {
             let current_high_qc_view = self
@@ -1376,7 +1286,7 @@ impl Consensus {
                     new_high_qc_block_view + 1,
                     current_high_qc_view,
                 );
-                self.block_store.set_high_qc(new_high_qc.clone())?;
+                self.db.set_high_qc(new_high_qc.clone())?;
                 self.high_qc = new_high_qc;
                 self.view.set_view(new_high_qc_block_view + 1);
             }
@@ -1530,7 +1440,7 @@ impl Consensus {
     /// finalized tip forward by one. Does not update view/height.
     pub fn finalize(&mut self, hash: Hash, view: u64) -> Result<()> {
         self.finalized_view = view;
-        self.db.insert(LATEST_FINALIZED_VIEW, &view.to_be_bytes())?;
+        self.db.put_latest_finalized_view(view)?;
 
         if self.config.consensus.is_main {
             // Check for new shards to join
@@ -1761,7 +1671,7 @@ impl Consensus {
     }
 
     pub fn seen_tx_already(&self, hash: &Hash) -> Result<bool> {
-        Ok(self.new_transactions.contains_key(hash) || self.transactions.contains_key(hash.0)?)
+        Ok(self.new_transactions.contains_key(hash) || self.db.contains_transaction(hash)?)
     }
 
     fn get_highest_from_agg<'a>(&self, agg: &'a AggregateQc) -> Result<&'a QuorumCertificate> {
@@ -1858,17 +1768,17 @@ impl Consensus {
             // block transactions need to be removed from self.transactions and re-injected
             for tx_hash in &head_block.transactions {
                 let orig_tx = self.get_transaction_by_hash(*tx_hash).unwrap().unwrap();
-                let _ = self.transactions.remove(tx_hash.0);
+                self.db.remove_transaction(tx_hash)?;
 
                 // Put tx back in.
                 self.new_transaction(orig_tx).unwrap();
 
                 // block hash reverse index, remove tx hash too
-                let _ = self.block_hash_reverse_index.remove(tx_hash.0);
+                self.db.remove_block_hash_reverse_index(tx_hash)?;
             }
 
             // TX receipts are indexed by block
-            let _ = self.transaction_receipts.remove(head_block.hash().0);
+            self.db.remove_transaction_receipt(&head_block.hash())?;
 
             // State is easily set - must be to the parent block, though
             trace!("Setting state to: {}", parent_block.state_root_hash());
@@ -1878,8 +1788,7 @@ impl Consensus {
             // Persistence - only need to update head block pointer as it should be impossible
             // to change finalized height
             let new_highest = head_block.header.number.saturating_sub(1);
-            self.db
-                .insert(HIGHEST_BLOCK_NUMBER, &new_highest.to_be_bytes())?;
+            self.db.put_highest_block_number(new_highest)?;
 
             // touched address index: TODO
         }
