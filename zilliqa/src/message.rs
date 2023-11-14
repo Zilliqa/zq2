@@ -223,6 +223,24 @@ impl QuorumCertificate {
         }
     }
 
+    // Verifying an aggregated signature is a case of verifying the aggregated public key
+    // against the aggregated signature
+    pub fn verify(&self, public_keys: Vec<NodePublicKey>) -> bool {
+        // First verify that the signature itself is the aggregated signature of all hashes - pubkeys
+        //if !NodeSignature::verify_agg_signature(self.signature, self.block_hash, public_keys) {
+        //    return anyhow!("Invalid generated signature found in QC!");
+        //}
+
+        // Select which public keys have gone into creating this signature
+        let mut public_keys = public_keys
+            .into_iter()
+            .zip(self.cosigned.iter())
+            .filter_map(|(pk, cosigned)| if *cosigned { Some(pk) } else { None })
+            .collect::<Vec<_>>();
+
+        NodeSignature::verify_aggregate(&self.signature, self.block_hash.as_bytes(), public_keys).is_ok()
+    }
+
     pub fn compute_hash(&self) -> Hash {
         Hash::compute([
             &self.signature.to_bytes(),
@@ -478,6 +496,10 @@ impl Committee {
         let mut rng = rand::thread_rng();
         let index = rng.gen_range(0..self.0.len());
         self.get_by_index(index).unwrap()
+    }
+
+    pub fn public_keys(&self) -> Vec<NodePublicKey> {
+        self.0.iter().map(|v| v.public_key).collect()
     }
 }
 
