@@ -519,7 +519,7 @@ pub struct Block {
 
 impl Display for Block {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Header: {}", self.header)?;
+        write!(f, "Header: {} ", self.header)?;
         write!(f, "QC hash: {}, ", self.qc.block_hash)?;
         if let Some(agg) = &self.agg {
             write!(f, "Agg QC view: {}, ", agg.view)?;

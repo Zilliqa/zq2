@@ -3,8 +3,7 @@ echo "The CI is running this script."
 # Start network early.
 pwd
 cargo build --all-targets > /dev/null 2>&1
-RUST_LOG=zilliqa=trace ./target/debug/z2 internal run > /tmp/zil_log_out.txt 2>&1 &
-sleep 10;
+RUST_LOG=zilliqa=warn ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 -c config-example.toml > /tmp/zil_log_out.txt 2>&1 &
 
 # Pull submodule
 cd evm_js_tests
@@ -18,7 +17,10 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
+echo "Installing nvm"
 nvm install 16.0
+
+echo "Using nvm"
 nvm use 16.0
 node --version
 
@@ -26,14 +28,17 @@ sudo add-apt-repository ppa:ethereum/ethereum > /dev/null 2>&1
 sudo apt-get update > /dev/null 2>&1
 sudo apt-get install solc libsecp256k1-dev > /dev/null 2>&1
 
+echo "Installing tests"
+
 # Install tests
 npm install > /dev/null 2>&1
 
+echo "Running tests"
+
 # Run tests
-npx hardhat test --parallel
+npx hardhat test
 
 retVal=$?
-
 pkill -INT zilliqa
 if [ $retVal -ne 0 ]; then
     cat /tmp/zil_log_out.txt
