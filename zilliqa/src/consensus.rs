@@ -613,7 +613,7 @@ impl Consensus {
 
             // Must make sure state root hash is set to the parent's state root hash before applying transactions
             if self.state.root_hash()? != parent.state_root_hash() {
-                warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}", parent.state_root_hash(), self.state.root_hash()?);
+                warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}.\nHead: {}", parent.state_root_hash(), self.state.root_hash()?, head_block);
             }
 
             for txn in &transactions {

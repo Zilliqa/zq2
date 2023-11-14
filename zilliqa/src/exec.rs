@@ -585,7 +585,7 @@ impl State {
 
                 if acct.nonce != txn.transaction.nonce {
                     let error_str = format!(
-                        "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
+                        "Nonce mismatch during tx execution! Acct nonce: {}, Tx nonce: {} tx hash: {}",
                         acct.nonce, txn.transaction.nonce, hash
                     );
                     warn!(error_str);
