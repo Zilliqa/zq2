@@ -576,7 +576,7 @@ impl Consensus {
             }
         }
 
-        self.add_block(block.clone())?;
+        /* self.add_block(block.clone())?; */
         self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
 
         let proposal_view = block.view();
@@ -1623,11 +1623,6 @@ impl Consensus {
 
     fn vote_from_block(&self, block: &Block) -> Vote {
         Vote::new(self.secret_key, block.hash(), self.secret_key.node_public_key())
-        //Vote {
-        //    block_hash: block.hash(),
-        //    signature: self.secret_key.sign(block.hash().as_bytes()),
-        //    public_key: self.secret_key.node_public_key(),
-        //}
     }
 
     fn get_high_qc_from_block<'a>(&self, block: &'a Block) -> Result<&'a QuorumCertificate> {

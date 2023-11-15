@@ -388,6 +388,8 @@ impl Network {
         let mut proposals_seen = 0;
         let mut broadcast_handled = false;
 
+        trace!("Dropping propose messages except one");
+
         loop {
             // Generate some messages
             self.tick().await;
@@ -462,6 +464,8 @@ impl Network {
                 self.resend_message.send(message).unwrap();
             }
         }
+
+        trace!("Finished dropping propose messages except one");
     }
 
     // Drop the first message in each node queue with N% probability per tick
