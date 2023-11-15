@@ -16,7 +16,6 @@ use sha3::{
     },
     Digest, Keccak256,
 };
-use sled::Tree;
 use std::convert::TryInto;
 use std::fmt::{Display, LowerHex};
 use std::sync::Arc;
@@ -30,32 +29,39 @@ use serde::{Deserialize, Serialize};
 use crate::{
     cfg::ConsensusConfig,
     contracts, crypto,
-    db::SledDb,
+    db::TrieStorage,
     schnorr,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
 
 #[derive(Debug)]
+/// The state of the blockchain, consisting of:
+/// -  state - a database of Map<Address, Map<key,value>>
+/// -  accounts, Map<Address, Account>
+/// where an address is a 20-byte array representing a user.
+/// where Account is (nonce, code, storage_root)
+/// the storage root is used to index into the state
+/// all the keys are hashed and stored in the same sled tree
 pub struct State {
-    db: Arc<SledDb>,
-    accounts: PatriciaTrie<SledDb>,
+    db: Arc<TrieStorage>,
+    accounts: PatriciaTrie<TrieStorage>,
 }
 
 impl State {
-    pub fn new(database: Tree) -> State {
-        let db = Arc::new(SledDb::new(database));
+    pub fn new(trie: TrieStorage) -> State {
+        let db = Arc::new(trie);
         Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
         }
     }
 
-    pub fn new_at_root(database: Tree, root_hash: H256) -> Self {
-        Self::new(database).at_root(root_hash)
+    pub fn new_at_root(trie: TrieStorage, root_hash: H256) -> Self {
+        Self::new(trie).at_root(root_hash)
     }
 
-    pub fn new_with_genesis(database: Tree, config: ConsensusConfig) -> Result<State> {
-        let db = Arc::new(SledDb::new(database));
+    pub fn new_with_genesis(trie: TrieStorage, config: ConsensusConfig) -> Result<State> {
+        let db = Arc::new(trie);
         let mut state = Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
@@ -149,7 +155,7 @@ impl State {
     }
 
     /// If using this to modify the account, ensure save_account gets called
-    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<SledDb>> {
+    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
         Ok(match self.get_account(address)?.storage_root {
             Some(root) => PatriciaTrie::new(self.db.clone()).at_root(root),
             None => PatriciaTrie::new(self.db.clone()),

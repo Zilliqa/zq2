@@ -5,6 +5,7 @@ use ethers::{
     providers::Middleware,
     types::{BlockNumber, TransactionRequest},
 };
+use primitive_types::H160;
 use tracing::*;
 use zilliqa::state::Address;
 
@@ -14,12 +15,6 @@ use zilliqa::state::Address;
 async fn network_can_die_restart(mut network: Network) {
     let start_block = 5;
     let finish_block = 10;
-
-    let samples: usize = std::env::var_os("ZQ_TEST_SAMPLES")
-        .map(|s| s.to_str().unwrap_or("1").parse().unwrap_or(1))
-        .unwrap_or(1);
-
-    println!("{}", samples);
 
     // wait until at least 5 blocks have been produced
     network
@@ -315,6 +310,70 @@ async fn launch_shard(mut network: Network) {
                     .number
                     .unwrap()
                     >= check_child_block + 5
+            },
+            500,
+        )
+        .await
+        .unwrap();
+}
+
+// test that when a fork occurs in the network, the node which has forked correctly reverts its state
+// and progresses.
+#[zilliqa_macros::test]
+async fn handle_forking_correctly(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let _provider = wallet.provider();
+
+    let start_block = 5;
+
+    // wait until at least 5 blocks have been produced
+    network
+        .run_until(
+            |n| {
+                let index = n.random_index();
+                n.get_node(index).get_finalized_height() >= start_block
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Send a single TX to the network
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    network.drop_propose_messages_except_one().await;
+
+    // Check that node 0 has executed the transaction while the others haven't
+    let first = network
+        .get_node(0)
+        .get_transaction_receipt(hash.into())
+        .unwrap();
+    let second = network
+        .get_node(1)
+        .get_transaction_receipt(hash.into())
+        .unwrap();
+
+    // Only the first node should have executed the transaction
+    assert!(first.is_some());
+    assert!(second.is_none());
+
+    let original_receipt = first.unwrap();
+
+    trace!("Running until the network has reverted the block");
+    // Now we should be able to run the network until we get a different tx receipt from the first
+    // node, which indicates that it has reverted the block
+    network
+        .run_until(
+            |n| {
+                let receipt = n.get_node(0).get_transaction_receipt(hash.into());
+                match receipt {
+                    Ok(Some(receipt)) => receipt.block_hash != original_receipt.block_hash,
+                    _ => false,
+                }
             },
             500,
         )

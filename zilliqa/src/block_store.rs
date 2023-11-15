@@ -1,14 +1,15 @@
 use crate::message::ExternalMessage;
-use std::{cell::RefCell, num::NonZeroUsize};
+use std::{cell::RefCell, num::NonZeroUsize, sync::Arc};
 
 use anyhow::Result;
+use libp2p::PeerId;
 use lru::LruCache;
-use sled::{Db, Tree};
 use tracing::*;
 
 use crate::{
     crypto::Hash,
-    message::{Block, BlockBatchRequest, BlockRef, BlockRequest, QuorumCertificate},
+    db::Db,
+    message::{Block, BlockBatchRequest, BlockRef, BlockRequest},
     node::MessageSender,
 };
 
@@ -16,30 +17,22 @@ use crate::{
 /// this may become more complex with retries, batching, snapshots, etc.
 #[derive(Debug)]
 pub struct BlockStore {
-    block_headers: Tree,
-    canonical_block_numbers: Tree,
-    canonical_block_views: Tree,
-    blocks: Tree,
-    high_qc: Tree,
+    db: Arc<Db>,
     block_cache: RefCell<LruCache<Hash, Block>>,
     message_sender: MessageSender,
 }
 
 impl BlockStore {
-    pub fn new(db: &Db, message_sender: MessageSender) -> Result<Self> {
+    pub fn new(db: Arc<Db>, message_sender: MessageSender) -> Result<Self> {
         Ok(BlockStore {
-            block_headers: db.open_tree(b"block_headers_tree")?,
-            canonical_block_numbers: db.open_tree(b"canonical_block_numbers_tree")?,
-            canonical_block_views: db.open_tree(b"canonical_block_views_tree")?,
-            blocks: db.open_tree(b"blocks_tree")?,
-            high_qc: db.open_tree(b"high_qc_tree")?,
+            db,
             block_cache: RefCell::new(LruCache::new(NonZeroUsize::new(5).unwrap())),
             message_sender,
         })
     }
 
     pub fn contains_block(&self, hash: Hash) -> Result<bool> {
-        Ok(self.blocks.contains_key(hash.as_bytes())?)
+        self.db.contains_block(&hash)
     }
 
     pub fn get_block(&self, hash: Hash) -> Result<Option<Block>> {
@@ -47,33 +40,29 @@ impl BlockStore {
         if let Some(block) = block_cache.get(&hash) {
             return Ok(Some(block.clone()));
         }
-        let Some(block) = self.blocks.get(hash.as_bytes())? else {
+        let Some(block) = self.db.get_block(&hash)? else {
             return Ok(None);
         };
-        let block: Block = bincode::deserialize(&block)?;
         block_cache.put(hash, block.clone());
         Ok(Some(block))
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        let Some(hash) = self.canonical_block_views.get(view.to_be_bytes())? else {
+        let Some(hash) = self.db.get_canonical_block_view(view)? else {
             return Ok(None);
         };
-        let hash = Hash::from_bytes(hash)?;
         self.get_block(hash)
     }
 
     pub fn get_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        let Some(hash) = self.canonical_block_numbers.get(number.to_be_bytes())? else {
+        let Some(hash) = self.db.get_canonical_block_number(number)? else {
             return Ok(None);
         };
-        let hash = Hash::from_bytes(hash)?;
         self.get_block(hash)
     }
 
     pub fn request_block_by_view(&mut self, view: u64) -> Result<()> {
-        if let Some(hash) = self.canonical_block_views.get(view.to_be_bytes())? {
-            let hash = Hash::from_bytes(hash)?;
+        if let Some(hash) = self.db.get_canonical_block_view(view)? {
             self.request_block(hash)?;
         } else {
             self.message_sender
@@ -87,8 +76,7 @@ impl BlockStore {
 
     #[allow(dead_code)]
     pub fn request_block_by_number(&mut self, number: u64) -> Result<()> {
-        if let Some(hash) = self.canonical_block_numbers.get(number.to_be_bytes())? {
-            let hash = Hash::from_bytes(hash)?;
+        if let Some(hash) = self.db.get_canonical_block_number(number)? {
             self.request_block(hash)?;
         } else {
             self.message_sender
@@ -100,18 +88,29 @@ impl BlockStore {
         Ok(())
     }
 
-    pub fn request_blocks(&mut self, number: u64) -> Result<()> {
-        self.message_sender
-            .broadcast_external_message(ExternalMessage::BlockBatchRequest(BlockBatchRequest(
-                BlockRef::Number(number),
-            )))
-            .unwrap();
+    pub fn request_blocks(&mut self, peer: Option<PeerId>, number: u64) -> Result<()> {
+        let request =
+            ExternalMessage::BlockBatchRequest(BlockBatchRequest(BlockRef::Number(number)));
+
+        // We can request blocks from a single peer or from all peers.
+        match peer {
+            Some(peer) => {
+                self.message_sender
+                    .send_external_message(peer, request)
+                    .unwrap();
+            }
+            None => {
+                self.message_sender
+                    .broadcast_external_message(request)
+                    .unwrap();
+            }
+        }
 
         Ok(())
     }
 
     pub fn request_block(&mut self, hash: Hash) -> Result<()> {
-        if !self.blocks.contains_key(hash.as_bytes())? {
+        if !self.db.contains_block(&hash)? {
             self.message_sender
                 .broadcast_external_message(ExternalMessage::BlockRequest(BlockRequest(
                     BlockRef::Hash(hash),
@@ -124,36 +123,15 @@ impl BlockStore {
     }
 
     pub fn set_canonical(&mut self, number: u64, view: u64, hash: Hash) -> Result<()> {
-        self.canonical_block_numbers
-            .insert(number.to_be_bytes(), &hash.0)?;
-        self.canonical_block_views
-            .insert(view.to_be_bytes(), &hash.0)?;
-
+        self.db.put_canonical_block_view(view, hash)?;
+        self.db.put_canonical_block_number(number, hash)?;
         Ok(())
-    }
-
-    pub fn set_high_qc(&mut self, high_qc: QuorumCertificate) -> Result<()> {
-        self.high_qc
-            .insert("".as_bytes(), bincode::serialize(&high_qc)?)?;
-
-        Ok(())
-    }
-
-    pub fn get_high_qc(&mut self) -> Result<Option<QuorumCertificate>> {
-        let Some(result) = self.high_qc.get("".as_bytes())? else {
-            return Ok(None);
-        };
-
-        let result: QuorumCertificate = bincode::deserialize(&result)?;
-        Ok(Some(result))
     }
 
     pub fn process_block(&mut self, block: Block) -> Result<()> {
         trace!(number = block.number(), hash = ?block.hash(), "insert block");
-        self.block_headers
-            .insert(block.hash().as_bytes(), bincode::serialize(&block.header)?)?;
-        self.blocks
-            .insert(block.hash().as_bytes(), bincode::serialize(&block)?)?;
+        self.db.insert_block_header(&block.hash(), &block.header)?;
+        self.db.insert_block(&block.hash(), &block)?;
         // TODO: Is this correct?
         self.set_canonical(block.number(), block.view(), block.hash())?;
         Ok(())

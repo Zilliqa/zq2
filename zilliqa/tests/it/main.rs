@@ -374,6 +374,116 @@ impl Network {
         }
     }
 
+    fn collect_messages(&mut self) -> Vec<(PeerId, Option<PeerId>, Message)> {
+        let mut messages = vec![];
+
+        // Poll the receiver with `unconstrained` to ensure it won't be pre-empted. This makes sure we always
+        // get an item if it has been sent. It does not lead to starvation, because we evaluate the returned
+        // future with `.now_or_never()` which instantly returns `None` if the future is not ready.
+        for (_i, receiver) in self.receivers.iter_mut().enumerate() {
+            loop {
+                match tokio::task::unconstrained(receiver.next()).now_or_never() {
+                    Some(Some(message)) => {
+                        messages.push(message);
+                    }
+                    Some(None) => {
+                        warn!("Stream was unreachable!");
+                        unreachable!("stream was terminated, this should be impossible");
+                    }
+                    None => {
+                        break;
+                    }
+                }
+            }
+        }
+        messages
+    }
+
+    // Take all the currently ready messages from the stream,
+    // remove N-1 propose messages we see where network size = N and the remaining one is
+    // the first node in the vector
+    // *** Only perform this when the propose message contains one or more txs.
+    pub async fn drop_propose_messages_except_one(&mut self) {
+        let mut counter = 0;
+        let mut proposals_seen = 0;
+        let mut broadcast_handled = false;
+
+        loop {
+            // Generate some messages
+            self.tick().await;
+
+            counter += 1;
+
+            if counter >= 100 {
+                panic!("Possibly looping forever looking for propose messages.");
+            }
+
+            let mut messages = self.collect_messages();
+
+            if messages.is_empty() {
+                warn!("Messages were empty - advance time faster!");
+                zilliqa::time::advance(Duration::from_millis(50));
+                continue;
+            }
+
+            // filter out all the propose messages, except node 0. If the proposal is a broadcast,
+            // repackage it as direct messages to all nodes except node 0.
+            let mut removed_items = Vec::new();
+
+            // Remove the matching messages
+            messages.retain(|(s, d, m)| {
+                if let Message::External(ExternalMessage::Proposal(prop)) = m {
+                    if !prop.transactions.is_empty() {
+                        removed_items.push((*s, *d, m.clone()));
+                        return false;
+                    }
+                }
+                true
+            });
+
+            // Handle the removed proposes correctly for both cases of broadcast and single cast
+            for (s, d, m) in removed_items {
+                // If specifically to a node, only allow node 0
+                if let Some(dest) = d {
+                    // We actually want to allow this message, put it back into the queue
+                    if dest == self.nodes[0].peer_id {
+                        messages.push((s, Some(dest), m));
+                        continue;
+                    }
+
+                    // This counts as it getting dropped
+                    proposals_seen += 1;
+                } else {
+                    // Broadcast seen! Push it back into the queue with specific destination of node 0
+                    messages.push((s, Some(self.nodes[0].peer_id), m));
+
+                    broadcast_handled = true;
+                    break;
+                }
+            }
+
+            // All but one allowed through, we can now quit
+            if proposals_seen == self.nodes.len() - 1 || broadcast_handled {
+                // Now process all available messages to make sure the nodes execute them
+                trace!(
+                    "Processing all remaining messages of len {}",
+                    messages.len()
+                );
+
+                for message in messages {
+                    self.handle_message(message);
+                }
+
+                break;
+            }
+
+            // Requeue the other messages
+            for message in messages {
+                self.resend_message.send(message).unwrap();
+            }
+        }
+    }
+
     // Drop the first message in each node queue with N% probability per tick
     pub async fn randomly_drop_messages_then_tick(&mut self, failure_rate: f64) {
         if !(0.0..=1.0).contains(&failure_rate) {
@@ -381,6 +491,8 @@ impl Network {
         }
 
         for (_i, receiver) in self.receivers.iter_mut().enumerate() {
+            // Peek at the messages in the queue
+
             let drop = self.rng.lock().unwrap().gen_bool(failure_rate);
             if drop {
                 // Don't really care too much what the reciever has, just pop something off if
@@ -390,7 +502,6 @@ impl Network {
                         unreachable!("stream was terminated, this should be impossible");
                     }
                     Some(Some(message)) => {
-                        //messages.push(message);
                         info!("***** Randomly dropping message: {:?}", message);
                     }
                     _ => {}
@@ -406,26 +517,7 @@ impl Network {
         zilliqa::time::advance(Duration::from_millis(1));
 
         // Take all the currently ready messages from the stream.
-        let mut messages = Vec::new();
-        for (_i, receiver) in self.receivers.iter_mut().enumerate() {
-            loop {
-                // Poll the receiver with `unconstrained` to ensure it won't be pre-empted. This makes sure we always
-                // get an item if it has been sent. It does not lead to starvation, because we evaluate the returned
-                // future with `.now_or_never()` which instantly returns `None` if the future is not ready.
-                match tokio::task::unconstrained(receiver.next()).now_or_never() {
-                    Some(Some(message)) => {
-                        messages.push(message);
-                    }
-                    Some(None) => {
-                        warn!("Stream was unreachable!");
-                        unreachable!("stream was terminated, this should be impossible");
-                    }
-                    None => {
-                        break;
-                    }
-                }
-            }
-        }
+        let mut messages = self.collect_messages();
 
         trace!(
             "{} possible messages to send ({:?})",
@@ -440,8 +532,12 @@ impl Network {
             trace!("Messages were empty - advance time and trigger timeout in all nodes!");
             zilliqa::time::advance(Duration::from_millis(500));
 
-            for node in &self.nodes {
-                node.inner.lock().unwrap().handle_timeout();
+            for (index, node) in self.nodes.iter().enumerate() {
+                let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
+
+                span.in_scope(|| {
+                    node.inner.lock().unwrap().handle_timeout();
+                });
             }
             return;
         }
@@ -458,21 +554,25 @@ impl Network {
             format_message(&self.nodes, source, destination, &message)
         );
 
-        if let Message::Internal(internal_message) = message {
-            if let InternalMessage::LaunchShard(shard_id) = internal_message {
-                if let Some(network) = self.children.get_mut(&shard_id) {
-                    trace!("Launching shard node for {shard_id} - adding new node to shard");
+        self.handle_message((source, destination, message))
+    }
+
+    fn handle_message(&mut self, message: (PeerId, Option<PeerId>, Message)) {
+        if let Message::Internal(internal_message) = message.2 {
+            if let InternalMessage::LaunchShard(network_id) = internal_message {
+                if let Some(network) = self.children.get_mut(&network_id) {
+                    trace!("Launching shard node for {network_id} - adding new node to shard");
                     network.add_node(true);
                 } else {
-                    info!("Launching node in new shard network {shard_id}");
+                    info!("Launching node in new shard network {network_id}");
                     self.children.insert(
-                        shard_id,
-                        Network::new_shard(self.rng.clone(), 1, false, shard_id, self.seed),
+                        network_id,
+                        Network::new_shard(self.rng.clone(), 1, false, network_id, self.seed),
                     );
                 }
             }
         } else {
-            let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = destination {
+            let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = message.1 {
                 vec![self
                     .nodes
                     .iter()
@@ -486,17 +586,17 @@ impl Network {
             for (index, node) in nodes.iter() {
                 let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                 span.in_scope(|| {
-                    if destination.is_some() {
+                    if message.1.is_some() {
                         info!(
                             "destination: {}, node being used: {}",
-                            destination.unwrap(),
+                            message.1.unwrap(),
                             node.inner.lock().unwrap().peer_id()
                         );
                     }
                     node.inner
                         .lock()
                         .unwrap()
-                        .handle_message(source, message.clone())
+                        .handle_message(message.0, message.2.clone())
                         .unwrap();
                 });
             }
