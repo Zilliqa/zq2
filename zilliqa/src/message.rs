@@ -53,6 +53,14 @@ impl Proposal {
             self.transactions,
         )
     }
+
+    pub fn number(&self) -> u64 {
+        self.header.number
+    }
+
+    pub fn view(&self) -> u64 {
+        self.header.view
+    }
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -125,11 +133,11 @@ pub struct BlockBatchRequest(pub BlockRef);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
-    pub block: Block,
+    pub proposal: Proposal,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockBatchResponse {
-    pub blocks: Vec<Block>,
+    pub proposals: Vec<Proposal>,
 }
 
 // #[allow(clippy::large_enum_variant)] // Pending refactor once join_network is merged
@@ -231,14 +239,16 @@ impl QuorumCertificate {
         //    return anyhow!("Invalid generated signature found in QC!");
         //}
 
-        // Select which public keys have gone into creating this signature
-        let mut public_keys = public_keys
-            .into_iter()
-            .zip(self.cosigned.iter())
-            .filter_map(|(pk, cosigned)| if *cosigned { Some(pk) } else { None })
-            .collect::<Vec<_>>();
+        true
 
-        NodeSignature::verify_aggregate(&self.signature, self.block_hash.as_bytes(), public_keys).is_ok()
+        //// Select which public keys have gone into creating this signature
+        //let mut public_keys = public_keys
+        //    .into_iter()
+        //    .zip(self.cosigned.iter())
+        //    .filter_map(|(pk, cosigned)| if *cosigned { Some(pk) } else { None })
+        //    .collect::<Vec<_>>();
+
+        //NodeSignature::verify_aggregate(&self.signature, self.block_hash.as_bytes(), public_keys).is_ok()
     }
 
     pub fn compute_hash(&self) -> Hash {

@@ -130,7 +130,7 @@ impl Node {
                 ExternalMessage::Proposal(m) => {
                     let m_view = m.header.view;
 
-                    if let Some((leader, vote)) = self.consensus.proposal(m)? {
+                    if let Some((leader, vote)) = self.consensus.proposal(m, false)? {
                         self.reset_timeout.send(())?;
                         self.message_sender
                             .send_external_message(leader, ExternalMessage::Vote(vote))?;
@@ -433,18 +433,33 @@ impl Node {
             return Ok(());
         };
 
+        // Need to get and send corresponding TXs for the block
+        let txs: Vec<SignedTransaction> = block.transactions.iter().map(|tx_hash | {
+            self.consensus.get_transaction_by_hash(*tx_hash).unwrap().unwrap()
+        }).collect::<Vec<_>>();
+
+
         self.message_sender.send_external_message(
             source,
-            ExternalMessage::BlockResponse(BlockResponse { block }),
+            ExternalMessage::BlockResponse(BlockResponse { proposal: Proposal::from_parts(block, txs) }),
         )?;
 
         Ok(())
     }
 
     fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
-        self.consensus.receive_block(response.block)?;
+        let _ = self.consensus.receive_block(response.proposal)?;
 
         Ok(())
+    }
+
+    // Convenience function to convert a block to a proposal (add full txs)
+    fn block_to_proposal(&self, block: Block) -> Proposal {
+        let txs: Vec<SignedTransaction> = block.transactions.iter().map(|tx_hash | {
+            self.consensus.get_transaction_by_hash(*tx_hash).unwrap().unwrap()
+        }).collect::<Vec<_>>();
+
+        Proposal::from_parts(block, txs)
     }
 
     fn handle_block_batch_request(
@@ -466,13 +481,15 @@ impl Node {
             }
         };
 
-        let block_number = block.header.number;
-        let mut blocks: Vec<Block> = Vec::new();
+        let mut proposal = self.block_to_proposal(block);
+        let block_number = proposal.header.number;
+        let mut proposals: Vec<Proposal> = Vec::new();
 
         for i in block_number..block_number + 100 {
             let block = self.consensus.get_block_by_number(i);
             if let Ok(Some(block)) = block {
-                blocks.push(block);
+                proposal = self.block_to_proposal(block);
+                proposals.push(proposal);
             } else {
                 break;
             }
@@ -482,12 +499,12 @@ impl Node {
             "Responding to new blocks request of {:?} starting {} with {} blocks",
             request,
             block_number,
-            blocks.len()
+            proposals.len()
         );
 
         self.message_sender.send_external_message(
             source,
-            ExternalMessage::BlockBatchResponse(BlockBatchResponse { blocks }),
+            ExternalMessage::BlockBatchResponse(BlockBatchResponse { proposals }),
         )?;
 
         Ok(())
@@ -496,13 +513,17 @@ impl Node {
     fn handle_blocks_response(&mut self, _: PeerId, response: BlockBatchResponse) -> Result<()> {
         trace!(
             "Received blocks response of length {}",
-            response.blocks.len()
+            response.proposals.len()
         );
         let mut was_new = false;
-        let length_recvd = response.blocks.len();
+        let length_recvd = response.proposals.len();
 
-        for block in response.blocks {
+        for block in response.proposals {
             was_new = self.consensus.receive_block(block)?;
+
+            if !was_new {
+                break;
+            }
         }
 
         if was_new && length_recvd > 1 {

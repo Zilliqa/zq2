@@ -538,7 +538,7 @@ impl Consensus {
         self.secret_key.to_libp2p_keypair().public().to_peer_id()
     }
 
-    pub fn proposal(&mut self, proposal: Proposal) -> Result<Option<(PeerId, Vote)>> {
+    pub fn proposal(&mut self, proposal: Proposal, allow_older: bool) -> Result<Option<(PeerId, Vote)>> {
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
 
@@ -566,8 +566,9 @@ impl Consensus {
             Ok(()) => {}
             Err(e) => {
                 if let Some(e) = e.downcast_ref::<MissingBlockError>() {
-                    warn!("missing finalized block1");
-                    info!(?e, "missing block when checking block proposal");
+                    info!(?e, "missing block when checking block proposal - try and request the parent from the network: {}", block.header.number.saturating_sub(1));
+
+                    self.block_store.request_blocks(None, block.header.number.saturating_sub(1))?;
                     return Ok(None);
                 } else {
                     warn!(?e, "invalid block proposal received!");
@@ -576,7 +577,6 @@ impl Consensus {
             }
         }
 
-        /* self.add_block(block.clone())?; */
         self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
 
         let proposal_view = block.view();
@@ -588,7 +588,7 @@ impl Consensus {
         trace!("checking if block view {} is safe", block.view());
 
         // If the proposed block is safe, vote for it and advance to the next round.
-        if self.check_safe_block(&block)? {
+        if self.check_safe_block(&block, allow_older)? {
             trace!(
                 "block view {} number {} aka {} is safe",
                 block.view(),
@@ -597,10 +597,6 @@ impl Consensus {
             );
 
             let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
-
-            if !transactions.is_empty() {
-                trace!("applying {} transactions to state", transactions.len());
-            }
 
             if head_block.hash() != parent.hash() || block.number() != head_block.header.number + 1
             {
@@ -614,6 +610,10 @@ impl Consensus {
             // Must make sure state root hash is set to the parent's state root hash before applying transactions
             if self.state.root_hash()? != parent.state_root_hash() {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}.\nHead: {}", parent.state_root_hash(), self.state.root_hash()?, head_block);
+            }
+
+            if !transactions.is_empty() {
+                trace!("applying {} transactions to state", transactions.len());
             }
 
             for txn in &transactions {
@@ -641,6 +641,11 @@ impl Consensus {
                 self.db
                     .insert_transaction_receipt(&block.hash(), &block_receipts)?;
             }
+
+            // Important - only add blocks we are going to execute because they can potentially
+            // overwrite the mapping of block height to block, which there should only be one of.
+            // for example, this HAS to be after the deal with fork call
+            self.add_block(block.clone())?;
 
             if self.state.root_hash()? != block_state_root {
                 warn!(
@@ -1144,10 +1149,10 @@ impl Consensus {
                         self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, signers)?;
                     let high_qc = self.get_highest_from_agg(&agg)?;
                     let parent_hash = high_qc.block_hash;
-                    let state_root_hash = self.state.root_hash()?;
                     let parent = self
                         .get_block(&parent_hash)?
                         .ok_or_else(|| anyhow!("missing block"))?;
+                    let state_root_hash = parent.state_root_hash();//self.state.root_hash()?;
 
                     // why does this have no txn?
                     let proposal = Block::from_agg(
@@ -1350,7 +1355,7 @@ impl Consensus {
         Ok(current.view() == 0 || current.hash() == ancestor.hash())
     }
 
-    fn check_safe_block(&mut self, proposal: &Block) -> Result<bool> {
+    fn check_safe_block(&mut self, proposal: &Block, allow_older: bool) -> Result<bool> {
         let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else {
             trace!("could not get qc for block: {}", proposal.qc.block_hash);
             return Ok(false);
@@ -1363,9 +1368,9 @@ impl Consensus {
             Some(_) => match self.block_extends_from(proposal, &qc_block) {
                 Ok(true) => {
                     let block_hash = proposal_hash;
-                    self.check_and_commit(block_hash)?;
+                    self.check_and_commit(proposal)?;
                     trace!("check block aggregate is outdated? {}", outdated);
-                    Ok(!outdated)
+                    Ok(!outdated || allow_older)
                 }
                 Ok(false) => {
                     trace!("block does not extend from parent");
@@ -1378,7 +1383,7 @@ impl Consensus {
             },
             None => {
                 if proposal.view() == 0 || proposal.view() == qc_block.view() + 1 {
-                    self.check_and_commit(proposal.hash())?;
+                    self.check_and_commit(proposal)?;
 
                     if outdated {
                         trace!(
@@ -1390,7 +1395,7 @@ impl Consensus {
 
                     trace!("check block is outdated? {}", outdated);
 
-                    Ok(!outdated)
+                    Ok(!outdated || allow_older)
                 } else {
                     trace!(
                         "block does not extend from parent, {} != {} + 1",
@@ -1403,42 +1408,42 @@ impl Consensus {
         }
     }
 
-    fn check_and_commit(&mut self, proposal_hash: Hash) -> Result<()> {
-        let Some(proposal) = self.get_block(&proposal_hash)? else {
-            trace!("block not found: {proposal_hash}");
-            return Ok(());
+    fn check_and_commit(&mut self, proposal: &Block) -> Result<()> {
+        // The condition for a block to be finalized is if there is a direct two-chain. From the paper:
+        // Once a replica is convinced, it checks
+        // if a two-chain is formed over the top of the parent of the
+        // block pointed by the highQC (the first chain in the two-chain
+        // formed has to be a one-direct chain in case of pipelined Fast-
+        // HotStuff). Then a replica can safely commit the parent of the
+        // block pointed by the highQC.
+        // So, in short, look up parent of QC, and finalize it iff the two subsequent blocks
+        // have views N+1, N+2 (the final one being proposal block).
+
+        let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else {
+            warn!("missing qc block when checking whether to finalize!");
+            return Err(MissingBlockError::from(proposal.qc.block_hash).into());
         };
-        let Some(prev_1) = self.get_block(&proposal.qc.block_hash)? else {
-            trace!("parent not found: {}", proposal.qc.block_hash);
-            return Ok(());
-        };
-        let Some(prev_2) = self.get_block(&prev_1.qc.block_hash)? else {
-            trace!("grandparent not found: {}", prev_1.qc.block_hash);
+
+        // At genesis it could be fine not to have a qc block, so don't error.
+        let Some(qc_parent) = self.get_block(&qc_block.parent_hash())? else {
+            warn!("missing qc parent block when checking whether to finalize!");
             return Ok(());
         };
 
-        if prev_1.view() == 0 || prev_1.view() == prev_2.view() + 1 {
-            let committed_block = prev_2;
-            let finalized_block = self
-                .get_block_by_view(self.finalized_view)?
-                .ok_or_else(|| anyhow!("missing block"))?;
-            let mut current = committed_block.clone();
-            // commit blocks back to the last finalized block
-            while current.view() > self.finalized_view {
-                let Some(new) = self.get_block(&current.parent_hash())? else {
-                    return Ok(());
-                };
-                current = new;
-            }
-            if current.hash() == finalized_block.hash() {
-                self.finalize(committed_block.hash(), committed_block.view())?;
-                // discard blocks that can't be committed anymore
-            }
+        // Likewise, block + 1 doesn't have to exist neccessarily
+        let Some(qc_child) = self.get_block_by_number(qc_parent.number() + 1)? else {
+            warn!("missing qc child when checking whether to finalize!");
+            return Ok(());
+        };
+
+        if qc_parent.view() + 1 == qc_child.view() && qc_parent.view() + 2 == proposal.view() {
+            self.finalize(qc_block.hash(), qc_block.view())?;
         } else {
-            trace!(
-                "parent does not extend from grandparent {} != {} + 1",
-                prev_1.view(),
-                prev_2.view(),
+            warn!(
+                "Failed to finalize block! Not finalizing QC block {} with view {} and number {}",
+                qc_block.hash(),
+                qc_block.view(),
+                qc_block.number()
             );
         }
 
@@ -1497,7 +1502,7 @@ impl Consensus {
         }
 
         let Some(parent) = self.get_block(&block.parent_hash())? else {
-            warn!("missing finalized block3");
+            warn!("missing the parent of block being checked");
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 
@@ -1588,25 +1593,38 @@ impl Consensus {
 
     // Checks for the validity of a block and adds it to our block store if valid.
     // Returns true when the block is valid and newly seen and false otherwise.
-    pub fn receive_block(&mut self, block: Block) -> Result<bool> {
+    pub fn receive_block(&mut self, proposal: Proposal) -> Result<bool> {
+        let (block, transactions) = proposal.into_parts();
+        trace!("received block: {} number: {}, view: {}", block.hash(), block.number(), block.view());
         if self.block_store.contains_block(block.hash())? {
             trace!("recieved block already seen: {}", block.hash());
+            return Ok(false);
+        }
+
+        // Check whether it is loose or not - we do not store loose blocks.
+        if !self.block_store.contains_block(block.parent_hash())? {
+            trace!("received block is loose: {}", block.hash());
+
+            warn!("missing received block the parent! Lets request the parent, then: {}", block.parent_hash());
+            self.block_store.request_blocks(None, block.header.number.saturating_sub(1))?;
             return Ok(false);
         }
 
         match self.check_block(&block) {
             Ok(()) => {
                 trace!(
-                    "updating high QC and view, blocks seems good! {} {} {}",
+                    "updating high QC and view, blocks seems good! hash: {} number: {} view: {}",
                     block.hash(),
                     block.number(),
                     block.view()
                 );
-                self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
-                self.add_block(block)?;
+                self.proposal(Proposal::from_parts(block, transactions), true)?;
+                //self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
+                //self.add_block(block)?;
             }
             Err(e) => {
                 warn!(?e, "invalid block received during sync!");
+
                 return Ok(false);
             }
         }
