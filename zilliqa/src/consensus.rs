@@ -525,26 +525,6 @@ impl Consensus {
             .committee
             .leader(self.view.get_view())
             .peer_id;
-        // let leader = head_block.committee.leader(self.view.get_view()).peer_id;
-
-        if leader == self.peer_id() {
-            let lead_for_hb = self.are_we_leader_for_view(head_block.hash(), self.view.get_view());
-            let lead_for_hqc =
-                self.are_we_leader_for_view(self.high_qc.block_hash, self.view.get_view());
-            let lead_for_phb =
-                self.are_we_leader_for_view(head_block.parent_hash(), self.view.get_view());
-            println!(
-            "\n\n\n NEW VIEW to ourselves! Head block view: {}, self view: {}. \nhead_block hash: {},\nhigh_qc hash: {}.\nAre we leader for head_block? {}.\nAre we leader for high_qc block? {}\n Head_block's parent hash: {}\nAre we leader for head_block's parent? {}\n\n\n",
-            head_block.view(),
-            self.view.get_view(),
-            head_block.hash(),
-            self.high_qc.block_hash,
-            lead_for_hb,
-            lead_for_hqc,
-            head_block.parent_hash(),
-            lead_for_phb
-        );
-        }
 
         let new_view = NewView::new(
             self.secret_key,
@@ -561,12 +541,6 @@ impl Consensus {
     }
 
     pub fn proposal(&mut self, proposal: Proposal) -> Result<Option<(PeerId, Vote)>> {
-        println!(
-            "BYTHEWAY! Our high_qc is: {}, and our head_block is: {}. Head_block's parent is: {}",
-            self.high_qc.block_hash,
-            self.head_block().hash(),
-            self.head_block().parent_hash()
-        );
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
 
