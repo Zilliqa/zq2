@@ -114,7 +114,7 @@ impl NodeLauncher {
                 },
                 () = &mut sleep => {
                     // No messages for a while, so check if consensus wants to timeout
-                    self.node.lock().unwrap().handle_timeout();
+                    self.node.lock().unwrap().handle_timeout().unwrap();
                     sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
                 },
                 r = self.reset_timeout_receiver.next() => {

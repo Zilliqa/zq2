@@ -206,14 +206,14 @@ impl Node {
     }
 
     // handle timeout - true if something happened
-    pub fn handle_timeout(&mut self) -> bool {
-        if let Some((leader, response)) = self.consensus.timeout() {
+    pub fn handle_timeout(&mut self) -> Result<bool> {
+        if let Some((leader, response)) = self.consensus.timeout()? {
             self.message_sender
                 .send_external_message(leader, response)
                 .unwrap();
-            return true;
+            return Ok(true);
         }
-        false
+        Ok(false)
     }
 
     pub fn add_peer(&mut self, peer: PeerId, public_key: NodePublicKey) -> Result<()> {

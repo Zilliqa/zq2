@@ -456,14 +456,13 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn timeout(&mut self) -> Option<(PeerId, ExternalMessage)> {
+    pub fn timeout(&mut self) -> Result<Option<(PeerId, ExternalMessage)>> {
         // We never want to timeout while on view 1
         if self.view.get_view() == 1 {
             let genesis = self
                 .get_block_by_view(0)
                 .unwrap()
-                .ok_or_else(|| anyhow!("missing block"))
-                .unwrap();
+                .ok_or_else(|| anyhow!("missing block"))?;
             // If we're in the genesis committee, vote again.
             if genesis
                 .committee
@@ -473,13 +472,13 @@ impl Consensus {
                 info!("timeout in view 1, we will vote for genesis block rather than incrementing view");
                 let leader = genesis.committee.leader(self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
-                return Some((leader.peer_id, ExternalMessage::Vote(vote)));
+                return Ok(Some((leader.peer_id, ExternalMessage::Vote(vote))));
             } else {
                 info!("We are on view 1 but we are not a validator, so we are waiting.");
                 let _ = self.download_blocks_up_to_head();
             }
 
-            return None;
+            return Ok(None);
         }
 
         // Now consider whether we want to timeout - the timeout duration doubles every time, so it
@@ -503,7 +502,7 @@ impl Consensus {
                 time_since_last_view_change,
                 exponential_backoff_timeout
             );
-            return None;
+            return Ok(None);
         }
 
         trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", self.view.get_view(), time_since_last_view_change, exponential_backoff_timeout, head_block_view, head_block.hash());
@@ -519,10 +518,33 @@ impl Consensus {
         self.view.set_view(self.view.get_view() + 1);
 
         let leader = self
-            .head_block()
+            .get_block(&self.high_qc.block_hash)?
+            .ok_or_else(|| {
+                anyhow!("missing block corresponding to our high qc - this should never happen")
+            })?
             .committee
             .leader(self.view.get_view())
             .peer_id;
+        // let leader = head_block.committee.leader(self.view.get_view()).peer_id;
+
+        if leader == self.peer_id() {
+            let lead_for_hb = self.are_we_leader_for_view(head_block.hash(), self.view.get_view());
+            let lead_for_hqc =
+                self.are_we_leader_for_view(self.high_qc.block_hash, self.view.get_view());
+            let lead_for_phb =
+                self.are_we_leader_for_view(head_block.parent_hash(), self.view.get_view());
+            println!(
+            "\n\n\n NEW VIEW to ourselves! Head block view: {}, self view: {}. \nhead_block hash: {},\nhigh_qc hash: {}.\nAre we leader for head_block? {}.\nAre we leader for high_qc block? {}\n Head_block's parent hash: {}\nAre we leader for head_block's parent? {}\n\n\n",
+            head_block.view(),
+            self.view.get_view(),
+            head_block.hash(),
+            self.high_qc.block_hash,
+            lead_for_hb,
+            lead_for_hqc,
+            head_block.parent_hash(),
+            lead_for_phb
+        );
+        }
 
         let new_view = NewView::new(
             self.secret_key,
@@ -531,7 +553,7 @@ impl Consensus {
             self.secret_key.node_public_key(),
         );
 
-        Some((leader, ExternalMessage::NewView(Box::new(new_view))))
+        Ok(Some((leader, ExternalMessage::NewView(Box::new(new_view)))))
     }
 
     pub fn peer_id(&self) -> PeerId {
@@ -539,6 +561,12 @@ impl Consensus {
     }
 
     pub fn proposal(&mut self, proposal: Proposal) -> Result<Option<(PeerId, Vote)>> {
+        println!(
+            "BYTHEWAY! Our high_qc is: {}, and our head_block is: {}. Head_block's parent is: {}",
+            self.high_qc.block_hash,
+            self.head_block().hash(),
+            self.head_block().parent_hash()
+        );
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
 
@@ -1267,8 +1295,7 @@ impl Consensus {
         let new_high_qc_block_view = new_high_qc_block.view();
 
         if self.high_qc.block_hash == Hash::ZERO {
-            // This seems like a potential bug???
-            trace!("received high qc for the zero hash, setting.");
+            trace!("received high qc, self high_qc is currently uninitialized, setting to the new one.");
             self.db.set_high_qc(new_high_qc.clone())?;
             self.high_qc = new_high_qc;
         } else {
@@ -1488,7 +1515,10 @@ impl Consensus {
         }
 
         let Some(parent) = self.get_block(&block.parent_hash())? else {
-            warn!("Missing parent block while trying to check validity of block {}", block.number());
+            warn!(
+                "Missing parent block while trying to check validity of block {}",
+                block.number()
+            );
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 

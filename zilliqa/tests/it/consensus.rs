@@ -106,6 +106,8 @@ async fn block_production(mut network: Network) {
     info!("Adding networked node.");
     let index = network.add_node(true);
 
+    println!("\n\n\n\n\n\n\n\n\n\n\n==================================================\n\n\n\n\n\n\n Restarting with new node. \n\n\n\n\n\n\n\n\n\n ========================================\n\n\n\n\n\n\n\n\n\n\n\n\n");
+
     network
         .run_until(
             |n| {
@@ -138,7 +140,7 @@ async fn launch_shard(mut network: Network) {
     // This is necessary to maintain a supermajority once the main shard nodes join.
     // The size can be reduced once nodes stop joining the committee before they're
     // fully caught up.
-    let child_shard_nodes = 9;
+    let child_shard_nodes = 10;
 
     // 1. Construct and launch a shard network
     let mut shard_network = Network::new_shard(
@@ -293,6 +295,8 @@ async fn launch_shard(mut network: Network) {
         .unwrap()
         .number
         .unwrap();
+
+    println!("\n\n\n\n\n\n\n\nAAAAAAAA\n\n\n\n\n\n====================\n\n\n\n\n\n\\nAAAAAAAA\n\n\n\n\n\n\n");
 
     network
         .children

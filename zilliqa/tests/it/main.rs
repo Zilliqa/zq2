@@ -366,7 +366,7 @@ impl Network {
         // this could of course spin forever, but the test itself should time out.
         loop {
             for node in &self.nodes {
-                if node.inner.lock().unwrap().handle_timeout() {
+                if node.inner.lock().unwrap().handle_timeout().unwrap() {
                     return;
                 }
                 zilliqa::time::advance(Duration::from_millis(500));
@@ -536,7 +536,7 @@ impl Network {
                 let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
 
                 span.in_scope(|| {
-                    node.inner.lock().unwrap().handle_timeout();
+                    node.inner.lock().unwrap().handle_timeout().unwrap();
                 });
             }
             return;
