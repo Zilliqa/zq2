@@ -89,6 +89,11 @@ impl BlockStore {
     }
 
     pub fn request_blocks(&mut self, peer: Option<PeerId>, number: u64) -> Result<()> {
+
+        // If the request is higher than our head, lower it to our head, as we don't store
+        // loose blocks
+        let number = std::cmp::min(number, self.db.get_highest_block_number().unwrap().unwrap());
+
         let request =
             ExternalMessage::BlockBatchRequest(BlockBatchRequest(BlockRef::Number(number)));
 

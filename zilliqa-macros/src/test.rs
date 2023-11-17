@@ -1,6 +1,7 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 use syn::ItemFn;
+use ntest::*;
 
 // Much of this code is adapted from https://github.com/tokio-rs/tokio/blob/910a1e2fcf8ebafd41c2841144c3a1037af7dc40/tokio-macros/src/lib.rs.
 
@@ -17,13 +18,18 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
     input.sig.ident = inner_name.clone();
 
     quote! {
+        use ntest::*;
+        use tracing::*;
+
         #[tokio::test(flavor = "multi_thread")]
+        #[timeout(100000)]
         async fn #test_name() {
             // The original test function
             #input
 
             // Work out what RNG seeds to run the test with.
             let seeds: Vec<u64> = if let Some(seed) = std::env::var_os("ZQ_TEST_RNG_SEED") {
+                println!("Starting seed is {}", seed.to_str().unwrap());
                 vec![seed.to_str().unwrap().parse().unwrap()]
             } else {
                 let samples: usize = std::env::var_os("ZQ_TEST_SAMPLES")
@@ -56,14 +62,23 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                     let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed);
 
                     // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
-                    let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(#inner_name(network))).await;
 
-                    match result {
-                        Ok(()) => {},
-                        Err(e) => {
-                            std::panic::resume_unwind(e);
+                    let span = tracing::span!(tracing::Level::INFO, "tst", seed);
+
+                    async move {
+                        let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(#inner_name(network))).await;
+
+                        //let result = span.in_scope(|| {
+                        // futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(#inner_name(network)));
+                        //}).await;
+
+                        match result {
+                            Ok(()) => {},
+                            Err(e) => {
+                                std::panic::resume_unwind(e);
+                            }
                         }
-                    }
+                    }.instrument(span).await
                 });
                 id_to_seed.insert(handle.id(), seed);
             }

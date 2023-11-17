@@ -234,21 +234,14 @@ impl QuorumCertificate {
     // Verifying an aggregated signature is a case of verifying the aggregated public key
     // against the aggregated signature
     pub fn verify(&self, public_keys: Vec<NodePublicKey>) -> bool {
-        // First verify that the signature itself is the aggregated signature of all hashes - pubkeys
-        //if !NodeSignature::verify_agg_signature(self.signature, self.block_hash, public_keys) {
-        //    return anyhow!("Invalid generated signature found in QC!");
-        //}
+        // Select which public keys have gone into creating this signature
+        let mut public_keys = public_keys
+            .into_iter()
+            .zip(self.cosigned.iter())
+            .filter_map(|(pk, cosigned)| if *cosigned { Some(pk) } else { None })
+            .collect::<Vec<_>>();
 
-        true
-
-        //// Select which public keys have gone into creating this signature
-        //let mut public_keys = public_keys
-        //    .into_iter()
-        //    .zip(self.cosigned.iter())
-        //    .filter_map(|(pk, cosigned)| if *cosigned { Some(pk) } else { None })
-        //    .collect::<Vec<_>>();
-
-        //NodeSignature::verify_aggregate(&self.signature, self.block_hash.as_bytes(), public_keys).is_ok()
+        NodeSignature::verify_aggregate(&self.signature, self.block_hash.as_bytes(), public_keys).is_ok()
     }
 
     pub fn compute_hash(&self) -> Hash {
@@ -257,6 +250,15 @@ impl QuorumCertificate {
             &self.cosigned.clone().into_vec(), // FIXME: What does this do when `self.cosigned.len() % 8 != 0`?
             self.block_hash.as_bytes(),
         ])
+    }
+}
+
+impl Display for QuorumCertificate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "QC hash: {}, ", self.compute_hash())?;
+        write!(f, "QC signature: [..], ")?;
+        write!(f, "QC cosigned: {:?}, ", self.cosigned)?;
+        Ok(())
     }
 }
 

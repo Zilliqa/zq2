@@ -522,6 +522,7 @@ impl Network {
                 span.in_scope(|| {
                     node.inner.lock().unwrap().handle_timeout();
                 });
+                //span.
             }
             return;
         }

@@ -1,5 +1,6 @@
 use ethabi::{Event, Log, RawLog};
 use primitive_types::H256;
+use rand::Rng;
 
 use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::MessageSender;
@@ -14,6 +15,7 @@ use std::{
     error::Error,
     fmt::Display,
 };
+use rand_chacha::ChaCha8Rng;
 
 use tracing::*;
 
@@ -202,6 +204,8 @@ pub struct Consensus {
     db: Arc<Db>,
     /// Transactions ordered by priority, map of address of TXn (from account) to ordered TXns to be executed.
     new_transactions_priority: BTreeMap<Address, BinaryHeap<TxnOrder>>,
+    /// PRNG
+    rng: ChaCha8Rng,
 }
 
 // View in consensus should be have access monitored so last_timeout is always correct
@@ -351,6 +355,7 @@ impl Consensus {
             state,
             db,
             new_transactions_priority: BTreeMap::new(),
+            rng: <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(0)
         };
 
         // If we're at genesis, add the genesis block.
@@ -443,10 +448,11 @@ impl Consensus {
             // Remove self from potential people to send to
             let mut other_peers = head_block.committee.clone();
             other_peers.remove_by_peer_id(self.peer_id());
+            let peer_len = other_peers.len();
 
-            match other_peers.len() {
+            match peer_len {
                 0 => None,
-                _ => Some(other_peers.choose_random().peer_id),
+                _ => Some(other_peers.get_by_index(self.rng.gen_range(0..peer_len)).unwrap().peer_id),
             }
         };
 
@@ -1525,8 +1531,9 @@ impl Consensus {
 
         // Check if the co-signers of the block's QC represent the supermajority.
         self.check_quorum_in_bits(&block.qc.cosigned, &parent.committee)?;
-        // Verify the block's QC signature
-        self.verify_qc_signature(&block.qc, block.committee.public_keys())?;
+        // Verify the block's QC signature - note the parent should be the committee the QC
+        // was signed over.
+        self.verify_qc_signature(&block.qc, parent.committee.public_keys())?;
         if let Some(agg) = &block.agg {
             // Check if the signers of the block's aggregate QC represent the supermajority
             self.check_quorum_in_indices(&agg.signers, &parent.committee)?;
@@ -1718,10 +1725,11 @@ impl Consensus {
     }
 
     fn verify_qc_signature(&self, qc: &QuorumCertificate, public_keys: Vec<NodePublicKey>) -> Result<()> {
+        let len = public_keys.len();
         match qc.verify(public_keys) {
             true => Ok(()),
             false => {
-                warn!("invalid qc signature found when verifying!");
+                warn!("invalid qc signature found when verifying! Public keys: {:?}. QC: {}", len, qc);
                 Err(anyhow!("invalid qc signature found!"))
             }
         }
