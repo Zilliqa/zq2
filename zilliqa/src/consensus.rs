@@ -7,6 +7,7 @@ use crate::node::MessageSender;
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
+use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{
@@ -15,7 +16,6 @@ use std::{
     error::Error,
     fmt::Display,
 };
-use rand_chacha::ChaCha8Rng;
 
 use tracing::*;
 
@@ -355,7 +355,7 @@ impl Consensus {
             state,
             db,
             new_transactions_priority: BTreeMap::new(),
-            rng: <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(0)
+            rng: <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(0),
         };
 
         // If we're at genesis, add the genesis block.
@@ -452,7 +452,12 @@ impl Consensus {
 
             match peer_len {
                 0 => None,
-                _ => Some(other_peers.get_by_index(self.rng.gen_range(0..peer_len)).unwrap().peer_id),
+                _ => Some(
+                    other_peers
+                        .get_by_index(self.rng.gen_range(0..peer_len))
+                        .unwrap()
+                        .peer_id,
+                ),
             }
         };
 
@@ -544,7 +549,11 @@ impl Consensus {
         self.secret_key.to_libp2p_keypair().public().to_peer_id()
     }
 
-    pub fn proposal(&mut self, proposal: Proposal, allow_older: bool) -> Result<Option<(PeerId, Vote)>> {
+    pub fn proposal(
+        &mut self,
+        proposal: Proposal,
+        during_sync: bool,
+    ) -> Result<Option<(PeerId, Vote)>> {
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
 
@@ -574,7 +583,8 @@ impl Consensus {
                 if let Some(e) = e.downcast_ref::<MissingBlockError>() {
                     info!(?e, "missing block when checking block proposal - try and request the parent from the network: {}", block.header.number.saturating_sub(1));
 
-                    self.block_store.request_blocks(None, block.header.number.saturating_sub(1))?;
+                    self.block_store
+                        .request_blocks(None, block.header.number.saturating_sub(1))?;
                     return Ok(None);
                 } else {
                     warn!(?e, "invalid block proposal received!");
@@ -594,7 +604,7 @@ impl Consensus {
         trace!("checking if block view {} is safe", block.view());
 
         // If the proposed block is safe, vote for it and advance to the next round.
-        if self.check_safe_block(&block, allow_older)? {
+        if self.check_safe_block(&block, during_sync)? {
             trace!(
                 "block view {} number {} aka {} is safe",
                 block.view(),
@@ -683,19 +693,21 @@ impl Consensus {
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     block.committee.len()
                 );
-                Ok(None)
+                return Ok(None);
             } else {
                 let vote = self.vote_from_block(&block);
                 let next_leader = block.committee.leader(self.view.get_view()).peer_id;
 
-                trace!(proposal_view, ?next_leader, "voting for block");
-
-                Ok(Some((next_leader, vote)))
+                if (!during_sync) {
+                    trace!(proposal_view, ?next_leader, "voting for block");
+                    return Ok(Some((next_leader, vote)));
+                }
             }
         } else {
             trace!("block is not safe");
-            Ok(None)
         }
+
+        Ok(None)
     }
 
     pub fn remove_tx_from_mempool(&mut self, tx_hash: &Hash) {
@@ -1158,7 +1170,7 @@ impl Consensus {
                     let parent = self
                         .get_block(&parent_hash)?
                         .ok_or_else(|| anyhow!("missing block"))?;
-                    let state_root_hash = parent.state_root_hash();//self.state.root_hash()?;
+                    let state_root_hash = parent.state_root_hash(); //self.state.root_hash()?;
 
                     // why does this have no txn?
                     let proposal = Block::from_agg(
@@ -1172,6 +1184,8 @@ impl Consensus {
                         SystemTime::max(SystemTime::now(), parent.timestamp()),
                         self.get_next_committee(parent.committee),
                     );
+
+                    trace!("Our high QC is {:?}", self.high_qc);
 
                     trace!(proposal_hash = ?proposal.hash(), view = self.view.get_view(), height = proposal.header.number, "######### creating proposal block from new view");
 
@@ -1339,11 +1353,7 @@ impl Consensus {
         //    block_hash,
         //}
 
-        QuorumCertificate::new(
-            signatures,
-            cosigned,
-            block_hash,
-        )
+        QuorumCertificate::new(signatures, cosigned, block_hash)
     }
 
     fn block_extends_from(&self, block: &Block, ancestor: &Block) -> Result<bool> {
@@ -1361,7 +1371,7 @@ impl Consensus {
         Ok(current.view() == 0 || current.hash() == ancestor.hash())
     }
 
-    fn check_safe_block(&mut self, proposal: &Block, allow_older: bool) -> Result<bool> {
+    fn check_safe_block(&mut self, proposal: &Block, during_sync: bool) -> Result<bool> {
         let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else {
             trace!("could not get qc for block: {}", proposal.qc.block_hash);
             return Ok(false);
@@ -1373,10 +1383,10 @@ impl Consensus {
             // we check elsewhere that qc is the highest among the qcs in the agg
             Some(_) => match self.block_extends_from(proposal, &qc_block) {
                 Ok(true) => {
-                    let block_hash = proposal_hash;
+                    let _block_hash = proposal_hash;
                     self.check_and_commit(proposal)?;
                     trace!("check block aggregate is outdated? {}", outdated);
-                    Ok(!outdated || allow_older)
+                    Ok(!outdated || during_sync)
                 }
                 Ok(false) => {
                     trace!("block does not extend from parent");
@@ -1401,7 +1411,7 @@ impl Consensus {
 
                     trace!("check block is outdated? {}", outdated);
 
-                    Ok(!outdated || allow_older)
+                    Ok(!outdated || during_sync)
                 } else {
                     trace!(
                         "block does not extend from parent, {} != {} + 1",
@@ -1443,7 +1453,7 @@ impl Consensus {
         };
 
         if qc_parent.view() + 1 == qc_child.view() && qc_parent.view() + 2 == proposal.view() {
-            self.finalize(qc_block.hash(), qc_block.view())?;
+            self.finalize(qc_parent.hash(), qc_parent.view())?;
         } else {
             warn!(
                 "Failed to finalize block! Not finalizing QC block {} with view {} and number {}",
@@ -1549,6 +1559,12 @@ impl Consensus {
         };
         // Prevent the creation of forks from the already committed chain
         if block_high_qc_block.view() < finalized_block.view() {
+            warn!(
+                "invalid block - high QC view is {} while finalized is {}. Our High QC: {}, block: {:?}",
+                block_high_qc_block.view(),
+                finalized_block.view(),
+                self.high_qc,
+                block);
             return Err(anyhow!(
                 "invalid block - high QC view is {} while finalized is {}",
                 block_high_qc_block.view(),
@@ -1602,7 +1618,12 @@ impl Consensus {
     // Returns true when the block is valid and newly seen and false otherwise.
     pub fn receive_block(&mut self, proposal: Proposal) -> Result<bool> {
         let (block, transactions) = proposal.into_parts();
-        trace!("received block: {} number: {}, view: {}", block.hash(), block.number(), block.view());
+        trace!(
+            "received block: {} number: {}, view: {}",
+            block.hash(),
+            block.number(),
+            block.view()
+        );
         if self.block_store.contains_block(block.hash())? {
             trace!("recieved block already seen: {}", block.hash());
             return Ok(false);
@@ -1612,8 +1633,12 @@ impl Consensus {
         if !self.block_store.contains_block(block.parent_hash())? {
             trace!("received block is loose: {}", block.hash());
 
-            warn!("missing received block the parent! Lets request the parent, then: {}", block.parent_hash());
-            self.block_store.request_blocks(None, block.header.number.saturating_sub(1))?;
+            warn!(
+                "missing received block the parent! Lets request the parent, then: {}",
+                block.parent_hash()
+            );
+            self.block_store
+                .request_blocks(None, block.header.number.saturating_sub(1))?;
             return Ok(false);
         }
 
@@ -1647,7 +1672,11 @@ impl Consensus {
     }
 
     fn vote_from_block(&self, block: &Block) -> Vote {
-        Vote::new(self.secret_key, block.hash(), self.secret_key.node_public_key())
+        Vote::new(
+            self.secret_key,
+            block.hash(),
+            self.secret_key.node_public_key(),
+        )
     }
 
     fn get_high_qc_from_block<'a>(&self, block: &'a Block) -> Result<&'a QuorumCertificate> {
@@ -1724,12 +1753,19 @@ impl Consensus {
             .map(|(qc, _)| qc)
     }
 
-    fn verify_qc_signature(&self, qc: &QuorumCertificate, public_keys: Vec<NodePublicKey>) -> Result<()> {
+    fn verify_qc_signature(
+        &self,
+        qc: &QuorumCertificate,
+        public_keys: Vec<NodePublicKey>,
+    ) -> Result<()> {
         let len = public_keys.len();
         match qc.verify(public_keys) {
             true => Ok(()),
             false => {
-                warn!("invalid qc signature found when verifying! Public keys: {:?}. QC: {}", len, qc);
+                warn!(
+                    "invalid qc signature found when verifying! Public keys: {:?}. QC: {}",
+                    len, qc
+                );
                 Err(anyhow!("invalid qc signature found!"))
             }
         }

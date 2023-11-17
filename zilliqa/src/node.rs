@@ -434,14 +434,22 @@ impl Node {
         };
 
         // Need to get and send corresponding TXs for the block
-        let txs: Vec<SignedTransaction> = block.transactions.iter().map(|tx_hash | {
-            self.consensus.get_transaction_by_hash(*tx_hash).unwrap().unwrap()
-        }).collect::<Vec<_>>();
-
+        let txs: Vec<SignedTransaction> = block
+            .transactions
+            .iter()
+            .map(|tx_hash| {
+                self.consensus
+                    .get_transaction_by_hash(*tx_hash)
+                    .unwrap()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
 
         self.message_sender.send_external_message(
             source,
-            ExternalMessage::BlockResponse(BlockResponse { proposal: Proposal::from_parts(block, txs) }),
+            ExternalMessage::BlockResponse(BlockResponse {
+                proposal: Proposal::from_parts(block, txs),
+            }),
         )?;
 
         Ok(())
@@ -455,9 +463,16 @@ impl Node {
 
     // Convenience function to convert a block to a proposal (add full txs)
     fn block_to_proposal(&self, block: Block) -> Proposal {
-        let txs: Vec<SignedTransaction> = block.transactions.iter().map(|tx_hash | {
-            self.consensus.get_transaction_by_hash(*tx_hash).unwrap().unwrap()
-        }).collect::<Vec<_>>();
+        let txs: Vec<SignedTransaction> = block
+            .transactions
+            .iter()
+            .map(|tx_hash| {
+                self.consensus
+                    .get_transaction_by_hash(*tx_hash)
+                    .unwrap()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
 
         Proposal::from_parts(block, txs)
     }
