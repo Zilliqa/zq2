@@ -17,11 +17,9 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
     input.sig.ident = inner_name.clone();
 
     quote! {
-        use ntest::*;
         use tracing::*;
 
         #[tokio::test(flavor = "multi_thread")]
-        #[timeout(300000_00)]
         async fn #test_name() {
             // The original test function
             #input
