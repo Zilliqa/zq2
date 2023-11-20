@@ -53,7 +53,7 @@ opentelemetry = { git = "https://github.com/open-telemetry/opentelemetry-rust", 
 opentelemetry-otlp = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "ecf0dda5686dc45470ae02993a4748c289c407de", features = ["metrics", "http-proto"] }
 paste = "1.0.14"
 primitive-types = { version = "0.12.2", features = ["serde"] }
-prost = "0.12.1"
+prost = "0.12.2"
 rand = "0.8.5"
 rand_core = "0.6.4"
 rlp = "0.5.2"
