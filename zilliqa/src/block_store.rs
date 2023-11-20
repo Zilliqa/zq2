@@ -92,6 +92,9 @@ impl BlockStore {
         // If the request is higher than our head, lower it to our head, as we don't store
         // loose blocks
         let number = std::cmp::min(number, self.db.get_highest_block_number().unwrap().unwrap());
+        let number = std::cmp::max(number, 1); // avoid requesting genesis unnceccessarily
+
+        trace!("Requesting blocks from {}", number);
 
         let request =
             ExternalMessage::BlockBatchRequest(BlockBatchRequest(BlockRef::Number(number)));

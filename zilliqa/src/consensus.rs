@@ -698,7 +698,7 @@ impl Consensus {
                 let vote = self.vote_from_block(&block);
                 let next_leader = block.committee.leader(self.view.get_view()).peer_id;
 
-                if (!during_sync) {
+                if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
                     return Ok(Some((next_leader, vote)));
                 }

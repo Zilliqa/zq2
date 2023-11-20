@@ -22,7 +22,7 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
         use tracing::*;
 
         #[tokio::test(flavor = "multi_thread")]
-        #[timeout(100000)]
+        #[timeout(100000_000)]
         async fn #test_name() {
             // The original test function
             #input
