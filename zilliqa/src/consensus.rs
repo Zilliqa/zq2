@@ -740,9 +740,6 @@ impl Consensus {
         // Ensure the transaction has a valid signature
         txn.verify()?;
 
-        // If we haven't applied the transaction yet, do so. This ensures we don't execute the transaction twice if we
-        // already executed it in the process of proposing this block.
-        //if !self.transactions.contains_key(hash.0)? {
         let mut listener = TouchedAddressEventListener::default();
 
         let result = evm_ds::evm::tracing::using(&mut listener, || {
@@ -1170,7 +1167,7 @@ impl Consensus {
                     let parent = self
                         .get_block(&parent_hash)?
                         .ok_or_else(|| anyhow!("missing block"))?;
-                    let state_root_hash = parent.state_root_hash(); //self.state.root_hash()?;
+                    let state_root_hash = parent.state_root_hash();
 
                     // why does this have no txn?
                     let proposal = Block::from_agg(
@@ -1347,12 +1344,6 @@ impl Consensus {
         cosigned: BitVec,
     ) -> QuorumCertificate {
         // we've already verified the signatures upon receipt of the responses so there's no need to do it again
-        //QuorumCertificate {
-        //    signature: NodeSignature::aggregate(signatures).unwrap(),
-        //    cosigned,
-        //    block_hash,
-        //}
-
         QuorumCertificate::new(signatures, cosigned, block_hash)
     }
 
@@ -1651,8 +1642,6 @@ impl Consensus {
                     block.view()
                 );
                 self.proposal(Proposal::from_parts(block, transactions), true)?;
-                //self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
-                //self.add_block(block)?;
             }
             Err(e) => {
                 warn!(?e, "invalid block received during sync!");

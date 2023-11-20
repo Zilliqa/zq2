@@ -6614,7 +6614,6 @@ dependencies = [
  "clap",
  "eyre",
  "futures",
- "ntest",
  "rand_core",
  "serde",
  "tempfile",
@@ -6728,7 +6727,6 @@ dependencies = [
 name = "zilliqa-macros"
 version = "0.1.0"
 dependencies = [
- "ntest",
  "proc-macro2",
  "quote",
  "syn 2.0.39",

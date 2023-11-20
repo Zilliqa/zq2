@@ -55,12 +55,6 @@ impl NodeSignature {
         }
 
         Ok(())
-
-        //let compressed_public_key = bls_signatures::compress_public_key(public_keys);
-
-        //if !bls_signatures::verify_messages(&signature.0, messages, &compressed_public_key) {
-        //    return Err(anyhow!("invalid signature"));
-        //}
     }
 
     pub fn to_bytes(self) -> Vec<u8> {

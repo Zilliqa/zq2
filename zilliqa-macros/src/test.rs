@@ -1,4 +1,3 @@
-
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 use syn::ItemFn;
@@ -22,7 +21,7 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
         use tracing::*;
 
         #[tokio::test(flavor = "multi_thread")]
-        #[timeout(100000_000)]
+        #[timeout(100000)]
         async fn #test_name() {
             // The original test function
             #input
@@ -62,15 +61,10 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                     let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed);
 
                     // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
-
-                    let span = tracing::span!(tracing::Level::INFO, "tst", seed);
+                    let span = tracing::span!(tracing::Level::INFO, "tst");
 
                     async move {
                         let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(#inner_name(network))).await;
-
-                        //let result = span.in_scope(|| {
-                        // futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(#inner_name(network)));
-                        //}).await;
 
                         match result {
                             Ok(()) => {},

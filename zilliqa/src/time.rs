@@ -23,16 +23,15 @@ pub use time_impl::*;
 #[cfg(feature = "fake_time")]
 mod time_impl {
     use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
     use std::{
         sync::{
-            Mutex,
             atomic::{AtomicBool, Ordering},
-            OnceLock,
+            Mutex, OnceLock,
         },
         time::Duration,
     };
     use tokio::task::Id;
-    use std::collections::HashMap;
 
     /// A fake implementation of [std::time::SystemTime]. The value of `SystemTime::now` can be controlled with [advance_time].
     #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -47,10 +46,15 @@ mod time_impl {
 
             if paused {
                 // Time has been paused, get the fake time (init if not exist).
-                let mut current_time_map = CURRENT_TIME.get_or_init(|| {Mutex::new(HashMap::new()) }).lock().unwrap();
+                let mut current_time_map = CURRENT_TIME
+                    .get_or_init(|| Mutex::new(HashMap::new()))
+                    .lock()
+                    .unwrap();
 
                 let current_task_id = tokio::task::id();
-                let current_time = current_time_map.entry(current_task_id).or_insert(Duration::ZERO);
+                let current_time = current_time_map
+                    .entry(current_task_id)
+                    .or_insert(Duration::ZERO);
 
                 SystemTime(std::time::SystemTime::UNIX_EPOCH + *current_time)
             } else {
@@ -93,16 +97,15 @@ mod time_impl {
         }
 
         PAUSED.store(true, Ordering::Release);
-        //let mut current_time = CURRENT_TIME.get_or_init(Mutex::default).lock().unwrap();
-        //*current_time = Duration::ZERO;
 
-        //let current_time_map = *CURRENT_TIME.get_or_init(Mutex::new(HashMap::new())).lock().unwrap();
-        //let current_task_id = tokio::task::id();
-        //let current_time = current_time_map.lock().unwrap().entry(current_task_id).or_insert(Duration::ZERO);
-
-        let mut current_time_map = CURRENT_TIME.get_or_init(|| {Mutex::new(HashMap::new()) }).lock().unwrap();
+        let mut current_time_map = CURRENT_TIME
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap();
         let current_task_id = tokio::task::id();
-        let mut current_time = current_time_map.entry(current_task_id).or_insert(Duration::ZERO);
+        let current_time = current_time_map
+            .entry(current_task_id)
+            .or_insert(Duration::ZERO);
         *current_time = Duration::ZERO;
     }
 
@@ -112,12 +115,13 @@ mod time_impl {
         if !paused {
             panic!("time is not paused");
         }
-        //let mut current_time = CURRENT_TIME.get_or_init(Mutex::default).lock().unwrap();
-        //*current_time += delta;
 
-        let mut current_time_map = CURRENT_TIME.get_or_init(|| {Mutex::new(HashMap::new()) }).lock().unwrap();
+        let mut current_time_map = CURRENT_TIME
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap();
         let current_task_id = tokio::task::id();
-        let mut current_time = current_time_map.get_mut(&current_task_id).unwrap();
+        let current_time = current_time_map.get_mut(&current_task_id).unwrap();
         *current_time += delta;
     }
 }
