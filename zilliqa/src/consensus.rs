@@ -1369,12 +1369,11 @@ impl Consensus {
         };
         // We don't vote on blocks older than our view
         let outdated = proposal.view() < self.view.get_view();
-        let proposal_hash = proposal.hash();
+        let _proposal_hash = proposal.hash();
         match proposal.agg {
             // we check elsewhere that qc is the highest among the qcs in the agg
             Some(_) => match self.block_extends_from(proposal, &qc_block) {
                 Ok(true) => {
-                    let _block_hash = proposal_hash;
                     self.check_and_commit(proposal)?;
                     trace!("check block aggregate is outdated? {}", outdated);
                     Ok(!outdated || during_sync)
@@ -1497,7 +1496,6 @@ impl Consensus {
         }
 
         let Some(finalized_block) = self.get_block_by_view(self.finalized_view)? else {
-            warn!("missing finalized block0");
             return Err(MissingBlockError::from(self.finalized_view).into());
         };
         if block.view() < finalized_block.view() {

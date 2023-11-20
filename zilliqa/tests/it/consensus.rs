@@ -2,7 +2,6 @@ use crate::CombinedJson;
 use crate::Network;
 use ethabi::Token;
 use ethers::{providers::Middleware, types::TransactionRequest};
-use ntest::*;
 use primitive_types::H160;
 
 use tracing::*;
