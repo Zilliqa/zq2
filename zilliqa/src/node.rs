@@ -137,7 +137,7 @@ impl Node {
             ExternalMessage::Proposal(m) => {
                 let m_view = m.header.view;
 
-                if let Some((leader, vote)) = self.consensus.proposal(m)? {
+                if let Some((leader, vote)) = self.consensus.proposal(m, false)? {
                     self.reset_timeout.send(())?;
                     self.message_sender
                         .send_external_message(leader, ExternalMessage::Vote(vote))?;
