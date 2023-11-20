@@ -1,11 +1,13 @@
 use crate::p2p_node::LocalMessageTuple;
 use crate::{
     cfg::NodeConfig,
+    db::Db,
     message::{BlockNumber, InternalMessage},
     p2p_node::OutboundMessageTuple,
     state::{SignedTransaction, TransactionReceipt},
 };
 use primitive_types::H256;
+use std::sync::Arc;
 
 use evm_ds::protos::evm_proto::{self as EvmProto};
 
@@ -95,6 +97,7 @@ pub struct Node {
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<()>,
     consensus: Consensus,
+    db: Arc<Db>,
 }
 
 impl Node {
@@ -112,12 +115,14 @@ impl Node {
             outbound_channel: message_sender_channel,
             local_channel: local_sender_channel,
         };
+        let db = Arc::new(Db::new(config.data_dir.as_ref(), config.eth_chain_id)?);
         let node = Node {
             config: config.clone(),
             peer_id,
             message_sender: message_sender.clone(),
             reset_timeout,
-            consensus: Consensus::new(secret_key, config, message_sender)?,
+            db: db.clone(),
+            consensus: Consensus::new(secret_key, config, message_sender, db)?,
         };
         Ok(node)
     }
@@ -374,6 +379,16 @@ impl Node {
         self.consensus.get_block_by_number(block_number)
     }
 
+    pub fn get_transaction_receipts_in_block(
+        &self,
+        block_hash: Hash,
+    ) -> Result<Vec<TransactionReceipt>> {
+        Ok(self
+            .db
+            .get_transaction_receipt(&block_hash)?
+            .unwrap_or_default())
+    }
+
     pub fn get_finalized_height(&self) -> u64 {
         self.consensus.finalized_view()
     }
@@ -393,17 +408,6 @@ impl Node {
 
     pub fn get_block_by_hash(&self, hash: Hash) -> Result<Option<Block>> {
         self.consensus.get_block(&hash)
-    }
-
-    pub fn get_block_hash_from_transaction(&self, tx_hash: Hash) -> Result<Option<Hash>> {
-        self.consensus.get_block_hash_from_transaction(&tx_hash)
-    }
-
-    pub fn get_transaction_receipts_in_block(
-        &self,
-        block_hash: Hash,
-    ) -> Result<Vec<TransactionReceipt>> {
-        self.consensus.get_transaction_receipts_in_block(block_hash)
     }
 
     pub fn get_transaction_receipt(&self, tx_hash: Hash) -> Result<Option<TransactionReceipt>> {
@@ -495,12 +499,13 @@ impl Node {
             response.blocks.len()
         );
         let mut was_new = false;
+        let length_recvd = response.blocks.len();
 
         for block in response.blocks {
             was_new = self.consensus.receive_block(block)?;
         }
 
-        if was_new {
+        if was_new && length_recvd > 1 {
             trace!(
                 "Requesting additional blocks after successful block download. Start: {}",
                 self.consensus.head_block().header.number
