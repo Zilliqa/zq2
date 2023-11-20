@@ -6,7 +6,7 @@ use ethers::{
 };
 use primitive_types::H160;
 use tracing::*;
-use zilliqa::{state::Address, contracts};
+use zilliqa::{contracts, state::Address};
 
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)

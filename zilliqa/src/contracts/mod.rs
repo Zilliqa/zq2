@@ -145,7 +145,7 @@ mod tests {
             let file = File::create(output_file).unwrap();
             serde_json::to_writer(file, &output).unwrap();
 
-            panic!("compiled contracts updated, run this test again with `ZQ_CONTRACT_TEST_BLESS` unset");
+            println!("`compiled.json` updated, please commit these changes");
         } else {
             let file = File::open(output_file).unwrap();
             let current_output: CompilerOutput = serde_json::from_reader(file).unwrap();
