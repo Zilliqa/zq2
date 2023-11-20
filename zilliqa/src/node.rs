@@ -1,7 +1,8 @@
+use crate::p2p_node::LocalMessageTuple;
 use crate::{
     cfg::NodeConfig,
     db::Db,
-    message::{BlockNumber, InternalMessage, Message},
+    message::{BlockNumber, InternalMessage},
     p2p_node::OutboundMessageTuple,
     state::{SignedTransaction, TransactionReceipt},
 };
@@ -32,20 +33,25 @@ pub struct MessageSender {
     our_shard: u64,
     our_peer_id: PeerId,
     outbound_channel: UnboundedSender<OutboundMessageTuple>,
+    local_channel: UnboundedSender<LocalMessageTuple>,
 }
 
 impl MessageSender {
     /// Send message to the p2p/coordinator thread
     pub fn send_message_to_coordinator(&self, message: InternalMessage) -> Result<()> {
-        self.outbound_channel
-            .send((None, self.our_shard, Message::Internal(message)))?;
+        self.local_channel
+            .send((self.our_shard, self.our_shard, message))?;
         Ok(())
     }
 
     /// Send a message to a locally running shard node
-    pub fn send_message_to_shard(&self, shard: u64, message: InternalMessage) -> Result<()> {
-        self.outbound_channel
-            .send((None, shard, Message::Internal(message)))?;
+    pub fn send_message_to_shard(
+        &self,
+        destination_shard: u64,
+        message: InternalMessage,
+    ) -> Result<()> {
+        self.local_channel
+            .send((self.our_shard, destination_shard, message))?;
         Ok(())
     }
 
@@ -58,14 +64,14 @@ impl MessageSender {
             peer
         );
         self.outbound_channel
-            .send((Some(peer), self.our_shard, Message::External(message)))?;
+            .send((Some(peer), self.our_shard, message))?;
         Ok(())
     }
 
     /// Broadcast to the entire network of this shard
     pub fn broadcast_external_message(&self, message: ExternalMessage) -> Result<()> {
         self.outbound_channel
-            .send((None, self.our_shard, Message::External(message)))?;
+            .send((None, self.our_shard, message))?;
         Ok(())
     }
 }
@@ -99,6 +105,7 @@ impl Node {
         config: NodeConfig,
         secret_key: SecretKey,
         message_sender_channel: UnboundedSender<OutboundMessageTuple>,
+        local_sender_channel: UnboundedSender<LocalMessageTuple>,
         reset_timeout: UnboundedSender<()>,
     ) -> Result<Node> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
@@ -106,6 +113,7 @@ impl Node {
             our_shard: config.eth_chain_id,
             our_peer_id: peer_id,
             outbound_channel: message_sender_channel,
+            local_channel: local_sender_channel,
         };
         let db = Arc::new(Db::new(config.data_dir.as_ref(), config.eth_chain_id)?);
         let node = Node {
@@ -120,86 +128,78 @@ impl Node {
     }
 
     // TODO: Multithreading - `&mut self` -> `&self`
-    pub fn handle_message(&mut self, from: PeerId, message: Message) -> Result<()> {
+    pub fn handle_network_message(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         let to = self.peer_id;
         let to_self = from == to;
         let message_name = message.name();
         tracing::debug!(%from, %to, %message_name, "handling message");
         match message {
-            Message::External(external_message) => match external_message {
-                ExternalMessage::Proposal(m) => {
-                    let m_view = m.header.view;
+            ExternalMessage::Proposal(m) => {
+                let m_view = m.header.view;
 
-                    if let Some((leader, vote)) = self.consensus.proposal(m, false)? {
-                        self.reset_timeout.send(())?;
-                        self.message_sender
-                            .send_external_message(leader, ExternalMessage::Vote(vote))?;
-                    } else {
-                        info!("We had nothing to respond to proposal, lets try to join committee for view {m_view:}");
-                        self.message_sender.send_external_message(
-                            from,
-                            ExternalMessage::JoinCommittee(self.consensus.public_key()),
-                        )?;
-                    }
+                if let Some((leader, vote)) = self.consensus.proposal(m)? {
+                    self.reset_timeout.send(())?;
+                    self.message_sender
+                        .send_external_message(leader, ExternalMessage::Vote(vote))?;
+                } else {
+                    info!("We had nothing to respond to proposal, lets try to join committee for view {m_view:}");
+                    self.message_sender.send_external_message(
+                        from,
+                        ExternalMessage::JoinCommittee(self.consensus.public_key()),
+                    )?;
                 }
-                ExternalMessage::Vote(m) => {
-                    if let Some((block, transactions)) = self.consensus.vote(m)? {
-                        self.message_sender.broadcast_external_message(
-                            ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
-                        )?;
-                    }
+            }
+            ExternalMessage::Vote(m) => {
+                if let Some((block, transactions)) = self.consensus.vote(m)? {
+                    self.message_sender
+                        .broadcast_external_message(ExternalMessage::Proposal(
+                            Proposal::from_parts(block, transactions),
+                        ))?;
                 }
-                ExternalMessage::NewView(m) => {
-                    if let Some(block) = self.consensus.new_view(from, *m)? {
-                        self.message_sender.broadcast_external_message(
-                            ExternalMessage::Proposal(Proposal::from_parts(block, vec![])),
-                        )?;
-                    }
+            }
+            ExternalMessage::NewView(m) => {
+                if let Some(block) = self.consensus.new_view(from, *m)? {
+                    self.message_sender
+                        .broadcast_external_message(ExternalMessage::Proposal(
+                            Proposal::from_parts(block, vec![]),
+                        ))?;
                 }
-                ExternalMessage::BlockRequest(m) => {
-                    if !to_self {
-                        self.handle_block_request(from, m)?;
-                    } else {
-                        debug!("ignoring block request to self");
-                    }
+            }
+            ExternalMessage::BlockRequest(m) => {
+                if !to_self {
+                    self.handle_block_request(from, m)?;
+                } else {
+                    debug!("ignoring block request to self");
                 }
-                ExternalMessage::BlockResponse(m) => {
-                    if !to_self {
-                        self.handle_block_response(from, m)?;
-                    } else {
-                        debug!("ignoring block response to self");
-                    }
+            }
+            ExternalMessage::BlockResponse(m) => {
+                if !to_self {
+                    self.handle_block_response(from, m)?;
+                } else {
+                    debug!("ignoring block response to self");
                 }
-                ExternalMessage::BlockBatchRequest(m) => {
-                    if !to_self {
-                        self.handle_block_batch_request(from, m)?;
-                    } else {
-                        debug!("ignoring blocks request to self");
-                    }
+            }
+            ExternalMessage::BlockBatchRequest(m) => {
+                if !to_self {
+                    self.handle_block_batch_request(from, m)?;
+                } else {
+                    debug!("ignoring blocks request to self");
                 }
-                ExternalMessage::BlockBatchResponse(m) => {
-                    if !to_self {
-                        self.handle_blocks_response(from, m)?;
-                    } else {
-                        debug!("ignoring blocks response to self");
-                    }
+            }
+            ExternalMessage::BlockBatchResponse(m) => {
+                if !to_self {
+                    self.handle_blocks_response(from, m)?;
+                } else {
+                    debug!("ignoring blocks response to self");
                 }
-                ExternalMessage::RequestResponse => {}
-                ExternalMessage::NewTransaction(t) => {
-                    self.consensus.new_transaction(t)?;
-                }
-                ExternalMessage::JoinCommittee(public_key) => {
-                    self.add_peer(from, public_key)?;
-                }
-            },
-            Message::Internal(internal_message) => match internal_message {
-                InternalMessage::AddPeer(public_key) => {
-                    self.add_peer(from, public_key)?;
-                }
-                InternalMessage::LaunchShard(_) => {
-                    warn!("LaunchShard messages should not be passed to the node.");
-                }
-            },
+            }
+            ExternalMessage::RequestResponse => {}
+            ExternalMessage::NewTransaction(t) => {
+                self.consensus.new_transaction(t)?;
+            }
+            ExternalMessage::JoinCommittee(public_key) => {
+                self.add_peer(from, public_key)?;
+            }
         }
 
         Ok(())
