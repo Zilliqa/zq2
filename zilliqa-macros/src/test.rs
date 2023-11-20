@@ -59,7 +59,7 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                     let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed);
 
                     // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
-                    let span = tracing::span!(tracing::Level::INFO, "tst");
+                    let span = tracing::span!(tracing::Level::INFO);
 
                     async move {
                         let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(#inner_name(network))).await;
