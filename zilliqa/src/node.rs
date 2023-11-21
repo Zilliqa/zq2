@@ -535,10 +535,6 @@ impl Node {
 
         for block in response.proposals {
             was_new = self.consensus.receive_block(block)?;
-
-            if !was_new {
-                break;
-            }
         }
 
         if was_new && length_recvd > 1 {

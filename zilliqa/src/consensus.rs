@@ -444,27 +444,28 @@ impl Consensus {
     pub fn download_blocks_up_to_head(&mut self) -> Result<()> {
         let head_block = self.head_block();
 
-        let random_validator_peer = {
-            // Remove self from potential people to send to
-            let mut other_peers = head_block.committee.clone();
-            other_peers.remove_by_peer_id(self.peer_id());
-            let peer_len = other_peers.len();
-
-            match peer_len {
-                0 => None,
-                _ => Some(
-                    other_peers
-                        .get_by_index(self.rng.gen_range(0..peer_len))
-                        .unwrap()
-                        .peer_id,
-                ),
-            }
-        };
-
+        let random_peer = self.get_random_other_peer();
         self.block_store
-            .request_blocks(random_validator_peer, head_block.header.number + 1)?;
+            .request_blocks(random_peer, head_block.header.number + 1)?;
 
         Ok(())
+    }
+
+    pub fn get_random_other_peer(&mut self) -> Option<PeerId> {
+        // Remove self from potential people to send to
+        let mut other_peers = self.head_block().committee.clone();
+        other_peers.remove_by_peer_id(self.peer_id());
+        let peer_len = other_peers.len();
+
+        match peer_len {
+            0 => None,
+            _ => Some(
+                other_peers
+                    .get_by_index(self.rng.gen_range(0..peer_len))
+                    .unwrap()
+                    .peer_id,
+            ),
+        }
     }
 
     pub fn timeout(&mut self) -> Option<(PeerId, ExternalMessage)> {
@@ -583,8 +584,9 @@ impl Consensus {
                 if let Some(e) = e.downcast_ref::<MissingBlockError>() {
                     info!(?e, "missing block when checking block proposal - try and request the parent from the network: {}", block.header.number.saturating_sub(1));
 
+                    let random_peer = self.get_random_other_peer();
                     self.block_store
-                        .request_blocks(None, block.header.number.saturating_sub(1))?;
+                        .request_blocks(random_peer, block.header.number.saturating_sub(1))?;
                     return Ok(None);
                 } else {
                     warn!(?e, "invalid block proposal received!");
@@ -1614,7 +1616,11 @@ impl Consensus {
             block.view()
         );
         if self.block_store.contains_block(block.hash())? {
-            trace!("recieved block already seen: {}", block.hash());
+            trace!(
+                "recieved block already seen: {} - our head is {}",
+                block.hash(),
+                self.head_block()
+            );
             return Ok(false);
         }
 

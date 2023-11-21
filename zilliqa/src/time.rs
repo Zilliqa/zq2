@@ -8,6 +8,7 @@ pub type SystemTime = std::time::SystemTime;
 
 pub type OffsetDateTime = time::OffsetDateTime;
 
+#[cfg(feature = "fake_time")]
 impl From<time_impl::SystemTime> for OffsetDateTime {
     fn from(time: time_impl::SystemTime) -> Self {
         let duration = time
