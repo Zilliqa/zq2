@@ -12,6 +12,7 @@ pub mod message;
 pub mod node;
 pub mod node_launcher;
 pub mod p2p_node;
+mod pool;
 pub mod schnorr;
 pub mod state;
 pub mod time;
