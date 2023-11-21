@@ -15,12 +15,12 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gcp]
     steps:
-    - name: Clear some disk space
-      run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /home/runner/work/_temp/
+    - name: Install Rust
+      run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
     - name: Install dependencies
-      run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y protobuf-compiler solc
+      run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y protobuf-compiler solc build-essential
     - uses: actions/checkout@v4
       with:
         submodules: recursive
