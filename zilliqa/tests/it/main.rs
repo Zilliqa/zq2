@@ -737,7 +737,7 @@ fn format_message(
                 format!("{} [{:?}]", message.name(), request.0)
             }
             ExternalMessage::BlockResponse(response) => {
-                format!("{} [{}]", message.name(), response.block.number())
+                format!("{} [{}]", message.name(), response.proposal.number())
             }
             _ => message.name().to_owned(),
         },
