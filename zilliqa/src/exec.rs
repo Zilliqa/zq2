@@ -24,7 +24,7 @@ use crate::{
     contracts,
     message::BlockHeader,
     state::{Address, State},
-    transaction::RecoveredTransaction,
+    transaction::VerifiedTransaction,
 };
 
 #[derive(Default)]
@@ -538,7 +538,7 @@ impl State {
     /// Apply a transaction to the account state.
     pub fn apply_transaction(
         &mut self,
-        txn: RecoveredTransaction,
+        txn: VerifiedTransaction,
         chain_id: u64,
         current_block: BlockHeader,
         tracing: bool,

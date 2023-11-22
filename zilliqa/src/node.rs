@@ -4,7 +4,7 @@ use crate::{
     db::Db,
     message::{BlockNumber, InternalMessage},
     p2p_node::OutboundMessageTuple,
-    transaction::{RecoveredTransaction, SignedTransaction, TransactionReceipt},
+    transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 use primitive_types::H256;
 use std::sync::Arc;
@@ -414,7 +414,7 @@ impl Node {
         self.consensus.get_transaction_receipt(&tx_hash)
     }
 
-    pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<RecoveredTransaction>> {
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
         self.consensus.get_transaction_by_hash(hash)
     }
 

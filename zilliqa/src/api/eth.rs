@@ -753,7 +753,7 @@ mod tests {
         api::eth::{left_pad_arr, parse_transaction},
         crypto::Hash,
         state::Address,
-        transaction::{EthSignature, RecoveredTransaction, SignedTransaction, TxLegacy},
+        transaction::{EthSignature, SignedTransaction, TxLegacy, VerifiedTransaction},
     };
 
     #[test]
@@ -761,8 +761,8 @@ mod tests {
         // From https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md#example
         let transaction = hex::decode("f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83").unwrap();
         let signed_tx = parse_transaction(&transaction).unwrap();
-        let recovered_tx = signed_tx.recover_signer().unwrap();
-        let expected = RecoveredTransaction {
+        let recovered_tx = signed_tx.verify().unwrap();
+        let expected = VerifiedTransaction {
             tx: SignedTransaction::Legacy {
                 tx: TxLegacy {
                     chain_id: Some(1),

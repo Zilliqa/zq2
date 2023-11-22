@@ -27,7 +27,7 @@ use crate::{
 
 /// A [Transaction] plus its signature. The underlying transaction can be obtained with
 /// [`SignedTransaction::into_transaction()`]. The transaction's signer and hash can be obtained by converting this to a
-/// [RecoveredTransaction] with [`SignedTransaction::recover_signer()`].
+/// [VerifiedTransaction] with [`SignedTransaction::verify()`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SignedTransaction {
     Legacy {
@@ -114,7 +114,7 @@ impl SignedTransaction {
         }
     }
 
-    pub fn recover_signer(self) -> Result<RecoveredTransaction> {
+    pub fn verify(self) -> Result<VerifiedTransaction> {
         let signer = match &self {
             SignedTransaction::Legacy { tx, sig } => {
                 let recovery_id = RecoveryId::new(sig.y_is_odd, false);
@@ -159,7 +159,7 @@ impl SignedTransaction {
         };
         let hash = self.calculate_hash();
 
-        Ok(RecoveredTransaction {
+        Ok(VerifiedTransaction {
             tx: self,
             signer,
             hash,
@@ -167,7 +167,7 @@ impl SignedTransaction {
     }
 
     /// Calculate the hash of this transaction. If you need to do this more than once, consider caching the result
-    /// using [`Self::recover_signer()`] and the `hash` field from [RecoveredTransaction].
+    /// using [`Self::verify()`] and the `hash` field from [RecoveredTransaction].
     pub fn calculate_hash(&self) -> crypto::Hash {
         match self {
             SignedTransaction::Legacy { tx, sig } => {
@@ -229,11 +229,12 @@ impl EthSignature {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// A [SignedTransaction] which has had the signer recovered. The transaction's hash is also calculated and cached.
+/// A [SignedTransaction] which has had the signature verified and the signer recovered. The transaction's hash is also
+/// calculated and cached.
 ///
 /// [Serialize] and [Deserialize] are deliberately not implemented for this type. [SignedTransaction]s should be sent
 /// accross the network the signer should be verified and recovered independently.
-pub struct RecoveredTransaction {
+pub struct VerifiedTransaction {
     pub tx: SignedTransaction,
     pub signer: Address,
     pub hash: crypto::Hash,

@@ -32,7 +32,7 @@ use crate::{
     },
     state::{Address, State},
     time::SystemTime,
-    transaction::{RecoveredTransaction, SignedTransaction, TransactionReceipt},
+    transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 #[derive(Debug)]
@@ -197,7 +197,7 @@ pub struct Consensus {
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<Validator>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
-    new_transactions: BTreeMap<Hash, RecoveredTransaction>,
+    new_transactions: BTreeMap<Hash, VerifiedTransaction>,
     /// The account store.
     state: State,
     /// The persistence database
@@ -619,7 +619,7 @@ impl Consensus {
             }
 
             for txn in &transactions {
-                let txn = txn.clone().recover_signer()?;
+                let txn = txn.clone().verify()?;
                 let tx_hash = txn.hash;
                 if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
                     self.db
@@ -707,7 +707,7 @@ impl Consensus {
 
     pub fn apply_transaction(
         &mut self,
-        txn: RecoveredTransaction,
+        txn: VerifiedTransaction,
         current_block: BlockHeader,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
@@ -744,7 +744,7 @@ impl Consensus {
     // Get valid TXs to execute while also cleaning the mempool of TXs that are invalid
     // to do this, we refer to a binary heap which for each from address, contains a list of TXs
     // prioritised by nonce (so popping gives lowest), then by gas price and gas limit (highest)
-    pub fn get_txns_to_execute(&mut self) -> Vec<RecoveredTransaction> {
+    pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
         let mut ret = Vec::new();
 
         if self.config.consensus.block_tx_limit < 1 {
@@ -1186,7 +1186,7 @@ impl Consensus {
     }
 
     pub fn new_transaction(&mut self, txn: SignedTransaction) -> Result<()> {
-        let txn = txn.recover_signer()?;
+        let txn = txn.verify()?;
         // If we already have the tx, ignore it
         if self.new_transactions.contains_key(&txn.hash) {
             return Ok(());
@@ -1204,14 +1204,14 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<RecoveredTransaction>> {
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
         if let Some(txn) = self.new_transactions.get(&hash) {
             return Ok(Some(txn.clone()));
         }
 
         self.db
             .get_transaction(&hash)?
-            .map(|tx| tx.recover_signer())
+            .map(|tx| tx.verify())
             .transpose()
     }
 
