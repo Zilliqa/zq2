@@ -149,11 +149,11 @@ pub struct BlockBatchRequest(pub BlockRef);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
-    pub block: Block,
+    pub proposal: Proposal,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockBatchResponse {
-    pub blocks: Vec<Block>,
+    pub proposals: Vec<Proposal>,
 }
 
 /// A message intended to be sent over the network as part of p2p communication.

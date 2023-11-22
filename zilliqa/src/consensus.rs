@@ -1582,25 +1582,49 @@ impl Consensus {
 
     // Checks for the validity of a block and adds it to our block store if valid.
     // Returns true when the block is valid and newly seen and false otherwise.
-    pub fn receive_block(&mut self, block: Block) -> Result<bool> {
+    pub fn receive_block(&mut self, proposal: Proposal) -> Result<bool> {
+        let (block, transactions) = proposal.into_parts();
+        trace!(
+            "received block: {} number: {}, view: {}",
+            block.hash(),
+            block.number(),
+            block.view()
+        );
         if self.block_store.contains_block(block.hash())? {
-            trace!("recieved block already seen: {}", block.hash());
+            trace!(
+                "recieved block already seen: {} - our head is {}",
+                block.hash(),
+                self.head_block()
+            );
+            return Ok(false);
+        }
+
+        // Check whether it is loose or not - we do not store loose blocks.
+        if !self.block_store.contains_block(block.parent_hash())? {
+            trace!("received block is loose: {}", block.hash());
+
+            warn!(
+                "missing received block the parent! Lets request the parent, then: {}",
+                block.parent_hash()
+            );
+            self.block_store
+                .request_blocks(None, block.header.number.saturating_sub(1))?;
             return Ok(false);
         }
 
         match self.check_block(&block) {
             Ok(()) => {
                 trace!(
-                    "updating high QC and view, blocks seems good! {} {} {}",
+                    "updating high QC and view, blocks seems good! hash: {} number: {} view: {}",
                     block.hash(),
                     block.number(),
                     block.view()
                 );
-                self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
-                self.add_block(block)?;
+                self.proposal(Proposal::from_parts(block, transactions))?;
             }
             Err(e) => {
                 warn!(?e, "invalid block received during sync!");
+
                 return Ok(false);
             }
         }
