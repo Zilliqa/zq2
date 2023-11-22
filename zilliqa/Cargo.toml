@@ -47,6 +47,7 @@ jsonrpsee = { version = "0.20.2", features = ["server"] }
 k256 = {version = "0.13.2", features = ["serde", "pem"] }
 libp2p = { version = "0.52.4", features = ["gossipsub", "macros", "tcp", "tokio", "noise", "mdns", "request-response", "kad", "identify", "serde", "yamux"] }
 lru = "0.12"
+ntest = "0.9.0"
 once_cell = "1.18.0"
 # TODO: Use open telemetry "0.20.0" when released
 opentelemetry = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "ecf0dda5686dc45470ae02993a4748c289c407de", features = ["metrics", "rt-tokio"] }
