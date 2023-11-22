@@ -937,7 +937,7 @@ impl Consensus {
 
         // if the vote is new, store it
         if !cosigned[index] {
-            signatures.push(vote.signature);
+            signatures.push(vote.signature());
             cosigned.set(index, true);
             cosigned_weight += sender.weight;
 
@@ -954,7 +954,8 @@ impl Consensus {
             if supermajority_reached {
                 // if we are already in the round in which the vote counts and have reached supermajority
                 if block_view + 1 == self.view.get_view() {
-                    let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone());
+                    let qc =
+                        self.qc_from_bits(block_hash, &signatures, cosigned.clone(), vote.view);
                     let parent_hash = qc.block_hash;
                     let parent = self
                         .get_block(&parent_hash)?
@@ -1345,9 +1346,15 @@ impl Consensus {
         block_hash: Hash,
         signatures: &[NodeSignature],
         cosigned: BitVec,
+        view: u64,
     ) -> QuorumCertificate {
         // we've already verified the signatures upon receipt of the responses so there's no need to do it again
-        QuorumCertificate::new(signatures, cosigned, block_hash)
+        QuorumCertificate {
+            signature: NodeSignature::aggregate(signatures).unwrap(),
+            cosigned,
+            block_hash,
+            view,
+        }
     }
 
     fn block_extends_from(&self, block: &Block, ancestor: &Block) -> Result<bool> {
@@ -1673,6 +1680,7 @@ impl Consensus {
             self.secret_key,
             block.hash(),
             self.secret_key.node_public_key(),
+            block.view(),
         )
     }
 
