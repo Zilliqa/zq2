@@ -54,6 +54,14 @@ impl Proposal {
             self.transactions,
         )
     }
+
+    pub fn number(&self) -> u64 {
+        self.header.number
+    }
+
+    pub fn view(&self) -> u64 {
+        self.header.view
+    }
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
