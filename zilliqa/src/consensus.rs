@@ -1321,12 +1321,7 @@ impl Consensus {
         view: u64,
     ) -> QuorumCertificate {
         // we've already verified the signatures upon receipt of the responses so there's no need to do it again
-        QuorumCertificate {
-            signature: NodeSignature::aggregate(signatures).unwrap(),
-            cosigned,
-            block_hash,
-            view,
-        }
+        QuorumCertificate::new(signatures, cosigned, block_hash, view)
     }
 
     fn block_extends_from(&self, block: &Block, ancestor: &Block) -> Result<bool> {
