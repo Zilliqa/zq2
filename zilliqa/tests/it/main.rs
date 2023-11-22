@@ -545,7 +545,7 @@ impl Network {
 
         if messages.is_empty() {
             trace!("Messages were empty - advance time and trigger timeout in all nodes!");
-            zilliqa::time::advance(Duration::from_millis(500));
+            zilliqa::time::advance(Duration::from_millis(1000));
 
             for (index, node) in self.nodes.iter().enumerate() {
                 let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
