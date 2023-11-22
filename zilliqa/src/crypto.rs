@@ -38,6 +38,25 @@ impl NodeSignature {
         Ok(NodeSignature(bls_signatures::aggregate(&signatures)?))
     }
 
+    // Verify that the aggregated signature is valid for the given public keys and message.
+    // That is, each public key has signed the message, and the aggregated signature is the
+    // aggregation of those signatures.
+    pub fn verify_aggregate(
+        signature: &NodeSignature,
+        message: &[u8],
+        public_keys: Vec<NodePublicKey>,
+    ) -> Result<()> {
+        // first verify that the signature itself has been composed from the public keys and the message
+        let hash = bls_signatures::hash(message);
+        let public_keys = public_keys.iter().map(|p| p.0).collect::<Vec<_>>();
+
+        if !bls_signatures::verify_agg_signatures_on_same_hash(&signature.0, &hash, &public_keys) {
+            return Err(anyhow!("invalid QC aggregated signature!"));
+        }
+
+        Ok(())
+    }
+
     pub fn to_bytes(self) -> Vec<u8> {
         self.0.as_bytes()
     }

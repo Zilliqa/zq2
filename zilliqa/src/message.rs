@@ -53,6 +53,14 @@ impl Proposal {
             self.transactions,
         )
     }
+
+    pub fn number(&self) -> u64 {
+        self.header.number
+    }
+
+    pub fn view(&self) -> u64 {
+        self.header.view
+    }
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -125,19 +133,11 @@ pub struct BlockBatchRequest(pub BlockRef);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
-    pub block: Block,
+    pub proposal: Proposal,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockBatchResponse {
-    pub blocks: Vec<Block>,
-}
-
-// #[allow(clippy::large_enum_variant)] // Pending refactor once join_network is merged
-/// TODO: #397, refactor these two out into separate, unrelated structs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Message {
-    External(ExternalMessage),
-    Internal(InternalMessage),
+    pub proposals: Vec<Proposal>,
 }
 
 /// A message intended to be sent over the network as part of p2p communication.
@@ -159,17 +159,7 @@ pub enum ExternalMessage {
 /// but not sent over the network.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InternalMessage {
-    AddPeer(NodePublicKey),
     LaunchShard(u64),
-}
-
-impl Message {
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::External(m) => m.name(),
-            Self::Internal(m) => m.name(),
-        }
-    }
 }
 
 impl ExternalMessage {
@@ -192,7 +182,6 @@ impl ExternalMessage {
 impl InternalMessage {
     pub fn name(&self) -> &'static str {
         match self {
-            InternalMessage::AddPeer(_) => "AddPeer",
             InternalMessage::LaunchShard(_) => "LaunchShard",
         }
     }
@@ -223,12 +212,35 @@ impl QuorumCertificate {
         }
     }
 
+    // Verifying an aggregated signature is a case of verifying the aggregated public key
+    // against the aggregated signature
+    pub fn verify(&self, public_keys: Vec<NodePublicKey>) -> bool {
+        // Select which public keys have gone into creating this signature
+        let public_keys = public_keys
+            .into_iter()
+            .zip(self.cosigned.iter())
+            .filter_map(|(pk, cosigned)| if *cosigned { Some(pk) } else { None })
+            .collect::<Vec<_>>();
+
+        NodeSignature::verify_aggregate(&self.signature, self.block_hash.as_bytes(), public_keys)
+            .is_ok()
+    }
+
     pub fn compute_hash(&self) -> Hash {
         Hash::compute([
             &self.signature.to_bytes(),
             &self.cosigned.clone().into_vec(), // FIXME: What does this do when `self.cosigned.len() % 8 != 0`?
             self.block_hash.as_bytes(),
         ])
+    }
+}
+
+impl Display for QuorumCertificate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "QC hash: {}, ", self.compute_hash())?;
+        write!(f, "QC signature: [..], ")?;
+        write!(f, "QC cosigned: {:?}, ", self.cosigned)?;
+        Ok(())
     }
 }
 
@@ -478,6 +490,10 @@ impl Committee {
         let mut rng = rand::thread_rng();
         let index = rng.gen_range(0..self.0.len());
         self.get_by_index(index).unwrap()
+    }
+
+    pub fn public_keys(&self) -> Vec<NodePublicKey> {
+        self.0.iter().map(|v| v.public_key).collect()
     }
 }
 

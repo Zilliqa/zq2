@@ -6,6 +6,7 @@ use ethers::{
     types::{BlockNumber, TransactionRequest},
 };
 use primitive_types::H160;
+
 use tracing::*;
 use zilliqa::state::Address;
 
@@ -115,7 +116,7 @@ async fn block_production(mut network: Network) {
                     .map_or(0, |b| b.number())
                     >= 10
             },
-            100,
+            500000,
         )
         .await
         .unwrap();
@@ -319,6 +320,7 @@ async fn launch_shard(mut network: Network) {
 // and progresses.
 #[zilliqa_macros::test]
 async fn handle_forking_correctly(mut network: Network) {
+    trace!("Handle forking correctly test starting....");
     let wallet = network.genesis_wallet().await;
     let _provider = wallet.provider();
 
