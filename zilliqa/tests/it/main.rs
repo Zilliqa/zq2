@@ -601,7 +601,15 @@ impl Network {
                 } else {
                     self.nodes.iter().collect()
                 };
-                for (index, node) in nodes.iter().enumerate() {
+
+                for node in &nodes {
+                    // Need to recalculate index against the original vec, not the filtered one.
+                    let index = self
+                        .nodes
+                        .iter()
+                        .position(|n| n.peer_id == node.peer_id)
+                        .unwrap();
+
                     let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                     span.in_scope(|| {
                         node.inner
