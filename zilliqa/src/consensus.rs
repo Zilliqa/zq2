@@ -1,11 +1,13 @@
 use ethabi::{Event, Log, RawLog};
 use primitive_types::H256;
+use rand::Rng;
 
 use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::MessageSender;
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
+use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{
@@ -202,6 +204,8 @@ pub struct Consensus {
     db: Arc<Db>,
     /// Transactions ordered by priority, map of address of TXn (from account) to ordered TXns to be executed.
     new_transactions_priority: BTreeMap<Address, BinaryHeap<TxnOrder>>,
+    // PRNG
+    rng: ChaCha8Rng,
 }
 
 // View in consensus should be have access monitored so last_timeout is always correct
@@ -351,6 +355,7 @@ impl Consensus {
             state,
             db,
             new_transactions_priority: BTreeMap::new(),
+            rng: <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(0),
         };
 
         // If we're at genesis, add the genesis block.
@@ -439,21 +444,28 @@ impl Consensus {
     pub fn download_blocks_up_to_head(&mut self) -> Result<()> {
         let head_block = self.head_block();
 
-        let random_validator_peer = {
-            // Remove self from potential people to send to
-            let mut other_peers = head_block.committee.clone();
-            other_peers.remove_by_peer_id(self.peer_id());
-
-            match other_peers.len() {
-                0 => None,
-                _ => Some(other_peers.choose_random().peer_id),
-            }
-        };
-
+        let random_peer = self.get_random_other_peer();
         self.block_store
-            .request_blocks(random_validator_peer, head_block.header.number + 1)?;
+            .request_blocks(random_peer, head_block.header.number + 1)?;
 
         Ok(())
+    }
+
+    pub fn get_random_other_peer(&mut self) -> Option<PeerId> {
+        // Remove self from potential people to send to
+        let mut other_peers = self.head_block().committee.clone();
+        other_peers.remove_by_peer_id(self.peer_id());
+        let peer_len = other_peers.len();
+
+        match peer_len {
+            0 => None,
+            _ => Some(
+                other_peers
+                    .get_by_index(self.rng.gen_range(0..peer_len))
+                    .unwrap()
+                    .peer_id,
+            ),
+        }
     }
 
     pub fn timeout(&mut self) -> Option<(PeerId, ExternalMessage)> {
@@ -568,6 +580,11 @@ impl Consensus {
                 if let Some(e) = e.downcast_ref::<MissingBlockError>() {
                     warn!("missing finalized block1");
                     info!(?e, "missing block when checking block proposal");
+
+                    let random_peer = self.get_random_other_peer();
+                    self.block_store
+                        .request_blocks(random_peer, block.header.number.saturating_sub(1))?;
+
                     return Ok(None);
                 } else {
                     warn!(?e, "invalid block proposal received!");
