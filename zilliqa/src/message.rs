@@ -245,6 +245,15 @@ impl QuorumCertificate {
     }
 }
 
+impl Display for QuorumCertificate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "QC hash: {}, ", self.compute_hash())?;
+        write!(f, "QC signature: [..], ")?;
+        write!(f, "QC cosigned: {:?}, ", self.cosigned)?;
+        Ok(())
+    }
+}
+
 /// A collection of `n - f` [QuorumCertificate]s.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateQc {
