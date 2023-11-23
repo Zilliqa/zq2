@@ -30,8 +30,9 @@ use crate::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, NewView, Proposal,
         QuorumCertificate, Vote,
     },
-    state::{Address, SignedTransaction, State, TransactionReceipt},
+    state::{Address, State},
     time::SystemTime,
+    transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 #[derive(Debug)]
@@ -96,19 +97,20 @@ impl From<Hash> for MissingBlockError {
 #[derive(Debug, Clone)]
 struct TxnOrder {
     pub nonce: u64,
-    pub gas_price: u64,
+    pub gas_price: u128,
     pub gas_limit: u64,
     pub hash: Hash,
     pub retries: u64,
 }
 
 impl TxnOrder {
-    fn new(txn: &SignedTransaction) -> Self {
+    fn new(hash: Hash, txn: &SignedTransaction) -> Self {
+        let txn = txn.clone().into_transaction();
         TxnOrder {
-            nonce: txn.transaction.nonce,
-            gas_price: txn.transaction.gas_price,
-            gas_limit: txn.transaction.gas_limit,
-            hash: txn.hash(),
+            nonce: txn.nonce(),
+            gas_price: txn.max_fee_per_gas(),
+            gas_limit: txn.gas_limit(),
+            hash,
             retries: 0,
         }
     }
@@ -195,7 +197,7 @@ pub struct Consensus {
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<Validator>,
     /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
-    new_transactions: BTreeMap<Hash, SignedTransaction>,
+    new_transactions: BTreeMap<Hash, VerifiedTransaction>,
     /// The account store.
     state: State,
     /// The persistence database
@@ -617,8 +619,9 @@ impl Consensus {
             }
 
             for txn in &transactions {
+                let txn = txn.clone().verify()?;
+                let tx_hash = txn.hash;
                 if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
-                    let tx_hash = txn.hash();
                     self.db
                         .insert_block_hash_reverse_index(&tx_hash, &block.hash())?;
                     let receipt = TransactionReceipt {
@@ -629,7 +632,7 @@ impl Consensus {
                         logs: result.logs,
                     };
                     info!(?receipt, "applied transaction {:?}", receipt);
-                    self.db.insert_transaction(&txn.hash(), txn)?;
+                    self.db.insert_transaction(&txn.hash, &txn.tx)?;
                     block_receipts.push(receipt);
                 } else {
                     warn!("Failed to apply TX! Something might be wrong");
@@ -695,27 +698,22 @@ impl Consensus {
             }
         };
 
-        let from_addr = removed.from_addr;
-
         // loop over priority txs and remove the tx (this shold be O(log n) as it will almost cert
         // be a leaf node)
-        if let Some(priority_txs) = self.new_transactions_priority.get_mut(&from_addr) {
+        if let Some(priority_txs) = self.new_transactions_priority.get_mut(&removed.signer) {
             priority_txs.retain(|tx| tx.hash != *tx_hash);
         }
     }
 
     pub fn apply_transaction(
         &mut self,
-        txn: SignedTransaction,
+        txn: VerifiedTransaction,
         current_block: BlockHeader,
     ) -> Result<Option<TransactionApplyResult>> {
-        let hash = txn.hash();
+        let hash = txn.hash;
 
         // If we have the transaction in the mempool, remove it.
         self.remove_tx_from_mempool(&hash);
-
-        // Ensure the transaction has a valid signature
-        txn.verify()?;
 
         let mut listener = TouchedAddressEventListener::default();
 
@@ -746,8 +744,8 @@ impl Consensus {
     // Get valid TXs to execute while also cleaning the mempool of TXs that are invalid
     // to do this, we refer to a binary heap which for each from address, contains a list of TXs
     // prioritised by nonce (so popping gives lowest), then by gas price and gas limit (highest)
-    pub fn get_txns_to_execute(&mut self) -> Vec<SignedTransaction> {
-        let mut ret: Vec<SignedTransaction> = Vec::new();
+    pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
+        let mut ret = Vec::new();
 
         if self.config.consensus.block_tx_limit < 1 {
             warn!("Block TX limit is set to 0, no TXs will be added to the block");
@@ -948,11 +946,13 @@ impl Consensus {
                         .into_iter()
                         .filter_map(|tx| {
                             let result = self.apply_transaction(tx.clone(), parent_header);
-                            result.transpose().map(|r| r.map(|_| tx.clone()))
+                            result.transpose().map(|r| r.map(|_| tx.tx.clone()))
                         })
                         .collect::<Result<_>>()?;
-                    let applied_transaction_hashes: Vec<_> =
-                        applied_transactions.iter().map(|tx| tx.hash()).collect();
+                    let applied_transaction_hashes: Vec<_> = applied_transactions
+                        .iter()
+                        .map(|tx| tx.calculate_hash())
+                        .collect();
 
                     let proposal = Block::from_qc(
                         self.secret_key,
@@ -1186,30 +1186,33 @@ impl Consensus {
     }
 
     pub fn new_transaction(&mut self, txn: SignedTransaction) -> Result<()> {
+        let txn = txn.verify()?;
         // If we already have the tx, ignore it
-        if self.new_transactions.contains_key(&txn.hash()) {
+        if self.new_transactions.contains_key(&txn.hash) {
             return Ok(());
         }
 
-        txn.verify()?; // sanity check
-        let txn_order = TxnOrder::new(&txn);
+        let txn_order = TxnOrder::new(txn.hash, &txn.tx);
 
         self.new_transactions_priority
-            .entry(txn.from_addr)
+            .entry(txn.signer)
             .or_default()
             .push(txn_order);
 
-        self.new_transactions.insert(txn.hash(), txn);
+        self.new_transactions.insert(txn.hash, txn);
 
         Ok(())
     }
 
-    pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<SignedTransaction>> {
+    pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
         if let Some(txn) = self.new_transactions.get(&hash) {
             return Ok(Some(txn.clone()));
         }
 
-        self.db.get_transaction(&hash)
+        self.db
+            .get_transaction(&hash)?
+            .map(|tx| tx.verify())
+            .transpose()
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
@@ -1775,7 +1778,7 @@ impl Consensus {
                 self.db.remove_transaction(tx_hash)?;
 
                 // Put tx back in.
-                self.new_transaction(orig_tx).unwrap();
+                self.new_transaction(orig_tx.tx).unwrap();
 
                 // block hash reverse index, remove tx hash too
                 self.db.remove_block_hash_reverse_index(tx_hash)?;

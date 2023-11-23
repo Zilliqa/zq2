@@ -257,14 +257,16 @@ fn get_internal_operations(
     }
 
     let tx = tx.unwrap();
+    let from = tx.signer;
+    let tx = tx.tx.into_transaction();
     let receipt = receipt.unwrap();
 
     let call_result = node.call_contract(
         receipt.block_number.into(),
-        tx.from_addr,
-        tx.transaction.to_addr,
-        tx.transaction.payload,
-        tx.transaction.amount.into(),
+        from,
+        tx.to_addr(),
+        tx.payload().to_vec(),
+        tx.amount().into(),
         true,
     );
 
