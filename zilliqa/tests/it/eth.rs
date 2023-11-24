@@ -1,12 +1,17 @@
 use ethabi::ethereum_types::U64;
 use futures::future::join_all;
-use std::fmt::Debug;
+use std::{fmt::Debug, ops::DerefMut};
 
 use ethers::{
     abi::FunctionExt,
     providers::{Middleware, Provider},
     types::{
-        transaction::eip2718::TypedTransaction, BlockId, BlockNumber, Filter, TransactionRequest,
+        transaction::{
+            eip2718::TypedTransaction,
+            eip2930::{AccessList, AccessListItem},
+        },
+        BlockId, BlockNumber, Eip1559TransactionRequest, Eip2930TransactionRequest, Filter,
+        Transaction, TransactionReceipt, TransactionRequest,
     },
     utils::keccak256,
 };
@@ -493,22 +498,128 @@ async fn get_storage_at(mut network: Network) {
     assert_eq!(value, H256::from_low_u64_be(1234));
 }
 
-#[zilliqa_macros::test]
-async fn send_transaction(mut network: Network) {
+/// Helper method for send transaction tests.
+async fn send_transaction(
+    network: &mut Network,
+    mut tx: TypedTransaction,
+) -> (Transaction, TransactionReceipt) {
     let wallet = network.genesis_wallet().await;
-
-    let to: H160 = "0x00000000000000000000000000000000deadbeef"
-        .parse()
-        .unwrap();
-    let tx = TransactionRequest::pay(to, 123);
-
-    // Transform the transaction to its final form, so we can caculate the expected hash.
-    let mut tx: TypedTransaction = tx.into();
     wallet.fill_transaction(&mut tx, None).await.unwrap();
     let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
-    let expected_hash = H256::from_slice(&keccak256(tx.rlp_signed(&sig)));
-
+    let expected_hash = tx.hash(&sig);
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    assert_eq!(hash, expected_hash);
+
+    network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    let tx = wallet.get_transaction(hash).await.unwrap().unwrap();
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+
+    (tx, receipt)
+}
+
+#[zilliqa_macros::test]
+async fn send_legacy_transaction(mut network: Network) {
+    let to = H160::random_using(network.rng.lock().unwrap().deref_mut());
+    let tx = TransactionRequest::pay(to, 123).into();
+    let (tx, receipt) = send_transaction(&mut network, tx).await;
+
+    assert_eq!(tx.transaction_type.unwrap().as_u64(), 0);
+    assert_eq!(receipt.to.unwrap(), to);
+}
+
+#[zilliqa_macros::test]
+async fn send_eip2930_transaction(mut network: Network) {
+    let (to, access_list) = {
+        let mut rng = network.rng.lock().unwrap();
+        let to = H160::random_using(rng.deref_mut());
+        let access_list = AccessList(vec![AccessListItem {
+            address: H160::random_using(rng.deref_mut()),
+            storage_keys: vec![
+                H256::random_using(rng.deref_mut()),
+                H256::random_using(rng.deref_mut()),
+            ],
+        }]);
+        (to, access_list)
+    };
+    let tx = Eip2930TransactionRequest::new(TransactionRequest::pay(to, 123), access_list.clone())
+        .into();
+    let (tx, receipt) = send_transaction(&mut network, tx).await;
+
+    assert_eq!(tx.transaction_type.unwrap().as_u64(), 1);
+    assert_eq!(tx.access_list.unwrap(), access_list);
+    assert_eq!(receipt.to.unwrap(), to);
+}
+
+#[zilliqa_macros::test]
+async fn send_eip1559_transaction(mut network: Network) {
+    let (to, access_list) = {
+        let mut rng = network.rng.lock().unwrap();
+        let to = H160::random_using(rng.deref_mut());
+        let access_list = AccessList(vec![AccessListItem {
+            address: H160::random_using(rng.deref_mut()),
+            storage_keys: vec![
+                H256::random_using(rng.deref_mut()),
+                H256::random_using(rng.deref_mut()),
+            ],
+        }]);
+        (to, access_list)
+    };
+    let tx = Eip1559TransactionRequest::new()
+        .to(to)
+        .value(456)
+        .access_list(access_list.clone())
+        .max_fee_per_gas(5000)
+        .max_priority_fee_per_gas(5000)
+        .into();
+    let (tx, receipt) = send_transaction(&mut network, tx).await;
+
+    assert_eq!(tx.transaction_type.unwrap().as_u64(), 2);
+    assert_eq!(tx.access_list.unwrap(), access_list);
+    assert_eq!(tx.max_fee_per_gas.unwrap().as_u64(), 5000);
+    assert_eq!(tx.max_priority_fee_per_gas.unwrap().as_u64(), 5000);
+    assert_eq!(receipt.to.unwrap(), to);
+}
+
+/// Test which sends a legacy transaction, without the replay protection specified by EIP-155.
+#[zilliqa_macros::test]
+async fn send_legacy_transaction_without_chain_id(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let tx = TransactionRequest::pay(
+        H160::random_using(network.rng.lock().unwrap().deref_mut()),
+        123,
+    );
+    let mut tx: TypedTransaction = tx.into();
+    wallet.fill_transaction(&mut tx, None).await.unwrap();
+    // Clear the chain ID.
+    let tx = TypedTransaction::Legacy(TransactionRequest {
+        chain_id: None,
+        ..tx.into()
+    });
+
+    let sig = wallet.signer().sign_hash(tx.sighash()).unwrap();
+    let expected_hash = tx.hash(&sig);
+
+    // Drop down to the provider, to prevent the wallet middleware from setting the chain ID.
+    let hash = wallet
+        .provider()
+        .send_raw_transaction(tx.rlp_signed(&sig))
+        .await
+        .unwrap()
+        .tx_hash();
 
     assert_eq!(hash, expected_hash);
 
@@ -526,10 +637,9 @@ async fn send_transaction(mut network: Network) {
         .await
         .unwrap();
 
-    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
-
-    assert_eq!(receipt.to.unwrap(), to);
-    assert_eq!(receipt.from, wallet.address());
+    let tx = wallet.get_transaction(hash).await.unwrap().unwrap();
+    assert_eq!(tx.transaction_type.unwrap().as_u64(), 0);
+    assert_eq!(tx.chain_id, None);
 }
 
 #[zilliqa_macros::test]

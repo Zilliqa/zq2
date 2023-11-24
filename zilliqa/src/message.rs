@@ -7,14 +7,14 @@ use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{fmt, fmt::Display, fmt::Formatter, str::FromStr};
-use time::format_description;
+use time::{macros::format_description, OffsetDateTime};
+use tracing::*;
 
 use crate::{
     consensus::Validator,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
-    state::SignedTransaction,
-    time::OffsetDateTime,
     time::SystemTime,
+    transaction::SignedTransaction,
 };
 
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
@@ -48,7 +48,11 @@ impl Proposal {
                 qc: self.qc,
                 agg: self.agg,
                 committee: self.committee,
-                transactions: self.transactions.iter().map(|txn| txn.hash()).collect(),
+                transactions: self
+                    .transactions
+                    .iter()
+                    .map(|txn| txn.calculate_hash())
+                    .collect(),
             },
             self.transactions,
         )
@@ -65,24 +69,47 @@ impl Proposal {
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Vote {
-    /// A signature on the block_hash.
-    pub signature: NodeSignature,
+    /// A signature on the block_hash and view.
+    signature: NodeSignature,
     pub block_hash: Hash,
     pub public_key: NodePublicKey,
+    pub view: u64,
 }
 
 impl Vote {
-    pub fn new(secret_key: SecretKey, block_hash: Hash, public_key: NodePublicKey) -> Self {
+    pub fn new(
+        secret_key: SecretKey,
+        block_hash: Hash,
+        public_key: NodePublicKey,
+        view: u64,
+    ) -> Self {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(block_hash.as_bytes());
+        bytes.extend_from_slice(&view.to_be_bytes());
+
+        warn!("sign vote {:?} {:?}", block_hash, view);
+
         Vote {
-            signature: secret_key.sign(block_hash.as_bytes()),
+            signature: secret_key.sign(&bytes),
             block_hash,
             public_key,
+            view,
         }
     }
 
+    // Make this a getter to force the use of ::new
+    pub fn signature(&self) -> NodeSignature {
+        self.signature
+    }
+
     pub fn verify(&self) -> Result<()> {
-        self.public_key
-            .verify(self.block_hash.as_bytes(), self.signature)
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(self.block_hash.as_bytes());
+        bytes.extend_from_slice(&self.view.to_be_bytes());
+
+        trace!("Verify vote: {:?}", self);
+
+        self.public_key.verify(&bytes, self.signature)
     }
 }
 
@@ -193,6 +220,7 @@ pub struct QuorumCertificate {
     pub signature: NodeSignature,
     pub cosigned: BitVec,
     pub block_hash: Hash,
+    pub view: u64,
 }
 
 impl QuorumCertificate {
@@ -201,14 +229,21 @@ impl QuorumCertificate {
             signature: NodeSignature::identity(),
             cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
             block_hash: Hash::ZERO,
+            view: 0,
         }
     }
 
-    pub fn new(signatures: &[NodeSignature], cosigned: BitVec, block_hash: Hash) -> Self {
+    pub fn new(
+        signatures: &[NodeSignature],
+        cosigned: BitVec,
+        block_hash: Hash,
+        view: u64,
+    ) -> Self {
         QuorumCertificate {
             signature: NodeSignature::aggregate(signatures).unwrap(),
             cosigned,
             block_hash,
+            view,
         }
     }
 
@@ -312,12 +347,13 @@ impl fmt::Display for BlockHeader {
 
 // Helper function to format SystemTime as a string
 // https://stackoverflow.com/questions/45386585
-fn systemtime_strftime<T>(dt: T) -> Result<String, time::error::Format>
-where
-    T: Into<OffsetDateTime>,
-{
-    let f = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]").unwrap();
-    dt.into().format(&f)
+fn systemtime_strftime(timestamp: SystemTime) -> Result<String> {
+    let time_since_epoch = timestamp.elapsed()?;
+    let format = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+    Ok(
+        OffsetDateTime::from_unix_timestamp_nanos(time_since_epoch.as_nanos() as i128)?
+            .format(&format)?,
+    )
 }
 
 impl BlockHeader {
@@ -540,6 +576,7 @@ impl Block {
             signature: NodeSignature::identity(),
             cosigned: bitvec![u8, bitvec::order::Msb0; 1; 0],
             block_hash: Hash::ZERO,
+            view: 0,
         };
         let parent_hash = Hash::ZERO;
         let timestamp = SystemTime::UNIX_EPOCH;
@@ -576,6 +613,7 @@ impl Block {
                 signature: NodeSignature::identity(),
                 cosigned: bitvec![u8, bitvec::order::Msb0; 1; 0],
                 block_hash: Hash::ZERO,
+                view: 0,
             },
             agg: None,
             transactions: vec![],

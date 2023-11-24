@@ -64,7 +64,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let last_block = inner.get_block_by_number(last_number).unwrap().unwrap();
     let tx = inner.get_transaction_by_hash(hash).unwrap().unwrap();
     // sanity check
-    assert_eq!(tx.hash(), hash);
+    assert_eq!(tx.hash, hash);
     assert_eq!(block_with_tx.transactions.len(), 1);
 
     // drop and re-create the node using the same datadir:
@@ -112,8 +112,9 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             .get_transaction_by_hash(hash)
             .unwrap()
             .unwrap()
-            .transaction
-            .payload,
-        tx.transaction.payload
+            .tx
+            .into_transaction()
+            .payload(),
+        tx.tx.into_transaction().payload()
     );
 }

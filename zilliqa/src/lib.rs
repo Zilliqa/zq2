@@ -16,4 +16,5 @@ pub mod p2p_node;
 pub mod schnorr;
 pub mod state;
 pub mod time;
+mod transaction;
 pub mod zq1_proto;
