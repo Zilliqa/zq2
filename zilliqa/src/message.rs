@@ -247,6 +247,7 @@ impl QuorumCertificate {
     // Verifying an aggregated signature is a case of verifying the aggregated public key
     // against the aggregated signature
     pub fn verify(&self, public_keys: Vec<NodePublicKey>) -> bool {
+        //true
         // Select which public keys have gone into creating this signature
         let public_keys = public_keys
             .into_iter()
@@ -270,6 +271,7 @@ impl QuorumCertificate {
 impl Display for QuorumCertificate {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "QC hash: {}, ", self.compute_hash())?;
+        write!(f, "QC block hash: {}, ", self.compute_hash())?;
         write!(f, "QC signature: [..], ")?;
         write!(f, "QC cosigned: {:?}, ", self.cosigned)?;
         Ok(())

@@ -89,6 +89,7 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn block_production(mut network: Network) {
+    trace!("nathan Block production test starting....");
     network
         .run_until(
             |n| {

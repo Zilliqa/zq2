@@ -889,7 +889,7 @@ impl Consensus {
         let block_hash = block.hash();
         let block_view = block.view();
         let current_view = self.view.get_view();
-        trace!(block_view, current_view, %block_hash, "handling vote");
+        trace!(block_view, current_view, %block_hash, %block, "handling vote");
 
         // if we are not the leader of the round in which the vote counts
         // The vote is in the happy path (?) - so the view is block view + 1
@@ -956,6 +956,9 @@ impl Consensus {
                 if block_view + 1 == self.view.get_view() {
                     let qc =
                         self.qc_from_bits(block_hash, &signatures, cosigned.clone(), vote.view);
+
+                    trace!(%qc, %block_hash, "Constructing QC from bits");
+
                     let parent_hash = qc.block_hash;
                     let parent = self
                         .get_block(&parent_hash)?
