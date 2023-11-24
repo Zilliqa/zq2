@@ -474,7 +474,8 @@ impl Consensus {
             let genesis = self
                 .get_block_by_view(0)
                 .unwrap()
-                .ok_or_else(|| anyhow!("missing block"))?;
+                .ok_or_else(|| anyhow!("missing block"))
+                .unwrap();
             // If we're in the genesis committee, vote again.
             if genesis
                 .committee
@@ -889,7 +890,7 @@ impl Consensus {
         let block_hash = block.hash();
         let block_view = block.view();
         let current_view = self.view.get_view();
-        trace!(block_view, current_view, %block_hash, %block, "handling vote");
+        trace!(block_view, current_view, %block_hash, "handling vote");
 
         // if we are not the leader of the round in which the vote counts
         // The vote is in the happy path (?) - so the view is block view + 1
@@ -954,11 +955,7 @@ impl Consensus {
             if supermajority_reached {
                 // if we are already in the round in which the vote counts and have reached supermajority
                 if block_view + 1 == self.view.get_view() {
-                    let qc =
-                        self.qc_from_bits(block_hash, &signatures, cosigned.clone(), vote.view);
-
-                    trace!(%qc, %block_hash, "Constructing QC from bits");
-
+                    let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone(), block_view);
                     let parent_hash = qc.block_hash;
                     let parent = self
                         .get_block(&parent_hash)?
@@ -1300,7 +1297,8 @@ impl Consensus {
         let new_high_qc_block_view = new_high_qc_block.view();
 
         if self.high_qc.block_hash == Hash::ZERO {
-            trace!("received high qc, self high_qc is currently uninitialized, setting to the new one.");
+            // This seems like a potential bug???
+            trace!("received high qc for the zero hash, setting.");
             self.db.set_high_qc(new_high_qc.clone())?;
             self.high_qc = new_high_qc;
         } else {
@@ -1352,12 +1350,7 @@ impl Consensus {
         view: u64,
     ) -> QuorumCertificate {
         // we've already verified the signatures upon receipt of the responses so there's no need to do it again
-        QuorumCertificate {
-            signature: NodeSignature::aggregate(signatures).unwrap(),
-            cosigned,
-            block_hash,
-            view,
-        }
+        QuorumCertificate::new(signatures, cosigned, block_hash, view)
     }
 
     fn block_extends_from(&self, block: &Block, ancestor: &Block) -> Result<bool> {
@@ -1520,10 +1513,7 @@ impl Consensus {
         }
 
         let Some(parent) = self.get_block(&block.parent_hash())? else {
-            warn!(
-                "Missing parent block while trying to check validity of block {}",
-                block.number()
-            );
+            warn!("missing the parent of block being checked");
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 
@@ -1679,6 +1669,7 @@ impl Consensus {
     }
 
     fn vote_from_block(&self, block: &Block) -> Vote {
+        trace!("voting for block: {}", block.hash());
         Vote::new(
             self.secret_key,
             block.hash(),
