@@ -193,9 +193,6 @@ struct Network {
 
 impl Network {
     pub fn new(rng: Arc<Mutex<ChaCha8Rng>>, nodes: usize, seed: u64) -> Network {
-        // Make sure first thing is to pause system time
-        zilliqa::time::pause_at_epoch();
-
         let mut keys: Vec<_> = (0..nodes)
             .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
             .collect();
@@ -601,7 +598,15 @@ impl Network {
                 } else {
                     self.nodes.iter().collect()
                 };
-                for (index, node) in nodes.iter().enumerate() {
+
+                for node in &nodes {
+                    // Need to recalculate index against the original vec, not the filtered one.
+                    let index = self
+                        .nodes
+                        .iter()
+                        .position(|n| n.peer_id == node.peer_id)
+                        .unwrap();
+
                     let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                     span.in_scope(|| {
                         node.inner

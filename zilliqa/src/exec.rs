@@ -20,11 +20,11 @@ use evm_ds::{
 use primitive_types::{H160, U256};
 use tracing::*;
 
-use crate::state::SignedTransaction;
 use crate::{
     contracts,
     message::BlockHeader,
     state::{Address, State},
+    transaction::VerifiedTransaction,
 };
 
 #[derive(Default)]
@@ -158,7 +158,7 @@ impl State {
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
-        gas_price: u64,
+        gas_price: u128,
         gas_limit: u64,
         amount: U256,
         payload: Vec<u8>,
@@ -223,7 +223,7 @@ impl State {
 
         // For gas, we need to check that the caller has enough balance to pay for the gas and the
         // transfer (gas price). After execution, we can then deduct the gas used from the caller's balance.
-        let gas_cost_max: U256 = (gas_price + gas_limit).into();
+        let gas_cost_max: U256 = (gas_price * gas_limit as u128).into();
         let upfront_reserve = if estimate {
             amount
         } else {
@@ -454,7 +454,7 @@ impl State {
                 panic!("More gas remains than we specified at the beginning of execution!");
             }
 
-            let gas_deduction = gas_limit - result.remaining_gas + gas_price;
+            let gas_deduction = (gas_limit - result.remaining_gas) as u128 * gas_price;
 
             continuation_stack.push(push_transfer(
                 from_addr,
@@ -523,7 +523,7 @@ impl State {
         self.apply_transaction_inner(
             Address::ZERO,
             to_addr,
-            u64::MIN,
+            u128::MIN,
             u64::MAX,
             U256::zero(),
             payload,
@@ -538,31 +538,35 @@ impl State {
     /// Apply a transaction to the account state.
     pub fn apply_transaction(
         &mut self,
-        txn: SignedTransaction,
+        txn: VerifiedTransaction,
         chain_id: u64,
         current_block: BlockHeader,
         tracing: bool,
     ) -> Result<TransactionApplyResult> {
-        let hash = txn.hash();
+        let hash = txn.hash;
+        let from_addr = txn.signer;
         info!(?hash, ?txn, "executing txn");
 
         let gas_price = self.get_gas_price()?;
 
-        if txn.transaction.gas_limit < gas_price {
+        let txn = txn.tx.into_transaction();
+
+        if txn.gas_limit() < gas_price {
             let error_str = format!(
                 "Transaction gas limit is less than the gas price! Tx limit: {}, Gas price: {}",
-                txn.transaction.gas_limit, gas_price
+                txn.gas_limit(),
+                gas_price
             );
             warn!(error_str);
         }
 
         let result = self.apply_transaction_inner(
-            txn.from_addr,
-            txn.transaction.to_addr,
-            txn.transaction.gas_price,
-            txn.transaction.gas_limit,
-            txn.transaction.amount.into(),
-            txn.transaction.payload,
+            from_addr,
+            txn.to_addr(),
+            txn.max_fee_per_gas(),
+            txn.gas_limit(),
+            txn.amount().into(),
+            txn.payload().to_vec(),
             chain_id,
             current_block,
             tracing,
@@ -581,18 +585,19 @@ impl State {
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
                 // and we get the return value (which will indicate the error)
-                let mut acct = self.get_account(txn.from_addr).unwrap();
+                let mut acct = self.get_account(from_addr).unwrap();
 
-                if acct.nonce != txn.transaction.nonce {
-                    let error_str = format!(
+                if acct.nonce != txn.nonce() {
+                    let error_str =
+                        format!(
                         "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
-                        acct.nonce, txn.transaction.nonce, hash
+                        acct.nonce, txn.nonce(), hash
                     );
                     warn!(error_str);
                     return Err(anyhow!(error_str));
                 }
                 acct.nonce = acct.nonce.checked_add(1).unwrap();
-                self.save_account(txn.from_addr, acct)?;
+                self.save_account(from_addr, acct)?;
 
                 Ok(TransactionApplyResult {
                     success,
@@ -761,7 +766,7 @@ impl State {
         let result = self.apply_transaction_inner(
             Address::ZERO,
             Some(Address::NATIVE_TOKEN),
-            u64::MIN,
+            u128::MIN,
             u64::MAX,
             U256::zero(),
             data,
