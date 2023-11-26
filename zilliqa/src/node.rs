@@ -442,6 +442,7 @@ impl Node {
                     .get_transaction_by_hash(*tx_hash)
                     .unwrap()
                     .unwrap()
+                    .tx
             })
             .collect::<Vec<_>>();
 
@@ -471,6 +472,7 @@ impl Node {
                     .get_transaction_by_hash(*tx_hash)
                     .unwrap()
                     .unwrap()
+                    .tx
             })
             .collect::<Vec<_>>();
 

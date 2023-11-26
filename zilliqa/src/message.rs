@@ -85,7 +85,7 @@ impl Vote {
     ) -> Self {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(block_hash.as_bytes());
-        bytes.extend_from_slice(&view.to_be_bytes());
+        //bytes.extend_from_slice(&view.to_be_bytes());
 
         warn!("sign vote {:?} {:?}", block_hash, view);
 
@@ -105,7 +105,7 @@ impl Vote {
     pub fn verify(&self) -> Result<()> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(self.block_hash.as_bytes());
-        bytes.extend_from_slice(&self.view.to_be_bytes());
+        //bytes.extend_from_slice(&self.view.to_be_bytes());
 
         trace!("Verify vote: {:?}", self);
 
@@ -348,7 +348,9 @@ impl fmt::Display for BlockHeader {
 // Helper function to format SystemTime as a string
 // https://stackoverflow.com/questions/45386585
 fn systemtime_strftime(timestamp: SystemTime) -> Result<String> {
+    println!("Formatting timestamp: {:?}", timestamp);
     let time_since_epoch = timestamp.elapsed()?;
+    println!("2Formatting timestamp: {:?}", timestamp);
     let format = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
     Ok(
         OffsetDateTime::from_unix_timestamp_nanos(time_since_epoch.as_nanos() as i128)?

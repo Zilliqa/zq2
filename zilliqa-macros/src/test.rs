@@ -17,18 +17,13 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
     input.sig.ident = inner_name.clone();
 
     quote! {
-        use tracing::*;
-        use ntest::*;
-
         #[tokio::test(flavor = "multi_thread")]
-        #[timeout(300000_00)]
         async fn #test_name() {
             // The original test function
             #input
 
             // Work out what RNG seeds to run the test with.
             let seeds: Vec<u64> = if let Some(seed) = std::env::var_os("ZQ_TEST_RNG_SEED") {
-                println!("Starting seed is {}", seed.to_str().unwrap());
                 vec![seed.to_str().unwrap().parse().unwrap()]
             } else {
                 let samples: usize = std::env::var_os("ZQ_TEST_SAMPLES")
@@ -65,13 +60,12 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                         zilliqa::time::with_fake_time(#inner_name(network))
                     )).await;
 
-                        match result {
-                            Ok(()) => {},
-                            Err(e) => {
-                                std::panic::resume_unwind(e);
-                            }
+                    match result {
+                        Ok(()) => {},
+                        Err(e) => {
+                            std::panic::resume_unwind(e);
                         }
-                    }.instrument(span).await
+                    }
                 });
                 id_to_seed.insert(handle.id(), seed);
             }
