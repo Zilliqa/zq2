@@ -626,10 +626,8 @@ impl Network {
                     self.nodes.iter().collect()
                 };
 
-
                 for node in &nodes {
-
-                    // Recalculate index
+                    // Need to recalculate index against the original vec, not the filtered one.
                     let index = self
                         .nodes
                         .iter()

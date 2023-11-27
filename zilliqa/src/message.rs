@@ -7,15 +7,14 @@ use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{fmt, fmt::Display, fmt::Formatter, str::FromStr};
-use time::format_description;
+use time::{macros::format_description, OffsetDateTime};
 use tracing::*;
 
 use crate::{
     consensus::Validator,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
-    state::SignedTransaction,
-    time::OffsetDateTime,
     time::SystemTime,
+    transaction::SignedTransaction,
 };
 
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
@@ -49,7 +48,11 @@ impl Proposal {
                 qc: self.qc,
                 agg: self.agg,
                 committee: self.committee,
-                transactions: self.transactions.iter().map(|txn| txn.hash()).collect(),
+                transactions: self
+                    .transactions
+                    .iter()
+                    .map(|txn| txn.calculate_hash())
+                    .collect(),
             },
             self.transactions,
         )
@@ -349,12 +352,15 @@ impl fmt::Display for BlockHeader {
 
 // Helper function to format SystemTime as a string
 // https://stackoverflow.com/questions/45386585
-fn systemtime_strftime<T>(dt: T) -> Result<String, time::error::Format>
-where
-    T: Into<OffsetDateTime>,
-{
-    let f = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]").unwrap();
-    dt.into().format(&f)
+fn systemtime_strftime(timestamp: SystemTime) -> Result<String> {
+    println!("Formatting timestamp: {:?}", timestamp);
+    let time_since_epoch = timestamp.elapsed()?;
+    println!("2Formatting timestamp: {:?}", timestamp);
+    let format = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+    Ok(
+        OffsetDateTime::from_unix_timestamp_nanos(time_since_epoch.as_nanos() as i128)?
+            .format(&format)?,
+    )
 }
 
 impl BlockHeader {
