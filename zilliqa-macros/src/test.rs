@@ -71,7 +71,6 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                                 std::panic::resume_unwind(e);
                             }
                         }
-                    }.instrument(span).await
                 });
                 id_to_seed.insert(handle.id(), seed);
             }
