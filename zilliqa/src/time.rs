@@ -35,11 +35,10 @@ mod time_impl {
         }
 
         pub fn elapsed(&self) -> Result<Duration, SystemTimeError> {
-            self.duration_since(Self::UNIX_EPOCH)
+            self.duration_since(SystemTime::now())
         }
 
         pub fn duration_since(&self, other: SystemTime) -> Result<Duration, SystemTimeError> {
-            println!("duration_since({:?}, {:?})", self, other);
             self.0
                 .duration_since(other.0)
                 .map_err(|e| SystemTimeError(e.duration()))
