@@ -4,8 +4,8 @@
 //! * https://eips.ethereum.org/EIPS/eip-197
 //! * https://eips.ethereum.org/EIPS/eip-1108.
 
-use evm::backend::Backend;
 use evm::{
+    backend::Backend,
     executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType},
     Context, ExitError, ExitSucceed,
 };

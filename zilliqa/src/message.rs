@@ -1,4 +1,9 @@
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    fmt,
+    fmt::{Display, Formatter},
+    str::FromStr,
+};
 
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
@@ -6,7 +11,6 @@ use libp2p::PeerId;
 use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
-use std::{fmt, fmt::Display, fmt::Formatter, str::FromStr};
 use time::{macros::format_description, OffsetDateTime};
 use tracing::*;
 

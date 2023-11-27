@@ -1,7 +1,3 @@
-use crate::{
-    message::QuorumCertificate,
-    transaction::{SignedTransaction, TransactionReceipt},
-};
 use std::path::Path;
 
 use anyhow::Result;
@@ -9,8 +5,9 @@ use sled::Tree;
 
 use crate::{
     crypto::Hash,
-    message::{Block, BlockHeader},
+    message::{Block, BlockHeader, QuorumCertificate},
     state::Address,
+    transaction::{SignedTransaction, TransactionReceipt},
 };
 
 #[derive(Debug)]

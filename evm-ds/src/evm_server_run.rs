@@ -1,27 +1,25 @@
-use std::ops::Deref;
-use std::panic::{self, AssertUnwindSafe};
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
-
-use evm::backend::Backend;
-use evm::executor::stack::MemoryStackSubstate;
-use evm::{
-    backend::Apply,
-    executor::stack::{MemoryStackState, StackSubstateMetadata},
-    CreateScheme, Handler,
+use std::{
+    ops::Deref,
+    panic::{self, AssertUnwindSafe},
+    rc::Rc,
+    sync::{Arc, Mutex},
 };
-use evm::{Machine, Runtime};
+
+use evm::{
+    backend::{Apply, Backend},
+    executor::stack::{MemoryStackState, MemoryStackSubstate, StackSubstateMetadata},
+    CreateScheme, Handler, Machine, Runtime,
+};
+use primitive_types::*;
 use tracing::*;
 
-use primitive_types::*;
-
-use crate::cps_executor::{CpsCallInterrupt, CpsCreateInterrupt, CpsExecutor, CpsReason};
-use crate::precompiles::get_precompiles;
-use crate::pretty_printer::log_evm_result;
-
-use crate::protos::evm_proto as EvmProto;
-
-use crate::tracing_logging::{CallContext, LoggingEventListener};
+use crate::{
+    cps_executor::{CpsCallInterrupt, CpsCreateInterrupt, CpsExecutor, CpsReason},
+    precompiles::get_precompiles,
+    pretty_printer::log_evm_result,
+    protos::evm_proto as EvmProto,
+    tracing_logging::{CallContext, LoggingEventListener},
+};
 
 #[allow(clippy::too_many_arguments)]
 fn build_exit_result<B: Backend>(

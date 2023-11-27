@@ -1,14 +1,18 @@
-use anyhow::{anyhow, Result};
 use core::fmt;
+use std::{
+    convert::TryInto,
+    fmt::{Display, LowerHex},
+    hash::Hash,
+    str::FromStr,
+    sync::Arc,
+};
+
+use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use std::convert::TryInto;
-use std::fmt::{Display, LowerHex};
-use std::sync::Arc;
-use std::{hash::Hash, str::FromStr};
 
 use crate::{cfg::ConsensusConfig, contracts, crypto, db::TrieStorage};
 

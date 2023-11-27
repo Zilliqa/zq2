@@ -1,10 +1,9 @@
-use crate::CombinedJson;
-use ethers::prelude::Contract;
 use std::sync::Arc;
 
+use ethers::prelude::Contract;
 use zilliqa::state::Address;
 
-use crate::Network;
+use crate::{CombinedJson, Network};
 
 #[zilliqa_macros::test]
 async fn native_token(mut network: Network) {

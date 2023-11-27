@@ -1,35 +1,31 @@
-use ethabi::{Event, Log, RawLog};
-use primitive_types::H256;
-
-use crate::message::{ExternalMessage, InternalMessage};
-use crate::node::MessageSender;
-use anyhow::{anyhow, Result};
-use bitvec::bitvec;
-use libp2p::PeerId;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BinaryHeap},
     error::Error,
     fmt::Display,
+    sync::Arc,
 };
 
+use anyhow::{anyhow, Result};
+use bitvec::bitvec;
+use ethabi::{Event, Log, RawLog};
+use libp2p::PeerId;
+use primitive_types::H256;
+use serde::{Deserialize, Serialize};
 use tracing::*;
 
-use crate::message::Committee;
 use crate::{
     block_store::BlockStore,
     cfg::NodeConfig,
     contracts,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     db::Db,
-    exec::TouchedAddressEventListener,
-    exec::TransactionApplyResult,
+    exec::{TouchedAddressEventListener, TransactionApplyResult},
     message::{
-        AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, NewView, Proposal,
-        QuorumCertificate, Vote,
+        AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, Committee, ExternalMessage,
+        InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
     },
+    node::MessageSender,
     state::{Address, State},
     time::SystemTime,
     transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},

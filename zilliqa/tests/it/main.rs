@@ -4,22 +4,21 @@ mod native_contracts;
 mod persistence;
 mod web3;
 mod zil;
+use std::{env, ops::DerefMut};
+
 use ethers::solc::SHANGHAI_SOLC;
 use itertools::Itertools;
-use std::env;
-use std::ops::DerefMut;
-use zilliqa::cfg::ConsensusConfig;
-use zilliqa::cfg::NodeConfig;
-use zilliqa::crypto::{Hash, NodePublicKey, SecretKey};
-use zilliqa::message::{ExternalMessage, InternalMessage};
-use zilliqa::node::Node;
-use zilliqa::state::Address;
+use zilliqa::{
+    cfg::{ConsensusConfig, NodeConfig},
+    crypto::{Hash, NodePublicKey, SecretKey},
+    message::{ExternalMessage, InternalMessage},
+    node::Node,
+    state::Address,
+};
 
 extern crate fs_extra;
-use fs_extra::dir::*;
-
-use std::collections::HashMap;
 use std::{
+    collections::HashMap,
     fmt::Debug,
     fs,
     rc::Rc,
@@ -32,17 +31,16 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-
-use ethers::utils::secret_key_to_address;
 use ethers::{
     abi::Contract,
     prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, SignerMiddleware},
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::LocalWallet,
     types::H256,
+    utils::secret_key_to_address,
 };
+use fs_extra::dir::*;
 use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
-
 use jsonrpsee::{
     types::{Id, RequestSer, Response, ResponsePayload},
     RpcModule,
@@ -52,8 +50,7 @@ use libp2p::PeerId;
 use primitive_types::H160;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
-use serde::Deserialize;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
