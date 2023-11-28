@@ -5,6 +5,7 @@ mod persistence;
 mod web3;
 mod zil;
 use ethers::solc::SHANGHAI_SOLC;
+use itertools::Itertools;
 use std::env;
 use std::ops::DerefMut;
 use zilliqa::cfg::ConsensusConfig;
@@ -28,7 +29,6 @@ use std::{
     },
     time::Duration,
 };
-use zilliqa::message::Message;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -70,6 +70,15 @@ struct AbiContract {
     bin: String,
 }
 
+/// (source, destination, message) for both
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum AnyMessage {
+    External(ExternalMessage),
+    Internal(u64, u64, InternalMessage),
+}
+
+type StreamMessage = (PeerId, Option<PeerId>, AnyMessage);
+
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
 // type
 #[allow(clippy::type_complexity)]
@@ -80,15 +89,30 @@ fn node(
     datadir: Option<TempDir>,
 ) -> Result<(
     TestNode,
-    BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
+    BoxStream<'static, StreamMessage>,
+    BoxStream<'static, StreamMessage>,
 )> {
     let (message_sender, message_receiver) = mpsc::unbounded_channel();
     let message_receiver = UnboundedReceiverStream::new(message_receiver);
     // Augment the `message_receiver` stream to include the sender's `PeerId`.
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
     let message_receiver = message_receiver
-        .map(move |(dest, _, message)| (peer_id, dest, message))
+        .map(move |(dest, _, message)| (peer_id, dest, AnyMessage::External(message)))
         .boxed();
+
+    let (local_message_sender, local_message_receiver) = mpsc::unbounded_channel();
+    let local_message_receiver = UnboundedReceiverStream::new(local_message_receiver);
+    // Augment the `message_receiver` stream to include the sender and receiver's `PeerId`.
+    let local_message_receiver = local_message_receiver
+        .map(move |(src, dest, message)| {
+            (
+                peer_id,
+                Some(peer_id),
+                AnyMessage::Internal(src, dest, message),
+            )
+        })
+        .boxed();
+
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     std::mem::forget(reset_timeout_receiver);
 
@@ -101,6 +125,7 @@ fn node(
         },
         secret_key,
         message_sender,
+        local_message_sender,
         reset_timeout_sender,
     )?;
     let node = Arc::new(Mutex::new(node));
@@ -116,6 +141,7 @@ fn node(
             rpc_module,
         },
         message_receiver,
+        local_message_receiver,
     ))
 }
 
@@ -140,8 +166,8 @@ struct Network {
     nodes: Vec<TestNode>,
     /// A stream of messages from each node. The stream items are a tuple of (source, destination, message).
     /// If the destination is `None`, the message is a broadcast.
-    receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, Message)>>,
-    resend_message: UnboundedSender<(PeerId, Option<PeerId>, Message)>,
+    receivers: Vec<BoxStream<'static, StreamMessage>>,
+    resend_message: UnboundedSender<StreamMessage>,
     rng: Arc<Mutex<ChaCha8Rng>>,
     /// The seed input for the node - because rng.get_seed() returns a different, internal
     /// representation
@@ -193,13 +219,18 @@ impl Network {
             ..Default::default()
         };
 
-        let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
+        let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
                 node(config.clone(), key, i, Some(tempfile::tempdir().unwrap())).unwrap()
             })
-            .unzip();
+            .multiunzip();
+
+        let mut receivers: Vec<_> = external_receivers
+            .into_iter()
+            .chain(local_receivers)
+            .collect();
 
         for node in &nodes {
             trace!(
@@ -210,8 +241,7 @@ impl Network {
             );
         }
 
-        let (resend_message, receive_resend_message) =
-            mpsc::unbounded_channel::<(PeerId, Option<PeerId>, Message)>();
+        let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
@@ -269,13 +299,14 @@ impl Network {
             },
             ..Default::default()
         };
-        let (node, receiver) = node(config, secret_key, self.nodes.len(), None).unwrap();
+        let (node, receiver, local_receiver) =
+            node(config, secret_key, self.nodes.len(), None).unwrap();
 
         self.resend_message
             .send((
                 node.peer_id,
                 None,
-                Message::External(ExternalMessage::JoinCommittee(
+                AnyMessage::External(ExternalMessage::JoinCommittee(
                     node.secret_key.node_public_key(),
                 )),
             ))
@@ -287,6 +318,7 @@ impl Network {
 
         self.nodes.push(node);
         self.receivers.push(receiver);
+        self.receivers.push(local_receiver);
 
         index
     }
@@ -308,7 +340,7 @@ impl Network {
         );
         let genesis_committee = vec![validator];
 
-        let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
+        let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
@@ -342,7 +374,12 @@ impl Network {
 
                 node(config, key, i, Some(new_data_dir)).unwrap()
             })
-            .unzip();
+            .multiunzip();
+
+        let mut receivers: Vec<_> = external_receivers
+            .into_iter()
+            .chain(local_receivers)
+            .collect();
 
         for node in &nodes {
             trace!(
@@ -353,8 +390,7 @@ impl Network {
             );
         }
 
-        let (resend_message, receive_resend_message) =
-            mpsc::unbounded_channel::<(PeerId, Option<PeerId>, Message)>();
+        let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
@@ -374,7 +410,7 @@ impl Network {
         }
     }
 
-    fn collect_messages(&mut self) -> Vec<(PeerId, Option<PeerId>, Message)> {
+    fn collect_messages(&mut self) -> Vec<(PeerId, Option<PeerId>, AnyMessage)> {
         let mut messages = vec![];
 
         // Poll the receiver with `unconstrained` to ensure it won't be pre-empted. This makes sure we always
@@ -432,7 +468,7 @@ impl Network {
 
             // Remove the matching messages
             messages.retain(|(s, d, m)| {
-                if let Message::External(ExternalMessage::Proposal(prop)) = m {
+                if let AnyMessage::External(ExternalMessage::Proposal(prop)) = m {
                     if !prop.transactions.is_empty() {
                         removed_items.push((*s, *d, m.clone()));
                         return false;
@@ -557,48 +593,53 @@ impl Network {
         self.handle_message((source, destination, message))
     }
 
-    fn handle_message(&mut self, message: (PeerId, Option<PeerId>, Message)) {
-        if let Message::Internal(internal_message) = message.2 {
-            if let InternalMessage::LaunchShard(network_id) = internal_message {
-                if let Some(network) = self.children.get_mut(&network_id) {
-                    trace!("Launching shard node for {network_id} - adding new node to shard");
-                    network.add_node(true);
-                } else {
-                    info!("Launching node in new shard network {network_id}");
-                    self.children.insert(
-                        network_id,
-                        Network::new_shard(self.rng.clone(), 1, false, network_id, self.seed),
-                    );
+    fn handle_message(&mut self, message: (PeerId, Option<PeerId>, AnyMessage)) {
+        match message.2 {
+            AnyMessage::Internal(_source_shard, _destination_shard, internal_message) => {
+                match internal_message {
+                    #[allow(clippy::match_single_binding)]
+                    InternalMessage::LaunchShard(network_id) => {
+                        if let Some(network) = self.children.get_mut(&network_id) {
+                            trace!(
+                                "Launching shard node for {network_id} - adding new node to shard"
+                            );
+                            network.add_node(true);
+                        } else {
+                            info!("Launching node in new shard network {network_id}");
+                            self.children
+                                .insert(network_id, Network::new(self.rng.clone(), 1, self.seed));
+                        }
+                    }
                 }
             }
-        } else {
-            let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = message.1 {
-                vec![self
-                    .nodes
-                    .iter()
-                    .enumerate()
-                    .find(|(_, n)| n.peer_id == destination)
-                    .unwrap()]
-            } else {
-                self.nodes.iter().enumerate().collect()
-            };
-
-            for (index, node) in nodes.iter() {
-                let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
-                span.in_scope(|| {
-                    if message.1.is_some() {
-                        info!(
-                            "destination: {}, node being used: {}",
-                            message.1.unwrap(),
-                            node.inner.lock().unwrap().peer_id()
-                        );
-                    }
-                    node.inner
-                        .lock()
-                        .unwrap()
-                        .handle_message(message.0, message.2.clone())
-                        .unwrap();
-                });
+            AnyMessage::External(external_message) => {
+                let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = message.1 {
+                    vec![self
+                        .nodes
+                        .iter()
+                        .enumerate()
+                        .find(|(_, n)| n.peer_id == destination)
+                        .unwrap()]
+                } else {
+                    self.nodes.iter().enumerate().collect()
+                };
+                for (index, node) in nodes.iter() {
+                    let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
+                    span.in_scope(|| {
+                        if message.1.is_some() {
+                            info!(
+                                "destination: {}, node being used: {}",
+                                message.1.unwrap(),
+                                node.inner.lock().unwrap().peer_id()
+                            );
+                        }
+                        node.inner
+                            .lock()
+                            .unwrap()
+                            .handle_network_message(message.0, external_message.clone())
+                            .unwrap();
+                    });
+                }
             }
         }
     }
@@ -707,10 +748,10 @@ fn format_message(
     nodes: &[TestNode],
     source: PeerId,
     destination: Option<PeerId>,
-    message: &Message,
+    message: &AnyMessage,
 ) -> String {
     let message = match message {
-        Message::External(external_message) => match external_message {
+        AnyMessage::External(message) => match message {
             ExternalMessage::Proposal(proposal) => format!(
                 "{} [{}] ({:?})",
                 message.name(),
@@ -730,7 +771,7 @@ fn format_message(
             _ => message.name().to_owned(),
         },
         #[allow(clippy::match_single_binding)]
-        Message::Internal(internal_message) => match internal_message {
+        AnyMessage::Internal(_source_shard, _destination_shard, message) => match message {
             _ => message.name().to_owned(),
         },
     };

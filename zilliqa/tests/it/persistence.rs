@@ -87,7 +87,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     // As this is very painful to debug, should only ever be relevant for tests like these, and CI
     // should run enough samples to still have decent test coverage, we simply skip the rest of the
     // test if this happens.
-    let Ok((newnode, _)) = result else {
+    let Ok((newnode, _, _)) = result else {
         warn!(
             "Failed to release database lock. Skipping test, with seed {}.",
             network.seed

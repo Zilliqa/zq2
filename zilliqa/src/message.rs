@@ -132,14 +132,6 @@ pub struct BlockBatchResponse {
     pub blocks: Vec<Block>,
 }
 
-// #[allow(clippy::large_enum_variant)] // Pending refactor once join_network is merged
-/// TODO: #397, refactor these two out into separate, unrelated structs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Message {
-    External(ExternalMessage),
-    Internal(InternalMessage),
-}
-
 /// A message intended to be sent over the network as part of p2p communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExternalMessage {
@@ -159,17 +151,7 @@ pub enum ExternalMessage {
 /// but not sent over the network.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InternalMessage {
-    AddPeer(NodePublicKey),
     LaunchShard(u64),
-}
-
-impl Message {
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::External(m) => m.name(),
-            Self::Internal(m) => m.name(),
-        }
-    }
 }
 
 impl ExternalMessage {
@@ -192,7 +174,6 @@ impl ExternalMessage {
 impl InternalMessage {
     pub fn name(&self) -> &'static str {
         match self {
-            InternalMessage::AddPeer(_) => "AddPeer",
             InternalMessage::LaunchShard(_) => "LaunchShard",
         }
     }
