@@ -326,10 +326,13 @@ impl fmt::Display for BlockHeader {
 // Helper function to format SystemTime as a string
 // https://stackoverflow.com/questions/45386585
 fn systemtime_strftime(timestamp: SystemTime) -> Result<String> {
-    let time_since_epoch = timestamp.elapsed()?;
+    let time_since_epoch = timestamp.elapsed()
+        .map(|d| d.as_nanos() as i128)
+        // Handle the case where `timestamp` was before unix epoch.
+        .unwrap_or_else(|e| -(e.duration().as_nanos() as i128));
     let format = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
     Ok(
-        OffsetDateTime::from_unix_timestamp_nanos(time_since_epoch.as_nanos() as i128)?
+        OffsetDateTime::from_unix_timestamp_nanos(time_since_epoch)?
             .format(&format)?,
     )
 }
