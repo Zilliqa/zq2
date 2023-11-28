@@ -6710,7 +6710,6 @@ dependencies = [
  "bls-signatures",
  "bls12_381",
  "bs58",
- "byteorder",
  "bytes",
  "chrono",
  "clap",

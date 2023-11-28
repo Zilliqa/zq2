@@ -1,4 +1,3 @@
-use byteorder::{BigEndian, ByteOrder};
 use ethabi::{Event, Log, RawLog};
 use primitive_types::H256;
 use rand::prelude::IteratorRandom;
@@ -8,7 +7,7 @@ use crate::node::MessageSender;
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
-use rand_chacha::ChaCha8Rng;
+use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{
@@ -208,7 +207,7 @@ pub struct Consensus {
     /// Transactions ordered by priority, map of address of TXn (from account) to ordered TXns to be executed.
     new_transactions_priority: BTreeMap<Address, BinaryHeap<TxnOrder>>,
     // PRNG
-    rng: ChaCha8Rng,
+    rng: ChaCha20Rng,
 }
 
 // View in consensus should be have access monitored so last_timeout is always correct
@@ -359,8 +358,12 @@ impl Consensus {
             db,
             new_transactions_priority: BTreeMap::new(),
             // Seed the rng with the node's public key
-            rng: <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(
-                BigEndian::read_u64(secret_key.node_public_key().as_bytes().as_slice()),
+            rng: <rand_chacha::ChaCha20Rng as rand_core::SeedableRng>::seed_from_u64(
+                u64::from_be_bytes(
+                    secret_key.node_public_key().as_bytes()[..8]
+                        .try_into()
+                        .unwrap(),
+                ),
             ),
         };
 
@@ -1491,7 +1494,6 @@ impl Consensus {
         }
 
         let Some(finalized_block) = self.get_block_by_view(self.finalized_view)? else {
-            warn!("missing finalized block0");
             return Err(MissingBlockError::from(self.finalized_view).into());
         };
         if block.view() < finalized_block.view() {
@@ -1503,7 +1505,6 @@ impl Consensus {
         }
 
         let Some(parent) = self.get_block(&block.parent_hash())? else {
-            warn!("missing finalized block3");
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 
