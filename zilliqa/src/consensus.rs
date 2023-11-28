@@ -1,6 +1,8 @@
 use ethabi::{Event, Log, RawLog};
 use primitive_types::H256;
 use rand::Rng;
+use byteorder::{BigEndian, ByteOrder};
+use rand::prelude::IteratorRandom;
 
 use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::MessageSender;
@@ -357,7 +359,8 @@ impl Consensus {
             state,
             db,
             new_transactions_priority: BTreeMap::new(),
-            rng: <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(0),
+            // Seed the rng with the node's public key
+            rng: <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(BigEndian::read_u64(secret_key.node_public_key().as_bytes().as_slice())),
         };
 
         // If we're at genesis, add the genesis block.
@@ -454,19 +457,10 @@ impl Consensus {
     }
 
     pub fn get_random_other_peer(&mut self) -> Option<PeerId> {
-        // Remove self from potential people to send to
-        let mut other_peers = self.head_block().committee.clone();
-        other_peers.remove_by_peer_id(self.peer_id());
-        let peer_len = other_peers.len();
-
-        match peer_len {
-            0 => None,
-            _ => Some(
-                other_peers
-                    .get_by_index(self.rng.gen_range(0..peer_len))
-                    .unwrap()
-                    .peer_id,
-            ),
+        let our_id = self.peer_id();
+        match self.head_block().committee.iter().filter(|v| v.peer_id != our_id).choose(&mut self.rng) {
+            None => None,
+            Some(v) => Some(v.peer_id),
         }
     }
 

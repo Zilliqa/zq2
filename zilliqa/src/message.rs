@@ -499,12 +499,6 @@ impl Committee {
     pub fn remove_by_peer_id(&mut self, peer_id: PeerId) {
         self.0.retain(|v| v.peer_id != peer_id);
     }
-
-    pub fn choose_random(&mut self) -> Validator {
-        let mut rng = rand::thread_rng();
-        let index = rng.gen_range(0..self.0.len());
-        self.get_by_index(index).unwrap()
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
