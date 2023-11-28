@@ -90,7 +90,7 @@ pub enum TransactionSignature {
 
 /// The public key type used internally in consensus, alongside `NodeSignature`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NodePublicKey(bls_signatures::PublicKey);
+pub struct NodePublicKey(pub bls_signatures::PublicKey);
 
 impl NodePublicKey {
     pub fn from_bytes(bytes: &[u8]) -> Result<NodePublicKey> {
