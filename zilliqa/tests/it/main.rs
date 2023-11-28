@@ -188,9 +188,6 @@ impl Network {
         shard_id: u64,
         seed: u64,
     ) -> Network {
-        // Make sure first thing is to pause system time
-        zilliqa::time::pause_at_epoch();
-
         let mut keys: Vec<_> = (0..nodes)
             .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
             .collect();
