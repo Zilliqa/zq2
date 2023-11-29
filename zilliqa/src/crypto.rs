@@ -7,6 +7,7 @@
 use std::fmt::Display;
 
 use anyhow::{anyhow, Result};
+use bls12_381::G1Projective;
 use bls12_381::G2Affine;
 use bls_signatures::Serialize as BlsSerialize;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
@@ -46,11 +47,16 @@ impl NodeSignature {
         message: &[u8],
         public_keys: Vec<NodePublicKey>,
     ) -> Result<()> {
-        // first verify that the signature itself has been composed from the public keys and the message
-        let hash = bls_signatures::hash(message);
-        let public_keys = public_keys.iter().map(|p| p.0).collect::<Vec<_>>();
+        let aggregate_key: Vec<bls_signatures::PublicKey> = vec![public_keys
+            .iter()
+            .map(|p| G1Projective::from(p.0))
+            .sum::<G1Projective>()
+            .into()];
 
-        if !bls_signatures::verify_agg_signatures_on_same_hash(&signature.0, &hash, &public_keys) {
+        // first verify that the signature itself has been composed from the public keys and the message
+        let hash = vec![bls_signatures::hash(message)];
+
+        if !bls_signatures::verify(&signature.0, &hash, &aggregate_key) {
             return Err(anyhow!("invalid QC aggregated signature!"));
         }
 

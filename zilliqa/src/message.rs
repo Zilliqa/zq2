@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use bls12_381::G1Projective;
 
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
@@ -258,11 +257,7 @@ impl QuorumCertificate {
             .filter_map(|(pk, cosigned)| if *cosigned { Some(pk) } else { None })
             .collect::<Vec<_>>();
 
-        let aggregate_key: bls_signatures::PublicKey = public_keys.iter().map(|p| G1Projective::from(p.0)).sum::<G1Projective>().into();
-
-        let agg: Vec<NodePublicKey> = vec![NodePublicKey(aggregate_key)];
-
-        NodeSignature::verify_aggregate(&self.signature, self.block_hash.as_bytes(), agg)
+        NodeSignature::verify_aggregate(&self.signature, self.block_hash.as_bytes(), public_keys)
             .is_ok()
     }
 
