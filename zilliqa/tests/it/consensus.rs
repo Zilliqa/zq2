@@ -1,4 +1,3 @@
-use crate::CombinedJson;
 use crate::Network;
 use ethabi::Token;
 use ethers::{
@@ -7,7 +6,7 @@ use ethers::{
 };
 use primitive_types::H160;
 use tracing::*;
-use zilliqa::state::Address;
+use zilliqa::{contracts, state::Address};
 
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)
@@ -172,18 +171,10 @@ async fn launch_shard(mut network: Network) {
         .unwrap();
 
     // 3. Deploy shard contract for the shard on the main network
-    let shard_contract = include_str!("../../src/contracts/shard.json");
-    let shard_contract = serde_json::from_str::<CombinedJson>(shard_contract)
-        .unwrap()
-        .contracts
-        .remove("shard.sol:Shard")
-        .unwrap();
-
-    let shard_constructor = shard_contract.abi.constructor().unwrap();
     let deploy_shard_tx = TransactionRequest::new().data(
-        shard_constructor
+        contracts::shard::CONSTRUCTOR
             .encode_input(
-                hex::decode(shard_contract.bin).unwrap(),
+                contracts::shard::BYTECODE.to_vec(),
                 &[
                     Token::Uint((700 + 0x8000).into()),
                     Token::Uint(5000.into()),
@@ -217,19 +208,10 @@ async fn launch_shard(mut network: Network) {
     let shard_contract_address = deploy_shard_receipt.contract_address.unwrap();
 
     // 4. Register the shard in the shard registry on the main shard
-    let registry_abi = include_str!("../../src/contracts/shard_registry.json");
-    let registry_abi = serde_json::from_str::<CombinedJson>(registry_abi)
-        .unwrap()
-        .contracts
-        .remove("shard_registry.sol:ShardRegistry")
-        .unwrap()
-        .abi;
-
-    let function = registry_abi.function("addShard").unwrap();
     let tx_request = TransactionRequest::new()
         .to(Address::SHARD_CONTRACT.0)
         .data(
-            function
+            contracts::shard_registry::ADD_SHARD
                 .encode_input(&[
                     Token::Uint(child_shard_id.into()),
                     Token::Address(shard_contract_address),

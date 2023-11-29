@@ -1,36 +1,33 @@
-use std::collections::HashMap;
+use serde_json::Value;
 
-use serde::Deserialize;
+pub mod gas_price {
+    use ethabi::{Constructor, Function};
+    use once_cell::sync::Lazy;
 
-#[derive(Deserialize)]
-struct CombinedJson {
-    contracts: HashMap<String, Contract>,
+    use super::{contract, Contract};
+
+    static CONTRACT: Lazy<Contract> =
+        Lazy::new(|| contract("src/contracts/gas_price.sol", "GasPrice"));
+
+    pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+    pub static SET_GAS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("setGas").unwrap().clone());
+    pub static GET_GAS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("value").unwrap().clone());
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct Contract {
-    abi: ethabi::Contract,
-    bin: String,
-    bin_runtime: String,
-}
-
-// Generated with `solc native_token.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > native_token.json`.
-#[allow(dead_code)] // define properties on the contract, even if they aren't currently invoked
 pub mod native_token {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
 
-    use super::{CombinedJson, Contract};
+    use super::{contract, Contract};
 
-    const COMBINED_JSON: &str = include_str!("native_token.json");
-    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
-        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
-            .unwrap()
-            .contracts
-            .remove("native_token.sol:NativeToken")
-            .unwrap()
-    });
+    static CONTRACT: Lazy<Contract> =
+        Lazy::new(|| contract("src/contracts/native_token.sol", "NativeToken"));
+
+    pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
     pub static CONSTRUCTOR: Lazy<Constructor> =
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
     pub static BALANCE_OF: Lazy<Function> =
@@ -39,220 +36,121 @@ pub mod native_token {
         Lazy::new(|| CONTRACT.abi.function("setBalance").unwrap().clone());
     pub static TRANSFER: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("transfer").unwrap().clone());
-    pub static CREATION_CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin).unwrap());
-    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
 }
 
-// Generated with `solc shard.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > shard.json`.
-#[allow(dead_code)] // define properties on the contract, even if they aren't currently invoked
 pub mod shard {
-    use ethabi::{Constructor, Function};
+    use ethabi::Constructor;
     use once_cell::sync::Lazy;
 
-    use super::{CombinedJson, Contract};
+    use super::{contract, Contract};
 
-    const COMBINED_JSON: &str = include_str!("shard.json");
-    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
-        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
-            .unwrap()
-            .contracts
-            .remove("shard.sol:Shard")
-            .unwrap()
-    });
+    static CONTRACT: Lazy<Contract> = Lazy::new(|| contract("src/contracts/shard.sol", "Shard"));
+
+    pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
     pub static CONSTRUCTOR: Lazy<Constructor> =
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
-    pub static ADD_VALIDATOR: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("addValidator").unwrap().clone());
-    pub static CONSENSUS_TIMEOUT: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("consensusTimeoutMs").unwrap().clone());
-    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
-    pub static CREATION_CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin).unwrap());
 }
 
-// Generated with `solc shard_registry.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > shard_registry.json`.
-#[allow(dead_code)]
 pub mod shard_registry {
     use ethabi::{Constructor, Event, Function};
     use once_cell::sync::Lazy;
 
-    use super::{CombinedJson, Contract};
+    use super::{contract, Contract};
 
-    const COMBINED_JSON: &str = include_str!("shard_registry.json");
-    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
-        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
-            .unwrap()
-            .contracts
-            .remove("shard_registry.sol:ShardRegistry")
-            .unwrap()
-    });
+    static CONTRACT: Lazy<Contract> =
+        Lazy::new(|| contract("src/contracts/shard_registry.sol", "ShardRegistry"));
+
+    pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
     pub static CONSTRUCTOR: Lazy<Constructor> =
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
-    pub static SHARD_ADDED_EVT: Lazy<Event> =
-        Lazy::new(|| CONTRACT.abi.event("ShardAdded").unwrap().clone());
     pub static ADD_SHARD: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("addShard").unwrap().clone());
-    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
-    pub static CREATION_CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin).unwrap());
+    pub static SHARD_ADDED_EVT: Lazy<Event> =
+        Lazy::new(|| CONTRACT.abi.event("ShardAdded").unwrap().clone());
 }
 
-// Generated with `solc gas_price.sol '@openzeppelin/=openzeppelin-contracts/' --base-path . --include-path ../../../vendor/ --combined-json abi,bin,bin-runtime > gas_price.json`.
-#[allow(dead_code)] // in case not all properties are used immediately
-pub mod gas_price {
-    use ethabi::{Constructor, Function};
-    use once_cell::sync::Lazy;
+const COMPILED: &str = include_str!("compiled.json");
 
-    use super::{CombinedJson, Contract};
+fn contract(src: &str, name: &str) -> Contract {
+    let compiled = serde_json::from_str::<Value>(COMPILED).unwrap();
+    let contract = &compiled["contracts"][src][name];
+    let abi = serde_json::from_value(contract["abi"].clone()).unwrap();
+    let bytecode = hex::decode(contract["evm"]["bytecode"]["object"].as_str().unwrap()).unwrap();
 
-    const COMBINED_JSON: &str = include_str!("gas_price.json");
-    static CONTRACT: Lazy<Contract> = Lazy::new(|| {
-        serde_json::from_str::<CombinedJson>(COMBINED_JSON)
-            .unwrap()
-            .contracts
-            .remove("gas_price.sol:GasPrice")
-            .unwrap()
-    });
-    pub static CONSTRUCTOR: Lazy<Constructor> =
-        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
-    pub static SET_GAS: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("setGas").unwrap().clone());
-
-    pub static GET_GAS: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("value").unwrap().clone());
-    pub static CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin_runtime).unwrap());
-    pub static CREATION_CODE: Lazy<Vec<u8>> = Lazy::new(|| hex::decode(&CONTRACT.bin).unwrap());
+    Contract { abi, bytecode }
 }
 
-/// These tests assert the contract binaries in this module are correct and reproducible, by recompiling the source
+struct Contract {
+    abi: ethabi::Contract,
+    bytecode: Vec<u8>,
+}
+
+/// This test asserts the contract binaries in this module are correct and reproducible, by recompiling the source
 /// files and checking the result is the same. This means we can keep the compiled source code in-tree, while also
 /// asserting in CI that the compiled source code is genuine. The tests only run when the `test_contract_bytecode`
 /// feature is enabled.
-#[cfg(target_os = "linux")]
 #[cfg(test)]
 mod tests {
-    // Obtained from https://binaries.soliditylang.org/linux-amd64/list.json.
-    const SOLC_VERSION: &str = "v0.8.21+commit.d9974bed";
-    const SOLC_HASH: &str = "00bebaa90cfcc8c807b6b48cd8e9423bdbe5b7054ca0e47cbe5d8dd1aa1dced3";
+    use std::{fs::File, path::PathBuf};
 
-    use std::{
-        fs::OpenOptions, io::Write, mem, os::unix::prelude::OpenOptionsExt, path::PathBuf,
-        process::Command,
+    use ethers::solc::{
+        artifacts::{output_selection::OutputSelection, Optimizer, Settings, Source},
+        remappings::Remapping,
+        CompilerInput, EvmVersion, Solc,
     };
-
-    use serde_json::Value;
-    use sha2::Digest;
-    use sha3::Keccak256;
-
-    use super::{gas_price, native_token, shard, shard_registry};
+    use ethers_solc::CompilerOutput;
 
     #[test]
     #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
-    fn native_token() {
-        test_contract(
-            "native_token.sol",
-            "native_token.sol:NativeToken",
-            native_token::CODE.as_slice(),
-            native_token::CREATION_CODE.as_slice(),
-        )
-    }
+    fn compile_all() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let input = CompilerInput {
+            language: "Solidity".to_owned(),
+            sources: Source::read_all(
+                [
+                    "gas_price.sol",
+                    "native_token.sol",
+                    "shard.sol",
+                    "shard_registry.sol",
+                ]
+                .map(|c| format!("src/contracts/{c}")),
+            )
+            .unwrap(),
+            settings: Settings {
+                remappings: vec![Remapping {
+                    context: None,
+                    name: "@openzeppelin".to_owned(),
+                    path: "../vendor/openzeppelin-contracts/".to_owned(),
+                }],
+                optimizer: Optimizer {
+                    enabled: Some(true),
+                    runs: Some(4294967295),
+                    details: None,
+                },
+                output_selection: OutputSelection::complete_output_selection(),
+                evm_version: Some(EvmVersion::Shanghai),
+                ..Default::default()
+            },
+        };
 
-    #[test]
-    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
-    fn shard() {
-        test_contract(
-            "shard.sol",
-            "shard.sol:Shard",
-            shard::CODE.as_slice(),
-            shard::CREATION_CODE.as_slice(),
-        )
-    }
-
-    #[test]
-    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
-    fn shard_registry() {
-        test_contract(
-            "shard_registry.sol",
-            "shard_registry.sol:ShardRegistry",
-            shard_registry::CODE.as_slice(),
-            shard_registry::CREATION_CODE.as_slice(),
-        )
-    }
-
-    #[test]
-    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
-    fn gas_price() {
-        test_contract(
-            "gas_price.sol",
-            "gas_price.sol:GasPrice",
-            gas_price::CODE.as_slice(),
-            gas_price::CREATION_CODE.as_slice(),
-        )
-    }
-
-    fn test_contract(filename: &str, json_key: &str, code: &[u8], creation_code: &[u8]) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let mut solc = Vec::new();
-        let solc_download_path = format!(
-            "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-{SOLC_VERSION}"
-        );
-        let response = ureq::get(&solc_download_path).call().unwrap();
-        response.into_reader().read_to_end(&mut solc).unwrap();
-
-        let expected_hash = hex::decode(SOLC_HASH).unwrap();
-        let actual_hash = Keccak256::digest(&solc);
-        assert_eq!(expected_hash, actual_hash.to_vec());
-
-        let solc_path = temp_dir.path().join("solc");
-        println!("{}", solc_path.to_string_lossy());
-        let mut solc_file = OpenOptions::new()
-            .mode(0o777)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&solc_path)
-            .unwrap();
-        solc_file.write_all(&solc).unwrap();
-        mem::drop(solc_file); // Close the file.
-
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("src")
-            .join("contracts");
-        let contract = root.join(filename);
-        let vendor = root
-            .parent()
+        let solc = Solc::find_or_install_svm_version("0.8.23")
             .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("vendor");
+            .with_base_path(&root)
+            .args(["--allow-paths", "../vendor"]);
 
-        let output = Command::new(solc_path)
-            .current_dir(root)
-            .arg(contract)
-            .arg("@openzeppelin/=openzeppelin-contracts/")
-            .arg("--base-path")
-            .arg(".")
-            .arg("--include-path")
-            .arg(vendor)
-            .arg("--combined-json")
-            .arg("abi,bin,bin-runtime")
-            .arg("--evm-version=paris")
-            .output()
-            .unwrap();
+        let output = solc.compile_exact(&input).unwrap();
+        let output_file = root.join("src").join("contracts").join("compiled.json");
 
-        eprintln!("{}", std::str::from_utf8(&output.stderr).unwrap());
-        let combined_json: Value = serde_json::from_slice(&output.stdout).unwrap();
-        let contract = combined_json["contracts"][&json_key].clone();
+        if std::env::var_os("ZQ_CONTRACT_TEST_BLESS").is_some() {
+            let file = File::create(output_file).unwrap();
+            serde_json::to_writer(file, &output).unwrap();
 
-        let bin = contract["bin-runtime"].as_str().unwrap();
-        let expected_code = hex::decode(bin).unwrap();
-        assert_eq!(code.len(), expected_code.len()); // fail fast on a mismatch rather than dumping
-                                                     // full blobs into stdout
-        assert_eq!(code, expected_code);
+            println!("`compiled.json` updated, please commit these changes");
+        } else {
+            let file = File::open(output_file).unwrap();
+            let current_output: CompilerOutput = serde_json::from_reader(file).unwrap();
 
-        let bin_creation = contract["bin"].as_str().unwrap();
-        let expected_creation_code = hex::decode(bin_creation).unwrap();
-        assert_eq!(creation_code.len(), expected_creation_code.len());
-        assert_eq!(creation_code, expected_creation_code);
+            assert_eq!(output, current_output);
+        }
     }
 }
