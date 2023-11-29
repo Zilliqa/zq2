@@ -6,7 +6,7 @@ use ethers::{
 };
 use primitive_types::H160;
 use tracing::*;
-use zilliqa::{contracts, state::Address};
+use zilliqa::{contracts, state::contract_addr};
 
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)
@@ -209,7 +209,7 @@ async fn launch_shard(mut network: Network) {
 
     // 4. Register the shard in the shard registry on the main shard
     let tx_request = TransactionRequest::new()
-        .to(Address::SHARD_CONTRACT.0)
+        .to(contract_addr::SHARD_CONTRACT)
         .data(
             contracts::shard_registry::ADD_SHARD
                 .encode_input(&[
