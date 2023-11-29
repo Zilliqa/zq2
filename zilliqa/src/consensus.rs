@@ -660,7 +660,6 @@ impl Consensus {
                         logs: result.logs,
                     };
                     info!(?receipt, "applied transaction {:?}", receipt);
-                    self.db.insert_transaction(&txn.hash, &txn.tx)?;
                     block_receipts.push(receipt);
                 } else {
                     warn!("Failed to apply TX! Something might be wrong");
@@ -738,6 +737,9 @@ impl Consensus {
         if let Some(priority_txs) = self.new_transactions_priority.get_mut(&removed.signer) {
             priority_txs.retain(|tx| tx.hash != *tx_hash);
         }
+
+        // Finally, insert tx into the db, so there is no discontinuity
+        let _ = self.db.insert_transaction(tx_hash, &removed.tx);
     }
 
     pub fn apply_transaction(

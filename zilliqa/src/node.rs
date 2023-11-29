@@ -433,23 +433,10 @@ impl Node {
             return Ok(());
         };
 
-        // Need to get and send corresponding TXs for the block
-        let txs: Vec<SignedTransaction> = block
-            .transactions
-            .iter()
-            .map(|tx_hash| {
-                self.consensus
-                    .get_transaction_by_hash(*tx_hash)
-                    .unwrap()
-                    .unwrap()
-                    .tx
-            })
-            .collect::<Vec<_>>();
-
         self.message_sender.send_external_message(
             source,
             ExternalMessage::BlockResponse(BlockResponse {
-                proposal: Proposal::from_parts(block, txs),
+                proposal: self.block_to_proposal(block),
             }),
         )?;
 

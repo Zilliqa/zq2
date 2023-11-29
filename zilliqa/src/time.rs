@@ -39,7 +39,6 @@ mod time_impl {
         }
 
         pub fn duration_since(&self, other: SystemTime) -> Result<Duration, SystemTimeError> {
-            println!("duration_since({:?}, {:?})", self, other);
             self.0
                 .duration_since(other.0)
                 .map_err(|e| SystemTimeError(e.duration()))
