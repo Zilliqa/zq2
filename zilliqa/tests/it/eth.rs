@@ -598,10 +598,8 @@ async fn send_eip1559_transaction(mut network: Network) {
 async fn send_legacy_transaction_without_chain_id(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    let tx = TransactionRequest::pay(
-        H160::random_using(network.rng.lock().unwrap().deref_mut()),
-        123,
-    );
+    let to = H160::random_using(network.rng.lock().unwrap().deref_mut());
+    let tx = TransactionRequest::pay(to, 123);
     let mut tx: TypedTransaction = tx.into();
     wallet.fill_transaction(&mut tx, None).await.unwrap();
     // Clear the chain ID.
@@ -640,6 +638,9 @@ async fn send_legacy_transaction_without_chain_id(mut network: Network) {
     let tx = wallet.get_transaction(hash).await.unwrap().unwrap();
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 0);
     assert_eq!(tx.chain_id, None);
+
+    let balance = wallet.get_balance(to, None).await.unwrap().as_u128();
+    assert_eq!(balance, 123);
 }
 
 #[zilliqa_macros::test]

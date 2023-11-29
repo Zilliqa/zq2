@@ -1,14 +1,12 @@
 use anyhow::{anyhow, Result};
-use core::fmt;
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::convert::TryInto;
-use std::fmt::{Display, LowerHex};
+use std::hash::Hash;
 use std::sync::Arc;
-use std::{hash::Hash, str::FromStr};
 
 use crate::{cfg::ConsensusConfig, contracts, crypto, db::TrieStorage};
 
@@ -47,19 +45,19 @@ impl State {
 
         if config.is_main {
             let shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
-                contracts::shard_registry::CREATION_CODE.to_vec(),
+                contracts::shard_registry::BYTECODE.to_vec(),
                 &[Token::Uint(config.consensus_timeout.as_millis().into())],
             )?;
-            state.force_deploy_contract(shard_data, Some(Address::SHARD_CONTRACT))?;
+            state.force_deploy_contract(shard_data, Some(contract_addr::SHARD_CONTRACT))?;
         };
 
         let native_token_data = contracts::native_token::CONSTRUCTOR
-            .encode_input(contracts::native_token::CREATION_CODE.to_vec(), &[])?;
-        state.force_deploy_contract(native_token_data, Some(Address::NATIVE_TOKEN))?;
+            .encode_input(contracts::native_token::BYTECODE.to_vec(), &[])?;
+        state.force_deploy_contract(native_token_data, Some(contract_addr::NATIVE_TOKEN))?;
 
         let gas_price_data = contracts::gas_price::CONSTRUCTOR
-            .encode_input(contracts::gas_price::CREATION_CODE.to_vec(), &[])?;
-        state.force_deploy_contract(gas_price_data, Some(Address::GAS_PRICE))?;
+            .encode_input(contracts::gas_price::BYTECODE.to_vec(), &[])?;
+        state.force_deploy_contract(gas_price_data, Some(contract_addr::GAS_PRICE))?;
 
         let _ = state.set_gas_price(default_gas_price().into());
 
@@ -222,72 +220,20 @@ impl State {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Address(pub H160);
+pub type Address = H160;
 
-impl fmt::Debug for Address {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self.0)
-    }
-}
+pub mod contract_addr {
+    use primitive_types::H160;
 
-impl From<H160> for Address {
-    fn from(h: H160) -> Address {
-        Address(h)
-    }
-}
-
-impl Address {
-    pub const ZERO: Address = Address(H160::zero());
-    pub fn zero() -> Address {
-        Address(H160::zero())
-    }
+    use super::Address;
 
     /// Address of the native token ERC-20 contract.
-    pub const NATIVE_TOKEN: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"));
-
-    pub const SHARD_CONTRACT: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD"));
-
+    pub const NATIVE_TOKEN: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL");
+    pub const SHARD_CONTRACT: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD");
     /// Address of the gas contract
-    pub const GAS_PRICE: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0GAS"));
-
+    pub const GAS_PRICE: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0GAS");
     /// Gas fees go here
-    pub const COLLECTED_FEES: Address = Address(H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0FEE"));
-
-    pub fn is_balance_transfer(to: Address) -> bool {
-        to == Address::NATIVE_TOKEN
-    }
-
-    pub fn from_bytes(bytes: [u8; 20]) -> Address {
-        Address(bytes.into())
-    }
-
-    pub fn from_slice(bytes: &[u8]) -> Address {
-        let mut bytes = bytes.to_owned();
-        // FIXME: Awfully inefficient
-        while bytes.len() < 20 {
-            bytes.insert(0, 0);
-        }
-        Address(H160::from_slice(&bytes))
-    }
-
-    pub fn as_bytes(&self) -> [u8; 20] {
-        *self.0.as_fixed_bytes()
-    }
-}
-
-impl Display for Address {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        LowerHex::fmt(&self.0, f)
-    }
-}
-
-impl FromStr for Address {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Address(s.parse()?))
-    }
+    pub const COLLECTED_FEES: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0FEE");
 }
 
 #[derive(Debug, Clone, Default, Hash, Serialize, Deserialize)]

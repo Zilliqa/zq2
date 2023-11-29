@@ -72,8 +72,6 @@ impl<'a> EvmBackend<'a> {
         for apply in applys {
             match apply {
                 Apply::Delete { address } => {
-                    let address = Address(address);
-
                     // Insert empty slot into cache
                     self.account_storage_cached.insert(address, None);
                 }
@@ -85,8 +83,6 @@ impl<'a> EvmBackend<'a> {
                     storage,
                     reset_storage,
                 } => {
-                    let address = Address(address);
-
                     if reset_storage {
                         todo!("clear_account_storage");
                     }
@@ -123,11 +119,11 @@ impl<'a> EvmBackend<'a> {
     pub fn get_result(self) -> EvmResult {
         let mut applys: Vec<Apply> = vec![];
 
-        for (addr, item) in self.account_storage_cached.into_iter() {
+        for (address, item) in self.account_storage_cached.into_iter() {
             match item {
                 Some((acct, stor)) => {
                     applys.push(Apply::Modify {
-                        address: addr.0,
+                        address,
                         balance: U256::zero(),
                         nonce: U256::zero(),
                         code: acct.code,
@@ -139,7 +135,7 @@ impl<'a> EvmBackend<'a> {
                     });
                 }
                 None => {
-                    applys.push(Apply::Delete { address: addr.0 });
+                    applys.push(Apply::Delete { address });
                 }
             }
         }
@@ -205,13 +201,13 @@ impl<'a> Backend for EvmBackend<'a> {
         // creation of many addresses and the resulting increase in state size.
 
         // first check if the account is cleared in the cache
-        if let Some(item) = self.account_storage_cached.get(&address.into()) {
+        if let Some(item) = self.account_storage_cached.get(&address) {
             if item.is_none() {
                 return false;
             }
         }
 
-        let exists = self.state.has_account(Address(address));
+        let exists = self.state.has_account(address);
         trace!(
             "EVM request: Checking whether account {:?} exists {}",
             address,
@@ -222,13 +218,10 @@ impl<'a> Backend for EvmBackend<'a> {
 
     fn basic(&self, address: H160) -> Basic {
         // first check if the account is in the cache
-        if let Some(Some((acct, _))) = self.account_storage_cached.get(&Address(address)) {
+        if let Some(Some((acct, _))) = self.account_storage_cached.get(&address) {
             let nonce = acct.nonce;
             let basic = Basic {
-                balance: self
-                    .state
-                    .get_native_balance(Address(address), false)
-                    .unwrap(),
+                balance: self.state.get_native_balance(address, false).unwrap(),
                 nonce: nonce.into(),
             };
             trace!(
@@ -239,12 +232,9 @@ impl<'a> Backend for EvmBackend<'a> {
             return basic;
         }
 
-        let nonce = self.state.must_get_account(Address(address)).nonce;
+        let nonce = self.state.must_get_account(address).nonce;
         let basic = Basic {
-            balance: self
-                .state
-                .get_native_balance(Address(address), false)
-                .unwrap(),
+            balance: self.state.get_native_balance(address, false).unwrap(),
             nonce: nonce.into(),
         };
         trace!(
@@ -257,7 +247,7 @@ impl<'a> Backend for EvmBackend<'a> {
 
     fn code(&self, address: H160) -> Vec<u8> {
         // first check if the account is in the cache
-        if let Some(Some((acct, _))) = self.account_storage_cached.get(&Address(address)) {
+        if let Some(Some((acct, _))) = self.account_storage_cached.get(&address) {
             let code = acct.code.clone();
             trace!(
                 "EVM request: (cached) Requesting code for {:?} - answ: {:?}",
@@ -267,7 +257,7 @@ impl<'a> Backend for EvmBackend<'a> {
             return code;
         }
 
-        let code = self.state.must_get_account(Address(address)).code;
+        let code = self.state.must_get_account(address).code;
 
         trace!(
             "EVM request: Requesting code for {:?} - answ: {:?}",
@@ -279,7 +269,7 @@ impl<'a> Backend for EvmBackend<'a> {
 
     fn storage(&self, address: H160, index: H256) -> H256 {
         // first check if the account is in the cache
-        if let Some(Some((_, stor))) = self.account_storage_cached.get(&Address(address)) {
+        if let Some(Some((_, stor))) = self.account_storage_cached.get(&address) {
             if let Some(value) = stor.get(&index) {
                 trace!(
                     "EVM request: (cached) Requesting storage for {:?} at {:?} and is: {:?}",
@@ -291,7 +281,7 @@ impl<'a> Backend for EvmBackend<'a> {
             }
         }
 
-        let res = self.state.must_get_account_storage(Address(address), index);
+        let res = self.state.must_get_account_storage(address, index);
 
         trace!(
             "EVM request: Requesting storage for {:?} at {:?} and is: {:?}",
