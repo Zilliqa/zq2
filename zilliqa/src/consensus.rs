@@ -1,6 +1,6 @@
 use ethabi::{Event, Log, RawLog};
 use primitive_types::H256;
-use rand::prelude::IteratorRandom;
+
 use rand::Rng;
 
 use crate::message::{ExternalMessage, InternalMessage};
@@ -10,7 +10,6 @@ use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
 use rand::rngs::SmallRng;
-use rand_chacha::ChaCha8Rng;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
