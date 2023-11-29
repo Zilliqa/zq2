@@ -302,7 +302,6 @@ async fn launch_shard(mut network: Network) {
 // and progresses.
 #[zilliqa_macros::test]
 async fn handle_forking_correctly(mut network: Network) {
-    trace!("Handle forking correctly test starting....");
     let wallet = network.genesis_wallet().await;
     let _provider = wallet.provider();
 

@@ -1,8 +1,6 @@
 use ethabi::{Event, Log, RawLog};
 use primitive_types::H256;
 
-use rand::Rng;
-
 use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::MessageSender;
 use crate::state::contract_addr;
@@ -462,20 +460,13 @@ impl Consensus {
     }
 
     pub fn get_random_other_peer(&mut self) -> Option<PeerId> {
-        // Remove self from potential people to send to
-        let mut other_peers = self.head_block().committee.clone();
-        other_peers.remove_by_peer_id(self.peer_id());
-        let peer_len = other_peers.len();
-
-        match peer_len {
-            0 => None,
-            _ => Some(
-                other_peers
-                    .get_by_index(self.rng.gen_range(0..peer_len))
-                    .unwrap()
-                    .peer_id,
-            ),
-        }
+        let our_id = self.peer_id();
+        self.head_block()
+            .committee
+            .iter()
+            .filter(|v| v.peer_id != our_id)
+            .choose(&mut self.rng)
+            .map(|v| v.peer_id)
     }
 
     pub fn timeout(&mut self) -> Result<Option<(PeerId, ExternalMessage)>> {
@@ -738,7 +729,8 @@ impl Consensus {
             priority_txs.retain(|tx| tx.hash != *tx_hash);
         }
 
-        // Finally, insert tx into the db, so there is no discontinuity
+        // Finally, insert tx into the db, so there is no discontinuity where the TX can't
+        // be found anywhere
         let _ = self.db.insert_transaction(tx_hash, &removed.tx);
     }
 
@@ -1387,7 +1379,6 @@ impl Consensus {
         };
         // We don't vote on blocks older than our view
         let outdated = proposal.view() < self.view.get_view();
-        let _proposal_hash = proposal.hash();
         match proposal.agg {
             // we check elsewhere that qc is the highest among the qcs in the agg
             Some(_) => match self.block_extends_from(proposal, &qc_block) {
