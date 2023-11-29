@@ -55,6 +55,7 @@ paste = "1.0.14"
 primitive-types = { version = "0.12.2", features = ["serde"] }
 prost = "0.12.2"
 rand = "0.8.5"
+rand_chacha = "0.3.1"
 rand_core = "0.6.4"
 rlp = "0.5.2"
 serde = { version = "1.0.193", features = ["derive", "rc"] }
@@ -77,7 +78,6 @@ zilliqa-macros = { path = "../zilliqa-macros" }
 async-trait = "0.1.74"
 ethers = { version = "2.0.10", default-features = false, features = ["ethers-solc", "legacy"] }
 ethers-solc = { version = "2.0.10", features = ["svm-solc"] }
-rand_chacha = "0.3.1"
 tempfile = "3.8.1"
 ureq = "2.9.1"
 zilliqa = { path = ".", default-features = false, features = ["fake_time"] }

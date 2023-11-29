@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
 use libp2p::PeerId;
-use rand::Rng;
+
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{fmt, fmt::Display, fmt::Formatter, str::FromStr};
@@ -499,12 +499,6 @@ impl Committee {
 
     pub fn remove_by_peer_id(&mut self, peer_id: PeerId) {
         self.0.retain(|v| v.peer_id != peer_id);
-    }
-
-    pub fn choose_random(&mut self) -> Validator {
-        let mut rng = rand::thread_rng();
-        let index = rng.gen_range(0..self.0.len());
-        self.get_by_index(index).unwrap()
     }
 }
 

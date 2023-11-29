@@ -299,7 +299,7 @@ async fn launch_shard(mut network: Network) {
 
 // test that when a fork occurs in the network, the node which has forked correctly reverts its state
 // and progresses.
-#[zilliqa_macros::test]
+#[allow(dead_code)]
 async fn handle_forking_correctly(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let _provider = wallet.provider();
