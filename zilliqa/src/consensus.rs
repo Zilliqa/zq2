@@ -7,7 +7,8 @@ use crate::node::MessageSender;
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
-use rand_chacha::ChaCha20Rng;
+use rand::{Rng, SeedableRng};
+use rand::rngs::SmallRng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{
@@ -206,8 +207,8 @@ pub struct Consensus {
     db: Arc<Db>,
     /// Transactions ordered by priority, map of address of TXn (from account) to ordered TXns to be executed.
     new_transactions_priority: BTreeMap<Address, BinaryHeap<TxnOrder>>,
-    // PRNG
-    rng: ChaCha20Rng,
+    // PRNG - non-cryptographically secure, but we don't need that here
+    rng: SmallRng,
 }
 
 // View in consensus should be have access monitored so last_timeout is always correct
@@ -358,7 +359,7 @@ impl Consensus {
             db,
             new_transactions_priority: BTreeMap::new(),
             // Seed the rng with the node's public key
-            rng: <rand_chacha::ChaCha20Rng as rand_core::SeedableRng>::seed_from_u64(
+            rng: <SmallRng as rand_core::SeedableRng>::seed_from_u64(
                 u64::from_be_bytes(
                     secret_key.node_public_key().as_bytes()[..8]
                         .try_into()
