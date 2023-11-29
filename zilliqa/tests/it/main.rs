@@ -1,11 +1,11 @@
 mod consensus;
 mod eth;
-mod native_contracts;
 mod persistence;
 mod web3;
 mod zil;
 use ethers::solc::SHANGHAI_SOLC;
 use itertools::Itertools;
+use serde::Deserialize;
 use std::env;
 use std::ops::DerefMut;
 use zilliqa::cfg::ConsensusConfig;
@@ -51,24 +51,11 @@ use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
-use serde::Deserialize;
 use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
-
-#[derive(Deserialize)]
-struct CombinedJson {
-    contracts: HashMap<String, AbiContract>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct AbiContract {
-    abi: ethabi::Contract,
-    bin: String,
-}
 
 /// (source, destination, message) for both
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,7 +245,7 @@ impl Network {
 
     fn genesis_accounts(genesis_key: &SigningKey) -> Vec<(Address, String)> {
         vec![(
-            Address(secret_key_to_address(genesis_key)),
+            secret_key_to_address(genesis_key),
             1_000_000_000u128
                 .checked_mul(10u128.pow(18))
                 .unwrap()

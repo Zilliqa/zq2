@@ -4,6 +4,7 @@ use rand::prelude::IteratorRandom;
 
 use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::MessageSender;
+use crate::state::contract_addr;
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
@@ -745,7 +746,7 @@ impl Consensus {
         })?;
 
         for address in listener.touched {
-            self.db.add_touched_address(Address(address), hash)?;
+            self.db.add_touched_address(address, hash)?;
         }
 
         if !result.success {
@@ -1257,7 +1258,7 @@ impl Consensus {
         let logs: Result<Vec<_>, _> = receipts
             .into_iter()
             .flat_map(|receipt| receipt.logs)
-            .filter(|log| log.address == emitter.0 && log.topics[0] == event.signature())
+            .filter(|log| log.address == emitter && log.topics[0] == event.signature())
             .map(|log| {
                 event.parse_log_whole(RawLog {
                     topics: log.topics,
@@ -1465,7 +1466,7 @@ impl Consensus {
             let shard_logs = self.get_logs_in_block(
                 hash,
                 contracts::shard_registry::SHARD_ADDED_EVT.clone(),
-                Address::SHARD_CONTRACT,
+                contract_addr::SHARD_CONTRACT,
             )?;
             for log in shard_logs {
                 let Some(shard_id) = log
