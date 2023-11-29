@@ -7,8 +7,8 @@ use crate::node::MessageSender;
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
-use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
+
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{
@@ -359,13 +359,11 @@ impl Consensus {
             db,
             new_transactions_priority: BTreeMap::new(),
             // Seed the rng with the node's public key
-            rng: <SmallRng as rand_core::SeedableRng>::seed_from_u64(
-                u64::from_be_bytes(
-                    secret_key.node_public_key().as_bytes()[..8]
-                        .try_into()
-                        .unwrap(),
-                ),
-            ),
+            rng: <SmallRng as rand_core::SeedableRng>::seed_from_u64(u64::from_be_bytes(
+                secret_key.node_public_key().as_bytes()[..8]
+                    .try_into()
+                    .unwrap(),
+            )),
         };
 
         // If we're at genesis, add the genesis block.
