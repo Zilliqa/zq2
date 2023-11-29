@@ -29,6 +29,11 @@ variable "eth_chain_id" {
   nullable = false
 }
 
+variable "subdomain" {
+  type = string
+  nullable = false
+}
+
 provider "google" {
   project = var.project_id
   region = "europe-west2"
@@ -36,7 +41,7 @@ provider "google" {
 }
 
 resource "google_storage_bucket" "binaries" {
-  name                        = "zq2-binaries"
+  name                        = "${var.project_id}-zq2-binaries"
   location                    = "EUROPE-WEST2"
   uniform_bucket_level_access = true
 }
@@ -186,6 +191,7 @@ module "bootstrap_node" {
   network_name          = google_compute_network.this.name
   subnetwork_name       = google_compute_subnetwork.subnet.name
   binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
+  binary_md5            = google_storage_bucket_object.binary.md5hash
   config                = <<-EOT
   p2p_port = 3333
 
@@ -214,6 +220,7 @@ module "node" {
   network_name          = google_compute_network.this.name
   subnetwork_name       = google_compute_subnetwork.subnet.name
   binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
+  binary_md5            = google_storage_bucket_object.binary.md5hash
   config                = <<-EOT
   p2p_port = 3333
   bootstrap_address = [ "${local.bootstrap_peer_id}", "/ip4/${module.bootstrap_node.network_ip}/tcp/3333" ]
@@ -231,32 +238,6 @@ module "node" {
 
 resource "google_project_service" "osconfig" {
   service = "osconfig.googleapis.com"
-}
-
-module "agent_policy" {
-  source  = "terraform-google-modules/cloud-operations/google//modules/agent-policy"
-  version = "0.3.0"
-
-  project_id = data.google_project.this.project_id
-  policy_id  = "ops-agents-zq2"
-  agent_rules = [
-    {
-      type               = "ops-agent"
-      version            = "current-major"
-      package_state      = "installed"
-      enable_autoupgrade = true
-    },
-  ]
-  os_types = [
-    {
-      short_name = "debian"
-      version    = "11"
-    }
-  ]
-  instances = concat(
-    [module.bootstrap_node.id],
-    [for n in module.node : n.id],
-  )
 }
 
 resource "google_compute_instance_group" "api" {
@@ -311,8 +292,8 @@ resource "google_compute_target_https_proxy" "api" {
   ssl_certificates = [google_compute_managed_ssl_certificate.api.id]
 }
 
-data "google_compute_global_address" "devnet_api" {
-  name = "api-zq2-devnet-zilstg-dev"
+data "google_compute_global_address" "api" {
+  name = "api-${replace(var.subdomain, ".", "-")}"
 }
 
 resource "google_compute_global_forwarding_rule" "api_http" {
@@ -323,7 +304,7 @@ resource "google_compute_global_forwarding_rule" "api_http" {
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "80"
   target                = google_compute_target_http_proxy.api.id
-  ip_address            = data.google_compute_global_address.devnet_api.address
+  ip_address            = data.google_compute_global_address.api.address
 }
 
 resource "google_compute_global_forwarding_rule" "api_https" {
@@ -334,13 +315,13 @@ resource "google_compute_global_forwarding_rule" "api_https" {
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "443"
   target                = google_compute_target_https_proxy.api.id
-  ip_address            = data.google_compute_global_address.devnet_api.address
+  ip_address            = data.google_compute_global_address.api.address
 }
 
 resource "google_compute_managed_ssl_certificate" "api" {
-  name = "zq2-devnet"
+  name = "zq2-api"
 
   managed {
-    domains = ["api.zq2-devnet.zilstg.dev"]
+    domains = ["api.${var.subdomain}"]
   }
 }
