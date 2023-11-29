@@ -5,7 +5,7 @@ use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::sec1::ToEncodedPoint,
 };
-use primitive_types::H256;
+use primitive_types::{H160, H256};
 use prost::Message;
 use rlp::RlpStream;
 use serde::{Deserialize, Serialize};
@@ -154,7 +154,7 @@ impl SignedTransaction {
 
                 let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
                 let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
-                Address::from_bytes(bytes.into())
+                H160(bytes.into())
             }
         };
         let hash = self.calculate_hash();
@@ -379,19 +379,21 @@ impl TxLegacy {
         if let Some(chain_id) = &self.chain_id {
             rlp.append(chain_id).append(&0u8).append(&0u8);
         }
-        crypto::Hash(Keccak256::digest(rlp.out()).into())
+        crypto::Hash(
+            Keccak256::digest({
+                let a = rlp.out();
+                println!("{}", hex::encode(&a));
+                a
+            })
+            .into(),
+        )
     }
 
     fn encode_fields(&self, rlp: &mut RlpStream) {
         rlp.append(&self.nonce)
             .append(&self.gas_price)
             .append(&self.gas_limit)
-            .append(
-                &self
-                    .to_addr
-                    .map(|a| a.as_bytes().to_vec())
-                    .unwrap_or_default(),
-            )
+            .append(&rlp_option_addr(&self.to_addr))
             .append(&self.amount)
             .append(&self.payload);
     }
@@ -425,12 +427,7 @@ impl TxEip2930 {
             .append(&self.nonce)
             .append(&self.gas_price)
             .append(&self.gas_limit)
-            .append(
-                &self
-                    .to_addr
-                    .map(|a| a.as_bytes().to_vec())
-                    .unwrap_or_default(),
-            )
+            .append(&rlp_option_addr(&self.to_addr))
             .append(&self.amount)
             .append(&self.payload);
         encode_access_list(rlp, &self.access_list);
@@ -467,12 +464,7 @@ impl TxEip1559 {
             .append(&self.max_priority_fee_per_gas)
             .append(&self.max_fee_per_gas)
             .append(&self.gas_limit)
-            .append(
-                &self
-                    .to_addr
-                    .map(|a| a.as_bytes().to_vec())
-                    .unwrap_or_default(),
-            )
+            .append(&rlp_option_addr(&self.to_addr))
             .append(&self.amount)
             .append(&self.payload);
         encode_access_list(rlp, &self.access_list);
@@ -516,14 +508,20 @@ fn ecdsa_key_to_address(key: &VerifyingKey) -> Address {
     // Remove the first byte before hashing - The first byte specifies the encoding tag.
     let hashed = Keccak256::digest(&key.to_encoded_point(false).as_bytes()[1..]);
     let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
-    Address::from_bytes(bytes.into())
+    H160(bytes.into())
+}
+
+/// Encode an `Option<H160>` ready to be added to an [RlpStream].
+/// `None` is represented as an empty string.
+fn rlp_option_addr(addr: &Option<H160>) -> &[u8] {
+    addr.as_ref().map(|a| a.as_ref()).unwrap_or_default()
 }
 
 fn encode_access_list(rlp: &mut RlpStream, access_list: &[(Address, Vec<H256>)]) {
     rlp.begin_list(access_list.len());
     for (address, storage_keys) in access_list {
         rlp.begin_list(2);
-        rlp.append(&address.0);
+        rlp.append(address);
         rlp.append_list(storage_keys);
     }
 }

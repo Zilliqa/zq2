@@ -16,7 +16,6 @@ use crate::{
     message::BlockNumber,
     node::Node,
     schnorr,
-    state::Address,
     transaction::{SignedTransaction, TxZilliqa},
 };
 
@@ -96,7 +95,7 @@ fn create_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
             nonce: transaction.nonce,
             gas_price: transaction.gas_price,
             gas_limit: transaction.gas_limit,
-            to_addr: Address(transaction.to_addr),
+            to_addr: transaction.to_addr,
             amount: transaction.amount,
             code: transaction.code,
             data: transaction.data,
@@ -116,13 +115,11 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Va
 
     let node = node.lock().unwrap();
 
-    let balance = node.get_native_balance(Address(address), BlockNumber::Latest)?;
+    let balance = node.get_native_balance(address, BlockNumber::Latest)?;
     // We need to scale the balance from units of (10^-18) ZIL to (10^-12) ZIL. The value is truncated in this process.
     let balance = balance / U256::from(10).pow(U256::from(6));
     let balance = balance.to_string();
-    let nonce = node
-        .get_account(Address(address), BlockNumber::Latest)?
-        .nonce;
+    let nonce = node.get_account(address, BlockNumber::Latest)?.nonce;
 
     Ok(json!({"balance": balance, "nonce": nonce}))
 }

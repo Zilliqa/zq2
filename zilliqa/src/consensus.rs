@@ -1,13 +1,17 @@
 use ethabi::{Event, Log, RawLog};
 use primitive_types::H256;
 use rand::Rng;
+use rand::prelude::IteratorRandom;
 
 use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::MessageSender;
+use crate::state::contract_addr;
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
 use rand_chacha::ChaCha8Rng;
+use rand::rngs::SmallRng;
+
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{
@@ -206,8 +210,8 @@ pub struct Consensus {
     db: Arc<Db>,
     /// Transactions ordered by priority, map of address of TXn (from account) to ordered TXns to be executed.
     new_transactions_priority: BTreeMap<Address, BinaryHeap<TxnOrder>>,
-    /// PRNG
-    rng: ChaCha8Rng,
+    // PRNG - non-cryptographically secure, but we don't need that here
+    rng: SmallRng,
 }
 
 // View in consensus should be have access monitored so last_timeout is always correct
@@ -357,7 +361,12 @@ impl Consensus {
             state,
             db,
             new_transactions_priority: BTreeMap::new(),
-            rng: <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(0),
+            // Seed the rng with the node's public key
+            rng: <SmallRng as rand_core::SeedableRng>::seed_from_u64(u64::from_be_bytes(
+                secret_key.node_public_key().as_bytes()[..8]
+                    .try_into()
+                    .unwrap(),
+            )),
         };
 
         // If we're at genesis, add the genesis block.
@@ -470,14 +479,13 @@ impl Consensus {
         }
     }
 
-    pub fn timeout(&mut self) -> Option<(PeerId, ExternalMessage)> {
+    pub fn timeout(&mut self) -> Result<Option<(PeerId, ExternalMessage)>> {
         // We never want to timeout while on view 1
         if self.view.get_view() == 1 {
             let genesis = self
                 .get_block_by_view(0)
                 .unwrap()
-                .ok_or_else(|| anyhow!("missing block"))
-                .unwrap();
+                .ok_or_else(|| anyhow!("missing block"))?;
             // If we're in the genesis committee, vote again.
             if genesis
                 .committee
@@ -487,13 +495,13 @@ impl Consensus {
                 info!("timeout in view 1, we will vote for genesis block rather than incrementing view");
                 let leader = genesis.committee.leader(self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
-                return Some((leader.peer_id, ExternalMessage::Vote(vote)));
+                return Ok(Some((leader.peer_id, ExternalMessage::Vote(vote))));
             } else {
                 info!("We are on view 1 but we are not a validator, so we are waiting.");
                 let _ = self.download_blocks_up_to_head();
             }
 
-            return None;
+            return Ok(None);
         }
 
         // Now consider whether we want to timeout - the timeout duration doubles every time, so it
@@ -517,7 +525,7 @@ impl Consensus {
                 time_since_last_view_change,
                 exponential_backoff_timeout
             );
-            return None;
+            return Ok(None);
         }
 
         trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", self.view.get_view(), time_since_last_view_change, exponential_backoff_timeout, head_block_view, head_block.hash());
@@ -533,7 +541,10 @@ impl Consensus {
         self.view.set_view(self.view.get_view() + 1);
 
         let leader = self
-            .head_block()
+            .get_block(&self.high_qc.block_hash)?
+            .ok_or_else(|| {
+                anyhow!("missing block corresponding to our high qc - this should never happen")
+            })?
             .committee
             .leader(self.view.get_view())
             .peer_id;
@@ -545,7 +556,7 @@ impl Consensus {
             self.secret_key.node_public_key(),
         );
 
-        Some((leader, ExternalMessage::NewView(Box::new(new_view))))
+        Ok(Some((leader, ExternalMessage::NewView(Box::new(new_view)))))
     }
 
     pub fn peer_id(&self) -> PeerId {
@@ -752,7 +763,7 @@ impl Consensus {
         })?;
 
         for address in listener.touched {
-            self.db.add_touched_address(Address(address), hash)?;
+            self.db.add_touched_address(address, hash)?;
         }
 
         if !result.success {
@@ -1266,7 +1277,7 @@ impl Consensus {
         let logs: Result<Vec<_>, _> = receipts
             .into_iter()
             .flat_map(|receipt| receipt.logs)
-            .filter(|log| log.address == emitter.0 && log.topics[0] == event.signature())
+            .filter(|log| log.address == emitter && log.topics[0] == event.signature())
             .map(|log| {
                 event.parse_log_whole(RawLog {
                     topics: log.topics,
@@ -1298,8 +1309,7 @@ impl Consensus {
         let new_high_qc_block_view = new_high_qc_block.view();
 
         if self.high_qc.block_hash == Hash::ZERO {
-            // This seems like a potential bug???
-            trace!("received high qc for the zero hash, setting.");
+            trace!("received high qc, self high_qc is currently uninitialized, setting to the new one.");
             self.db.set_high_qc(new_high_qc.clone())?;
             self.high_qc = new_high_qc;
         } else {
@@ -1474,7 +1484,7 @@ impl Consensus {
             let shard_logs = self.get_logs_in_block(
                 hash,
                 contracts::shard_registry::SHARD_ADDED_EVT.clone(),
-                Address::SHARD_CONTRACT,
+                contract_addr::SHARD_CONTRACT,
             )?;
             for log in shard_logs {
                 let Some(shard_id) = log
@@ -1514,7 +1524,10 @@ impl Consensus {
         }
 
         let Some(parent) = self.get_block(&block.parent_hash())? else {
-            warn!("missing the parent of block being checked");
+            warn!(
+                "Missing parent block while trying to check validity of block {}",
+                block.number()
+            );
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 

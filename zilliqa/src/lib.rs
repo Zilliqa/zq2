@@ -2,7 +2,7 @@ pub mod api;
 mod block_store;
 pub mod cfg;
 pub mod consensus;
-mod contracts;
+pub mod contracts;
 pub mod crypto;
 mod db;
 mod evm_backend;

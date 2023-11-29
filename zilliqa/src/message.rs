@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
 use libp2p::PeerId;
-use rand::Rng;
+
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{fmt, fmt::Display, fmt::Formatter, str::FromStr};
@@ -348,14 +348,13 @@ impl fmt::Display for BlockHeader {
 // Helper function to format SystemTime as a string
 // https://stackoverflow.com/questions/45386585
 fn systemtime_strftime(timestamp: SystemTime) -> Result<String> {
-    println!("Formatting timestamp: {:?}", timestamp);
-    let time_since_epoch = timestamp.elapsed()?;
-    println!("2Formatting timestamp: {:?}", timestamp);
+    let time_since_epoch = timestamp
+        .elapsed()
+        .map(|d| d.as_nanos() as i128)
+        // Handle the case where `timestamp` was before unix epoch.
+        .unwrap_or_else(|e| -(e.duration().as_nanos() as i128));
     let format = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
-    Ok(
-        OffsetDateTime::from_unix_timestamp_nanos(time_since_epoch.as_nanos() as i128)?
-            .format(&format)?,
-    )
+    Ok(OffsetDateTime::from_unix_timestamp_nanos(time_since_epoch)?.format(&format)?)
 }
 
 impl BlockHeader {
@@ -522,12 +521,6 @@ impl Committee {
 
     pub fn remove_by_peer_id(&mut self, peer_id: PeerId) {
         self.0.retain(|v| v.peer_id != peer_id);
-    }
-
-    pub fn choose_random(&mut self) -> Validator {
-        let mut rng = rand::thread_rng();
-        let index = rng.gen_range(0..self.0.len());
-        self.get_by_index(index).unwrap()
     }
 
     pub fn public_keys(&self) -> Vec<NodePublicKey> {
