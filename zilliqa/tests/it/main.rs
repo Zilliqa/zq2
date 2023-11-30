@@ -428,6 +428,8 @@ impl Network {
         let mut proposals_seen = 0;
         let mut broadcast_handled = false;
 
+        trace!("Dropping propose messages except one");
+
         loop {
             // Generate some messages
             self.tick().await;
@@ -502,6 +504,8 @@ impl Network {
                 self.resend_message.send(message).unwrap();
             }
         }
+
+        trace!("Finished dropping propose messages except one");
     }
 
     // Drop the first message in each node queue with N% probability per tick
@@ -550,7 +554,7 @@ impl Network {
 
         if messages.is_empty() {
             trace!("Messages were empty - advance time and trigger timeout in all nodes!");
-            zilliqa::time::advance(Duration::from_millis(500));
+            zilliqa::time::advance(Duration::from_millis(1000));
 
             for (index, node) in self.nodes.iter().enumerate() {
                 let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
@@ -750,7 +754,7 @@ fn format_message(
                 format!("{} [{:?}]", message.name(), request.0)
             }
             ExternalMessage::BlockResponse(response) => {
-                format!("{} [{}]", message.name(), response.block.number())
+                format!("{} [{}]", message.name(), response.proposal.number())
             }
             _ => message.name().to_owned(),
         },

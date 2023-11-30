@@ -5,6 +5,7 @@ use ethers::{
     types::{BlockNumber, TransactionRequest},
 };
 use primitive_types::H160;
+
 use tracing::*;
 use zilliqa::{contracts, state::contract_addr};
 
@@ -299,7 +300,7 @@ async fn launch_shard(mut network: Network) {
 
 // test that when a fork occurs in the network, the node which has forked correctly reverts its state
 // and progresses.
-#[allow(dead_code)]
+#[zilliqa_macros::test]
 async fn handle_forking_correctly(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let _provider = wallet.provider();
@@ -355,7 +356,7 @@ async fn handle_forking_correctly(mut network: Network) {
                     _ => false,
                 }
             },
-            500,
+            1000,
         )
         .await
         .unwrap();

@@ -379,14 +379,7 @@ impl TxLegacy {
         if let Some(chain_id) = &self.chain_id {
             rlp.append(chain_id).append(&0u8).append(&0u8);
         }
-        crypto::Hash(
-            Keccak256::digest({
-                let a = rlp.out();
-                println!("{}", hex::encode(&a));
-                a
-            })
-            .into(),
-        )
+        crypto::Hash(Keccak256::digest(rlp.out()).into())
     }
 
     fn encode_fields(&self, rlp: &mut RlpStream) {

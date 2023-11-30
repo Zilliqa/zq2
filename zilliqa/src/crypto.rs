@@ -7,6 +7,7 @@
 use std::fmt::Display;
 
 use anyhow::{anyhow, Result};
+use bls12_381::G1Projective;
 use bls12_381::G2Affine;
 use bls_signatures::Serialize as BlsSerialize;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
@@ -36,6 +37,30 @@ impl NodeSignature {
     pub fn aggregate(signatures: &[NodeSignature]) -> Result<NodeSignature> {
         let signatures: Vec<_> = signatures.iter().map(|s| s.0).collect();
         Ok(NodeSignature(bls_signatures::aggregate(&signatures)?))
+    }
+
+    // Verify that the aggregated signature is valid for the given public keys and message.
+    // That is, each public key has signed the message, and the aggregated signature is the
+    // aggregation of those signatures.
+    pub fn verify_aggregate(
+        signature: &NodeSignature,
+        message: &[u8],
+        public_keys: Vec<NodePublicKey>,
+    ) -> Result<()> {
+        let aggregate_key: Vec<bls_signatures::PublicKey> = vec![public_keys
+            .iter()
+            .map(|p| G1Projective::from(p.0))
+            .sum::<G1Projective>()
+            .into()];
+
+        // first verify that the signature itself has been composed from the public keys and the message
+        let hash = vec![bls_signatures::hash(message)];
+
+        if !bls_signatures::verify(&signature.0, &hash, &aggregate_key) {
+            return Err(anyhow!("invalid QC aggregated signature!"));
+        }
+
+        Ok(())
     }
 
     pub fn to_bytes(self) -> Vec<u8> {
@@ -71,7 +96,7 @@ pub enum TransactionSignature {
 
 /// The public key type used internally in consensus, alongside `NodeSignature`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NodePublicKey(bls_signatures::PublicKey);
+pub struct NodePublicKey(pub bls_signatures::PublicKey);
 
 impl NodePublicKey {
     pub fn from_bytes(bytes: &[u8]) -> Result<NodePublicKey> {
