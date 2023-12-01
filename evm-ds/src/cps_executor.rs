@@ -1,18 +1,18 @@
+use core::cmp::min;
 use std::collections::BTreeMap;
 
-use crate::protos::evm_proto as EvmProto;
-use core::cmp::min;
-use evm::executor::stack::{
-    MemoryStackState, PrecompileFailure, PrecompileOutput, PrecompileOutputType, PrecompileSet,
-    StackExecutor, StackExecutorHandle, StackState,
-};
-
-use evm::backend::Backend;
 use evm::{
+    backend::Backend,
+    executor::stack::{
+        MemoryStackState, PrecompileFailure, PrecompileOutput, PrecompileOutputType, PrecompileSet,
+        StackExecutor, StackExecutorHandle, StackState,
+    },
     Capture, Config, Context, CreateScheme, ExitError, ExitReason, Handler, Opcode, Resolve,
     Runtime, Stack, Transfer,
 };
 use primitive_types::{H160, H256, U256};
+
+use crate::protos::evm_proto as EvmProto;
 
 type PrecompileMap = BTreeMap<
     H160,

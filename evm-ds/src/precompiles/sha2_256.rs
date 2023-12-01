@@ -1,7 +1,10 @@
-use evm::backend::Backend;
-use evm::executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType};
-use evm::{Context, ExitError, ExitSucceed};
 use std::borrow::Cow;
+
+use evm::{
+    backend::Backend,
+    executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType},
+    Context, ExitError, ExitSucceed,
+};
 
 const SHA256_BASE: u64 = 60;
 const SHA256_PER_WORD: u64 = 12;

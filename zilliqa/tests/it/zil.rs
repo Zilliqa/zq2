@@ -1,6 +1,5 @@
 use std::ops::DerefMut;
 
-use crate::Network;
 use ethers::{providers::Middleware, types::TransactionRequest};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use primitive_types::{H160, H256};
@@ -11,6 +10,8 @@ use zilliqa::{
     schnorr,
     zq1_proto::{Nonce, ProtoTransactionCoreInfo},
 };
+
+use crate::Network;
 
 #[zilliqa_macros::test]
 async fn create_transaction(mut network: Network) {

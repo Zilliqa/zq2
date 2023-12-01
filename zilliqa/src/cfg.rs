@@ -1,10 +1,12 @@
-use crate::crypto::Hash;
 use std::time::Duration;
 
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 
-use crate::{crypto::NodePublicKey, state::Address};
+use crate::{
+    crypto::{Hash, NodePublicKey},
+    state::Address,
+};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]

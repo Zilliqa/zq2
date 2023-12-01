@@ -4,11 +4,12 @@
 //! apply_update will be called for each continuation, and at the end we generate the EvmResult via
 //! get_result
 
-use evm_ds::protos::evm_proto::{Apply, EvmResult, Storage};
 use std::collections::HashMap;
 
-use evm_ds::evm::backend::{Backend, Basic};
-
+use evm_ds::{
+    evm::backend::{Backend, Basic},
+    protos::evm_proto::{Apply, EvmResult, Storage},
+};
 use primitive_types::{H160, H256, U256};
 use tracing::{error, trace};
 
