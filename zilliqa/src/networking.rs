@@ -1,12 +1,11 @@
+use futures::prelude::*;
 use std::io;
 
+use crate::message;
 use async_trait::async_trait;
-use futures::prelude::*;
 use libp2p::core::upgrade::{read_length_prefixed, write_length_prefixed};
 pub use libp2p::request_response::{self, ProtocolSupport, RequestId, ResponseChannel};
 use tracing::*;
-
-use crate::message;
 
 #[derive(Debug, Clone, Default)]
 pub struct MessageProtocol;

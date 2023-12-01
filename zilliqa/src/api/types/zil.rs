@@ -1,8 +1,9 @@
 use primitive_types::{H256, H512};
 use serde::Serialize;
 
-use super::hex;
 use crate::{message::Block, time::SystemTime};
+
+use super::hex;
 
 #[derive(Clone, Serialize)]
 pub struct TxBlock {

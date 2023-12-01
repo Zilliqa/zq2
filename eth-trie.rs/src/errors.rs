@@ -1,4 +1,5 @@
-use std::{error::Error, fmt};
+use std::error::Error;
+use std::fmt;
 
 use keccak_hash::H256;
 use rlp::DecoderError;

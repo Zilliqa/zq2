@@ -1,6 +1,5 @@
-use ethers::providers::Middleware;
-
 use crate::Network;
+use ethers::providers::Middleware;
 
 #[zilliqa_macros::test]
 async fn sha3(mut network: Network) {

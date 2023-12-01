@@ -1,16 +1,18 @@
+use evm::backend::Backend;
+use evm::executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType};
+use evm::{Context, ExitError};
 use std::borrow::Cow;
 
-use ethers::abi::{decode, Address, ParamType, Token};
-use evm::{
-    backend::Backend,
-    executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType},
-    Context, ExitError,
-};
+use crate::precompiles::scilla_common::parse_invocation_prefix;
+use crate::precompiles::scilla_common::substitute_scilla_type_with_sol;
 use hex::ToHex;
 use primitive_types::U256;
 use serde_json::{json, Value};
 
-use crate::precompiles::scilla_common::{parse_invocation_prefix, substitute_scilla_type_with_sol};
+use ethers::abi::decode;
+use ethers::abi::Address;
+use ethers::abi::ParamType;
+use ethers::abi::Token;
 
 // TODO: revisit these consts
 const BASE_COST: u64 = 15;

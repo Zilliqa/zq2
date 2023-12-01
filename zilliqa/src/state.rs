@@ -1,11 +1,12 @@
-use std::{convert::TryInto, hash::Hash, sync::Arc};
-
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
+use std::convert::TryInto;
+use std::hash::Hash;
+use std::sync::Arc;
 
 use crate::{cfg::ConsensusConfig, contracts, crypto, db::TrieStorage};
 

@@ -1,12 +1,15 @@
 extern crate bs58;
 use std::{fs, path::PathBuf};
+use zilliqa::p2p_node::P2pNode;
 
 use anyhow::Result;
 use clap::Parser;
+
 use opentelemetry::runtime;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use tokio::time::Duration;
-use zilliqa::{cfg::Config, crypto::SecretKey, p2p_node::P2pNode};
+
+use zilliqa::{cfg::Config, crypto::SecretKey};
 
 #[derive(Parser, Debug)]
 struct Args {

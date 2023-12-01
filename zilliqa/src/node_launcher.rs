@@ -1,32 +1,29 @@
+use crate::p2p_node::LocalMessageTuple;
+use crate::{health::HealthLayer, message::ExternalMessage};
+use jsonrpsee::RpcModule;
 use std::{
     net::Ipv4Addr,
     sync::{Arc, Mutex},
-    time::Duration,
 };
+use tokio::sync::mpsc::UnboundedSender;
+
+use crate::{api, cfg::NodeConfig, crypto::SecretKey, node, p2p_node::OutboundMessageTuple};
 
 use anyhow::{anyhow, Result};
 use http::{header, Method};
-use jsonrpsee::RpcModule;
 use libp2p::{futures::StreamExt, PeerId};
+
+use crate::message::InternalMessage;
 use node::Node;
+use std::time::Duration;
 use tokio::{
     select,
-    sync::{mpsc, mpsc::UnboundedSender},
+    sync::mpsc,
     time::{self, Instant},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::*;
-
-use crate::{
-    api,
-    cfg::NodeConfig,
-    crypto::SecretKey,
-    health::HealthLayer,
-    message::{ExternalMessage, InternalMessage},
-    node,
-    p2p_node::{LocalMessageTuple, OutboundMessageTuple},
-};
 
 pub struct NodeLauncher {
     pub node: Arc<Mutex<Node>>,

@@ -1,12 +1,10 @@
-use std::io::Write;
-
+use crate::collector;
 use eyre::{eyre, Result};
+use std::io::Write;
 use tempfile::NamedTempFile;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::SecretKey;
-
-use crate::collector;
 
 const DATADIR_PREFIX: &str = "z2_node_";
 

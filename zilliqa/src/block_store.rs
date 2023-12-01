@@ -1,3 +1,4 @@
+use crate::message::ExternalMessage;
 use std::{cell::RefCell, num::NonZeroUsize, sync::Arc};
 
 use anyhow::Result;
@@ -8,7 +9,7 @@ use tracing::*;
 use crate::{
     crypto::Hash,
     db::Db,
-    message::{Block, BlockBatchRequest, BlockRef, BlockRequest, ExternalMessage},
+    message::{Block, BlockBatchRequest, BlockRef, BlockRequest},
     node::MessageSender,
 };
 

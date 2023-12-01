@@ -1,13 +1,10 @@
-use std::borrow::Cow;
-
-use evm::{
-    backend::Backend,
-    executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType},
-    Context, ExitError, ExitSucceed,
-};
+use evm::backend::Backend;
+use evm::executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType};
+use evm::{Context, ExitError, ExitSucceed};
 use num_bigint::BigUint;
 use num_integer::Integer;
 use primitive_types::U256;
+use std::borrow::Cow;
 
 pub(crate) fn modexp(
     input: &[u8],
