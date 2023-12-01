@@ -1,4 +1,5 @@
 use std::error::Error;
+
 use vergen::EmitBuilder;
 
 // This build script will be executed when building the project and will provide

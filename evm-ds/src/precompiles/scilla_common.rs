@@ -1,9 +1,7 @@
-use ethers::abi::ethereum_types::Address;
-use ethers::abi::{decode, ParamType, Token, Uint};
-use evm::executor::stack::PrecompileFailure;
-use evm::ExitError;
-use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
+
+use ethers::abi::{decode, ethereum_types::Address, ParamType, Token, Uint};
+use evm::{executor::stack::PrecompileFailure, ExitError};
 
 pub fn substitute_scilla_type_with_sol(arg_name: &str) -> Result<ParamType, PrecompileFailure> {
     let mapping = BTreeMap::from([

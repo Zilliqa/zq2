@@ -1,31 +1,24 @@
-use crate::p2p_node::LocalMessageTuple;
-use crate::{
-    cfg::NodeConfig,
-    db::Db,
-    message::{BlockNumber, InternalMessage},
-    p2p_node::OutboundMessageTuple,
-    transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
-};
-use primitive_types::H256;
 use std::sync::Arc;
 
-use evm_ds::protos::evm_proto::{self as EvmProto};
-
 use anyhow::{anyhow, Result};
+use evm_ds::protos::evm_proto::{self as EvmProto};
 use libp2p::PeerId;
-
-use primitive_types::U256;
+use primitive_types::{H256, U256};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::*;
 
 use crate::{
+    cfg::NodeConfig,
     consensus::Consensus,
     crypto::{Hash, NodePublicKey, SecretKey},
+    db::Db,
     message::{
-        Block, BlockBatchRequest, BlockBatchResponse, BlockRequest, BlockResponse, ExternalMessage,
-        Proposal,
+        Block, BlockBatchRequest, BlockBatchResponse, BlockNumber, BlockRequest, BlockResponse,
+        ExternalMessage, InternalMessage, Proposal,
     },
+    p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     state::{Account, Address},
+    transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 #[derive(Debug, Clone)]
