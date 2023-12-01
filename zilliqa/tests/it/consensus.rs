@@ -1,13 +1,13 @@
-use crate::Network;
 use ethabi::Token;
 use ethers::{
     providers::Middleware,
     types::{BlockNumber, TransactionRequest},
 };
 use primitive_types::H160;
-
 use tracing::*;
 use zilliqa::{contracts, state::contract_addr};
+
+use crate::Network;
 
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)

@@ -5,9 +5,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use evm_ds::tracing_logging::LoggingEventListener;
-
-use crate::{evm_backend::EvmBackend, state::contract_addr};
 use anyhow::{anyhow, Result};
 use ethabi::Token;
 use evm_ds::{
@@ -16,14 +13,16 @@ use evm_ds::{
         calculate_contract_address, calculate_contract_address_scheme, run_evm_impl_direct,
     },
     protos::evm_proto::{self as EvmProto, ExitReasonCps},
+    tracing_logging::LoggingEventListener,
 };
 use primitive_types::{H160, U256};
 use tracing::*;
 
 use crate::{
     contracts,
+    evm_backend::EvmBackend,
     message::BlockHeader,
-    state::{Address, State},
+    state::{contract_addr, Address, State},
     transaction::VerifiedTransaction,
 };
 
