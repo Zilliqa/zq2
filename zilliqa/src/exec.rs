@@ -101,6 +101,8 @@ pub struct TransactionApplyResult {
     pub logs: Vec<EvmProto::Log>,
     /// The traces from the EVM, if enabled
     pub traces: Arc<Mutex<LoggingEventListener>>,
+    /// The gas paid by the transaction
+    pub gas_used: u64,
 }
 
 impl State {
@@ -444,11 +446,23 @@ impl State {
             }
         }
 
+        // If this was contract creation, apply this to the deltas for the convenience of
+        // the caller
+        if let Some(created_contract_addr) = created_contract_addr {
+            backend.create_account(created_contract_addr, result.return_value.clone());
+        }
+
+        // If the result was a revert, kill all applys
+        if !run_succeeded {
+            debug!("Transaction failed, clearing applys.");
+            backend.account_storage_cached.clear();
+        }
+
         // Finally, we want to deduct the gas used by the caller and send it to the miner
         // For now we send it to origin and assume we will handle rewards later
         // In estimation mode, we do not attempt to deduct the gas (so we should use this mode for
         // system calls)
-        if !estimate && run_succeeded {
+        if !estimate {
             if result.remaining_gas > gas_limit {
                 panic!("More gas remains than we specified at the beginning of execution!");
             }
@@ -487,12 +501,6 @@ impl State {
             }
 
             backend.apply_update(gas_result.take_apply());
-        }
-
-        // If this was contract creation, apply this to the deltas for the convenience of
-        // the caller
-        if let Some(created_contract_addr) = created_contract_addr {
-            backend.create_account(created_contract_addr, result.return_value.clone());
         }
 
         let mut backend_result = backend.get_result();
@@ -578,9 +586,7 @@ impl State {
                 // Apply the state changes only if success
                 let success = result.succeeded();
 
-                if success {
-                    self.apply_delta(result.apply)?;
-                }
+                self.apply_delta(result.apply)?;
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
                 // and we get the return value (which will indicate the error)
@@ -603,6 +609,7 @@ impl State {
                     contract_address: contract_addr,
                     logs: result.logs,
                     traces: result.tx_trace.clone(),
+                    gas_used: txn.gas_limit() - result.remaining_gas,
                 })
             }
             Err(e) => {
@@ -613,6 +620,7 @@ impl State {
                     contract_address: None,
                     logs: Default::default(),
                     traces: Default::default(),
+                    gas_used: 0,
                 })
             }
         }

@@ -521,7 +521,7 @@ pub(super) fn get_transaction_receipt_inner(
         to: transaction.to_addr(),
         cumulative_gas_used: 0,
         effective_gas_price: 0,
-        gas_used: 1,
+        gas_used: receipt.gas_used,
         contract_address: receipt.contract_address,
         logs,
         logs_bloom,
