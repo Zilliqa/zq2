@@ -546,9 +546,22 @@ impl State {
         let from_addr = txn.signer;
         info!(?hash, ?txn, "executing txn");
 
-        let gas_price = self.get_gas_price()?;
-
         let txn = txn.tx.into_transaction();
+
+        // fail early on nonce mismatch
+        let mut acct = self.get_account(from_addr).unwrap();
+        if acct.nonce != txn.nonce() {
+            let error_str = format!(
+                "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
+                acct.nonce,
+                txn.nonce(),
+                hash
+            );
+            warn!(error_str);
+            return Err(anyhow!(error_str));
+        }
+
+        let gas_price = self.get_gas_price()?;
 
         if txn.gas_limit() < gas_price {
             let error_str = format!(
@@ -584,17 +597,6 @@ impl State {
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
                 // and we get the return value (which will indicate the error)
-                let mut acct = self.get_account(from_addr).unwrap();
-
-                if acct.nonce != txn.nonce() {
-                    let error_str =
-                        format!(
-                        "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
-                        acct.nonce, txn.nonce(), hash
-                    );
-                    warn!(error_str);
-                    return Err(anyhow!(error_str));
-                }
                 acct.nonce = acct.nonce.checked_add(1).unwrap();
                 self.save_account(from_addr, acct)?;
 
