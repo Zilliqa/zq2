@@ -31,8 +31,8 @@ jobs:
       run: cargo clippy --all-targets --all-features -- -D warnings
     - name: Test
       run: cargo test --all-targets --all-features
+      timeout-minutes: 30
     - name: Verify working directory is clean
       run: git diff --exit-code
-      # Run rustfmt with nightly, so we can use unstable features
     - name: rustfmt
-      run: cargo +nightly fmt --all --check
+      run: cargo fmt --all --check
