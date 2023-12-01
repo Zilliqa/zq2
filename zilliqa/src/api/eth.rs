@@ -10,16 +10,17 @@ use rlp::Rlp;
 use serde::Deserialize;
 use tracing::*;
 
-use super::{
-    to_hex::ToHex,
-    types::eth::{self, CallParams, EstimateGasParams, HashOrTransaction, OneOrMany},
-};
 use crate::{
     crypto::Hash,
     message::{Block, BlockNumber},
     node::Node,
     state::Address,
     transaction::{EthSignature, SignedTransaction, Transaction, TxEip1559, TxEip2930, TxLegacy},
+};
+
+use super::{
+    to_hex::ToHex,
+    types::eth::{self, CallParams, EstimateGasParams, HashOrTransaction, OneOrMany},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -79,8 +80,8 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     let ret = node.lock().unwrap().call_contract(
         block_number,
-        Address(call_params.from),
-        call_params.to.map(Address),
+        call_params.from,
+        call_params.to,
         call_params.data.clone(),
         U256::from(call_params.value),
         false,
@@ -129,7 +130,7 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(node
         .lock()
         .unwrap()
-        .get_native_balance(Address(address), block_number)?
+        .get_native_balance(address, block_number)?
         .to_hex())
 }
 
@@ -142,7 +143,7 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(node
         .lock()
         .unwrap()
-        .get_account(Address(address), block_number)?
+        .get_account(address, block_number)?
         .code
         .to_hex())
 }
@@ -158,10 +159,10 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     position.to_big_endian(&mut position_bytes);
     let position = H256::from_slice(&position_bytes);
 
-    let value =
-        node.lock()
-            .unwrap()
-            .get_account_storage(Address(address), position, block_number)?;
+    let value = node
+        .lock()
+        .unwrap()
+        .get_account_storage(address, position, block_number)?;
 
     Ok(value.to_hex())
 }
@@ -176,7 +177,7 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
         "get_transaction_count resp: {:?}",
         node.lock()
             .unwrap()
-            .get_account(Address(address), block_number)?
+            .get_account(address, block_number)?
             .nonce
             .to_hex()
     );
@@ -184,7 +185,7 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     Ok(node
         .lock()
         .unwrap()
-        .get_account(Address(address), block_number)?
+        .get_account(address, block_number)?
         .nonce
         .to_hex())
 }
@@ -432,7 +433,7 @@ pub(super) fn get_transaction_inner(
     let transaction = eth::Transaction {
         block_hash: block.as_ref().map(|b| b.hash().0.into()),
         block_number: block.as_ref().map(|b| b.number()),
-        from: from.0,
+        from,
         gas: 0,
         gas_price,
         max_fee_per_gas,
@@ -440,7 +441,7 @@ pub(super) fn get_transaction_inner(
         hash: H256(hash.0),
         input: transaction.payload().to_vec(),
         nonce: transaction.nonce(),
-        to: transaction.to_addr().map(|a| a.0),
+        to: transaction.to_addr(),
         transaction_index: block
             .map(|b| b.transactions.iter().position(|t| *t == hash).unwrap() as u64),
         value: transaction.amount(),
@@ -448,9 +449,7 @@ pub(super) fn get_transaction_inner(
         r,
         s,
         chain_id: transaction.chain_id(),
-        access_list: transaction
-            .access_list()
-            .map(|a| a.iter().map(|(a, s)| (a.0, s.clone())).collect()),
+        access_list: transaction.access_list().map(|a| a.to_vec()),
         transaction_type: match transaction {
             Transaction::Legacy(_) => 0,
             Transaction::Eip2930(_) => 1,
@@ -519,12 +518,12 @@ pub(super) fn get_transaction_receipt_inner(
         transaction_index: transaction_index as u64,
         block_hash: H256(block.hash().0),
         block_number: block.number(),
-        from: from.0,
-        to: transaction.to_addr().map(|a| a.0),
+        from,
+        to: transaction.to_addr(),
         cumulative_gas_used: 0,
         effective_gas_price: 0,
         gas_used: 1,
-        contract_address: receipt.contract_address.map(|a| a.0),
+        contract_address: receipt.contract_address,
         logs,
         logs_bloom,
         ty: 0,
@@ -613,7 +612,7 @@ fn parse_legacy_transaction(rlp: Rlp<'_>) -> Result<SignedTransaction> {
         nonce,
         gas_price,
         gas_limit,
-        to_addr: (!to_addr.is_empty()).then_some(Address::from_slice(&to_addr)),
+        to_addr: (!to_addr.is_empty()).then(|| Address::from_slice(&to_addr)),
         amount,
         payload,
     };
@@ -645,13 +644,10 @@ fn parse_eip2930_transaction(rlp: Rlp<'_>) -> Result<SignedTransaction> {
         nonce,
         gas_price,
         gas_limit,
-        to_addr: (!to_addr.is_empty()).then_some(Address::from_slice(&to_addr)),
+        to_addr: (!to_addr.is_empty()).then(|| Address::from_slice(&to_addr)),
         amount,
         payload,
-        access_list: access_list
-            .into_iter()
-            .map(|(a, s)| (Address(a), s))
-            .collect(),
+        access_list,
     };
 
     Ok(SignedTransaction::Eip2930 { tx, sig })
@@ -683,13 +679,10 @@ fn parse_eip1559_transaction(rlp: Rlp<'_>) -> Result<SignedTransaction> {
         max_priority_fee_per_gas,
         max_fee_per_gas,
         gas_limit,
-        to_addr: (!to_addr.is_empty()).then_some(Address::from_slice(&to_addr)),
+        to_addr: (!to_addr.is_empty()).then(|| Address::from_slice(&to_addr)),
         amount,
         payload,
-        access_list: access_list
-            .into_iter()
-            .map(|(a, s)| (Address(a), s))
-            .collect(),
+        access_list,
     };
 
     Ok(SignedTransaction::Eip1559 { tx, sig })
@@ -751,7 +744,6 @@ mod tests {
     use crate::{
         api::eth::{left_pad_arr, parse_transaction},
         crypto::Hash,
-        state::Address,
         transaction::{EthSignature, SignedTransaction, TxLegacy, VerifiedTransaction},
     };
 
@@ -768,7 +760,7 @@ mod tests {
                     nonce: 9,
                     gas_price: 20 * 10_u128.pow(9),
                     gas_limit: 21000u64,
-                    to_addr: Some(Address("0x3535353535353535353535353535353535353535".parse().unwrap())),
+                    to_addr: Some("0x3535353535353535353535353535353535353535".parse().unwrap()),
                     amount: 10u128.pow(18),
                     payload: Vec::new(),
                 },
@@ -778,7 +770,7 @@ mod tests {
                     y_is_odd: false,
                 },
             },
-            signer: Address("0x9d8A62f656a8d1615C1294fd71e9CFb3E4855A4F".parse().unwrap()),
+            signer: "0x9d8A62f656a8d1615C1294fd71e9CFb3E4855A4F".parse().unwrap(),
             hash: Hash::from_bytes(hex::decode("33469b22e9f636356c4160a87eb19df52b7412e8eac32a4a55ffe88ea8350788").unwrap()).unwrap(),
         };
         assert_eq!(recovered_tx, expected);

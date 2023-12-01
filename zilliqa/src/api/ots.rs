@@ -6,11 +6,12 @@ use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
 use tracing::trace;
 
+use crate::{crypto::Hash, message::BlockNumber, node::Node, state::Address, time::SystemTime};
+
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},
     types::ots,
 };
-use crate::{crypto::Hash, message::BlockNumber, node::Node, state::Address, time::SystemTime};
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
@@ -111,7 +112,7 @@ fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
     let empty = node
         .lock()
         .unwrap()
-        .get_account(Address(address), block_number)?
+        .get_account(address, block_number)?
         .code
         .is_empty();
 
@@ -217,7 +218,7 @@ fn search_transactions_after(params: Params, node: &Arc<Mutex<Node>>) -> Result<
     let block_number: u64 = params.next()?;
     let page_size: usize = params.next()?;
 
-    search_transactions_inner(node, Address(address), block_number, page_size, false)
+    search_transactions_inner(node, address, block_number, page_size, false)
 }
 
 fn search_transactions_before(
@@ -234,7 +235,7 @@ fn search_transactions_before(
         block_number = u64::MAX;
     }
 
-    search_transactions_inner(node, Address(address), block_number, page_size, true)
+    search_transactions_inner(node, address, block_number, page_size, true)
 }
 
 fn get_internal_operations(

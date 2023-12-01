@@ -1,18 +1,13 @@
-use std::{
-    collections::BTreeSet,
-    fmt,
-    fmt::{Display, Formatter},
-    str::FromStr,
-};
+use std::collections::BTreeSet;
 
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
 use libp2p::PeerId;
-use rand::Rng;
+
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
+use std::{fmt, fmt::Display, fmt::Formatter, str::FromStr};
 use time::{macros::format_description, OffsetDateTime};
-use tracing::*;
 
 use crate::{
     consensus::Validator,
@@ -61,6 +56,14 @@ impl Proposal {
             self.transactions,
         )
     }
+
+    pub fn number(&self) -> u64 {
+        self.header.number
+    }
+
+    pub fn view(&self) -> u64 {
+        self.header.view
+    }
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -83,8 +86,6 @@ impl Vote {
         bytes.extend_from_slice(block_hash.as_bytes());
         bytes.extend_from_slice(&view.to_be_bytes());
 
-        warn!("sign vote {:?} {:?}", block_hash, view);
-
         Vote {
             signature: secret_key.sign(&bytes),
             block_hash,
@@ -102,8 +103,6 @@ impl Vote {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(self.block_hash.as_bytes());
         bytes.extend_from_slice(&self.view.to_be_bytes());
-
-        trace!("Verify vote: {:?}", self);
 
         self.public_key.verify(&bytes, self.signature)
     }
@@ -156,11 +155,11 @@ pub struct BlockBatchRequest(pub BlockRef);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
-    pub block: Block,
+    pub proposal: Proposal,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockBatchResponse {
-    pub blocks: Vec<Block>,
+    pub proposals: Vec<Proposal>,
 }
 
 /// A message intended to be sent over the network as part of p2p communication.
@@ -241,6 +240,12 @@ impl QuorumCertificate {
             block_hash,
             view,
         }
+    }
+
+    // Verifying an aggregated signature is a case of verifying the aggregated public key
+    // against the aggregated signature
+    pub fn verify(&self, _public_keys: Vec<NodePublicKey>) -> bool {
+        true
     }
 
     pub fn compute_hash(&self) -> Hash {
@@ -330,12 +335,13 @@ impl fmt::Display for BlockHeader {
 // Helper function to format SystemTime as a string
 // https://stackoverflow.com/questions/45386585
 fn systemtime_strftime(timestamp: SystemTime) -> Result<String> {
-    let time_since_epoch = timestamp.elapsed()?;
+    let time_since_epoch = timestamp
+        .elapsed()
+        .map(|d| d.as_nanos() as i128)
+        // Handle the case where `timestamp` was before unix epoch.
+        .unwrap_or_else(|e| -(e.duration().as_nanos() as i128));
     let format = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
-    Ok(
-        OffsetDateTime::from_unix_timestamp_nanos(time_since_epoch.as_nanos() as i128)?
-            .format(&format)?,
-    )
+    Ok(OffsetDateTime::from_unix_timestamp_nanos(time_since_epoch)?.format(&format)?)
 }
 
 impl BlockHeader {
@@ -504,10 +510,8 @@ impl Committee {
         self.0.retain(|v| v.peer_id != peer_id);
     }
 
-    pub fn choose_random(&mut self) -> Validator {
-        let mut rng = rand::thread_rng();
-        let index = rng.gen_range(0..self.0.len());
-        self.get_by_index(index).unwrap()
+    pub fn public_keys(&self) -> Vec<NodePublicKey> {
+        self.0.iter().map(|v| v.public_key).collect()
     }
 }
 

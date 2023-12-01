@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use eth_trie::{EthTrie, MemoryDB, Trie};
+
 use uuid::Uuid;
+
+use eth_trie::MemoryDB;
+use eth_trie::{EthTrie, Trie};
 
 fn insert_worse_case_benchmark(c: &mut Criterion) {
     c.bench_function("insert one", |b| {

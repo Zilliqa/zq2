@@ -11,10 +11,9 @@ pub use time_impl::*;
 
 #[cfg(feature = "fake_time")]
 mod time_impl {
-    use std::{error::Error, fmt, sync::Mutex, time::Duration};
-
     use futures::Future;
     use serde::{Deserialize, Serialize};
+    use std::{error::Error, fmt, sync::Mutex, time::Duration};
 
     /// A fake implementation of [std::time::SystemTime]. The value of `SystemTime::now` can be controlled with [advance_time].
     #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -36,7 +35,7 @@ mod time_impl {
         }
 
         pub fn elapsed(&self) -> Result<Duration, SystemTimeError> {
-            self.duration_since(SystemTime::now())
+            SystemTime::now().duration_since(*self)
         }
 
         pub fn duration_since(&self, other: SystemTime) -> Result<Duration, SystemTimeError> {

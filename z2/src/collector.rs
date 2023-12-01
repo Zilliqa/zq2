@@ -1,12 +1,10 @@
-use std::vec::Vec;
-
+use crate::runner;
 use eyre::Result;
 use futures::future::JoinAll;
+use std::vec::Vec;
 use tempfile::NamedTempFile;
 use tokio::sync::mpsc;
 use zilliqa::crypto::SecretKey;
-
-use crate::runner;
 
 pub struct Collector {
     pub runners: Vec<runner::Process>,

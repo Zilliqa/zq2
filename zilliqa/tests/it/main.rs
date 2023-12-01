@@ -1,24 +1,25 @@
 mod consensus;
 mod eth;
-mod native_contracts;
 mod persistence;
 mod web3;
 mod zil;
-use std::{env, ops::DerefMut};
-
 use ethers::solc::SHANGHAI_SOLC;
 use itertools::Itertools;
-use zilliqa::{
-    cfg::{ConsensusConfig, NodeConfig},
-    crypto::{Hash, NodePublicKey, SecretKey},
-    message::{ExternalMessage, InternalMessage},
-    node::Node,
-    state::Address,
-};
+use serde::Deserialize;
+use std::env;
+use std::ops::DerefMut;
+use zilliqa::cfg::ConsensusConfig;
+use zilliqa::cfg::NodeConfig;
+use zilliqa::crypto::{NodePublicKey, SecretKey};
+use zilliqa::message::{ExternalMessage, InternalMessage};
+use zilliqa::node::Node;
+use zilliqa::state::Address;
 
 extern crate fs_extra;
+use fs_extra::dir::*;
+
+use std::collections::HashMap;
 use std::{
-    collections::HashMap,
     fmt::Debug,
     fs,
     rc::Rc,
@@ -31,41 +32,30 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+
+use ethers::utils::secret_key_to_address;
 use ethers::{
     abi::Contract,
     prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, SignerMiddleware},
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::LocalWallet,
     types::H256,
-    utils::secret_key_to_address,
 };
-use fs_extra::dir::*;
 use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
+
 use jsonrpsee::{
     types::{Id, RequestSer, Response, ResponsePayload},
     RpcModule,
 };
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
-use primitive_types::H160;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
-
-#[derive(Deserialize)]
-struct CombinedJson {
-    contracts: HashMap<String, AbiContract>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct AbiContract {
-    abi: ethabi::Contract,
-}
 
 /// (source, destination, message) for both
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,12 +70,10 @@ type StreamMessage = (PeerId, Option<PeerId>, AnyMessage);
 // type
 #[allow(clippy::type_complexity)]
 fn node(
-    genesis_committee: Vec<(NodePublicKey, PeerId)>,
-    genesis_hash: Option<Hash>,
+    config: NodeConfig,
     secret_key: SecretKey,
     index: usize,
     datadir: Option<TempDir>,
-    genesis_account: H160,
 ) -> Result<(
     TestNode,
     BoxStream<'static, StreamMessage>,
@@ -120,21 +108,7 @@ fn node(
             data_dir: datadir
                 .as_ref()
                 .map(|d| d.path().to_str().unwrap().to_string()),
-            consensus: ConsensusConfig {
-                genesis_committee,
-                genesis_hash,
-                // Give a genesis account 1 billion ZIL.
-                genesis_accounts: vec![(
-                    Address(genesis_account),
-                    1_000_000_000u128
-                        .checked_mul(10u128.pow(18))
-                        .unwrap()
-                        .to_string(),
-                )],
-                consensus_timeout: Duration::from_secs(1),
-                ..Default::default()
-            },
-            ..Default::default()
+            ..config
         },
         secret_key,
         message_sender,
@@ -170,10 +144,10 @@ struct TestNode {
 
 struct Network {
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
-    /// Save the funded genesis address for use in restarts.
-    pub genesis_address: H160,
     /// Child shards.
     pub children: HashMap<u64, Network>,
+    pub is_main: bool,
+    pub shard_id: u64,
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
     // the borrow checker happy.
     nodes: Vec<TestNode>,
@@ -189,7 +163,18 @@ struct Network {
 }
 
 impl Network {
+    /// Create a main shard network.
     pub fn new(rng: Arc<Mutex<ChaCha8Rng>>, nodes: usize, seed: u64) -> Network {
+        Self::new_shard(rng, nodes, true, NodeConfig::default().eth_chain_id, seed)
+    }
+
+    pub fn new_shard(
+        rng: Arc<Mutex<ChaCha8Rng>>,
+        nodes: usize,
+        is_main: bool,
+        shard_id: u64,
+        seed: u64,
+    ) -> Network {
         let mut keys: Vec<_> = (0..nodes)
             .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
             .collect();
@@ -204,22 +189,25 @@ impl Network {
         let genesis_committee = vec![validator];
         let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
-        // save for later use if we restart
-        let genesis_address = secret_key_to_address(&genesis_key);
+        let config = NodeConfig {
+            eth_chain_id: shard_id,
+            consensus: ConsensusConfig {
+                genesis_committee: genesis_committee.clone(),
+                genesis_hash: None,
+                is_main,
+                consensus_timeout: Duration::from_secs(1),
+                // Give a genesis account 1 billion ZIL.
+                genesis_accounts: Self::genesis_accounts(&genesis_key),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
-                node(
-                    genesis_committee.clone(),
-                    None,
-                    key,
-                    i,
-                    Some(tempfile::tempdir().unwrap()),
-                    genesis_address,
-                )
-                .unwrap()
+                node(config.clone(), key, i, Some(tempfile::tempdir().unwrap())).unwrap()
             })
             .multiunzip();
 
@@ -243,8 +231,9 @@ impl Network {
 
         Network {
             genesis_committee,
-            genesis_address,
             nodes,
+            is_main,
+            shard_id,
             receivers,
             resend_message,
             rng,
@@ -252,6 +241,16 @@ impl Network {
             children: HashMap::new(),
             genesis_key,
         }
+    }
+
+    fn genesis_accounts(genesis_key: &SigningKey) -> Vec<(Address, String)> {
+        vec![(
+            secret_key_to_address(genesis_key),
+            1_000_000_000u128
+                .checked_mul(10u128.pow(18))
+                .unwrap()
+                .to_string(),
+        )]
     }
 
     pub fn add_node(&mut self, genesis: bool) -> usize {
@@ -271,15 +270,21 @@ impl Network {
                 ),
             )
         };
-        let (node, receiver, local_receiver) = node(
-            genesis_committee,
-            genesis_hash,
-            secret_key,
-            self.nodes.len(),
-            None,
-            secret_key_to_address(&self.genesis_key),
-        )
-        .unwrap();
+
+        let config = NodeConfig {
+            eth_chain_id: self.shard_id,
+            consensus: ConsensusConfig {
+                genesis_committee,
+                genesis_hash,
+                is_main: self.is_main,
+                consensus_timeout: Duration::from_secs(1),
+                genesis_accounts: Self::genesis_accounts(&self.genesis_key),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (node, receiver, local_receiver) =
+            node(config, secret_key, self.nodes.len(), None).unwrap();
 
         self.resend_message
             .send((
@@ -337,15 +342,21 @@ impl Network {
                     warn!("Failed to copy data dir over");
                 }
 
-                node(
-                    genesis_committee.clone(),
-                    None,
-                    key,
-                    i,
-                    Some(new_data_dir),
-                    self.genesis_address,
-                )
-                .unwrap()
+                let config = NodeConfig {
+                    eth_chain_id: self.shard_id,
+                    consensus: ConsensusConfig {
+                        genesis_committee: genesis_committee.clone(),
+                        genesis_hash: None,
+                        is_main: self.is_main,
+                        consensus_timeout: Duration::from_secs(1),
+                        // Give a genesis account 1 billion ZIL.
+                        genesis_accounts: Self::genesis_accounts(&self.genesis_key),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+
+                node(config, key, i, Some(new_data_dir)).unwrap()
             })
             .multiunzip();
 
@@ -375,7 +386,7 @@ impl Network {
         // this could of course spin forever, but the test itself should time out.
         loop {
             for node in &self.nodes {
-                if node.inner.lock().unwrap().handle_timeout() {
+                if node.inner.lock().unwrap().handle_timeout().unwrap() {
                     return;
                 }
                 zilliqa::time::advance(Duration::from_millis(500));
@@ -416,6 +427,8 @@ impl Network {
         let mut counter = 0;
         let mut proposals_seen = 0;
         let mut broadcast_handled = false;
+
+        trace!("Dropping propose messages except one");
 
         loop {
             // Generate some messages
@@ -491,6 +504,8 @@ impl Network {
                 self.resend_message.send(message).unwrap();
             }
         }
+
+        trace!("Finished dropping propose messages except one");
     }
 
     // Drop the first message in each node queue with N% probability per tick
@@ -539,13 +554,13 @@ impl Network {
 
         if messages.is_empty() {
             trace!("Messages were empty - advance time and trigger timeout in all nodes!");
-            zilliqa::time::advance(Duration::from_millis(500));
+            zilliqa::time::advance(Duration::from_millis(1000));
 
             for (index, node) in self.nodes.iter().enumerate() {
                 let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
 
                 span.in_scope(|| {
-                    node.inner.lock().unwrap().handle_timeout();
+                    node.inner.lock().unwrap().handle_timeout().unwrap();
                 });
             }
             return;
@@ -586,26 +601,26 @@ impl Network {
                 }
             }
             AnyMessage::External(external_message) => {
-                let nodes: Vec<&TestNode> = if let Some(destination) = message.1 {
+                let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = message.1 {
                     vec![self
                         .nodes
                         .iter()
-                        .find(|n| n.peer_id == destination)
+                        .enumerate()
+                        .find(|(_, n)| n.peer_id == destination)
                         .unwrap()]
                 } else {
-                    self.nodes.iter().collect()
+                    self.nodes.iter().enumerate().collect()
                 };
-
-                for node in &nodes {
-                    // Need to recalculate index against the original vec, not the filtered one.
-                    let index = self
-                        .nodes
-                        .iter()
-                        .position(|n| n.peer_id == node.peer_id)
-                        .unwrap();
-
+                for (index, node) in nodes.iter() {
                     let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                     span.in_scope(|| {
+                        if message.1.is_some() {
+                            info!(
+                                "destination: {}, node being used: {}",
+                                message.1.unwrap(),
+                                node.inner.lock().unwrap().peer_id()
+                            );
+                        }
                         node.inner
                             .lock()
                             .unwrap()
@@ -739,7 +754,7 @@ fn format_message(
                 format!("{} [{:?}]", message.name(), request.0)
             }
             ExternalMessage::BlockResponse(response) => {
-                format!("{} [{}]", message.name(), response.block.number())
+                format!("{} [{}]", message.name(), response.proposal.number())
             }
             _ => message.name().to_owned(),
         },

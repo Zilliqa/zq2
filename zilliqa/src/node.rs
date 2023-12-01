@@ -1,24 +1,31 @@
+use crate::p2p_node::LocalMessageTuple;
+use crate::{
+    cfg::NodeConfig,
+    db::Db,
+    message::{BlockNumber, InternalMessage},
+    p2p_node::OutboundMessageTuple,
+    transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
+};
+use primitive_types::H256;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
 use evm_ds::protos::evm_proto::{self as EvmProto};
+
+use anyhow::{anyhow, Result};
 use libp2p::PeerId;
-use primitive_types::{H256, U256};
+
+use primitive_types::U256;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::*;
 
 use crate::{
-    cfg::NodeConfig,
     consensus::Consensus,
     crypto::{Hash, NodePublicKey, SecretKey},
-    db::Db,
     message::{
-        Block, BlockBatchRequest, BlockBatchResponse, BlockNumber, BlockRequest, BlockResponse,
-        ExternalMessage, InternalMessage, Proposal,
+        Block, BlockBatchRequest, BlockBatchResponse, BlockRequest, BlockResponse, ExternalMessage,
+        Proposal,
     },
-    p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     state::{Account, Address},
-    transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 #[derive(Debug, Clone)]
@@ -130,7 +137,7 @@ impl Node {
             ExternalMessage::Proposal(m) => {
                 let m_view = m.header.view;
 
-                if let Some((leader, vote)) = self.consensus.proposal(m)? {
+                if let Some((leader, vote)) = self.consensus.proposal(m, false)? {
                     self.reset_timeout.send(())?;
                     self.message_sender
                         .send_external_message(leader, ExternalMessage::Vote(vote))?;
@@ -199,14 +206,14 @@ impl Node {
     }
 
     // handle timeout - true if something happened
-    pub fn handle_timeout(&mut self) -> bool {
-        if let Some((leader, response)) = self.consensus.timeout() {
+    pub fn handle_timeout(&mut self) -> Result<bool> {
+        if let Some((leader, response)) = self.consensus.timeout()? {
             self.message_sender
                 .send_external_message(leader, response)
                 .unwrap();
-            return true;
+            return Ok(true);
         }
-        false
+        Ok(false)
     }
 
     pub fn add_peer(&mut self, peer: PeerId, public_key: NodePublicKey) -> Result<()> {
@@ -428,16 +435,35 @@ impl Node {
 
         self.message_sender.send_external_message(
             source,
-            ExternalMessage::BlockResponse(BlockResponse { block }),
+            ExternalMessage::BlockResponse(BlockResponse {
+                proposal: self.block_to_proposal(block),
+            }),
         )?;
 
         Ok(())
     }
 
     fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
-        self.consensus.receive_block(response.block)?;
+        let _ = self.consensus.receive_block(response.proposal)?;
 
         Ok(())
+    }
+
+    // Convenience function to convert a block to a proposal (add full txs)
+    fn block_to_proposal(&self, block: Block) -> Proposal {
+        let txs: Vec<SignedTransaction> = block
+            .transactions
+            .iter()
+            .map(|tx_hash| {
+                self.consensus
+                    .get_transaction_by_hash(*tx_hash)
+                    .unwrap()
+                    .unwrap()
+                    .tx
+            })
+            .collect::<Vec<_>>();
+
+        Proposal::from_parts(block, txs)
     }
 
     fn handle_block_batch_request(
@@ -459,13 +485,15 @@ impl Node {
             }
         };
 
-        let block_number = block.header.number;
-        let mut blocks: Vec<Block> = Vec::new();
+        let mut proposal = self.block_to_proposal(block);
+        let block_number = proposal.header.number;
+        let mut proposals: Vec<Proposal> = Vec::new();
 
         for i in block_number..block_number + 100 {
             let block = self.consensus.get_block_by_number(i);
             if let Ok(Some(block)) = block {
-                blocks.push(block);
+                proposal = self.block_to_proposal(block);
+                proposals.push(proposal);
             } else {
                 break;
             }
@@ -475,12 +503,12 @@ impl Node {
             "Responding to new blocks request of {:?} starting {} with {} blocks",
             request,
             block_number,
-            blocks.len()
+            proposals.len()
         );
 
         self.message_sender.send_external_message(
             source,
-            ExternalMessage::BlockBatchResponse(BlockBatchResponse { blocks }),
+            ExternalMessage::BlockBatchResponse(BlockBatchResponse { proposals }),
         )?;
 
         Ok(())
@@ -489,12 +517,12 @@ impl Node {
     fn handle_blocks_response(&mut self, _: PeerId, response: BlockBatchResponse) -> Result<()> {
         trace!(
             "Received blocks response of length {}",
-            response.blocks.len()
+            response.proposals.len()
         );
         let mut was_new = false;
-        let length_recvd = response.blocks.len();
+        let length_recvd = response.proposals.len();
 
-        for block in response.blocks {
+        for block in response.proposals {
             was_new = self.consensus.receive_block(block)?;
         }
 

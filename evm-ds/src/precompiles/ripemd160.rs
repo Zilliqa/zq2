@@ -1,10 +1,7 @@
+use evm::backend::Backend;
+use evm::executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType};
+use evm::{Context, ExitError, ExitSucceed};
 use std::borrow::Cow;
-
-use evm::{
-    backend::Backend,
-    executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType},
-    Context, ExitError, ExitSucceed,
-};
 
 const RIPEMD160_BASE: u64 = 600;
 const RIPEMD160_PER_WORD: u64 = 120;

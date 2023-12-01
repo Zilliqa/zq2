@@ -1,6 +1,16 @@
 //! A node in the Zilliqa P2P network. May coordinate multiple shard nodes.
 
+use crate::cfg::{ConsensusConfig, NodeConfig};
+
 use std::{collections::HashMap, iter};
+use tokio::{sync::mpsc::UnboundedSender, task::JoinSet};
+
+use crate::{
+    cfg::Config,
+    crypto::SecretKey,
+    networking::{request_response, MessageCodec, MessageProtocol, ProtocolSupport},
+    node_launcher::NodeLauncher,
+};
 
 use anyhow::{anyhow, Result};
 use libp2p::{
@@ -15,22 +25,16 @@ use libp2p::{
     swarm::{self, NetworkBehaviour, SwarmEvent},
     tcp, yamux, PeerId, Swarm, Transport,
 };
+
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
-    sync::{mpsc, mpsc::UnboundedSender},
-    task::JoinSet,
+    sync::mpsc,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    cfg::{Config, ConsensusConfig, NodeConfig},
-    crypto::SecretKey,
-    message::{ExternalMessage, InternalMessage},
-    networking::{request_response, MessageCodec, MessageProtocol, ProtocolSupport},
-    node_launcher::NodeLauncher,
-};
+use crate::message::{ExternalMessage, InternalMessage};
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {

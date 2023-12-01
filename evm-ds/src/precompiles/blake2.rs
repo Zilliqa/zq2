@@ -1,10 +1,8 @@
 use std::borrow::Cow;
 
-use evm::{
-    backend::Backend,
-    executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType},
-    Context, ExitError, ExitSucceed,
-};
+use evm::backend::Backend;
+use evm::executor::stack::{PrecompileFailure, PrecompileOutput, PrecompileOutputType};
+use evm::{Context, ExitError, ExitSucceed};
 
 /// Blake2 constants.
 mod consts {

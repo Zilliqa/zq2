@@ -1,14 +1,11 @@
 #[cfg(test)]
 mod trie_tests {
-    use std::sync::Arc;
-
     use hex::FromHex;
     use rand::Rng;
+    use std::sync::Arc;
 
-    use crate::{
-        db::MemoryDB,
-        trie::{EthTrie, Trie},
-    };
+    use crate::db::MemoryDB;
+    use crate::trie::{EthTrie, Trie};
 
     fn assert_root(data: Vec<(&[u8], &[u8])>, hash: &str) {
         let memdb = Arc::new(MemoryDB::new(true));
