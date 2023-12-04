@@ -41,6 +41,10 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
             // `JoinSet` (via `.join_next_with_id()`), where we can guarantee to only process one case at a time.
             let mut id_to_seed = std::collections::HashMap::new();
 
+            // time this whole test to make sure its not taking too long
+            use std::time::{Duration, Instant};
+            let start = Instant::now();
+
             // Silence the default panic hook.
             std::panic::set_hook(Box::new(|_| {}));
 
@@ -91,6 +95,12 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                         }
                     },
                 }
+            }
+
+            let duration = start.elapsed();
+
+            if duration.as_secs() > 60 {
+                panic!("Test took too long: {:?}", duration);
             }
         }
     }
