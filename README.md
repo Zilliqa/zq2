@@ -1,5 +1,6 @@
 # Zilliqa 2.0 - The next evolution of Zilliqa
 
+
 ## Running a Node
 
 To start a node you need to pass a private key as a command line parameter.
