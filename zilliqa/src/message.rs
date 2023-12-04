@@ -87,7 +87,7 @@ impl Vote {
     ) -> Self {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(block_hash.as_bytes());
-        bytes.extend_from_slice(&view.to_be_bytes());
+        //bytes.extend_from_slice(&view.to_be_bytes());
 
         Vote {
             signature: secret_key.sign(&bytes),
@@ -105,7 +105,7 @@ impl Vote {
     pub fn verify(&self) -> Result<()> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(self.block_hash.as_bytes());
-        bytes.extend_from_slice(&self.view.to_be_bytes());
+        //bytes.extend_from_slice(&self.view.to_be_bytes());
 
         self.public_key.verify(&bytes, self.signature)
     }
@@ -248,7 +248,18 @@ impl QuorumCertificate {
     // Verifying an aggregated signature is a case of verifying the aggregated public key
     // against the aggregated signature
     pub fn verify(&self, _public_keys: Vec<NodePublicKey>) -> bool {
-        true
+        // Select which public keys have gone into creating the signature
+        let public_keys = _public_keys.into_iter().zip(self.cosigned.iter()).filter_map(
+            |(public_key, cosigned)| {
+                if *cosigned {
+                    Some(public_key)
+                } else {
+                    None
+                }
+            },
+        ).collect::<Vec<_>>();
+
+        NodeSignature::verify_aggregate(&self.signature, self.block_hash.as_bytes(), public_keys).is_ok()
     }
 
     pub fn compute_hash(&self) -> Hash {
