@@ -521,8 +521,6 @@ impl Consensus {
             next_exponential_backoff_timeout
         );
 
-        info!("Head block is: {}", head_block);
-
         let _ = self.download_blocks_up_to_head();
         self.view.set_view(self.view.get_view() + 1);
 
@@ -1653,7 +1651,7 @@ impl Consensus {
                     block.view()
                 );
 
-                //self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
+                self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
 
                 let current_head = self.head_block();
 
@@ -1668,8 +1666,6 @@ impl Consensus {
                 Ok(false)
             }
         }
-//
-        //Ok(true)
     }
 
     fn add_block(&mut self, block: Block) -> Result<()> {

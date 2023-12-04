@@ -356,7 +356,7 @@ async fn handle_forking_correctly(mut network: Network) {
                     _ => false,
                 }
             },
-            1001,
+            1000,
         )
         .await
         .unwrap();
