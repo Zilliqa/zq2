@@ -634,7 +634,6 @@ impl Consensus {
 
             for txn in &transactions {
                 let txn = self.new_transaction(txn.clone())?;
-                //let txn = txn.clone().verify()?;
                 let tx_hash = txn.hash;
                 if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
                     self.db
