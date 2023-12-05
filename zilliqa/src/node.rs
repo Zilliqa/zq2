@@ -454,8 +454,8 @@ impl Node {
             .map(|tx_hash| {
                 self.consensus
                     .get_transaction_by_hash(*tx_hash)
-                    .unwrap()
-                    .unwrap()
+                    .expect("An err occured getting the tx by hash")
+                    .expect(format!("Tx with hash {:?} not found", tx_hash).as_str())
                     .tx
             })
             .collect::<Vec<_>>();

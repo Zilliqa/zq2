@@ -32,7 +32,7 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                 // Generate random seeds using the thread-local RNG.
                 //rand::Rng::sample_iter(rand::thread_rng(), rand::distributions::Standard).take(samples).collect()
                 // Populate from a range
-                let ret = (0..samples).map(|x| x as u64).collect();
+                let ret = (543..samples+543).map(|x| x as u64).collect();
                 ret
                 //(0..samples).collect().iter().map(|x| *x as u64).collect()
             };
