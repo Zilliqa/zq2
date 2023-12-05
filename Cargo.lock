@@ -3809,37 +3809,32 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry"
-version = "0.19.0"
-source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=ecf0dda5686dc45470ae02993a4748c289c407de#ecf0dda5686dc45470ae02993a4748c289c407de"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e32339a5dc40459130b3bd269e9892439f55b33e772d2a9d402a789baaf4e8a"
 dependencies = [
- "opentelemetry_api",
- "opentelemetry_sdk",
-]
-
-[[package]]
-name = "opentelemetry-http"
-version = "0.8.0"
-source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=ecf0dda5686dc45470ae02993a4748c289c407de#ecf0dda5686dc45470ae02993a4748c289c407de"
-dependencies = [
- "async-trait",
- "bytes",
- "http",
- "opentelemetry_api",
+ "futures-core",
+ "futures-sink",
+ "indexmap 2.1.0",
+ "js-sys",
+ "once_cell",
+ "pin-project-lite",
+ "thiserror",
+ "urlencoding",
 ]
 
 [[package]]
 name = "opentelemetry-otlp"
-version = "0.12.0"
-source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=ecf0dda5686dc45470ae02993a4748c289c407de#ecf0dda5686dc45470ae02993a4748c289c407de"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f24cda83b20ed2433c68241f918d0f6fdec8b1d43b7a9590ab4420c5095ca930"
 dependencies = [
  "async-trait",
- "futures",
- "futures-util",
+ "futures-core",
  "http",
- "opentelemetry-http",
+ "opentelemetry",
  "opentelemetry-proto",
  "opentelemetry-semantic-conventions",
- "opentelemetry_api",
  "opentelemetry_sdk",
  "prost 0.11.9",
  "thiserror",
@@ -3849,12 +3844,11 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry-proto"
-version = "0.2.0"
-source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=ecf0dda5686dc45470ae02993a4748c289c407de#ecf0dda5686dc45470ae02993a4748c289c407de"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2e155ce5cc812ea3d1dffbd1539aed653de4bf4882d60e6e04dcf0901d674e1"
 dependencies = [
- "futures",
- "futures-util",
- "opentelemetry_api",
+ "opentelemetry",
  "opentelemetry_sdk",
  "prost 0.11.9",
  "tonic",
@@ -3862,43 +3856,30 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry-semantic-conventions"
-version = "0.11.0"
-source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=ecf0dda5686dc45470ae02993a4748c289c407de#ecf0dda5686dc45470ae02993a4748c289c407de"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5774f1ef1f982ef2a447f6ee04ec383981a3ab99c8e77a1a7b30182e65bbc84"
 dependencies = [
  "opentelemetry",
 ]
 
 [[package]]
-name = "opentelemetry_api"
-version = "0.19.0"
-source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=ecf0dda5686dc45470ae02993a4748c289c407de#ecf0dda5686dc45470ae02993a4748c289c407de"
-dependencies = [
- "fnv",
- "futures-channel",
- "futures-util",
- "indexmap 1.9.3",
- "once_cell",
- "pin-project-lite",
- "thiserror",
- "urlencoding",
-]
-
-[[package]]
 name = "opentelemetry_sdk"
-version = "0.19.0"
-source = "git+https://github.com/open-telemetry/opentelemetry-rust?rev=ecf0dda5686dc45470ae02993a4748c289c407de#ecf0dda5686dc45470ae02993a4748c289c407de"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "968ba3f2ca03e90e5187f5e4f46c791ef7f2c163ae87789c8ce5f5ca3b7b7de5"
 dependencies = [
  "async-trait",
  "crossbeam-channel",
  "futures-channel",
  "futures-executor",
  "futures-util",
+ "glob",
  "once_cell",
- "opentelemetry_api",
+ "opentelemetry",
  "ordered-float",
  "percent-encoding",
  "rand",
- "regex",
  "thiserror",
  "tokio",
  "tokio-stream",
@@ -3912,9 +3893,9 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "ordered-float"
-version = "3.9.2"
+version = "4.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1e1c390732d15f1d48471625cd92d154e66db2c56645e29a9cd26f4699f72dc"
+checksum = "a76df7075c7d4d01fdcb46c912dd17fba5b60c78ea480b475f2b6ab6f666584e"
 dependencies = [
  "num-traits",
 ]
@@ -6883,6 +6864,7 @@ dependencies = [
  "once_cell",
  "opentelemetry",
  "opentelemetry-otlp",
+ "opentelemetry_sdk",
  "paste",
  "primitive-types",
  "prost 0.12.3",
