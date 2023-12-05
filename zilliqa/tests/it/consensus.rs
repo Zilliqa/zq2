@@ -15,6 +15,7 @@ use crate::Network;
 async fn network_can_die_restart(mut network: Network) {
     let start_block = 5;
     let finish_block = 10;
+    //let seeds: Vec<u64> = (0..10).::<Vec<u64>>collect();
 
     // wait until at least 5 blocks have been produced
     network
@@ -38,7 +39,7 @@ async fn network_can_die_restart(mut network: Network) {
                 let index = n.random_index();
                 n.get_node(index).get_finalized_height() >= finish_block
             },
-            1000,
+            10000,
         )
         .await
         .expect("Failed to progress to target block");

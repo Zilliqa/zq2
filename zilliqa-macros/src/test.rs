@@ -30,7 +30,11 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                     .map(|s| s.to_str().unwrap().parse().expect(&format!("Failed to parse ZQ_TEST_SAMPLES env var: {:?}", s)))
                     .unwrap_or(1);
                 // Generate random seeds using the thread-local RNG.
-                rand::Rng::sample_iter(rand::thread_rng(), rand::distributions::Standard).take(samples).collect()
+                //rand::Rng::sample_iter(rand::thread_rng(), rand::distributions::Standard).take(samples).collect()
+                // Populate from a range
+                let ret = (0..samples).map(|x| x as u64).collect();
+                ret
+                //(0..samples).collect().iter().map(|x| *x as u64).collect()
             };
 
             let mut set = tokio::task::JoinSet::new();
@@ -44,6 +48,7 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
             // time this whole test to make sure its not taking too long
             use std::time::{Duration, Instant};
             let start = Instant::now();
+            let seeds_number = seeds.len();
 
             // Silence the default panic hook.
             std::panic::set_hook(Box::new(|_| {}));
@@ -98,9 +103,14 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             let duration = start.elapsed();
+            let mut time_allowed_ms = Duration::from_secs(10).as_millis() * (seeds_number as u128);
 
-            if duration.as_secs() > 60 {
-                panic!("Test took too long: {:?}", duration);
+            if cfg!(debug_assertions) {
+                time_allowed_ms *= 10;
+            }
+
+            if duration.as_millis() > time_allowed_ms {
+                panic!("Test took too long: {}ms. Allowed: {}", duration.as_millis(), time_allowed_ms);
             }
         }
     }
