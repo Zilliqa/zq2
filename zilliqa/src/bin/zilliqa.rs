@@ -14,13 +14,20 @@ struct Args {
     secret_key: SecretKey,
     #[clap(long, short, default_value = "config.toml")]
     config_file: PathBuf,
+    #[clap(long, default_value = "false")]
+    log_json: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
-
     let args = Args::parse();
+
+    let builder = tracing_subscriber::fmt();
+    if args.log_json {
+        builder.json().init();
+    } else {
+        builder.init();
+    }
 
     let config = if args.config_file.exists() {
         fs::read_to_string(&args.config_file)?
