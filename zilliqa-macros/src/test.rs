@@ -55,22 +55,33 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                     let subscriber = tracing_subscriber::fmt()
                         .with_ansi(false)
                         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env());
+
                     let _guard = tracing_subscriber::util::SubscriberInitExt::set_default(subscriber);
 
-                    let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
-                    let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed);
+                    // Optionally print the seed in each tests logging so it can be filtered out later.
+                    use tracing::Instrument;
+                    let span = if std::env::var_os("ZQ_TEST_SEED_SPANS").is_some() {
+                        tracing::span!(tracing::Level::INFO, "", seed)
+                    } else {
+                        tracing::span!(tracing::Level::INFO, "")
+                    };
 
-                    // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
-                    let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
-                        zilliqa::time::with_fake_time(#inner_name(network))
-                    )).await;
+                    async move {
+                        let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
+                        let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed);
 
-                    match result {
-                        Ok(()) => {},
-                        Err(e) => {
-                            std::panic::resume_unwind(e);
+                        // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
+                        let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
+                            zilliqa::time::with_fake_time(#inner_name(network))
+                        )).await;
+
+                        match result {
+                            Ok(()) => {},
+                            Err(e) => {
+                                std::panic::resume_unwind(e);
+                            }
                         }
-                    }
+                    }.instrument(span).await
                 });
                 id_to_seed.insert(handle.id(), seed);
             }
@@ -92,6 +103,7 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 }
 
+                failure_examples.sort();
                 let total = success + failure;
                 println!("Total seeds tested: {total}");
                 println!("\x1b[0;32mSuccess: {success}\x1b[0m");
