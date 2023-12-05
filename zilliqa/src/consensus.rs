@@ -558,7 +558,8 @@ impl Consensus {
         trace!(
             block_view = block.view(),
             block_number = block.number(),
-            "handling block proposal"
+            "handling block proposal {}",
+            block.hash()
         );
 
         if self.block_store.contains_block(block.hash())? {
@@ -1649,16 +1650,22 @@ impl Consensus {
                     block.number(),
                     block.view()
                 );
+
+                self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
+
+                let current_head = self.head_block();
+
                 self.proposal(Proposal::from_parts(block, transactions), true)?;
+
+                // Return whether the head block hash changed as to whether it was new
+                Ok(self.head_block().hash() != current_head.hash())
             }
             Err(e) => {
                 warn!(?e, "invalid block received during sync!");
 
-                return Ok(false);
+                Ok(false)
             }
         }
-
-        Ok(true)
     }
 
     fn add_block(&mut self, block: Block) -> Result<()> {
