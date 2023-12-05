@@ -5,7 +5,6 @@ mod web3;
 mod zil;
 use std::{env, ops::DerefMut};
 
-//use crate::time::SystemTime;
 use ethers::solc::SHANGHAI_SOLC;
 use itertools::Itertools;
 use serde::Deserialize;
@@ -323,10 +322,6 @@ impl Network {
         );
         let genesis_committee = vec![validator];
 
-        for nodes in &mut self.nodes {
-            nodes.inner.lock().unwrap().flush();
-        }
-
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
@@ -541,23 +536,7 @@ impl Network {
 
     pub async fn tick(&mut self) {
         // Advance time.
-        // print the time
-        //let time = zilliqa::time::now();
-        let first_time = zilliqa::time::SystemTime::now();
-        trace!("Time before advance: {:?}", first_time);
         zilliqa::time::advance(Duration::from_millis(1));
-
-        let second_time = zilliqa::time::SystemTime::now();
-        trace!(
-            "Time before and after advance: {:?} {:?} diff: {:?}",
-            first_time,
-            second_time,
-            second_time.duration_since(first_time).unwrap()
-        );
-
-        if second_time.duration_since(first_time).unwrap() > Duration::from_millis(1) {
-            panic!("Time advanced too much!");
-        }
 
         // Take all the currently ready messages from the stream.
         let mut messages = self.collect_messages();
@@ -587,7 +566,6 @@ impl Network {
         // Pick a random message
         let index = self.rng.lock().unwrap().gen_range(0..messages.len());
         let (source, destination, message) = messages.swap_remove(index);
-        warn!("Index chosen: {} message: {:?}", index, message);
         // Requeue the other messages
         for message in messages {
             self.resend_message.send(message).unwrap();
