@@ -133,6 +133,11 @@ impl Db {
         })
     }
 
+    pub fn flush(&self) -> Result<()> {
+        self.root.flush()?;
+        Ok(())
+    }
+
     pub fn state_trie(&self) -> Result<TrieStorage> {
         Ok(TrieStorage::new(self.root.open_tree(STATE_TRIE_TREE)?))
     }

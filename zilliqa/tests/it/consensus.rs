@@ -43,6 +43,8 @@ async fn network_can_die_restart(mut network: Network) {
         )
         .await
         .expect("Failed to progress to target block");
+
+    warn!("Network restarted successfully. Fin!");
 }
 
 fn get_block_number(n: &mut Network) -> u64 {

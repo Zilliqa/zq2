@@ -120,6 +120,10 @@ impl Node {
         Ok(node)
     }
 
+    pub fn flush(&self) {
+        self.db.flush();
+    }
+
     // TODO: Multithreading - `&mut self` -> `&self`
     pub fn handle_network_message(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         let to = self.peer_id;
