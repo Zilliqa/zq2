@@ -82,10 +82,10 @@ module "otterscan" {
   name  = "otterscan"
   image = "zilliqa/otterscan:develop"
   env = [
-    ["ERIGON_URL", "https://api.zq2-devnet.zilstg.dev"],
+    ["ERIGON_URL", "https://api.${var.subdomain}"],
   ]
-  static_ip_name = "explorer-zq2-devnet-zilstg-dev"
-  domain         = "explorer.zq2-devnet.zilstg.dev"
+  static_ip_name = "explorer-${replace(var.subdomain, ".", "-")}"
+  domain         = "explorer.${var.subdomain}"
 }
 
 module "faucet" {
@@ -94,14 +94,14 @@ module "faucet" {
   name  = "faucet"
   image = "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa/eth-spout:89eb40d3"
   env = [
-    ["RPC_URL", "https://api.zq2-devnet.zilstg.dev"],
+    ["RPC_URL", "https://api.${var.subdomain}"],
     ["NATIVE_TOKEN_SYMBOL", "ZIL"],
     ["PRIVATE_KEY", random_id.genesis_key.hex],
     ["ETH_AMOUNT", "100"],
-    ["EXPLORER_URL", "https://explorer.zq2-devnet.zilstg.dev"],
+    ["EXPLORER_URL", "https://explorer.${var.subdomain}"],
     ["MINIMUM_SECONDS_BETWEEN_REQUESTS", "60"],
     ["BECH32_HRP", "zil"],
   ]
-  static_ip_name = "faucet-zq2-devnet-zilstg-dev"
-  domain         = "faucet.zq2-devnet.zilstg.dev"
+  static_ip_name = "faucet-${replace(var.subdomain, ".", "-")}"
+  domain         = "faucet.${var.subdomain}"
 }
