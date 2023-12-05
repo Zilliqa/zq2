@@ -548,7 +548,12 @@ impl Network {
         zilliqa::time::advance(Duration::from_millis(1));
 
         let second_time = zilliqa::time::SystemTime::now();
-        trace!("Time before and after advance: {:?} {:?} diff: {:?}", first_time, second_time, second_time.duration_since(first_time).unwrap() );
+        trace!(
+            "Time before and after advance: {:?} {:?} diff: {:?}",
+            first_time,
+            second_time,
+            second_time.duration_since(first_time).unwrap()
+        );
 
         if second_time.duration_since(first_time).unwrap() > Duration::from_millis(1) {
             panic!("Time advanced too much!");
