@@ -5,6 +5,7 @@ mod web3;
 mod zil;
 use std::{env, ops::DerefMut};
 
+//use crate::time::SystemTime;
 use ethers::solc::SHANGHAI_SOLC;
 use itertools::Itertools;
 use serde::Deserialize;
@@ -321,6 +322,10 @@ impl Network {
             keys[0].to_libp2p_keypair().public().to_peer_id(),
         );
         let genesis_committee = vec![validator];
+
+        for nodes in &mut self.nodes {
+            nodes.inner.lock().unwrap().flush();
+        }
 
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
             .into_iter()
