@@ -87,7 +87,7 @@ impl Vote {
     ) -> Self {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(block_hash.as_bytes());
-        //bytes.extend_from_slice(&view.to_be_bytes());
+        bytes.extend_from_slice(&view.to_be_bytes());
 
         Vote {
             signature: secret_key.sign(&bytes),
@@ -105,7 +105,7 @@ impl Vote {
     pub fn verify(&self) -> Result<()> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(self.block_hash.as_bytes());
-        //bytes.extend_from_slice(&self.view.to_be_bytes());
+        bytes.extend_from_slice(&self.view.to_be_bytes());
 
         self.public_key.verify(&bytes, self.signature)
     }
@@ -130,7 +130,7 @@ impl NewView {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(qc.compute_hash().as_bytes());
         bytes.extend_from_slice(&public_key.as_bytes());
-        //bytes.extend_from_slice(&view.to_be_bytes());
+        bytes.extend_from_slice(&view.to_be_bytes());
 
         NewView {
             signature: secret_key.sign(&bytes),
@@ -144,7 +144,7 @@ impl NewView {
         let mut message = Vec::new();
         message.extend_from_slice(self.qc.compute_hash().as_bytes());
         message.extend_from_slice(&self.public_key.as_bytes());
-        //message.extend_from_slice(&self.view.to_be_bytes());
+        message.extend_from_slice(&self.view.to_be_bytes());
 
         public_key.verify(&message, self.signature)
     }
@@ -259,7 +259,11 @@ impl QuorumCertificate {
             },
         ).collect::<Vec<_>>();
 
-        NodeSignature::verify_aggregate(&self.signature, self.block_hash.as_bytes(), public_keys).is_ok()
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(self.block_hash.as_bytes());
+        bytes.extend_from_slice(&self.view.to_be_bytes());
+
+        NodeSignature::verify_aggregate(&self.signature, &bytes, public_keys).is_ok()
     }
 
     pub fn compute_hash(&self) -> Hash {
