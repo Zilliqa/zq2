@@ -36,6 +36,11 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                 ret
                 //(0..samples).collect().iter().map(|x| *x as u64).collect()
             };
+            let style = indicatif::ProgressStyle::with_template("[{elapsed_precise}/{duration_precise}] {wide_bar:.cyan/blue} {pos:>}/{len}").unwrap().progress_chars("##-");
+            let pb = indicatif::ProgressBar::new(seeds.len() as u64);
+            pb.set_style(style);
+
+            pb.tick();
 
             let mut set = tokio::task::JoinSet::new();
 
@@ -78,27 +83,64 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
                 });
                 id_to_seed.insert(handle.id(), seed);
             }
-            // Restore the default panic hook, so the panic we actually care about gets printed.
-            let _ = std::panic::take_hook();
+            if std::env::var_os("ZQ_TEST_SEED_SUMMARY").is_some() {
+                let mut success = 0;
+                let mut failure = 0;
+                let mut failure_examples = Vec::new();
+                while let Some(result) = set.join_next_with_id().await {
+                    pb.inc(1);
+                    match result {
+                        Ok((_, ())) => { success += 1; },
+                        Err(e) => {
+                            failure += 1;
+                            if failure_examples.len() < 16 {
+                                let seed = id_to_seed.get(&e.id()).unwrap();
+                                failure_examples.push(seed);
+                            }
+                        },
+                    }
+                }
 
-            while let Some(result) = set.join_next_with_id().await {
-                match result {
-                    Ok((_, ())) => {},
-                    Err(e) => {
-                        let id = e.id();
-                        if let Ok(p) = e.try_into_panic() {
-                            // Silence the panic hook again. When we break from this loop and the `JoinSet` is dropped,
-                            // the remaining tasks will be aborted. If any of them have also failed, we don't want
-                            // their logs to be printed.
-                            std::panic::set_hook(Box::new(|_| {}));
+                let total = success + failure;
+                println!("Total seeds tested: {total}");
+                println!("\x1b[0;32mSuccess: {success}\x1b[0m");
+                let examples = if failure == 0 {
+                    String::new()
+                } else {
+                    let more = if failure > 16 { "..." } else { "" };
+                    let e = failure_examples.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+                    format!(" (seeds: {}{more})", e.join(", "))
+                };
+                println!("\x1b[0;31mFailure: {failure}{examples}\x1b[0m");
+                println!("Pass rate: {}%", (success as f32 / total as f32) * 100.0);
 
-                            let seed = id_to_seed.get(&id).unwrap();
-                            println!("Reproduce this test run by setting ZQ_TEST_RNG_SEED={seed}");
-                            std::panic::resume_unwind(p);
-                        } else {
-                            panic!("task cancelled")
-                        }
-                    },
+                if failure != 0 {
+                    panic!();
+                }
+            } else {
+                // Restore the default panic hook, so the panic we actually care about gets printed.
+                let _ = std::panic::take_hook();
+
+                while let Some(result) = set.join_next_with_id().await {
+                    pb.inc(1);
+                    match result {
+                        Ok((_, ())) => {},
+                        Err(e) => {
+                            let id = e.id();
+                            if let Ok(p) = e.try_into_panic() {
+                                // Silence the panic hook again. When we break from this loop and the `JoinSet` is
+                                // dropped, the remaining tasks will be aborted. If any of them have also failed, we
+                                // don't want their logs to be printed.
+                                std::panic::set_hook(Box::new(|_| {}));
+
+                                let seed = id_to_seed.get(&id).unwrap();
+                                println!("Reproduce this test run by setting ZQ_TEST_RNG_SEED={seed}");
+                                std::panic::resume_unwind(p);
+                            } else {
+                                panic!("task cancelled")
+                            }
+                        },
+                    }
                 }
             }
 
