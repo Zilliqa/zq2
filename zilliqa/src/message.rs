@@ -247,9 +247,9 @@ impl QuorumCertificate {
 
     // Verifying an aggregated signature is a case of verifying the aggregated public key
     // against the aggregated signature
-    pub fn verify(&self, _public_keys: Vec<NodePublicKey>) -> bool {
+    pub fn verify(&self, public_keys: Vec<NodePublicKey>) -> bool {
         // Select which public keys have gone into creating the signature
-        let public_keys = _public_keys
+        let public_keys = public_keys
             .into_iter()
             .zip(self.cosigned.iter())
             .filter_map(
