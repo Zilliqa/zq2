@@ -482,6 +482,7 @@ pub struct TransactionReceipt {
     pub block_hash: crypto::Hash,
     pub tx_hash: crypto::Hash,
     pub success: bool,
+    pub gas_used: u64,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
 }
