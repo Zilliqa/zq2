@@ -249,15 +249,19 @@ impl QuorumCertificate {
     // against the aggregated signature
     pub fn verify(&self, _public_keys: Vec<NodePublicKey>) -> bool {
         // Select which public keys have gone into creating the signature
-        let public_keys = _public_keys.into_iter().zip(self.cosigned.iter()).filter_map(
-            |(public_key, cosigned)| {
-                if *cosigned {
-                    Some(public_key)
-                } else {
-                    None
-                }
-            },
-        ).collect::<Vec<_>>();
+        let public_keys = _public_keys
+            .into_iter()
+            .zip(self.cosigned.iter())
+            .filter_map(
+                |(public_key, cosigned)| {
+                    if *cosigned {
+                        Some(public_key)
+                    } else {
+                        None
+                    }
+                },
+            )
+            .collect::<Vec<_>>();
 
         let mut bytes = Vec::new();
         bytes.extend_from_slice(self.block_hash.as_bytes());
