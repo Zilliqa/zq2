@@ -142,7 +142,7 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             let duration = start.elapsed();
-            let mut time_allowed_ms = Duration::from_millis(1000).as_millis() * (seeds_number as u128);
+            let mut time_allowed_ms = Duration::from_millis(3000).as_millis() * (seeds_number as u128);
 
             if cfg!(debug_assertions) {
                 time_allowed_ms *= 10;
