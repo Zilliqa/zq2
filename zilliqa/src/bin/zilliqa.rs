@@ -3,8 +3,8 @@ use std::{fs, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
-use opentelemetry::runtime;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
+use opentelemetry_sdk::runtime;
 use tokio::time::Duration;
 use zilliqa::{cfg::Config, crypto::SecretKey, p2p_node::P2pNode};
 
