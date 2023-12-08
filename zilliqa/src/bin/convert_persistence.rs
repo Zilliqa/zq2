@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
@@ -6,7 +6,6 @@ use clap::Parser;
 use evm_ds::protos::evm_proto::Log;
 use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
 use itertools::Itertools;
-use libp2p::PeerId;
 use primitive_types::H256;
 use rlp::RlpStream;
 use sha2::Sha256;
@@ -15,8 +14,8 @@ use tracing::*;
 use zilliqa::{
     cfg::ConsensusConfig,
     consensus::Validator,
-    crypto::{Hash, NodePublicKey, NodeSignature},
-    message::{Block, BlockHeader, Committee, QuorumCertificate},
+    crypto::{Hash, SecretKey},
+    message::{Block, Committee, QuorumCertificate, Vote},
     schnorr,
     state::{Account, Address, State},
     time::SystemTime,
@@ -31,10 +30,8 @@ use zilliqa::{
 struct Args {
     zq1_persistence_directory: PathBuf,
     zq2_data_dir: PathBuf,
-    #[clap(value_parser = NodePublicKey::from_str)]
-    genesis_node_key: NodePublicKey,
-    #[clap(value_parser = PeerId::from_str)]
-    genesis_node_peer_id: PeerId,
+    #[clap(value_parser = SecretKey::from_hex)]
+    secret_key: SecretKey,
     chain_id: u64,
     #[clap(long)]
     skip_accounts: bool,
@@ -62,7 +59,6 @@ fn main() -> Result<()> {
         genesis_committee: vec![],
         genesis_hash: None,
         genesis_accounts: vec![],
-        genesis_height: 0,
     };
     let mut state = State::new_with_genesis(zq2_db.state_trie()?, config)?;
 
@@ -112,15 +108,15 @@ fn main() -> Result<()> {
             };
 
             state.save_account(address, account)?;
-            state.set_native_balance(address, zq1_account.balance.into())?;
+            state.set_native_balance(address, (zq1_account.balance * 10u128.pow(6)).into())?;
 
             trace!(?address, "account inserted");
         }
     }
 
     let committee = Committee::new(Validator {
-        public_key: args.genesis_node_key,
-        peer_id: args.genesis_node_peer_id,
+        public_key: args.secret_key.node_public_key(),
+        peer_id: args.secret_key.to_libp2p_keypair().public().to_peer_id(),
         weight: 100,
     });
 
@@ -154,10 +150,11 @@ fn main() -> Result<()> {
         let mut receipts = Vec::new();
         let mut block_headers = Vec::new();
         let mut blocks = Vec::new();
+        let mut parent_hash = Hash::ZERO;
 
         for (block_number, block) in chunk {
             let block = zq1::persistence::TxBlock::from_proto(block)?;
-            let block_hash = Hash(block.block_hash.0);
+            // TODO: Retain ZQ1 block hash, so we can return it in APIs.
 
             let txn_hashes: Vec<_> = block
                 .mb_infos
@@ -173,6 +170,30 @@ fn main() -> Result<()> {
                         .map(|txn| H256::from_slice(&txn))
                 })
                 .collect();
+
+            let vote = Vote::new(
+                args.secret_key,
+                parent_hash,
+                args.secret_key.node_public_key(),
+                block.block_num - 1,
+            );
+            let qc = QuorumCertificate::new(
+                &[vote.signature()],
+                bitvec![u8, bitvec::order::Msb0; 1; 1],
+                parent_hash,
+                block.block_num - 1,
+            );
+            let block = Block::from_qc(
+                args.secret_key,
+                block.block_num,
+                block.block_num,
+                qc,
+                parent_hash,
+                state.root_hash()?,
+                txn_hashes.iter().map(|h| Hash(h.0)).collect(),
+                SystemTime::UNIX_EPOCH + Duration::from_micros(block.timestamp),
+                committee.clone(),
+            );
 
             let mut block_receipts = Vec::new();
 
@@ -204,7 +225,7 @@ fn main() -> Result<()> {
                         });
 
                         let receipt = TransactionReceipt {
-                            block_hash,
+                            block_hash: block.hash(),
                             tx_hash: Hash(txn_hash.0),
                             success: transaction.receipt.success,
                             gas_used: transaction.receipt.cumulative_gas,
@@ -264,7 +285,7 @@ fn main() -> Result<()> {
                         });
 
                         let receipt = TransactionReceipt {
-                            block_hash,
+                            block_hash: block.hash(),
                             tx_hash: Hash(txn_hash.0),
                             success: transaction.receipt.success,
                             gas_used: transaction.receipt.cumulative_gas,
@@ -303,45 +324,22 @@ fn main() -> Result<()> {
 
                 transactions.push((Hash(txn_hash.0), transaction));
                 block_receipts.push(receipt);
-                zq2_db.insert_block_hash_reverse_index(
-                    &Hash(txn_hash.0),
-                    &Hash(block.block_hash.0),
-                )?;
+                zq2_db.insert_block_hash_reverse_index(&Hash(txn_hash.0), &block.hash())?;
 
                 //trace!(?txn_hash, "transaction inserted");
             }
 
-            let block_header = BlockHeader {
-                view: block.block_num,
-                number: block.block_num,
-                hash: Hash(block.block_hash.0),
-                parent_hash: Hash(block.prev_hash.0),
-                signature: NodeSignature::identity(),
-                state_root_hash: state.root_hash()?,
-                timestamp: SystemTime::UNIX_EPOCH + Duration::from_micros(block.timestamp),
-            };
-            let block = Block {
-                header: block_header,
-                qc: QuorumCertificate {
-                    signature: NodeSignature::identity(),
-                    cosigned: bitvec![u8, bitvec::order::Msb0; 1; 1],
-                    block_hash: Hash(block.prev_hash.0),
-                    view: block.block_num,
-                },
-                agg: None,
-                transactions: txn_hashes.iter().map(|h| Hash(h.0)).collect(),
-                committee: committee.clone(),
-            };
             receipts.push((block.hash(), block_receipts));
             zq2_db.put_canonical_block_number(block_number, block.hash())?;
             zq2_db.put_canonical_block_view(block_number, block.hash())?;
-            block_headers.push((block.hash(), block_header));
+            block_headers.push((block.hash(), block.header));
             zq2_db.set_high_qc(block.qc.clone())?;
-            blocks.push((block.hash(), block));
+            blocks.push((block.hash(), block.clone()));
             zq2_db.put_latest_finalized_view(block_number)?;
-            zq2_db.put_highest_block_number(max_block)?;
+            zq2_db.put_highest_block_number(block_number)?;
 
             trace!(%block_number, "block inserted");
+            parent_hash = block.hash();
         }
 
         zq2_db.insert_transaction_batch(&transactions)?;
@@ -350,7 +348,10 @@ fn main() -> Result<()> {
         zq2_db.insert_block_batch(&blocks)?;
     }
 
-    println!("Persistence conversion done up to block {max_block}");
+    println!(
+        "Persistence conversion done up to block {}",
+        zq2_db.get_highest_block_number()?.unwrap()
+    );
 
     Ok(())
 }

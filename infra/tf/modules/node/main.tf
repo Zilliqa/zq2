@@ -57,7 +57,7 @@ resource "random_id" "name_suffix" {
 
 resource "google_compute_instance" "this" {
   name                      = "${var.name}-${random_id.name_suffix.hex}"
-  machine_type              = "e2-standard-2"
+  machine_type              = "n2-standard-8"
   allow_stopping_for_update = true
 
   service_account {
@@ -124,6 +124,10 @@ logging:
 EOF
 sudo systemctl restart google-cloud-ops-agent
 
+# Download the data directory
+gsutil -q cp -r gs://prj-d-zq2-beacon-zq2-binaries/zq2_mainnet_data_dir_5/ /
+mv /zq2_mainnet_data_dir_5 /data
+
 # Download the Zilliqa binary
 gsutil cp ${var.binary_url} /zilliqa
 MD5_SUM=$(echo "${var.binary_md5}" | base64 --decode | hexdump -v -e '/1 "%02x" ')
@@ -153,7 +157,7 @@ Description=Zilliqa Node
 [Service]
 Type=simple
 ExecStart=/zilliqa ${var.secret_key} --log-json
-Environment="RUST_LOG=zilliqa=debug"
+Environment="RUST_LOG=zilliqa=trace"
 Environment="RUST_BACKTRACE=1"
 StandardOutput=append:/zilliqa.log
 

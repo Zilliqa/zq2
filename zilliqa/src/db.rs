@@ -104,10 +104,12 @@ impl Db {
     where
         P: AsRef<Path>,
     {
+        println!("making db");
         let db = match data_dir {
             Some(path) => sled::open(path.as_ref().join(shard_id.to_string()))?,
             None => sled::Config::new().temporary(true).open()?,
         };
+        println!("opened db");
 
         let block_header = db.open_tree(BLOCK_HEADERS_TREE)?;
         let block = db.open_tree(BLOCKS_TREE)?;

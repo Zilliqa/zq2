@@ -237,10 +237,12 @@ fn search_transactions_before(
     search_transactions_inner(node, address, block_number, page_size, true)
 }
 
+#[allow(unreachable_code)]
 fn get_internal_operations(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Vec<InternalOperationOtter>> {
+    return Err(anyhow!("not implemented: ZQ1 transactions cause a panic!"));
     trace!("get_internal_operations called");
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);

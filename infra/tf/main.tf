@@ -165,15 +165,19 @@ data "external" "genesis_key_converted" {
   }
 }
 
-resource "random_id" "bootstrap_key" {
-  byte_length = 32
+//resource "random_id" "bootstrap_key" {
+//  byte_length = 32
+//}
+
+locals {
+  bootstrap_key = "65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227"
 }
 
 data "external" "bootstrap_key_converted" {
   program = ["cargo", "run", "--bin", "convert-key"]
   working_dir = "${path.module}/../.."
   query = {
-    secret_key = random_id.bootstrap_key.hex
+    secret_key = local.bootstrap_key
   }
 }
 
@@ -203,7 +207,7 @@ module "bootstrap_node" {
   consensus.genesis_committee = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}"] ]
   consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
   EOT
-  secret_key            = random_id.bootstrap_key.hex
+  secret_key            = local.bootstrap_key
 }
 
 resource "random_id" "secret_key" {
@@ -211,30 +215,30 @@ resource "random_id" "secret_key" {
   byte_length = 32
 }
 
-module "node" {
-  source = "./modules/node"
-  count = 3
-
-  name                  = "zq2-node-${count.index}"
-  service_account_email = google_service_account.node.email
-  network_name          = google_compute_network.this.name
-  subnetwork_name       = google_compute_subnetwork.subnet.name
-  binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
-  binary_md5            = google_storage_bucket_object.binary.md5hash
-  config                = <<-EOT
-  p2p_port = 3333
-  bootstrap_address = [ "${local.bootstrap_peer_id}", "/ip4/${module.bootstrap_node.network_ip}/tcp/3333" ]
-
-  [[nodes]]
-  eth_chain_id = ${var.eth_chain_id}
-  allowed_timestamp_skew = { secs = 60, nanos = 0 }
-  data_dir = "/data"
-  consensus.consensus_timeout = { secs = 60, nanos = 0 }
-  consensus.genesis_committee = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}"] ]
-  consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
-  EOT
-  secret_key = random_id.secret_key[count.index].hex
-}
+#module "node" {
+#  source = "./modules/node"
+#  count = 3
+#
+#  name                  = "zq2-node-${count.index}"
+#  service_account_email = google_service_account.node.email
+#  network_name          = google_compute_network.this.name
+#  subnetwork_name       = google_compute_subnetwork.subnet.name
+#  binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
+#  binary_md5            = google_storage_bucket_object.binary.md5hash
+#  config                = <<-EOT
+#  p2p_port = 3333
+#  bootstrap_address = [ "${local.bootstrap_peer_id}", "/ip4/${module.bootstrap_node.network_ip}/tcp/3333" ]
+#
+#  [[nodes]]
+#  eth_chain_id = ${var.eth_chain_id}
+#  allowed_timestamp_skew = { secs = 60, nanos = 0 }
+#  data_dir = "/data"
+#  consensus.consensus_timeout = { secs = 60, nanos = 0 }
+#  consensus.genesis_committee = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}"] ]
+#  consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
+#  EOT
+#  secret_key = random_id.secret_key[count.index].hex
+#}
 
 resource "google_project_service" "osconfig" {
   service = "osconfig.googleapis.com"

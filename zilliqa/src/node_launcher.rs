@@ -54,14 +54,21 @@ impl NodeLauncher {
         outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
         local_outbound_message_sender: UnboundedSender<LocalMessageTuple>,
     ) -> Result<Self> {
+        println!("1");
         let (inbound_message_sender, inbound_message_receiver) = mpsc::unbounded_channel();
+        println!("2");
         let inbound_message_receiver = UnboundedReceiverStream::new(inbound_message_receiver);
+        println!("3");
         let (local_inbound_message_sender, local_inbound_message_receiver) =
             mpsc::unbounded_channel();
+        println!("4");
         let local_inbound_message_receiver =
             UnboundedReceiverStream::new(local_inbound_message_receiver);
+        println!("5");
         let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
+        println!("6");
         let reset_timeout_receiver = UnboundedReceiverStream::new(reset_timeout_receiver);
+        println!("7");
 
         let node = Node::new(
             config.clone(),
@@ -70,9 +77,12 @@ impl NodeLauncher {
             local_outbound_message_sender.clone(),
             reset_timeout_sender.clone(),
         )?;
+        println!("8");
         let node = Arc::new(Mutex::new(node));
+        println!("9");
 
         let rpc_module = api::rpc_module(Arc::clone(&node));
+        println!("10");
 
         if !config.disable_rpc {
             trace!("Launching JSON-RPC server");

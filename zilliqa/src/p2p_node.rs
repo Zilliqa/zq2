@@ -87,6 +87,7 @@ impl P2pNode {
             .authenticate(noise::Config::new(&key_pair)?)
             .multiplex(yamux::Config::default())
             .boxed();
+        println!("transport");
 
         let behaviour = Behaviour {
             // TODO: Consider replacing with [request_response::json::Behaviour].
@@ -110,6 +111,7 @@ impl P2pNode {
             )),
             kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
         };
+        println!("behaviour");
 
         let swarm = Swarm::new(
             transport,
@@ -117,6 +119,7 @@ impl P2pNode {
             peer_id,
             swarm::Config::with_tokio_executor(),
         );
+        println!("swarm");
 
         Ok(Self {
             shard_nodes: HashMap::new(),
@@ -172,7 +175,9 @@ impl P2pNode {
         );
         self.shard_threads
             .spawn(async move { node.start_shard_node().await });
+        println!("spawned");
         self.swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
+        println!("subscribed");
         Ok(())
     }
 
@@ -225,7 +230,9 @@ impl P2pNode {
         let mut addr: Multiaddr = "/ip4/0.0.0.0".parse().unwrap();
         addr.push(Protocol::Tcp(self.config.p2p_port));
 
+        println!("addr");
         self.swarm.listen_on(addr)?;
+        println!("listening");
 
         if let Some((peer, address)) = &self.config.bootstrap_address {
             self.swarm

@@ -271,6 +271,7 @@ impl Consensus {
                     .ok_or_else(|| anyhow!("no header found at view {view}"))
             })
             .transpose()?;
+        println!("latest block: {latest_block:?}");
 
         let mut state = if let Some(latest_block) = &latest_block {
             trace!("Loading state from latest block");
@@ -336,6 +337,7 @@ impl Consensus {
                 }
             }
         };
+        println!("start_view: {start_view}");
 
         let mut consensus = Consensus {
             secret_key,
@@ -403,7 +405,7 @@ impl Consensus {
 
         debug!(%peer_id, "added pending peer");
 
-        if self.view.get_view() == self.config.consensus.genesis_height + 1 {
+        if self.view.get_view() == 1 {
             let Some(genesis) = self.get_block_by_view(0)? else {
                 // if we don't have genesis that means we only have its hash
                 // ergo we weren't, and can't be, part of the network at genesis and

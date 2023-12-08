@@ -4474,7 +4474,7 @@ dependencies = [
  "prost 0.12.3",
  "prost-types",
  "regex",
- "syn 2.0.39",
+ "syn 2.0.40",
  "tempfile",
  "which",
 ]

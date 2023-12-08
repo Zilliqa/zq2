@@ -3,7 +3,7 @@ services:
   node0:
     environment:
       RUST_BACKTRACE: 1
-      RUST_LOG: zilliqa=info,opentelemetry=trace,opentelemetry_otlp=trace
+      RUST_LOG: zilliqa=trace,opentelemetry=trace,opentelemetry_otlp=trace
     build:
       context: .
       dockerfile: Dockerfile
@@ -81,5 +81,20 @@ services:
     image: otterscan/otterscan:develop
     ports:
       - "5100:80"
+    # Fast shutdown - Don't gracefully close open connections.
+    stop_signal: SIGKILL
+
+  faucet:
+    environment:
+      RPC_URL: http://node0:4201
+      NATIVE_TOKEN_SYMBOL: ZIL
+      PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
+      ETH_AMOUNT: 100
+      EXPLORER_URL: http://localhost:5100
+      MINIMUM_SECONDS_BETWEEN_REQUESTS: 0
+      BECH32_HRP: zil
+    image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa/eth-spout:89eb40d3
+    ports:
+      - "5200:80"
     # Fast shutdown - Don't gracefully close open connections.
     stop_signal: SIGKILL

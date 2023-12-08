@@ -72,8 +72,6 @@ pub struct ConsensusConfig {
     pub genesis_hash: Option<Hash>,
     /// Accounts that will be pre-funded at genesis.
     pub genesis_accounts: Vec<(Address, String)>,
-    /// Height of the genesis block. Defaults to 0.
-    pub genesis_height: u64,
 }
 
 impl Default for ConsensusConfig {
@@ -87,7 +85,6 @@ impl Default for ConsensusConfig {
             genesis_committee: vec![],
             genesis_hash: None,
             genesis_accounts: Vec::new(),
-            genesis_height: 0,
         }
     }
 }
