@@ -22,11 +22,11 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let builder = tracing_subscriber::fmt();
     if args.log_json {
+        let builder = tracing_subscriber::fmt();
         builder.json().init();
     } else {
-        builder.init();
+        tracing_subscriber::fmt::init();
     }
 
     let config = if args.config_file.exists() {
