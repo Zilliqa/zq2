@@ -17,7 +17,6 @@ use crate::{
     message::BlockNumber,
     node::Node,
     schnorr,
-    state::Address,
     transaction::{SignedTransaction, TxZilliqa},
 };
 
