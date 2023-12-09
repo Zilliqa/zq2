@@ -1,11 +1,9 @@
-use crate::{Network, TestNode};
-use ethers::providers::Middleware;
-use ethers::types::TransactionRequest;
-use ethers::utils::secret_key_to_address;
+use ethers::{providers::Middleware, types::TransactionRequest};
 use primitive_types::H160;
 use tracing::*;
-use zilliqa::crypto::Hash;
-use zilliqa::crypto::SecretKey;
+use zilliqa::crypto::{Hash, SecretKey};
+
+use crate::{ConsensusConfig, Network, NodeConfig, TestNode};
 
 #[zilliqa_macros::test]
 async fn block_and_tx_data_persistence(mut network: Network) {
@@ -71,21 +69,24 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     drop(inner);
     #[allow(clippy::redundant_closure_call)]
     let dir = (|mut node: TestNode| node.dir.take())(node).unwrap(); // move dir out and drop the rest of node
-    let result = crate::node(
-        network.genesis_committee,
-        None,
-        SecretKey::new().unwrap(),
-        0,
-        Some(dir),
-        secret_key_to_address(&network.genesis_key),
-    );
+    let config = NodeConfig {
+        consensus: ConsensusConfig {
+            genesis_committee: network.genesis_committee,
+            genesis_hash: None,
+            is_main: true,
+            genesis_accounts: Network::genesis_accounts(&network.genesis_key),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let result = crate::node(config, SecretKey::new().unwrap(), 0, Some(dir));
 
     // Sometimes, the dropping Arc<Node> (by dropping the TestNode above) does not actually drop
     // the underlying Node. See: https://github.com/Zilliqa/zq2/issues/299
     // As this is very painful to debug, should only ever be relevant for tests like these, and CI
     // should run enough samples to still have decent test coverage, we simply skip the rest of the
     // test if this happens.
-    let Ok((newnode, _)) = result else {
+    let Ok((newnode, _, _)) = result else {
         warn!(
             "Failed to release database lock. Skipping test, with seed {}.",
             network.seed

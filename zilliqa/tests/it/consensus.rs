@@ -1,10 +1,13 @@
-use crate::CombinedJson;
-use crate::Network;
 use ethabi::Token;
-use ethers::{providers::Middleware, types::TransactionRequest};
+use ethers::{
+    providers::Middleware,
+    types::{BlockNumber, TransactionRequest},
+};
 use primitive_types::H160;
 use tracing::*;
-use zilliqa::state::Address;
+use zilliqa::{contracts, state::contract_addr};
+
+use crate::Network;
 
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)
@@ -112,7 +115,7 @@ async fn block_production(mut network: Network) {
                     .map_or(0, |b| b.number())
                     >= 10
             },
-            50000,
+            100,
         )
         .await
         .unwrap();
@@ -122,6 +125,7 @@ async fn block_production(mut network: Network) {
 async fn launch_shard(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
+    // 0. Sanity check - make sure main network is running
     network
         .run_until_async(
             || async { wallet.get_block_number().await.unwrap().as_u64() >= 1 },
@@ -130,27 +134,99 @@ async fn launch_shard(mut network: Network) {
         .await
         .unwrap();
 
-    let abi = include_str!("../../src/contracts/shard_registry.json");
-    let abi = serde_json::from_str::<CombinedJson>(abi)
-        .unwrap()
-        .contracts
-        .remove("shard_registry.sol:ShardRegistry")
-        .unwrap()
-        .abi;
+    let child_shard_id = 80000u64;
+    // This is necessary to maintain a supermajority once the main shard nodes join.
+    // The size can be reduced once nodes stop joining the committee before they're
+    // fully caught up.
+    let child_shard_nodes = 10;
 
-    let shard_id = 80000u64;
+    // 1. Construct and launch a shard network
+    let mut shard_network = Network::new_shard(
+        network.rng.clone(),
+        child_shard_nodes,
+        false,
+        child_shard_id,
+        network.seed,
+    );
+    let shard_wallet = shard_network.genesis_wallet().await;
 
-    let function = abi.function("addShard").unwrap();
+    network.children.insert(child_shard_id, shard_network);
+    network
+        .children
+        .get_mut(&child_shard_id)
+        .unwrap()
+        .run_until_async(
+            || async { shard_wallet.get_block_number().await.unwrap().as_u64() >= 1 },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // 2. Fetch shard's genesis hash
+    let shard_genesis = shard_wallet
+        .get_block(0)
+        .await
+        .unwrap()
+        .unwrap()
+        .hash
+        .unwrap();
+
+    // 3. Deploy shard contract for the shard on the main network
+    let deploy_shard_tx = TransactionRequest::new().data(
+        contracts::shard::CONSTRUCTOR
+            .encode_input(
+                contracts::shard::BYTECODE.to_vec(),
+                &[
+                    Token::Uint((700 + 0x8000).into()),
+                    Token::Uint(5000.into()),
+                    Token::FixedBytes(shard_genesis.0.to_vec()),
+                ],
+            )
+            .unwrap(),
+    );
+
+    let tx = wallet
+        .send_transaction(deploy_shard_tx, None)
+        .await
+        .unwrap();
+    let hash = tx.tx_hash();
+
+    network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    let deploy_shard_receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let shard_contract_address = deploy_shard_receipt.contract_address.unwrap();
+
+    // 4. Register the shard in the shard registry on the main shard
     let tx_request = TransactionRequest::new()
-        .to(Address::SHARD_CONTRACT.0)
+        .to(contract_addr::SHARD_CONTRACT)
         .data(
-            function
-                .encode_input(&[Token::Uint(shard_id.into())])
+            contracts::shard_registry::ADD_SHARD
+                .encode_input(&[
+                    Token::Uint(child_shard_id.into()),
+                    Token::Address(shard_contract_address),
+                ])
                 .unwrap(),
         );
 
-    // sanity check
-    assert_eq!(network.children.len(), 0);
+    // sanity check - child shard exists and only has the nodes we manually spawned in it earlier
+    assert_eq!(network.children.len(), 1);
+    assert!(network.children.contains_key(&child_shard_id));
+    assert_eq!(
+        network.children.get(&child_shard_id).unwrap().nodes.len(),
+        child_shard_nodes
+    );
 
     let tx = wallet.send_transaction(tx_request, None).await.unwrap();
     let hash = tx.tx_hash();
@@ -171,7 +247,8 @@ async fn launch_shard(mut network: Network) {
 
     let included_block = wallet.get_block_number().await.unwrap();
 
-    // finalize block
+    // 5. Finalize the block on the main shard and check each main shard node has
+    // spawned a child shard node in response
     network
         .run_until_async(
             || async { wallet.get_block_number().await.unwrap() >= included_block + 2 },
@@ -180,36 +257,42 @@ async fn launch_shard(mut network: Network) {
         .await
         .unwrap();
 
-    // check we've spawned a shard
-    network
-        .run_until(|n| n.children.contains_key(&shard_id), 50)
-        .await
-        .unwrap();
-
-    // check every node has spawned a shard node
     network
         .run_until(
-            |n| n.children.get(&shard_id).unwrap().nodes.len() == n.nodes.len(),
+            |n| {
+                n.children.get(&child_shard_id).unwrap().nodes.len()
+                    == n.nodes.len() + child_shard_nodes
+            },
             50,
         )
         .await
         .unwrap();
 
-    // check shard is producing blocks
+    // 6. Check shard is still producing blocks
+    let check_child_block = shard_wallet
+        .get_block(BlockNumber::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .number
+        .unwrap();
+
     network
         .children
-        .get_mut(&shard_id)
+        .get_mut(&child_shard_id)
         .unwrap()
-        .run_until(
-            |n| {
-                let index = n.random_index();
-                n.get_node(index)
-                    .get_latest_block()
+        .run_until_async(
+            || async {
+                shard_wallet
+                    .get_block(BlockNumber::Latest)
+                    .await
                     .unwrap()
-                    .map_or(0, |b| b.number())
-                    >= 5
+                    .unwrap()
+                    .number
+                    .unwrap()
+                    >= check_child_block + 5
             },
-            50,
+            500,
         )
         .await
         .unwrap();
@@ -273,7 +356,7 @@ async fn handle_forking_correctly(mut network: Network) {
                     _ => false,
                 }
             },
-            500,
+            1000,
         )
         .await
         .unwrap();

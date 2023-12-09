@@ -5,7 +5,7 @@ use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::sec1::ToEncodedPoint,
 };
-use primitive_types::H256;
+use primitive_types::{H160, H256};
 use prost::Message;
 use rlp::RlpStream;
 use serde::{Deserialize, Serialize};
@@ -18,9 +18,6 @@ use sha3::{
     },
     Digest, Keccak256,
 };
-use std::fmt;
-use std::fmt::Display;
-use std::fmt::Formatter;
 
 use crate::{
     crypto, schnorr,
@@ -30,7 +27,7 @@ use crate::{
 
 /// A [Transaction] plus its signature. The underlying transaction can be obtained with
 /// [`SignedTransaction::into_transaction()`]. The transaction's signer and hash can be obtained by converting this to a
-/// [RecoveredTransaction] with [`SignedTransaction::recover_signer()`].
+/// [VerifiedTransaction] with [`SignedTransaction::verify()`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SignedTransaction {
     Legacy {
@@ -117,7 +114,7 @@ impl SignedTransaction {
         }
     }
 
-    pub fn recover_signer(self) -> Result<RecoveredTransaction> {
+    pub fn verify(self) -> Result<VerifiedTransaction> {
         let signer = match &self {
             SignedTransaction::Legacy { tx, sig } => {
                 let recovery_id = RecoveryId::new(sig.y_is_odd, false);
@@ -157,12 +154,12 @@ impl SignedTransaction {
 
                 let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
                 let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
-                Address::from_bytes(bytes.into())
+                H160(bytes.into())
             }
         };
         let hash = self.calculate_hash();
 
-        Ok(RecoveredTransaction {
+        Ok(VerifiedTransaction {
             tx: self,
             signer,
             hash,
@@ -170,7 +167,7 @@ impl SignedTransaction {
     }
 
     /// Calculate the hash of this transaction. If you need to do this more than once, consider caching the result
-    /// using [`Self::recover_signer()`] and the `hash` field from [RecoveredTransaction].
+    /// using [`Self::verify()`] and the `hash` field from [RecoveredTransaction].
     pub fn calculate_hash(&self) -> crypto::Hash {
         match self {
             SignedTransaction::Legacy { tx, sig } => {
@@ -232,11 +229,12 @@ impl EthSignature {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// A [SignedTransaction] which has had the signer recovered. The transaction's hash is also calculated and cached.
+/// A [SignedTransaction] which has had the signature verified and the signer recovered. The transaction's hash is also
+/// calculated and cached.
 ///
 /// [Serialize] and [Deserialize] are deliberately not implemented for this type. [SignedTransaction]s should be sent
 /// accross the network the signer should be verified and recovered independently.
-pub struct RecoveredTransaction {
+pub struct VerifiedTransaction {
     pub tx: SignedTransaction,
     pub signer: Address,
     pub hash: crypto::Hash,
@@ -388,12 +386,7 @@ impl TxLegacy {
         rlp.append(&self.nonce)
             .append(&self.gas_price)
             .append(&self.gas_limit)
-            .append(
-                &self
-                    .to_addr
-                    .map(|a| a.as_bytes().to_vec())
-                    .unwrap_or_default(),
-            )
+            .append(&rlp_option_addr(&self.to_addr))
             .append(&self.amount)
             .append(&self.payload);
     }
@@ -427,12 +420,7 @@ impl TxEip2930 {
             .append(&self.nonce)
             .append(&self.gas_price)
             .append(&self.gas_limit)
-            .append(
-                &self
-                    .to_addr
-                    .map(|a| a.as_bytes().to_vec())
-                    .unwrap_or_default(),
-            )
+            .append(&rlp_option_addr(&self.to_addr))
             .append(&self.amount)
             .append(&self.payload);
         encode_access_list(rlp, &self.access_list);
@@ -469,12 +457,7 @@ impl TxEip1559 {
             .append(&self.max_priority_fee_per_gas)
             .append(&self.max_fee_per_gas)
             .append(&self.gas_limit)
-            .append(
-                &self
-                    .to_addr
-                    .map(|a| a.as_bytes().to_vec())
-                    .unwrap_or_default(),
-            )
+            .append(&rlp_option_addr(&self.to_addr))
             .append(&self.amount)
             .append(&self.payload);
         encode_access_list(rlp, &self.access_list);
@@ -499,6 +482,7 @@ pub struct TransactionReceipt {
     pub block_hash: crypto::Hash,
     pub tx_hash: crypto::Hash,
     pub success: bool,
+    pub gas_used: u64,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
 }
@@ -518,14 +502,20 @@ fn ecdsa_key_to_address(key: &VerifyingKey) -> Address {
     // Remove the first byte before hashing - The first byte specifies the encoding tag.
     let hashed = Keccak256::digest(&key.to_encoded_point(false).as_bytes()[1..]);
     let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
-    Address::from_bytes(bytes.into())
+    H160(bytes.into())
+}
+
+/// Encode an `Option<H160>` ready to be added to an [RlpStream].
+/// `None` is represented as an empty string.
+fn rlp_option_addr(addr: &Option<H160>) -> &[u8] {
+    addr.as_ref().map(|a| a.as_ref()).unwrap_or_default()
 }
 
 fn encode_access_list(rlp: &mut RlpStream, access_list: &[(Address, Vec<H256>)]) {
     rlp.begin_list(access_list.len());
     for (address, storage_keys) in access_list {
         rlp.begin_list(2);
-        rlp.append(&address.0);
+        rlp.append(address);
         rlp.append_list(storage_keys);
     }
 }
@@ -545,34 +535,4 @@ fn encode_zilliqa_transaction(txn: &TxZilliqa, pub_key: schnorr::PublicKey) -> V
         oneof9,
     };
     proto.encode_to_vec()
-}
-
-// All displays below
-impl Display for SignedTransaction {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            SignedTransaction::Legacy { tx, sig } => {
-                write!(f, "Legacy {{ tx: {}, sig: [abridged] }}", tx,)
-            }
-            SignedTransaction::Eip2930 { tx, sig } => {
-                write!(f, "Eip2930 {{ tx: {}, sig: [abridged] }}", tx,)
-            }
-            SignedTransaction::Eip1559 { tx, sig } => {
-                write!(f, "Eip1559 {{ tx: {}, sig: [abridged] }}", tx,)
-            }
-            SignedTransaction::Zilliqa { tx, key, sig } => {
-                write!(f, "Zilliqa {{ tx: {}, key: {}, sig: [abridged] }}", tx, key)
-            }
-        }
-    }
-}
-
-impl Display for RecoveredTransaction {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "RecoveredTransaction {{ tx: {}, signer: {}, hash: {} }}",
-            self.tx, self.signer, self.hash
-        )
-    }
 }

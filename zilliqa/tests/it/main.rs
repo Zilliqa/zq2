@@ -1,24 +1,24 @@
 mod consensus;
 mod eth;
-mod native_contracts;
 mod persistence;
 mod web3;
 mod zil;
+use std::{env, ops::DerefMut};
+
 use ethers::solc::SHANGHAI_SOLC;
-use std::env;
-use std::ops::DerefMut;
-use zilliqa::cfg::ConsensusConfig;
-use zilliqa::cfg::NodeConfig;
-use zilliqa::crypto::{Hash, NodePublicKey, SecretKey};
-use zilliqa::message::{ExternalMessage, InternalMessage};
-use zilliqa::node::Node;
-use zilliqa::state::Address;
+use itertools::Itertools;
+use serde::Deserialize;
+use zilliqa::{
+    cfg::{ConsensusConfig, NodeConfig},
+    crypto::{NodePublicKey, SecretKey},
+    message::{ExternalMessage, InternalMessage},
+    node::Node,
+    state::Address,
+};
 
 extern crate fs_extra;
-use fs_extra::dir::*;
-
-use std::collections::HashMap;
 use std::{
+    collections::HashMap,
     fmt::Debug,
     fs,
     rc::Rc,
@@ -28,69 +28,76 @@ use std::{
     },
     time::Duration,
 };
-use zilliqa::message::Message;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-
-use ethers::utils::secret_key_to_address;
 use ethers::{
     abi::Contract,
     prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, SignerMiddleware},
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::LocalWallet,
     types::H256,
+    utils::secret_key_to_address,
 };
+use fs_extra::dir::*;
 use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
-
 use jsonrpsee::{
     types::{Id, RequestSer, Response, ResponsePayload},
     RpcModule,
 };
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
-use primitive_types::H160;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
-use serde::Deserialize;
 use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
 
-#[derive(Deserialize)]
-struct CombinedJson {
-    contracts: HashMap<String, AbiContract>,
+/// (source, destination, message) for both
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum AnyMessage {
+    External(ExternalMessage),
+    Internal(u64, u64, InternalMessage),
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct AbiContract {
-    abi: ethabi::Contract,
-}
+type StreamMessage = (PeerId, Option<PeerId>, AnyMessage);
 
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
 // type
 #[allow(clippy::type_complexity)]
 fn node(
-    genesis_committee: Vec<(NodePublicKey, PeerId)>,
-    genesis_hash: Option<Hash>,
+    config: NodeConfig,
     secret_key: SecretKey,
     index: usize,
     datadir: Option<TempDir>,
-    genesis_account: H160,
 ) -> Result<(
     TestNode,
-    BoxStream<'static, (PeerId, Option<PeerId>, Message)>,
+    BoxStream<'static, StreamMessage>,
+    BoxStream<'static, StreamMessage>,
 )> {
     let (message_sender, message_receiver) = mpsc::unbounded_channel();
     let message_receiver = UnboundedReceiverStream::new(message_receiver);
     // Augment the `message_receiver` stream to include the sender's `PeerId`.
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
     let message_receiver = message_receiver
-        .map(move |(dest, _, message)| (peer_id, dest, message))
+        .map(move |(dest, _, message)| (peer_id, dest, AnyMessage::External(message)))
         .boxed();
+
+    let (local_message_sender, local_message_receiver) = mpsc::unbounded_channel();
+    let local_message_receiver = UnboundedReceiverStream::new(local_message_receiver);
+    // Augment the `message_receiver` stream to include the sender and receiver's `PeerId`.
+    let local_message_receiver = local_message_receiver
+        .map(move |(src, dest, message)| {
+            (
+                peer_id,
+                Some(peer_id),
+                AnyMessage::Internal(src, dest, message),
+            )
+        })
+        .boxed();
+
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     std::mem::forget(reset_timeout_receiver);
 
@@ -99,24 +106,11 @@ fn node(
             data_dir: datadir
                 .as_ref()
                 .map(|d| d.path().to_str().unwrap().to_string()),
-            consensus: ConsensusConfig {
-                genesis_committee,
-                genesis_hash,
-                // Give a genesis account 1 billion ZIL.
-                genesis_accounts: vec![(
-                    Address(genesis_account),
-                    1_000_000_000u128
-                        .checked_mul(10u128.pow(18))
-                        .unwrap()
-                        .to_string(),
-                )],
-                consensus_timeout: Duration::from_secs(1),
-                ..Default::default()
-            },
-            ..Default::default()
+            ..config
         },
         secret_key,
         message_sender,
+        local_message_sender,
         reset_timeout_sender,
     )?;
     let node = Arc::new(Mutex::new(node));
@@ -132,6 +126,7 @@ fn node(
             rpc_module,
         },
         message_receiver,
+        local_message_receiver,
     ))
 }
 
@@ -147,17 +142,17 @@ struct TestNode {
 
 struct Network {
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
-    /// Save the funded genesis address for use in restarts.
-    pub genesis_address: H160,
     /// Child shards.
     pub children: HashMap<u64, Network>,
+    pub is_main: bool,
+    pub shard_id: u64,
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
     // the borrow checker happy.
     nodes: Vec<TestNode>,
     /// A stream of messages from each node. The stream items are a tuple of (source, destination, message).
     /// If the destination is `None`, the message is a broadcast.
-    receivers: Vec<BoxStream<'static, (PeerId, Option<PeerId>, Message)>>,
-    resend_message: UnboundedSender<(PeerId, Option<PeerId>, Message)>,
+    receivers: Vec<BoxStream<'static, StreamMessage>>,
+    resend_message: UnboundedSender<StreamMessage>,
     rng: Arc<Mutex<ChaCha8Rng>>,
     /// The seed input for the node - because rng.get_seed() returns a different, internal
     /// representation
@@ -166,10 +161,18 @@ struct Network {
 }
 
 impl Network {
+    /// Create a main shard network.
     pub fn new(rng: Arc<Mutex<ChaCha8Rng>>, nodes: usize, seed: u64) -> Network {
-        // Make sure first thing is to pause system time
-        zilliqa::time::pause_at_epoch();
+        Self::new_shard(rng, nodes, true, NodeConfig::default().eth_chain_id, seed)
+    }
 
+    pub fn new_shard(
+        rng: Arc<Mutex<ChaCha8Rng>>,
+        nodes: usize,
+        is_main: bool,
+        shard_id: u64,
+        seed: u64,
+    ) -> Network {
         let mut keys: Vec<_> = (0..nodes)
             .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
             .collect();
@@ -184,24 +187,32 @@ impl Network {
         let genesis_committee = vec![validator];
         let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
-        // save for later use if we restart
-        let genesis_address = secret_key_to_address(&genesis_key);
+        let config = NodeConfig {
+            eth_chain_id: shard_id,
+            consensus: ConsensusConfig {
+                genesis_committee: genesis_committee.clone(),
+                genesis_hash: None,
+                is_main,
+                consensus_timeout: Duration::from_secs(1),
+                // Give a genesis account 1 billion ZIL.
+                genesis_accounts: Self::genesis_accounts(&genesis_key),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
-        let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
+        let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
-                node(
-                    genesis_committee.clone(),
-                    None,
-                    key,
-                    i,
-                    Some(tempfile::tempdir().unwrap()),
-                    genesis_address,
-                )
-                .unwrap()
+                node(config.clone(), key, i, Some(tempfile::tempdir().unwrap())).unwrap()
             })
-            .unzip();
+            .multiunzip();
+
+        let mut receivers: Vec<_> = external_receivers
+            .into_iter()
+            .chain(local_receivers)
+            .collect();
 
         for node in &nodes {
             trace!(
@@ -212,15 +223,15 @@ impl Network {
             );
         }
 
-        let (resend_message, receive_resend_message) =
-            mpsc::unbounded_channel::<(PeerId, Option<PeerId>, Message)>();
+        let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
         Network {
             genesis_committee,
-            genesis_address,
             nodes,
+            is_main,
+            shard_id,
             receivers,
             resend_message,
             rng,
@@ -228,6 +239,16 @@ impl Network {
             children: HashMap::new(),
             genesis_key,
         }
+    }
+
+    fn genesis_accounts(genesis_key: &SigningKey) -> Vec<(Address, String)> {
+        vec![(
+            secret_key_to_address(genesis_key),
+            1_000_000_000u128
+                .checked_mul(10u128.pow(18))
+                .unwrap()
+                .to_string(),
+        )]
     }
 
     pub fn add_node(&mut self, genesis: bool) -> usize {
@@ -247,21 +268,27 @@ impl Network {
                 ),
             )
         };
-        let (node, receiver) = node(
-            genesis_committee,
-            genesis_hash,
-            secret_key,
-            self.nodes.len(),
-            None,
-            secret_key_to_address(&self.genesis_key),
-        )
-        .unwrap();
+
+        let config = NodeConfig {
+            eth_chain_id: self.shard_id,
+            consensus: ConsensusConfig {
+                genesis_committee,
+                genesis_hash,
+                is_main: self.is_main,
+                consensus_timeout: Duration::from_secs(1),
+                genesis_accounts: Self::genesis_accounts(&self.genesis_key),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (node, receiver, local_receiver) =
+            node(config, secret_key, self.nodes.len(), None).unwrap();
 
         self.resend_message
             .send((
                 node.peer_id,
                 None,
-                Message::External(ExternalMessage::JoinCommittee(
+                AnyMessage::External(ExternalMessage::JoinCommittee(
                     node.secret_key.node_public_key(),
                 )),
             ))
@@ -273,6 +300,7 @@ impl Network {
 
         self.nodes.push(node);
         self.receivers.push(receiver);
+        self.receivers.push(local_receiver);
 
         index
     }
@@ -294,7 +322,7 @@ impl Network {
         );
         let genesis_committee = vec![validator];
 
-        let (nodes, mut receivers): (Vec<_>, Vec<_>) = keys
+        let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
@@ -312,17 +340,28 @@ impl Network {
                     warn!("Failed to copy data dir over");
                 }
 
-                node(
-                    genesis_committee.clone(),
-                    None,
-                    key,
-                    i,
-                    Some(new_data_dir),
-                    self.genesis_address,
-                )
-                .unwrap()
+                let config = NodeConfig {
+                    eth_chain_id: self.shard_id,
+                    consensus: ConsensusConfig {
+                        genesis_committee: genesis_committee.clone(),
+                        genesis_hash: None,
+                        is_main: self.is_main,
+                        consensus_timeout: Duration::from_secs(1),
+                        // Give a genesis account 1 billion ZIL.
+                        genesis_accounts: Self::genesis_accounts(&self.genesis_key),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+
+                node(config, key, i, Some(new_data_dir)).unwrap()
             })
-            .unzip();
+            .multiunzip();
+
+        let mut receivers: Vec<_> = external_receivers
+            .into_iter()
+            .chain(local_receivers)
+            .collect();
 
         for node in &nodes {
             trace!(
@@ -333,8 +372,7 @@ impl Network {
             );
         }
 
-        let (resend_message, receive_resend_message) =
-            mpsc::unbounded_channel::<(PeerId, Option<PeerId>, Message)>();
+        let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
@@ -346,7 +384,7 @@ impl Network {
         // this could of course spin forever, but the test itself should time out.
         loop {
             for node in &self.nodes {
-                if node.inner.lock().unwrap().handle_timeout() {
+                if node.inner.lock().unwrap().handle_timeout().unwrap() {
                     return;
                 }
                 zilliqa::time::advance(Duration::from_millis(500));
@@ -354,7 +392,7 @@ impl Network {
         }
     }
 
-    fn collect_messages(&mut self) -> Vec<(PeerId, Option<PeerId>, Message)> {
+    fn collect_messages(&mut self) -> Vec<(PeerId, Option<PeerId>, AnyMessage)> {
         let mut messages = vec![];
 
         // Poll the receiver with `unconstrained` to ensure it won't be pre-empted. This makes sure we always
@@ -388,6 +426,8 @@ impl Network {
         let mut proposals_seen = 0;
         let mut broadcast_handled = false;
 
+        trace!("Dropping propose messages except one");
+
         loop {
             // Generate some messages
             self.tick().await;
@@ -412,7 +452,7 @@ impl Network {
 
             // Remove the matching messages
             messages.retain(|(s, d, m)| {
-                if let Message::External(ExternalMessage::Proposal(prop)) = m {
+                if let AnyMessage::External(ExternalMessage::Proposal(prop)) = m {
                     if !prop.transactions.is_empty() {
                         removed_items.push((*s, *d, m.clone()));
                         return false;
@@ -462,6 +502,8 @@ impl Network {
                 self.resend_message.send(message).unwrap();
             }
         }
+
+        trace!("Finished dropping propose messages except one");
     }
 
     // Drop the first message in each node queue with N% probability per tick
@@ -510,13 +552,13 @@ impl Network {
 
         if messages.is_empty() {
             trace!("Messages were empty - advance time and trigger timeout in all nodes!");
-            zilliqa::time::advance(Duration::from_millis(500));
+            zilliqa::time::advance(Duration::from_millis(1000));
 
             for (index, node) in self.nodes.iter().enumerate() {
                 let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
 
                 span.in_scope(|| {
-                    node.inner.lock().unwrap().handle_timeout();
+                    node.inner.lock().unwrap().handle_timeout().unwrap();
                 });
             }
             return;
@@ -537,43 +579,53 @@ impl Network {
         self.handle_message((source, destination, message))
     }
 
-    fn handle_message(&mut self, message: (PeerId, Option<PeerId>, Message)) {
-        if let Message::Internal(internal_message) = message.2 {
-            if let InternalMessage::LaunchShard(network_id) = internal_message {
-                if let Some(network) = self.children.get_mut(&network_id) {
-                    trace!("Launching shard node for {network_id} - adding new node to shard");
-                    network.add_node(true);
-                } else {
-                    info!("Launching node in new shard network {network_id}");
-                    self.children
-                        .insert(network_id, Network::new(self.rng.clone(), 1, self.seed));
+    fn handle_message(&mut self, message: (PeerId, Option<PeerId>, AnyMessage)) {
+        match message.2 {
+            AnyMessage::Internal(_source_shard, _destination_shard, internal_message) => {
+                match internal_message {
+                    #[allow(clippy::match_single_binding)]
+                    InternalMessage::LaunchShard(network_id) => {
+                        if let Some(network) = self.children.get_mut(&network_id) {
+                            trace!(
+                                "Launching shard node for {network_id} - adding new node to shard"
+                            );
+                            network.add_node(true);
+                        } else {
+                            info!("Launching node in new shard network {network_id}");
+                            self.children
+                                .insert(network_id, Network::new(self.rng.clone(), 1, self.seed));
+                        }
+                    }
                 }
             }
-        } else {
-            let nodes: Vec<&TestNode> = if let Some(destination) = message.1 {
-                vec![self
-                    .nodes
-                    .iter()
-                    .find(|n| n.peer_id == destination)
-                    .unwrap()]
-            } else {
-                self.nodes.iter().collect()
-            };
-
-            for node in &nodes {
-                let index = self
-                    .nodes
-                    .iter()
-                    .position(|n| n.peer_id == node.peer_id)
-                    .unwrap_or(9999);
-                let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
-                span.in_scope(|| {
-                    node.inner
-                        .lock()
-                        .unwrap()
-                        .handle_message(message.0, message.2.clone())
-                        .unwrap();
-                });
+            AnyMessage::External(external_message) => {
+                let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = message.1 {
+                    vec![self
+                        .nodes
+                        .iter()
+                        .enumerate()
+                        .find(|(_, n)| n.peer_id == destination)
+                        .unwrap()]
+                } else {
+                    self.nodes.iter().enumerate().collect()
+                };
+                for (index, node) in nodes.iter() {
+                    let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
+                    span.in_scope(|| {
+                        if message.1.is_some() {
+                            info!(
+                                "destination: {}, node being used: {}",
+                                message.1.unwrap(),
+                                node.inner.lock().unwrap().peer_id()
+                            );
+                        }
+                        node.inner
+                            .lock()
+                            .unwrap()
+                            .handle_network_message(message.0, external_message.clone())
+                            .unwrap();
+                    });
+                }
             }
         }
     }
@@ -682,10 +734,10 @@ fn format_message(
     nodes: &[TestNode],
     source: PeerId,
     destination: Option<PeerId>,
-    message: &Message,
+    message: &AnyMessage,
 ) -> String {
     let message = match message {
-        Message::External(external_message) => match external_message {
+        AnyMessage::External(message) => match message {
             ExternalMessage::Proposal(proposal) => format!(
                 "{} [{}] ({:?})",
                 message.name(),
@@ -700,12 +752,12 @@ fn format_message(
                 format!("{} [{:?}]", message.name(), request.0)
             }
             ExternalMessage::BlockResponse(response) => {
-                format!("{} [{}]", message.name(), response.block.number())
+                format!("{} [{}]", message.name(), response.proposal.number())
             }
             _ => message.name().to_owned(),
         },
         #[allow(clippy::match_single_binding)]
-        Message::Internal(internal_message) => match internal_message {
+        AnyMessage::Internal(_source_shard, _destination_shard, message) => match message {
             _ => message.name().to_owned(),
         },
     };

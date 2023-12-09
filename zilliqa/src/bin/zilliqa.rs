@@ -1,15 +1,12 @@
 extern crate bs58;
 use std::{fs, path::PathBuf};
-use zilliqa::p2p_node::P2pNode;
 
 use anyhow::Result;
 use clap::Parser;
-
-use opentelemetry::runtime;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
+use opentelemetry_sdk::runtime;
 use tokio::time::Duration;
-
-use zilliqa::{cfg::Config, crypto::SecretKey};
+use zilliqa::{cfg::Config, crypto::SecretKey, p2p_node::P2pNode};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -17,13 +14,20 @@ struct Args {
     secret_key: SecretKey,
     #[clap(long, short, default_value = "config.toml")]
     config_file: PathBuf,
+    #[clap(long, default_value = "false")]
+    log_json: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
-
     let args = Args::parse();
+
+    let builder = tracing_subscriber::fmt();
+    if args.log_json {
+        builder.json().init();
+    } else {
+        builder.init();
+    }
 
     let config = if args.config_file.exists() {
         fs::read_to_string(&args.config_file)?

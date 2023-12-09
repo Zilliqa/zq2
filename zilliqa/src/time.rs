@@ -6,30 +6,15 @@
 #[cfg(not(feature = "fake_time"))]
 pub type SystemTime = std::time::SystemTime;
 
-pub type OffsetDateTime = time::OffsetDateTime;
-
-impl From<time_impl::SystemTime> for OffsetDateTime {
-    fn from(time: time_impl::SystemTime) -> Self {
-        let duration = time
-            .duration_since(time_impl::SystemTime::UNIX_EPOCH)
-            .unwrap();
-        time::OffsetDateTime::from_unix_timestamp(duration.as_secs() as i64).unwrap()
-    }
-}
-
 #[cfg(feature = "fake_time")]
 pub use time_impl::*;
 
 #[cfg(feature = "fake_time")]
 mod time_impl {
+    use std::{error::Error, fmt, sync::Mutex, time::Duration};
+
+    use futures::Future;
     use serde::{Deserialize, Serialize};
-    use std::{
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Mutex, OnceLock,
-        },
-        time::Duration,
-    };
 
     /// A fake implementation of [std::time::SystemTime]. The value of `SystemTime::now` can be controlled with [advance_time].
     #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -39,19 +24,19 @@ mod time_impl {
         pub const UNIX_EPOCH: SystemTime = SystemTime(std::time::SystemTime::UNIX_EPOCH);
 
         pub fn now() -> Self {
-            let paused = PAUSED.load(Ordering::Acquire);
-            if paused {
-                // Time has been paused, get the fake time.
-                let current_time = *CURRENT_TIME.get_or_init(Mutex::default).lock().unwrap();
-                SystemTime(std::time::SystemTime::UNIX_EPOCH + current_time)
-            } else {
-                // Time has not been paused, use the real time.
-                SystemTime(std::time::SystemTime::now())
-            }
+            CURRENT_TIME
+                .try_with(|current_time| {
+                    let current_time = *current_time.lock().unwrap();
+                    SystemTime(std::time::SystemTime::UNIX_EPOCH + current_time)
+                })
+                .unwrap_or_else(|_| {
+                    // We are not within the scope of `with_fake_time()`, so use the real time.
+                    SystemTime(std::time::SystemTime::now())
+                })
         }
 
         pub fn elapsed(&self) -> Result<Duration, SystemTimeError> {
-            self.duration_since(SystemTime::now())
+            SystemTime::now().duration_since(*self)
         }
 
         pub fn duration_since(&self, other: SystemTime) -> Result<Duration, SystemTimeError> {
@@ -69,30 +54,32 @@ mod time_impl {
             self.0
         }
     }
-
-    static PAUSED: AtomicBool = AtomicBool::new(false);
-    /// Stores the duration between the currently set fake time time and the `UNIX_EPOCH`.
-    static CURRENT_TIME: OnceLock<Mutex<Duration>> = OnceLock::new();
-
-    /// Pause the fake time at the unix epoch.
-    pub fn pause_at_epoch() {
-        // Do not pause if it already paused
-        if PAUSED.load(Ordering::Acquire) {
-            return;
+    impl fmt::Display for SystemTimeError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "second time provided was later than self")
         }
-
-        PAUSED.store(true, Ordering::Release);
-        let mut current_time = CURRENT_TIME.get_or_init(Mutex::default).lock().unwrap();
-        *current_time = Duration::ZERO;
     }
 
-    /// Advance the fake time by this duration. Panics if time has not been paused with `pause_at_epoch()`.
-    pub fn advance(delta: Duration) {
-        let paused = PAUSED.load(Ordering::Acquire);
-        if !paused {
-            panic!("time is not paused");
+    impl Error for SystemTimeError {
+        fn description(&self) -> &str {
+            "other time was not earlier than self"
         }
-        let mut current_time = CURRENT_TIME.get_or_init(Mutex::default).lock().unwrap();
-        *current_time += delta;
+    }
+
+    tokio::task_local! {
+        /// Stores the duration between the currently set fake time time and the `UNIX_EPOCH`.
+        static CURRENT_TIME: Mutex<Duration>;
+    }
+
+    pub fn with_fake_time<F: Future>(f: F) -> impl Future<Output = F::Output> {
+        CURRENT_TIME.scope(Mutex::new(Duration::ZERO), f)
+    }
+
+    /// Advance the fake time by this duration. Panics if not called within the scope of `with_fake_time()`.
+    pub fn advance(delta: Duration) {
+        CURRENT_TIME.with(|current_time| {
+            let mut current_time = current_time.lock().unwrap();
+            *current_time += delta;
+        });
     }
 }

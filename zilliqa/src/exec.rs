@@ -5,9 +5,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use evm_ds::tracing_logging::LoggingEventListener;
-
-use crate::evm_backend::EvmBackend;
 use anyhow::{anyhow, Result};
 use ethabi::Token;
 use evm_ds::{
@@ -16,15 +13,17 @@ use evm_ds::{
         calculate_contract_address, calculate_contract_address_scheme, run_evm_impl_direct,
     },
     protos::evm_proto::{self as EvmProto, ExitReasonCps},
+    tracing_logging::LoggingEventListener,
 };
 use primitive_types::{H160, U256};
 use tracing::*;
 
 use crate::{
     contracts,
+    evm_backend::EvmBackend,
     message::BlockHeader,
-    state::{Address, State},
-    transaction::RecoveredTransaction,
+    state::{contract_addr, Address, State},
+    transaction::VerifiedTransaction,
 };
 
 #[derive(Default)]
@@ -102,6 +101,8 @@ pub struct TransactionApplyResult {
     pub logs: Vec<EvmProto::Log>,
     /// The traces from the EVM, if enabled
     pub traces: Arc<Mutex<LoggingEventListener>>,
+    /// The gas paid by the transaction
+    pub gas_used: u64,
 }
 
 impl State {
@@ -127,13 +128,13 @@ impl State {
                     for apply in result.apply.iter_mut() {
                         match apply {
                             EvmProto::Apply::Modify { address, .. } => {
-                                if *address == evm_address.0 {
-                                    *address = override_address.0;
+                                if *address == evm_address {
+                                    *address = override_address;
                                 }
                             }
                             EvmProto::Apply::Delete { address, .. } => {
-                                if *address == evm_address.0 {
-                                    *address = override_address.0;
+                                if *address == evm_address {
+                                    *address = override_address;
                                 }
                             }
                         }
@@ -173,9 +174,9 @@ impl State {
         let context = "".to_string();
         let continuations: Arc<Mutex<EvmProto::Continuations>> = Default::default();
         let account = self
-            .get_account(to_addr.unwrap_or(Address::ZERO))
+            .get_account(to_addr.unwrap_or(Address::zero()))
             .unwrap_or_default();
-        let mut to = to_addr.unwrap_or(Address::ZERO);
+        let mut to = to_addr.unwrap_or(Address::zero());
         let mut created_contract_addr: Option<Address> = None;
 
         let mut code: Vec<u8> = account.code;
@@ -184,13 +185,13 @@ impl State {
             Arc::new(Mutex::new(LoggingEventListener::new(tracing)));
 
         // The backend is provided to the evm as a way to read accounts and state during execution
-        let mut backend = EvmBackend::new(self, U256::zero(), caller.0, chain_id, current_block);
+        let mut backend = EvmBackend::new(self, U256::zero(), caller, chain_id, current_block);
 
         // if this is none, it is contract creation
         if to_addr.is_none() {
             code = data;
             data = vec![];
-            to = Address(calculate_contract_address(from_addr.0, &backend));
+            to = calculate_contract_address(from_addr, &backend);
             created_contract_addr = Some(to);
             info!("Calculated contract address for creation: {}", to);
         }
@@ -201,12 +202,12 @@ impl State {
 
         // The first continuation in the stack is the tx itself
         continuation_stack.push(EvmProto::EvmCallArgs {
-            address: to.0,
+            address: to,
             code,
             data,
             apparent_value: amount,
             gas_limit,
-            caller: caller.0,
+            caller,
             gas_scaling_factor: 1,
             scaling_factor: None,
             estimate,
@@ -257,7 +258,7 @@ impl State {
                 );
             }
 
-            continuation_stack.push(push_transfer(
+            continuation_stack.push(self.push_transfer(
                 from_addr,
                 to,
                 amount,
@@ -341,8 +342,8 @@ impl State {
                         call_args.node_continuation = Some(cont);
 
                         let call_data_next = call.call_data;
-                        let call_addr: Address = call.callee_address.into();
-                        let caller: Address = call.context.caller.into();
+                        let call_addr = call.callee_address;
+                        let caller = call.context.caller;
                         let value: U256 = if let Some(transfer) = call.transfer {
                             transfer.value
                         } else {
@@ -350,11 +351,11 @@ impl State {
                         };
 
                         // Fetch the code to be called from the backend
-                        let code_next = backend.code(call_addr.0);
+                        let code_next = backend.code(call_addr);
 
                         // Set up the next continuation, adjust the relevant parameters
                         let call_args_next = EvmProto::EvmCallArgs {
-                            address: call_addr.0,
+                            address: call_addr,
                             code: code_next,
                             data: call_data_next,
                             apparent_value: value,
@@ -373,7 +374,7 @@ impl State {
 
                         // If the call also has a value transfer, we need to execute that first
                         if !value.is_zero() {
-                            continuation_stack.push(push_transfer(
+                            continuation_stack.push(self.push_transfer(
                                 caller,
                                 call_addr,
                                 value,
@@ -426,7 +427,7 @@ impl State {
                             // We also need to write down the data + address of the contract we
                             // just created
                             backend.create_account(
-                                prior_node_continuation.get_address().into(),
+                                prior_node_continuation.get_address(),
                                 result.return_value.clone(),
                             );
 
@@ -445,20 +446,32 @@ impl State {
             }
         }
 
+        // If this was contract creation, apply this to the deltas for the convenience of
+        // the caller
+        if let Some(created_contract_addr) = created_contract_addr {
+            backend.create_account(created_contract_addr, result.return_value.clone());
+        }
+
+        // If the result was a revert, kill all applys
+        if !run_succeeded {
+            debug!("Transaction failed, clearing applys.");
+            backend.account_storage_cached.clear();
+        }
+
         // Finally, we want to deduct the gas used by the caller and send it to the miner
         // For now we send it to origin and assume we will handle rewards later
         // In estimation mode, we do not attempt to deduct the gas (so we should use this mode for
         // system calls)
-        if !estimate && run_succeeded {
+        if !estimate {
             if result.remaining_gas > gas_limit {
                 panic!("More gas remains than we specified at the beginning of execution!");
             }
 
             let gas_deduction = (gas_limit - result.remaining_gas) as u128 * gas_price;
 
-            continuation_stack.push(push_transfer(
+            continuation_stack.push(self.push_transfer(
                 from_addr,
-                Address::COLLECTED_FEES,
+                contract_addr::COLLECTED_FEES,
                 gas_deduction.into(),
                 continuations,
                 traces,
@@ -488,12 +501,6 @@ impl State {
             }
 
             backend.apply_update(gas_result.take_apply());
-        }
-
-        // If this was contract creation, apply this to the deltas for the convenience of
-        // the caller
-        if let Some(created_contract_addr) = created_contract_addr {
-            backend.create_account(created_contract_addr, result.return_value.clone());
         }
 
         let mut backend_result = backend.get_result();
@@ -528,7 +535,7 @@ impl State {
         payload: Vec<u8>,
     ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
         self.apply_transaction_inner(
-            Address::ZERO,
+            Address::zero(),
             to_addr,
             u128::MIN,
             u64::MAX,
@@ -545,18 +552,31 @@ impl State {
     /// Apply a transaction to the account state.
     pub fn apply_transaction(
         &mut self,
-        txn: RecoveredTransaction,
+        txn: VerifiedTransaction,
         chain_id: u64,
         current_block: BlockHeader,
         tracing: bool,
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash;
         let from_addr = txn.signer;
-        info!(?hash, %txn, "executing txn");
-
-        let gas_price = self.get_gas_price()?;
+        info!(?hash, ?txn, "executing txn");
 
         let txn = txn.tx.into_transaction();
+
+        // fail early on nonce mismatch
+        let mut acct = self.get_account(from_addr).unwrap();
+        if acct.nonce != txn.nonce() {
+            let error_str = format!(
+                "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
+                acct.nonce,
+                txn.nonce(),
+                hash
+            );
+            warn!(error_str);
+            return Err(anyhow!(error_str));
+        }
+
+        let gas_price = self.get_gas_price()?;
 
         if txn.gas_limit() < gas_price {
             let error_str = format!(
@@ -586,23 +606,10 @@ impl State {
                 // Apply the state changes only if success
                 let success = result.succeeded();
 
-                if success {
-                    self.apply_delta(result.apply)?;
-                }
+                self.apply_delta(result.apply)?;
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
                 // and we get the return value (which will indicate the error)
-                let mut acct = self.get_account(from_addr).unwrap();
-
-                if acct.nonce != txn.nonce() {
-                    let error_str =
-                        format!(
-                        "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
-                        acct.nonce, txn.nonce(), hash
-                    );
-                    warn!(error_str);
-                    return Err(anyhow!(error_str));
-                }
                 acct.nonce = acct.nonce.checked_add(1).unwrap();
                 self.save_account(from_addr, acct)?;
 
@@ -611,6 +618,7 @@ impl State {
                     contract_address: contract_addr,
                     logs: result.logs,
                     traces: result.tx_trace.clone(),
+                    gas_used: txn.gas_limit() - result.remaining_gas,
                 })
             }
             Err(e) => {
@@ -621,6 +629,7 @@ impl State {
                     contract_address: None,
                     logs: Default::default(),
                     traces: Default::default(),
+                    gas_used: 0,
                 })
             }
         }
@@ -631,7 +640,6 @@ impl State {
         for apply in applys {
             match apply {
                 EvmProto::Apply::Delete { address } => {
-                    let address = Address(address);
                     let _account = self.delete_account(address);
                 }
                 EvmProto::Apply::Modify {
@@ -642,7 +650,6 @@ impl State {
                     storage,
                     reset_storage,
                 } => {
-                    let address = Address(address);
                     let mut account = self.get_account(address).unwrap_or_default();
 
                     if !code.is_empty() {
@@ -673,12 +680,12 @@ impl State {
         // For these accounts, we hardcode the balance we return to the EVM engine as zero. Otherwise, we have an
         // infinite recursion because getting the native balance of any account requires this method to be called for
         // these two 'special' accounts.
-        if address == Address::NATIVE_TOKEN || address == Address::ZERO {
+        if address == contract_addr::NATIVE_TOKEN || address.is_zero() {
             return Ok(U256::zero());
         }
 
         let data = contracts::native_token::BALANCE_OF
-            .encode_input(&[Token::Address(address.0)])
+            .encode_input(&[Token::Address(address)])
             .unwrap();
 
         if print_enabled {
@@ -687,8 +694,8 @@ impl State {
 
         let balance = self
             .call_contract(
-                Address::ZERO,
-                Some(Address::NATIVE_TOKEN),
+                Address::zero(),
+                Some(contract_addr::NATIVE_TOKEN),
                 data,
                 // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
                 // dummy values.
@@ -712,7 +719,7 @@ impl State {
             .unwrap();
 
         debug!("****** setting gas price to: {}", price);
-        let result = self.force_execute_payload(Some(Address::GAS_PRICE), data);
+        let result = self.force_execute_payload(Some(contract_addr::GAS_PRICE), data);
 
         match result {
             Ok((result, _)) => {
@@ -741,8 +748,8 @@ impl State {
 
         let gas_price = self
             .call_contract(
-                Address::ZERO,
-                Some(Address::GAS_PRICE),
+                Address::zero(),
+                Some(contract_addr::GAS_PRICE),
                 data,
                 U256::zero(),
                 // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
@@ -762,7 +769,7 @@ impl State {
 
     pub fn set_native_balance(&mut self, address: Address, amount: U256) -> Result<()> {
         let data = contracts::native_token::SET_BALANCE
-            .encode_input(&[Token::Address(address.0), Token::Uint(amount)])
+            .encode_input(&[Token::Address(address), Token::Uint(amount)])
             .unwrap();
 
         debug!(
@@ -771,8 +778,8 @@ impl State {
         );
 
         let result = self.apply_transaction_inner(
-            Address::ZERO,
-            Some(Address::NATIVE_TOKEN),
+            Address::zero(),
+            Some(contract_addr::NATIVE_TOKEN),
             u128::MIN,
             u64::MAX,
             U256::zero(),
@@ -912,44 +919,47 @@ impl State {
 
         Ok(result?.0)
     }
-}
 
-// Convenience function to create a balance transfer for the call stack. Note we do NOT use the
-// setBalance function as this should only be used at genesis
-pub fn push_transfer(
-    from: Address,
-    to: Address,
-    amount: U256,
-    continuations: Arc<Mutex<EvmProto::Continuations>>,
-    traces: Arc<Mutex<LoggingEventListener>>,
-) -> EvmProto::EvmCallArgs {
-    trace!(
-        "Pushing transfer from: {} -> to: {} amount: {}",
-        from,
-        to,
-        amount
-    );
+    // Convenience function to create a balance transfer for the call stack. Note we do NOT use the
+    // setBalance function as this should only be used at genesis
+    pub fn push_transfer(
+        &self,
+        from: Address,
+        to: Address,
+        amount: U256,
+        continuations: Arc<Mutex<EvmProto::Continuations>>,
+        traces: Arc<Mutex<LoggingEventListener>>,
+    ) -> EvmProto::EvmCallArgs {
+        trace!(
+            "Pushing transfer from: {} -> to: {} amount: {}",
+            from,
+            to,
+            amount
+        );
 
-    let balance_data = contracts::native_token::TRANSFER
-        .encode_input(&[Token::Address(to.0), Token::Uint(amount)])
-        .unwrap();
+        let native_token_code = self.get_account(contract_addr::NATIVE_TOKEN).unwrap().code;
 
-    EvmProto::EvmCallArgs {
-        caller: from.0,
-        gas_scaling_factor: 1,
-        scaling_factor: None,
-        estimate: false,
-        address: Address::NATIVE_TOKEN.0,
-        code: contracts::native_token::CODE.clone(),
-        data: balance_data,
-        apparent_value: Default::default(),
-        gas_limit: u64::MAX,
-        tx_trace: traces,
-        continuations,
-        enable_cps: true,
-        node_continuation: None,
-        evm_context: "fund_transfer".to_string(),
-        is_static: false,
-        tx_trace_enabled: true,
+        let balance_data = contracts::native_token::TRANSFER
+            .encode_input(&[Token::Address(to), Token::Uint(amount)])
+            .unwrap();
+
+        EvmProto::EvmCallArgs {
+            caller: from,
+            gas_scaling_factor: 1,
+            scaling_factor: None,
+            estimate: false,
+            address: contract_addr::NATIVE_TOKEN,
+            code: native_token_code,
+            data: balance_data,
+            apparent_value: Default::default(),
+            gas_limit: u64::MAX,
+            tx_trace: traces,
+            continuations,
+            enable_cps: true,
+            node_continuation: None,
+            evm_context: "fund_transfer".to_string(),
+            is_static: false,
+            tx_trace_enabled: true,
+        }
     }
 }
