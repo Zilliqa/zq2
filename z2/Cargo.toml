@@ -22,7 +22,7 @@ test = false
 
 [dependencies]
 clap = { version = "4.4.8", features = ["derive"] }
-eyre = "0.6.9"
+eyre = "0.6.10"
 futures = "0.3.29"
 rand_core = "0.6.4"
 serde = { version="1.0.193", features = [ "derive" ] }
