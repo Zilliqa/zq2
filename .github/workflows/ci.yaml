@@ -26,9 +26,9 @@ jobs:
         submodules: recursive
     - uses: Swatinem/rust-cache@v2
     - name: Build
-      run: cargo build --all-targets --all-features
+      run: cargo build --release --all-targets --all-features
     - name: Clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: cargo clippy --release --all-targets --all-features -- -D warnings
     - name: Test
       run: cargo test --release --all-targets --all-features
       timeout-minutes: 30
