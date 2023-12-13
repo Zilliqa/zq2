@@ -25,6 +25,7 @@ use crate::{
     state::{contract_addr, Address, State},
     transaction::VerifiedTransaction,
 };
+use crate::transaction::SignedTransaction;
 
 #[derive(Default)]
 pub struct TouchedAddressEventListener {
@@ -169,6 +170,9 @@ impl State {
         estimate: bool,
         print_enabled: bool,
     ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
+
+        let is_scilla = payload.starts_with(b"scilla_version".to_vec().iter().as_ref());
+
         let caller = from_addr;
         let is_static = false;
         let context = "".to_string();
@@ -183,6 +187,15 @@ impl State {
         let mut data: Vec<u8> = payload;
         let mut traces: Arc<Mutex<LoggingEventListener>> =
             Arc::new(Mutex::new(LoggingEventListener::new(tracing)));
+        let datax = b"scilla_version".to_vec();
+
+        info!("data is {:?}", datax);
+
+        if is_scilla {
+            //ssilla_code.extend_from_slice(&code);
+            //code = scilla_code;
+            info!("Scilla code detected, using scilla interpreter");
+        }
 
         // The backend is provided to the evm as a way to read accounts and state during execution
         let mut backend = EvmBackend::new(self, U256::zero(), caller, chain_id, current_block);
@@ -193,7 +206,7 @@ impl State {
             data = vec![];
             to = calculate_contract_address(from_addr, &backend);
             created_contract_addr = Some(to);
-            info!("Calculated contract address for creation: {}", to);
+            trace!("Calculated contract address for creation: {}", to);
         }
 
         let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];
@@ -218,6 +231,7 @@ impl State {
             enable_cps: true,
             tx_trace_enabled: true,
             tx_trace: traces.clone(),
+            is_scilla: is_scilla,
         });
         let mut result;
         let mut run_succeeded;
@@ -284,7 +298,11 @@ impl State {
             }
 
             backend.origin = call_args.caller;
-            result = run_evm_impl_direct(call_args.clone(), &backend);
+            result = if call_args.is_scilla {
+                run_evm_impl_direct(call_args.clone(), &backend)
+            } else {
+                run_evm_impl_direct(call_args.clone(), &backend)
+            };
 
             if print_enabled {
                 debug!("Evm invocation complete - applying result {:?}", result);
@@ -561,7 +579,15 @@ impl State {
         let from_addr = txn.signer;
         info!(?hash, ?txn, "executing txn");
 
+        match txn.tx {
+            SignedTransaction::Zilliqa {..} => {
+                info!("Zilliqa transaction detected, using zilliqa interpreter...");
+            }
+            _ => { }
+        }
+
         let txn = txn.tx.into_transaction();
+
 
         // fail early on nonce mismatch
         let mut acct = self.get_account(from_addr).unwrap();
@@ -960,6 +986,7 @@ impl State {
             evm_context: "fund_transfer".to_string(),
             is_static: false,
             tx_trace_enabled: true,
+            is_scilla: false,
         }
     }
 }
