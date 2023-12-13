@@ -6,6 +6,7 @@ use clap::Parser;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use opentelemetry_sdk::runtime;
 use tokio::time::Duration;
+use tracing_subscriber::EnvFilter;
 use zilliqa::{cfg::Config, crypto::SecretKey, p2p_node::P2pNode};
 
 #[derive(Parser, Debug)]
