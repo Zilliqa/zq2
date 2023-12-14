@@ -633,7 +633,7 @@ impl Consensus {
             }
 
             for txn in &transactions {
-                let txn = txn.clone().verify()?;
+                let txn = self.new_transaction(txn.clone())?;
                 let tx_hash = txn.hash;
                 if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
                     self.db
@@ -644,6 +644,7 @@ impl Consensus {
                         success: result.success,
                         contract_address: result.contract_address,
                         logs: result.logs,
+                        gas_used: result.gas_used,
                     };
                     info!(?receipt, "applied transaction {:?}", receipt);
                     block_receipts.push(receipt);
@@ -1211,11 +1212,11 @@ impl Consensus {
         Ok(None)
     }
 
-    pub fn new_transaction(&mut self, txn: SignedTransaction) -> Result<()> {
+    pub fn new_transaction(&mut self, txn: SignedTransaction) -> Result<VerifiedTransaction> {
         let txn = txn.verify()?;
         // If we already have the tx, ignore it
         if self.new_transactions.contains_key(&txn.hash) {
-            return Ok(());
+            return Ok(txn);
         }
 
         let txn_order = TxnOrder::new(txn.hash, &txn.tx);
@@ -1225,9 +1226,9 @@ impl Consensus {
             .or_default()
             .push(txn_order);
 
-        self.new_transactions.insert(txn.hash, txn);
+        self.new_transactions.insert(txn.hash, txn.clone());
 
-        Ok(())
+        Ok(txn)
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {

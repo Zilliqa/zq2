@@ -247,8 +247,27 @@ impl QuorumCertificate {
 
     // Verifying an aggregated signature is a case of verifying the aggregated public key
     // against the aggregated signature
-    pub fn verify(&self, _public_keys: Vec<NodePublicKey>) -> bool {
-        true
+    pub fn verify(&self, public_keys: Vec<NodePublicKey>) -> bool {
+        // Select which public keys have gone into creating the signature
+        let public_keys = public_keys
+            .into_iter()
+            .zip(self.cosigned.iter())
+            .filter_map(
+                |(public_key, cosigned)| {
+                    if *cosigned {
+                        Some(public_key)
+                    } else {
+                        None
+                    }
+                },
+            )
+            .collect::<Vec<_>>();
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(self.block_hash.as_bytes());
+        bytes.extend_from_slice(&self.view.to_be_bytes());
+
+        NodeSignature::verify_aggregate(&self.signature, &bytes, public_keys).is_ok()
     }
 
     pub fn compute_hash(&self) -> Hash {
