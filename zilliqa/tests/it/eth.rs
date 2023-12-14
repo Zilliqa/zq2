@@ -1,7 +1,6 @@
 use std::{fmt::Debug, ops::DerefMut};
 
-use ethabi::ethereum_types::U64;
-use ethabi::Token;
+use ethabi::{ethereum_types::U64, Token};
 use ethers::{
     abi::FunctionExt,
     providers::{Middleware, Provider},
