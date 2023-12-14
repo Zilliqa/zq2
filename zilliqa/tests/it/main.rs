@@ -324,7 +324,7 @@ impl Network {
         let genesis_committee = vec![validator];
 
         for nodes in &mut self.nodes {
-            nodes.inner.lock().unwrap().flush();
+            nodes.inner.lock().unwrap().db.flush();
         }
 
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
