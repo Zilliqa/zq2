@@ -1,6 +1,6 @@
 use std::{fmt::Debug, ops::DerefMut};
 
-use ethabi::ethereum_types::U64;
+use ethabi::{ethereum_types::U64, Token};
 use ethers::{
     abi::FunctionExt,
     providers::{Middleware, Provider},
@@ -684,6 +684,116 @@ async fn eth_call(mut network: Network) {
     let value = wallet.call(&tx.into(), None).await.unwrap();
 
     assert_eq!(H256::from_slice(value.as_ref()), H256::from_low_u64_be(99));
+}
+
+#[zilliqa_macros::test]
+async fn revert_transaction(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/RevertMe.sol",
+        "RevertMe",
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+    let setter = abi.function("revertable").unwrap();
+    let getter = abi.function("value").unwrap();
+
+    // First ensure contract works
+    let success_call = TransactionRequest::new()
+        .to(contract_address)
+        .data(setter.encode_input(&[Token::Bool(true)]).unwrap());
+    let (_, receipt) = send_transaction(&mut network, success_call.into()).await;
+    assert_eq!(receipt.status.unwrap().as_u32(), 1);
+
+    // Ensure value was incremented
+    let check_call = TransactionRequest::new()
+        .to(contract_address)
+        .data(getter.selector());
+    let value = wallet.call(&check_call.clone().into(), None).await.unwrap();
+    let value = getter.decode_output(&value).unwrap()[0]
+        .clone()
+        .into_int()
+        .unwrap();
+    assert_eq!(value, 1.into());
+
+    // Next ensure revert fails correctly
+    let revert_call = TransactionRequest::new()
+        .to(contract_address)
+        .data(setter.encode_input(&[Token::Bool(false)]).unwrap())
+        .gas(10_000_000_000u64); // Pass a gas limit, otherwise estimate_gas is called and fails
+                                 // due to the revert
+    let (_, receipt) = send_transaction(&mut network, revert_call.into()).await;
+    assert_eq!(receipt.status.unwrap().as_u32(), 0);
+
+    // Ensure value was NOT incremented a second time
+    let value = wallet.call(&check_call.into(), None).await.unwrap();
+    let value = getter.decode_output(&value).unwrap()[0]
+        .clone()
+        .into_int()
+        .unwrap();
+    assert_eq!(value, 1.into());
+}
+
+#[zilliqa_macros::test]
+async fn gas_charged_on_revert(mut network: Network) {
+    const SMALL_GAS_LIMIT: u64 = 10;
+    const LARGE_GAS_LIMIT: u64 = 10_000_000_000;
+
+    let wallet = network.genesis_wallet().await;
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/RevertMe.sol",
+        "RevertMe",
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+    let setter = abi.function("revertable").unwrap();
+
+    let gas_price = wallet.get_gas_price().await.unwrap();
+
+    // Revert on contract failure. Ensure gas is consumed according to execution.
+    let balance_before_call = wallet.get_balance(wallet.address(), None).await.unwrap();
+    let revert_call = TransactionRequest::new()
+        .to(contract_address)
+        .data(setter.encode_input(&[Token::Bool(false)]).unwrap())
+        .gas(LARGE_GAS_LIMIT);
+    let (_, receipt) = send_transaction(&mut network, revert_call.into()).await;
+
+    assert_eq!(receipt.status.unwrap().as_u32(), 0);
+    assert!(receipt.gas_used.is_some());
+    let gas_used = receipt.gas_used.unwrap();
+    assert!(gas_used > 0.into());
+    assert!(gas_used < LARGE_GAS_LIMIT.into());
+    let balance_after_call = wallet.get_balance(wallet.address(), None).await.unwrap();
+    assert_eq!(
+        balance_after_call,
+        balance_before_call - gas_price * gas_used
+    );
+
+    // Revert on out-of-gas. Ensure entire gas limit is consumed.
+    let balance_before_call = wallet.get_balance(wallet.address(), None).await.unwrap();
+
+    let fail_out_of_gas_call = TransactionRequest::new()
+        .to(contract_address)
+        .data(setter.encode_input(&[Token::Bool(true)]).unwrap())
+        .gas(SMALL_GAS_LIMIT);
+    let (_, receipt) = send_transaction(&mut network, fail_out_of_gas_call.into()).await;
+
+    assert_eq!(receipt.status.unwrap().as_u32(), 0);
+    let balance_after_call = wallet.get_balance(wallet.address(), None).await.unwrap();
+    assert_eq!(
+        balance_after_call,
+        balance_before_call - gas_price * SMALL_GAS_LIMIT
+    );
 }
 
 #[zilliqa_macros::test]

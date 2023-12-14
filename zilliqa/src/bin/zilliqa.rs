@@ -3,9 +3,10 @@ use std::{fs, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
-use opentelemetry::runtime;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
+use opentelemetry_sdk::runtime;
 use tokio::time::Duration;
+use tracing_subscriber::EnvFilter;
 use zilliqa::{cfg::Config, crypto::SecretKey, p2p_node::P2pNode};
 
 #[derive(Parser, Debug)]
@@ -22,7 +23,7 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let builder = tracing_subscriber::fmt();
+    let builder = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env());
     if args.log_json {
         builder.json().init();
     } else {
