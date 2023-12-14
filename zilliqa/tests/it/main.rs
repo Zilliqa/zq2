@@ -5,7 +5,6 @@ mod web3;
 mod zil;
 use std::{env, ops::DerefMut};
 
-//use crate::time::SystemTime;
 use ethers::solc::SHANGHAI_SOLC;
 use itertools::Itertools;
 use serde::Deserialize;
