@@ -134,7 +134,7 @@ impl Db {
     }
 
     pub fn flush(&self) {
-        self.root.flush().unwrap();
+        while self.root.flush().unwrap() > 0 {}
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
