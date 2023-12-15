@@ -89,22 +89,34 @@ impl TransactionPool {
         }
     }
 
-    pub fn insert_transaction(&mut self, transaction: VerifiedTransaction, account_nonce: u64) {
-        if transaction.tx.nonce() < account_nonce {
+    pub fn insert_transaction(&mut self, txn: VerifiedTransaction, account_nonce: u64) -> bool {
+        if txn.tx.nonce() < account_nonce {
             // This transaction is permanently invalid, so there is nothing to do.
-            return;
+            return false;
         }
 
-        if transaction.tx.nonce() == account_nonce {
-            self.ready.push((&transaction).into());
+        if let Some(existing_txn) = self.transactions.get(&(txn.signer, txn.tx.nonce())) {
+            // There is already a transaction in the mempool with the same signer and nonce. Only proceed if this one
+            // is better. Note that if they are equally good, we prioritise the existing transaction to avoid the need
+            // to broadcast a new transaction to the network.
+            if ReadyItem::from(existing_txn) >= ReadyItem::from(&txn) {
+                return false;
+            } else {
+                // Remove the existing transaction from `hash_to_index` if we're about to replace it.
+                self.hash_to_index.remove(&existing_txn.hash);
+            }
         }
 
-        self.hash_to_index.insert(
-            transaction.hash,
-            (transaction.signer, transaction.tx.nonce()),
-        );
-        self.transactions
-            .insert((transaction.signer, transaction.tx.nonce()), transaction);
+        if txn.tx.nonce() == account_nonce {
+            // This transaction has a nonce equal to the account's current nonce, so it is ready to be executed.
+            self.ready.push((&txn).into());
+        }
+
+        self.hash_to_index
+            .insert(txn.hash, (txn.signer, txn.tx.nonce()));
+        self.transactions.insert((txn.signer, txn.tx.nonce()), txn);
+
+        true
     }
 
     pub fn get_transaction(&self, hash: Hash) -> Option<&VerifiedTransaction> {
@@ -115,13 +127,24 @@ impl TransactionPool {
         self.transactions.get(&(*addr, *nonce))
     }
 
-    pub fn update_nonce(&mut self, address: Address, nonce: u64) {
+    /// Update the pool after a transaction has been executed.
+    ///
+    /// It is important to call this for all executed transactions, otherwise permanently invalidated transactions
+    /// will be left indefinitely in the pool.
+    pub fn update_nonce(&mut self, txn: &VerifiedTransaction) {
         // Remove a transaction from this sender with the previous nonce, if it exists.
-        self.transactions.remove(&(address, nonce - 1));
+        self.transactions.remove(&(txn.signer, txn.tx.nonce()));
 
-        if let Some(next_txn) = self.transactions.get(&(address, nonce)) {
+        if let Some(next_txn) = self.transactions.get(&(txn.signer, txn.tx.nonce() + 1)) {
             self.ready.push(next_txn.into());
         }
+    }
+
+    /// Clear the transaction pool, returning all remaining transactions in an unspecified order.
+    pub fn drain(&mut self) -> impl Iterator<Item = VerifiedTransaction> {
+        self.ready.clear();
+        self.hash_to_index.clear();
+        std::mem::take(&mut self.transactions).into_values()
     }
 }
 
@@ -205,7 +228,7 @@ mod tests {
         pool.insert_transaction(transaction(from, 0, 0), 0);
         pool.insert_transaction(transaction(from, 1, 0), 0);
 
-        pool.update_nonce(from, 1);
+        pool.update_nonce(&transaction(from, 0, 0));
 
         assert_eq!(pool.best_transaction().unwrap().tx.nonce(), 1);
     }

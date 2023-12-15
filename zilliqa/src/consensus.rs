@@ -651,6 +651,8 @@ impl Consensus {
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
 
+        self.db.insert_transaction(&hash, &txn.tx)?;
+
         let mut listener = TouchedAddressEventListener::default();
 
         let result = evm_ds::evm::tracing::using(&mut listener, || {
@@ -662,9 +664,10 @@ impl Consensus {
             )
         })?;
 
-        // Tell the transaction pool that the sender's nonce has been incremented.
-        self.transaction_pool
-            .update_nonce(txn.signer, txn.tx.nonce() + 1);
+        // If the transaction succeeded, tell the transaction pool that the sender's nonce has been incremented.
+        if result.success {
+            self.transaction_pool.update_nonce(&txn);
+        }
 
         for address in listener.touched {
             self.db.add_touched_address(address, hash)?;
@@ -682,20 +685,13 @@ impl Consensus {
     }
 
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
-        let mut ret = Vec::new();
-
-        while let Some(txn) = self.transaction_pool.best_transaction() {
-            let account_nonce = self.state.must_get_account(txn.signer).nonce;
-
-            // Ignore this transaction if it is no longer valid.
-            if txn.tx.nonce() < account_nonce {
-                continue;
-            }
-
-            ret.push(txn);
-        }
-
-        ret
+        std::iter::from_fn(|| self.transaction_pool.best_transaction())
+            .filter(|txn| {
+                let account_nonce = self.state.must_get_account(txn.signer).nonce;
+                // Ignore this transaction if it is no longer valid.
+                txn.tx.nonce() >= account_nonce
+            })
+            .collect()
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
@@ -1039,9 +1035,7 @@ impl Consensus {
         }
 
         let account_nonce = self.state.get_account(txn.signer)?.nonce;
-        self.transaction_pool.insert_transaction(txn, account_nonce);
-
-        Ok(true)
+        Ok(self.transaction_pool.insert_transaction(txn, account_nonce))
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
@@ -1654,17 +1648,6 @@ impl Consensus {
 
             trace!("Reverting block {}", head_block);
             // block store doesn't require anything, it will just hold blocks that may now be invalid
-            // block transactions need to be removed from self.transactions and re-injected
-            for tx_hash in &head_block.transactions {
-                let orig_tx = self.get_transaction_by_hash(*tx_hash).unwrap().unwrap();
-                self.db.remove_transaction(tx_hash)?;
-
-                // Put tx back in.
-                self.new_transaction(orig_tx).unwrap();
-
-                // block hash reverse index, remove tx hash too
-                self.db.remove_block_hash_reverse_index(tx_hash)?;
-            }
 
             // TX receipts are indexed by block
             self.db.remove_transaction_receipt(&head_block.hash())?;
@@ -1673,6 +1656,29 @@ impl Consensus {
             trace!("Setting state to: {}", parent_block.state_root_hash());
             self.state
                 .set_to_root(H256(parent_block.state_root_hash().0));
+
+            // Ensure the transaction pool is consistent by recreating it. This is moderately costly, but forks are
+            // rare.
+            let existing_txns = self.transaction_pool.drain();
+
+            for txn in existing_txns {
+                let account_nonce = self.state.get_account(txn.signer)?.nonce;
+                self.transaction_pool.insert_transaction(txn, account_nonce);
+            }
+
+            // block transactions need to be removed from self.transactions and re-injected
+            for tx_hash in &head_block.transactions {
+                let orig_tx = self.get_transaction_by_hash(*tx_hash).unwrap().unwrap();
+                self.db.remove_transaction(tx_hash)?;
+
+                // Insert this unwound transaction back into the transaction pool too.
+                let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
+                self.transaction_pool
+                    .insert_transaction(orig_tx, account_nonce);
+
+                // block hash reverse index, remove tx hash too
+                self.db.remove_block_hash_reverse_index(tx_hash)?;
+            }
 
             // Persistence - only need to update head block pointer as it should be impossible
             // to change finalized height

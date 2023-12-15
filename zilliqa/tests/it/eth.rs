@@ -883,7 +883,6 @@ async fn nonces_respected_ordered(mut network: Network) {
     assert!(wait.is_ok());
 }
 
-#[cfg(target_os = "macos")]
 #[zilliqa_macros::test]
 async fn priority_fees_tx(mut network: Network) {
     let wallet = network.genesis_wallet().await;
