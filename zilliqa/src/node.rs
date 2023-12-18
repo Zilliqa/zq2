@@ -86,11 +86,11 @@ impl MessageSender {
 #[derive(Debug)]
 pub struct Node {
     pub config: NodeConfig,
+    pub db: Arc<Db>,
     peer_id: PeerId,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<()>,
     consensus: Consensus,
-    db: Arc<Db>,
 }
 
 impl Node {
