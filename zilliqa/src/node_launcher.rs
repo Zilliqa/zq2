@@ -84,7 +84,7 @@ impl NodeLauncher {
             let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
             let port = config.json_rpc_port;
             let server = jsonrpsee::server::ServerBuilder::new()
-                .set_middleware(middleware)
+                .set_http_middleware(middleware)
                 .build((Ipv4Addr::UNSPECIFIED, port))
                 .await;
 
