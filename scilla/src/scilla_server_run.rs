@@ -3,6 +3,9 @@ use evm::{
     ExitSucceed,
     backend::{Apply, Backend}};
 
+use futures::{future, FutureExt};
+use std::io::Read;
+use jsonrpc_core::IoHandler;
 use jsonrpc_client_transports::{transports::duplex, RawClient, RpcChannel, RpcError};
 use jsonrpc_core::{
     futures,
@@ -23,6 +26,7 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::fs::File;
+use std::net::TcpStream;
 
 use std::sync::{Arc, Mutex};
 use evm_ds::tracing_logging::LoggingEventListener;
@@ -30,12 +34,24 @@ use serde_json::from_str;
 use serde::{Serialize, Deserialize};
 
 use tokio::io::sink;
-use tokio::net::TcpStream;
+//use tokio::net::TcpStream;
 use std::process;
 use tokio::sync::oneshot;
 use tokio::select;
 
 use tokio::time::{sleep, Duration};
+use tokio::runtime::{Runtime, Handle};
+use tracing::field::debug;
+
+fn get_runtime_handle() -> (Handle, Option<Runtime>) {
+    match Handle::try_current() {
+        Ok(h) => (h, None),
+        Err(_) => {
+            let rt = Runtime::new().unwrap();
+            (rt.handle().clone(), Some(rt))
+        }
+    }
+}
 
 pub fn run_scilla_impl_direct<B: Backend>(
     args: EvmProto::EvmCallArgs,
@@ -52,9 +68,16 @@ pub fn run_scilla_impl_direct<B: Backend>(
     //let from_addr = account_address(txn.sender_pub_key);
     let from_addr = backend.origin();
 
-    let lib_directory = PathBuf::from("/scilla/0/src/stdlib/");
-    let init_directory = PathBuf::from("/Users/nhutton/repos/zq2/scilla_init/");
-    let input_directory = PathBuf::from("/Users/nhutton/repos/zq2/scilla_input/");
+    let lib_directory_str = "/scilla/0/src/stdlib/";
+    let init_directory_str = "/tmp/scilla_init/init.json";
+    let input_directory_str = "/tmp/scilla_input/input.scilla";
+
+    let init_directory_local = "/Users/nhutton/repos/zq2/scilla_init/";
+    let input_directory_local = "/Users/nhutton/repos/zq2/scilla_input/";
+
+    //let lib_directory = PathBuf::from(lib_directory_str);
+    let init_directory = PathBuf::from(init_directory_local);
+    let input_directory = PathBuf::from(input_directory_local);
     // Convert code to string since scilla
     let code = str::from_utf8(&args.code).expect("unable to convert code to string").to_string();
     let init_data = args.data;
@@ -65,17 +88,17 @@ pub fn run_scilla_impl_direct<B: Backend>(
             debug!("Execute transfer. nothing to do.");
             //Ok(())
             //let mut from = db
-                //.lock()
-                //.unwrap()
-                //.get_account(from_addr)?
-                //.map(Account::from_proto)
-                //.transpose()?
-                //.unwrap_or_default();
+            //.lock()
+            //.unwrap()
+            //.get_account(from_addr)?
+            //.map(Account::from_proto)
+            //.transpose()?
+            //.unwrap_or_default();
             //from.nonce = txn.nonce;
             //from.balance -= txn.cumulative_gas as u128 * txn.gas_price;
             //db.lock()
-                //.unwrap()
-                //.save_account(from_addr, from.to_proto()?)?;
+            //.unwrap()
+            //.save_account(from_addr, from.to_proto()?)?;
 //
             //transfer(&mut db.lock().unwrap(), from_addr, txn.to_addr, txn.amount)?;
         }
@@ -113,7 +136,8 @@ pub fn run_scilla_impl_direct<B: Backend>(
             //let mut state_root = H256::from_slice(&Keccak256::digest(rlp::NULL_RLP));
 
             let check_output =
-                check_contract(code.as_bytes(), args.gas_limit, &init_data).unwrap();
+                check_contract(code.as_bytes(), args.gas_limit, &init_data, init_directory_str, lib_directory_str, input_directory_str,
+                ).unwrap();
 
             debug!("Check output: {:?}", check_output);
 
@@ -173,6 +197,8 @@ pub fn run_scilla_impl_direct<B: Backend>(
                 args.gas_limit,
                 //args.apparent_value,
                 &init_data,
+                init_directory_str, lib_directory_str, input_directory_str,
+
             ).unwrap();
 
             debug!("here5");
@@ -225,13 +251,13 @@ pub fn run_scilla_impl_direct<B: Backend>(
     }
 
     //db.lock()
-        //.unwrap()
-        //.put_tx_body(txn.block, txn.id, txn.to_proto()?)?;
+    //.unwrap()
+    //.put_tx_body(txn.block, txn.id, txn.to_proto()?)?;
     //db.lock().unwrap().put_tx_epoch(
-        //txn.id,
-        //ProtoTxEpoch {
-            //epochnum: txn.block,
-        //},
+    //txn.id,
+    //ProtoTxEpoch {
+    //epochnum: txn.block,
+    //},
     //)?;
 
     EvmProto::EvmResult {
@@ -250,21 +276,22 @@ pub fn check_contract(
     contract: &[u8],
     gas_limit: u64,
     init: &Value,
+    init_path: &str,
+    lib_path: &str,
+    input_path: &str,
 ) -> Result<CheckOutput> {
     //let dir = TempDir::new()?;
     //let (contract_path, init_path) = self.create_common_inputs(&dir, contract, init)?;
 
     let args = vec![
         "-init".to_owned(),
-        //init_path.to_str().unwrap().to_owned(),
-        "/tmp/scilla_init/init.json".to_owned(),
+        //"/tmp/scilla_init/init.json".to_owned(), // ending init.json
+        init_path.to_string(), // ending init.json
         "-libdir".to_owned(),
-        //self.lib_dir.to_str().unwrap().to_owned(),
-        //"/tmp/scilla_libs/".to_owned(),
-        "/scilla/0/src/stdlib/".to_owned(),
-        //contract_path.to_str().unwrap().to_owned(),
-        //"/scilla/0/input.scilla".to_owned(),
-        "/tmp/scilla_input/input.scilla".to_owned(),
+        //"/scilla/0/src/stdlib/".to_owned(),
+        lib_path.to_string(),
+        //"/tmp/scilla_input/input.scilla".to_owned(), // ending input.scilla
+        input_path.to_string(), // ending input.scilla
         "-gaslimit".to_owned(),
         gas_limit.to_string(),
         "-contractinfo".to_owned(),
@@ -290,23 +317,29 @@ pub fn create_contract(
     gas_limit: u64,
     //balance: u128, // todo: this
     init: &Value,
+    init_path: &str,
+    lib_path: &str,
+    input_path: &str,
 ) -> Result<()> {
     //let dir = TempDir::new()?;
 
     let args = vec![
-        "-init".to_owned(),
-        //init_path.to_str().unwrap().to_owned(),
-        "/tmp/scilla_init/init.json".to_owned(),
-        "-libdir".to_owned(),
-        //self.lib_dir.to_str().unwrap().to_owned(),
-        //"/tmp/scilla_libs/".to_owned(),
-        "/scilla/0/src/stdlib/".to_owned(),
+        "-i".to_owned(),
         //contract_path.to_str().unwrap().to_owned(),
-        //"/scilla/0/input.scilla".to_owned(),
-        "/tmp/scilla_input/input.scilla".to_owned(),
+        input_path.to_string(),
+        "-init".to_owned(),
+        init_path.to_string(), // ending init.json
+        "-ipcaddress".to_owned(),
+        "/tmp/scilla-server.sock".to_owned(), // todo: this.
+        //"/tmp/scilla-socket/server.sock".to_owned(), // todo: this.
         "-gaslimit".to_owned(),
         gas_limit.to_string(),
-        "-contractinfo".to_owned(),
+        "-balance".to_owned(),
+        //balance.to_string(),
+        "1000000".to_string(), // todo: this
+        "-libdir".to_owned(),
+        //self.lib_dir.to_str().unwrap().to_owned(),
+        lib_path.to_string(),
         "-jsonerrors".to_owned(),
     ];
 
@@ -422,49 +455,123 @@ struct JsonRpcError {
 
 pub fn call_scilla_server(method: &str, params: serde_json::Value) -> Result<String> {
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
+    //let rt = tokio::runtime::Builder::new_current_thread()
+    //    .enable_all()
+    //    .build()?;
 
-    rt.block_on(async move {
-        let request = JsonRpcRequest::new(method, params, 1);
-        let mut request_str = serde_json::to_string(&request)?;
-        let request_str = request_str + "\n";
+    //let rt = get_runtime_handle();
 
-        debug!("Calling Scilla server with request: {:?}", request_str);
+    //rt.0.
 
-        let mut stream = TcpStream::connect("127.0.0.1:12345").await?;
-        stream.write_all(request_str.as_bytes()).await?;
+    //let result = rt.0.spawn(async move {
+    //debug!("Calling the Scilla server proper");
+    //Ok("adsf".to_string())
+    let request = JsonRpcRequest::new(method, params, 1);
+    let mut request_str = serde_json::to_string(&request)?;
+    let request_str = request_str + "\n";
 
-        let mut response = [0; 10000];
-        let mut bytes_read = 0;
+    debug!("Calling Scilla server with request: {:?}", request_str);
 
-        loop {
-            select! {
-            _ = tokio::time::sleep(Duration::from_millis(5000)) => {
-                return Err(anyhow!("Timeout trying to read response from Scilla server"));
+    let mut stream = TcpStream::connect("127.0.0.1:12345")?;
+    let mut stream_backend = TcpStream::connect("127.0.0.1:12346")?;
+
+    stream.write_all(request_str.as_bytes())?;
+
+    stream.set_nonblocking(true)?;
+    stream_backend.set_nonblocking(true)?;
+
+    let mut response = [0; 10000];
+    let mut response_backend = [0; 10000];
+    let mut bytes_read = 0;
+    let mut bytes_read_backend = 0;
+
+    let mut io = IoHandler::new();
+
+    io.add_method("updateStateValueB64",  |params| {
+        debug!("updateStateValueB64 called with params: {:?}", params);
+        future::ready(Ok(json!(true))).boxed()
+        //move |params| inner.lock().unwrap().fetch_state_value_b64(params)
+    });
+
+    io.add_method("updateStateValue",  |params| {
+        debug!("updateStateValue called with params: {:?}", params);
+        future::ready(Ok(json!(true))).boxed()
+        //move |params| inner.lock().unwrap().fetch_state_value_b64(params)
+    });
+
+    debug!("Calling the Scilla server proper");
+
+    loop {
+        let bytes_read_tcp = stream_backend.read(&mut response_backend[bytes_read..]);
+
+        match bytes_read_tcp {
+            Ok(bytes_read) => {
+                if bytes_read > 0 {
+                    debug!("Scilla backend response so far: {:?}", str::from_utf8(&response_backend));
+                }
+
+                bytes_read_backend += bytes_read;
             }
-            bytes_r = stream.read(&mut response[bytes_read..]) => {
-                bytes_read += bytes_r.unwrap();
-
-                if bytes_read == 0 {
-                    debug!("Scilla server closed connection {:?}", response);
-                }
-
-                if response[bytes_read-1] == '\n' as u8 {
-                    let filtered = filter_this(response[0..bytes_read-1].to_vec());
-                    return Ok(String::from_utf8(filtered)?);
-                } else {
-                    debug!("Scilla response so far: {:?}", response);
-                }
-
-                if bytes_read >= 10000 {
-                    return Err(anyhow!("Response from Scilla server too large!"));
-                }
+            Err(e) => {
+                debug!("Scilla backend response so far: {:?}", str::from_utf8(&response_backend));
+                debug!("Scilla backend error: {:?}", e);
             }
         }
+
+        if bytes_read_backend > 0 {
+            if response_backend[bytes_read_backend-1] == '\n' as u8 {
+                let filtered = filter_this(response_backend[0..bytes_read_backend-1].to_vec());
+                debug!("Scilla backend response: {:?}", String::from_utf8(filtered.clone())?);
+                let aa = io.handle_request_sync(&String::from_utf8(filtered)?);
+                debug!("Scilla backend responseRR: {:?}", aa);
+
+                let not_filtered = response_backend[0..bytes_read_backend-1].to_vec();
+                let aa = io.handle_request_sync(&String::from_utf8(not_filtered)?);
+                debug!("Scilla backend responseRR: {:?}", aa);
+                debug!("Scilla backend response: {:?}", aa);
+                //return Ok(String::from_utf8(filtered)?);
+            } else {
+                debug!("Scilla response so far: {:?}", response);
+            }
         }
-    })
+
+        let bytes_r = stream.read(&mut response[bytes_read..]);
+
+        match bytes_r {
+            Ok(bytes_r) => {
+                bytes_read += bytes_r;
+            }
+            Err(e) => {
+                debug!("Scilla read error: {:?}", e);
+            }
+        }
+
+
+        if bytes_read > 0 {
+            debug!("Scilla response so far: {:?}", response);
+        }
+
+        if bytes_read == 0 {
+            // sleep 1 sec
+            std::thread::sleep(std::time::Duration::from_secs(1));
+
+            continue;
+        }
+
+        if response[bytes_read-1] == '\n' as u8 {
+            let filtered = filter_this(response[0..bytes_read-1].to_vec());
+            return Ok(String::from_utf8(filtered)?);
+        } else {
+            debug!("Scilla response so far: {:?}", response);
+        }
+
+        if bytes_read >= 10000 {
+            return Err(anyhow!("Response from Scilla server too large!"));
+        }
+
+        // sleep 1 sec
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
 }
 
 fn filter_this(data: Vec<u8>) -> Vec<u8> {
@@ -490,3 +597,584 @@ fn filter_this(data: Vec<u8>) -> Vec<u8> {
     }
     filtered_data
 }
+/*
+
+pub struct Server {
+    //inner: Arc<Mutex<Inner>>,
+    _tcp_server: jsonrpc_tcp_server::Server,
+}
+
+//struct Inner {
+//    db: Arc<Mutex<Db>>,
+//    current_contract_addr: Option<(H160, H256, u64)>,
+//}
+
+impl Server {
+    pub fn new() -> Server {
+        //let inner = Inner {
+        //    db,
+        //    current_contract_addr: None,
+        //};
+        //let inner = Arc::new(Mutex::new(inner));
+
+        let mut io = IoHandler::new();
+        io.add_method("fetchStateValueB64", {
+            let inner = Arc::clone(&inner);
+            move |params| inner.lock().unwrap().fetch_state_value_b64(params)
+        });
+        io.add_method("fetchExternalStateValueB64", {
+            let inner = Arc::clone(&inner);
+            move |params| inner.lock().unwrap().fetch_external_state_value_b64(params)
+        });
+        io.add_method("updateStateValueB64", {
+            let inner = Arc::clone(&inner);
+            move |params| inner.lock().unwrap().update_state_value_b64(params)
+        });
+        io.add_method("fetchBlockchainInfo", {
+            let inner = Arc::clone(&inner);
+            move |params| inner.lock().unwrap().fetch_blockchain_info(params)
+        });
+
+        let _tcp_server = ServerBuilder::new(io)
+            .request_separators(Separator::Byte(b'\n'), Separator::Byte(b'\n'))
+            .start("/tmp/stateipc.sock")
+            .unwrap();
+
+        Server { _tcp_server }
+    }
+
+    pub fn set_current_contract_addr(&self, addr: H160, state_root: H256, block_number: u64) {
+        self.inner.lock().unwrap().current_contract_addr = Some((addr, state_root, block_number));
+    }
+
+    pub fn reset_current_contract_addr(&self) -> H256 {
+        let (_, state_root, _) = self
+            .inner
+            .lock()
+            .unwrap()
+            .current_contract_addr
+            .take()
+            .unwrap();
+        state_root
+    }
+}
+
+impl Inner {
+    fn fetch_state_value_b64(
+        &mut self,
+        params: Params,
+    ) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
+        fn err(s: &'static str) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
+            futures::future::ready(Err(jsonrpc_core::Error::invalid_params(s))).boxed()
+        }
+
+        let b64 = base64::engine::general_purpose::STANDARD;
+
+        let Params::Map(params) = params else { return err("expected a map"); };
+        let Some(query) = params.get("query") else { return err("expected query in map"); };
+        let Some(query) = query.as_str().map(str::to_owned) else { return err("query was not a string"); };
+        let Ok(query) = b64.decode(query) else { return err("query was not base64"); };
+        let Ok(query) = ProtoScillaQuery::decode(query.as_slice()) else { return err("could not parse query"); };
+
+        let result = self.fetch_state_value_inner(query).map_err(convert_err);
+
+        let result = result.map(|value| {
+            let arr = match value {
+                Some(value) => vec![true.into(), b64.encode(value.encode_to_vec()).into()],
+                None => vec![false.into(), String::new().into()],
+            };
+            Value::Array(arr)
+        });
+
+        future::ready(result).boxed()
+    }
+
+    fn fetch_state_value_inner(
+        &mut self,
+        query: ProtoScillaQuery,
+    ) -> Result<Option<ProtoScillaVal>> {
+        trace!("Fetch state value: {query:?}");
+
+        if ["_addr", "_version", "_depth", "_type", "_hasmap"].contains(&query.name.as_str()) {
+            return Err(anyhow!("reserved variable name: {}", query.name));
+        }
+
+        let Some((addr, _, _)) = self.current_contract_addr else { return Err(anyhow!("no current contract")); };
+
+        let addr_hex = format!("{addr:x}");
+        let mut key = format!("{}\x16{}\x16", addr_hex, query.name);
+        for index in &query.indices {
+            key.push_str(str::from_utf8(index)?);
+            key.push('\x16');
+        }
+
+        let value = match query.indices.len().cmp(&(query.mapdepth as usize)) {
+            std::cmp::Ordering::Greater => {
+                return Err(anyhow!("indices is deeper than map depth"));
+            }
+            std::cmp::Ordering::Equal => {
+                // Result will not be a map and can be just fetched into the store
+                let bytes = self.db.lock().unwrap().get_contract_state_data(&key)?;
+
+                let Some(bytes) = bytes else { return Ok(None); };
+
+                ProtoScillaVal {
+                    val_type: Some(ValType::Bval(bytes)),
+                }
+            }
+            std::cmp::Ordering::Less => {
+                // We're fetching a map value. We need to iterate through the DB lexicographically.
+                let mut entries = HashMap::new();
+
+                let existing_entries: Vec<_> = self
+                    .db
+                    .lock()
+                    .unwrap()
+                    .get_contract_state_data_with_prefix(&key)
+                    .collect();
+                if existing_entries.is_empty() && !query.indices.is_empty() {
+                    return Ok(None);
+                }
+                for kv in existing_entries {
+                    let (k, v) = kv?;
+                    entries.insert(k, v);
+                }
+
+                let mut val = ProtoScillaVal {
+                    val_type: Some(ValType::Mval(proto_scilla_val::Map { m: HashMap::new() })),
+                };
+                for (k, v) in entries {
+                    let key_non_prefix = k
+                        .strip_prefix(&key)
+                        .ok_or_else(|| anyhow!("{key} is not a prefix of {k}"))?;
+                    let indices: Vec<_> = key_non_prefix.split_terminator('\x16').collect();
+
+                    let mut val_ref = &mut val;
+                    for index in &indices {
+                        let Some(ValType::Mval(proto_scilla_val::Map { ref mut m })) = val_ref.val_type else { unreachable!(); };
+                        val_ref = m.entry((*index).to_owned()).or_insert(ProtoScillaVal {
+                            val_type: Some(ValType::Mval(Default::default())),
+                        });
+                    }
+
+                    if query.indices.len() + indices.len() < query.mapdepth as usize {
+                        // Assert that we have a protobuf-encoded empty map.
+                        let empty_map = ProtoScillaVal::decode(v.as_slice())?;
+                        match empty_map.val_type {
+                            Some(ValType::Mval(map)) if map.m.is_empty() => {}
+                            _ => {
+                                return Err(anyhow!("Expected protobuf encoded empty map since entry has fewer keys than mapdepth"));
+                            }
+                        }
+                        *val_ref = ProtoScillaVal {
+                            val_type: Some(ValType::Mval(Default::default())),
+                        };
+                    } else {
+                        *val_ref = ProtoScillaVal {
+                            val_type: Some(ValType::Bval(v)),
+                        };
+                    }
+                }
+                val
+            }
+        };
+
+        Ok(Some(value))
+    }
+
+    fn fetch_external_state_value_b64(
+        &mut self,
+        params: Params,
+    ) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
+        fn err(s: &'static str) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
+            futures::future::ready(Err(jsonrpc_core::Error::invalid_params(s))).boxed()
+        }
+
+        let b64 = base64::engine::general_purpose::STANDARD;
+
+        let Params::Map(params) = params else { return err("expected a map"); };
+        let Some(addr) = params.get("addr") else { return err("expected addr in map"); };
+        let Some(addr) = addr.as_str().map(str::to_owned) else { return err("addr was not a string"); };
+        let Ok(addr) = addr.parse::<H160>() else { return err("addr parsing failed"); };
+        let Some(query) = params.get("query") else { return err("expected query in map"); };
+        let Some(query) = query.as_str().map(str::to_owned) else { return err("query was not a string"); };
+        let Ok(query) = b64.decode(query) else { return err("query was not base64"); };
+
+        let result = self
+            .fetch_external_state_value_inner(addr, query)
+            .map_err(convert_err);
+
+        let result = result.map(|vt| {
+            let arr = match vt {
+                Some((value, ty)) => vec![
+                    true.into(),
+                    b64.encode(value.encode_to_vec()).into(),
+                    ty.into(),
+                ],
+                None => vec![false.into(), String::new().into(), String::new().into()],
+            };
+            Value::Array(arr)
+        });
+
+        future::ready(result).boxed()
+    }
+
+    fn fetch_external_state_value_inner(
+        &mut self,
+        addr: H160,
+        query: Vec<u8>,
+    ) -> Result<Option<(ProtoScillaVal, String)>> {
+        let mut query = ProtoScillaQuery::decode(query.as_slice())?;
+
+        trace!("Fetch external state value: {addr:?} - {query:?}");
+
+        let Some(account) = self.db.lock().unwrap().get_account(addr)? else { return Ok(None); };
+        let account = Account::from_proto(account)?;
+
+        fn scilla_val(b: Vec<u8>) -> ProtoScillaVal {
+            ProtoScillaVal {
+                val_type: Some(ValType::Bval(b)),
+            }
+        }
+
+        match query.name.as_str() {
+            "_balance" => {
+                let val = scilla_val(format!("\"{}\"", account.balance).into_bytes());
+                return Ok(Some((val, "Uint128".to_owned())));
+            }
+            "_nonce" => {
+                let val = scilla_val(format!("\"{}\"", account.nonce).into_bytes());
+                return Ok(Some((val, "Uint64".to_owned())));
+            }
+            "_this_address" => {
+                if account.contract.is_some() {
+                    let val = scilla_val(format!("\"0x{:?}\"", addr).into_bytes());
+                    return Ok(Some((val, "ByStr20".to_owned())));
+                }
+            }
+            "_codehash" => {
+                let code_hash = account.contract.map(|c| c.code_hash).unwrap_or_default();
+                let val = scilla_val(format!("\"0x{:?}\"", code_hash).into_bytes());
+                return Ok(Some((val, "ByStr32".to_owned())));
+            }
+            "_code" => {
+                let code = self
+                    .db
+                    .lock()
+                    .unwrap()
+                    .get_contract_code(addr)?
+                    .unwrap_or_default();
+                let val = scilla_val(code);
+                return Ok(Some((val, String::new())));
+            }
+            _ => {}
+        }
+
+        let addr_hex = format!("{addr:x}");
+
+        let ty = if query.name == "_evm_storage" {
+            Some("ByStr30".to_owned())
+        } else {
+            let ty_key = format!("{}\x16_type\x16{}\x16", addr_hex, query.name);
+            self.get_state(&ty_key)?
+                .map(String::from_utf8)
+                .transpose()?
+        };
+        let Some(ty) = ty else { return Ok(None); };
+
+        let depth_key = format!("{}\x16_depth\x16{}\x16", addr_hex, query.name);
+        let depth = String::from_utf8(
+            self.get_state(&depth_key)?
+                .ok_or_else(|| anyhow!("no depth"))?,
+        )?
+            .parse()?;
+        query.mapdepth = depth;
+
+        let Some(contract) = account.contract else { return Err(anyhow!("state read from non-contract")); };
+
+        let Some((old_addr, old_state_root, block_num)) = self.current_contract_addr else { return Err(anyhow!("no current contract")); };
+
+        self.current_contract_addr = Some((addr, contract.state_root, block_num));
+        let value = self.fetch_state_value_inner(query)?;
+        self.current_contract_addr = Some((old_addr, old_state_root, block_num));
+
+        Ok(value.map(|v| (v, ty)))
+    }
+
+    fn update_state_value_b64(
+        &mut self,
+        params: Params,
+    ) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
+        fn err(s: &'static str) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
+            futures::future::ready(Err(jsonrpc_core::Error::invalid_params(s))).boxed()
+        }
+
+        let b64 = base64::engine::general_purpose::STANDARD;
+
+        let Params::Map(params) = params else { return err("expected a map"); };
+        let Some(query) = params.get("query") else { return err("expected query in map"); };
+        let Some(query) = query.as_str().map(str::to_owned) else { return err("query was not a string"); };
+        let Ok(query) = b64.decode(query) else { return err("query was not base64"); };
+        let Some(value) = params.get("value") else { return err("expected value in map"); };
+        let Some(value) = value.as_str().map(str::to_owned) else { return err("value was not a string"); };
+        let Ok(value) = b64.decode(value) else { return err("value was not base64"); };
+
+        let result = self
+            .update_state_value_inner(query, value)
+            .map_err(convert_err);
+
+        future::ready(result).boxed()
+    }
+
+    fn update_state_value_inner(&mut self, query: Vec<u8>, value: Vec<u8>) -> Result<Value> {
+        let query = ProtoScillaQuery::decode(query.as_slice())?;
+        let value = ProtoScillaVal::decode(value.as_slice())?;
+
+        trace!("Update state value: {query:?} -> {value:?}");
+
+        if ["_addr", "_version", "_depth", "_type", "_hasmap"].contains(&query.name.as_str()) {
+            return Err(anyhow!("reserved variable name: {}", query.name));
+        }
+
+        let Some((addr, _, _)) = self.current_contract_addr else { return Err(anyhow!("no current contract")); };
+
+        let addr_hex = format!("{addr:x}");
+        let mut key = format!("{}\x16{}\x16", addr_hex, query.name);
+
+        if query.ignoreval {
+            if query.indices.is_empty() {
+                return Err(anyhow!("indices cannot be empty"));
+            }
+            for index in &query.indices[..(query.indices.len() - 1)] {
+                let index = str::from_utf8(index)?;
+                key.push_str(index);
+                key.push('\x16');
+            }
+            let parent_key = key.clone();
+            let index = str::from_utf8(query.indices.last().unwrap())?;
+            key.push_str(index);
+            key.push('\x16');
+
+            self.delete_by_prefix(&key)?;
+
+            if self.key_is_empty(&parent_key)? {
+                let empty_map = ProtoScillaVal {
+                    val_type: Some(ValType::Mval(Default::default())),
+                };
+                self.update_state(&parent_key, &empty_map.encode_to_vec(), false)?;
+            }
+        } else {
+            for index in &query.indices {
+                let index = str::from_utf8(index)?;
+                key.push_str(index);
+                key.push('\x16');
+            }
+
+            match query.indices.len().cmp(&(query.mapdepth as usize)) {
+                std::cmp::Ordering::Greater => {
+                    return Err(anyhow!("indices is deeper than map depth"));
+                }
+                std::cmp::Ordering::Equal => {
+                    let val_type = value.val_type.ok_or_else(|| anyhow!("no val_type"))?;
+                    let ValType::Bval(bytes) = val_type else { return Err(anyhow!("expected bytes for value, but got a map")); };
+                    self.update_state(&key, &bytes, true)?;
+                }
+                std::cmp::Ordering::Less => {
+                    self.delete_by_prefix(&key)?;
+
+                    fn map_handler(
+                        inner: &mut Inner,
+                        key_acc: String,
+                        value: &ProtoScillaVal,
+                    ) -> Result<()> {
+                        let val_type = value
+                            .val_type
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("no val_type"))?;
+                        let ValType::Mval(val_type) = val_type else { return Err(anyhow!("expected map for value but got bytes")); };
+
+                        if val_type.m.is_empty() {
+                            // We have an empty map. Insert an entry for keyAcc in the store to indicate that the key itself exists.
+                            inner.update_state(&key_acc, &value.encode_to_vec(), true)?;
+                            return Ok(());
+                        }
+
+                        for (k, v) in &val_type.m {
+                            let mut index = key_acc.clone();
+                            index.push_str(k);
+                            index.push('\x16');
+
+                            let inner_val_type =
+                                v.val_type.as_ref().ok_or_else(|| anyhow!("no val_type"))?;
+                            match inner_val_type {
+                                ValType::Mval(_) => {
+                                    map_handler(inner, index, v)?;
+                                }
+                                ValType::Bval(bytes) => {
+                                    inner.update_state(&index, bytes.as_slice(), true)?;
+                                }
+                            }
+                        }
+
+                        Ok(())
+                    }
+
+                    map_handler(self, key, &value)?;
+                }
+            }
+        }
+
+        Ok(Value::Null)
+    }
+
+    fn fetch_blockchain_info(
+        &mut self,
+        params: Params,
+    ) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
+        fn err(s: &'static str) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
+            futures::future::ready(Err(jsonrpc_core::Error::invalid_params(s))).boxed()
+        }
+
+        let Params::Map(params) = params else { return err("expected a map"); };
+        let Some(query_name) = params.get("query_name") else { return err("expected query_name in map"); };
+        let Some(query_name) = query_name.as_str().map(str::to_owned) else { return err("query_name was not a string"); };
+        let Some(query_args) = params.get("query_args") else { return err("expected query_args in map"); };
+        let Some(query_args) = query_args.as_str().map(str::to_owned) else { return err("query_args was not a string"); };
+
+        let result = self
+            .fetch_blockchain_info_inner(query_name, query_args)
+            .map_err(convert_err);
+
+        let result = result.map(|s| Value::Array(vec![true.into(), s.into()]));
+
+        future::ready(result).boxed()
+    }
+
+    fn fetch_blockchain_info_inner(
+        &mut self,
+        query_name: String,
+        query_args: String,
+    ) -> Result<String> {
+        trace!("Fetch blockchain info: {query_name} - {query_args}");
+
+        match query_name.as_str() {
+            "BLOCKNUMBER" => {
+                let Some((_, _, block_number)) = self.current_contract_addr else { return Err(anyhow!("no current contract")); };
+                Ok(block_number.to_string())
+            }
+            "TIMESTAMP" => {
+                let block_num: u64 = query_args.parse()?;
+                let block = self
+                    .db
+                    .lock()
+                    .unwrap()
+                    .get_tx_block(block_num)?
+                    .ok_or_else(|| anyhow!("invalid block"))?;
+                let block = TxBlock::from_proto(block)?;
+                Ok(block.timestamp.to_string())
+            }
+            "BLOCKHASH" => {
+                let block_num: u64 = query_args.parse()?;
+                let block = self
+                    .db
+                    .lock()
+                    .unwrap()
+                    .get_tx_block(block_num)?
+                    .ok_or_else(|| anyhow!("invalid block"))?;
+                let block = TxBlock::from_proto(block)?;
+                let block_hash = format!("{:x}", block.block_hash);
+                Ok(block_hash)
+            }
+            "CHAINID" => Ok(1.to_string()),
+            _ => Ok(String::new()),
+        }
+    }
+
+    fn get_state(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        self.db.lock().unwrap().get_contract_state_data(key)
+    }
+
+    fn key_is_empty(&self, key: &str) -> Result<bool> {
+        let keys: Vec<_> = self
+            .db
+            .lock()
+            .unwrap()
+            .get_contract_state_data_with_prefix(key)
+            .collect::<Result<_>>()?;
+
+        Ok(keys.is_empty())
+    }
+
+    fn delete_by_prefix(&mut self, prefix: &str) -> Result<()> {
+        let Some((addr, state_root, block_number)) = self.current_contract_addr else { return Err(anyhow!("no current contract")); };
+        let state_root = self
+            .db
+            .lock()
+            .unwrap()
+            .delete_contract_state_with_prefix(state_root, prefix)?;
+        self.current_contract_addr = Some((addr, state_root, block_number));
+
+        Ok(())
+    }
+
+    fn update_state(&mut self, key: &str, value: &[u8], clean_empty: bool) -> Result<()> {
+        if clean_empty {
+            let indices: Vec<_> = key.split_terminator('\x16').collect();
+            if indices.len() < 2 {
+                return Err(anyhow!("not enough indices: {}", indices.len()));
+            }
+
+            let mut scan_key = format!("{}\x16{}\x16", indices[0], indices[1]);
+            self.delete_state(&scan_key)?;
+
+            if indices.len() > 2 {
+                // Exclude the value key.
+                for index in &indices[2..(indices.len() - 1)] {
+                    scan_key.push_str(index);
+                    scan_key.push('\x16');
+                    self.delete_state(&scan_key)?;
+                }
+            }
+        }
+
+        self.put_state(key, value)?;
+
+        Ok(())
+    }
+
+    fn put_state(&mut self, key: &str, value: &[u8]) -> Result<()> {
+        let Some((addr, state_root, block_number)) = self.current_contract_addr else { return Err(anyhow!("no current contract")); };
+        let state_root = self
+            .db
+            .lock()
+            .unwrap()
+            .put_contract_state(state_root, key, value)?;
+        self.current_contract_addr = Some((addr, state_root, block_number));
+
+        Ok(())
+    }
+
+    fn delete_state(&mut self, key: &str) -> Result<()> {
+        let Some((addr, state_root, block_number)) = self.current_contract_addr else { return Err(anyhow!("no current contract")); };
+        let state_root = self
+            .db
+            .lock()
+            .unwrap()
+            .delete_contract_state(state_root, key)?;
+        self.current_contract_addr = Some((addr, state_root, block_number));
+
+        Ok(())
+    }
+}
+
+fn convert_err(err: impl Into<anyhow::Error>) -> jsonrpc_core::Error {
+    let err: anyhow::Error = err.into();
+    error!("{err:?}");
+    jsonrpc_core::Error {
+        code: jsonrpc_core::ErrorCode::InternalError,
+        message: err.to_string(),
+        data: None,
+    }
+}
+
+ */
