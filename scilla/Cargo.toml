@@ -1,0 +1,19 @@
+[package]
+name = "scilla"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tracing = "0.1.40"
+evm_ds = { path = "../evm-ds" }
+evm = { git = "https://github.com/Zilliqa/evm", rev = "08a117eadfd0368cd2cc813763155e8f740bd881", features = ["tracing"] }
+anyhow = "1.0.78"
+serde_json = "1.0.108"
+serde = "1.0.193"
+tokio = "1.35.1"
+jsonrpc-client-transports = "18.0.0"
+jsonrpc-core = "18.0.0"
+primitive-types = "0.12.2"
+sha2 = "0.10.8"

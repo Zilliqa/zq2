@@ -309,17 +309,19 @@ impl Transaction {
         }
     }
 
-    pub fn payload(&self) -> &[u8] {
+    pub fn payload(&self) -> (&[u8], &[u8]) {
         match self {
-            Transaction::Legacy(TxLegacy { payload, .. }) => payload,
-            Transaction::Eip2930(TxEip2930 { payload, .. }) => payload,
-            Transaction::Eip1559(TxEip1559 { payload, .. }) => payload,
+            Transaction::Legacy(TxLegacy { payload, .. }) => (payload, <&[u8]>::default()),
+            Transaction::Eip2930(TxEip2930 { payload, .. }) => (payload, <&[u8]>::default()),
+            Transaction::Eip1559(TxEip1559 { payload, .. }) => (payload, <&[u8]>::default()),
             // Zilliqa transactions can have both code and data set, but code takes precedence if it is non-empty.
             Transaction::Zilliqa(TxZilliqa { code, data, .. }) => {
-                if !code.is_empty() {
-                    code.as_bytes()
-                } else {
-                    data.as_bytes()
+
+                match (!code.is_empty(), !data.is_empty()) {
+                    (true, false) => (code.as_bytes(), <&[u8]>::default()),
+                    (false, true) => (data.as_bytes(), <&[u8]>::default()),
+                    (true, true) => (code.as_bytes(), data.as_bytes()),
+                    (false, false) => panic!("Zilliqa transaction has neither code nor data"),
                 }
             }
         }

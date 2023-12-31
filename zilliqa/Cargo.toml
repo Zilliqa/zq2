@@ -37,6 +37,7 @@ crypto-bigint = "=0.5.0"
 eth_trie = {path =  "../eth-trie.rs"}
 ethabi = "18.0.0"
 evm_ds = { path = "../evm-ds" }
+scilla = { path = "../scilla" }
 fs_extra = "1.3.0"
 futures = "0.3.29"
 hex = { version = "0.4.3", features = ["serde"] }

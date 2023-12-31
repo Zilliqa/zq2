@@ -1,5 +1,6 @@
 //! Manages execution of transactions on state.
 
+use std::str;
 use std::{
     collections::HashSet,
     sync::{Arc, Mutex},
@@ -7,6 +8,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use ethabi::Token;
+use scilla::{scilla_server_run::run_scilla_impl_direct};
 use evm_ds::{
     evm::{backend::Backend, tracing::EventListener},
     evm_server_run::{
@@ -164,6 +166,7 @@ impl State {
         gas_limit: u64,
         amount: U256,
         payload: Vec<u8>,
+        payload_initdata: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
         tracing: bool,
@@ -172,6 +175,10 @@ impl State {
     ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
 
         let is_scilla = payload.starts_with(b"scilla_version".to_vec().iter().as_ref());
+
+        if is_scilla {
+            info!("#### Scilla execution requested");
+        }
 
         let caller = from_addr;
         let is_static = false;
@@ -184,29 +191,21 @@ impl State {
         let mut created_contract_addr: Option<Address> = None;
 
         let mut code: Vec<u8> = account.code;
-        let mut data: Vec<u8> = payload;
+        let mut data: Vec<u8> = payload.clone();
         let mut traces: Arc<Mutex<LoggingEventListener>> =
             Arc::new(Mutex::new(LoggingEventListener::new(tracing)));
         let datax = b"scilla_version".to_vec();
-
-        info!("data is {:?}", datax);
-
-        if is_scilla {
-            //ssilla_code.extend_from_slice(&code);
-            //code = scilla_code;
-            info!("Scilla code detected, using scilla interpreter");
-        }
 
         // The backend is provided to the evm as a way to read accounts and state during execution
         let mut backend = EvmBackend::new(self, U256::zero(), caller, chain_id, current_block);
 
         // if this is none, it is contract creation
-        if to_addr.is_none() {
+        if to_addr.is_none() || to_addr.is_some_and(|x| x == Address::zero()) {
             code = data;
-            data = vec![];
+            data = payload_initdata.clone();
             to = calculate_contract_address(from_addr, &backend);
             created_contract_addr = Some(to);
-            trace!("Calculated contract address for creation: {}", to);
+            trace!("*** Calculated contract address for creation: {}", to);
         }
 
         let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];
@@ -299,10 +298,19 @@ impl State {
 
             backend.origin = call_args.caller;
             result = if call_args.is_scilla {
-                run_evm_impl_direct(call_args.clone(), &backend)
+                run_scilla_impl_direct(call_args.clone(), &backend)
             } else {
                 run_evm_impl_direct(call_args.clone(), &backend)
             };
+
+            if call_args.is_scilla {
+                // payload and payload_initdata printing as strings
+                info!("payload is {:?}", payload);
+                info!("payload init data is {:?}", payload_initdata.clone());
+                info!("payload is {:?}", str::from_utf8(&payload));
+                info!("payload init data is {:?}", str::from_utf8(&payload_initdata));
+                trace!("Scilla execution complete - applying result {:?}", result);
+            }
 
             if print_enabled {
                 debug!("Evm invocation complete - applying result {:?}", result);
@@ -559,6 +567,7 @@ impl State {
             u64::MAX,
             U256::zero(),
             payload,
+            vec![],
             0,
             BlockHeader::default(),
             false,
@@ -582,6 +591,7 @@ impl State {
         match txn.tx {
             SignedTransaction::Zilliqa {..} => {
                 info!("Zilliqa transaction detected, using zilliqa interpreter...");
+
             }
             _ => { }
         }
@@ -619,7 +629,8 @@ impl State {
             txn.max_fee_per_gas(),
             txn.gas_limit(),
             txn.amount().into(),
-            txn.payload().to_vec(),
+            txn.payload().0.to_vec(),
+            txn.payload().1.to_vec(),
             chain_id,
             current_block,
             tracing,
@@ -810,6 +821,7 @@ impl State {
             u64::MAX,
             U256::zero(),
             data,
+            vec![],
             // The chain ID and current block are not accessed when the native balance is updated, so we just pass in
             // some dummy values.
             0,
@@ -866,6 +878,7 @@ impl State {
             gas,
             value,
             data,
+            vec![],
             chain_id,
             current_block,
             false,
@@ -932,6 +945,7 @@ impl State {
             u64::MAX,
             amount,
             data,
+            vec![],
             chain_id,
             current_block,
             tracing,

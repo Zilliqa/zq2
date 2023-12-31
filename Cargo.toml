@@ -6,6 +6,7 @@ members = [
  "zilliqa-macros",
  "z2",
  "evm-ds",
+ "scilla",
  "eth-trie.rs"
 ]
 
