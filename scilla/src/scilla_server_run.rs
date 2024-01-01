@@ -3,6 +3,7 @@ use evm::{
     ExitSucceed,
     backend::{Apply, Backend}};
 
+use crate::scilla_tcp_server::ScillaServer;
 use futures::{future, FutureExt};
 use std::io::Read;
 use jsonrpc_core::IoHandler;
@@ -67,6 +68,8 @@ pub fn run_scilla_impl_direct<B: Backend>(
 
     //let from_addr = account_address(txn.sender_pub_key);
     let from_addr = backend.origin();
+
+    let tcp_scilla_server = ScillaServer::new(backend);
 
     let lib_directory_str = "/scilla/0/src/stdlib/";
     let init_directory_str = "/tmp/scilla_init/init.json";
@@ -136,7 +139,7 @@ pub fn run_scilla_impl_direct<B: Backend>(
             //let mut state_root = H256::from_slice(&Keccak256::digest(rlp::NULL_RLP));
 
             let check_output =
-                check_contract(code.as_bytes(), args.gas_limit, &init_data, init_directory_str, lib_directory_str, input_directory_str,
+                check_contract(code.as_bytes(), args.gas_limit, &init_data, init_directory_str, lib_directory_str, input_directory_str, &tcp_scilla_server
                 ).unwrap();
 
             debug!("Check output: {:?}", check_output);
@@ -197,7 +200,7 @@ pub fn run_scilla_impl_direct<B: Backend>(
                 args.gas_limit,
                 //args.apparent_value,
                 &init_data,
-                init_directory_str, lib_directory_str, input_directory_str,
+                init_directory_str, lib_directory_str, input_directory_str, &tcp_scilla_server
 
             ).unwrap();
 
@@ -272,13 +275,14 @@ pub fn run_scilla_impl_direct<B: Backend>(
     }
 }
 
-pub fn check_contract(
+pub fn check_contract<B: evm::backend::Backend>(
     contract: &[u8],
     gas_limit: u64,
     init: &Value,
     init_path: &str,
     lib_path: &str,
     input_path: &str,
+    tcp_scilla_server: &ScillaServer<B>,
 ) -> Result<CheckOutput> {
     //let dir = TempDir::new()?;
     //let (contract_path, init_path) = self.create_common_inputs(&dir, contract, init)?;
@@ -300,7 +304,7 @@ pub fn check_contract(
     let args = serde_json::to_value(args)?;
     let params = [("argv".to_owned(), args)].into_iter().collect();
 
-    let mut response = call_scilla_server("check", params)?;
+    let mut response = call_scilla_server("check", params, tcp_scilla_server)?;
 
     let response = response.replace("\"{", "{")
         .replace("}\"", "}");
@@ -312,7 +316,7 @@ pub fn check_contract(
 
     Ok(response)
 }
-pub fn create_contract(
+pub fn create_contract<B: evm::backend::Backend>(
     contract: &[u8],
     gas_limit: u64,
     //balance: u128, // todo: this
@@ -320,6 +324,7 @@ pub fn create_contract(
     init_path: &str,
     lib_path: &str,
     input_path: &str,
+    tcp_scilla_server: &ScillaServer<B>,
 ) -> Result<()> {
     //let dir = TempDir::new()?;
 
@@ -346,7 +351,7 @@ pub fn create_contract(
     let args = serde_json::to_value(args)?;
     let params = [("argv".to_owned(), args)].into_iter().collect();
 
-    let mut response = call_scilla_server("run", params)?;
+    let mut response = call_scilla_server("run", params, tcp_scilla_server)?;
 
     let response = response.replace("\"{", "{")
         .replace("}\"", "}");
@@ -453,7 +458,7 @@ struct JsonRpcError {
     data: Option<Value>,
 }
 
-pub fn call_scilla_server(method: &str, params: serde_json::Value) -> Result<String> {
+pub fn call_scilla_server<B: evm::backend::Backend>(method: &str, params: serde_json::Value, tcp_scilla_server: &ScillaServer<B>) -> Result<String> {
 
     //let rt = tokio::runtime::Builder::new_current_thread()
     //    .enable_all()
@@ -485,21 +490,21 @@ pub fn call_scilla_server(method: &str, params: serde_json::Value) -> Result<Str
     let mut bytes_read = 0;
     let mut bytes_read_backend = 0;
 
-    let mut io = IoHandler::new();
+    //let mut io = IoHandler::new();
 
-    io.add_method("updateStateValueB64",  |params| {
-        debug!("updateStateValueB64 called with params: {:?}", params);
-        future::ready(Ok(json!(true))).boxed()
-        //move |params| inner.lock().unwrap().fetch_state_value_b64(params)
-    });
+    //io.add_method("updateStateValueB64",  |params| {
+    //    debug!("updateStateValueB64 called with params: {:?}", params);
+    //    future::ready(Ok(json!(true))).boxed()
+    //    //move |params| inner.lock().unwrap().fetch_state_value_b64(params)
+    //});
 
-    io.add_method("updateStateValue",  |params| {
-        debug!("updateStateValue called with params: {:?}", params);
-        future::ready(Ok(json!(true))).boxed()
-        //move |params| inner.lock().unwrap().fetch_state_value_b64(params)
-    });
+    //io.add_method("updateStateValue",  |params| {
+    //    debug!("updateStateValue called with params: {:?}", params);
+    //    future::ready(Ok(json!(true))).boxed()
+    //    //move |params| inner.lock().unwrap().fetch_state_value_b64(params)
+    //});
 
-    debug!("Calling the Scilla server proper");
+    //debug!("Calling the Scilla server proper");
 
     loop {
         let bytes_read_tcp = stream_backend.read(&mut response_backend[bytes_read..]);
@@ -520,18 +525,18 @@ pub fn call_scilla_server(method: &str, params: serde_json::Value) -> Result<Str
 
         if bytes_read_backend > 0 {
             if response_backend[bytes_read_backend-1] == '\n' as u8 {
-                let filtered = filter_this(response_backend[0..bytes_read_backend-1].to_vec());
-                debug!("Scilla backend response: {:?}", String::from_utf8(filtered.clone())?);
-                let aa = io.handle_request_sync(&String::from_utf8(filtered)?);
-                debug!("Scilla backend responseRR: {:?}", aa);
+                //let filtered = filter_this(response_backend[0..bytes_read_backend-1].to_vec());
+                //debug!("Scilla backend response: {:?}", String::from_utf8(filtered.clone())?);
+                //let aa = io.handle_request_sync(&String::from_utf8(filtered)?);
+                //debug!("Scilla backend responseRR: {:?}", aa);
 
                 let not_filtered = response_backend[0..bytes_read_backend-1].to_vec();
-                let aa = io.handle_request_sync(&String::from_utf8(not_filtered)?);
+                let aa = tcp_scilla_server._tcp_server.handle_request_sync(&String::from_utf8(not_filtered)?);
                 debug!("Scilla backend responseRR: {:?}", aa);
                 debug!("Scilla backend response: {:?}", aa);
                 //return Ok(String::from_utf8(filtered)?);
             } else {
-                debug!("Scilla response so far: {:?}", response);
+                debug!("Scilla response so farX: {:?}", String::from_utf8(response.to_vec())?);
             }
         }
 
@@ -548,7 +553,7 @@ pub fn call_scilla_server(method: &str, params: serde_json::Value) -> Result<Str
 
 
         if bytes_read > 0 {
-            debug!("Scilla response so far: {:?}", response);
+            debug!("Scilla response so farBk: {:?}", String::from_utf8(response.to_vec())?);
         }
 
         if bytes_read == 0 {
@@ -562,7 +567,7 @@ pub fn call_scilla_server(method: &str, params: serde_json::Value) -> Result<Str
             let filtered = filter_this(response[0..bytes_read-1].to_vec());
             return Ok(String::from_utf8(filtered)?);
         } else {
-            debug!("Scilla response so far: {:?}", response);
+            debug!("Scilla response so farYY: {:?}", String::from_utf8(response.to_vec())?);
         }
 
         if bytes_read >= 10000 {
