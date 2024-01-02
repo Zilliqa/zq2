@@ -23,7 +23,7 @@ fake_time = []
 vergen = { version = "8.2.6", features = ["git", "gitcl"] }
 
 [dependencies]
-anyhow = { version = "1.0.75", features = ["backtrace"] }
+anyhow = { version = "1.0.79", features = ["backtrace"] }
 async-trait = "0.1.76"
 bincode = "1.3.3"
 bitvec = { version = "1.0.1", features = ["serde"] }
