@@ -79,6 +79,6 @@ async-trait = "0.1.74"
 ethers = { version = "2.0.10", default-features = false, features = ["ethers-solc", "legacy"] }
 ethers-solc = { version = "2.0.10", features = ["svm-solc"] }
 indicatif = "0.17.7"
-tempfile = "3.8.1"
+tempfile = "3.9.0"
 ureq = "2.9.1"
 zilliqa = { path = ".", default-features = false, features = ["fake_time"] }
