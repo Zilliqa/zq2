@@ -24,7 +24,7 @@ vergen = { version = "8.2.6", features = ["git", "gitcl"] }
 
 [dependencies]
 anyhow = { version = "1.0.75", features = ["backtrace"] }
-async-trait = "0.1.74"
+async-trait = "0.1.76"
 bincode = "1.3.3"
 bitvec = { version = "1.0.1", features = ["serde"] }
 bls-signatures = "0.15.0"
@@ -75,7 +75,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 zilliqa-macros = { path = "../zilliqa-macros" }
 
 [dev-dependencies]
-async-trait = "0.1.74"
+async-trait = "0.1.76"
 ethers = { version = "2.0.10", default-features = false, features = ["ethers-solc", "legacy"] }
 ethers-solc = { version = "2.0.10", features = ["svm-solc"] }
 indicatif = "0.17.7"
