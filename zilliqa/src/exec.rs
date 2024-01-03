@@ -172,13 +172,10 @@ impl State {
         tracing: bool,
         estimate: bool,
         print_enabled: bool,
+        is_scilla: bool,
     ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
 
-        let is_scilla = payload.starts_with(b"scilla_version".to_vec().iter().as_ref());
-
-        if is_scilla {
-            info!("#### Scilla execution requested");
-        }
+        //let is_scilla = payload.starts_with(b"scilla_version".to_vec().iter().as_ref());
 
         let caller = from_addr;
         let is_static = false;
@@ -211,6 +208,10 @@ impl State {
         let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];
         let native_balance = self.get_native_balance(from_addr, false).unwrap();
         let target_balance = self.get_native_balance(to, false).unwrap();
+
+        if is_scilla {
+            info!("#### Scilla execution requested. From: {} To: {} with funds: {}", from_addr, to, target_balance);
+        }
 
         // The first continuation in the stack is the tx itself
         continuation_stack.push(EvmProto::EvmCallArgs {
@@ -282,7 +283,7 @@ impl State {
 
         if print_enabled {
             debug!(
-                "*** Evm invocation begin - with args {:?}",
+                "*** Virtual machine invocation begin - with args {:?}",
                 continuation_stack
             );
         }
@@ -455,6 +456,7 @@ impl State {
                             backend.create_account(
                                 prior_node_continuation.get_address(),
                                 result.return_value.clone(),
+                                is_scilla,
                             );
 
                             trace!(
@@ -475,7 +477,7 @@ impl State {
         // If this was contract creation, apply this to the deltas for the convenience of
         // the caller
         if let Some(created_contract_addr) = created_contract_addr {
-            backend.create_account(created_contract_addr, result.return_value.clone());
+            backend.create_account(created_contract_addr, result.return_value.clone(), is_scilla);
         }
 
         // If the result was a revert, kill all applys
@@ -573,6 +575,7 @@ impl State {
             false,
             true,
             false,
+            false,
         )
     }
 
@@ -587,26 +590,35 @@ impl State {
         let hash = txn.hash;
         let from_addr = txn.signer;
         info!(?hash, ?txn, "executing txn");
+        let mut is_scilla = false;
 
         match txn.tx {
             SignedTransaction::Zilliqa {..} => {
                 info!("Zilliqa transaction detected, using zilliqa interpreter...");
-
+                is_scilla = true;
             }
             _ => { }
         }
 
         let txn = txn.tx.into_transaction();
 
-
         // fail early on nonce mismatch
         let mut acct = self.get_account(from_addr).unwrap();
-        if acct.nonce != txn.nonce() {
+
+        let desired_account_nonce = if is_scilla {
+            // todo: this should be +1 but it is not.
+            acct.nonce
+        } else {
+            acct.nonce
+        };
+
+        if desired_account_nonce != txn.nonce() {
             let error_str = format!(
-                "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
-                acct.nonce,
+                "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {} from account {}",
+                desired_account_nonce,
                 txn.nonce(),
-                hash
+                hash,
+                from_addr
             );
             warn!(error_str);
             return Err(anyhow!(error_str));
@@ -636,6 +648,7 @@ impl State {
             tracing,
             false,
             true,
+            is_scilla,
         );
 
         match result {
@@ -829,6 +842,7 @@ impl State {
             false,
             true,
             false,
+            false,
         );
 
         match result {
@@ -884,6 +898,7 @@ impl State {
             false,
             true,
             print_enabled,
+            false,
         );
 
         if print_enabled {
@@ -951,6 +966,7 @@ impl State {
             tracing,
             true,
             print_enabled,
+            false,
         );
 
         if print_enabled {

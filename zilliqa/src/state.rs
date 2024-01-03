@@ -241,6 +241,7 @@ pub struct Account {
     #[serde(with = "serde_bytes")]
     pub code: Vec<u8>,
     pub storage_root: Option<H256>,
+    pub is_scilla: bool,
 }
 
 pub fn default_gas() -> u64 {
