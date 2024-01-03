@@ -1,8 +1,14 @@
 use tracing::*;
 use evm::{
-    ExitSucceed,
-    backend::{Apply, Backend}};
+    ExitSucceed,};
+    //backend::{Apply, Backend}};
 
+use evm_ds::{
+    evm::backend::{Backend, Basic},
+    protos::evm_proto::{Apply, EvmResult, Storage},
+};
+
+use std::collections::HashMap;
 use crate::scilla_tcp_server::ScillaServer;
 use futures::{future, FutureExt};
 use std::io::Read;
@@ -13,7 +19,7 @@ use jsonrpc_core::{
     futures_util::{SinkExt, StreamExt},
     Params,
 };
-use primitive_types::{H256, H160};
+use primitive_types::{H256, H160, U256};
 use sha2::{Digest, Sha256};
 use std::str;
 use std::io::Write;
@@ -24,7 +30,7 @@ use std::path::Path;
 use evm_ds::protos::evm_proto as EvmProto;
 use evm_ds::protos::evm_proto::{ExitReasonCps };
 use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use serde_json::{json, Value, from_value};
 use std::path::PathBuf;
 use std::fs::File;
 use std::net::TcpStream;
@@ -44,17 +50,87 @@ use tokio::time::{sleep, Duration};
 use tokio::runtime::{Runtime, Handle};
 use tracing::field::debug;
 
-fn get_runtime_handle() -> (Handle, Option<Runtime>) {
-    match Handle::try_current() {
-        Ok(h) => (h, None),
-        Err(_) => {
-            let rt = Runtime::new().unwrap();
-            (rt.handle().clone(), Some(rt))
+pub type Address = H160;
+
+pub struct Account {
+    pub nonce: u64,
+    pub code: Vec<u8>,
+    pub storage_root: Option<H256>,
+}
+
+// Structure that answers queries about the state by using the backend, while also collecting
+// the state changes so it can generate an evm result
+pub struct BackendCollector<'a, B: evm::backend::Backend>{
+    pub backend: &'a B,
+    // Map of cached (execution in progress) address to account and any dirty storage.
+    // If the value is None, this means a deletion of that account and storage
+    pub account_storage_cached: HashMap<Address, Option<(Account, HashMap<H256, H256>)>>,
+}
+
+impl<'a, B: Backend> BackendCollector<'a, B> {
+    pub fn new(
+        backend: &'a B,
+    ) -> Self {
+        Self {
+            backend: backend,
+            account_storage_cached: HashMap::new(),
+        }
+    }
+
+    pub fn create_account(&mut self, address: Address, code: Vec<u8>) {
+        // Insert empty slot into cache if it does not already exist, else just put the code there
+        if let Some(Some((acct, _))) = self.account_storage_cached.get_mut(&address) {
+            acct.code = code;
+            return;
+        }
+
+        // Fall through
+        self.account_storage_cached.insert(
+            address,
+            Some((
+                Account {
+                    nonce: 0,
+                    code,
+                    storage_root: None,
+                },
+                HashMap::new(),
+            )),
+        );
+    }
+
+    // Get the deltas from all of the operations so far
+    pub fn get_result(self) -> EvmResult {
+        let mut applys: Vec<Apply> = vec![];
+
+        for (address, item) in self.account_storage_cached.into_iter() {
+            match item {
+                Some((acct, stor)) => {
+                    applys.push(Apply::Modify {
+                        address,
+                        balance: U256::zero(),
+                        nonce: U256::zero(),
+                        code: acct.code,
+                        storage: stor
+                            .into_iter()
+                            .map(|(key, value)| Storage { key, value })
+                            .collect(),
+                        reset_storage: false,
+                    });
+                }
+                None => {
+                    applys.push(Apply::Delete { address });
+                }
+            }
+        }
+
+        EvmResult {
+            apply: applys,
+            ..Default::default()
         }
     }
 }
 
-pub fn run_scilla_impl_direct<B: Backend>(
+pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
     args: EvmProto::EvmCallArgs,
     backend: &B,
 ) -> EvmProto::EvmResult {
@@ -69,7 +145,10 @@ pub fn run_scilla_impl_direct<B: Backend>(
     //let from_addr = account_address(txn.sender_pub_key);
     let from_addr = backend.origin();
 
-    let tcp_scilla_server = ScillaServer::new(backend);
+    let mut backend_collector = BackendCollector::new(backend);
+    //let mut io_handler = IoHandler::new();
+    let mut tcp_scilla_server = ScillaServer::new(backend_collector);
+    //tcp_scilla_server.setup();
 
     let lib_directory_str = "/scilla/0/src/stdlib/";
     let init_directory_str = "/tmp/scilla_init/init.json";
@@ -139,7 +218,7 @@ pub fn run_scilla_impl_direct<B: Backend>(
             //let mut state_root = H256::from_slice(&Keccak256::digest(rlp::NULL_RLP));
 
             let check_output =
-                check_contract(code.as_bytes(), args.gas_limit, &init_data, init_directory_str, lib_directory_str, input_directory_str, &tcp_scilla_server
+                check_contract(code.as_bytes(), args.gas_limit, &init_data, init_directory_str, lib_directory_str, input_directory_str, & mut tcp_scilla_server
                 ).unwrap();
 
             debug!("Check output: {:?}", check_output);
@@ -200,7 +279,7 @@ pub fn run_scilla_impl_direct<B: Backend>(
                 args.gas_limit,
                 //args.apparent_value,
                 &init_data,
-                init_directory_str, lib_directory_str, input_directory_str, &tcp_scilla_server
+                init_directory_str, lib_directory_str, input_directory_str, &mut tcp_scilla_server
 
             ).unwrap();
 
@@ -282,7 +361,7 @@ pub fn check_contract<B: evm::backend::Backend>(
     init_path: &str,
     lib_path: &str,
     input_path: &str,
-    tcp_scilla_server: &ScillaServer<B>,
+    tcp_scilla_server: &mut ScillaServer<B>,
 ) -> Result<CheckOutput> {
     //let dir = TempDir::new()?;
     //let (contract_path, init_path) = self.create_common_inputs(&dir, contract, init)?;
@@ -302,7 +381,8 @@ pub fn check_contract<B: evm::backend::Backend>(
         "-jsonerrors".to_owned(),
     ];
     let args = serde_json::to_value(args)?;
-    let params = [("argv".to_owned(), args)].into_iter().collect();
+    let params: Value = [("argv".to_owned(), args)].into_iter().collect();
+    let params: Params = from_value(params).unwrap();
 
     let mut response = call_scilla_server("check", params, tcp_scilla_server)?;
 
@@ -324,7 +404,7 @@ pub fn create_contract<B: evm::backend::Backend>(
     init_path: &str,
     lib_path: &str,
     input_path: &str,
-    tcp_scilla_server: &ScillaServer<B>,
+    tcp_scilla_server: & mut ScillaServer<B>,
 ) -> Result<()> {
     //let dir = TempDir::new()?;
 
@@ -349,7 +429,8 @@ pub fn create_contract<B: evm::backend::Backend>(
     ];
 
     let args = serde_json::to_value(args)?;
-    let params = [("argv".to_owned(), args)].into_iter().collect();
+    let params: Value = [("argv".to_owned(), args)].into_iter().collect();
+    let params: Params = from_value(params).unwrap();
 
     let mut response = call_scilla_server("run", params, tcp_scilla_server)?;
 
@@ -425,16 +506,17 @@ pub struct Param {
 }
 
 
-#[derive(Serialize, Deserialize)]
-struct JsonRpcRequest {
+#[derive(Serialize, Deserialize, Debug)]
+pub struct JsonRpcRequest {
     jsonrpc: String,
-    method: String,
-    params: serde_json::Value,
+    pub method: String,
+    //pub params: serde_json::Value,
+    pub params: Params,
     id: u32,
 }
 
 impl JsonRpcRequest {
-    fn new(method: &str, params: serde_json::Value, id: u32) -> Self {
+    fn new(method: &str, params: Params, id: u32) -> Self {
         JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
@@ -458,7 +540,24 @@ struct JsonRpcError {
     data: Option<Value>,
 }
 
-pub fn call_scilla_server<B: evm::backend::Backend>(method: &str, params: serde_json::Value, tcp_scilla_server: &ScillaServer<B>) -> Result<String> {
+fn respond_json(val: Value, mut connection: &TcpStream) {
+
+    let response = JsonRpcResponse {
+        jsonrpc: "2.0".to_string(),
+        result: Some(val),
+        error: None,
+        id: 1,
+    };
+
+    let response_str = serde_json::to_string(&response).unwrap();
+    let response_str = response_str + "\n";
+
+    debug!("Responding to the backend with: {:?}", response_str);
+
+    connection.write_all(response_str.as_bytes()).unwrap();
+}
+
+pub fn call_scilla_server<B: evm::backend::Backend>(method: &str, params: Params, tcp_scilla_server: &mut ScillaServer<B>) -> Result<String> {
 
     //let rt = tokio::runtime::Builder::new_current_thread()
     //    .enable_all()
@@ -506,6 +605,19 @@ pub fn call_scilla_server<B: evm::backend::Backend>(method: &str, params: serde_
 
     //debug!("Calling the Scilla server proper");
 
+    //let mut _tcp_server = IoHandler::new();
+
+    //_tcp_server.add_method("updateStateValue", |params| {
+    //    debug!("* updateStateValue called with params: {:?}", params);
+
+    //    //// nathan
+    //    //let inner_arc = Arc::clone(&cloned_arc);
+    //    move |params| tcp_scilla_server.inner.update_state_value_b64(params);
+
+    //    future::ready(Ok(json!(true))).boxed()
+    //});
+
+
     loop {
         let bytes_read_tcp = stream_backend.read(&mut response_backend[bytes_read..]);
 
@@ -525,15 +637,23 @@ pub fn call_scilla_server<B: evm::backend::Backend>(method: &str, params: serde_
 
         if bytes_read_backend > 0 {
             if response_backend[bytes_read_backend-1] == '\n' as u8 {
-                //let filtered = filter_this(response_backend[0..bytes_read_backend-1].to_vec());
-                //debug!("Scilla backend response: {:?}", String::from_utf8(filtered.clone())?);
-                //let aa = io.handle_request_sync(&String::from_utf8(filtered)?);
-                //debug!("Scilla backend responseRR: {:?}", aa);
 
                 let not_filtered = response_backend[0..bytes_read_backend-1].to_vec();
-                let aa = tcp_scilla_server._tcp_server.handle_request_sync(&String::from_utf8(not_filtered)?);
+
+                debug!("Deser the request...");
+                let mut request: Result<JsonRpcRequest, serde_json::Error> = from_str(&String::from_utf8(not_filtered.to_vec())?);
+                debug!("Deser the request... {:?}", request);
+
+                let aa = tcp_scilla_server.handle_request(request.expect("Deser of server request failed"));
+
                 debug!("Scilla backend responseRR: {:?}", aa);
                 debug!("Scilla backend response: {:?}", aa);
+
+                // Reset read pointer
+                bytes_read_backend = 0;
+
+                respond_json(aa?, &stream_backend);
+
                 //return Ok(String::from_utf8(filtered)?);
             } else {
                 debug!("Scilla response so farX: {:?}", String::from_utf8(response.to_vec())?);
@@ -1183,3 +1303,14 @@ fn convert_err(err: impl Into<anyhow::Error>) -> jsonrpc_core::Error {
 }
 
  */
+
+//fn get_runtime_handle() -> (Handle, Option<Runtime>) {
+//    match Handle::try_current() {
+//        Ok(h) => (h, None),
+//        Err(_) => {
+//            let rt = Runtime::new().unwrap();
+//            (rt.handle().clone(), Some(rt))
+//        }
+//    }
+//}
+
