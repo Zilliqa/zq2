@@ -210,7 +210,7 @@ async fn launch_shard(mut network: Network) {
 
     // 4. Register the shard in the shard registry on the main shard
     let tx_request = TransactionRequest::new()
-        .to(contract_addr::SHARD_CONTRACT)
+        .to(contract_addr::SHARD_REGISTRY)
         .data(
             contracts::shard_registry::ADD_SHARD
                 .encode_input(&[
@@ -291,6 +291,88 @@ async fn launch_shard(mut network: Network) {
                     .number
                     .unwrap()
                     >= check_child_block + 5
+            },
+            500,
+        )
+        .await
+        .unwrap();
+
+    // 7. Send a cross-shard transaction
+
+    let inner_data = contracts::gas_price::GET_GAS.encode_input(&[]).unwrap();
+    let data = contracts::intershard_bridge::BRIDGE
+        .encode_input(&[
+            Token::Uint(child_shard_id.into()),
+            Token::Address(contract_addr::GAS_PRICE),
+            Token::Bytes(inner_data),
+            Token::Uint(10_000_000.into()),
+            Token::Uint(10_000.into()),
+        ])
+        .unwrap();
+    let tx_request = TransactionRequest::new()
+        .to(contract_addr::INTERSHARD_BRIDGE)
+        .data(data);
+    let hash = wallet
+        .send_transaction(tx_request, None)
+        .await
+        .unwrap()
+        .tx_hash();
+    network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+
+    // 8. Finalize that block
+    network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_block(BlockNumber::Latest)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .number
+                    .unwrap()
+                    >= receipt.block_number.unwrap() + 10
+            },
+            500,
+        )
+        .await
+        .unwrap();
+
+    // 6. Check shard is still producing blocks
+    let check_child_block = shard_wallet
+        .get_block(BlockNumber::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .number
+        .unwrap();
+
+    network
+        .children
+        .get_mut(&child_shard_id)
+        .unwrap()
+        .run_until_async(
+            || async {
+                shard_wallet
+                    .get_block(BlockNumber::Latest)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .number
+                    .unwrap()
+                    >= check_child_block + 10
             },
             500,
         )

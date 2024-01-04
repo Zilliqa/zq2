@@ -47,6 +47,12 @@ pub enum SignedTransaction {
         key: schnorr::PublicKey,
         sig: schnorr::Signature,
     },
+    Intershard {
+        tx: TxIntershard,
+        // no signature as the transaction can only originate from a local (trusted) process
+        // instead use raw from address
+        from: Address,
+    },
 }
 
 impl SignedTransaction {
@@ -56,6 +62,7 @@ impl SignedTransaction {
             SignedTransaction::Eip2930 { tx, .. } => tx.into(),
             SignedTransaction::Eip1559 { tx, .. } => tx.into(),
             SignedTransaction::Zilliqa { tx, .. } => tx.into(),
+            SignedTransaction::Intershard { tx, .. } => tx.into(),
         }
     }
 
@@ -65,6 +72,7 @@ impl SignedTransaction {
             SignedTransaction::Eip2930 { sig, .. } => sig.r,
             SignedTransaction::Eip1559 { sig, .. } => sig.r,
             SignedTransaction::Zilliqa { sig, .. } => sig.r().to_bytes().into(),
+            SignedTransaction::Intershard { .. } => [0; 32],
         }
     }
 
@@ -74,6 +82,7 @@ impl SignedTransaction {
             SignedTransaction::Eip2930 { sig, .. } => sig.s,
             SignedTransaction::Eip1559 { sig, .. } => sig.s,
             SignedTransaction::Zilliqa { sig, .. } => sig.s().to_bytes().into(),
+            SignedTransaction::Intershard { .. } => [0; 32],
         }
     }
 
@@ -92,6 +101,7 @@ impl SignedTransaction {
             SignedTransaction::Eip2930 { sig, .. } => sig.y_is_odd as u64,
             SignedTransaction::Eip1559 { sig, .. } => sig.y_is_odd as u64,
             SignedTransaction::Zilliqa { .. } => 0,
+            SignedTransaction::Intershard { .. } => 0,
         }
     }
 
@@ -101,6 +111,7 @@ impl SignedTransaction {
             SignedTransaction::Eip2930 { tx, .. } => Some(tx.chain_id),
             SignedTransaction::Eip1559 { tx, .. } => Some(tx.chain_id),
             SignedTransaction::Zilliqa { tx, .. } => Some(tx.chain_id as u64),
+            SignedTransaction::Intershard { tx, .. } => Some(tx.chain_id),
         }
     }
 
@@ -111,6 +122,7 @@ impl SignedTransaction {
             SignedTransaction::Eip1559 { tx, .. } => tx.nonce,
             // Zilliqa nonces are 1-indexed rather than zero indexed.
             SignedTransaction::Zilliqa { tx, .. } => tx.nonce - 1,
+            SignedTransaction::Intershard { tx, .. } => tx.nonce,
         }
     }
 
@@ -156,6 +168,7 @@ impl SignedTransaction {
                 let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
                 H160(bytes.into())
             }
+            SignedTransaction::Intershard { from, .. } => *from,
         };
         let hash = self.calculate_hash();
 
@@ -195,6 +208,12 @@ impl SignedTransaction {
             SignedTransaction::Zilliqa { tx, key, .. } => {
                 let txn_data = encode_zilliqa_transaction(tx, *key);
                 crypto::Hash(Sha256::digest(txn_data).into())
+            }
+            SignedTransaction::Intershard { tx, from } => {
+                let mut rlp = RlpStream::new_list(7);
+                tx.encode_fields(&mut rlp);
+                rlp.append(from);
+                crypto::Hash(Keccak256::digest(rlp.out()).into())
             }
         }
     }
@@ -247,6 +266,7 @@ pub enum Transaction {
     Eip2930(TxEip2930),
     Eip1559(TxEip1559),
     Zilliqa(TxZilliqa),
+    Intershard(TxIntershard),
 }
 
 impl Transaction {
@@ -256,6 +276,7 @@ impl Transaction {
             Transaction::Eip2930(TxEip2930 { chain_id, .. }) => Some(*chain_id),
             Transaction::Eip1559(TxEip1559 { chain_id, .. }) => Some(*chain_id),
             Transaction::Zilliqa(TxZilliqa { chain_id, .. }) => Some(*chain_id as u64),
+            Transaction::Intershard(TxIntershard { chain_id, .. }) => Some(*chain_id),
         }
     }
 
@@ -266,6 +287,7 @@ impl Transaction {
             Transaction::Eip1559(TxEip1559 { nonce, .. }) => *nonce,
             // Zilliqa nonces are 1-indexed rather than zero indexed.
             Transaction::Zilliqa(TxZilliqa { nonce, .. }) => *nonce - 1,
+            Transaction::Intershard(TxIntershard { nonce, .. }) => *nonce,
         }
     }
 
@@ -277,6 +299,7 @@ impl Transaction {
                 max_fee_per_gas, ..
             }) => *max_fee_per_gas,
             Transaction::Zilliqa(TxZilliqa { gas_price, .. }) => *gas_price,
+            Transaction::Intershard(TxIntershard { gas_price, .. }) => *gas_price,
         }
     }
 
@@ -286,6 +309,7 @@ impl Transaction {
             Transaction::Eip2930(TxEip2930 { gas_limit, .. }) => *gas_limit,
             Transaction::Eip1559(TxEip1559 { gas_limit, .. }) => *gas_limit,
             Transaction::Zilliqa(TxZilliqa { gas_limit, .. }) => *gas_limit,
+            Transaction::Intershard(TxIntershard { gas_limit, .. }) => *gas_limit,
         }
     }
 
@@ -295,6 +319,7 @@ impl Transaction {
             Transaction::Eip2930(TxEip2930 { to_addr, .. }) => *to_addr,
             Transaction::Eip1559(TxEip1559 { to_addr, .. }) => *to_addr,
             Transaction::Zilliqa(TxZilliqa { to_addr, .. }) => Some(*to_addr),
+            Transaction::Intershard(TxIntershard { to_addr, .. }) => Some(*to_addr),
         }
     }
 
@@ -306,6 +331,7 @@ impl Transaction {
             // Zilliqa amounts are represented in units of (10^-12) ZILs, whereas our internal representation is in
             // units of (10^-18) ZILs. Account for this difference by multiplying the amount by (10^6).
             Transaction::Zilliqa(TxZilliqa { amount, .. }) => *amount * 10u128.pow(6),
+            Transaction::Intershard(_) => 0,
         }
     }
 
@@ -322,6 +348,7 @@ impl Transaction {
                     data.as_bytes()
                 }
             }
+            Transaction::Intershard(TxIntershard { payload, .. }) => payload,
         }
     }
 
@@ -331,6 +358,7 @@ impl Transaction {
             Transaction::Eip2930(TxEip2930 { access_list, .. }) => Some(access_list),
             Transaction::Eip1559(TxEip1559 { access_list, .. }) => Some(access_list),
             Transaction::Zilliqa(_) => None,
+            Transaction::Intershard(_) => None,
         }
     }
 }
@@ -356,6 +384,12 @@ impl From<TxEip1559> for Transaction {
 impl From<TxZilliqa> for Transaction {
     fn from(tx: TxZilliqa) -> Self {
         Transaction::Zilliqa(tx)
+    }
+}
+
+impl From<TxIntershard> for Transaction {
+    fn from(tx: TxIntershard) -> Self {
+        Transaction::Intershard(tx)
     }
 }
 
@@ -388,6 +422,28 @@ impl TxLegacy {
             .append(&self.gas_limit)
             .append(&rlp_option_addr(&self.to_addr))
             .append(&self.amount)
+            .append(&self.payload);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TxIntershard {
+    pub chain_id: u64,
+    pub nonce: u64,
+    pub gas_price: u128,
+    pub gas_limit: u64,
+    pub to_addr: Address, // do not support cross-shard contract deployments (yet)
+    // Amount intentionally missing: cannot send native amount cross-shard
+    pub payload: Vec<u8>,
+}
+
+impl TxIntershard {
+    fn encode_fields(&self, rlp: &mut RlpStream) {
+        rlp.append(&self.chain_id)
+            .append(&self.nonce)
+            .append(&self.gas_price)
+            .append(&self.gas_limit)
+            .append(&self.to_addr)
             .append(&self.payload);
     }
 }

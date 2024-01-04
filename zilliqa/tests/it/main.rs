@@ -581,9 +581,8 @@ impl Network {
 
     fn handle_message(&mut self, message: (PeerId, Option<PeerId>, AnyMessage)) {
         match message.2 {
-            AnyMessage::Internal(_source_shard, _destination_shard, internal_message) => {
+            AnyMessage::Internal(source_shard, destination_shard, ref internal_message) => {
                 match internal_message {
-                    #[allow(clippy::match_single_binding)]
                     InternalMessage::LaunchShard(network_id) => {
                         if let Some(network) = self.children.get_mut(&network_id) {
                             trace!(
@@ -593,7 +592,34 @@ impl Network {
                         } else {
                             info!("Launching node in new shard network {network_id}");
                             self.children
-                                .insert(network_id, Network::new(self.rng.clone(), 1, self.seed));
+                                .insert(*network_id, Network::new(self.rng.clone(), 1, self.seed));
+                        }
+                    }
+                    InternalMessage::IntershardCall(_) => {
+                        if destination_shard == self.shard_id {
+                            let destination = message.1.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
+                            let idx_node = self
+                                .nodes
+                                .iter()
+                                .enumerate()
+                                .find(|(_, n)| n.peer_id == destination);
+                            if let Some((idx, node)) = idx_node {
+                                trace!("Handling intershard transactinon from shard {}, in subshard {} of node {}", self.shard_id, destination_shard, idx);
+                                node.inner
+                                    .lock()
+                                    .unwrap()
+                                    .handle_internal_message(source_shard, internal_message.clone())
+                                    .unwrap();
+                            } else {
+                                warn!(
+                                    "Intershard transcation to node that isn't running that shard"
+                                );
+                            }
+                        } else if let Some(network) = self.children.get_mut(&destination_shard) {
+                            trace!("Forwarding intershard transactinon from shard {} to subshard {}...", self.shard_id, destination_shard);
+                            network.resend_message.send(message).unwrap();
+                        } else {
+                            warn!("Intershard transaction for shard that does not exist");
                         }
                     }
                 }

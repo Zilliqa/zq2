@@ -1,3 +1,4 @@
+use crate::blockhooks::BlockHooks;
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BinaryHeap},
@@ -18,7 +19,6 @@ use tracing::*;
 use crate::{
     block_store::BlockStore,
     cfg::NodeConfig,
-    contracts,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     db::Db,
     exec::{TouchedAddressEventListener, TransactionApplyResult},
@@ -27,7 +27,7 @@ use crate::{
         InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
     },
     node::MessageSender,
-    state::{contract_addr, Address, State},
+    state::{Address, State},
     time::SystemTime,
     transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
@@ -199,6 +199,8 @@ pub struct Consensus {
     state: State,
     /// The persistence database
     db: Arc<Db>,
+    /// Actions that act on newly created blocks
+    block_hooks: BlockHooks,
     /// Transactions ordered by priority, map of address of TXn (from account) to ordered TXns to be executed.
     new_transactions_priority: BTreeMap<Address, BinaryHeap<TxnOrder>>,
     // PRNG - non-cryptographically secure, but we don't need that here
@@ -345,6 +347,7 @@ impl Consensus {
             votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
             high_qc,
+            block_hooks: BlockHooks::default(),
             view: View::new(start_view),
             finalized_view: start_view.saturating_sub(1),
             pending_peers: Vec::new(),
@@ -654,9 +657,9 @@ impl Consensus {
             }
 
             // If we were the proposer we would've already processed the transactions
-            if !self.db.contains_transaction_receipt(&block.hash())? {
+            if !self.db.contains_transaction_receipts(&block.hash())? {
                 self.db
-                    .insert_transaction_receipt(&block.hash(), &block_receipts)?;
+                    .insert_transaction_receipts(&block.hash(), &block_receipts)?;
             }
 
             // Important - only add blocks we are going to execute because they can potentially
@@ -1248,7 +1251,7 @@ impl Consensus {
         };
         let block_receipts = self
             .db
-            .get_transaction_receipt(&block_hash)?
+            .get_transaction_receipts(&block_hash)?
             .unwrap_or_default();
         Ok(block_receipts
             .into_iter()
@@ -1261,7 +1264,7 @@ impl Consensus {
         event: Event,
         emitter: Address,
     ) -> Result<Vec<Log>> {
-        let receipts = self.db.get_transaction_receipt(&hash)?.unwrap_or_default();
+        let receipts = self.db.get_transaction_receipts(&hash)?.unwrap_or_default();
 
         let logs: Result<Vec<_>, _> = receipts
             .into_iter()
@@ -1467,24 +1470,29 @@ impl Consensus {
         self.finalized_view = view;
         self.db.put_latest_finalized_view(view)?;
 
+        let receipts = self.db.get_transaction_receipts(&hash)?.unwrap_or_default();
+
+        for (destination_shard, intershard_call) in self
+            .block_hooks
+            .get_cross_shard_messages(receipts.clone())?
+        {
+            println!(
+                "\nSending x-shard call to {}. We are {}. Call:\n{:?}\n\n",
+                destination_shard, self.config.eth_chain_id, intershard_call
+            );
+            self.message_sender.send_message_to_shard(
+                destination_shard,
+                InternalMessage::IntershardCall(intershard_call),
+            )?;
+        }
+
         if self.config.consensus.is_main {
             // Check for new shards to join
-            let shard_logs = self.get_logs_in_block(
-                hash,
-                contracts::shard_registry::SHARD_ADDED_EVT.clone(),
-                contract_addr::SHARD_CONTRACT,
-            )?;
-            for log in shard_logs {
-                let Some(shard_id) = log
-                    .params
-                    .into_iter()
-                    .find(|param| param.name == "id")
-                    .and_then(|param| param.value.into_uint())
-                else {
-                    return Err(anyhow!("LaunchShard event does not contain an id!"));
-                };
+            // TODO: this will be switched to use the bridge registering mechanism from the shard
+            // registry in the future
+            for new_shard_id in self.block_hooks.get_launch_shard_messages(receipts)? {
                 self.message_sender
-                    .send_message_to_coordinator(InternalMessage::LaunchShard(shard_id.as_u64()))?;
+                    .send_message_to_coordinator(InternalMessage::LaunchShard(new_shard_id))?;
             }
         }
 
@@ -1860,7 +1868,7 @@ impl Consensus {
             }
 
             // TX receipts are indexed by block
-            self.db.remove_transaction_receipt(&head_block.hash())?;
+            self.db.remove_transaction_receipts(&head_block.hash())?;
 
             // State is easily set - must be to the parent block, though
             trace!("Setting state to: {}", parent_block.state_root_hash());
