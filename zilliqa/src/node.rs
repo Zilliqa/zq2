@@ -1,4 +1,3 @@
-use crate::message::IntershardCall;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -15,7 +14,7 @@ use crate::{
     db::Db,
     message::{
         Block, BlockBatchRequest, BlockBatchResponse, BlockNumber, BlockRequest, BlockResponse,
-        ExternalMessage, InternalMessage, Proposal,
+        ExternalMessage, InternalMessage, IntershardCall, Proposal,
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     state::{Account, Address},
@@ -316,6 +315,22 @@ impl Node {
             true,
             tracing,
         )
+    }
+
+    pub fn get_proposer_reward_address(&self, block: &Block) -> Result<Option<Address>> {
+        // Return the zero address for the genesis block. There was no reward for it.
+        if block.view() == 0 {
+            return Ok(None);
+        }
+
+        let parent = self
+            .get_block_by_hash(block.parent_hash())?
+            .ok_or_else(|| anyhow!("missing parent: {}", block.parent_hash()))?;
+        let proposer = self
+            .consensus
+            .leader(&parent.committee, block.view())
+            .public_key;
+        self.consensus.state().get_reward_address(proposer)
     }
 
     pub fn get_gas_price(&self) -> u64 {

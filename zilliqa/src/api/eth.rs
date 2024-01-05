@@ -222,7 +222,8 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
 
 fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
     if !full {
-        Ok(block.into())
+        let miner = node.get_proposer_reward_address(block)?;
+        Ok(eth::Block::from_block(block, miner.unwrap_or_default()))
     } else {
         let transactions = block
             .transactions
@@ -233,9 +234,11 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<e
             })
             .map(|t| Ok(HashOrTransaction::Transaction(t?)))
             .collect::<Result<_>>()?;
+        let miner = node.get_proposer_reward_address(block)?;
+        let block = eth::Block::from_block(block, miner.unwrap_or_default());
         Ok(eth::Block {
             transactions,
-            ..block.into()
+            ..block
         })
     }
 }

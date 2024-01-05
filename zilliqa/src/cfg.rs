@@ -63,6 +63,9 @@ pub struct ConsensusConfig {
     /// Genesis data. Specifying a committee node is necessary for nodes participating in the consensus at
     /// genesis. Only the hash can be specified for nodes joining afterwards.
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    /// The initially staked deposits in the deposit contract at genesis, composed of
+    /// (public key, amount, reward address) tuples.
+    pub genesis_deposits: Vec<(NodePublicKey, String, Address)>,
     pub genesis_hash: Option<Hash>,
     /// Accounts that will be pre-funded at genesis.
     pub genesis_accounts: Vec<(Address, String)>,
@@ -75,6 +78,7 @@ impl Default for ConsensusConfig {
             main_shard_id: None,
             consensus_timeout: Duration::from_secs(5),
             genesis_committee: vec![],
+            genesis_deposits: vec![],
             genesis_hash: None,
             genesis_accounts: Vec::new(),
         }

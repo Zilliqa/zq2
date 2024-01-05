@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashSet,
+    num::NonZeroU128,
     sync::{Arc, Mutex},
 };
 
@@ -20,6 +21,7 @@ use tracing::*;
 
 use crate::{
     contracts,
+    crypto::NodePublicKey,
     evm_backend::EvmBackend,
     message::BlockHeader,
     state::{contract_addr, Address, State},
@@ -629,7 +631,7 @@ impl State {
     }
 
     // Apply the changes the EVM is requesting for
-    fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm_proto::Apply>) -> Result<()> {
+    pub fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm_proto::Apply>) -> Result<()> {
         for apply in applys {
             match apply {
                 EvmProto::Apply::Delete { address } => {
@@ -760,6 +762,138 @@ impl State {
         Ok(gas_price.as_u64())
     }
 
+    pub fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
+        let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
+
+        let stakers = self
+            .call_contract(
+                Address::zero(),
+                Some(contract_addr::DEPOSIT),
+                data,
+                U256::zero(),
+                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+                // dummy values.
+                0,
+                BlockHeader::default(),
+                false,
+                false,
+            )?
+            .return_value;
+
+        let stakers = contracts::deposit::GET_STAKERS
+            .decode_output(&stakers)
+            .unwrap()[0]
+            .clone()
+            .into_array()
+            .unwrap();
+
+        Ok(stakers
+            .into_iter()
+            .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
+            .collect())
+    }
+
+    pub fn get_stake(&self, public_key: NodePublicKey) -> Result<Option<NonZeroU128>> {
+        let data =
+            contracts::deposit::GET_STAKE.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
+
+        let stake = self
+            .call_contract(
+                Address::zero(),
+                Some(contract_addr::DEPOSIT),
+                data,
+                U256::zero(),
+                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+                // dummy values.
+                0,
+                BlockHeader::default(),
+                false,
+                false,
+            )?
+            .return_value;
+
+        Ok(NonZeroU128::new(U256::from_big_endian(&stake).as_u128()))
+    }
+
+    pub fn get_reward_address(&self, public_key: NodePublicKey) -> Result<Option<Address>> {
+        let data = contracts::deposit::GET_REWARD_ADDRESS
+            .encode_input(&[Token::Bytes(public_key.as_bytes())])?;
+
+        let return_value = self
+            .call_contract(
+                Address::zero(),
+                Some(contract_addr::DEPOSIT),
+                data,
+                U256::zero(),
+                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+                // dummy values.
+                0,
+                BlockHeader::default(),
+                false,
+                false,
+            )?
+            .return_value;
+
+        let addr = contracts::deposit::GET_REWARD_ADDRESS.decode_output(&return_value)?[0]
+            .clone()
+            .into_address()
+            .unwrap();
+
+        Ok((!addr.is_zero()).then_some(addr))
+    }
+
+    pub fn get_total_supply(&self) -> Result<u128> {
+        let data = contracts::native_token::TOTAL_SUPPLY.encode_input(&[])?;
+
+        let return_value = self
+            .call_contract(
+                Address::zero(),
+                Some(contract_addr::NATIVE_TOKEN),
+                data,
+                U256::zero(),
+                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+                // dummy values.
+                0,
+                BlockHeader::default(),
+                false,
+                false,
+            )?
+            .return_value;
+
+        let amount = contracts::native_token::TOTAL_SUPPLY.decode_output(&return_value)?[0]
+            .clone()
+            .into_uint()
+            .unwrap();
+
+        Ok(amount.as_u128())
+    }
+
+    pub fn get_total_stake(&self) -> Result<u128> {
+        let data = contracts::deposit::TOTAL_STAKE.encode_input(&[])?;
+
+        let return_value = self
+            .call_contract(
+                Address::zero(),
+                Some(contract_addr::DEPOSIT),
+                data,
+                U256::zero(),
+                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+                // dummy values.
+                0,
+                BlockHeader::default(),
+                false,
+                false,
+            )?
+            .return_value;
+
+        let amount = contracts::deposit::TOTAL_STAKE.decode_output(&return_value)?[0]
+            .clone()
+            .into_uint()
+            .unwrap();
+
+        Ok(amount.as_u128())
+    }
+
     pub fn set_native_balance(&mut self, address: Address, amount: U256) -> Result<()> {
         let data = contracts::native_token::SET_BALANCE
             .encode_input(&[Token::Address(address), Token::Uint(amount)])
@@ -791,12 +925,12 @@ impl State {
                 // Apply the state changes only if success
                 let success = result.succeeded();
 
-                info!("Set native balance result: {:?}", result);
+                trace!("Set native balance result: {:?}", result);
 
                 if success {
                     self.apply_delta(result.apply)?;
                 } else {
-                    panic!("Failed to set balance with error: {:?}", result.exit_reason);
+                    panic!("Failed to set balance: {result:?}");
                 }
 
                 Ok(())
