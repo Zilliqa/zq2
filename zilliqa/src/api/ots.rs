@@ -36,14 +36,15 @@ fn get_otterscan_api_level(_: Params, _: &Arc<Mutex<Node>>) -> Result<u64> {
 fn get_block_details(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<ots::BlockDetails>> {
     let block: u64 = params.one()?;
 
-    let block = node
-        .lock()
-        .unwrap()
-        .get_block_by_number(block)?
-        .as_ref()
-        .map(ots::BlockDetails::from);
+    let Some(ref block) = node.lock().unwrap().get_block_by_number(block)? else {
+        return Ok(None);
+    };
+    let miner = node.lock().unwrap().get_proposer_reward_address(block)?;
 
-    Ok(block)
+    Ok(Some(ots::BlockDetails::from_block(
+        block,
+        miner.unwrap_or_default(),
+    )))
 }
 
 fn get_block_details_by_hash(
@@ -52,14 +53,15 @@ fn get_block_details_by_hash(
 ) -> Result<Option<ots::BlockDetails>> {
     let block_hash: H256 = params.one()?;
 
-    let block = node
-        .lock()
-        .unwrap()
-        .get_block_by_hash(Hash(block_hash.0))?
-        .as_ref()
-        .map(ots::BlockDetails::from);
+    let Some(ref block) = node.lock().unwrap().get_block_by_hash(Hash(block_hash.0))? else {
+        return Ok(None);
+    };
+    let miner = node.lock().unwrap().get_proposer_reward_address(block)?;
 
-    Ok(block)
+    Ok(Some(ots::BlockDetails::from_block(
+        block,
+        miner.unwrap_or_default(),
+    )))
 }
 
 fn get_block_transactions(
@@ -76,6 +78,7 @@ fn get_block_transactions(
     let Some(block) = node.get_block_by_number(block_num)? else {
         return Ok(None);
     };
+    let miner = node.get_proposer_reward_address(&block)?;
 
     let start = usize::min(page_number * page_size, block.transactions.len());
     let end = usize::min((page_number + 1) * page_size, block.transactions.len());
@@ -94,7 +97,7 @@ fn get_block_transactions(
 
     let full_block = ots::BlockWithTransactions {
         transactions,
-        block: (&block).into(),
+        block: ots::Block::from_block(&block, miner.unwrap_or_default()),
     };
 
     Ok(Some(ots::BlockTransactions {

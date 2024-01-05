@@ -14,12 +14,13 @@ fn get_header_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Optio
     let block: BlockNumber = params.one()?;
 
     // Erigon headers are a subset of the full block response. We choose to just return the full block.
-    let header = node
-        .lock()
-        .unwrap()
-        .get_block_by_blocknum(block)?
-        .as_ref()
-        .map(eth::Block::from);
+    let Some(ref header) = node.lock().unwrap().get_block_by_blocknum(block)? else {
+        return Ok(None);
+    };
 
-    Ok(header)
+    let miner = node.lock().unwrap().get_proposer_reward_address(header)?;
+    Ok(Some(eth::Block::from_block(
+        header,
+        miner.unwrap_or_default(),
+    )))
 }

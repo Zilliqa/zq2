@@ -1,5 +1,29 @@
 use serde_json::Value;
 
+pub mod deposit {
+    use ethabi::Function;
+    use once_cell::sync::Lazy;
+
+    use super::{contract, Contract};
+
+    static CONTRACT: Lazy<Contract> =
+        Lazy::new(|| contract("src/contracts/deposit.sol", "Deposit"));
+
+    pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
+    pub static DEPOSIT: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("deposit").unwrap().clone());
+    pub static SET_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("setStake").unwrap().clone());
+    pub static GET_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getStake").unwrap().clone());
+    pub static GET_REWARD_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getRewardAddress").unwrap().clone());
+    pub static GET_STAKERS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getStakers").unwrap().clone());
+    pub static TOTAL_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("totalStake").unwrap().clone());
+}
+
 pub mod gas_price {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
@@ -36,6 +60,8 @@ pub mod native_token {
         Lazy::new(|| CONTRACT.abi.function("setBalance").unwrap().clone());
     pub static TRANSFER: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("transfer").unwrap().clone());
+    pub static TOTAL_SUPPLY: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("totalSupply").unwrap().clone());
 }
 
 pub mod shard {
@@ -128,6 +154,7 @@ mod tests {
             language: "Solidity".to_owned(),
             sources: Source::read_all(
                 [
+                    "deposit.sol",
                     "gas_price.sol",
                     "intershard_bridge.sol",
                     "native_token.sol",
