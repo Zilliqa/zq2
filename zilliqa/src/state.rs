@@ -2,8 +2,8 @@ use std::{convert::TryInto, hash::Hash, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
-use ethabi::Token;
-use primitive_types::{H160, H256};
+use ethabi::{Constructor, Token};
+use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -71,9 +71,26 @@ impl State {
         }
 
         for (address, balance) in config.genesis_accounts {
-            state.set_native_balance(address, balance.parse()?)?;
+            state.set_native_balance(address, U256::from_dec_str(&balance)?)?;
             let account_new = state.get_account(address)?;
             state.save_account(address, account_new)?;
+        }
+
+        let deposit_data = Constructor { inputs: vec![] }
+            .encode_input(contracts::deposit::BYTECODE.to_vec(), &[])?;
+        state.force_deploy_contract(deposit_data, Some(contract_addr::DEPOSIT))?;
+
+        for (pub_key, stake, reward_address) in config.genesis_deposits {
+            let data = contracts::deposit::SET_STAKE.encode_input(&[
+                Token::Bytes(pub_key.as_bytes()),
+                Token::Address(reward_address),
+                Token::Uint(U256::from_dec_str(&stake)?),
+            ])?;
+            let (result, _) = state.force_execute_payload(Some(contract_addr::DEPOSIT), data)?;
+            if !result.succeeded() {
+                return Err(anyhow!("setting stake failed: {result:?}"));
+            }
+            state.apply_delta(result.apply)?;
         }
 
         Ok(state)
@@ -136,7 +153,7 @@ impl State {
     }
 
     /// If using this to modify the account, ensure save_account gets called
-    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
+    pub fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
         Ok(match self.get_account(address)?.storage_root {
             Some(root) => PatriciaTrie::new(self.db.clone()).at_root(root),
             None => PatriciaTrie::new(self.db.clone()),
@@ -240,9 +257,9 @@ pub mod contract_addr {
     pub const COLLECTED_FEES: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0FEE");
     /// For intershard transactions, call this address
     pub const INTERSHARD_BRIDGE: Address = H160(*b"\0\0\0\0\0\0\0\0ZQINTERSHARD");
-
     /// Address of the shard registry - only present on the root shard.
     pub const SHARD_REGISTRY: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD");
+    pub const DEPOSIT: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0ZILDEPOSIT");
 }
 
 #[derive(Debug, Clone, Default, Hash, Serialize, Deserialize)]
