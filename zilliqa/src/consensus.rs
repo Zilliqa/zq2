@@ -664,10 +664,8 @@ impl Consensus {
             )
         })?;
 
-        // If the transaction succeeded, tell the transaction pool that the sender's nonce has been incremented.
-        if result.success {
-            self.transaction_pool.update_nonce(&txn);
-        }
+        // Tell the transaction pool that the sender's nonce has been incremented.
+        self.transaction_pool.update_nonce(&txn);
 
         for address in listener.touched {
             self.db.add_touched_address(address, hash)?;
