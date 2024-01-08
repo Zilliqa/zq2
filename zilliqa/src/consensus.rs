@@ -884,7 +884,7 @@ impl Consensus {
     /// Clear up anything in memory that is no longer required. This is to avoid memory leaks.
     pub fn cleanup_memory(&mut self) {
         // Wrt votes, we only care about votes on hashes for the current view or higher
-        let keys_to_process: Vec<_> = self.votes.iter().map(|(k, _)| k.clone()).collect();
+        let keys_to_process: Vec<_> = self.votes.keys().copied().collect();
 
         for key in keys_to_process {
             if let Ok(Some(block)) = self.get_block(&key) {
@@ -898,8 +898,7 @@ impl Consensus {
         }
 
         // Wrt new views, we only care about new views for the current view or higher
-        self.new_views
-            .retain(|k, _| *k >= self.view.get_view());
+        self.new_views.retain(|k, _| *k >= self.view.get_view());
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {

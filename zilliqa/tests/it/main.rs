@@ -398,7 +398,7 @@ impl Network {
         // Poll the receiver with `unconstrained` to ensure it won't be pre-empted. This makes sure we always
         // get an item if it has been sent. It does not lead to starvation, because we evaluate the returned
         // future with `.now_or_never()` which instantly returns `None` if the future is not ready.
-        for (_i, receiver) in self.receivers.iter_mut().enumerate() {
+        for receiver in self.receivers.iter_mut() {
             loop {
                 match tokio::task::unconstrained(receiver.next()).now_or_never() {
                     Some(Some(message)) => {
@@ -512,7 +512,7 @@ impl Network {
             panic!("failure rate is a probability and must be between 0 and 1");
         }
 
-        for (_i, receiver) in self.receivers.iter_mut().enumerate() {
+        for receiver in self.receivers.iter_mut() {
             // Peek at the messages in the queue
 
             let drop = self.rng.lock().unwrap().gen_bool(failure_rate);
