@@ -58,7 +58,9 @@ impl JsonRpcRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JsonRpcResponse {
     jsonrpc: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<JsonRpcError>,
     id: u32,
 }
@@ -80,7 +82,7 @@ fn respond_json(val: Value, mut connection: &TcpStream) {
     };
 
     let response_str = serde_json::to_string(&response).unwrap();
-    let response_str = response_str + "\n";
+    let response_str = response_str.to_owned() + "\n";
 
     debug!("Responding to the backend with: {:?}", response_str);
 
@@ -112,15 +114,15 @@ pub fn call_scilla_server<B: evm::backend::Backend>(method: &str, params: Params
 
         match bytes_read_tcp {
             Ok(bytes_read) => {
-                if bytes_read > 0 {
-                    debug!("Scilla backend response so far: {:?}", str::from_utf8(&response_backend));
-                }
+                //if bytes_read > 0 {
+                //    debug!("Scilla backend response so far: {:?}", str::from_utf8(&response_backend));
+                //}
 
                 bytes_read_backend += bytes_read;
             }
             Err(e) => {
-                debug!("Scilla backend response so far: {:?}", str::from_utf8(&response_backend));
-                debug!("Scilla backend error: {:?}", e);
+                //debug!("Scilla backend response so far: {:?}", str::from_utf8(&response_backend));
+                //debug!("Scilla backend error: {:?}", e);
             }
         }
 
@@ -135,7 +137,8 @@ pub fn call_scilla_server<B: evm::backend::Backend>(method: &str, params: Params
 
                 let aa = tcp_scilla_server.handle_request(request.expect("Deser of server request failed"));
 
-                debug!("Scilla backend responseRR: {:?}", aa);
+                //let aa =
+
                 debug!("Scilla backend response: {:?}", aa);
 
                 // Reset read pointer
@@ -156,14 +159,14 @@ pub fn call_scilla_server<B: evm::backend::Backend>(method: &str, params: Params
                 bytes_read += bytes_r;
             }
             Err(e) => {
-                debug!("Scilla read error: {:?}", e);
+                //debug!("Scilla read error: {:?}", e);
             }
         }
 
 
-        if bytes_read > 0 {
-            debug!("Scilla response so farBk: {:?}", String::from_utf8(response.to_vec())?);
-        }
+        //if bytes_read > 0 {
+        //    debug!("Scilla response so farBk: {:?}", String::from_utf8(response.to_vec())?);
+        //}
 
         if bytes_read == 0 {
             // sleep 1 sec

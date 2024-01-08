@@ -387,7 +387,10 @@ fn get_transaction_by_hash(
     let hash: Hash = Hash(hash.0);
     let node = node.lock().unwrap();
 
-    get_transaction_inner(hash, &node)
+    let ret = get_transaction_inner(hash, &node);
+
+    trace!("get_transaction_by_hash resp: {:?}", ret);
+    ret
 }
 
 pub(super) fn get_transaction_inner(

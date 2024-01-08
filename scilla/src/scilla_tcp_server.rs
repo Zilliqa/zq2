@@ -36,7 +36,7 @@ pub struct ScillaServer<'a, B: evm::backend::Backend> {
     pub _tcp_server: IoHandler,
 }
 
-struct Inner<'a, B: evm::backend::Backend> {
+pub struct Inner<'a, B: evm::backend::Backend> {
     pub backend: BackendCollector<'a, B>,
     current_contract_addr: Option<(H160, H256, u64)>,
 }
@@ -433,7 +433,8 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
 
         //let result = self.inner.backend.set_storage(query, value).map_err(convert_err);
 
-        Ok(Value::Null)
+        //Ok(Value::Null)
+        result
 
         //Ok(json!("hehe".to_string()))
     }
@@ -511,8 +512,9 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             }
         }
 
-        debug!("returning null after successful operation.");
+        debug!("returning true after successful operation.");
         Ok(Value::Null)
+        //Ok(json!(true))
     }
 
     fn map_handler(

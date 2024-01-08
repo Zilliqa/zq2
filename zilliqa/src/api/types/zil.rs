@@ -1,8 +1,11 @@
-use primitive_types::{H256, H512};
+use primitive_types::{H256, H512, H160};
 use serde::Serialize;
+use serde_json::{json, Value};
 
 use super::hex;
 use crate::{message::Block, time::SystemTime};
+use crate::transaction::{SignedTransaction, TxZilliqa, VerifiedTransaction};
+use crate::transaction::TransactionReceipt;
 
 #[derive(Clone, Serialize)]
 pub struct TxBlock {
@@ -66,6 +69,103 @@ struct TxBlockHeader {
     txn_fees: u64,
     version: u32,
 }
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct GetTxResponse {
+    ID: String,
+    version: String,
+    nonce: String,
+    to_addr: H160,
+    sender_pub_key: String,
+    amount: String,
+    signature: String,
+    receipt: GetTxResponseReceipt,
+    gas_price: String,
+    gas_limit: String,
+    code: String,
+    data: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct GetTxResponseReceipt {
+    cumulative_gas: String,
+    epoch_num: String,
+    success: bool,
+}
+
+impl GetTxResponse {
+    pub fn new(verified_tx: VerifiedTransaction, receipt: TransactionReceipt) -> Option<Self> {
+
+        match verified_tx.tx {
+            SignedTransaction::Zilliqa{ref tx, ..} => Some(GetTxResponse {
+                ID: verified_tx.hash.to_string(),
+                version: "65537".to_string(),
+                nonce: tx.nonce.to_string(),
+                to_addr: tx.to_addr.clone(), // Note this appears to have no 0x prefix in zq1
+                sender_pub_key: verified_tx.signer.to_string(),
+                amount: tx.amount.to_string(),
+                signature: format!("0x{}{}", hex::encode(verified_tx.tx.sig_r()), hex::encode(verified_tx.tx.sig_s())),
+                receipt: GetTxResponseReceipt {
+                    cumulative_gas: receipt.gas_used.to_string(),
+                    epoch_num: "1".to_string(), // todo here
+                    success: receipt.success,
+                },
+                gas_price: "2000000000".to_string(),
+                gas_limit: "50000".to_string(),
+                code: tx.code.to_string(),
+                data: tx.data.to_string(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/*
+Json::Value _json;
+
+_json["ID"] = twr.GetTransaction().GetTranID().hex();
+_json["version"] = to_string(twr.GetTransaction().GetVersion());
+_json["nonce"] = to_string(twr.GetTransaction().GetNonce());
+_json["toAddr"] = twr.GetTransaction().GetToAddr().hex();
+_json["senderPubKey"] =
+static_cast<string>(twr.GetTransaction().GetSenderPubKey());
+_json["amount"] = twr.GetTransaction().GetAmountQa().str();
+_json["signature"] = static_cast<string>(twr.GetTransaction().GetSignature());
+_json["receipt"] = twr.GetTransactionReceipt().GetJsonValue();
+_json["gasPrice"] = twr.GetTransaction().GetGasPriceQa().str();
+_json["gasLimit"] = to_string(twr.GetTransaction().GetGasLimitZil());
+
+auto const code = twr.GetTransaction().GetCode();
+auto const data = twr.GetTransaction().GetData();
+
+// If we detect non ascii characters (i.e evm bytecode) we convert to hex
+// this should only happen when old style API calls (GetTransaction) are made
+// that hit on new eth-style TXs
+if (!code.empty()) {
+if(!DataConversion::ContainsAllAscii(code) && twr.GetTransaction().IsEth()) {
+_json["code"] = DataConversion::Uint8VecToHexStrRet(code);
+} else {
+_json["code"] =
+DataConversion::CharArrayToString(code);
+}
+}
+if (!data.empty()) {
+if(!DataConversion::ContainsAllAscii(data) && twr.GetTransaction().IsEth()) {
+_json["data"] = DataConversion::Uint8VecToHexStrRet(data);
+} else {
+_json["data"] =
+DataConversion::CharArrayToString(data);
+}
+}
+
+if (isSoftConfirmed) {
+_json["softconfirm"] = true;
+}
+
+return _json;
+ */
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]

@@ -210,7 +210,8 @@ impl State {
         let target_balance = self.get_native_balance(to, false).unwrap();
 
         if is_scilla {
-            info!("#### Scilla execution requested. From: {} To: {} with funds: {}", from_addr, to, target_balance);
+            info!("\n");
+            info!("#### Scilla execution requested. From: {:?} To: {:?} with funds: {}", from_addr, to, target_balance);
         }
 
         // The first continuation in the stack is the tx itself

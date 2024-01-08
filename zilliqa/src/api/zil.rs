@@ -3,28 +3,33 @@
 use std::{
     fmt::Display,
     str::FromStr,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
-use primitive_types::{H160, U256};
+use primitive_types::{H160, U256, H256};
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
+use tracing::trace;
 
 use super::types::zil;
 use crate::{
+    crypto::Hash,
     message::BlockNumber,
     node::Node,
     schnorr,
     transaction::{SignedTransaction, TxZilliqa},
+    api::types::zil::GetTxResponse,
 };
+use crate::transaction::VerifiedTransaction;
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
         node,
         [
             ("CreateTransaction", create_transaction),
+            ("GetTransaction", get_transaction),
             ("GetBalance", get_balance),
             ("GetCurrentMiniEpoch", get_current_mini_epoch),
             ("GetLatestTxBlock", get_latest_tx_block),
@@ -106,8 +111,60 @@ fn create_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
     let transaction_hash = node.create_transaction(transaction)?;
     let transaction_hash = hex::encode(transaction_hash.0);
 
+    // todo: this doesn't seem to be the correct response. Example:
+    // {"id":1,"jsonrpc":"2.0","result":{"ContractAddress":"ed577d28d7d790ee7afbc38d5d9346530f5ac1a8","Info":"Txn processed","TranID":"a2fac2dda1efbc1e88ab2407d9727456c0e68c77a9c7ee747db8d140c07176a1"}}
+
     Ok(json!({"TranID": transaction_hash}))
 }
+
+fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<GetTxResponse>> {
+    let hash: H256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+    let node = node.lock().unwrap();
+    trace!("GetTransaction: {:?}", hash);
+
+    let ret = get_scilla_transaction_inner(hash, &node)?;
+    let receipt = node.get_transaction_receipt(hash)?;
+
+    trace!("GetTransaction: {:?} => {:?}", hash, ret);
+
+    if let Some(receipt) = receipt {
+        match ret {
+            Some(tx) => {
+                let resp = Ok(GetTxResponse::new(tx, receipt));
+                trace!("GetTransaction: {:?} => {:?}", hash, resp);
+                resp
+            }
+            None => {
+                Ok(None)
+            }
+        }
+    } else {
+        Ok(None)
+    }
+
+    //ret
+}
+
+pub(super) fn get_scilla_transaction_inner(
+    hash: Hash,
+    node: &MutexGuard<Node>,
+) -> Result<Option<VerifiedTransaction>> {
+    let Some(tx) = node.get_transaction_by_hash(hash)? else {
+        return Ok(None);
+    };
+
+    match tx.tx {
+        SignedTransaction::Zilliqa { .. } => {
+            Ok(Some(tx))
+        }
+        _ => {
+            Ok(None)
+        }
+    }
+}
+
+
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
     let address: H160 = params.one()?;

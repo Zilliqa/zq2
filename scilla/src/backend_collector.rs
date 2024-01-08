@@ -1,10 +1,14 @@
 use primitive_types::{H160, H256, U256};
 use std::collections::HashMap;
 use evm::backend::{Backend};
+use tracing::field::debug;
 use evm_ds::protos::evm_proto::{EvmResult, Storage, Apply};
+use tracing::*;
+use sha3::{Digest, Keccak256};
 
 pub type Address = H160;
 
+#[derive(Debug)]
 pub struct Account {
     pub nonce: u64,
     pub code: Vec<u8>,
@@ -28,6 +32,54 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         Self {
             backend: backend,
             account_storage_cached: HashMap::new(),
+        }
+    }
+
+    pub fn update_account_storage(&mut self, address: Address, key: &str, value: &[u8]) {
+        // Get or create a cached account with these details.
+
+        debug!("Updating account storage: {:?}, {:?}, {:?},", address, key, value);
+
+        // Hash key to H256
+        let key = H256::from_slice(&Keccak256::digest(key.as_bytes()).to_vec());
+
+        // Put the value in as H256 for now...
+        let mut value_fixed_width = [0u8; 32];
+        // copy the value into the fixed width array
+        value_fixed_width[..value.len()].copy_from_slice(value);
+        let value = H256::from(value_fixed_width);
+
+        // If the account does not exist, check the backend, then create it with empty code and storage
+        if !self.account_storage_cached.contains_key(&address) {
+
+            debug!("Creating account in cache: {:?}", address);
+
+            let account = Account {
+                nonce: self.backend.basic(address).nonce.as_u64(),
+                code: self.backend.code(address),
+                storage_root: None,
+                is_scilla: true,
+            };
+
+            self.account_storage_cached.insert(
+                address,
+                Some(( account, HashMap::from([(key, value)]),
+                )),
+            );
+        } else {
+
+            let entry = self.account_storage_cached.get_mut(&address).unwrap();
+
+            debug!("Updating account in cache: {:?} {:?}", address, entry);
+
+            match entry {
+                Some((_, storage)) => {
+                    storage.insert(key, value);
+                }
+                None => {
+                    error!("Account in cache is None: {:?}", address);
+                }
+            }
         }
     }
 
