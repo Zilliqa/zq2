@@ -1,4 +1,11 @@
-use ethabi::Token;
+use crate::LocalRpcClient;
+use ethabi::{Address, Token};
+use ethers::types::BlockId;
+use ethers::{
+    prelude::{DeploymentTxFactory, SignerMiddleware},
+    providers::Provider,
+    signers::LocalWallet,
+};
 use ethers::{
     providers::Middleware,
     types::{BlockNumber, TransactionRequest},
@@ -7,7 +14,7 @@ use primitive_types::H160;
 use tracing::*;
 use zilliqa::{contracts, state::contract_addr};
 
-use crate::Network;
+use crate::{compile_contract, Network};
 
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)
@@ -138,7 +145,7 @@ async fn launch_shard(mut network: Network) {
     // This is necessary to maintain a supermajority once the main shard nodes join.
     // The size can be reduced once nodes stop joining the committee before they're
     // fully caught up.
-    let child_shard_nodes = 10;
+    let child_shard_nodes = 4;
 
     // 1. Construct and launch a shard network
     let mut shard_network = Network::new_shard(
@@ -147,6 +154,7 @@ async fn launch_shard(mut network: Network) {
         false,
         child_shard_id,
         network.seed,
+        None,
     );
     let shard_wallet = shard_network.genesis_wallet().await;
 
@@ -290,7 +298,7 @@ async fn launch_shard(mut network: Network) {
                     .unwrap()
                     .number
                     .unwrap()
-                    >= check_child_block + 5
+                    >= check_child_block + 2
             },
             500,
         )
@@ -299,7 +307,12 @@ async fn launch_shard(mut network: Network) {
 
     // 7. Send a cross-shard transaction
 
-    let inner_data = contracts::gas_price::GET_GAS.encode_input(&[]).unwrap();
+    let (abi, bytecode) = compile_contract("tests/it/contracts/CallMe.sol", "CallMe");
+    let factory = DeploymentTxFactory::new(abi, bytecode, wallet.clone());
+    let deployer = factory.deploy(()).unwrap();
+    let inner_data = deployer.tx.data().unwrap().clone().to_vec();
+
+    // let inner_data = contracts::gas_price::GET_GAS.encode_input(&[]).unwrap();
     let data = contracts::intershard_bridge::BRIDGE
         .encode_input(&[
             Token::Uint(child_shard_id.into()),
@@ -343,14 +356,14 @@ async fn launch_shard(mut network: Network) {
                     .unwrap()
                     .number
                     .unwrap()
-                    >= receipt.block_number.unwrap() + 10
+                    >= receipt.block_number.unwrap() + 3
             },
             500,
         )
         .await
         .unwrap();
 
-    // 6. Check shard is still producing blocks
+    // 9. Check shard is still producing blocks
     let check_child_block = shard_wallet
         .get_block(BlockNumber::Latest)
         .await
@@ -378,6 +391,29 @@ async fn launch_shard(mut network: Network) {
         )
         .await
         .unwrap();
+
+    async fn get_nonce(
+        wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+        address: Address,
+        number: BlockNumber,
+    ) -> u128 {
+        wallet
+            .get_transaction_count(address, Some(BlockId::Number(number)))
+            .await
+            .unwrap()
+            .as_u128()
+    }
+
+    // 10. Check contract exists on shard
+    let nonce_before = get_nonce(
+        &shard_wallet,
+        wallet.address(),
+        BlockNumber::Number(check_child_block),
+    )
+    .await;
+    let nonce_after = get_nonce(&shard_wallet, wallet.address(), BlockNumber::Latest).await;
+
+    println!("\nNonce before: {}, after: {}\n", nonce_before, nonce_after);
 }
 
 // test that when a fork occurs in the network, the node which has forked correctly reverts its state

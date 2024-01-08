@@ -28,7 +28,7 @@ impl BlockHooks {
                         data: log.data.clone(),
                     })
                     .map_err(|e| {
-                        println!("\nERROR PARSING LOG!\n{e}\nLOG: {log:?}\n");
+                        warn!("Error parsing event log: {e}. The log was: {log:?}");
                         e
                     })
             })

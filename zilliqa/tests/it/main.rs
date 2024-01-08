@@ -3,6 +3,9 @@ mod eth;
 mod persistence;
 mod web3;
 mod zil;
+// use ethabi::Bytes;
+// use ethers::abi::Bytes;
+use ethers::types::Bytes;
 use std::{env, ops::DerefMut};
 
 use ethers::solc::SHANGHAI_SOLC;
@@ -163,7 +166,14 @@ struct Network {
 impl Network {
     /// Create a main shard network.
     pub fn new(rng: Arc<Mutex<ChaCha8Rng>>, nodes: usize, seed: u64) -> Network {
-        Self::new_shard(rng, nodes, true, NodeConfig::default().eth_chain_id, seed)
+        Self::new_shard(
+            rng,
+            nodes,
+            true,
+            NodeConfig::default().eth_chain_id,
+            seed,
+            None,
+        )
     }
 
     pub fn new_shard(
@@ -172,10 +182,13 @@ impl Network {
         is_main: bool,
         shard_id: u64,
         seed: u64,
+        keys: Option<Vec<SecretKey>>,
     ) -> Network {
-        let mut keys: Vec<_> = (0..nodes)
-            .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
-            .collect();
+        let mut keys = keys.unwrap_or_else(|| {
+            (0..nodes)
+                .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
+                .collect()
+        });
         // Sort the keys in the same order as they will occur in the consensus committee. This means node indices line
         // up with indices in the committee, making logs easier to read.
         keys.sort_unstable_by_key(|key| key.to_libp2p_keypair().public().to_peer_id());
@@ -253,6 +266,10 @@ impl Network {
 
     pub fn add_node(&mut self, genesis: bool) -> usize {
         let secret_key = SecretKey::new_from_rng(self.rng.lock().unwrap().deref_mut()).unwrap();
+        self.add_node_with_key(genesis, secret_key)
+    }
+
+    pub fn add_node_with_key(&mut self, genesis: bool, secret_key: SecretKey) -> usize {
         let (genesis_committee, genesis_hash) = if genesis {
             (self.genesis_committee.clone(), None)
         } else {
@@ -580,35 +597,45 @@ impl Network {
     }
 
     fn handle_message(&mut self, message: (PeerId, Option<PeerId>, AnyMessage)) {
-        match message.2 {
+        let (source, destination, ref contents) = message;
+        match contents {
             AnyMessage::Internal(source_shard, destination_shard, ref internal_message) => {
                 match internal_message {
-                    InternalMessage::LaunchShard(network_id) => {
-                        if let Some(network) = self.children.get_mut(&network_id) {
+                    InternalMessage::LaunchShard(new_network_id) => {
+                        let secret_key = self.find_node(source).unwrap().1.secret_key.clone();
+                        if let Some(network) = self.children.get_mut(new_network_id) {
                             trace!(
-                                "Launching shard node for {network_id} - adding new node to shard"
+                                "Launching shard node for {new_network_id} - adding new node to shard"
                             );
-                            network.add_node(true);
+                            network.add_node_with_key(true, secret_key);
                         } else {
-                            info!("Launching node in new shard network {network_id}");
-                            self.children
-                                .insert(*network_id, Network::new(self.rng.clone(), 1, self.seed));
+                            info!("Launching node in new shard network {new_network_id}");
+                            self.children.insert(
+                                *new_network_id,
+                                Network::new_shard(
+                                    self.rng.clone(),
+                                    1,
+                                    false,
+                                    *new_network_id,
+                                    self.seed,
+                                    Some(vec![secret_key]),
+                                ),
+                            );
                         }
                     }
                     InternalMessage::IntershardCall(_) => {
-                        if destination_shard == self.shard_id {
-                            let destination = message.1.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
-                            let idx_node = self
-                                .nodes
-                                .iter()
-                                .enumerate()
-                                .find(|(_, n)| n.peer_id == destination);
+                        if *destination_shard == self.shard_id {
+                            let destination = destination.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
+                            let idx_node = self.find_node(destination);
                             if let Some((idx, node)) = idx_node {
                                 trace!("Handling intershard transactinon from shard {}, in subshard {} of node {}", self.shard_id, destination_shard, idx);
                                 node.inner
                                     .lock()
                                     .unwrap()
-                                    .handle_internal_message(source_shard, internal_message.clone())
+                                    .handle_internal_message(
+                                        *source_shard,
+                                        internal_message.clone(),
+                                    )
                                     .unwrap();
                             } else {
                                 warn!(
@@ -625,7 +652,7 @@ impl Network {
                 }
             }
             AnyMessage::External(external_message) => {
-                let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = message.1 {
+                let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = destination {
                     vec![self
                         .nodes
                         .iter()
@@ -638,17 +665,17 @@ impl Network {
                 for (index, node) in nodes.iter() {
                     let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                     span.in_scope(|| {
-                        if message.1.is_some() {
+                        if destination.is_some() {
                             info!(
                                 "destination: {}, node being used: {}",
-                                message.1.unwrap(),
+                                destination.unwrap(),
                                 node.inner.lock().unwrap().peer_id()
                             );
                         }
                         node.inner
                             .lock()
                             .unwrap()
-                            .handle_network_message(message.0, external_message.clone())
+                            .handle_network_message(source, external_message.clone())
                             .unwrap();
                     });
                 }
@@ -698,6 +725,14 @@ impl Network {
 
     pub fn random_index(&mut self) -> usize {
         self.rng.lock().unwrap().gen_range(0..self.nodes.len())
+    }
+
+    /// Returns (index, TestNode)
+    fn find_node(&self, peer_id: PeerId) -> Option<(usize, &TestNode)> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.peer_id == peer_id)
     }
 
     pub fn get_node(&self, index: usize) -> MutexGuard<Node> {
@@ -804,12 +839,7 @@ fn format_message(
 const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
 const EVM_VERSION: EvmVersion = EvmVersion::Shanghai;
 
-async fn deploy_contract(
-    path: &str,
-    contract: &str,
-    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-    network: &mut Network,
-) -> (H256, Contract) {
+fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     let full_path = format!("{}{}", PROJECT_ROOT, path);
 
     let contract_source = std::fs::read(&full_path).unwrap_or_else(|e| {
@@ -856,6 +886,16 @@ async fn deploy_contract(
         .unwrap();
     let abi = contract.abi.unwrap().clone();
     let bytecode = contract.bytecode().unwrap().clone();
+    (abi, bytecode)
+}
+
+async fn deploy_contract(
+    path: &str,
+    contract: &str,
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+    network: &mut Network,
+) -> (H256, Contract) {
+    let (abi, bytecode) = compile_contract(path, contract);
 
     // Deploy the contract.
     let factory = DeploymentTxFactory::new(abi, bytecode, wallet.clone());

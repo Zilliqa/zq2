@@ -200,7 +200,6 @@ impl Node {
     }
 
     pub fn handle_internal_message(&mut self, from: u64, message: InternalMessage) -> Result<()> {
-        panic!("\n\nBBBBBBBBBBBBBBBBBb\nInjecting intershard call\n\n");
         let to = self.config.eth_chain_id;
         let message_name = message.name();
         tracing::debug!(%from, %to, %message_name, "handling message");
@@ -216,7 +215,6 @@ impl Node {
     }
 
     fn inject_intershard_transaction(&mut self, intershard_call: IntershardCall) -> Result<()> {
-        println!("\n\nAAAAAAAAAAAAAA\nInjecting intershard call\n\n");
         let tx = SignedTransaction::Intershard {
             tx: TxIntershard {
                 chain_id: self.config.eth_chain_id,

@@ -306,7 +306,6 @@ impl P2pNode {
                             self.add_shard_node(shard_config.clone()).await?;
                         },
                         InternalMessage::IntershardCall(_) => {
-                            println!("\nP2P_Node got INTERSHARD_CALL!! Destination {}", destination);
                             self.forward_local_message_to_shard(&Self::shard_id_to_topic(destination).hash(), source, message)?;
                         }
                     }
