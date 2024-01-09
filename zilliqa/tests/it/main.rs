@@ -160,7 +160,7 @@ struct Network {
     /// The seed input for the node - because rng.get_seed() returns a different, internal
     /// representation
     seed: u64,
-    genesis_key: SigningKey,
+    pub genesis_key: SigningKey,
 }
 
 impl Network {
@@ -751,8 +751,14 @@ impl Network {
     pub async fn genesis_wallet(
         &mut self,
     ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
-        let wallet: LocalWallet = self.genesis_key.clone().into();
+        self.wallet_from_key(self.genesis_key.clone()).await
+    }
 
+    pub async fn wallet_from_key(
+        &mut self,
+        key: SigningKey,
+    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+        let wallet: LocalWallet = key.into();
         let node = self
             .nodes
             .choose(self.rng.lock().unwrap().deref_mut())
@@ -772,22 +778,8 @@ impl Network {
     pub async fn random_wallet(
         &mut self,
     ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
-        let wallet: LocalWallet = SigningKey::random(self.rng.lock().unwrap().deref_mut()).into();
-
-        let node = self
-            .nodes
-            .choose(self.rng.lock().unwrap().deref_mut())
-            .unwrap();
-        trace!(index = node.index, "node selected for wallet");
-        let client = LocalRpcClient {
-            id: Arc::new(AtomicU64::new(0)),
-            rpc_module: node.rpc_module.clone(),
-        };
-        let provider = Provider::new(client);
-
-        SignerMiddleware::new_with_provider_chain(provider, wallet)
-            .await
-            .unwrap()
+        let key = SigningKey::random(self.rng.lock().unwrap().deref_mut());
+        self.wallet_from_key(key).await
     }
 }
 

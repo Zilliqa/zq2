@@ -169,7 +169,7 @@ pub struct BlockBatchResponse {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IntershardCall {
     pub source_address: H160,
-    pub target_address: H160,
+    pub target_address: Option<H160>,
     pub gas_price: u128,
     pub gas_limit: u64,
     pub calldata: Vec<u8>,

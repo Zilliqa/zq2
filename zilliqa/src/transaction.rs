@@ -319,7 +319,7 @@ impl Transaction {
             Transaction::Eip2930(TxEip2930 { to_addr, .. }) => *to_addr,
             Transaction::Eip1559(TxEip1559 { to_addr, .. }) => *to_addr,
             Transaction::Zilliqa(TxZilliqa { to_addr, .. }) => Some(*to_addr),
-            Transaction::Intershard(TxIntershard { to_addr, .. }) => Some(*to_addr),
+            Transaction::Intershard(TxIntershard { to_addr, .. }) => *to_addr,
         }
     }
 
@@ -432,7 +432,7 @@ pub struct TxIntershard {
     pub nonce: u64,
     pub gas_price: u128,
     pub gas_limit: u64,
-    pub to_addr: Address, // do not support cross-shard contract deployments (yet)
+    pub to_addr: Option<Address>, // do not support cross-shard contract deployments (yet)
     // Amount intentionally missing: cannot send native amount cross-shard
     pub payload: Vec<u8>,
 }

@@ -5,6 +5,7 @@ contract IntershardBridge {
     event Relayed(
         uint64 indexed targetChainId,
         address source,
+        bool contract_creation,
         address target,
         bytes call,
         uint64 gasLimit,
@@ -18,12 +19,13 @@ contract IntershardBridge {
 
     function bridge(
         uint64 targetShard,
+        bool contract_creation,
         address target,
         bytes calldata call,
         uint64 gasLimit,
         uint128 gasPrice
     ) external returns (uint) {
-        emit Relayed(targetShard, msg.sender, target, call, gasLimit, gasPrice, nonce);
+        emit Relayed(targetShard, msg.sender, contract_creation, target, call, gasLimit, gasPrice, nonce);
         return nonce++;
     }
 

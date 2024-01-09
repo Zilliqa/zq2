@@ -1476,6 +1476,7 @@ impl Consensus {
             .block_hooks
             .get_cross_shard_messages(receipts.clone())?
         {
+            println!("\nSending cross-shard message from shard {} to shard {}, source address {}, destination address {:?}\n", self.config.eth_chain_id, destination_shard, intershard_call.source_address, intershard_call.target_address);
             self.message_sender.send_message_to_shard(
                 destination_shard,
                 InternalMessage::IntershardCall(intershard_call),

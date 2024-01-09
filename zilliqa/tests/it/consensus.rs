@@ -305,27 +305,57 @@ async fn launch_shard(mut network: Network) {
         .await
         .unwrap();
 
-    // 7. Send a cross-shard transaction
+    // 7. Fund the child_shard_wallet so it can send a cross-shard transaction
+    let shard_wallet_key = network
+        .children
+        .get(&child_shard_id)
+        .unwrap()
+        .genesis_key
+        .clone();
+    let shard_wallet_connected_to_main = network.wallet_from_key(shard_wallet_key).await;
+    let xfer_hash = wallet
+        .send_transaction(
+            TransactionRequest::pay(shard_wallet.address(), 100_000_000_000_000u64),
+            None,
+        )
+        .await
+        .unwrap()
+        .tx_hash();
 
+    network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_transaction_receipt(xfer_hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // 8. Send a cross-shard transaction
     let (abi, bytecode) = compile_contract("tests/it/contracts/CallMe.sol", "CallMe");
     let factory = DeploymentTxFactory::new(abi, bytecode, wallet.clone());
     let deployer = factory.deploy(()).unwrap();
     let inner_data = deployer.tx.data().unwrap().clone().to_vec();
 
-    // let inner_data = contracts::gas_price::GET_GAS.encode_input(&[]).unwrap();
     let data = contracts::intershard_bridge::BRIDGE
         .encode_input(&[
             Token::Uint(child_shard_id.into()),
-            Token::Address(contract_addr::GAS_PRICE),
+            Token::Bool(true),
+            Token::Address(H160::zero()),
             Token::Bytes(inner_data),
-            Token::Uint(10_000_000.into()),
+            Token::Uint(10_000_000_000u64.into()),
             Token::Uint(10_000.into()),
         ])
         .unwrap();
     let tx_request = TransactionRequest::new()
         .to(contract_addr::INTERSHARD_BRIDGE)
         .data(data);
-    let hash = wallet
+    let hash = shard_wallet_connected_to_main
         .send_transaction(tx_request, None)
         .await
         .unwrap()
@@ -345,7 +375,7 @@ async fn launch_shard(mut network: Network) {
         .unwrap();
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
 
-    // 8. Finalize that block
+    // 9. Finalize that block
     network
         .run_until_async(
             || async {
@@ -363,7 +393,7 @@ async fn launch_shard(mut network: Network) {
         .await
         .unwrap();
 
-    // 9. Check shard is still producing blocks
+    // 10. Check shard is still producing blocks
     let check_child_block = shard_wallet
         .get_block(BlockNumber::Latest)
         .await
@@ -404,7 +434,7 @@ async fn launch_shard(mut network: Network) {
             .as_u128()
     }
 
-    // 10. Check contract exists on shard
+    // 11. Check contract exists on shard
     let nonce_before = get_nonce(
         &shard_wallet,
         wallet.address(),
@@ -413,7 +443,27 @@ async fn launch_shard(mut network: Network) {
     .await;
     let nonce_after = get_nonce(&shard_wallet, wallet.address(), BlockNumber::Latest).await;
 
-    println!("\nNonce before: {}, after: {}\n", nonce_before, nonce_after);
+    println!(
+        "\nFor address {}, nonce before: {}, after: {}\n",
+        wallet.address(),
+        nonce_before,
+        nonce_after
+    );
+
+    let nonce_before = get_nonce(
+        &shard_wallet,
+        shard_wallet.address(),
+        BlockNumber::Number(check_child_block),
+    )
+    .await;
+    let nonce_after = get_nonce(&shard_wallet, shard_wallet.address(), BlockNumber::Latest).await;
+
+    println!(
+        "\nFor address {}, nonce before: {}, after: {}\n",
+        shard_wallet.address(),
+        nonce_before,
+        nonce_after
+    );
 }
 
 // test that when a fork occurs in the network, the node which has forked correctly reverts its state

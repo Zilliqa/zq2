@@ -100,7 +100,12 @@ impl BlockHooks {
                     destination_shard,
                     IntershardCall {
                         source_address: values.next().unwrap().into_address().unwrap(),
-                        target_address: values.next().unwrap().into_address().unwrap(),
+                        target_address: if values.next().unwrap().into_bool().unwrap() {
+                            values.next();
+                            None
+                        } else {
+                            Some(values.next().unwrap().into_address().unwrap())
+                        },
                         calldata: values.next().unwrap().into_bytes().unwrap(),
                         gas_limit: values.next().unwrap().into_uint().unwrap().as_u64(),
                         gas_price: values.next().unwrap().into_uint().unwrap().as_u128(),
