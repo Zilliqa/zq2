@@ -70,9 +70,10 @@ struct TxBlockHeader {
     version: u32,
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "PascalCase")]
+#[derive(Clone, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct GetTxResponse {
+    #[serde(rename = "ID")]
     ID: String,
     version: String,
     nonce: String,
@@ -87,8 +88,7 @@ pub struct GetTxResponse {
     data: String,
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "PascalCase")]
+#[derive(Clone, Serialize, Debug)]
 struct GetTxResponseReceipt {
     cumulative_gas: String,
     epoch_num: String,

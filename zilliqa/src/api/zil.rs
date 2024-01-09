@@ -120,13 +120,26 @@ fn create_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
 fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<GetTxResponse>> {
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
-    let node = node.lock().unwrap();
+    //let node_locked = node.lock().unwrap();
     trace!("GetTransaction: {:?}", hash);
 
-    let ret = get_scilla_transaction_inner(hash, &node)?;
-    let receipt = node.get_transaction_receipt(hash)?;
+    let ret = get_scilla_transaction_inner(hash, &node.lock().unwrap())?;
+    let mut receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
 
     trace!("GetTransaction: {:?} => {:?}", hash, ret);
+
+    // Spin up to 1s while waiting for the receipt to become available
+    let now = std::time::Instant::now();
+    while receipt.is_none() && now.elapsed() < std::time::Duration::from_secs(10) {
+        //node.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
+        trace!("Waiting... {:?}", now.elapsed());
+    }
+
+    if receipt.is_none() {
+        trace!("GetTransaction will fail");
+    }
 
     if let Some(receipt) = receipt {
         match ret {
