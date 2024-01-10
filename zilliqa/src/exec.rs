@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use ethabi::Token;
-use scilla::{scilla_server_run::run_scilla_impl_direct};
+use scilla::{scilla_server_run::{run_scilla_impl_direct, calculate_contract_address_scilla}};
 use evm_ds::{
     evm::{backend::Backend, tracing::EventListener},
     evm_server_run::{
@@ -200,7 +200,8 @@ impl State {
         if to_addr.is_none() || to_addr.is_some_and(|x| x == Address::zero()) {
             code = data;
             data = payload_initdata.clone();
-            to = calculate_contract_address(from_addr, &backend);
+            // Note that scilla has an off by one for the account nonce
+            to = if is_scilla {calculate_contract_address_scilla(from_addr, account.nonce + 1)} else {calculate_contract_address(from_addr, &backend)};
             created_contract_addr = Some(to);
             trace!("*** Calculated contract address for creation: {}", to);
         }

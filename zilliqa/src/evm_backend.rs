@@ -11,7 +11,8 @@ use evm_ds::{
     protos::evm_proto::{Apply, EvmResult, Storage},
 };
 use primitive_types::{H160, H256, U256};
-use tracing::{error, trace};
+use tracing::*;
+//use tracing::field::debug;
 
 use crate::{
     message::BlockHeader,
@@ -106,6 +107,7 @@ impl<'a> EvmBackend<'a> {
                     let storage_cached = &mut cache.1;
 
                     if !code.is_empty() {
+                        debug!("**** Updating code for account {:?} to {:?}", address, code);
                         account_cached.code = code.to_vec();
                     }
 
