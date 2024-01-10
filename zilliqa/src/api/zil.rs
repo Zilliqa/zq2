@@ -111,9 +111,6 @@ fn create_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
     let transaction_hash = node.create_transaction(transaction)?;
     let transaction_hash = hex::encode(transaction_hash.0);
 
-    // todo: this doesn't seem to be the correct response. Example:
-    // {"id":1,"jsonrpc":"2.0","result":{"ContractAddress":"ed577d28d7d790ee7afbc38d5d9346530f5ac1a8","Info":"Txn processed","TranID":"a2fac2dda1efbc1e88ab2407d9727456c0e68c77a9c7ee747db8d140c07176a1"}}
-
     Ok(json!({"TranID": transaction_hash}))
 }
 
@@ -155,8 +152,6 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<Get
     } else {
         Ok(None)
     }
-
-    //ret
 }
 
 pub(super) fn get_scilla_transaction_inner(

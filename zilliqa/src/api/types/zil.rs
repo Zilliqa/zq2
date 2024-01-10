@@ -122,51 +122,6 @@ impl GetTxResponse {
     }
 }
 
-/*
-Json::Value _json;
-
-_json["ID"] = twr.GetTransaction().GetTranID().hex();
-_json["version"] = to_string(twr.GetTransaction().GetVersion());
-_json["nonce"] = to_string(twr.GetTransaction().GetNonce());
-_json["toAddr"] = twr.GetTransaction().GetToAddr().hex();
-_json["senderPubKey"] =
-static_cast<string>(twr.GetTransaction().GetSenderPubKey());
-_json["amount"] = twr.GetTransaction().GetAmountQa().str();
-_json["signature"] = static_cast<string>(twr.GetTransaction().GetSignature());
-_json["receipt"] = twr.GetTransactionReceipt().GetJsonValue();
-_json["gasPrice"] = twr.GetTransaction().GetGasPriceQa().str();
-_json["gasLimit"] = to_string(twr.GetTransaction().GetGasLimitZil());
-
-auto const code = twr.GetTransaction().GetCode();
-auto const data = twr.GetTransaction().GetData();
-
-// If we detect non ascii characters (i.e evm bytecode) we convert to hex
-// this should only happen when old style API calls (GetTransaction) are made
-// that hit on new eth-style TXs
-if (!code.empty()) {
-if(!DataConversion::ContainsAllAscii(code) && twr.GetTransaction().IsEth()) {
-_json["code"] = DataConversion::Uint8VecToHexStrRet(code);
-} else {
-_json["code"] =
-DataConversion::CharArrayToString(code);
-}
-}
-if (!data.empty()) {
-if(!DataConversion::ContainsAllAscii(data) && twr.GetTransaction().IsEth()) {
-_json["data"] = DataConversion::Uint8VecToHexStrRet(data);
-} else {
-_json["data"] =
-DataConversion::CharArrayToString(data);
-}
-}
-
-if (isSoftConfirmed) {
-_json["softconfirm"] = true;
-}
-
-return _json;
- */
-
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct TxBlockBody {

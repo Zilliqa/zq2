@@ -175,8 +175,6 @@ impl State {
         is_scilla: bool,
     ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
 
-        //let is_scilla = payload.starts_with(b"scilla_version".to_vec().iter().as_ref());
-
         let caller = from_addr;
         let is_static = false;
         let context = "".to_string();
@@ -191,7 +189,6 @@ impl State {
         let mut data: Vec<u8> = payload.clone();
         let mut traces: Arc<Mutex<LoggingEventListener>> =
             Arc::new(Mutex::new(LoggingEventListener::new(tracing)));
-        let datax = b"scilla_version".to_vec();
 
         // The backend is provided to the evm as a way to read accounts and state during execution
         let mut backend = EvmBackend::new(self, U256::zero(), caller, chain_id, current_block);
@@ -209,11 +206,6 @@ impl State {
         let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];
         let native_balance = self.get_native_balance(from_addr, false).unwrap();
         let target_balance = self.get_native_balance(to, false).unwrap();
-
-        if is_scilla {
-            info!("\n");
-            info!("#### Scilla execution requested. From: {:?} To: {:?} with funds: {}", from_addr, to, target_balance);
-        }
 
         // The first continuation in the stack is the tx itself
         continuation_stack.push(EvmProto::EvmCallArgs {
@@ -305,15 +297,6 @@ impl State {
             } else {
                 run_evm_impl_direct(call_args.clone(), &backend)
             };
-
-            if call_args.is_scilla {
-                // payload and payload_initdata printing as strings
-                info!("payload is {:?}", payload);
-                info!("payload init data is {:?}", payload_initdata.clone());
-                info!("payload is {:?}", str::from_utf8(&payload));
-                info!("payload init data is {:?}", str::from_utf8(&payload_initdata));
-                trace!("Scilla execution complete - applying result {:?}", result);
-            }
 
             if print_enabled {
                 debug!("Evm invocation complete - applying result {:?}", result);

@@ -755,10 +755,6 @@ impl Consensus {
             info!("Transaction was a failure...");
         }
 
-        if !result.success {
-            info!("Transaction was a failure...");
-        }
-
         Ok(Some(result))
     }
 

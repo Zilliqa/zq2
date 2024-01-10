@@ -25,10 +25,9 @@ async fn main() -> Result<()> {
 
     let builder = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env());
     if args.log_json {
-        let builder = tracing_subscriber::fmt();
         builder.json().init();
     } else {
-        tracing_subscriber::fmt::init();
+        builder.init();
     }
 
     let config = if args.config_file.exists() {

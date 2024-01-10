@@ -4,7 +4,6 @@ use crate::call_scilla_server::call_scilla_server;
 use crate::call_scilla_server::JsonRpcResponse;
 use evm::{
     ExitSucceed,};
-    //backend::{Apply, Backend}};
 
 use evm_ds::{
     evm::backend::{Backend, Basic},
@@ -87,7 +86,6 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
     let init_directory = PathBuf::from("/Users/nhutton/repos/zq2/scilla_init/");
     let input_directory = PathBuf::from("/Users/nhutton/repos/zq2/scilla_input/");
 
-    //let account = tcp_scilla_server.inner.backend.get_account(args.address);
     let is_contract_creation = tcp_scilla_server.inner.backend.get_code(args.address).is_empty();
     let code = str::from_utf8(&args.code).expect("unable to convert scilla code to a string").to_string();
     let init_data = args.data;
@@ -98,35 +96,12 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
         // Transfer
         (false, false) => {
             debug!("Execute transfer. nothing to do.");
-            //Ok(())
-            //let mut from = db
-            //.lock()
-            //.unwrap()
-            //.get_account(from_addr)?
-            //.map(Account::from_proto)
-            //.transpose()?
-            //.unwrap_or_default();
-            //from.nonce = txn.nonce;
-            //from.balance -= txn.cumulative_gas as u128 * txn.gas_price;
-            //db.lock()
-            //.unwrap()
-            //.save_account(from_addr, from.to_proto()?)?;
-//
-            //transfer(&mut db.lock().unwrap(), from_addr, txn.to_addr, txn.amount)?;
         }
         // Contract creation
         (true, true) => {
             debug!("contract creation!");
+
             let account_nonce: u64 = 1; // todo: this
-
-            // todo: make this a free function for contract creation calculation
-            /*
-            let mut hasher = Sha256::new();
-            hasher.update(from_addr.as_bytes());
-            hasher.update((account_nonce - 1).to_be_bytes());
-            let hashed = hasher.finalize();
-            let contract_address = H160::from_slice(&hashed[(hashed.len() - 20)..]); */
-
             let contract_address = args.address;
 
             let mut init_data: Value = serde_json::from_slice(init_data.as_slice()).unwrap();
@@ -134,19 +109,8 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
             let contract_address_hex = format!("{contract_address:?}");
             init_data.as_array_mut().unwrap().push(json!({"vname": "_this_address", "type": "ByStr20", "value": contract_address_hex}));
 
-            debug!("Creating contract: {contract_address:?}");
-            debug!("xx Init data is: {:?}", init_data);
-
             // Save the init data to the contract
             tcp_scilla_server.inner.backend.update_account_storage_scilla(contract_address, "init_data", init_data.to_string().as_bytes());
-
-            let testme = tcp_scilla_server.inner.backend.get_account_storage_scilla(contract_address, "init_data");
-
-            debug!("Serialized init data is: {:?}", init_data.to_string());
-
-            let testme = serde_json::from_slice::<Value>(&testme).expect("unable to convert scilla data to a Value during contract call");
-            debug!("Deserialized init data is: {:?}", testme);
-            debug!("pause");
 
             // Write down to the files the init data and make sure the libs are in order
             // todo: make sure the old files are cleared
@@ -156,16 +120,6 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
 
             // Create account here
             tcp_scilla_server.inner.backend.create_account(contract_address, code.as_bytes().to_vec(), true);
-            // No init state 2 here
-
-            //db.lock()
-            //    .unwrap()
-            //    .put_contract_code(contract_address, code.as_bytes())?;
-            //db.lock()
-            //    .unwrap()
-            //    .put_init_state_2(contract_address, &serde_json::to_vec(&init_data)?)?;
-
-            //let mut state_root = H256::from_slice(&Keccak256::digest(rlp::NULL_RLP));
 
             let check_output =
                 check_contract(code.as_bytes(), args.gas_limit, &init_data, init_directory_str, lib_directory_str, input_directory_str, & mut tcp_scilla_server
@@ -180,44 +134,17 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
                     format!("{}\x16_depth\x16{}\x16", addr_no_prefix, field.name);
 
                 tcp_scilla_server.inner.backend.update_account_storage_scilla(contract_address, &depth_key, field.depth.to_string().as_bytes());
-               // state_root = db.lock().unwrap().put_contract_state(
-               //     state_root,
-               //     &depth_key,
-               //     field.depth.to_string().as_bytes(),
-               // )?;
                 let type_key =
                     format!("{}\x16_type\x16{}\x16", addr_no_prefix, field.name);
                 tcp_scilla_server.inner.backend.update_account_storage_scilla(contract_address, &type_key, field.ty.as_bytes());
-                //state_root = db.lock().unwrap().put_contract_state(
-                //    state_root,
-                //    &type_key,
-                //    field.ty.as_bytes(),
-                //)?;
 
                 debug!("check output field: {:?} {:?} {:?}", field, depth_key, type_key);
             }
 
             let version_key = format!("{addr_no_prefix}\x16_version\x16");
             tcp_scilla_server.inner.backend.update_account_storage_scilla(contract_address, &version_key, check_output.contract_info.scilla_major_version.as_bytes());
-            //state_root = db.lock().unwrap().put_contract_state(
-            //    state_root,
-            //    &version_key,
-            //    check_output.contract_info.scilla_major_version.as_bytes(),
-            //)?;
             let addr_key = format!("{addr_no_prefix}\x16_addr\x16");
             tcp_scilla_server.inner.backend.update_account_storage_scilla(contract_address, &addr_key, contract_address.as_bytes());
-            //state_root = db.lock().unwrap().put_contract_state(
-            //    state_root,
-            //    &addr_key,
-            //    contract_address.as_bytes(),
-            //)?;
-
-            //ipc_server.set_current_contract_addr(
-            //    contract_address,
-            //    state_root,
-            //    block_num,
-            //);
-
 
             create_contract(
                 code.as_bytes(),
@@ -228,71 +155,12 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
 
             ).unwrap();
 
-
-            /* let state_root = ipc_server.reset_current_contract_addr(); */
-
-
-            //let contract_account = Account {
-            //    version: 1,
-            //    balance: 0,
-            //    nonce: 0,
-            //    contract: Some(Contract {
-            //        code_hash: code_hash(code, &init_data)?,
-            //        state_root,
-            //    }),
-            //};
-
-            /*
-            db.lock()
-                .unwrap()
-                .save_account(contract_address, contract_account.to_proto()?)?;
-
-            let creator_account = db
-                .lock()
-                .unwrap()
-                .get_account(from_addr)?
-                .ok_or_else(|| anyhow!("account does not exist: {from_addr:?}"))?;
-
-            let mut creator_account = Account::from_proto(creator_account)?;
-            creator_account.nonce += 1;
-            creator_account.balance -= args.cumulative_gas as u128 * args.gas_price;
-            db.lock()
-                .unwrap()
-                .save_account(from_addr, creator_account.to_proto()?)?;
-            */
-            //Ok(())
-
             return_value = code.into_bytes();
         }
 
         // Contract call
         (false, true) => {
             debug!("contract call! Lets gooooo");
-
-            //let caller_account = db
-            //    .lock()
-            //    .unwrap()
-            //    .get_account(from_addr)?
-            //    .ok_or_else(|| anyhow!("account does not exist: {from_addr:?}"))?;
-
-            //let mut caller_account = Account::from_proto(caller_account)?;
-            //caller_account.nonce += 1;
-            //caller_account.balance -= txn.cumulative_gas as u128 * txn.gas_price;
-            //db.lock()
-            //    .unwrap()
-            //    .save_account(from_addr, caller_account.to_proto()?)?;
-
-            //let addr = txn.to_addr;
-
-            //let success = serde_json::from_str::<Value>(&txn.receipt)?
-            //    .as_object()
-            //    .and_then(|obj| obj.get("success"))
-            //    .and_then(|b| b.as_bool())
-            //    .expect("TODO");
-            //if !success {
-            //    debug!("Skipping failed transaction");
-            //    continue;
-            //}
 
             //let mut msg = serde_json::from_str::<Value>(args.data)?;
             let mut msg = serde_json::from_slice::<Value>(&init_data).expect("unable to convert scilla data to a Value during contract call");
@@ -310,7 +178,6 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
                 .unwrap()
                 .insert("_amount".to_owned(), args.apparent_value.to_string().into());
 
-            //let origin_addr_hex = format!("{from_addr:#x}");
             let origin_addr_hex = format!("{from_addr:#x}");
             trace!("origin addr: {:?}", origin_addr_hex);
 
@@ -360,14 +227,6 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
                     input_directory_str,
                     message_directory_str,
                     &mut tcp_scilla_server,
-                    //message,
-//                    &db,
-//                    &ipc_server,
-//                    &scilla,
-//                    txn.gas_limit,
-//                    block_num,
-//                    to_addr,
-//                    &message,
                 );
 
                 debug!("invoke contract done");
@@ -407,27 +266,16 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
         }
         (true, false) => {
             warn!("contract creation without init data!");
-            //Ok(())
-            //return Err(anyhow!("contract creation without init data"));
+            return Err(anyhow!("contract creation without init data"));
         }
     }
-
-    //db.lock()
-    //.unwrap()
-    //.put_tx_body(txn.block, txn.id, txn.to_proto()?)?;
-    //db.lock().unwrap().put_tx_epoch(
-    //txn.id,
-    //ProtoTxEpoch {
-    //epochnum: txn.block,
-    //},
-    //)?;
 
     let mut state_deltas = tcp_scilla_server.inner.backend.get_result();
 
     state_deltas.exit_reason = ExitReasonCps::Succeed(ExitSucceed::Stopped);
     state_deltas.return_value = return_value;
 
-    debug!("State deltas: {:?}", state_deltas);
+    debug!("Scilla state deltas: {:?}", state_deltas);
 
     state_deltas
 }
@@ -441,17 +289,12 @@ pub fn check_contract<B: evm::backend::Backend>(
     input_path: &str,
     tcp_scilla_server: &mut ScillaServer<B>,
 ) -> Result<CheckOutput> {
-    //let dir = TempDir::new()?;
-    //let (contract_path, init_path) = self.create_common_inputs(&dir, contract, init)?;
 
     let args = vec![
         "-init".to_owned(),
-        //"/tmp/scilla_init/init.json".to_owned(), // ending init.json
         init_path.to_string(), // ending init.json
         "-libdir".to_owned(),
-        //"/scilla/0/src/stdlib/".to_owned(),
         lib_path.to_string(),
-        //"/tmp/scilla_input/input.scilla".to_owned(), // ending input.scilla
         input_path.to_string(), // ending input.scilla
         "-gaslimit".to_owned(),
         gas_limit.to_string(),
@@ -485,9 +328,7 @@ pub fn invoke_contract<B: evm::backend::Backend> (
     input_path: &str,
     message_path: &str,
     tcp_scilla_server: & mut ScillaServer<B>,
-    //message: Value,
 ) -> Result<()> {
-    //let dir = TempDir::new()?;
 
     let args = vec![
         "-init".to_owned(),
@@ -532,25 +373,19 @@ pub fn create_contract<B: evm::backend::Backend> (
     input_path: &str,
     tcp_scilla_server: & mut ScillaServer<B>,
 ) -> Result<()> {
-    //let dir = TempDir::new()?;
 
     let args = vec![
         "-i".to_owned(),
-        //contract_path.to_str().unwrap().to_owned(),
         input_path.to_string(),
         "-init".to_owned(),
         init_path.to_string(), // ending init.json
         "-ipcaddress".to_owned(),
         "/tmp/scilla-server.sock".to_owned(), // todo: this.
-        //"/tmp/scilla-socket/server.sock".to_owned(), // todo: this.
         "-gaslimit".to_owned(),
         gas_limit.to_string(),
         "-balance".to_owned(),
-        //balance.to_string(),
-        //"1000000".to_string(), // todo: this
         balance.to_string(), // todo: this
         "-libdir".to_owned(),
-        //self.lib_dir.to_str().unwrap().to_owned(),
         lib_path.to_string(),
         "-jsonerrors".to_owned(),
     ];
@@ -566,13 +401,6 @@ pub fn create_contract<B: evm::backend::Backend> (
 
     debug!("Create Response: {:?}", response);
 
-    //let mut deser: Result<JsonRpcResponse, serde_json::Error> = from_str(&response);
-    //debug!("Deser: {:?}", deser);
-
-    //let response: CheckOutput = serde_json::from_value(deser.unwrap().result.unwrap().clone()).unwrap();
-
-    //debug!("Create response: {response}");
-
     Ok(())
 }
 fn ensure_setup_correct(init_data: Option<serde_json::Value>, init_directory: &Path, input_data: Option<Vec<u8>>, input_directory: &Path, message: Option<Value>) {
@@ -585,7 +413,6 @@ fn ensure_setup_correct(init_data: Option<serde_json::Value>, init_directory: &P
             let mut init_data = init_data.clone();
 
             let mut init_file = File::create(init_directory.join("init.json")).unwrap();
-            //init_file.write_all(init_data).unwrap();
             init_file.write_all(serde_json::to_string(&init_data).unwrap().as_bytes()).unwrap();
         }
         None => { }
