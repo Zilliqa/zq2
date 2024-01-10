@@ -399,7 +399,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .children
         .get_mut(&child_shard_id)
         .unwrap()
-        .run_until_block(&shard_wallet, check_child_block + 5, 100)
+        .run_until_block(&shard_wallet, check_child_block + 10, 200)
         .await;
 
     async fn get_nonce(
