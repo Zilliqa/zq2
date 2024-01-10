@@ -580,14 +580,12 @@ impl State {
             warn!(error_str);
         }
 
-        let mut intershard = false;
         if let Transaction::Intershard(ref _intershard_tx) = txn {
             println!(
                 "\nApplying intershard transaction to address {} in shard {}",
                 from_addr, chain_id
             );
             println!("Handle intershard txs here! Need to verify nonce");
-            intershard = true;
             // TODO: 1. make call to verify nonce
         }
 
@@ -604,9 +602,6 @@ impl State {
             false,
             true,
         );
-        if intershard {
-            println!("Got result: {:?}", result);
-        };
 
         match result {
             Ok((result, contract_addr)) => {

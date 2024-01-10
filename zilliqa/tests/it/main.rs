@@ -1,3 +1,4 @@
+use ethers::providers::Middleware;
 mod consensus;
 mod eth;
 mod persistence;
@@ -5,7 +6,7 @@ mod web3;
 mod zil;
 // use ethabi::Bytes;
 // use ethers::abi::Bytes;
-use ethers::types::Bytes;
+use ethers::types::{Bytes, TransactionReceipt};
 use std::{env, ops::DerefMut};
 
 use ethers::solc::SHANGHAI_SOLC;
@@ -39,7 +40,7 @@ use ethers::{
     prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, SignerMiddleware},
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::LocalWallet,
-    types::H256,
+    types::{H256, U64},
     utils::secret_key_to_address,
 };
 use fs_extra::dir::*;
@@ -602,7 +603,7 @@ impl Network {
             AnyMessage::Internal(source_shard, destination_shard, ref internal_message) => {
                 match internal_message {
                     InternalMessage::LaunchShard(new_network_id) => {
-                        let secret_key = self.find_node(source).unwrap().1.secret_key.clone();
+                        let secret_key = self.find_node(source).unwrap().1.secret_key;
                         if let Some(network) = self.children.get_mut(new_network_id) {
                             trace!(
                                 "Launching shard node for {new_network_id} - adding new node to shard"
@@ -642,7 +643,7 @@ impl Network {
                                     "Intershard transcation to node that isn't running that shard"
                                 );
                             }
-                        } else if let Some(network) = self.children.get_mut(&destination_shard) {
+                        } else if let Some(network) = self.children.get_mut(destination_shard) {
                             trace!("Forwarding intershard transactinon from shard {} to subshard {}...", self.shard_id, destination_shard);
                             network.resend_message.send(message).unwrap();
                         } else {
@@ -723,6 +724,41 @@ impl Network {
         Ok(())
     }
 
+    pub async fn run_until_receipt(
+        &mut self,
+        wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+        hash: H256,
+        timeout: usize,
+    ) -> TransactionReceipt {
+        self.run_until_async(
+            || async {
+                wallet
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            timeout,
+        )
+        .await
+        .unwrap();
+        wallet.get_transaction_receipt(hash).await.unwrap().unwrap()
+    }
+
+    pub async fn run_until_block(
+        &mut self,
+        wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+        target_block: U64,
+        timeout: usize,
+    ) {
+        self.run_until_async(
+            || async { wallet.get_block_number().await.unwrap() >= target_block },
+            timeout,
+        )
+        .await
+        .unwrap();
+    }
+
     pub fn random_index(&mut self) -> usize {
         self.rng.lock().unwrap().gen_range(0..self.nodes.len())
     }
@@ -748,12 +784,6 @@ impl Network {
         self.nodes[index].inner.lock().unwrap()
     }
 
-    pub async fn genesis_wallet(
-        &mut self,
-    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
-        self.wallet_from_key(self.genesis_key.clone()).await
-    }
-
     pub async fn wallet_from_key(
         &mut self,
         key: SigningKey,
@@ -773,6 +803,12 @@ impl Network {
         SignerMiddleware::new_with_provider_chain(provider, wallet)
             .await
             .unwrap()
+    }
+
+    pub async fn genesis_wallet(
+        &mut self,
+    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+        self.wallet_from_key(self.genesis_key.clone()).await
     }
 
     pub async fn random_wallet(
@@ -894,8 +930,6 @@ async fn deploy_contract(
     let deployer = factory.deploy(()).unwrap();
     let abi = deployer.abi().clone();
     {
-        use ethers::providers::Middleware;
-
         let hash = wallet
             .send_transaction(deployer.tx, None)
             .await
