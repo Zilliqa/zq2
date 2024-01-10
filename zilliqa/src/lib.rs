@@ -10,7 +10,6 @@ mod evm_backend;
 mod exec;
 mod health;
 pub mod message;
-pub mod networking;
 pub mod node;
 pub mod node_launcher;
 pub mod p2p_node;
