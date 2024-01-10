@@ -331,7 +331,7 @@ impl P2pNode {
                             debug!(%from, message_type, "broadcasting");
                             match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
                                 Ok(_) => {},
-                                Err(e) => {
+                                Err(_e) => {
                                     //error!(%e, "failed to publish message");
                                 }
                             }

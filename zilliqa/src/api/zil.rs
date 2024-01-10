@@ -8,21 +8,20 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
-use primitive_types::{H160, U256, H256};
+use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use tracing::trace;
 
 use super::types::zil;
 use crate::{
+    api::types::zil::GetTxResponse,
     crypto::Hash,
     message::BlockNumber,
     node::Node,
     schnorr,
-    transaction::{SignedTransaction, TxZilliqa},
-    api::types::zil::GetTxResponse,
+    transaction::{SignedTransaction, TxZilliqa, VerifiedTransaction},
 };
-use crate::transaction::VerifiedTransaction;
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
@@ -145,9 +144,7 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<Get
                 trace!("GetTransaction: {:?} => {:?}", hash, resp);
                 resp
             }
-            None => {
-                Ok(None)
-            }
+            None => Ok(None),
         }
     } else {
         Ok(None)
@@ -163,16 +160,10 @@ pub(super) fn get_scilla_transaction_inner(
     };
 
     match tx.tx {
-        SignedTransaction::Zilliqa { .. } => {
-            Ok(Some(tx))
-        }
-        _ => {
-            Ok(None)
-        }
+        SignedTransaction::Zilliqa { .. } => Ok(Some(tx)),
+        _ => Ok(None),
     }
 }
-
-
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
     let address: H160 = params.one()?;

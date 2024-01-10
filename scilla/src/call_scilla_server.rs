@@ -1,15 +1,16 @@
-use serde::Deserialize;
-use serde::Serialize;
-use tracing::*;
+use std::{
+    io::{Read, Write},
+    net::TcpStream,
+    str,
+};
+
 use anyhow::{anyhow, Result};
-use std::net::TcpStream;
 use jsonrpc_core::Params;
+use serde::{Deserialize, Serialize};
+use serde_json::{from_str, Value};
+use tracing::*;
+
 use crate::scilla_tcp_server::ScillaServer;
-use serde_json::from_str;
-use serde_json::{json, Value, from_value};
-use std::io::Write;
-use std::io::Read;
-use std::str;
 
 struct TcpRawClient {
     pub client: TcpStream,
@@ -34,7 +35,6 @@ pub struct Param {
     #[serde(rename = "type")]
     pub ty: String,
 }
-
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JsonRpcRequest {
@@ -72,7 +72,6 @@ pub struct JsonRpcError {
 }
 
 fn respond_json(val: Value, mut connection: &TcpStream) {
-
     let response = JsonRpcResponse {
         jsonrpc: "2.0".to_string(),
         result: Some(val),
@@ -86,10 +85,13 @@ fn respond_json(val: Value, mut connection: &TcpStream) {
     connection.write_all(response_str.as_bytes()).unwrap();
 }
 
-pub fn call_scilla_server<B: evm::backend::Backend>(method: &str, params: Params, tcp_scilla_server: &mut ScillaServer<B>) -> Result<String> {
-
+pub fn call_scilla_server<B: evm::backend::Backend>(
+    method: &str,
+    params: Params,
+    tcp_scilla_server: &mut ScillaServer<B>,
+) -> Result<String> {
     let request = JsonRpcRequest::new(method, params, 1);
-    let mut request_str = serde_json::to_string(&request)?;
+    let request_str = serde_json::to_string(&request)?;
     let request_str = request_str + "\n";
 
     let mut stream = TcpStream::connect("127.0.0.1:12345")?;
@@ -113,18 +115,19 @@ pub fn call_scilla_server<B: evm::backend::Backend>(method: &str, params: Params
                 bytes_read_backend += bytes_read;
             }
             Err(e) => {
-                debug!("Scilla backend error: {:?}", e);
+                //debug!("Scilla backend error: {:?}", e);
             }
         }
 
         if bytes_read_backend > 0 {
-            if response_backend[bytes_read_backend-1] == '\n' as u8 {
+            if response_backend[bytes_read_backend - 1] == b'\n' {
+                let not_filtered = response_backend[0..bytes_read_backend - 1].to_vec();
 
-                let not_filtered = response_backend[0..bytes_read_backend-1].to_vec();
+                let request: Result<JsonRpcRequest, serde_json::Error> =
+                    from_str(&String::from_utf8(not_filtered.to_vec())?);
 
-                let mut request: Result<JsonRpcRequest, serde_json::Error> = from_str(&String::from_utf8(not_filtered.to_vec())?);
-
-                let backend_resp = tcp_scilla_server.handle_request(request.expect("Deser of server request failed"));
+                let backend_resp = tcp_scilla_server
+                    .handle_request(request.expect("Deser of server request failed"));
 
                 debug!("Scilla backend response: {:?}", backend_resp);
 
@@ -133,7 +136,10 @@ pub fn call_scilla_server<B: evm::backend::Backend>(method: &str, params: Params
 
                 respond_json(backend_resp?, &stream_backend);
             } else {
-                debug!("Scilla response so farX: {:?}", String::from_utf8(response.to_vec())?);
+                debug!(
+                    "Scilla response so farX: {:?}",
+                    String::from_utf8(response.to_vec())?
+                );
             }
         }
 
@@ -144,7 +150,7 @@ pub fn call_scilla_server<B: evm::backend::Backend>(method: &str, params: Params
                 bytes_read += bytes_r;
             }
             Err(e) => {
-                debug!("Scilla read error: {:?}", e);
+                //debug!("Scilla read error: {:?}", e);
             }
         }
 
@@ -153,11 +159,14 @@ pub fn call_scilla_server<B: evm::backend::Backend>(method: &str, params: Params
             continue;
         }
 
-        if response[bytes_read-1] == '\n' as u8 {
-            let filtered = filter_this(response[0..bytes_read-1].to_vec());
+        if response[bytes_read - 1] == b'\n' {
+            let filtered = filter_this(response[0..bytes_read - 1].to_vec());
             return Ok(String::from_utf8(filtered)?);
         } else {
-            debug!("Scilla response so farYY: {:?}", String::from_utf8(response.to_vec())?);
+            debug!(
+                "Scilla response so farYY: {:?}",
+                String::from_utf8(response.to_vec())?
+            );
         }
 
         if bytes_read >= 10000 {

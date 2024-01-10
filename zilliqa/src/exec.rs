@@ -1,6 +1,5 @@
 //! Manages execution of transactions on state.
 
-use std::str;
 use std::{
     collections::HashSet,
     sync::{Arc, Mutex},
@@ -8,7 +7,6 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use ethabi::Token;
-use scilla::{scilla_server_run::{run_scilla_impl_direct, calculate_contract_address_scilla}};
 use evm_ds::{
     evm::{backend::Backend, tracing::EventListener},
     evm_server_run::{
@@ -18,6 +16,7 @@ use evm_ds::{
     tracing_logging::LoggingEventListener,
 };
 use primitive_types::{H160, U256};
+use scilla::scilla_server_run::{calculate_contract_address_scilla, run_scilla_impl_direct};
 use tracing::*;
 
 use crate::{
@@ -25,9 +24,8 @@ use crate::{
     evm_backend::EvmBackend,
     message::BlockHeader,
     state::{contract_addr, Address, State},
-    transaction::VerifiedTransaction,
+    transaction::{SignedTransaction, VerifiedTransaction},
 };
-use crate::transaction::SignedTransaction;
 
 #[derive(Default)]
 pub struct TouchedAddressEventListener {
@@ -174,7 +172,6 @@ impl State {
         print_enabled: bool,
         is_scilla: bool,
     ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
-
         let caller = from_addr;
         let is_static = false;
         let context = "".to_string();
@@ -198,7 +195,11 @@ impl State {
             code = data;
             data = payload_initdata.clone();
             // Note that scilla has an off by one for the account nonce
-            to = if is_scilla {calculate_contract_address_scilla(from_addr, account.nonce + 1)} else {calculate_contract_address(from_addr, &backend)};
+            to = if is_scilla {
+                calculate_contract_address_scilla(from_addr, account.nonce + 1)
+            } else {
+                calculate_contract_address(from_addr, &backend)
+            };
             created_contract_addr = Some(to);
             trace!("*** Calculated contract address for creation: {}", to);
         }
@@ -225,7 +226,7 @@ impl State {
             enable_cps: true,
             tx_trace_enabled: true,
             tx_trace: traces.clone(),
-            is_scilla: is_scilla,
+            is_scilla,
         });
         let mut result;
         let mut run_succeeded;
@@ -462,7 +463,11 @@ impl State {
         // If this was contract creation, apply this to the deltas for the convenience of
         // the caller
         if let Some(created_contract_addr) = created_contract_addr {
-            backend.create_account(created_contract_addr, result.return_value.clone(), is_scilla);
+            backend.create_account(
+                created_contract_addr,
+                result.return_value.clone(),
+                is_scilla,
+            );
         }
 
         // If the result was a revert, kill all applys
@@ -578,11 +583,11 @@ impl State {
         let mut is_scilla = false;
 
         match txn.tx {
-            SignedTransaction::Zilliqa {..} => {
+            SignedTransaction::Zilliqa { .. } => {
                 info!("Zilliqa transaction detected, using zilliqa interpreter...");
                 is_scilla = true;
             }
-            _ => { }
+            _ => {}
         }
 
         let txn = txn.tx.into_transaction();

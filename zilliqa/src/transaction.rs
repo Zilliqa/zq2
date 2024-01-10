@@ -316,7 +316,6 @@ impl Transaction {
             Transaction::Eip1559(TxEip1559 { payload, .. }) => (payload, <&[u8]>::default()),
             // Zilliqa transactions can have both code and data set, but code takes precedence if it is non-empty.
             Transaction::Zilliqa(TxZilliqa { code, data, .. }) => {
-
                 match (!code.is_empty(), !data.is_empty()) {
                     (true, false) => (code.as_bytes(), <&[u8]>::default()),
                     (false, true) => (data.as_bytes(), <&[u8]>::default()),

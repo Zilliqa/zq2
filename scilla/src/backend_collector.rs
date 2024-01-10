@@ -1,10 +1,10 @@
-use primitive_types::{H160, H256, U256};
 use std::collections::HashMap;
-use evm::backend::{Backend};
-use tracing::field::debug;
-use evm_ds::protos::evm_proto::{EvmResult, Storage, Apply};
-use tracing::*;
+
+use evm::backend::Backend;
+use evm_ds::protos::evm_proto::{Apply, EvmResult, Storage};
+use primitive_types::{H160, H256, U256};
 use sha3::{Digest, Keccak256};
+use tracing::{*};
 
 pub type Address = H160;
 
@@ -18,7 +18,7 @@ pub struct Account {
 
 // Structure that answers queries about the state by using the backend, while also collecting
 // the state changes so it can generate an evm result
-pub struct BackendCollector<'a, B: evm::backend::Backend>{
+pub struct BackendCollector<'a, B: evm::backend::Backend> {
     pub backend: &'a B,
     // Map of cached (execution in progress) address to account and any dirty storage.
     // If the value is None, this means a deletion of that account and storage
@@ -26,17 +26,14 @@ pub struct BackendCollector<'a, B: evm::backend::Backend>{
 }
 
 impl<'a, B: Backend> BackendCollector<'a, B> {
-    pub fn new(
-        backend: &'a B,
-    ) -> Self {
+    pub fn new(backend: &'a B) -> Self {
         Self {
-            backend: backend,
+            backend,
             account_storage_cached: HashMap::new(),
         }
     }
 
     pub fn get_account_storage(&mut self, address: Address, key: H256) -> H256 {
-
         // If the account does not exist, check the backend
         if !self.account_storage_cached.contains_key(&address) {
             trace!("Account not in cache, checking backend");
@@ -45,9 +42,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
             let entry = self.account_storage_cached.get_mut(&address).unwrap();
 
             match entry {
-                Some((_, storage)) => {
-                    storage.get(&key).cloned().unwrap_or(H256::zero())
-                }
+                Some((_, storage)) => storage.get(&key).cloned().unwrap_or(H256::zero()),
                 None => {
                     error!("Queried storage in cache is None: {:?}", address);
                     H256::zero()
@@ -57,10 +52,8 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     }
 
     pub fn update_account_storage(&mut self, address: Address, key: H256, value: H256) {
-
         // If the account does not exist, check the backend, then create it with empty code and storage
-        if !self.account_storage_cached.contains_key(&address) {
-
+        if let std::collections::hash_map::Entry::Vacant(e) = self.account_storage_cached.entry(address) {
             debug!("Creating account in cache: {:?}", address);
 
             let account = Account {
@@ -70,11 +63,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
                 is_scilla: true,
             };
 
-            self.account_storage_cached.insert(
-                address,
-                Some(( account, HashMap::from([(key, value)]),
-                )),
-            );
+            e.insert(Some((account, HashMap::from([(key, value)]))));
         } else {
             let entry = self.account_storage_cached.get_mut(&address).unwrap();
 
@@ -98,14 +87,14 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     /// 3. put the data at H256 + 1, H256 + 2, etc.
     pub fn update_account_storage_scilla(&mut self, address: Address, key: &str, value: &[u8]) {
         // Hash key to H256
-        let mut key = H256::from_slice(&Keccak256::digest(key.as_bytes()).to_vec());
+        let mut key = H256::from_slice(&Keccak256::digest(key.as_bytes()));
 
         let value_fixed_width = u64_to_h256(value.len() as u64);
 
         // Key, Value for the length of the proceeding value in bytes
         self.update_account_storage(address, key, value_fixed_width);
 
-        for (i, chunk) in value.chunks(32).enumerate() {
+        for chunk in value.chunks(32) {
             let mut value_fixed_width = [0u8; 32];
             value_fixed_width[..chunk.len()].copy_from_slice(chunk);
             let value = H256::from(value_fixed_width);
@@ -120,30 +109,31 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     /// 2. put the length of the value in bytes at this location
     /// 3. put the data at H256 + 1, H256 + 2, etc.
     pub fn get_account_storage_scilla(&mut self, address: Address, key: &str) -> Vec<u8> {
-
-        let mut key = H256::from_slice(&Keccak256::digest(key.as_bytes()).to_vec());
-        let zero = H256::zero();
+        let mut key = H256::from_slice(&Keccak256::digest(key.as_bytes()));
+        let _zero = H256::zero();
 
         let value = self.get_account_storage(address, key);
         let value = h256_to_u64(value);
-        let mut len = value.div_ceil(32);
+        let len = value.div_ceil(32);
 
-        debug!("Getting account storage: {:?}, {:?}, len: {:?},", address, key, value);
+        debug!(
+            "Getting account storage: {:?}, {:?}, len: {:?},",
+            address, key, value
+        );
 
         let mut result = vec![];
 
-        for i in 0..len {
+        for _i in 0..len {
             key = increment_h256(key);
-            let value = self.get_account_storage(address, key.into());
-            result.extend_from_slice(&value.as_bytes());
+            let value = self.get_account_storage(address, key);
+            result.extend_from_slice(value.as_bytes());
         }
 
         // Remove trailing zeros if any
         result.resize(value as usize, 0);
 
-        return result;
+        result
     }
-}
 
     pub fn create_account(&mut self, address: Address, code: Vec<u8>, is_scilla: bool) {
         // Insert empty slot into cache if it does not already exist, else just put the code there
@@ -206,9 +196,9 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         }
     }
 }
-fn increment_h256(mut hash: H256) -> H256 {
+fn increment_h256(hash: H256) -> H256 {
     // To easily increment, just re-hash the hash
-    H256::from_slice(&Keccak256::digest(&hash[..].to_vec()).to_vec())
+    H256::from_slice(&Keccak256::digest(&hash[..]))
 }
 fn u64_to_h256(value: u64) -> H256 {
     let mut hash = [0u8; 32];

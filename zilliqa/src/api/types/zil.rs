@@ -1,11 +1,12 @@
-use primitive_types::{H256, H512, H160};
+use primitive_types::{H160, H256, H512};
 use serde::Serialize;
-use serde_json::{json, Value};
 
 use super::hex;
-use crate::{message::Block, time::SystemTime};
-use crate::transaction::{SignedTransaction, TxZilliqa, VerifiedTransaction};
-use crate::transaction::TransactionReceipt;
+use crate::{
+    message::Block,
+    time::SystemTime,
+    transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
+};
 
 #[derive(Clone, Serialize)]
 pub struct TxBlock {
@@ -97,16 +98,19 @@ struct GetTxResponseReceipt {
 
 impl GetTxResponse {
     pub fn new(verified_tx: VerifiedTransaction, receipt: TransactionReceipt) -> Option<Self> {
-
         match verified_tx.tx {
-            SignedTransaction::Zilliqa{ref tx, ..} => Some(GetTxResponse {
+            SignedTransaction::Zilliqa { ref tx, .. } => Some(GetTxResponse {
                 ID: verified_tx.hash.to_string(),
                 version: "65537".to_string(),
                 nonce: tx.nonce.to_string(),
-                to_addr: tx.to_addr.clone(), // Note this appears to have no 0x prefix in zq1
+                to_addr: tx.to_addr, // Note this appears to have no 0x prefix in zq1
                 sender_pub_key: verified_tx.signer.to_string(),
                 amount: tx.amount.to_string(),
-                signature: format!("0x{}{}", hex::encode(verified_tx.tx.sig_r()), hex::encode(verified_tx.tx.sig_s())),
+                signature: format!(
+                    "0x{}{}",
+                    hex::encode(verified_tx.tx.sig_r()),
+                    hex::encode(verified_tx.tx.sig_s())
+                ),
                 receipt: GetTxResponseReceipt {
                     cumulative_gas: receipt.gas_used.to_string(),
                     epoch_num: "1".to_string(), // todo here
