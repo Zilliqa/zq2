@@ -581,12 +581,8 @@ impl State {
         }
 
         if let Transaction::Intershard(ref _intershard_tx) = txn {
-            println!(
-                "\nApplying intershard transaction to address {} in shard {}",
-                from_addr, chain_id
-            );
-            println!("Handle intershard txs here! Need to verify nonce");
-            // TODO: 1. make call to verify nonce
+            warn!("Intershard tx - TODO: verify bridge nonce here");
+            // TODO: make call to verify nonce
         }
 
         let result = self.apply_transaction_inner(

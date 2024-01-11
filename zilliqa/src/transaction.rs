@@ -50,7 +50,7 @@ pub enum SignedTransaction {
     Intershard {
         tx: TxIntershard,
         // no signature as the transaction can only originate from a local (trusted) process
-        // instead use raw from address
+        // instead use raw from-address
         from: Address,
     },
 }
@@ -123,6 +123,17 @@ impl SignedTransaction {
             // Zilliqa nonces are 1-indexed rather than zero indexed.
             SignedTransaction::Zilliqa { tx, .. } => tx.nonce - 1,
             SignedTransaction::Intershard { tx, .. } => tx.nonce,
+        }
+    }
+
+    pub fn gas_price(&self) -> u128 {
+        match self {
+            SignedTransaction::Legacy { tx, .. } => tx.gas_price,
+            SignedTransaction::Eip2930 { tx, .. } => tx.gas_price,
+            // We ignore the priority fee and just use the maximum fee.
+            SignedTransaction::Eip1559 { tx, .. } => tx.max_fee_per_gas,
+            SignedTransaction::Zilliqa { tx, .. } => tx.gas_price,
+            SignedTransaction::Intershard { tx, .. } => tx.gas_price,
         }
     }
 

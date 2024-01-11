@@ -48,7 +48,6 @@ macro_rules! declare_module {
                 .f64_histogram("rpc.server.duration")
                 .with_unit(opentelemetry::metrics::Unit::new("ms"))
                 .init();
-            let cx = opentelemetry::Context::new();
             module
                 .register_method($name, move |params, context| {
                     let mut attributes = vec![
@@ -82,7 +81,6 @@ macro_rules! declare_module {
                         attributes.push(opentelemetry::KeyValue::new("rpc.jsonrpc.error_code", err.code() as i64));
                     }
                     rpc_server_duration.record(
-                        &cx,
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64() * 1000.0),
                         &attributes,
                     );

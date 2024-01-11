@@ -87,11 +87,11 @@ impl MessageSender {
 #[derive(Debug)]
 pub struct Node {
     pub config: NodeConfig,
+    pub db: Arc<Db>,
     peer_id: PeerId,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<()>,
     consensus: Consensus,
-    db: Arc<Db>,
 }
 
 impl Node {
@@ -189,7 +189,7 @@ impl Node {
             }
             ExternalMessage::RequestResponse => {}
             ExternalMessage::NewTransaction(t) => {
-                self.consensus.new_transaction(t)?;
+                self.consensus.new_transaction(t.verify()?)?;
             }
             ExternalMessage::JoinCommittee(public_key) => {
                 self.add_peer(from, public_key)?;
@@ -226,7 +226,7 @@ impl Node {
             },
             from: intershard_call.source_address,
         };
-        self.consensus.new_transaction(tx)?;
+        self.consensus.new_transaction(tx.verify()?)?;
         Ok(())
     }
 
@@ -258,11 +258,7 @@ impl Node {
 
         info!(?hash, "seen new txn {:?}", txn);
 
-        // Make sure TX hasn't been seen before
-        if !self.consensus.seen_tx_already(&hash)? {
-            // There is a race on querying txn hash, so avoid it by immediately putting it into the pool
-            self.consensus.new_transaction(txn.clone())?;
-
+        if self.consensus.new_transaction(txn.clone().verify()?)? {
             self.message_sender
                 .broadcast_external_message(ExternalMessage::NewTransaction(txn))?;
         }

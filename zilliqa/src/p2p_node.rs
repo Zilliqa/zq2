@@ -12,8 +12,9 @@ use libp2p::{
     mdns,
     multiaddr::{Multiaddr, Protocol},
     noise,
+    request_response::{self, ProtocolSupport},
     swarm::{self, NetworkBehaviour, SwarmEvent},
-    tcp, yamux, PeerId, Swarm, Transport,
+    tcp, yamux, PeerId, StreamProtocol, Swarm, Transport,
 };
 use tokio::{
     select,
@@ -28,13 +29,15 @@ use crate::{
     cfg::{Config, ConsensusConfig, NodeConfig},
     crypto::SecretKey,
     message::{ExternalMessage, InternalMessage},
-    networking::{request_response, MessageCodec, MessageProtocol, ProtocolSupport},
     node_launcher::NodeLauncher,
 };
 
+/// Messages are a tuple of the destination shard ID and the actual message.
+type DirectMessage = (u64, ExternalMessage);
+
 #[derive(NetworkBehaviour)]
 struct Behaviour {
-    request_response: request_response::Behaviour<MessageCodec>,
+    request_response: request_response::json::Behaviour<DirectMessage, DirectMessage>,
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
     identify: identify::Behaviour,
@@ -89,10 +92,8 @@ impl P2pNode {
             .boxed();
 
         let behaviour = Behaviour {
-            // TODO: Consider replacing with [request_response::json::Behaviour].
-            request_response: request_response::Behaviour::with_codec(
-                MessageCodec,
-                iter::once((MessageProtocol, ProtocolSupport::Full)),
+            request_response: request_response::json::Behaviour::new(
+                iter::once((StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full)),
                 Default::default(),
             ),
             gossipsub: gossipsub::Behaviour::new(

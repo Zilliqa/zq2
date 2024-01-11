@@ -1,7 +1,6 @@
 use std::{fmt::Debug, ops::DerefMut};
 
-use ethabi::ethereum_types::U64;
-use ethabi::Token;
+use ethabi::{ethereum_types::U64, Token};
 use ethers::{
     abi::FunctionExt,
     providers::{Middleware, Provider},
@@ -884,7 +883,6 @@ async fn nonces_respected_ordered(mut network: Network) {
     assert!(wait.is_ok());
 }
 
-#[cfg(target_os = "macos")]
 #[zilliqa_macros::test]
 async fn priority_fees_tx(mut network: Network) {
     let wallet = network.genesis_wallet().await;
