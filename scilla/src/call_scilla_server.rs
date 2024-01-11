@@ -12,10 +12,14 @@ use tracing::*;
 
 use crate::scilla_tcp_server::ScillaServer;
 
-struct TcpRawClient {
-    pub client: TcpStream,
-}
+/// Collection of functions to call the Scilla server and decode the result.
+/// The communications are over TCP currently.
+/// The scilla server is unusual in that it sometimes responds with a string as the 'result' which
+/// then has to be further parsed.
+/// There are two tcp connections required. The first is for the request (such as a 'run' command),
+/// and the second is for the backend queries (the server reading and writing to the state).
 
+/// Response from the 'check' command
 #[derive(Deserialize, Debug)]
 pub struct CheckOutput {
     pub contract_info: ContractInfo,
@@ -71,7 +75,7 @@ pub struct JsonRpcError {
     data: Option<Value>,
 }
 
-fn respond_json(val: Value, mut connection: &TcpStream) {
+fn respond_json(val: Value, mut connection: &TcpStream, id: u32) {
     let response = JsonRpcResponse {
         jsonrpc: "2.0".to_string(),
         result: Some(val),
@@ -92,49 +96,78 @@ pub fn call_scilla_server<B: evm::backend::Backend>(
 ) -> Result<String> {
     let request = JsonRpcRequest::new(method, params, 1);
     let request_str = serde_json::to_string(&request)?;
-    let request_str = request_str + "\n";
+    let request_str = request_str + "\n"; // This is required to complete the request
 
+    trace!("Connecting to scilla server...");
     let mut stream = TcpStream::connect("127.0.0.1:12345")?;
     let mut stream_backend = TcpStream::connect("127.0.0.1:12346")?;
 
+    trace!("Sending request to scilla server: {:?}", request_str);
     stream.write_all(request_str.as_bytes())?;
 
+    // Set non-blocking so that we can check and respond to both connections (and timeout).
     stream.set_nonblocking(true)?;
     stream_backend.set_nonblocking(true)?;
 
-    let mut response = [0; 10000];
-    let mut response_backend = [0; 10000];
+    let mut response = vec![];
+    let mut response_backend = vec![];
+
     let mut bytes_read = 0;
     let mut bytes_read_backend = 0;
 
     loop {
-        let bytes_read_tcp = stream_backend.read(&mut response_backend[bytes_read..]);
 
-        match bytes_read_tcp {
+        // Bump up the buffers we are reading into if we are at the end (exponential growth)
+        if bytes_read >= response.len() {
+            response.resize((response.len() + 1)*2, 0);
+        }
+
+        if bytes_read_backend >= response_backend.len() {
+            response_backend.resize((response_backend.len() + 1)*2, 0);
+        }
+
+        // Read backend request
+        let bytes_read_ch2 = stream_backend.read(&mut response_backend[bytes_read_backend..]);
+
+        match bytes_read_ch2 {
             Ok(bytes_read) => {
                 bytes_read_backend += bytes_read;
             }
-            Err(e) => {
+            // It is valid if there is no data to read for either connection because it can still be
+            // processing the request.
+            Err(_) => {
                 //debug!("Scilla backend error: {:?}", e);
             }
         }
 
+        // Check if final character read was a newline, which indicates the end of the response
         if bytes_read_backend > 0 {
             if response_backend[bytes_read_backend - 1] == b'\n' {
-                let not_filtered = response_backend[0..bytes_read_backend - 1].to_vec();
+                let possible_response = &response_backend[0..bytes_read_backend - 1];
 
                 let request: Result<JsonRpcRequest, serde_json::Error> =
-                    from_str(&String::from_utf8(not_filtered.to_vec())?);
+                    from_str(&String::from_utf8(possible_response.to_vec())?);
 
-                let backend_resp = tcp_scilla_server
-                    .handle_request(request.expect("Deser of server request failed"));
+                match request {
+                    Ok(request) => {
+                        debug!("Scilla backend request: {:?}", request);
+                        let backend_resp = tcp_scilla_server.handle_request(&request);
 
-                debug!("Scilla backend response: {:?}", backend_resp);
+                        // Reset read pointer
+                        bytes_read_backend = 0;
 
-                // Reset read pointer
-                bytes_read_backend = 0;
+                        respond_json(backend_resp?, &stream_backend, request.id);
+                    }
+                    Err(e) => {
+                        // This could be caused by a newline in the response itself,
+                        // so we just continue on and will try to handle the full request later
+                        debug!("Scilla backend request deser error: {:?}", e);
+                    }
+                }
 
-                respond_json(backend_resp?, &stream_backend);
+                //let backend_resp = tcp_scilla_server
+                //    .handle_request(request.expect("Deser of server request failed"));
+                //debug!("Scilla backend response: {:?}", backend_resp);
             } else {
                 debug!(
                     "Scilla response so farX: {:?}",
@@ -143,22 +176,24 @@ pub fn call_scilla_server<B: evm::backend::Backend>(
             }
         }
 
-        let bytes_r = stream.read(&mut response[bytes_read..]);
+        let bytes_read_ch1 = stream.read(&mut response[bytes_read..]);
 
-        match bytes_r {
+        match bytes_read_ch1 {
             Ok(bytes_r) => {
                 bytes_read += bytes_r;
             }
-            Err(e) => {
+            Err(_) => {
                 //debug!("Scilla read error: {:?}", e);
             }
         }
 
-        if bytes_read == 0 {
+        // Nothing read on either channel, so sleep for a bit
+        if bytes_read_ch1.is_err() && bytes_read_ch2.is_err() || bytes_read == 0 {
             std::thread::sleep(std::time::Duration::from_millis(100));
             continue;
         }
 
+        // Attempt to deserialize the response and return
         if response[bytes_read - 1] == b'\n' {
             let filtered = filter_this(response[0..bytes_read - 1].to_vec());
             return Ok(String::from_utf8(filtered)?);
@@ -168,13 +203,10 @@ pub fn call_scilla_server<B: evm::backend::Backend>(
                 String::from_utf8(response.to_vec())?
             );
         }
-
-        if bytes_read >= 10000 {
-            return Err(anyhow!("Response from Scilla server too large!"));
-        }
     }
 }
 
+/// Filter out the escape characters from the response
 fn filter_this(data: Vec<u8>) -> Vec<u8> {
     let mut filtered_data = Vec::new();
     let mut skip_next = false;

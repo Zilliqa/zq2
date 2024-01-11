@@ -35,7 +35,7 @@ pub struct Inner<'a, B: evm::backend::Backend> {
 impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
     pub fn handle_request(
         &mut self,
-        request: JsonRpcRequest,
+        request: &JsonRpcRequest,
     ) -> Result<Value, jsonrpc_core::Error> {
 
         match request.method.as_str() {
@@ -52,7 +52,7 @@ impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
             //    Ok(response)
             //},
             "updateStateValue" => {
-                self.inner.update_state_value_b64(request.params)
+                self.inner.update_state_value_b64(&request.params)
 
                 //Ok(response)
             }
@@ -85,7 +85,7 @@ impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
 }
 
 impl<'a, B: evm::backend::Backend> Inner<'a, B> {
-    pub fn update_state_value_b64(&mut self, params: Params) -> Result<Value, jsonrpc_core::Error> {
+    pub fn update_state_value_b64(&mut self, params: &Params) -> Result<Value, jsonrpc_core::Error> {
         fn err(s: &'static str) -> Result<Value, jsonrpc_core::Error> {
             debug!("* updateStateValueB64 ERROR called *** {:?}", s);
             Err(jsonrpc_core::Error::invalid_params(s))

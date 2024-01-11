@@ -8,6 +8,15 @@ use tracing::{*};
 
 pub type Address = H160;
 
+
+/// The backend collector acts as a cache during the scilla execution. It responds to queries about the state
+/// and saves changes to the state. Once the execution is complete, it returns the state changes as an EvmResult
+/// which can be applied in the same manner as the EVM flow.
+/// The interface it exposes provides read and write of (key, value), where the key is a string and the value is
+/// an unlimited length byte array.
+/// Due to the way the EVM works, in which the value is always 32 bytes, we pack and unpack the data
+/// into a number of hashes in a way which is hidden from scilla.
+
 #[derive(Debug, Clone)]
 pub struct Account {
     pub nonce: u64,
@@ -19,6 +28,7 @@ pub struct Account {
 // Structure that answers queries about the state by using the backend, while also collecting
 // the state changes so it can generate an evm result
 pub struct BackendCollector<'a, B: evm::backend::Backend> {
+    // Reference to the original backend
     pub backend: &'a B,
     // Map of cached (execution in progress) address to account and any dirty storage.
     // If the value is None, this means a deletion of that account and storage
@@ -196,6 +206,8 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         }
     }
 }
+
+// 'Increment' a H256
 fn increment_h256(hash: H256) -> H256 {
     // To easily increment, just re-hash the hash
     H256::from_slice(&Keccak256::digest(&hash[..]))
