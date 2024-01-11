@@ -1,15 +1,6 @@
-use crate::LocalRpcClient;
-use ethabi::{Address, Token};
-use ethers::types::BlockId;
-use ethers::{
-    prelude::{DeploymentTxFactory, SignerMiddleware},
-    providers::Provider,
-    signers::LocalWallet,
-};
-use ethers::{
-    providers::Middleware,
-    types::{BlockNumber, TransactionRequest},
-};
+use ethabi::Token;
+use ethers::prelude::DeploymentTxFactory;
+use ethers::{providers::Middleware, types::TransactionRequest};
 use primitive_types::H160;
 use tracing::*;
 use zilliqa::{contracts, state::contract_addr};
@@ -386,50 +377,31 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 50)
         .await;
 
-    // 10. Make enough blocks such that the transaction is included in the child network
-    let check_child_block = shard_wallet
-        .get_block(BlockNumber::Latest)
+    // 10. Make sure the transaction was included in the child network (by checking the nonce)
+
+    // quick sanity check first
+    let nonce_before = shard_wallet
+        .get_transaction_count(shard_wallet.address(), None)
         .await
-        .unwrap()
-        .unwrap()
-        .number
         .unwrap();
+    assert_eq!(nonce_before, 0.into());
 
     network
         .children
         .get_mut(&child_shard_id)
         .unwrap()
-        .run_until_block(&shard_wallet, check_child_block + 10, 200)
-        .await;
-
-    async fn get_nonce(
-        wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-        address: Address,
-        number: BlockNumber,
-    ) -> u128 {
-        wallet
-            .get_transaction_count(address, Some(BlockId::Number(number)))
-            .await
-            .unwrap()
-            .as_u128()
-    }
-
-    // 11. Check our nonce on the shard network
-    let nonce_before = get_nonce(
-        &shard_wallet,
-        shard_wallet.address(),
-        BlockNumber::Number(check_child_block),
-    )
-    .await;
-    assert_eq!(
-        nonce_before, 0,
-        "Wallet is expected to have nonce zero before having sent the cross-shard tx"
-    );
-    let nonce_after = get_nonce(&shard_wallet, shard_wallet.address(), BlockNumber::Latest).await;
-    assert_eq!(
-        nonce_after, 1,
-        "Wallet is expected to have nonce one after having sent the cross-shard tx"
-    );
+        .run_until_async(
+            || async {
+                shard_wallet
+                    .get_transaction_count(shard_wallet.address(), None)
+                    .await
+                    .unwrap()
+                    == 1.into()
+            },
+            300,
+        )
+        .await
+        .unwrap();
 }
 
 // test that when a fork occurs in the network, the node which has forked correctly reverts its state
