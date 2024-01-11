@@ -164,15 +164,6 @@ pub fn call_scilla_server<B: evm::backend::Backend>(
                         debug!("Scilla backend request deser error: {:?}", e);
                     }
                 }
-
-                //let backend_resp = tcp_scilla_server
-                //    .handle_request(request.expect("Deser of server request failed"));
-                //debug!("Scilla backend response: {:?}", backend_resp);
-            } else {
-                debug!(
-                    "Scilla response so farX: {:?}",
-                    String::from_utf8(response.to_vec())?
-                );
             }
         }
 
@@ -195,19 +186,14 @@ pub fn call_scilla_server<B: evm::backend::Backend>(
 
         // Attempt to deserialize the response and return
         if response[bytes_read - 1] == b'\n' {
-            let filtered = filter_this(response[0..bytes_read - 1].to_vec());
+            let filtered = filter_out_escape_chars(response[0..bytes_read - 1].to_vec());
             return Ok(String::from_utf8(filtered)?);
-        } else {
-            debug!(
-                "Scilla response so farYY: {:?}",
-                String::from_utf8(response.to_vec())?
-            );
         }
     }
 }
 
 /// Filter out the escape characters from the response
-fn filter_this(data: Vec<u8>) -> Vec<u8> {
+fn filter_out_escape_chars(data: Vec<u8>) -> Vec<u8> {
     let mut filtered_data = Vec::new();
     let mut skip_next = false;
 
