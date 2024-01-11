@@ -4,8 +4,6 @@ mod eth;
 mod persistence;
 mod web3;
 mod zil;
-// use ethabi::Bytes;
-// use ethers::abi::Bytes;
 use ethers::types::{Bytes, TransactionReceipt};
 use std::{env, ops::DerefMut};
 
