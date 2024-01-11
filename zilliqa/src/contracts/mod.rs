@@ -164,7 +164,7 @@ mod tests {
 
         if std::env::var_os("ZQ_CONTRACT_TEST_BLESS").is_some() {
             let file = File::create(output_file).unwrap();
-            serde_json::to_writer(file, &output).unwrap();
+            serde_json::to_writer_pretty(file, &output).unwrap();
 
             println!("`compiled.json` updated, please commit these changes");
         } else {
