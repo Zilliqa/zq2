@@ -583,6 +583,18 @@ impl Network {
             }
             return;
         }
+
+        // Immediately forward any intershard messages to children - the child network will randomize them
+        messages.retain(|m| {
+            if let AnyMessage::Internal(_, destination, InternalMessage::IntershardCall(_)) = m.2 {
+                if self.shard_id != destination {
+                    self.handle_message(m.clone());
+                    return false;
+                }
+            }
+            true
+        });
+
         // Pick a random message
         let index = self.rng.lock().unwrap().gen_range(0..messages.len());
         let (source, destination, message) = messages.swap_remove(index);

@@ -398,7 +398,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
                     .unwrap()
                     == 1.into()
             },
-            300,
+            200,
         )
         .await
         .unwrap();
