@@ -115,8 +115,6 @@ fn create_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<CreateT
     let transaction_hash = node.create_transaction(transaction.clone())?;
     let transaction_verified: VerifiedTransaction = transaction.verify()?;
 
-    //let transaction_hash = hex::encode(transaction_hash.0);
-
     match transaction_verified.tx {
         SignedTransaction::Zilliqa { ref tx, .. } => {
             let contract_address = get_created_scilla_contract_addr(tx, transaction_verified.signer);
@@ -128,32 +126,18 @@ fn create_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<CreateT
             Err(anyhow!("unexpected transaction type for scilla create transaction"))
         }
     }
-
-
-    //contract_address: String,
-    //info: String,
-    //#[serde(rename = "TranID")]
-    //tran_id: String,
-
-    //Ok(response)
 }
 
 fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<GetTxResponse>> {
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
-    //let node_locked = node.lock().unwrap();
-    trace!("GetTransaction: {:?}", hash);
 
     let ret = get_scilla_transaction_inner(hash, &node.lock().unwrap())?;
     let mut receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
 
-    trace!("GetTransaction: {:?} => {:?}", hash, ret);
-
     // Spin up to 1s while waiting for the receipt to become available
     let now = std::time::Instant::now();
     while receipt.is_none() && now.elapsed() < std::time::Duration::from_secs(10) {
-        //return Ok(None);
-        //node.
         std::thread::sleep(std::time::Duration::from_millis(10));
         receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
         trace!("Time spent waiting for receipt... {:?}", now.elapsed());
@@ -244,23 +228,11 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<s
     let smart_contract_address: H160 = params.one()?;
     let mut node = node.lock().unwrap();
 
-    trace!("GetSmartContractState request: {:?}", smart_contract_address);
-
     // First get the account and check that its a scilla account
     let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
     let balance = node.get_native_balance(smart_contract_address, BlockNumber::Latest)?;
 
-    trace!("GetSmartContractState account: {:?}", account);
-    trace!("GetSmartContractState account balance: {:?}", balance);
-    //trace!("GetSmartContractState account balance: {:?}", node.get_account_storage_all(smart_contract_address, BlockNumber::Latest));
-    let acccount_data = node.get_account_storage_all(smart_contract_address, BlockNumber::Latest)?;
-    //let account_data = reconstruct_kv_pairs(acccount_data);
-
-    //let mut backend = EvmBackend::new(node, U256::zero(), caller, chain_id, current_block);
-
     let acccount_data = node.get_scilla_kv_pairs(smart_contract_address, BlockNumber::Latest)?;
-
-    trace!("GetSmartContractState account data: {:?}", acccount_data);
 
     let mut return_json = serde_json::Value::Object(Default::default());
     return_json["_balance"] = serde_json::Value::String(balance.to_string());
@@ -272,12 +244,5 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<s
         return_json[key] = serde_json::Value::String(as_string.to_string());
     }
 
-    trace!("GetSmartContractState return_json: {:?}", return_json);
-
-    // Now iterate over every state item
-    //for storage_item in &mut node.get_account_storage_iterator(smart_contract_address, BlockNumber::Latest) {
-    //    trace!("GetSmartContractState key: {:?} ", storage_item);
-    //}
-    //Ok(json!({"_balance": balance.to_string()}))
     Ok(return_json)
 }

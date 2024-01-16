@@ -492,8 +492,6 @@ impl State {
 
             let gas_deduction = (gas_limit - result.remaining_gas) as u128 * gas_price;
 
-            trace!("TRACES1: {:?}", traces.lock().unwrap());
-
             let traces_clone = traces.clone();
 
             continuation_stack.push(self.push_transfer(
@@ -503,8 +501,6 @@ impl State {
                 continuations,
                 traces,
             ));
-
-            trace!("TRACES2: {:?}", traces_clone.lock().unwrap());
 
             let call_args = continuation_stack.pop().unwrap();
 
@@ -517,12 +513,9 @@ impl State {
                 debug!("our caller is: {:?}", call_args.caller);
             }
 
-            trace!("TRACES3: {:?}", traces_clone.lock().unwrap());
             backend.origin = call_args.caller;
             let mut gas_result = run_evm_impl_direct(call_args, &backend);
             traces = gas_result.tx_trace.clone();
-
-            trace!("TRACES4: {:?}", traces.lock().unwrap());
 
             if !gas_result.succeeded() {
                 let fail_string = format!(
@@ -535,8 +528,6 @@ impl State {
 
             backend.apply_update(gas_result.take_apply());
         }
-
-        trace!("TRACES5: {:?}", traces.lock().unwrap());
 
         let mut backend_result = backend.get_result();
         backend_result.exit_reason = result.exit_reason;
@@ -670,15 +661,12 @@ impl State {
                 acct.nonce = acct.nonce.checked_add(1).unwrap();
                 self.save_account(from_addr, acct)?;
 
-                trace!("******************** adsasfadsff {:?}", result.tx_trace.lock().unwrap().scilla_events.clone());
-
                 Ok(TransactionApplyResult {
                     success,
                     contract_address: contract_addr,
                     logs: result.logs,
                     traces: result.tx_trace.clone(),
                     gas_used: txn.gas_limit() - result.remaining_gas,
-                    //scilla_events: mem::take(&mut result.tx_trace.lock().unwrap().scilla_events),
                     scilla_events: scilla_events_to_single(result.tx_trace.lock().unwrap().scilla_events.clone()),
                 })
             }
@@ -1045,20 +1033,5 @@ pub fn get_created_scilla_contract_addr(tx: &TxZilliqa, from_addr: H160) -> Opti
 
 fn scilla_events_to_single(events: Vec<Value>) -> Value {
     let array_value = Value::Array(events.clone());
-
-    if events.len() > 0 {
-        trace!("scilla_events_to_single: {:?}", array_value);
-        trace!("scilla_events_to_single: {:?}", array_value);
-    }
-
     array_value
-    //// Create final Value which is an array of values, return this as a string
-    //let mut final_value = json!([]);
-
-    ////for (event, i) in events.iter().zip(0..) {
-    //for (i, event) in events.iter().enumerate() {
-    //    final_value[i] = event;
-    //}
-
-    //final_value
 }

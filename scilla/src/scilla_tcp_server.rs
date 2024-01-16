@@ -88,8 +88,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             Err(jsonrpc_core::Error::invalid_params(s))
         }
 
-        debug!("* updateStateValueB64 called ***");
-
         let b64 = base64::engine::general_purpose::STANDARD;
 
         let Params::Map(params) = params else {
@@ -101,16 +99,15 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         let Some(query) = query.as_str().map(str::to_owned) else {
             return err("query was not a string");
         };
-        // Attempt both base64 and non-base64 decoding.
+        // Attempt both base64 and non-base64 decoding for query and value
         let query = b64.decode(query.clone()).unwrap_or(query.into());
-        //let query = query.as_bytes().to_vec();
+
         let Some(value) = params.get("value") else {
             return err("expected value in map");
         };
         let Some(value) = value.as_str().map(str::to_owned) else {
             return err("value was not a string");
         };
-        //let Ok(value) = b64.decode(value) else { value };
         let value = b64.decode(value.clone()).unwrap_or(value.into());
 
         let result = self

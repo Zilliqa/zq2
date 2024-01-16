@@ -122,7 +122,6 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
                 // Read each already existing key and increment the pointer after
                 for _i in 0..(keys_number - 1) {
                     let (_old_val, key) = self.read_compressed(address, key_pointer);
-                    trace!("Note: old val: {:?}", _old_val);
                     key_pointer = increment_h256(key);
                 }
             }

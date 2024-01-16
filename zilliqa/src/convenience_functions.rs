@@ -1,11 +1,11 @@
 use core::fmt;
 
 // Convenience function to print long vectors, truncating if they are massive
-pub fn shortened_vec(val: &Vec<u8>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", vec_to_string_concat(val))
+pub fn sshortened_vec(val: &Vec<u8>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{}", vec_tos_string_concat(val))
 }
 
-fn vec_to_string_concat<T: fmt::Debug + fmt::Display + std::fmt::LowerHex>(
+fn vec_tos_string_concat<T: fmt::Debug + fmt::Display + std::fmt::LowerHex>(
     input: &Vec<T>,
 ) -> String {
     if input.len() > 64 {
