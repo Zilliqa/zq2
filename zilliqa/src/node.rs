@@ -6,6 +6,13 @@ use libp2p::PeerId;
 use primitive_types::{H256, U256};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::*;
+use eth_trie::{EthTrie as PatriciaTrie, EthTrie, Trie};
+use crate::db::TrieStorage;
+use crate::evm_backend::EvmBackend;
+//use crate::db::trie::TrieIterator;
+//use eth_trie::Trie;
+
+use scilla::scilla_server_run::{reconstruct_kv_pairs};
 
 use crate::{
     cfg::NodeConfig,
@@ -351,6 +358,38 @@ impl Node {
         self.consensus
             .try_get_state_at(self.get_number(block_number))?
             .get_account_storage(address, index)
+    }
+
+    pub fn get_account_storage_all(
+        &self,
+        address: Address,
+        block_number: BlockNumber,
+    ) -> Result<Vec<(H256, H256)>> {
+    //) -> impl Iterator<Item = (Vec<u8>, Vec<u8>)> {
+        let temp_state = self.consensus.try_get_state_at(self.get_number(block_number)).unwrap();
+
+        let aa = temp_state.get_account_trie(address).unwrap();
+        let mut result: Vec<(H256, H256)> = vec![];
+        //:aa.
+        for (k, v) in aa.iter() {
+            trace!("k: {:?}, v: {:?}", k, v);
+            result.push((H256::from_slice(&k), H256::from_slice(&v)));
+        }
+
+        Ok(result)
+    }
+
+    pub fn get_scilla_kv_pairs(
+        &self,
+        address: Address,
+        block_number: BlockNumber,
+    ) -> Result<Vec<(String, Vec<u8>)>> {
+        //) -> impl Iterator<Item = (Vec<u8>, Vec<u8>)> {
+
+        let block_header = self.get_block_by_blocknum(block_number).unwrap().unwrap().header;
+        let mut backend = EvmBackend::new(self.consensus.state(), U256::zero(), address, 0, block_header);
+        Ok(reconstruct_kv_pairs(&backend, address))
+        //Ok(result)
     }
 
     pub fn get_native_balance(&self, address: Address, block_number: BlockNumber) -> Result<U256> {

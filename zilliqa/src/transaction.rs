@@ -5,6 +5,7 @@ use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::sec1::ToEncodedPoint,
 };
+use serde_json::Value;
 use primitive_types::{H160, H256};
 use prost::Message;
 use rlp::RlpStream;
@@ -486,6 +487,7 @@ pub struct TransactionReceipt {
     pub gas_used: u64,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
+    pub scilla_events: String,
 }
 
 fn strip_leading_zeroes(bytes: &[u8]) -> &[u8] {

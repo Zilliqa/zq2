@@ -1,9 +1,11 @@
 use primitive_types::{H160, H256, H512};
 use serde::Serialize;
 
+use serde_json::Value;
 use super::hex;
 use crate::{
     message::Block,
+    crypto::Hash,
     time::SystemTime,
     transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
@@ -75,7 +77,7 @@ struct TxBlockHeader {
 #[serde(rename_all = "camelCase")]
 pub struct GetTxResponse {
     #[serde(rename = "ID")]
-    ID: String,
+    id: String,
     version: String,
     nonce: String,
     to_addr: H160,
@@ -88,23 +90,47 @@ pub struct GetTxResponse {
     code: String,
     data: String,
 }
+//#[derive(Clone, Serialize, Debug)]
+//#[serde(rename_all = "camelCase")]
+//pub struct GetSmartContractStateResponse {
+//    #[serde(rename = "_balance")]
+//    balance: String,
+//}
+
+#[derive(Clone, Serialize, Debug)]
+#[serde(rename_all = "PascalCase")]
+pub struct CreateTransactionResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_address: Option<H160>,
+    pub info: String,
+    #[serde(rename = "TranID")]
+    pub tran_id: H256,
+}
 
 #[derive(Clone, Serialize, Debug)]
 struct GetTxResponseReceipt {
     cumulative_gas: String,
     epoch_num: String,
     success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_logs: Option<Vec<Value>>,
 }
+
+//#[derive(Clone, Serialize, Debug)]
+//struct ScillaEvent {
+//    address: H160,
+//    params: Vec<ScillaEventParam>,
+//}
 
 impl GetTxResponse {
     pub fn new(verified_tx: VerifiedTransaction, receipt: TransactionReceipt) -> Option<Self> {
         match verified_tx.tx {
             SignedTransaction::Zilliqa { ref tx, .. } => Some(GetTxResponse {
-                ID: verified_tx.hash.to_string(),
+                id: verified_tx.hash.to_string(),
                 version: "65537".to_string(),
                 nonce: tx.nonce.to_string(),
                 to_addr: tx.to_addr, // Note this appears to have no 0x prefix in zq1
-                sender_pub_key: verified_tx.signer.to_string(),
+                sender_pub_key: hex::encode(verified_tx.signer),
                 amount: tx.amount.to_string(),
                 signature: format!(
                     "0x{}{}",
@@ -115,6 +141,7 @@ impl GetTxResponse {
                     cumulative_gas: receipt.gas_used.to_string(),
                     epoch_num: "1".to_string(), // todo here
                     success: receipt.success,
+                    event_logs: Some(serde_json::from_str(&receipt.scilla_events).unwrap()),
                 },
                 gas_price: "2000000000".to_string(),
                 gas_limit: "50000".to_string(),

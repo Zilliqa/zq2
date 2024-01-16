@@ -645,6 +645,7 @@ impl Consensus {
                         contract_address: result.contract_address,
                         logs: result.logs,
                         gas_used: result.gas_used,
+                        scilla_events: serde_json::to_string(&result.scilla_events).unwrap(),
                     };
                     info!(?receipt, "applied transaction {:?}", receipt);
                     block_receipts.push(receipt);

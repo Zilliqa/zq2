@@ -3,14 +3,11 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use base64::Engine;
 
-use futures::{FutureExt};
 use jsonrpc_core::{IoHandler, Params};
 use primitive_types::{H160, H256, U256};
 use prost::Message;
 use serde_json::{Value};
-//use sha2::digest::consts::U256;
 use tracing::{*};
 
 use crate::{
@@ -298,7 +295,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         Ok(())
     }
 
-    fn delete_state(&mut self, key: &str) -> Result<()> {
+    fn delete_state(&mut self, _key: &str) -> Result<()> {
         //let Some((addr, state_root, block_number)) = self.current_contract_addr else { return Err(anyhow!("no current contract")); };
         //let state_root = self
         //    .db

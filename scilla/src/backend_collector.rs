@@ -5,6 +5,7 @@ use evm_ds::protos::evm_proto::{Apply, EvmResult, Storage};
 use primitive_types::{H160, H256, U256};
 use sha3::{Digest, Keccak256};
 use tracing::{*};
+use serde_json::{Value};
 
 pub type Address = H160;
 
@@ -33,6 +34,7 @@ pub struct BackendCollector<'a, B: evm::backend::Backend> {
     // Map of cached (execution in progress) address to account and any dirty storage.
     // If the value is None, this means a deletion of that account and storage
     pub account_storage_cached: HashMap<Address, Option<(Account, HashMap<H256, H256>)>>,
+    pub events: Vec<Value>,
 }
 
 impl<'a, B: Backend> BackendCollector<'a, B> {
@@ -40,6 +42,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         Self {
             backend,
             account_storage_cached: HashMap::new(),
+            events: vec![],
         }
     }
 
@@ -96,9 +99,70 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     /// 2. put the length of the value in bytes at this location
     /// 3. put the data at H256 + 1, H256 + 2, etc.
     pub fn update_account_storage_scilla(&mut self, address: Address, key: &str, value: &[u8]) {
-        // Hash key to H256
-        let mut key = H256::from_slice(&Keccak256::digest(key.as_bytes()));
 
+        trace!("Updating account storage for scilla: KEY: {:?} VALUE: {:?} Lens: {} {}", key, value, key.len(), value.len());
+        let key_as_hash = H256::from_slice(&Keccak256::digest(key.as_bytes()));
+
+        // To be able to recover the original keys, we will use the following scheme:
+        // Hash of "0" will contain number of keys
+        // Hash of "1" will contain the last key location
+        // Subsequent locations will contain the keys themselves using the same format as the values
+        // Note: First check if the key exists, if not, we need to add it to the linked list
+        if self.get_account_storage(address, key_as_hash) == H256::zero() {
+            let key_start = H256::from_slice(&Keccak256::digest("0".as_bytes()));
+
+            // This should be H256::zero if first time accessed
+            let keys_number = self.get_account_storage(address, key_start);
+            let keys_number = h256_to_u64(keys_number) + 1;
+            self.update_account_storage(address, key_start, u64_to_h256(keys_number));
+
+            trace!("Keys number for write is now: {:?} based on {:?} {:?}", keys_number, key_start, u64_to_h256(keys_number));
+
+            let mut key_pointer = increment_h256(key_start); // Next location contains end of list pointer
+            let mut value_pointer = self.get_account_storage(address, key_pointer);
+            //let mut key_pointer = H256::zero();
+            //let mut value_pointer = H256::zero();
+
+            // Advance the pointer until it points at the next empty slot
+            {
+                key_pointer = increment_h256(key_pointer); // first location after end of key pointer
+
+                // Read each already existing key and increment the pointer after
+                for _i in 0..(keys_number - 1) {
+                    let (_old_val, key) = self.read_compressed(address, key_pointer);
+                    trace!("Note: old val: {:?}", _old_val);
+                    key_pointer = increment_h256(key);
+                }
+            }
+
+            // Update the 'end of list' pointer
+            self.update_account_storage(address, increment_h256(key_start), key_pointer);
+
+            trace!("Key pointer after advancement is now: {:?}", key_pointer);
+
+            // Now we can write the key using the compression scheme
+            self.write_compressed(address, key_pointer, key.as_bytes());
+
+            // Debug: print out all the kv pairs from this linked list
+            {
+                debug!("Printing out all kv pairs for address: {:?}", address);
+                key_pointer = key_start;
+
+                for _i in 0..30 {
+                    let value = self.get_account_storage(address, key_pointer);
+                    debug!("Key: {:?} value: {:?}", key_pointer, value);
+                    key_pointer = increment_h256(key_pointer);
+                }
+            }
+        } else {
+            trace!("Key already exists, not adding to linked list");
+        }
+
+        // Write the key normally using the compression scheme
+        self.write_compressed(address, H256::from_slice(&Keccak256::digest(key.as_bytes())), value);
+    }
+
+    fn write_compressed(&mut self, address: Address, mut key: H256, value: &[u8]) -> H256 {
         let value_fixed_width = u64_to_h256(value.len() as u64);
 
         // Key, Value for the length of the proceeding value in bytes
@@ -111,17 +175,10 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
             key = increment_h256(key);
             self.update_account_storage(address, key, value);
         }
+        key
     }
 
-    /// Get data from the cache as a key, value. In order to be able to write and read arbitrary
-    /// length data to the database (which expects K,V pairs of H256, H256), we:
-    /// 1. Hash the key to H256
-    /// 2. put the length of the value in bytes at this location
-    /// 3. put the data at H256 + 1, H256 + 2, etc.
-    pub fn get_account_storage_scilla(&mut self, address: Address, key: &str) -> Vec<u8> {
-        let mut key = H256::from_slice(&Keccak256::digest(key.as_bytes()));
-        let _zero = H256::zero();
-
+    fn read_compressed(&mut self, address: Address, mut key: H256) -> (Vec<u8>, H256) {
         let value = self.get_account_storage(address, key);
         let value = h256_to_u64(value);
         let len = value.div_ceil(32);
@@ -130,6 +187,10 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
             "Getting account storage: {:?}, {:?}, len: {:?},",
             address, key, value
         );
+
+        if len > 1000000 {
+            panic!("Length of value read from scilla storage is too large, this indicates an issue. Len: {:?}", len);
+        }
 
         let mut result = vec![];
 
@@ -142,7 +203,96 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         // Remove trailing zeros if any
         result.resize(value as usize, 0);
 
-        result
+        (result, key)
+    }
+
+    fn reconstruct_kv_pairs_inner(&mut self, address: Address) -> Vec<(String, Vec<u8>)> {
+        // to do this, we will traverse and collect the keys from the keys linked list
+        // and then we can get them normally using the key lookup
+        trace!("Reconstructing kv pairs for address: {:?}", address);
+        let key_start = H256::from_slice(&Keccak256::digest("0".as_bytes()));
+
+        let keys_number = self.get_account_storage(address, key_start);
+        let keys_number = h256_to_u64(keys_number);
+        let mut key_pointer = increment_h256(key_start);
+        key_pointer = increment_h256(key_pointer); // Jump past first item which is the pointer to last
+
+        let all_keys = match keys_number {
+            0 => { warn!("NO keys found when requesting scilla contract state"); vec![]},
+            _ => {
+                let mut ret = vec![];
+                for _i in 0..keys_number {
+                    let (reconstructed_key, last_point) = self.read_compressed(address, key_pointer);
+                    key_pointer = increment_h256(last_point);
+                    let reconstructed_key = String::from_utf8(reconstructed_key).unwrap();
+
+                    trace!("Reconstructed key: {:?}", reconstructed_key);
+                    ret.push(reconstructed_key);
+                }
+                ret
+            }
+        };
+
+        all_keys.iter().map(|key| {
+            (key.clone(), self.get_account_storage_scilla(address, key))
+        }).collect()
+    }
+
+    pub fn reconstruct_kv_pairs(&mut self, address: Address) -> Vec<(String, Vec<u8>)> {
+        //self.reconstruct_kv_pairs_inner(address).iter().
+
+        self.reconstruct_kv_pairs_inner(address)
+        .into_iter()
+        .filter_map(|(key, value)| {
+            //String::from_utf8(value).ok().map(|s| (key, s))
+            self.state_conversion(key, value)
+        })
+        .collect()
+    }
+
+    // Unwrap a proto value
+    fn state_conversion(&self, key: String, value: Vec<u8>) -> Option<(String, Vec<u8>)> {
+        if key.starts_with("init_data") {
+            return None;
+        }
+        trace!("State conversion: {:?} {:?}", key.as_bytes(), value);
+
+        // Custom logic to detemine if this is an actual key
+        // for the key string
+        let number_of_x16 = key.chars().filter(|x| *x  == 0x16 as char).count();
+        //let number_of_x16 = key.chars().iter().filter(|x| {trace!("{}", **x); **x == 0x16}).count();
+
+        if number_of_x16 != 2 {
+            trace!("Number of xs {}", number_of_x16);
+            return None;
+        }
+
+        trace!("XXX State conversion before: {:?} {:?}", key, value);
+
+        // return everything after the first x16
+        let key: String = key.split(0x16 as char).collect();
+
+        // Strip off the address thats prepended
+        let key = key.split_at(40).1;
+
+        // Don't return values which start with an underscore
+        if key.starts_with("_") {
+            return None;
+        }
+
+        trace!("XXX State conversion: {:?} {:?}", key, value);
+
+        Some((key.to_string(), value))
+    }
+
+    /// Get data from the cache as a key, value. In order to be able to write and read arbitrary
+    /// length data to the database (which expects K,V pairs of H256, H256), we:
+    /// 1. Hash the key to H256
+    /// 2. put the length of the value in bytes at this location
+    /// 3. put the data at H256 + 1, H256 + 2, etc.
+    pub fn get_account_storage_scilla(&mut self, address: Address, key: &str) -> Vec<u8> {
+        let mut key = H256::from_slice(&Keccak256::digest(key.as_bytes()));
+        self.read_compressed(address, key).0
     }
 
     pub fn create_account(&mut self, address: Address, code: Vec<u8>, is_scilla: bool) {
@@ -176,26 +326,27 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     }
 
     // Get the deltas from all of the operations so far
-    pub fn get_result(self) -> EvmResult {
+    pub fn get_result(&self) -> EvmResult {
         let mut applys: Vec<Apply> = vec![];
 
-        for (address, item) in self.account_storage_cached.into_iter() {
+        //for (address, item) in self.account_storage_cached.into_iter() {
+        for (address, item) in self.account_storage_cached.iter() {
             match item {
                 Some((acct, stor)) => {
                     applys.push(Apply::Modify {
-                        address,
+                        address: *address,
                         balance: U256::zero(),
                         nonce: U256::zero(),
-                        code: acct.code,
+                        code: acct.code.clone(),
                         storage: stor
                             .into_iter()
-                            .map(|(key, value)| Storage { key, value })
+                            .map(|(key, value)| Storage { key: *key, value: *value })
                             .collect(),
                         reset_storage: false,
                     });
                 }
                 None => {
-                    applys.push(Apply::Delete { address });
+                    applys.push(Apply::Delete { address: *address });
                 }
             }
         }
@@ -204,6 +355,10 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
             apply: applys,
             ..Default::default()
         }
+    }
+
+    pub fn add_event(&mut self, event: Value) {
+        self.events.push(event);
     }
 }
 

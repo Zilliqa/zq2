@@ -1,9 +1,4 @@
-//use tokio::net::TcpStream;
-use std::{
-    fs::File,
-    io::{Write},
-    path::{Path, PathBuf}, str,
-};
+use std::{fs::File, io::{Write}, mem, path::{Path, PathBuf}, str};
 
 use anyhow::{Result};
 use evm::ExitSucceed;
@@ -15,27 +10,24 @@ use evm_ds::{
     },
 };
 
-
 use jsonrpc_core::{
-    futures_util::{StreamExt}, Params,
+    Params,
 };
 use primitive_types::{H160, H256, U256};
 
-use serde_json::{from_str, from_value, json, Value};
+use serde_json::{from_value, json, Value};
 use sha2::{Digest, Sha256};
-use tokio::{
-    io::{AsyncWriteExt},
-};
 use tracing::{*};
 
 use crate::{
     backend_collector::BackendCollector,
-    call_scilla_server::{call_scilla_server, CheckOutput, JsonRpcResponse},
+    call_scilla_server::{call_scilla_server, CheckOutput},
     scilla_tcp_server::ScillaServer,
 };
+use crate::call_scilla_server::JsonRpcResponse;
 
+/// The scheme to calculate scilla contract addresses is different from the EVM.
 pub fn calculate_contract_address_scilla(from_addr: H160, account_nonce: u64) -> H160 {
-    debug!("calculate_contract_address_scilla called");
     let mut hasher = Sha256::new();
     hasher.update(from_addr.as_bytes());
     hasher.update((account_nonce - 1).to_be_bytes());
@@ -44,6 +36,9 @@ pub fn calculate_contract_address_scilla(from_addr: H160, account_nonce: u64) ->
     H160::from_slice(&hashed[(hashed.len() - 20)..])
 }
 
+/// Entry point for calling the scilla server. The backend is passed in so that the state can be queried
+/// and the function will return the state changes as an EvmResult.
+/// Note that the function will block the thread while it waits for the scilla server to respond.
 pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
     args: EvmProto::EvmCallArgs,
     backend: &B,
@@ -277,7 +272,7 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
                 );
 
                 // TODO: Differentiate between exceptions from contract and errors from Scilla itself.
-                let _ = invoke_contract(
+                let result = invoke_contract(
                     &code,
                     args.gas_limit,
                     args.apparent_value,
@@ -289,6 +284,50 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
                     &mut tcp_scilla_server,
                 );
 
+                match result {
+                    Ok(result) => {
+                        let result = result.result.unwrap();
+                        debug!("invoke contract resultX: {:?}", result);
+
+                        let is_accepted = result.get("_accepted").cloned().unwrap_or(json!(false));
+                        let events = result.get("events").cloned().unwrap_or(json!([]));
+                        let gas_remaining = result.get("gas_remaining").cloned().unwrap_or(json!(["0"]));
+                        let messages = result.get("messages").cloned().unwrap_or(json!([[]]));
+                        let scilla_major_version = result.get("scilla_major_version").cloned().unwrap_or(json!("0"));
+                        let states = result.get("states").cloned().unwrap_or(json!([]));
+
+                        trace!("is_accepted: {:?}", is_accepted);
+                        trace!("events: {:?}", events);
+                        trace!("gas_remaining: {:?}", gas_remaining);
+                        trace!("messages: {:?}", messages);
+                        trace!("scilla_major_version: {:?}", scilla_major_version);
+                        trace!("states: {:?}", states);
+
+                        for event in events.as_array().unwrap().clone() {
+                            tcp_scilla_server.inner.backend.add_event(event);
+                        }
+
+                        //events.as_array().and_then(|events| {
+                        //    for event in events {
+                        //        tcp_scilla_server.inner.backend.add_event(*event);
+                        //    }
+                        //    None
+                        //});
+
+
+                        //for event in events.as_array() {
+                        //    tcp_scilla_server.inner.backend.add_event(event);
+                        //}
+
+                        //if resutl
+                        //return_value = result;
+                    },
+                    Err(err) => {
+                        warn!("invoke contract error: {:?}", err);
+                    },
+                }
+
+                debug!("invoke contract done");
                 debug!("invoke contract done");
 
                 /*
@@ -334,6 +373,8 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
 
     state_deltas.exit_reason = ExitReasonCps::Succeed(ExitSucceed::Stopped);
     state_deltas.return_value = return_value;
+    state_deltas.tx_trace = args.tx_trace.clone();
+    state_deltas.tx_trace.lock().unwrap().scilla_events.extend(tcp_scilla_server.inner.backend.events);
 
     debug!("Scilla state deltas: {:?}", state_deltas);
 
@@ -366,13 +407,8 @@ pub fn check_contract<B: evm::backend::Backend>(
 
     let response = call_scilla_server("check", params, tcp_scilla_server)?;
 
-    let response = response.replace("\"{", "{").replace("}\"", "}");
-
-    let deser: Result<JsonRpcResponse, serde_json::Error> = from_str(&response);
-    debug!("Deser: {:?}", deser);
-
     let response: CheckOutput =
-        serde_json::from_value(deser.unwrap().result.unwrap().clone()).unwrap();
+        serde_json::from_value(response.result.unwrap().clone()).unwrap();
 
     Ok(response)
 }
@@ -387,7 +423,7 @@ pub fn invoke_contract<B: evm::backend::Backend>(
     input_path: &str,
     message_path: &str,
     tcp_scilla_server: &mut ScillaServer<B>,
-) -> Result<()> {
+) -> Result<JsonRpcResponse> {
     let args = vec![
         "-init".to_owned(),
         init_path.to_string(),
@@ -416,11 +452,9 @@ pub fn invoke_contract<B: evm::backend::Backend>(
 
     let response = call_scilla_server("run", params, tcp_scilla_server)?;
 
-    let response = response.replace("\"{", "{").replace("}\"", "}");
-
     debug!("invoke contract response: {:?}", response);
 
-    Ok(())
+    Ok(response)
 }
 pub fn create_contract<B: evm::backend::Backend>(
     _contract: &[u8],
@@ -454,12 +488,12 @@ pub fn create_contract<B: evm::backend::Backend>(
 
     let response = call_scilla_server("run", params, tcp_scilla_server)?;
 
-    let response = response.replace("\"{", "{").replace("}\"", "}");
-
     debug!("Create Response: {:?}", response);
 
     Ok(())
 }
+
+/// Ensure that the files are set up correctly for the scilla server to read them.
 fn ensure_setup_correct(
     init_data: Option<serde_json::Value>,
     init_directory: &Path,
@@ -493,4 +527,12 @@ fn ensure_setup_correct(
             .write_all(serde_json::to_string(&message).unwrap().as_bytes())
             .unwrap();
     }
+}
+
+pub fn reconstruct_kv_pairs<B: Backend + std::marker::Sync> (
+    backend: &B,
+    address: H160,
+) -> Vec<(String, Vec<u8>)> {
+    let mut collector = BackendCollector::new(backend);
+    collector.reconstruct_kv_pairs(address)
 }

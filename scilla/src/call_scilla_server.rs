@@ -80,7 +80,7 @@ fn respond_json(val: Value, mut connection: &TcpStream, id: u32) {
         jsonrpc: "2.0".to_string(),
         result: Some(val),
         error: None,
-        id: 1,
+        id: id,
     };
 
     let response_str = serde_json::to_string(&response).unwrap();
@@ -93,7 +93,7 @@ pub fn call_scilla_server<B: evm::backend::Backend>(
     method: &str,
     params: Params,
     tcp_scilla_server: &mut ScillaServer<B>,
-) -> Result<String> {
+) -> Result<JsonRpcResponse> {
     let request = JsonRpcRequest::new(method, params, 1);
     let request_str = serde_json::to_string(&request)?;
     let request_str = request_str + "\n"; // This is required to complete the request
@@ -115,7 +115,12 @@ pub fn call_scilla_server<B: evm::backend::Backend>(
     let mut bytes_read = 0;
     let mut bytes_read_backend = 0;
 
+    let now = std::time::Instant::now();
+
     loop {
+        if now.elapsed().as_millis() > 5000 {
+            return Err(anyhow!("Timeout waiting for response from scilla server"));
+        }
 
         // Bump up the buffers we are reading into if we are at the end (exponential growth)
         if bytes_read >= response.len() {
@@ -187,13 +192,25 @@ pub fn call_scilla_server<B: evm::backend::Backend>(
         // Attempt to deserialize the response and return
         if response[bytes_read - 1] == b'\n' {
             let filtered = filter_out_escape_chars(response[0..bytes_read - 1].to_vec());
-            return Ok(String::from_utf8(filtered)?);
+
+            let deser: Result<JsonRpcResponse, serde_json::Error> = from_str(&filtered);
+
+            match deser {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(e) => {
+                    // This could be caused by a newline in the response itself,
+                    // so we just continue on and will try to handle the full request later
+                    debug!("Scilla request deser error: {:?}", e);
+                }
+            }
         }
     }
 }
 
 /// Filter out the escape characters from the response
-fn filter_out_escape_chars(data: Vec<u8>) -> Vec<u8> {
+fn filter_out_escape_chars(data: Vec<u8>) -> String {
     let mut filtered_data = Vec::new();
     let mut skip_next = false;
 
@@ -213,5 +230,8 @@ fn filter_out_escape_chars(data: Vec<u8>) -> Vec<u8> {
         }
         filtered_data.push(byte);
     }
+    let filtered_data: String = String::from_utf8(filtered_data).unwrap().into();
+    let filtered_data = filtered_data.replace("\"{", "{").replace("}\"", "}");
+
     filtered_data
 }

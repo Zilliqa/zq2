@@ -130,7 +130,7 @@ impl State {
     }
 
     /// If using this to modify the account, ensure save_account gets called
-    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
+    pub fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
         Ok(match self.get_account(address)?.storage_root {
             Some(root) => PatriciaTrie::new(self.db.clone()).at_root(root),
             None => PatriciaTrie::new(self.db.clone()),
