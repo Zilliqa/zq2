@@ -67,8 +67,6 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     pub fn update_account_storage(&mut self, address: Address, key: H256, value: H256) {
         // If the account does not exist, check the backend, then create it with empty code and storage
         if let std::collections::hash_map::Entry::Vacant(e) = self.account_storage_cached.entry(address) {
-            debug!("Creating account in cache: {:?}", address);
-
             let account = Account {
                 nonce: self.backend.basic(address).nonce.as_u64(),
                 code: self.backend.code(address),
@@ -79,8 +77,6 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
             e.insert(Some((account, HashMap::from([(key, value)]))));
         } else {
             let entry = self.account_storage_cached.get_mut(&address).unwrap();
-
-            debug!("Updating account in cache: {:?} {:?}", address, entry);
 
             match entry {
                 Some((_, storage)) => {
@@ -116,12 +112,8 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
             let keys_number = h256_to_u64(keys_number) + 1;
             self.update_account_storage(address, key_start, u64_to_h256(keys_number));
 
-            trace!("Keys number for write is now: {:?} based on {:?} {:?}", keys_number, key_start, u64_to_h256(keys_number));
-
             let mut key_pointer = increment_h256(key_start); // Next location contains end of list pointer
             let mut value_pointer = self.get_account_storage(address, key_pointer);
-            //let mut key_pointer = H256::zero();
-            //let mut value_pointer = H256::zero();
 
             // Advance the pointer until it points at the next empty slot
             {
@@ -138,30 +130,16 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
             // Update the 'end of list' pointer
             self.update_account_storage(address, increment_h256(key_start), key_pointer);
 
-            trace!("Key pointer after advancement is now: {:?}", key_pointer);
-
             // Now we can write the key using the compression scheme
             self.write_compressed(address, key_pointer, key.as_bytes());
-
-            // Debug: print out all the kv pairs from this linked list
-            {
-                debug!("Printing out all kv pairs for address: {:?}", address);
-                key_pointer = key_start;
-
-                for _i in 0..30 {
-                    let value = self.get_account_storage(address, key_pointer);
-                    debug!("Key: {:?} value: {:?}", key_pointer, value);
-                    key_pointer = increment_h256(key_pointer);
-                }
-            }
-        } else {
-            trace!("Key already exists, not adding to linked list");
         }
 
         // Write the key normally using the compression scheme
-        self.write_compressed(address, H256::from_slice(&Keccak256::digest(key.as_bytes())), value);
+        self.write_compressed(address, key_as_hash, value);
     }
 
+    /// Internal function to write a compressed value to the database, according
+    /// to the scheme described in update_account_storage_scilla
     fn write_compressed(&mut self, address: Address, mut key: H256, value: &[u8]) -> H256 {
         let value_fixed_width = u64_to_h256(value.len() as u64);
 
@@ -178,17 +156,16 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         key
     }
 
+    /// Internal function to read a compressed value from the database, according
+    /// to the scheme described in update_account_storage_scilla
     fn read_compressed(&mut self, address: Address, mut key: H256) -> (Vec<u8>, H256) {
         let value = self.get_account_storage(address, key);
         let value = h256_to_u64(value);
         let len = value.div_ceil(32);
 
-        debug!(
-            "Getting account storage: {:?}, {:?}, len: {:?},",
-            address, key, value
-        );
-
-        if len > 1000000 {
+        // If a single value is over 1MB, this indicates an issue where the value read isn't actually
+        // a length
+        if len > 1_000_000 {
             panic!("Length of value read from scilla storage is too large, this indicates an issue. Len: {:?}", len);
         }
 
@@ -200,7 +177,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
             result.extend_from_slice(value.as_bytes());
         }
 
-        // Remove trailing zeros if any
+        // Remove trailing zeros if any (from padding)
         result.resize(value as usize, 0);
 
         (result, key)
@@ -238,13 +215,12 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         }).collect()
     }
 
+    /// Get all of the data the contract sees as key value pairs. Used to satisfy the call
+    /// GetSmartContractState
     pub fn reconstruct_kv_pairs(&mut self, address: Address) -> Vec<(String, Vec<u8>)> {
-        //self.reconstruct_kv_pairs_inner(address).iter().
-
         self.reconstruct_kv_pairs_inner(address)
         .into_iter()
         .filter_map(|(key, value)| {
-            //String::from_utf8(value).ok().map(|s| (key, s))
             self.state_conversion(key, value)
         })
         .collect()
@@ -252,22 +228,18 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
 
     // Unwrap a proto value
     fn state_conversion(&self, key: String, value: Vec<u8>) -> Option<(String, Vec<u8>)> {
+        // We have also stored the init_data in the state, so we need to filter that out
         if key.starts_with("init_data") {
             return None;
         }
-        trace!("State conversion: {:?} {:?}", key.as_bytes(), value);
 
-        // Custom logic to detemine if this is an actual key
+        // Custom temporary logic to detemine if this is an actual key
         // for the key string
         let number_of_x16 = key.chars().filter(|x| *x  == 0x16 as char).count();
-        //let number_of_x16 = key.chars().iter().filter(|x| {trace!("{}", **x); **x == 0x16}).count();
 
         if number_of_x16 != 2 {
-            trace!("Number of xs {}", number_of_x16);
             return None;
         }
-
-        trace!("XXX State conversion before: {:?} {:?}", key, value);
 
         // return everything after the first x16
         let key: String = key.split(0x16 as char).collect();
@@ -279,8 +251,6 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         if key.starts_with("_") {
             return None;
         }
-
-        trace!("XXX State conversion: {:?} {:?}", key, value);
 
         Some((key.to_string(), value))
     }
@@ -367,8 +337,12 @@ fn increment_h256(hash: H256) -> H256 {
     // To easily increment, just re-hash the hash
     H256::from_slice(&Keccak256::digest(&hash[..]))
 }
+
+/// Note that when we perform this conversion, we set the unused bytes to 1s which is useful
+/// for detecting whether a '0' is a read of a location with nothing written to it so far, or a read
+/// of a location with a value of 0
 fn u64_to_h256(value: u64) -> H256 {
-    let mut hash = [0u8; 32];
+    let mut hash = [255u8; 32];
     hash[24..32].copy_from_slice(&value.to_be_bytes()); // Big-endian
     hash.into()
 }

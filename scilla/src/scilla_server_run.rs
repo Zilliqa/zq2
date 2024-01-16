@@ -21,7 +21,7 @@ use tracing::{*};
 
 use crate::{
     backend_collector::BackendCollector,
-    call_scilla_server::{call_scilla_server, CheckOutput},
+    call_scilla_server::{call_scilla_server, CheckOutput, ensure_setup_correct},
     scilla_tcp_server::ScillaServer,
 };
 use crate::call_scilla_server::JsonRpcResponse;
@@ -306,29 +306,11 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
                         for event in events.as_array().unwrap().clone() {
                             tcp_scilla_server.inner.backend.add_event(event);
                         }
-
-                        //events.as_array().and_then(|events| {
-                        //    for event in events {
-                        //        tcp_scilla_server.inner.backend.add_event(*event);
-                        //    }
-                        //    None
-                        //});
-
-
-                        //for event in events.as_array() {
-                        //    tcp_scilla_server.inner.backend.add_event(event);
-                        //}
-
-                        //if resutl
-                        //return_value = result;
                     },
                     Err(err) => {
                         warn!("invoke contract error: {:?}", err);
                     },
                 }
-
-                debug!("invoke contract done");
-                debug!("invoke contract done");
 
                 /*
                 if output.accepted {
@@ -448,11 +430,7 @@ pub fn invoke_contract<B: evm::backend::Backend>(
     let params: Value = [("argv".to_owned(), args)].into_iter().collect();
     let params: Params = from_value(params).unwrap();
 
-    debug!("invoke contract args: {:?}", params);
-
     let response = call_scilla_server("run", params, tcp_scilla_server)?;
-
-    debug!("invoke contract response: {:?}", response);
 
     Ok(response)
 }
@@ -493,43 +471,7 @@ pub fn create_contract<B: evm::backend::Backend>(
     Ok(())
 }
 
-/// Ensure that the files are set up correctly for the scilla server to read them.
-fn ensure_setup_correct(
-    init_data: Option<serde_json::Value>,
-    init_directory: &Path,
-    input_data: Option<Vec<u8>>,
-    input_directory: &Path,
-    message: Option<Value>,
-) {
-    debug!(
-        "Ensure setup correct for scilla invocation: {:?} {:?}",
-        init_data, input_data
-    );
-
-    if let Some(init_data) = init_data {
-        let init_data = init_data.as_array().unwrap();
-        let init_data = init_data.clone();
-
-        let mut init_file = File::create(init_directory.join("init.json")).unwrap();
-        init_file
-            .write_all(serde_json::to_string(&init_data).unwrap().as_bytes())
-            .unwrap();
-    }
-
-    if let Some(input_data) = input_data {
-        let mut input_file = File::create(input_directory.join("input.scilla")).unwrap();
-        input_file.write_all(&input_data).unwrap();
-    }
-
-    if let Some(message) = message {
-        let mut message_file = File::create(input_directory.join("message.scilla")).unwrap();
-        message_file
-            .write_all(serde_json::to_string(&message).unwrap().as_bytes())
-            .unwrap();
-    }
-}
-
-pub fn reconstruct_kv_pairs<B: Backend + std::marker::Sync> (
+pub fn reconstruct_kv_pairs<B: Backend> (
     backend: &B,
     address: H160,
 ) -> Vec<(String, Vec<u8>)> {

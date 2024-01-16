@@ -76,7 +76,6 @@ pub struct LoggingEventListener {
     pub otter_addresses_called: Vec<String>,
     pub scilla_events: Vec<Value>,
     pub enabled: bool,
-    pub aa: bool,
 }
 
 impl LoggingEventListener {
@@ -119,7 +118,6 @@ impl LoggingEventListener {
             otter_addresses_called: Default::default(),
             scilla_events: Default::default(),
             enabled,
-            aa: false,
         }
     }
 }
