@@ -492,8 +492,6 @@ impl State {
 
             let gas_deduction = (gas_limit - result.remaining_gas) as u128 * gas_price;
 
-            let traces_clone = traces.clone();
-
             continuation_stack.push(self.push_transfer(
                 from_addr,
                 contract_addr::COLLECTED_FEES,

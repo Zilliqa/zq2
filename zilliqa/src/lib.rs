@@ -3,7 +3,6 @@ mod block_store;
 pub mod cfg;
 pub mod consensus;
 pub mod contracts;
-pub mod convenience_functions;
 pub mod crypto;
 mod db;
 mod evm_backend;
