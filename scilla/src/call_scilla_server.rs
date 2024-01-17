@@ -264,18 +264,18 @@ pub fn ensure_setup_correct(
             .write_all(serde_json::to_string(&init_data).unwrap().as_bytes())
             .unwrap();
 
-        //let mut stream = TcpStream::connect("127.0.0.1:12347").expect("unable to connect to scilla server for file setup!");
-        //stream.write_all(init_directory_str.as_bytes()).unwrap();
-        //stream.write_all(serde_json::to_string(&init_data).unwrap().as_bytes()).unwrap();
+        let mut stream = TcpStream::connect("127.0.0.1:12347").expect("unable to connect to scilla server for file setup!");
+        stream.write_all(init_directory_str.as_bytes()).unwrap();
+        stream.write_all(serde_json::to_string(&init_data).unwrap().as_bytes()).unwrap();
     }
 
     if let Some(input_data) = input_data {
         let mut input_file = File::create(input_directory.join("input.scilla")).unwrap();
         input_file.write_all(&input_data).unwrap();
 
-        //let mut stream = TcpStream::connect("127.0.0.1:12347").expect("unable to connect to scilla server for file setup!");
-        //stream.write_all(input_directory_str.as_bytes()).unwrap();
-        //stream.write_all(&input_data).unwrap();
+        let mut stream = TcpStream::connect("127.0.0.1:12347").expect("unable to connect to scilla server for file setup!");
+        stream.write_all(input_directory_str.as_bytes()).unwrap();
+        stream.write_all(&input_data).unwrap();
     }
 
     if let Some(message) = message {
@@ -284,8 +284,8 @@ pub fn ensure_setup_correct(
             .write_all(serde_json::to_string(&message).unwrap().as_bytes())
             .unwrap();
 
-        //let mut stream = TcpStream::connect("127.0.0.1:12347").expect("unable to connect to scilla server for file setup!");
-        //stream.write_all(message_directory_str.as_bytes()).unwrap();
-        //stream.write_all(serde_json::to_string(&message).unwrap().as_bytes()).unwrap();
+        let mut stream = TcpStream::connect("127.0.0.1:12347").expect("unable to connect to scilla server for file setup!");
+        stream.write_all(message_directory_str.as_bytes()).unwrap();
+        stream.write_all(serde_json::to_string(&message).unwrap().as_bytes()).unwrap();
     }
 }
