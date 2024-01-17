@@ -22,7 +22,6 @@ use crate::{
 
 pub struct ScillaServer<'a, B: evm::backend::Backend> {
     pub inner: Inner<'a, B>,
-    pub _tcp_server: IoHandler,
 }
 
 pub struct Inner<'a, B: evm::backend::Backend> {
@@ -72,11 +71,9 @@ impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
             backend,
             current_contract_addr: (contract_addr, state_root, block_number),
         };
-        let mut _tcp_server = IoHandler::new();
 
         ScillaServer {
             inner,
-            _tcp_server,
         }
     }
 }

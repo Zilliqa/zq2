@@ -241,49 +241,26 @@ fn filter_out_escape_chars(data: Vec<u8>) -> String {
 /// Ensure that the files are set up correctly for the scilla server to read them.
 pub fn ensure_setup_correct(
     init_data: Option<serde_json::Value>,
-    init_directory: &Path,
     input_data: Option<Vec<u8>>,
-    input_directory: &Path,
     message: Option<Value>,
 ) {
-    debug!(
-        "Ensure setup correct for scilla invocation: {:?} {:?}",
-        init_data, input_data
-    );
-
     let init_directory_str = "/tmp/scilla_init/init.json ";
     let input_directory_str = "/tmp/scilla_input/input.scilla ";
     let message_directory_str = "/tmp/scilla_input/message.scilla ";
 
     if let Some(init_data) = init_data {
-        let init_data = init_data.as_array().unwrap();
-        let init_data = init_data.clone();
-
-        let mut init_file = File::create(init_directory.join("init.json")).unwrap();
-        init_file
-            .write_all(serde_json::to_string(&init_data).unwrap().as_bytes())
-            .unwrap();
-
         let mut stream = TcpStream::connect("127.0.0.1:12347").expect("unable to connect to scilla server for file setup!");
         stream.write_all(init_directory_str.as_bytes()).unwrap();
         stream.write_all(serde_json::to_string(&init_data).unwrap().as_bytes()).unwrap();
     }
 
     if let Some(input_data) = input_data {
-        let mut input_file = File::create(input_directory.join("input.scilla")).unwrap();
-        input_file.write_all(&input_data).unwrap();
-
         let mut stream = TcpStream::connect("127.0.0.1:12347").expect("unable to connect to scilla server for file setup!");
         stream.write_all(input_directory_str.as_bytes()).unwrap();
         stream.write_all(&input_data).unwrap();
     }
 
     if let Some(message) = message {
-        let mut message_file = File::create(input_directory.join("message.scilla")).unwrap();
-        message_file
-            .write_all(serde_json::to_string(&message).unwrap().as_bytes())
-            .unwrap();
-
         let mut stream = TcpStream::connect("127.0.0.1:12347").expect("unable to connect to scilla server for file setup!");
         stream.write_all(message_directory_str.as_bytes()).unwrap();
         stream.write_all(serde_json::to_string(&message).unwrap().as_bytes()).unwrap();

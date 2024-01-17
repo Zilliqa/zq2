@@ -60,10 +60,6 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
     let input_directory_str = "/tmp/scilla_input/input.scilla";
     let message_directory_str = "/tmp/scilla_input/message.scilla";
 
-    // These are the directories on the local machine which we will write to
-    let init_directory = PathBuf::from("/Users/nhutton/repos/zq2/scilla_init/");
-    let input_directory = PathBuf::from("/Users/nhutton/repos/zq2/scilla_input/");
-
     let is_contract_creation = tcp_scilla_server
         .inner
         .backend
@@ -108,16 +104,11 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
                 );
 
             // Write down to the files the init data and make sure the libs are in order
-            // todo: make sure the old files are cleared
             ensure_setup_correct(
                 Some(init_data.clone()),
-                &init_directory,
                 Some(code.clone().into()),
-                &input_directory,
                 None,
             );
-
-            // todo: write to backend the contract addr, code, init state
 
             // Create account here
             tcp_scilla_server.inner.backend.create_account(
@@ -265,9 +256,7 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
                 // Make sure the setup is correct for files to be read
                 ensure_setup_correct(
                     Some(init_data.clone()),
-                    &init_directory,
                     Some(code.clone()),
-                    &input_directory,
                     Some(message),
                 );
 
