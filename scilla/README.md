@@ -5,8 +5,7 @@ This repo acts as a way to execute against scilla, running in a docker container
 Assuming you have a built docker container here called `scilla_reflector:1.0` with the scilla scripts inside you can run:
 
 ```
-docker run --rm -it -v /<PATH>/scilla_libs/:/tmp/scilla_libs -v /<PATH>/scilla_init/:/tmp/scilla_init -v /<PATH>/scilla_input/:/tmp/scilla_input -p 12345:12345 -p 12346:12346 scilla_reflector:1.0
-./run_scilla_tcp.sh
+docker run --rm -it -p 12345-12347:12345-12347 scilla_reflector:1.0
 ```
 
 You should see:
