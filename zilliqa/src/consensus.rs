@@ -1,4 +1,4 @@
-use crate::blockhooks::BlockHooks;
+use crate::blockhooks;
 use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc};
 
 use anyhow::{anyhow, Result};
@@ -134,7 +134,6 @@ pub struct Consensus {
     /// The persistence database
     db: Arc<Db>,
     /// Actions that act on newly created blocks
-    block_hooks: BlockHooks,
     transaction_pool: TransactionPool,
     // PRNG - non-cryptographically secure, but we don't need that here
     rng: SmallRng,
@@ -280,7 +279,6 @@ impl Consensus {
             votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
             high_qc,
-            block_hooks: BlockHooks::default(),
             view: View::new(start_view),
             finalized_view: start_view.saturating_sub(1),
             pending_peers: Vec::new(),
@@ -1275,9 +1273,7 @@ impl Consensus {
 
         let receipts = self.db.get_transaction_receipts(&hash)?.unwrap_or_default();
 
-        for (destination_shard, intershard_call) in self
-            .block_hooks
-            .get_cross_shard_messages(receipts.clone())?
+        for (destination_shard, intershard_call) in blockhooks::get_cross_shard_messages(&receipts)?
         {
             self.message_sender.send_message_to_shard(
                 destination_shard,
@@ -1289,7 +1285,7 @@ impl Consensus {
             // Check for new shards to join
             // TODO: this will be switched to use the bridge registering mechanism from the shard
             // registry in the future
-            for new_shard_id in self.block_hooks.get_launch_shard_messages(receipts)? {
+            for new_shard_id in blockhooks::get_launch_shard_messages(&receipts)? {
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::LaunchShard(new_shard_id))?;
             }

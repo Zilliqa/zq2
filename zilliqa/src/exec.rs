@@ -23,7 +23,7 @@ use crate::{
     evm_backend::EvmBackend,
     message::BlockHeader,
     state::{contract_addr, Address, State},
-    transaction::{Transaction, VerifiedTransaction},
+    transaction::VerifiedTransaction,
 };
 
 #[derive(Default)]
@@ -578,11 +578,6 @@ impl State {
                 gas_price
             );
             warn!(error_str);
-        }
-
-        if let Transaction::Intershard(ref _intershard_tx) = txn {
-            warn!("Intershard tx - TODO: verify bridge nonce here");
-            // TODO: make call to verify nonce
         }
 
         let result = self.apply_transaction_inner(
