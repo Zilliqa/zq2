@@ -9,13 +9,8 @@ contract IntershardBridge {
         address target,
         bytes call,
         uint64 gasLimit,
-        uint128 gasPrice,
-        uint64 indexed nonce
+        uint128 gasPrice
     );
-
-    // shard_id => nonce => is_dispatched
-    mapping(uint64 => mapping(uint64 => bool)) public dispatched;
-    uint64 public nonce;
 
     function bridge(
         uint64 targetShard,
@@ -24,15 +19,7 @@ contract IntershardBridge {
         bytes calldata call,
         uint64 gasLimit,
         uint128 gasPrice
-    ) external returns (uint) {
-        emit Relayed(targetShard, msg.sender, contract_creation, target, call, gasLimit, gasPrice, nonce);
-        return nonce++;
-    }
-
-    function validateCallNonce(uint64 sourceShardId, uint64 callNonce) internal {
-        if (dispatched[sourceShardId][callNonce]) {
-            revert("Nonce already used.");
-        }
-        dispatched[sourceShardId][callNonce] = true;
+    ) external {
+        emit Relayed(targetShard, msg.sender, contract_creation, target, call, gasLimit, gasPrice);
     }
 }

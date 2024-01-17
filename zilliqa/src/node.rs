@@ -218,7 +218,6 @@ impl Node {
         let tx = SignedTransaction::Intershard {
             tx: TxIntershard {
                 chain_id: self.config.eth_chain_id,
-                nonce: intershard_call.nonce,
                 gas_price: intershard_call.gas_price,
                 gas_limit: intershard_call.gas_limit,
                 to_addr: intershard_call.target_address,

@@ -102,7 +102,6 @@ pub fn get_cross_shard_messages(
                     calldata: values.next().unwrap().into_bytes().unwrap(),
                     gas_limit: values.next().unwrap().into_uint().unwrap().as_u64(),
                     gas_price: values.next().unwrap().into_uint().unwrap().as_u128(),
-                    nonce: values.next().unwrap().into_uint().unwrap().as_u64(),
                 },
             ))
         })
