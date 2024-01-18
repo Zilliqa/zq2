@@ -90,12 +90,6 @@ pub struct GetTxResponse {
     code: String,
     data: String,
 }
-//#[derive(Clone, Serialize, Debug)]
-//#[serde(rename_all = "camelCase")]
-//pub struct GetSmartContractStateResponse {
-//    #[serde(rename = "_balance")]
-//    balance: String,
-//}
 
 #[derive(Clone, Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
@@ -115,12 +109,6 @@ struct GetTxResponseReceipt {
     #[serde(skip_serializing_if = "Option::is_none")]
     event_logs: Option<Vec<Value>>,
 }
-
-//#[derive(Clone, Serialize, Debug)]
-//struct ScillaEvent {
-//    address: H160,
-//    params: Vec<ScillaEventParam>,
-//}
 
 impl GetTxResponse {
     pub fn new(verified_tx: VerifiedTransaction, receipt: TransactionReceipt) -> Option<Self> {
