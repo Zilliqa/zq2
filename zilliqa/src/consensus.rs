@@ -552,7 +552,7 @@ impl Consensus {
         proposal: Proposal,
         during_sync: bool,
     ) -> Result<Option<(PeerId, Vote)>> {
-        self.cleanup_memory();
+        self.cleanup_votes();
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
 
@@ -880,7 +880,7 @@ impl Consensus {
     }
 
     /// Clear up anything in memory that is no longer required. This is to avoid memory leaks.
-    pub fn cleanup_memory(&mut self) {
+    pub fn cleanup_votes(&mut self) {
         // Wrt votes, we only care about votes on hashes for the current view or higher
         let keys_to_process: Vec<_> = self.votes.keys().copied().collect();
 
@@ -1022,8 +1022,6 @@ impl Consensus {
                     trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
 
                     return Ok(Some((proposal, applied_transactions)));
-                    // we don't want to keep the collected votes if we proposed a new block
-                    // we should remove the collected votes if we couldn't reach supermajority within the view
                 }
             }
         }
