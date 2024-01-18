@@ -1,3 +1,4 @@
+use crate::message::IntershardCall;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -18,7 +19,7 @@ use crate::{
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     state::{Account, Address},
-    transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
+    transaction::{SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction},
 };
 
 #[derive(Debug, Clone)]
@@ -198,6 +199,37 @@ impl Node {
         Ok(())
     }
 
+    pub fn handle_internal_message(&mut self, from: u64, message: InternalMessage) -> Result<()> {
+        let to = self.config.eth_chain_id;
+        let message_name = message.name();
+        tracing::debug!(%from, %to, %message_name, "handling message");
+        match message {
+            InternalMessage::IntershardCall(intershard_call) => {
+                self.inject_intershard_transaction(intershard_call)?
+            }
+            InternalMessage::LaunchShard(_) => {
+                warn!("LaunchShard messages should be handled by the coordinator, not forwarded to a node.");
+            }
+        }
+        Ok(())
+    }
+
+    fn inject_intershard_transaction(&mut self, intershard_call: IntershardCall) -> Result<()> {
+        let tx = SignedTransaction::Intershard {
+            tx: TxIntershard {
+                chain_id: self.config.eth_chain_id,
+                nonce: intershard_call.nonce,
+                gas_price: intershard_call.gas_price,
+                gas_limit: intershard_call.gas_limit,
+                to_addr: intershard_call.target_address,
+                payload: intershard_call.calldata,
+            },
+            from: intershard_call.source_address,
+        };
+        self.consensus.new_transaction(tx.verify()?)?;
+        Ok(())
+    }
+
     // handle timeout - true if something happened
     pub fn handle_timeout(&mut self) -> Result<bool> {
         if let Some((leader, response)) = self.consensus.timeout()? {
@@ -374,7 +406,7 @@ impl Node {
     ) -> Result<Vec<TransactionReceipt>> {
         Ok(self
             .db
-            .get_transaction_receipt(&block_hash)?
+            .get_transaction_receipts(&block_hash)?
             .unwrap_or_default())
     }
 

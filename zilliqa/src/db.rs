@@ -19,7 +19,7 @@ pub struct Db {
     canonical_block_view: Tree,
     /// Transactions that have been executed and included in a block, and their receipts.
     transaction: Tree,
-    transaction_receipt: Tree,
+    transaction_receipts: Tree,
     /// An index of address to a list of transaction hashes, for which this address appeared somewhere in the
     /// transaction trace. The list of transations is ordered by execution order.
     touched_address_index: Tree,
@@ -127,7 +127,7 @@ impl Db {
             canonical_block_number,
             canonical_block_view,
             transaction,
-            transaction_receipt,
+            transaction_receipts: transaction_receipt,
             block_hash_reverse_index,
             touched_address_index,
         })
@@ -224,7 +224,7 @@ impl Db {
     get_and_insert_methods!(block_header, Hash, BlockHeader);
     get_and_insert_methods!(block, Hash, Block);
     get_and_insert_methods!(transaction, Hash, SignedTransaction);
-    get_and_insert_methods!(transaction_receipt, Hash, Vec<TransactionReceipt>);
+    get_and_insert_methods!(transaction_receipts, Hash, Vec<TransactionReceipt>);
     get_and_insert_methods!(block_hash_reverse_index, Hash, Hash);
 }
 
