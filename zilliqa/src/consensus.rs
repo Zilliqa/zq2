@@ -1,4 +1,3 @@
-use crate::blockhooks;
 use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc};
 
 use anyhow::{anyhow, Result};
@@ -12,6 +11,7 @@ use tracing::*;
 
 use crate::{
     block_store::BlockStore,
+    blockhooks,
     cfg::NodeConfig,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     db::Db,

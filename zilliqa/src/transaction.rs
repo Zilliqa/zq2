@@ -360,7 +360,7 @@ impl Transaction {
                     (false, false) => (<&[u8]>::default(), <&[u8]>::default()),
                 }
             }
-            Transaction::Intershard(TxIntershard { payload, .. }) => payload,
+            Transaction::Intershard(TxIntershard { payload, .. }) => (payload, <&[u8]>::default()),
         }
     }
 

@@ -4,10 +4,12 @@ mod eth;
 mod persistence;
 mod web3;
 mod zil;
-use ethers::types::{Bytes, TransactionReceipt};
 use std::{env, ops::DerefMut};
 
-use ethers::solc::SHANGHAI_SOLC;
+use ethers::{
+    solc::SHANGHAI_SOLC,
+    types::{Bytes, TransactionReceipt},
+};
 use itertools::Itertools;
 use serde::Deserialize;
 use zilliqa::{

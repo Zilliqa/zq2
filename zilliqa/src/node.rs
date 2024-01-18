@@ -1,4 +1,3 @@
-use crate::message::IntershardCall;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -17,7 +16,7 @@ use crate::{
     evm_backend::EvmBackend,
     message::{
         Block, BlockBatchRequest, BlockBatchResponse, BlockNumber, BlockRequest, BlockResponse,
-        ExternalMessage, InternalMessage, Proposal,
+        ExternalMessage, InternalMessage, IntershardCall, Proposal,
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     state::{Account, Address},

@@ -1,9 +1,13 @@
-use crate::message::IntershardCall;
-use crate::state::contract_addr;
-use crate::{contracts, state::Address, transaction::TransactionReceipt};
 use anyhow::Result;
 use ethabi::{Event, Log, RawLog, Token};
 use tracing::warn;
+
+use crate::{
+    contracts,
+    message::IntershardCall,
+    state::{contract_addr, Address},
+    transaction::TransactionReceipt,
+};
 
 fn filter_receipts(
     receipts: &[TransactionReceipt],
