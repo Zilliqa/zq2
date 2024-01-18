@@ -657,8 +657,12 @@ impl Consensus {
         let mut listener = TouchedAddressEventListener::default();
 
         let result = evm_ds::evm::tracing::using(&mut listener, || {
-            self.state
-                .apply_transaction(txn, self.config.eth_chain_id, current_block, false)
+            self.state.apply_transaction(
+                txn.clone(),
+                self.config.eth_chain_id,
+                current_block,
+                false,
+            )
         })?;
 
         // Tell the transaction pool that the sender's nonce has been incremented.

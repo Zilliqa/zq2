@@ -683,7 +683,7 @@ impl Network {
     }
 
     pub fn remove_node(&mut self, idx: usize) -> TestNode {
-        self.receivers.remove(idx);
+        let _ = self.receivers.remove(idx);
         self.nodes.remove(idx)
     }
 

@@ -330,7 +330,7 @@ impl Transaction {
                     (true, false) => (code.as_bytes(), <&[u8]>::default()),
                     (false, true) => (data.as_bytes(), <&[u8]>::default()),
                     (true, true) => (code.as_bytes(), data.as_bytes()),
-                    (false, false) => panic!("Zilliqa transaction has neither code nor data"),
+                    (false, false) => (<&[u8]>::default(), <&[u8]>::default()),
                 }
             }
         }
