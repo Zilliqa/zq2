@@ -413,9 +413,10 @@ pub(super) fn get_transaction_inner(
     let s = tx.tx.sig_s();
     let transaction = tx.tx.into_transaction();
     let (gas_price, max_fee_per_gas, max_priority_fee_per_gas) = match transaction {
-        Transaction::Legacy(_) | Transaction::Eip2930(_) | Transaction::Zilliqa(_) => {
-            (transaction.max_fee_per_gas(), None, None)
-        }
+        Transaction::Legacy(_)
+        | Transaction::Eip2930(_)
+        | Transaction::Zilliqa(_)
+        | Transaction::Intershard(_) => (transaction.max_fee_per_gas(), None, None),
         Transaction::Eip1559(TxEip1559 {
             max_fee_per_gas,
             max_priority_fee_per_gas,
@@ -455,6 +456,8 @@ pub(super) fn get_transaction_inner(
             Transaction::Eip1559(_) => 2,
             // Set Zilliqa transaction types to a unique number. This is "ZIL" encoded in ASCII.
             Transaction::Zilliqa(_) => 90_73_76,
+            // Set intershard transactions as unique, too. This is ZIL + 1.
+            Transaction::Intershard(_) => 90_73_77,
         },
     };
 

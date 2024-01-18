@@ -8,6 +8,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
 use libp2p::PeerId;
+use primitive_types::H160;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
 use time::{macros::format_description, OffsetDateTime};
@@ -165,6 +166,16 @@ pub struct BlockBatchResponse {
     pub proposals: Vec<Proposal>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IntershardCall {
+    pub source_address: H160,
+    pub target_address: Option<H160>,
+    pub gas_price: u128,
+    pub gas_limit: u64,
+    pub calldata: Vec<u8>,
+    pub nonce: u64,
+}
+
 /// A message intended to be sent over the network as part of p2p communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExternalMessage {
@@ -185,6 +196,7 @@ pub enum ExternalMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InternalMessage {
     LaunchShard(u64),
+    IntershardCall(IntershardCall),
 }
 
 impl ExternalMessage {
@@ -208,6 +220,7 @@ impl InternalMessage {
     pub fn name(&self) -> &'static str {
         match self {
             InternalMessage::LaunchShard(_) => "LaunchShard",
+            InternalMessage::IntershardCall(_) => "IntershardCall",
         }
     }
 }

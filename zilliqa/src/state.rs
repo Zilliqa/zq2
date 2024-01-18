@@ -47,7 +47,7 @@ impl State {
                 contracts::shard_registry::BYTECODE.to_vec(),
                 &[Token::Uint(config.consensus_timeout.as_millis().into())],
             )?;
-            state.force_deploy_contract(shard_data, Some(contract_addr::SHARD_CONTRACT))?;
+            state.force_deploy_contract(shard_data, Some(contract_addr::SHARD_REGISTRY))?;
         };
 
         let native_token_data = contracts::native_token::CONSTRUCTOR
@@ -57,6 +57,12 @@ impl State {
         let gas_price_data = contracts::gas_price::CONSTRUCTOR
             .encode_input(contracts::gas_price::BYTECODE.to_vec(), &[])?;
         state.force_deploy_contract(gas_price_data, Some(contract_addr::GAS_PRICE))?;
+
+        let intershard_bridge_data = contracts::intershard_bridge::BYTECODE.to_vec();
+        state.force_deploy_contract(
+            intershard_bridge_data,
+            Some(contract_addr::INTERSHARD_BRIDGE),
+        )?;
 
         let _ = state.set_gas_price(default_gas_price().into());
 
@@ -228,11 +234,15 @@ pub mod contract_addr {
 
     /// Address of the native token ERC-20 contract.
     pub const NATIVE_TOKEN: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL");
-    pub const SHARD_CONTRACT: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD");
     /// Address of the gas contract
     pub const GAS_PRICE: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0GAS");
     /// Gas fees go here
     pub const COLLECTED_FEES: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0FEE");
+    /// For intershard transactions, call this address
+    pub const INTERSHARD_BRIDGE: Address = H160(*b"\0\0\0\0\0\0\0\0ZQINTERSHARD");
+
+    /// Address of the shard registry - only present on the root shard.
+    pub const SHARD_REGISTRY: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD");
 }
 
 #[derive(Debug, Clone, Default, Hash, Serialize, Deserialize)]

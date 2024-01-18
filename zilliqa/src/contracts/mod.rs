@@ -51,6 +51,26 @@ pub mod shard {
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
 }
 
+pub mod intershard_bridge {
+    use ethabi::{Constructor, Event, Function};
+    use once_cell::sync::Lazy;
+
+    use super::{contract, Contract};
+
+    static CONTRACT: Lazy<Contract> =
+        Lazy::new(|| contract("src/contracts/intershard_bridge.sol", "IntershardBridge"));
+
+    pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+    pub static BRIDGE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("bridge").unwrap().clone());
+    pub static VALIDATE_CALL_NONCE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("validateCallNonce").unwrap().clone());
+    pub static RELAYED_EVT: Lazy<Event> =
+        Lazy::new(|| CONTRACT.abi.event("Relayed").unwrap().clone());
+}
+
 pub mod shard_registry {
     use ethabi::{Constructor, Event, Function};
     use once_cell::sync::Lazy;
@@ -109,6 +129,7 @@ mod tests {
             sources: Source::read_all(
                 [
                     "gas_price.sol",
+                    "intershard_bridge.sol",
                     "native_token.sol",
                     "shard.sol",
                     "shard_registry.sol",
