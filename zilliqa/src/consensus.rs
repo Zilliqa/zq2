@@ -1,3 +1,4 @@
+use crate::blockhooks;
 use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc};
 
 use anyhow::{anyhow, Result};
@@ -12,7 +13,6 @@ use tracing::*;
 use crate::{
     block_store::BlockStore,
     cfg::NodeConfig,
-    contracts,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     db::Db,
     exec::{TouchedAddressEventListener, TransactionApplyResult},
@@ -22,7 +22,7 @@ use crate::{
     },
     node::MessageSender,
     pool::TransactionPool,
-    state::{contract_addr, Address, State},
+    state::{Address, State},
     time::SystemTime,
     transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
@@ -133,6 +133,7 @@ pub struct Consensus {
     state: State,
     /// The persistence database
     db: Arc<Db>,
+    /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
     // PRNG - non-cryptographically secure, but we don't need that here
     rng: SmallRng,
@@ -588,9 +589,9 @@ impl Consensus {
             }
 
             // If we were the proposer we would've already processed the transactions
-            if !self.db.contains_transaction_receipt(&block.hash())? {
+            if !self.db.contains_transaction_receipts(&block.hash())? {
                 self.db
-                    .insert_transaction_receipt(&block.hash(), &block_receipts)?;
+                    .insert_transaction_receipts(&block.hash(), &block_receipts)?;
             }
 
             // Important - only add blocks we are going to execute because they can potentially
@@ -1070,7 +1071,7 @@ impl Consensus {
         };
         let block_receipts = self
             .db
-            .get_transaction_receipt(&block_hash)?
+            .get_transaction_receipts(&block_hash)?
             .unwrap_or_default();
         Ok(block_receipts
             .into_iter()
@@ -1083,7 +1084,7 @@ impl Consensus {
         event: Event,
         emitter: Address,
     ) -> Result<Vec<Log>> {
-        let receipts = self.db.get_transaction_receipt(&hash)?.unwrap_or_default();
+        let receipts = self.db.get_transaction_receipts(&hash)?.unwrap_or_default();
 
         let logs: Result<Vec<_>, _> = receipts
             .into_iter()
@@ -1289,24 +1290,23 @@ impl Consensus {
         self.finalized_view = view;
         self.db.put_latest_finalized_view(view)?;
 
+        let receipts = self.db.get_transaction_receipts(&hash)?.unwrap_or_default();
+
+        for (destination_shard, intershard_call) in blockhooks::get_cross_shard_messages(&receipts)?
+        {
+            self.message_sender.send_message_to_shard(
+                destination_shard,
+                InternalMessage::IntershardCall(intershard_call),
+            )?;
+        }
+
         if self.config.consensus.is_main {
             // Check for new shards to join
-            let shard_logs = self.get_logs_in_block(
-                hash,
-                contracts::shard_registry::SHARD_ADDED_EVT.clone(),
-                contract_addr::SHARD_CONTRACT,
-            )?;
-            for log in shard_logs {
-                let Some(shard_id) = log
-                    .params
-                    .into_iter()
-                    .find(|param| param.name == "id")
-                    .and_then(|param| param.value.into_uint())
-                else {
-                    return Err(anyhow!("LaunchShard event does not contain an id!"));
-                };
+            // TODO: this will be switched to use the bridge registering mechanism from the shard
+            // registry in the future
+            for new_shard_id in blockhooks::get_launch_shard_messages(&receipts)? {
                 self.message_sender
-                    .send_message_to_coordinator(InternalMessage::LaunchShard(shard_id.as_u64()))?;
+                    .send_message_to_coordinator(InternalMessage::LaunchShard(new_shard_id))?;
             }
         }
 
@@ -1667,7 +1667,7 @@ impl Consensus {
             // block store doesn't require anything, it will just hold blocks that may now be invalid
 
             // TX receipts are indexed by block
-            self.db.remove_transaction_receipt(&head_block.hash())?;
+            self.db.remove_transaction_receipts(&head_block.hash())?;
 
             // State is easily set - must be to the parent block, though
             trace!("Setting state to: {}", parent_block.state_root_hash());

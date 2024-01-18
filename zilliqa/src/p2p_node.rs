@@ -197,8 +197,6 @@ impl P2pNode {
         Ok(())
     }
 
-    // Method will be used once cross-shard messaging is implemented.
-    #[allow(dead_code)]
     fn forward_local_message_to_shard(
         &self,
         topic_hash: &TopicHash,
@@ -210,7 +208,6 @@ impl P2pNode {
                 .internal
                 .send((source_shard, message))?,
             None => {
-                // TODO (tentative): perhaps in the future this could auto-spawn a light shard node?
                 warn!(
                     ?topic_hash,
                     ?source_shard,
@@ -298,7 +295,7 @@ impl P2pNode {
                     _ => {},
                 },
                 message = self.local_message_receiver.next() => {
-                    let (_source, _destination, message) = message.expect("message stream should be infinite");
+                    let (source, destination, message) = message.expect("message stream should be infinite");
                     match message {
                         InternalMessage::LaunchShard(shard_id) => {
                             let shard_config = self.config.nodes
@@ -309,6 +306,9 @@ impl P2pNode {
                                     || Self::generate_child_config(self.config.nodes.first().unwrap(), shard_id));
                             self.add_shard_node(shard_config.clone()).await?;
                         },
+                        InternalMessage::IntershardCall(_) => {
+                            self.forward_local_message_to_shard(&Self::shard_id_to_topic(destination).hash(), source, message)?;
+                        }
                     }
                 },
                 message = self.outbound_message_receiver.next() => {
