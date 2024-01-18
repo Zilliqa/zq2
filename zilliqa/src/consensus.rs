@@ -1,10 +1,4 @@
-use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, BinaryHeap},
-    error::Error,
-    fmt::Display,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
@@ -27,6 +21,7 @@ use crate::{
         InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
     },
     node::MessageSender,
+    pool::TransactionPool,
     state::{contract_addr, Address, State},
     time::SystemTime,
     transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -91,65 +86,6 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
-#[derive(Debug, Clone)]
-struct TxnOrder {
-    pub nonce: u64,
-    pub gas_price: u128,
-    pub gas_limit: u64,
-    pub hash: Hash,
-    pub retries: u64,
-}
-
-impl TxnOrder {
-    fn new(hash: Hash, txn: &SignedTransaction) -> Self {
-        let txn = txn.clone().into_transaction();
-        TxnOrder {
-            nonce: txn.nonce(),
-            gas_price: txn.max_fee_per_gas(),
-            gas_limit: txn.gas_limit(),
-            hash,
-            retries: 0,
-        }
-    }
-}
-
-impl PartialEq for TxnOrder {
-    fn eq(&self, other: &Self) -> bool {
-        self.nonce == other.nonce
-            && self.gas_price == other.gas_price
-            && self.gas_limit == other.gas_limit
-            && self.hash == other.hash
-    }
-}
-
-impl Eq for TxnOrder {}
-
-// Implement a custom ordering for TxnOrder
-impl Ord for TxnOrder {
-    fn cmp(&self, other: &Self) -> Ordering {
-        if self.hash == other.hash {
-            warn!("TXnOrder hash collision {:?} vs {:?}", self, other);
-            return Ordering::Equal;
-        }
-
-        let nonce_ordering = other.nonce.cmp(&self.nonce);
-        if nonce_ordering == Ordering::Equal {
-            // If nonce is equal, compare by gas_price * fee (desire higher)
-            let self_fee = self.gas_price;
-            let other_fee = other.gas_price;
-            self_fee.cmp(&other_fee)
-        } else {
-            nonce_ordering
-        }
-    }
-}
-
-impl PartialOrd for TxnOrder {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 /// The consensus algorithm is pipelined fast-hotstuff, as given in this paper: https://arxiv.org/pdf/2010.11454.pdf
 ///
 /// The algorithm can be condensed down into the following explaination:
@@ -193,14 +129,11 @@ pub struct Consensus {
     finalized_view: u64,
     /// Peers that have appeared between the last view and this one. They will be added to the committee before the next view.
     pending_peers: Vec<Validator>,
-    /// Transactions that have been broadcasted by the network, but not yet executed. Transactions will be removed from this map once they are executed.
-    new_transactions: BTreeMap<Hash, VerifiedTransaction>,
     /// The account store.
     state: State,
     /// The persistence database
     db: Arc<Db>,
-    /// Transactions ordered by priority, map of address of TXn (from account) to ordered TXns to be executed.
-    new_transactions_priority: BTreeMap<Address, BinaryHeap<TxnOrder>>,
+    transaction_pool: TransactionPool,
     // PRNG - non-cryptographically secure, but we don't need that here
     rng: SmallRng,
 }
@@ -348,10 +281,9 @@ impl Consensus {
             view: View::new(start_view),
             finalized_view: start_view.saturating_sub(1),
             pending_peers: Vec::new(),
-            new_transactions: BTreeMap::new(),
             state,
             db,
-            new_transactions_priority: BTreeMap::new(),
+            transaction_pool: Default::default(),
             // Seed the rng with the node's public key
             rng: <SmallRng as rand_core::SeedableRng>::seed_from_u64(u64::from_be_bytes(
                 secret_key.node_public_key().as_bytes()[..8]
@@ -632,8 +564,9 @@ impl Consensus {
                 trace!("applying {} transactions to state", transactions.len());
             }
 
-            for txn in &transactions {
-                let txn = self.new_transaction(txn.clone())?;
+            for txn in transactions {
+                let txn = txn.verify()?;
+                self.new_transaction(txn.clone())?;
                 let tx_hash = txn.hash;
                 if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
                     self.db
@@ -712,25 +645,6 @@ impl Consensus {
         Ok(None)
     }
 
-    pub fn remove_tx_from_mempool(&mut self, tx_hash: &Hash) {
-        let removed = match self.new_transactions.remove(tx_hash) {
-            Some(tx) => tx,
-            None => {
-                return;
-            }
-        };
-
-        // loop over priority txs and remove the tx (this shold be O(log n) as it will almost cert
-        // be a leaf node)
-        if let Some(priority_txs) = self.new_transactions_priority.get_mut(&removed.signer) {
-            priority_txs.retain(|tx| tx.hash != *tx_hash);
-        }
-
-        // Finally, insert tx into the db, so there is no discontinuity where the TX can't
-        // be found anywhere
-        let _ = self.db.insert_transaction(tx_hash, &removed.tx);
-    }
-
     pub fn apply_transaction(
         &mut self,
         txn: VerifiedTransaction,
@@ -738,8 +652,7 @@ impl Consensus {
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
 
-        // If we have the transaction in the mempool, remove it.
-        self.remove_tx_from_mempool(&hash);
+        self.db.insert_transaction(&hash, &txn.tx)?;
 
         let mut listener = TouchedAddressEventListener::default();
 
@@ -747,6 +660,9 @@ impl Consensus {
             self.state
                 .apply_transaction(txn, self.config.eth_chain_id, current_block, false)
         })?;
+
+        // Tell the transaction pool that the sender's nonce has been incremented.
+        self.transaction_pool.update_nonce(&txn);
 
         for address in listener.touched {
             self.db.add_touched_address(address, hash)?;
@@ -763,116 +679,14 @@ impl Consensus {
         self.db.get_touched_address_index(address)
     }
 
-    // Get valid TXs to execute while also cleaning the mempool of TXs that are invalid
-    // to do this, we refer to a binary heap which for each from address, contains a list of TXs
-    // prioritised by nonce (so popping gives lowest), then by gas price and gas limit (highest)
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
-        let mut ret = Vec::new();
-
-        if self.config.consensus.block_tx_limit < 1 {
-            warn!("Block TX limit is set to 0, no TXs will be added to the block");
-        }
-
-        // Loop over the prioritised txs, putting them in so long as they are valid
-        for (from_addr, txs) in self.new_transactions_priority.iter_mut() {
-            // get the nonce of the account, or zero if none
-            let mut iter_nonce = self.state.must_get_account(*from_addr).nonce;
-            let mut remove_all_txs = false;
-
-            // Clear all nonces from the priority queue that are too low
-            while let Some(txn) = txs.pop() {
-                if txn.nonce < iter_nonce {
-                    trace!(
-                        "TX nonce {} too low, iter nonce {}, will be removed",
-                        txn.nonce,
-                        iter_nonce
-                    );
-                    continue;
-                } else {
-                    txs.push(txn);
-                    break;
-                }
-            }
-
-            // Push as many txs as have a sequential nonce into the map
-            // We have to pop, as iterating over a binary heap is not in order.
-            // So we put it all back afterward
-            let mut temp_vec = Vec::new();
-            while let Some(mut txn) = txs.pop() {
-                txn.retries += 1;
-                temp_vec.push(txn.clone());
-
-                // if we have reached the block limit, break
-                if ret.len() >= self.config.consensus.block_tx_limit {
-                    break;
-                }
-
-                // if it is less than the iter nonce, we can skip it
-                // this just means there are 'priority txs' with the same nonce but different fees
-                if txn.nonce < iter_nonce {
-                    trace!("lower priority tx ignored {} vs {}", txn.nonce, iter_nonce);
-                    continue;
-                }
-
-                // If the nonce is too high, we will take another pass
-                if txn.nonce > iter_nonce {
-                    trace!(
-                        "TX nonce {} too high, iter nonce {}, retry {} of {}",
-                        txn.nonce,
-                        iter_nonce,
-                        txn.retries,
-                        self.config.tx_retries
-                    );
-
-                    if txn.retries >= self.config.tx_retries {
-                        warn!(?txn, "Tranaction has exceeded retries and all pending from this account will been removed");
-                        remove_all_txs = true;
-                        temp_vec.pop();
-                    }
-
-                    // all other TXs will have a higher nonce, so we can break
-                    break;
-                }
-
-                // tx nonce == iter nonce, so we can add it
-                match self.new_transactions.get(&txn.hash) {
-                    Some(tx) => {
-                        trace!("Adding tx to execute: {:?}", tx);
-                        ret.push(tx.clone());
-                        iter_nonce += 1;
-                    }
-                    None => {
-                        warn!(
-                            "Transaction {} not found in mempool, but was in priority txs",
-                            txn.hash
-                        );
-                        temp_vec.pop();
-                    }
-                }
-            }
-
-            // If we need to remove the txs (retries timed out), remove it from the new_transactions and delete the entry
-            // in the priority map
-            if remove_all_txs {
-                trace!("removing txs for from address {}", from_addr);
-                while let Some(tx) = txs.pop() {
-                    self.new_transactions.remove(&tx.hash);
-                }
-            }
-
-            // Put the txs back in the heap
-            txs.extend(temp_vec.into_iter());
-        }
-
-        // As cleanup, remove any `From` where the heap is empty
-        self.new_transactions_priority
-            .retain(|_, binary_heap| !binary_heap.is_empty());
-
-        if !ret.is_empty() {
-            trace!("Added {} priority txs to block", ret.len());
-        }
-
-        ret
+        std::iter::from_fn(|| self.transaction_pool.best_transaction())
+            .filter(|txn| {
+                let account_nonce = self.state.must_get_account(txn.signer).nonce;
+                // Ignore this transaction if it is no longer valid.
+                txn.tx.nonce() >= account_nonce
+            })
+            .collect()
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
@@ -1209,34 +1023,23 @@ impl Consensus {
         Ok(None)
     }
 
-    pub fn new_transaction(&mut self, txn: SignedTransaction) -> Result<VerifiedTransaction> {
-        let txn = txn.verify()?;
-        // If we already have the tx, ignore it
-        if self.new_transactions.contains_key(&txn.hash) {
-            return Ok(txn);
+    /// Returns true if the transaction was new.
+    pub fn new_transaction(&mut self, txn: VerifiedTransaction) -> Result<bool> {
+        if self.db.contains_transaction(&txn.hash)? {
+            return Ok(false);
         }
 
-        let txn_order = TxnOrder::new(txn.hash, &txn.tx);
-
-        self.new_transactions_priority
-            .entry(txn.signer)
-            .or_default()
-            .push(txn_order);
-
-        self.new_transactions.insert(txn.hash, txn.clone());
-
-        Ok(txn)
+        let account_nonce = self.state.get_account(txn.signer)?.nonce;
+        Ok(self.transaction_pool.insert_transaction(txn, account_nonce))
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
-        if let Some(txn) = self.new_transactions.get(&hash) {
-            return Ok(Some(txn.clone()));
-        }
-
-        self.db
+        Ok(self
+            .db
             .get_transaction(&hash)?
             .map(|tx| tx.verify())
-            .transpose()
+            .transpose()?
+            .or_else(|| self.transaction_pool.get_transaction(hash).cloned()))
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
@@ -1732,10 +1535,6 @@ impl Consensus {
             .ok_or_else(|| anyhow!("No block at height {number}"))
     }
 
-    pub fn seen_tx_already(&self, hash: &Hash) -> Result<bool> {
-        Ok(self.new_transactions.contains_key(hash) || self.db.contains_transaction(hash)?)
-    }
-
     fn get_highest_from_agg<'a>(&self, agg: &'a AggregateQc) -> Result<&'a QuorumCertificate> {
         agg.qcs
             .iter()
@@ -1844,17 +1643,6 @@ impl Consensus {
 
             trace!("Reverting block {}", head_block);
             // block store doesn't require anything, it will just hold blocks that may now be invalid
-            // block transactions need to be removed from self.transactions and re-injected
-            for tx_hash in &head_block.transactions {
-                let orig_tx = self.get_transaction_by_hash(*tx_hash).unwrap().unwrap();
-                self.db.remove_transaction(tx_hash)?;
-
-                // Put tx back in.
-                self.new_transaction(orig_tx.tx).unwrap();
-
-                // block hash reverse index, remove tx hash too
-                self.db.remove_block_hash_reverse_index(tx_hash)?;
-            }
 
             // TX receipts are indexed by block
             self.db.remove_transaction_receipt(&head_block.hash())?;
@@ -1863,6 +1651,29 @@ impl Consensus {
             trace!("Setting state to: {}", parent_block.state_root_hash());
             self.state
                 .set_to_root(H256(parent_block.state_root_hash().0));
+
+            // Ensure the transaction pool is consistent by recreating it. This is moderately costly, but forks are
+            // rare.
+            let existing_txns = self.transaction_pool.drain();
+
+            for txn in existing_txns {
+                let account_nonce = self.state.get_account(txn.signer)?.nonce;
+                self.transaction_pool.insert_transaction(txn, account_nonce);
+            }
+
+            // block transactions need to be removed from self.transactions and re-injected
+            for tx_hash in &head_block.transactions {
+                let orig_tx = self.get_transaction_by_hash(*tx_hash).unwrap().unwrap();
+                self.db.remove_transaction(tx_hash)?;
+
+                // Insert this unwound transaction back into the transaction pool too.
+                let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
+                self.transaction_pool
+                    .insert_transaction(orig_tx, account_nonce);
+
+                // block hash reverse index, remove tx hash too
+                self.db.remove_block_hash_reverse_index(tx_hash)?;
+            }
 
             // Persistence - only need to update head block pointer as it should be impossible
             // to change finalized height

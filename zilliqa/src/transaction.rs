@@ -114,6 +114,16 @@ impl SignedTransaction {
         }
     }
 
+    pub fn gas_price(&self) -> u128 {
+        match self {
+            SignedTransaction::Legacy { tx, .. } => tx.gas_price,
+            SignedTransaction::Eip2930 { tx, .. } => tx.gas_price,
+            // We ignore the priority fee and just use the maximum fee.
+            SignedTransaction::Eip1559 { tx, .. } => tx.max_fee_per_gas,
+            SignedTransaction::Zilliqa { tx, .. } => tx.gas_price,
+        }
+    }
+
     pub fn verify(self) -> Result<VerifiedTransaction> {
         let signer = match &self {
             SignedTransaction::Legacy { tx, sig } => {
