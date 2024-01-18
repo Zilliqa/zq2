@@ -5,7 +5,6 @@ use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::sec1::ToEncodedPoint,
 };
-use serde_json::Value;
 use primitive_types::{H160, H256};
 use prost::Message;
 use rlp::RlpStream;

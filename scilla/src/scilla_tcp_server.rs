@@ -1,23 +1,17 @@
-use std::{
-    str,
-};
+use std::str;
 
 use anyhow::{anyhow, Result};
 use base64::Engine;
-
-use jsonrpc_core::{IoHandler, Params};
+use jsonrpc_core::Params;
 use primitive_types::{H160, H256, U256};
 use prost::Message;
-use serde_json::{Value};
-use tracing::{*};
+use serde_json::Value;
+use tracing::*;
 
 use crate::{
     backend_collector::BackendCollector,
     call_scilla_server::JsonRpcRequest,
-    proto::{
-        proto_scilla_val::{ValType},
-        ProtoScillaQuery, ProtoScillaVal,
-    },
+    proto::{proto_scilla_val::ValType, ProtoScillaQuery, ProtoScillaVal},
 };
 
 pub struct ScillaServer<'a, B: evm::backend::Backend> {
@@ -34,7 +28,6 @@ impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
         &mut self,
         request: &JsonRpcRequest,
     ) -> Result<Value, jsonrpc_core::Error> {
-
         match request.method.as_str() {
             //"fetchStateValueB64" => {
             //    let response = self.fetch_state_value_b64(request.params);
@@ -44,9 +37,7 @@ impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
             //    let response = self.fetch_external_state_value_b64(request.params);
             //    Ok(response)
             //},
-            "updateStateValueB64" => {
-                self.inner.update_state_value_b64(&request.params)
-            },
+            "updateStateValueB64" => self.inner.update_state_value_b64(&request.params),
             "updateStateValue" => {
                 self.inner.update_state_value_b64(&request.params)
 
@@ -66,20 +57,26 @@ impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
         }
     }
 
-    pub fn new(backend: BackendCollector<'a, B>, contract_addr: H160, state_root: H256, block_number: U256) -> ScillaServer<'a, B> {
+    pub fn new(
+        backend: BackendCollector<'a, B>,
+        contract_addr: H160,
+        state_root: H256,
+        block_number: U256,
+    ) -> ScillaServer<'a, B> {
         let inner = Inner {
             backend,
             current_contract_addr: (contract_addr, state_root, block_number),
         };
 
-        ScillaServer {
-            inner,
-        }
+        ScillaServer { inner }
     }
 }
 
 impl<'a, B: evm::backend::Backend> Inner<'a, B> {
-    pub fn update_state_value_b64(&mut self, params: &Params) -> Result<Value, jsonrpc_core::Error> {
+    pub fn update_state_value_b64(
+        &mut self,
+        params: &Params,
+    ) -> Result<Value, jsonrpc_core::Error> {
         fn err(s: &'static str) -> Result<Value, jsonrpc_core::Error> {
             debug!("* updateStateValueB64 ERROR called *** {:?}", s);
             Err(jsonrpc_core::Error::invalid_params(s))
@@ -107,11 +104,8 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         };
         let value = b64.decode(value.clone()).unwrap_or(value.into());
 
-        let result = self
-            .update_state_value_inner(query, value)
-            .map_err(convert_err);
-
-        result
+        self.update_state_value_inner(query, value)
+            .map_err(convert_err)
     }
 
     fn update_state_value_inner(&mut self, query: Vec<u8>, value: Vec<u8>) -> Result<Value> {
@@ -237,7 +231,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
 
     fn delete_by_prefix(&mut self, _prefix: &str) -> Result<()> {
         //let Some((_addr, _state_root, _block_number)) = self.current_contract_addr else {
-            //return Err(anyhow!("no current contract"));
+        //return Err(anyhow!("no current contract"));
         //};
         // todo: this.
         //let state_root = self
@@ -248,8 +242,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         //self.current_contract_addr = Some((addr, state_root, block_number));
 
         todo!("delete_by_prefix");
-
-        Ok(())
+        //Ok(())
     }
 
     fn update_state(&mut self, key: &str, value: &[u8], clean_empty: bool) -> Result<()> {
@@ -278,8 +271,8 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
     }
 
     fn put_state(&mut self, key: &str, value: &[u8]) -> Result<()> {
-
-        self.backend.update_account_storage_scilla(self.current_contract_addr.0, key, value);
+        self.backend
+            .update_account_storage_scilla(self.current_contract_addr.0, key, value);
         //let Some((addr, state_root, block_number)) = self.current_contract_addr else { return Err(anyhow!("no current contract")); };
         //let state_root = self
         //    .db

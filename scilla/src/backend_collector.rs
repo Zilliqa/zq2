@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use evm::backend::Backend;
 use evm_ds::protos::evm_proto::{Apply, EvmResult, Storage};
 use primitive_types::{H160, H256, U256};
+use serde_json::Value;
 use sha3::{Digest, Keccak256};
-use tracing::{*};
-use serde_json::{Value};
+use tracing::*;
 
 pub type Address = H160;
-
+type AccountStorage = HashMap<H256, H256>;
 
 /// The backend collector acts as a cache during the scilla execution. It responds to queries about the state
 /// and saves changes to the state. Once the execution is complete, it returns the state changes as an EvmResult
@@ -33,7 +33,7 @@ pub struct BackendCollector<'a, B: evm::backend::Backend> {
     pub backend: &'a B,
     // Map of cached (execution in progress) address to account and any dirty storage.
     // If the value is None, this means a deletion of that account and storage
-    pub account_storage_cached: HashMap<Address, Option<(Account, HashMap<H256, H256>)>>,
+    pub account_storage_cached: HashMap<Address, Option<(Account, AccountStorage)>>,
     pub events: Vec<Value>,
 }
 
@@ -66,7 +66,9 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
 
     pub fn update_account_storage(&mut self, address: Address, key: H256, value: H256) {
         // If the account does not exist, check the backend, then create it with empty code and storage
-        if let std::collections::hash_map::Entry::Vacant(e) = self.account_storage_cached.entry(address) {
+        if let std::collections::hash_map::Entry::Vacant(e) =
+            self.account_storage_cached.entry(address)
+        {
             let account = Account {
                 nonce: self.backend.basic(address).nonce.as_u64(),
                 code: self.backend.code(address),
@@ -95,8 +97,13 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     /// 2. put the length of the value in bytes at this location
     /// 3. put the data at H256 + 1, H256 + 2, etc.
     pub fn update_account_storage_scilla(&mut self, address: Address, key: &str, value: &[u8]) {
-
-        trace!("Updating account storage for scilla: KEY: {:?} VALUE: {:?} Lens: {} {}", key, value, key.len(), value.len());
+        trace!(
+            "Updating account storage for scilla: KEY: {:?} VALUE: {:?} Lens: {} {}",
+            key,
+            value,
+            key.len(),
+            value.len()
+        );
         let key_as_hash = H256::from_slice(&Keccak256::digest(key.as_bytes()));
 
         // To be able to recover the original keys, we will use the following scheme:
@@ -113,7 +120,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
             self.update_account_storage(address, key_start, u64_to_h256(keys_number));
 
             let mut key_pointer = increment_h256(key_start); // Next location contains end of list pointer
-            let mut value_pointer = self.get_account_storage(address, key_pointer);
+            let _value_pointer = self.get_account_storage(address, key_pointer);
 
             // Advance the pointer until it points at the next empty slot
             {
@@ -194,11 +201,15 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         key_pointer = increment_h256(key_pointer); // Jump past first item which is the pointer to last
 
         let all_keys = match keys_number {
-            0 => { warn!("NO keys found when requesting scilla contract state"); vec![]},
+            0 => {
+                warn!("NO keys found when requesting scilla contract state");
+                vec![]
+            }
             _ => {
                 let mut ret = vec![];
                 for _i in 0..keys_number {
-                    let (reconstructed_key, last_point) = self.read_compressed(address, key_pointer);
+                    let (reconstructed_key, last_point) =
+                        self.read_compressed(address, key_pointer);
                     key_pointer = increment_h256(last_point);
                     let reconstructed_key = String::from_utf8(reconstructed_key).unwrap();
 
@@ -209,20 +220,19 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
             }
         };
 
-        all_keys.iter().map(|key| {
-            (key.clone(), self.get_account_storage_scilla(address, key))
-        }).collect()
+        all_keys
+            .iter()
+            .map(|key| (key.clone(), self.get_account_storage_scilla(address, key)))
+            .collect()
     }
 
     /// Get all of the data the contract sees as key value pairs. Used to satisfy the call
     /// GetSmartContractState
     pub fn reconstruct_kv_pairs(&mut self, address: Address) -> Vec<(String, Vec<u8>)> {
         self.reconstruct_kv_pairs_inner(address)
-        .into_iter()
-        .filter_map(|(key, value)| {
-            self.state_conversion(key, value)
-        })
-        .collect()
+            .into_iter()
+            .filter_map(|(key, value)| self.state_conversion(key, value))
+            .collect()
     }
 
     // Unwrap a proto value
@@ -234,7 +244,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
 
         // Custom temporary logic to detemine if this is an actual key
         // for the key string
-        let number_of_x16 = key.chars().filter(|x| *x  == 0x16 as char).count();
+        let number_of_x16 = key.chars().filter(|x| *x == 0x16 as char).count();
 
         if number_of_x16 != 2 {
             return None;
@@ -247,7 +257,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         let key = key.split_at(40).1;
 
         // Don't return values which start with an underscore
-        if key.starts_with("_") {
+        if key.starts_with('_') {
             return None;
         }
 
@@ -260,7 +270,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     /// 2. put the length of the value in bytes at this location
     /// 3. put the data at H256 + 1, H256 + 2, etc.
     pub fn get_account_storage_scilla(&mut self, address: Address, key: &str) -> Vec<u8> {
-        let mut key = H256::from_slice(&Keccak256::digest(key.as_bytes()));
+        let key = H256::from_slice(&Keccak256::digest(key.as_bytes()));
         self.read_compressed(address, key).0
     }
 
@@ -308,8 +318,11 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
                         nonce: U256::zero(),
                         code: acct.code.clone(),
                         storage: stor
-                            .into_iter()
-                            .map(|(key, value)| Storage { key: *key, value: *value })
+                            .iter()
+                            .map(|(key, value)| Storage {
+                                key: *key,
+                                value: *value,
+                            })
                             .collect(),
                         reset_storage: false,
                     });

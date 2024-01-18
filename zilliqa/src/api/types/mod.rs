@@ -21,7 +21,7 @@ pub fn option_hex<S: Serializer, T: ToHex>(
     }
 }
 
-pub fn vec_hex<S: Serializer, T: ToHex>(data: &Vec<T>, serializer: S) -> Result<S::Ok, S::Error> {
+pub fn vec_hex<S: Serializer, T: ToHex>(data: &[T], serializer: S) -> Result<S::Ok, S::Error> {
     let mut serializer = serializer.serialize_seq(Some(data.len()))?;
 
     data.iter()

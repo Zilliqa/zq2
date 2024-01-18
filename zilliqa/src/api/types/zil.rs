@@ -1,11 +1,10 @@
 use primitive_types::{H160, H256, H512};
 use serde::Serialize;
-
 use serde_json::Value;
+
 use super::hex;
 use crate::{
     message::Block,
-    crypto::Hash,
     time::SystemTime,
     transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };

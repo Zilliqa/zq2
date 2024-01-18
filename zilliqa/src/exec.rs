@@ -5,8 +5,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use std::mem;
-use serde_json::{json, Value};
 use anyhow::{anyhow, Result};
 use ethabi::Token;
 use evm_ds::{
@@ -19,15 +17,15 @@ use evm_ds::{
 };
 use primitive_types::{H160, U256};
 use scilla::scilla_server_run::{calculate_contract_address_scilla, run_scilla_impl_direct};
+use serde_json::Value;
 use tracing::*;
 
 use crate::{
     contracts,
-    transaction::TxZilliqa,
     evm_backend::EvmBackend,
     message::BlockHeader,
     state::{contract_addr, Address, State},
-    transaction::{SignedTransaction, VerifiedTransaction},
+    transaction::{SignedTransaction, TxZilliqa, VerifiedTransaction},
 };
 
 #[derive(Default)]
@@ -588,12 +586,9 @@ impl State {
         info!(?hash, ?txn, "executing txn");
         let mut is_scilla = false;
 
-        match txn.tx {
-            SignedTransaction::Zilliqa { .. } => {
-                info!("Zilliqa transaction detected, using zilliqa interpreter...");
-                is_scilla = true;
-            }
-            _ => {}
+        if let SignedTransaction::Zilliqa { .. } = txn.tx {
+            info!("Zilliqa transaction detected, using zilliqa interpreter...");
+            is_scilla = true;
         }
 
         let txn = txn.tx.into_transaction();
@@ -665,7 +660,9 @@ impl State {
                     logs: result.logs,
                     traces: result.tx_trace.clone(),
                     gas_used: txn.gas_limit() - result.remaining_gas,
-                    scilla_events: scilla_events_to_single(result.tx_trace.lock().unwrap().scilla_events.clone()),
+                    scilla_events: scilla_events_to_single(
+                        result.tx_trace.lock().unwrap().scilla_events.clone(),
+                    ),
                 })
             }
             Err(e) => {
@@ -1017,7 +1014,6 @@ impl State {
             is_scilla: false,
         }
     }
-
 }
 
 // Convenience function to calculate the contract address for a given transaction, if it is created
@@ -1030,6 +1026,5 @@ pub fn get_created_scilla_contract_addr(tx: &TxZilliqa, from_addr: H160) -> Opti
 }
 
 fn scilla_events_to_single(events: Vec<Value>) -> Value {
-    let array_value = Value::Array(events.clone());
-    array_value
+    Value::Array(events.clone())
 }

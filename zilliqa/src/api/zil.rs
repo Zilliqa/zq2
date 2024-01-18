@@ -10,17 +10,14 @@ use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Deserializer};
-use serde_json::{json, Value};
+use serde_json::json;
 use tracing::trace;
-use tracing_subscriber::fmt::format::json;
-use crate::exec::get_created_scilla_contract_addr;
-use scilla::scilla_server_run::{reconstruct_kv_pairs};
-use crate::evm_backend::EvmBackend;
 
 use super::types::zil;
 use crate::{
-    api::types::zil::{GetTxResponse, CreateTransactionResponse},
+    api::types::zil::{CreateTransactionResponse, GetTxResponse},
     crypto::Hash,
+    exec::get_created_scilla_contract_addr,
     message::BlockNumber,
     node::Node,
     schnorr,
@@ -74,7 +71,10 @@ where
     s.parse().map_err(serde::de::Error::custom)
 }
 
-fn create_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<CreateTransactionResponse> {
+fn create_transaction(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<CreateTransactionResponse> {
     let transaction: TransactionParams = params.one()?;
     let mut node = node.lock().unwrap();
 
@@ -117,14 +117,23 @@ fn create_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<CreateT
 
     match transaction_verified.tx {
         SignedTransaction::Zilliqa { ref tx, .. } => {
-            let contract_address = get_created_scilla_contract_addr(tx, transaction_verified.signer);
-            let response = CreateTransactionResponse{contract_address: contract_address, info: "Txn processed".to_string(), tran_id: transaction_hash.0.into()};
-            trace!("CreateTransaction: {:?} response: {}", tx, serde_json::to_string(&response).unwrap());
+            let contract_address =
+                get_created_scilla_contract_addr(tx, transaction_verified.signer);
+            let response = CreateTransactionResponse {
+                contract_address,
+                info: "Txn processed".to_string(),
+                tran_id: transaction_hash.0.into(),
+            };
+            trace!(
+                "CreateTransaction: {:?} response: {}",
+                tx,
+                serde_json::to_string(&response).unwrap()
+            );
             Ok(response)
         }
-        _ => {
-            Err(anyhow!("unexpected transaction type for scilla create transaction"))
-        }
+        _ => Err(anyhow!(
+            "unexpected transaction type for scilla create transaction"
+        )),
     }
 }
 
@@ -154,7 +163,11 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<Get
             Some(tx) => {
                 let resp = Ok(GetTxResponse::new(tx.clone(), receipt.clone()));
                 let deleteme = GetTxResponse::new(tx, receipt);
-                trace!("GetTransaction: {:?} => {:?}", hash, serde_json::to_string(&deleteme).unwrap());
+                trace!(
+                    "GetTransaction: {:?} => {:?}",
+                    hash,
+                    serde_json::to_string(&deleteme).unwrap()
+                );
                 resp
             }
             None => Ok(None),
@@ -226,10 +239,10 @@ fn get_git_commit(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
 
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
     let smart_contract_address: H160 = params.one()?;
-    let mut node = node.lock().unwrap();
+    let node = node.lock().unwrap();
 
     // First get the account and check that its a scilla account
-    let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
+    let _account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
     let balance = node.get_native_balance(smart_contract_address, BlockNumber::Latest)?;
 
     let acccount_data = node.get_scilla_kv_pairs(smart_contract_address, BlockNumber::Latest)?;

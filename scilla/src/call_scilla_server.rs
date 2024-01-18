@@ -4,8 +4,6 @@ use std::{
     str,
 };
 
-use std::path::Path;
-use std::fs::File;
 use anyhow::{anyhow, Result};
 use jsonrpc_core::Params;
 use serde::{Deserialize, Serialize};
@@ -82,7 +80,7 @@ fn respond_json(val: Value, mut connection: &TcpStream, id: u32) {
         jsonrpc: "2.0".to_string(),
         result: Some(val),
         error: None,
-        id: id,
+        id,
     };
 
     let response_str = serde_json::to_string(&response).unwrap();
@@ -126,11 +124,11 @@ pub fn call_scilla_server<B: evm::backend::Backend>(
 
         // Bump up the buffers we are reading into if we are at the end (exponential growth)
         if bytes_read >= response.len() {
-            response.resize((response.len() + 1)*2, 0);
+            response.resize((response.len() + 1) * 2, 0);
         }
 
         if bytes_read_backend >= response_backend.len() {
-            response_backend.resize((response_backend.len() + 1)*2, 0);
+            response_backend.resize((response_backend.len() + 1) * 2, 0);
         }
 
         // Read backend request
@@ -148,28 +146,26 @@ pub fn call_scilla_server<B: evm::backend::Backend>(
         }
 
         // Check if final character read was a newline, which indicates the end of the response
-        if bytes_read_backend > 0 {
-            if response_backend[bytes_read_backend - 1] == b'\n' {
-                let possible_response = &response_backend[0..bytes_read_backend - 1];
+        if bytes_read_backend > 0 && response_backend[bytes_read_backend - 1] == b'\n' {
+            let possible_response = &response_backend[0..bytes_read_backend - 1];
 
-                let request: Result<JsonRpcRequest, serde_json::Error> =
-                    from_str(&String::from_utf8(possible_response.to_vec())?);
+            let request: Result<JsonRpcRequest, serde_json::Error> =
+                from_str(&String::from_utf8(possible_response.to_vec())?);
 
-                match request {
-                    Ok(request) => {
-                        debug!("Scilla backend request: {:?}", request);
-                        let backend_resp = tcp_scilla_server.handle_request(&request);
+            match request {
+                Ok(request) => {
+                    debug!("Scilla backend request: {:?}", request);
+                    let backend_resp = tcp_scilla_server.handle_request(&request);
 
-                        // Reset read pointer
-                        bytes_read_backend = 0;
+                    // Reset read pointer
+                    bytes_read_backend = 0;
 
-                        respond_json(backend_resp?, &stream_backend, request.id);
-                    }
-                    Err(e) => {
-                        // This could be caused by a newline in the response itself,
-                        // so we just continue on and will try to handle the full request later
-                        debug!("Scilla backend request deser error: {:?}", e);
-                    }
+                    respond_json(backend_resp?, &stream_backend, request.id);
+                }
+                Err(e) => {
+                    // This could be caused by a newline in the response itself,
+                    // so we just continue on and will try to handle the full request later
+                    debug!("Scilla backend request deser error: {:?}", e);
                 }
             }
         }
@@ -204,7 +200,12 @@ pub fn call_scilla_server<B: evm::backend::Backend>(
                 Err(e) => {
                     // This could be caused by a newline in the response itself,
                     // so we just continue on and will try to handle the full request later
-                    debug!("Scilla request deser error: {:?} Text: {:?} Bytes: {:?}", e, String::from_utf8(response.clone()).unwrap_or("not a string".to_string()), response);
+                    debug!(
+                        "Scilla request deser error: {:?} Text: {:?} Bytes: {:?}",
+                        e,
+                        String::from_utf8(response.clone()).unwrap_or("not a string".to_string()),
+                        response
+                    );
                 }
             }
         }
@@ -232,10 +233,9 @@ fn filter_out_escape_chars(data: Vec<u8>) -> String {
         }
         filtered_data.push(byte);
     }
-    let filtered_data: String = String::from_utf8(filtered_data).unwrap().into();
-    let filtered_data = filtered_data.replace("\"{", "{").replace("}\"", "}");
+    let filtered_data: String = String::from_utf8(filtered_data).unwrap();
 
-    filtered_data
+    filtered_data.replace("\"{", "{").replace("}\"", "}")
 }
 
 /// Ensure that the files are set up correctly for the scilla server to read them.
@@ -249,20 +249,27 @@ pub fn ensure_setup_correct(
     let message_directory_str = "/tmp/scilla_input/message.scilla ";
 
     if let Some(init_data) = init_data {
-        let mut stream = TcpStream::connect("127.0.0.1:12347").expect("unable to connect to scilla server for file setup!");
+        let mut stream = TcpStream::connect("127.0.0.1:12347")
+            .expect("unable to connect to scilla server for file setup!");
         stream.write_all(init_directory_str.as_bytes()).unwrap();
-        stream.write_all(serde_json::to_string(&init_data).unwrap().as_bytes()).unwrap();
+        stream
+            .write_all(serde_json::to_string(&init_data).unwrap().as_bytes())
+            .unwrap();
     }
 
     if let Some(input_data) = input_data {
-        let mut stream = TcpStream::connect("127.0.0.1:12347").expect("unable to connect to scilla server for file setup!");
+        let mut stream = TcpStream::connect("127.0.0.1:12347")
+            .expect("unable to connect to scilla server for file setup!");
         stream.write_all(input_directory_str.as_bytes()).unwrap();
         stream.write_all(&input_data).unwrap();
     }
 
     if let Some(message) = message {
-        let mut stream = TcpStream::connect("127.0.0.1:12347").expect("unable to connect to scilla server for file setup!");
+        let mut stream = TcpStream::connect("127.0.0.1:12347")
+            .expect("unable to connect to scilla server for file setup!");
         stream.write_all(message_directory_str.as_bytes()).unwrap();
-        stream.write_all(serde_json::to_string(&message).unwrap().as_bytes()).unwrap();
+        stream
+            .write_all(serde_json::to_string(&message).unwrap().as_bytes())
+            .unwrap();
     }
 }

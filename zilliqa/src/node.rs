@@ -4,19 +4,16 @@ use anyhow::{anyhow, Result};
 use evm_ds::protos::evm_proto::{self as EvmProto};
 use libp2p::PeerId;
 use primitive_types::{H256, U256};
+use scilla::scilla_server_run::reconstruct_kv_pairs;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::*;
-use eth_trie::{EthTrie as PatriciaTrie, EthTrie, Trie};
-use crate::db::TrieStorage;
-use crate::evm_backend::EvmBackend;
-
-use scilla::scilla_server_run::{reconstruct_kv_pairs};
 
 use crate::{
     cfg::NodeConfig,
     consensus::Consensus,
     crypto::{Hash, NodePublicKey, SecretKey},
     db::Db,
+    evm_backend::EvmBackend,
     message::{
         Block, BlockBatchRequest, BlockBatchResponse, BlockNumber, BlockRequest, BlockResponse,
         ExternalMessage, InternalMessage, Proposal,
@@ -363,9 +360,18 @@ impl Node {
         address: Address,
         block_number: BlockNumber,
     ) -> Result<Vec<(String, Vec<u8>)>> {
-
-        let block_header = self.get_block_by_blocknum(block_number).unwrap().unwrap().header;
-        let mut backend = EvmBackend::new(self.consensus.state(), U256::zero(), address, 0, block_header);
+        let block_header = self
+            .get_block_by_blocknum(block_number)
+            .unwrap()
+            .unwrap()
+            .header;
+        let backend = EvmBackend::new(
+            self.consensus.state(),
+            U256::zero(),
+            address,
+            0,
+            block_header,
+        );
         Ok(reconstruct_kv_pairs(&backend, address))
     }
 
