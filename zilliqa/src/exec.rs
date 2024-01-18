@@ -596,12 +596,8 @@ impl State {
         // fail early on nonce mismatch
         let mut acct = self.get_account(from_addr).unwrap();
 
-        let desired_account_nonce = if is_scilla {
-            // todo: this should be +1 but it is not.
-            acct.nonce
-        } else {
-            acct.nonce
-        };
+        // todo: this should be +1 but it is not.
+        let desired_account_nonce = acct.nonce;
 
         if desired_account_nonce != txn.nonce() {
             let error_str = format!(

@@ -168,10 +168,8 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
                 );
 
             create_contract(
-                code.as_bytes(),
                 args.gas_limit,
                 args.apparent_value,
-                &init_data,
                 init_directory_str,
                 lib_directory_str,
                 input_directory_str,
@@ -417,10 +415,8 @@ pub fn invoke_contract<B: evm::backend::Backend>(
     Ok(response)
 }
 pub fn create_contract<B: evm::backend::Backend>(
-    _contract: &[u8],
     gas_limit: u64,
     balance: U256, // todo: this
-    _init: &Value,
     init_path: &str,
     lib_path: &str,
     input_path: &str,
