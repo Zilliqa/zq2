@@ -10,8 +10,6 @@ anyhow = "1.0.78"
 base64 = "0.21.5"
 evm = { git = "https://github.com/Zilliqa/evm", rev = "08a117eadfd0368cd2cc813763155e8f740bd881", features = ["tracing"] }
 evm_ds = { path = "../evm-ds" }
-futures = "0.3.30"
-jsonrpc-client-transports = "18.0.0"
 jsonrpc-core = "18.0.0"
 primitive-types = "0.12.2"
 prost = "0.12.3"
@@ -19,7 +17,6 @@ serde = "1.0.193"
 serde_json = "1.0.108"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
-tokio = "1.35.1"
 tracing = "0.1.40"
 
 [build-dependencies]
