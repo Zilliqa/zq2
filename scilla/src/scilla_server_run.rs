@@ -201,6 +201,8 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
                 .unwrap()
                 .insert("_amount".to_owned(), args.apparent_value.to_string().into());
 
+            trace!("msg after population: {:?}", msg);
+
             let origin_addr_hex = format!("{from_addr:#x}");
             trace!("origin addr: {:?}", origin_addr_hex);
 

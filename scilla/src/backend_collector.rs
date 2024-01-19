@@ -296,6 +296,20 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         );
     }
 
+    pub fn get_balance(&self, address: Address) -> U256 {
+        self.backend.basic(address).balance
+    }
+
+    pub fn get_account(&self, address: Address) -> Account {
+        // The account is never cached by the backend collector, so we can just get it from the backend
+        Account {
+            nonce: self.backend.basic(address).nonce.as_u64(),
+            code: self.backend.code(address),
+            storage_root: None,
+            is_scilla: true, // todo: this is not neccessarily correct, but it might not matter
+        }
+    }
+
     pub fn get_code(&self, address: Address) -> Vec<u8> {
         if let Some(Some((acct, _))) = self.account_storage_cached.get(&address) {
             return acct.code.clone();
