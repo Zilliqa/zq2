@@ -97,6 +97,9 @@ fn create_transaction(
     let key = schnorr::PublicKey::from_sec1_bytes(&key)?;
     let sig = schnorr::Signature::from_str(&transaction.signature)?;
 
+    let nonce = transaction.nonce;
+    let to_addr = transaction.to_addr;
+
     let transaction = SignedTransaction::Zilliqa {
         tx: TxZilliqa {
             chain_id: chain_id as u16,
@@ -115,26 +118,37 @@ fn create_transaction(
     let transaction_hash = node.create_transaction(transaction.clone())?;
     let transaction_verified: VerifiedTransaction = transaction.verify()?;
 
-    match transaction_verified.tx {
-        SignedTransaction::Zilliqa { ref tx, .. } => {
-            let contract_address =
-                get_created_scilla_contract_addr(tx, transaction_verified.signer);
-            let response = CreateTransactionResponse {
-                contract_address,
-                info: "Txn processed".to_string(),
-                tran_id: transaction_hash.0.into(),
-            };
-            trace!(
-                "CreateTransaction: {:?} response: {}",
-                tx,
-                serde_json::to_string(&response).unwrap()
-            );
-            Ok(response)
-        }
-        _ => Err(anyhow!(
-            "unexpected transaction type for scilla create transaction"
-        )),
-    }
+    let contract_address =
+        get_created_scilla_contract_addr(nonce, transaction_verified.signer, to_addr);
+
+    let response = CreateTransactionResponse {
+        contract_address,
+        info: "Txn processed".to_string(),
+        tran_id: transaction_hash.0.into(),
+    };
+
+    Ok(response)
+
+    //match transaction_verified.tx {
+    //    SignedTransaction::Zilliqa { ref tx, .. } => {
+    //        let contract_address =
+    //            get_created_scilla_contract_addr(tx, transaction_verified.signer);
+    //        let response = CreateTransactionResponse {
+    //            contract_address,
+    //            info: "Txn processed".to_string(),
+    //            tran_id: transaction_hash.0.into(),
+    //        };
+    //        trace!(
+    //            "CreateTransaction: {:?} response: {}",
+    //            tx,
+    //            serde_json::to_string(&response).unwrap()
+    //        );
+    //        Ok(response)
+    //    }
+    //    _ => Err(anyhow!(
+    //        "unexpected transaction type for scilla create transaction"
+    //    )),
+    //}
 }
 
 fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<GetTxResponse>> {

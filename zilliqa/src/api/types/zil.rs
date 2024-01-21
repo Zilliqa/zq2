@@ -135,7 +135,7 @@ impl GetTxResponse {
                 code: tx.code.to_string(),
                 data: tx.data.to_string(),
             }),
-            _ => None,
+            _ => None, // todo: the others
         }
     }
 }

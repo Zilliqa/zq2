@@ -1013,9 +1013,9 @@ impl State {
 }
 
 // Convenience function to calculate the contract address for a given transaction, if it is created
-pub fn get_created_scilla_contract_addr(tx: &TxZilliqa, from_addr: H160) -> Option<H160> {
-    if tx.to_addr == Address::zero() {
-        Some(calculate_contract_address_scilla(from_addr, tx.nonce))
+pub fn get_created_scilla_contract_addr(nonce: u64, from_addr: H160, to_addr: H160) -> Option<H160> {
+    if to_addr == Address::zero() {
+        Some(calculate_contract_address_scilla(from_addr, nonce))
     } else {
         None
     }

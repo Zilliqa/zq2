@@ -46,13 +46,14 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         }
     }
 
-    pub fn get_account_storage(&mut self, address: Address, key: H256) -> H256 {
+    // todo: refactor this according to pr comments
+    pub fn get_account_storage(&self, address: Address, key: H256) -> H256 {
         // If the account does not exist, check the backend
         if !self.account_storage_cached.contains_key(&address) {
             trace!("Account not in cache, checking backend");
             self.backend.storage(address, key)
         } else {
-            let entry = self.account_storage_cached.get_mut(&address).unwrap();
+            let entry = self.account_storage_cached.get(&address).unwrap();
 
             match entry {
                 Some((_, storage)) => storage.get(&key).cloned().unwrap_or(H256::zero()),
@@ -64,7 +65,8 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         }
     }
 
-    pub fn update_account_storage(&mut self, address: Address, key: H256, value: H256) {
+    // todo: refactor this according to pr comments
+    fn update_account_storage(&mut self, address: Address, key: H256, value: H256) {
         // If the account does not exist, check the backend, then create it with empty code and storage
         if let std::collections::hash_map::Entry::Vacant(e) =
             self.account_storage_cached.entry(address)
@@ -164,7 +166,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
 
     /// Internal function to read a compressed value from the database, according
     /// to the scheme described in update_account_storage_scilla
-    fn read_compressed(&mut self, address: Address, mut key: H256) -> (Vec<u8>, H256) {
+    fn read_compressed(&self, address: Address, mut key: H256) -> (Vec<u8>, H256) {
         let value = self.get_account_storage(address, key);
         let value = h256_to_u64(value);
         let len = value.div_ceil(32);
@@ -184,7 +186,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         }
 
         // Remove trailing zeros if any (from padding)
-        result.resize(value as usize, 0);
+        result.truncate(value as usize);
 
         (result, key)
     }
@@ -269,7 +271,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     /// 1. Hash the key to H256
     /// 2. put the length of the value in bytes at this location
     /// 3. put the data at H256 + 1, H256 + 2, etc.
-    pub fn get_account_storage_scilla(&mut self, address: Address, key: &str) -> Vec<u8> {
+    pub fn get_account_storage_scilla(&self, address: Address, key: &str) -> Vec<u8> {
         let key = H256::from_slice(&Keccak256::digest(key.as_bytes()));
         self.read_compressed(address, key).0
     }

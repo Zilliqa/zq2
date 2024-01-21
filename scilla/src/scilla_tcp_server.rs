@@ -9,6 +9,8 @@ use prost::Message;
 use serde_json::Value;
 use tracing::*;
 use std::collections::HashMap;
+//use sha2::{Digest, Sha256};
+use sha3::{Keccak256, Digest};
 
 use crate::{
     backend_collector::BackendCollector,
@@ -33,23 +35,23 @@ impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
     ) -> Result<Value, jsonrpc_core::Error> {
         match request.method.as_str() {
             "fetchStateValueB64" => {
-                self.inner.fetch_state_value_b64(request.params)
+                self.inner.fetch_state_value_b64(&request.params)
             },
             "fetchStateValue" => {
-                self.inner.fetch_state_value_b64(request.params)
+                self.inner.fetch_state_value_b64(&request.params)
             },
             "fetchExternalStateValueB64" => {
-                self.inner.fetch_external_state_value_b64(request.params)
+                self.inner.fetch_external_state_value_b64(&request.params)
             },
             "fetchExternalStateValue" => {
-                self.inner.fetch_external_state_value_b64(request.params)
+                self.inner.fetch_external_state_value_b64(&request.params)
             },
             "updateStateValueB64" => self.inner.update_state_value_b64(&request.params),
             "updateStateValue" => {
                 self.inner.update_state_value_b64(&request.params)
             }
             "fetchBlockchainInfo" => {
-                self.inner.fetch_blockchain_info(request.params)
+                self.inner.fetch_blockchain_info(&request.params)
             },
             _ => {
                 warn!(
@@ -115,7 +117,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
     // todo: this.
     fn fetch_state_value_b64(
         &mut self,
-        params: Params,
+        params: &Params,
     ) -> Result<Value, jsonrpc_core::Error> {
         //fn err(s: &'static str) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
         //    futures::future::ready(Err(jsonrpc_core::Error::invalid_params(s))).boxed()
@@ -132,7 +134,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         let Some(query) = params.get("query") else { return err("expected query in map"); };
         let Some(query) = query.as_str().map(str::to_owned) else { return err("query was not a string"); };
         //let Ok(query) = b64.decode(query) else { return err("query was not base64"); };
-        let query = b64.decode(query).unwrap_or( query.into() );
+        let query = b64.decode(query.clone()).unwrap_or( query.into() );
         let Ok(query) = ProtoScillaQuery::decode(query.as_slice()) else { return err("could not parse query"); };
 
         let result = self.fetch_state_value_inner(query).map_err(convert_err);
@@ -152,7 +154,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
     // Todo: this.
     fn fetch_external_state_value_b64(
         &mut self,
-        params: Params,
+        params: &Params,
     ) -> Result<Value, jsonrpc_core::Error> {
         //fn err(s: &'static str) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
         //    futures::future::ready(Err(jsonrpc_core::Error::invalid_params(s))).boxed()
@@ -171,7 +173,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         let Some(query) = params.get("query") else { return err("expected query in map"); };
         let Some(query) = query.as_str().map(str::to_owned) else { return err("query was not a string"); };
         //let Ok(query) = b64.decode(query) else { return err("query was not base64"); };
-        let query = b64.decode(query).unwrap_or( query.into() );
+        let query = b64.decode(query.clone()).unwrap_or( query.into() );
 
         let result = self
             .fetch_external_state_value_inner(addr, query)
@@ -196,7 +198,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
     // todo: this.
     fn fetch_blockchain_info(
         &mut self,
-        params: Params,
+        params: &Params,
     ) -> Result<Value, jsonrpc_core::Error> {
         //fn err(s: &'static str) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
         //    futures::future::ready(Err(jsonrpc_core::Error::invalid_params(s))).boxed()
@@ -360,8 +362,8 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         //let basic = self.backend.get_balance(addr);
         let account = self.backend.get_account(addr);
         let balance = self.backend.get_balance(addr);
+        let code_hash = Keccak256::digest(&account.code); // todo: need to create this code hash - is this correct?
         let code = account.code;
-        let code_hash = account.code; // todo: need to create this code hash - is this correct?
 
         fn scilla_val(b: Vec<u8>) -> ProtoScillaVal {
             ProtoScillaVal {
@@ -380,7 +382,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
                 return Ok(Some((val, "Uint64".to_owned())));
             }
             "_this_address" => {
-                if !account.code.is_empty() {
+                if !code.is_empty() {
                     let val = scilla_val(format!("\"0x{:?}\"", addr).into_bytes());
                     return Ok(Some((val, "ByStr20".to_owned())));
                 }
@@ -427,7 +429,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         query.mapdepth = depth;
 
         //let Some(contract) = account.contract else { return Err(anyhow!("state read from non-contract")); };
-        let contract = account.code;
+        //let contract = account.code;
 
         // don't need to do this switch I think
         //let Some((old_addr, old_state_root, block_num)) = self.current_contract_addr else { return Err(anyhow!("no current contract")); };
@@ -476,7 +478,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             }
             std::cmp::Ordering::Less => {
                 // We're fetching a map value. We need to iterate through the DB lexicographically.
-                let mut entries = HashMap::new();
+                let mut entries : HashMap<String, Vec<u8>> = HashMap::new();
 
                 //let existing_entries: Vec<_> = self
                 //    .db
@@ -487,15 +489,17 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
 
                 // todo: this
                 //let existing_entries: Vec<_> = self.get_state_with_prefix(&key).collect();
-                let existing_entries: Vec<_> = self.get_state(&key).unwrap();
+                let existing_entries: Vec<_> = self.get_state(&key).unwrap().unwrap();
 
                 if existing_entries.is_empty() && !query.indices.is_empty() {
                     return Ok(None);
                 }
-                for kv in existing_entries {
-                    let (k, v) = kv?;
-                    entries.insert(k, v);
-                }
+
+                // todo: this.
+                //for kv in existing_entries {
+                //    let (k, v) = kv;
+                //    entries.insert(k, v);
+                //}
 
                 let mut val = ProtoScillaVal {
                     val_type: Some(ValType::Mval(proto_scilla_val::Map { m: HashMap::new() })),
@@ -581,6 +585,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
 
     fn delete_by_prefix(&mut self, prefix: &str) -> Result<()> {
         self.delete_state(prefix)?;
+        Ok(())
     }
 
     fn update_state(&mut self, key: &str, value: &[u8], clean_empty: bool) -> Result<()> {
@@ -616,7 +621,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
 
     fn get_state(&self, key: &str) -> Result<Option<Vec<u8>>> {
         let value = self.backend.get_account_storage_scilla(self.execution_context.0, key);
-        Ok(value)
+        Ok(Some(value))
     }
 
     fn delete_state(&mut self, key: &str) -> Result<()> {
