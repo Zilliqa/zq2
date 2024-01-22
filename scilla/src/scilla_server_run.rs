@@ -18,6 +18,13 @@ use crate::{
     scilla_tcp_server::ScillaServer,
 };
 
+// These are the directories inside the docker container which scilla will look for
+const SCILLA_SERVER_SOCK_PATH: &str = "/tmp/scilla-server.sock";
+const SCILLA_SERVER_LIB_PATH: &str = "/scilla/0/src/stdlib/";
+const SCILLA_SERVER_INIT_PATH: &str = "/tmp/scilla_init/init.json";
+const SCILLA_SERVER_INPUT_PATH: &str = "/tmp/scilla_input/input.scilla";
+const SCILLA_SERVER_MESSAGE_PATH: &str = "/tmp/scilla_input/message.scilla";
+
 /// The scheme to calculate scilla contract addresses is different from the EVM.
 pub fn calculate_contract_address_scilla(from_addr: H160, account_nonce: u64) -> H160 {
     let mut hasher = Sha256::new();
@@ -31,6 +38,8 @@ pub fn calculate_contract_address_scilla(from_addr: H160, account_nonce: u64) ->
 /// Entry point for calling the scilla server. The backend is passed in so that the state can be queried
 /// and the function will return the state changes as an EvmResult.
 /// Note that the function will block the thread while it waits for the scilla server to respond.
+/// The execution in this scilla library is only related to contract creation and contract calls.
+/// Transfers are handled by the EVM.
 pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
     args: EvmProto::EvmCallArgs,
     backend: &B,
@@ -47,11 +56,10 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
     let mut tcp_scilla_server =
         ScillaServer::new(backend_collector, args.address, H256::zero(), block_num);
 
-    // These are the directories inside the docker container which scilla will look for
-    let lib_directory_str = "/scilla/0/src/stdlib/";
-    let init_directory_str = "/tmp/scilla_init/init.json";
-    let input_directory_str = "/tmp/scilla_input/input.scilla";
-    let message_directory_str = "/tmp/scilla_input/message.scilla";
+    //let lib_directory_str = "/scilla/0/src/stdlib/";
+    //let init_directory_str = "/tmp/scilla_init/init.json";
+    //let input_directory_str = "/tmp/scilla_input/input.scilla";
+    //let message_directory_str = "/tmp/scilla_input/message.scilla";
 
     let is_contract_creation = tcp_scilla_server
         .inner
@@ -110,9 +118,9 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
                 code.as_bytes(),
                 args.gas_limit,
                 &init_data,
-                init_directory_str,
-                lib_directory_str,
-                input_directory_str,
+                //init_directory_str,
+                //lib_directory_str,
+                //input_directory_str,
                 &mut tcp_scilla_server,
             )
             .unwrap();
@@ -170,9 +178,9 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
             create_contract(
                 args.gas_limit,
                 args.apparent_value,
-                init_directory_str,
-                lib_directory_str,
-                input_directory_str,
+                //init_directory_str,
+                //lib_directory_str,
+                //input_directory_str,
                 &mut tcp_scilla_server,
             )
             .unwrap();
@@ -251,10 +259,10 @@ pub fn run_scilla_impl_direct<B: Backend + std::marker::Sync>(
                     args.gas_limit,
                     args.apparent_value,
                     //&init_data,
-                    init_directory_str,
-                    lib_directory_str,
-                    input_directory_str,
-                    message_directory_str,
+                    //init_directory_str,
+                    //lib_directory_str,
+                    //input_directory_str,
+                    //message_directory_str,
                     &mut tcp_scilla_server,
                 );
 
@@ -350,17 +358,17 @@ pub fn check_contract<B: evm::backend::Backend>(
     _contract: &[u8],
     gas_limit: u64,
     _init: &Value,
-    init_path: &str,
-    lib_path: &str,
-    input_path: &str,
+    //init_path: &str,
+    //lib_path: &str,
+    //input_path: &str,
     tcp_scilla_server: &mut ScillaServer<B>,
 ) -> Result<CheckOutput> {
     let args = vec![
         "-init".to_owned(),
-        init_path.to_string(), // ending init.json
+        SCILLA_SERVER_INIT_PATH.to_string(), // ending init.json
         "-libdir".to_owned(),
-        lib_path.to_string(),
-        input_path.to_string(), // ending input.scilla
+        SCILLA_SERVER_LIB_PATH.to_string(),
+        SCILLA_SERVER_INPUT_PATH.to_string(), // ending input.scilla
         "-gaslimit".to_owned(),
         gas_limit.to_string(),
         "-contractinfo".to_owned(),
@@ -382,27 +390,27 @@ pub fn invoke_contract<B: evm::backend::Backend>(
     gas_limit: u64,
     balance: U256, // todo: this
     //_init: &Value,
-    init_path: &str, // Note: same as message path
-    lib_path: &str,
-    input_path: &str,
-    message_path: &str,
+    //init_path: &str, // Note: same as message path
+    //lib_path: &str,
+    //input_path: &str,
+    //message_path: &str,
     tcp_scilla_server: &mut ScillaServer<B>,
 ) -> Result<JsonRpcResponse> {
     let args = vec![
         "-init".to_owned(),
-        init_path.to_string(),
+        SCILLA_SERVER_INIT_PATH.to_string(),
         "-ipcaddress".to_owned(),
-        "/tmp/scilla-server.sock".to_owned(), // todo: this.
+        SCILLA_SERVER_SOCK_PATH.to_owned(),
         "-imessage".to_owned(),
-        message_path.to_string(),
+        SCILLA_SERVER_MESSAGE_PATH.to_string(),
         "-i".to_owned(),
-        input_path.to_string(),
+        SCILLA_SERVER_INPUT_PATH.to_string(),
         "-gaslimit".to_owned(),
         gas_limit.to_string(),
         "-balance".to_owned(),
         balance.to_string(),
         "-libdir".to_owned(),
-        lib_path.to_string(),
+        SCILLA_SERVER_LIB_PATH.to_string(),
         "-jsonerrors".to_owned(),
         "-pplit".to_owned(),
         "true".to_owned(),
@@ -419,24 +427,24 @@ pub fn invoke_contract<B: evm::backend::Backend>(
 pub fn create_contract<B: evm::backend::Backend>(
     gas_limit: u64,
     balance: U256, // todo: this
-    init_path: &str,
-    lib_path: &str,
-    input_path: &str,
+    //init_path: &str,
+    //lib_path: &str,
+    //input_path: &str,
     tcp_scilla_server: &mut ScillaServer<B>,
 ) -> Result<()> {
     let args = vec![
         "-i".to_owned(),
-        input_path.to_string(),
+        SCILLA_SERVER_INPUT_PATH.to_string(),
         "-init".to_owned(),
-        init_path.to_string(), // ending init.json
+        SCILLA_SERVER_INIT_PATH.to_string(), // ending init.json
         "-ipcaddress".to_owned(),
-        "/tmp/scilla-server.sock".to_owned(), // todo: this.
+        SCILLA_SERVER_SOCK_PATH.to_owned(),
         "-gaslimit".to_owned(),
         gas_limit.to_string(),
         "-balance".to_owned(),
         balance.to_string(), // todo: this
         "-libdir".to_owned(),
-        lib_path.to_string(),
+        SCILLA_SERVER_LIB_PATH.to_string(),
         "-jsonerrors".to_owned(),
     ];
 

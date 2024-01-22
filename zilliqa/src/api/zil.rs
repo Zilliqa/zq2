@@ -128,67 +128,26 @@ fn create_transaction(
     };
 
     Ok(response)
-
-    //match transaction_verified.tx {
-    //    SignedTransaction::Zilliqa { ref tx, .. } => {
-    //        let contract_address =
-    //            get_created_scilla_contract_addr(tx, transaction_verified.signer);
-    //        let response = CreateTransactionResponse {
-    //            contract_address,
-    //            info: "Txn processed".to_string(),
-    //            tran_id: transaction_hash.0.into(),
-    //        };
-    //        trace!(
-    //            "CreateTransaction: {:?} response: {}",
-    //            tx,
-    //            serde_json::to_string(&response).unwrap()
-    //        );
-    //        Ok(response)
-    //    }
-    //    _ => Err(anyhow!(
-    //        "unexpected transaction type for scilla create transaction"
-    //    )),
-    //}
 }
 
 fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<GetTxResponse>> {
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
 
-    let ret = get_scilla_transaction_inner(hash, &node.lock().unwrap())?;
+    let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?;
     let mut receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
 
-    // Spin up to 1s while waiting for the receipt to become available
-    let now = std::time::Instant::now();
-    while receipt.is_none() && now.elapsed() < std::time::Duration::from_secs(10) {
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
-        trace!("Time spent waiting for receipt... {:?}", now.elapsed());
-    }
+    // Note: the scilla api expects an err json rpc response if the transaction is not found
+    // Canonical example:
+    //     "error": {
+    //     "code": -20,
+    //     "data": null,
+    //     "message": "Txn Hash not Present"
+    // },
+    let receipt = receipt.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+    let tx = tx.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
 
-    if receipt.is_none() {
-        trace!("GetTransaction will fail!");
-    }
-
-    trace!("***** TX RECEIPT: {:?}", receipt);
-
-    if let Some(receipt) = receipt {
-        match ret {
-            Some(tx) => {
-                let resp = Ok(GetTxResponse::new(tx.clone(), receipt.clone()));
-                let deleteme = GetTxResponse::new(tx, receipt);
-                trace!(
-                    "GetTransaction: {:?} => {:?}",
-                    hash,
-                    serde_json::to_string(&deleteme).unwrap()
-                );
-                resp
-            }
-            None => Ok(None),
-        }
-    } else {
-        Ok(None)
-    }
+    Ok(GetTxResponse::new(tx, receipt))
 }
 
 pub(super) fn get_scilla_transaction_inner(
