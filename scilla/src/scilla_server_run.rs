@@ -126,14 +126,8 @@ pub fn check_contract<B: evm::backend::Backend>(
 }
 
 pub fn invoke_contract<B: evm::backend::Backend>(
-    //_contract: &[u8],
     gas_limit: u64,
     balance: U256, // todo: this
-    //_init: &Value,
-    //init_path: &str, // Note: same as message path
-    //lib_path: &str,
-    //input_path: &str,
-    //message_path: &str,
     tcp_scilla_server: &mut ScillaServer<B>,
 ) -> Result<JsonRpcResponse> {
     let args = vec![
@@ -167,9 +161,6 @@ pub fn invoke_contract<B: evm::backend::Backend>(
 pub fn create_contract<B: evm::backend::Backend>(
     gas_limit: u64,
     balance: U256, // todo: this
-    //init_path: &str,
-    //lib_path: &str,
-    //input_path: &str,
     tcp_scilla_server: &mut ScillaServer<B>,
 ) -> Result<()> {
     let args = vec![
@@ -294,12 +285,13 @@ fn handle_contract_creation<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>,
         tcp_scilla_server,
     ).unwrap();
 
+    // todo: think about return values and how neccessary they are for scilla.
     code.to_string().into_bytes()
 }
 
 fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, code: &str, data: Vec<u8>, gas_limit: u64, balance: U256) -> Vec<u8> {
-
     trace!("contract call!");
+
     let from_addr = tcp_scilla_server.inner.caller;
     let contract_addr = tcp_scilla_server.inner.contract_addr;
 
@@ -336,6 +328,10 @@ fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, cod
                        _amount, // unused...
                    )) = messages.pop()
     {
+        trace!("Updating scilla backend context to from_addr {:?} and to_addr {:?}", from_addr, to_addr);
+        tcp_scilla_server.inner.caller = from_addr;
+        tcp_scilla_server.inner.contract_addr = to_addr;
+
         // Todo: get this in a cleaner way...
         let code = tcp_scilla_server.inner.backend.get_code(to_addr);
         let init_data = tcp_scilla_server
@@ -379,68 +375,56 @@ fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, cod
                 let result = result.result.unwrap();
                 debug!("invoke contract result: {:?}", result);
 
-                let is_accepted = result.get("_accepted").cloned().unwrap_or(json!(false));
-                let events = result.get("events").cloned().unwrap_or(json!([]));
-                let gas_remaining =
-                    result.get("gas_remaining").cloned().unwrap_or(json!(["0"]));
-                let messages = result.get("messages").cloned().unwrap_or(json!([[]]));
-                let scilla_major_version = result
-                    .get("scilla_major_version")
-                    .cloned()
-                    .unwrap_or(json!("0"));
-                let states = result.get("states").cloned().unwrap_or(json!([]));
+                let invoked = serde_json::from_value::<InvokeOutput>(result).expect("Unable to parse invoke output");
 
-                trace!("is_accepted: {:?}", is_accepted);
-                trace!("events: {:?}", events);
-                trace!("gas_remaining: {:?}", gas_remaining);
-                trace!("messages: {:?}", messages);
-                trace!("scilla_major_version: {:?}", scilla_major_version);
-                trace!("states: {:?}", states);
+                debug!("invoke contract invoke: {:?}", invoked);
 
                 // The events are collected by the backend and then added to the tx_trace
-                for event in events.as_array().unwrap().clone() {
+                for event in invoked.events {
                     tcp_scilla_server.inner.backend.add_event(event);
                 }
-            }
-            Err(err) => {
-                warn!("scilla invoke contract error: {:?}", err);
-            }
-        }
 
-        /*
-        if output.accepted {
-            transfer(&mut db.lock().unwrap(), from_addr, to_addr, amount)?;
-        }
+                if invoked.accepted {
+                    //transfer(&mut db.lock().unwrap(), from_addr, to_addr, amount)?;
+                    todo!("Need to handle contract to contract transfer!");
+                }
 
-        for message in output.messages {
-            let recipient_addr = message.recipient;
-            let recipient = db
-                .lock()
-                .unwrap()
-                .get_account(recipient_addr)?
-                .map(Account::from_proto)
-                .transpose()?
-                .unwrap_or_default();
-            let addr_hex = format!("{to_addr:#x}");
-            let input_message = json!({
+                for message in invoked.messages {
+                    let recipient_addr = message.recipient;
+
+                    // Check the recipient is a contract
+                    let recipient_contract = tcp_scilla_server
+                        .inner
+                        .backend
+                        .get_code(recipient_addr);
+                    let addr_hex = format!("{to_addr:#x}");
+
+                    let input_message = json!({
                             "_sender": addr_hex,
                             "_origin": origin_addr_hex,
                             "_amount": message.amount,
                             "_tag": message.tag,
                             "params": message.params,
                         });
-            messages.push((
-                recipient.contract.is_some(),
-                to_addr,
-                recipient_addr,
-                input_message,
-                message.amount.parse()?,
-            ));
+
+                    trace!("Pushing on input message/call: {:?}", input_message);
+
+                    messages.push((
+                        !recipient_contract.is_empty(),
+                        to_addr, // Note, the 'from' became the 'to'
+                        recipient_addr,
+                        input_message,
+                        message.amount.parse().unwrap(),
+                    ));
+                }
+            }
+            Err(err) => {
+                warn!("scilla invoke contract error: {:?}", err);
+            }
         }
-         */
     }
 
-    // return value
+    // return value is empty
     vec![]
 }
 

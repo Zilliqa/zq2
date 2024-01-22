@@ -1,4 +1,4 @@
-use primitive_types::H256;
+use primitive_types::{H256, H160};
 use serde::Deserialize;
 use serde::Serialize;
 use jsonrpc_core::Params;
@@ -66,4 +66,40 @@ pub struct JsonRpcError {
     code: i32,
     message: String,
     data: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InvokeOutput {
+    #[serde(rename = "_accepted", with = "str_bool")]
+    pub accepted: bool,
+    #[serde(default)]
+    pub messages: Vec<Message>,
+    #[serde(default)]
+    pub events: Vec<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Message {
+    #[serde(rename = "_tag")]
+    pub tag: String,
+    #[serde(rename = "_amount")]
+    pub amount: String,
+    #[serde(rename = "_recipient")]
+    pub recipient: H160,
+    pub params: Value,
+}
+
+mod str_bool {
+    use serde::{
+        de::{self, Unexpected},
+        Deserialize, Deserializer,
+    };
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+        let s = String::deserialize(d)?;
+        let b = s
+            .parse()
+            .map_err(|_| de::Error::invalid_value(Unexpected::Str(&s), &"a boolean"))?;
+        Ok(b)
+    }
 }
