@@ -20,7 +20,7 @@ test_contract_bytecode = []
 fake_time = []
 
 [build-dependencies]
-vergen = { version = "8.2.9", features = ["git", "gitcl"] }
+vergen = { version = "8.3.1", features = ["git", "gitcl"] }
 
 [dependencies]
 anyhow = { version = "1.0.79", features = ["backtrace"] }
