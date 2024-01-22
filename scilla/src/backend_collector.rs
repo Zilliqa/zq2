@@ -6,6 +6,7 @@ use primitive_types::{H160, H256, U256};
 use serde_json::Value;
 use sha3::{Digest, Keccak256};
 use tracing::*;
+use crate::types::Account;
 
 pub type Address = H160;
 type AccountStorage = HashMap<H256, H256>;
@@ -17,14 +18,6 @@ type AccountStorage = HashMap<H256, H256>;
 /// an unlimited length byte array.
 /// Due to the way the EVM works, in which the value is always 32 bytes, we pack and unpack the data
 /// into a number of hashes in a way which is hidden from scilla.
-
-#[derive(Debug, Clone)]
-pub struct Account {
-    pub nonce: u64,
-    pub code: Vec<u8>,
-    pub storage_root: Option<H256>,
-    pub is_scilla: bool,
-}
 
 // Structure that answers queries about the state by using the backend, while also collecting
 // the state changes so it can generate an evm result

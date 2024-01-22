@@ -11,6 +11,7 @@ use serde_json::{from_str, Value};
 use tracing::*;
 
 use crate::scilla_tcp_server::ScillaServer;
+use crate::types::{JsonRpcResponse, JsonRpcRequest};
 
 /// Collection of functions to call the Scilla server and decode the result.
 /// The communications are over TCP currently.
@@ -19,61 +20,6 @@ use crate::scilla_tcp_server::ScillaServer;
 /// There are two tcp connections required. The first is for the request (such as a 'run' command),
 /// and the second is for the backend queries (the server reading and writing to the state).
 
-/// Response from the 'check' command
-#[derive(Deserialize, Debug)]
-pub struct CheckOutput {
-    pub contract_info: ContractInfo,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct ContractInfo {
-    pub scilla_major_version: String,
-    pub fields: Vec<Param>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct Param {
-    #[serde(rename = "vname")]
-    pub name: String,
-    pub depth: u64,
-    #[serde(rename = "type")]
-    pub ty: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct JsonRpcRequest {
-    jsonrpc: String,
-    pub method: String,
-    pub params: Params,
-    id: u32,
-}
-
-impl JsonRpcRequest {
-    fn new(method: &str, params: Params, id: u32) -> Self {
-        JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            method: method.to_string(),
-            params,
-            id,
-        }
-    }
-}
-#[derive(Serialize, Deserialize, Debug)]
-pub struct JsonRpcResponse {
-    jsonrpc: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<JsonRpcError>,
-    id: u32,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct JsonRpcError {
-    code: i32,
-    message: String,
-    data: Option<Value>,
-}
 
 fn respond_json(val: Value, mut connection: &TcpStream, id: u32) {
     let response = JsonRpcResponse {

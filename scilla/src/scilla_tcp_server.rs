@@ -14,8 +14,8 @@ use sha3::{Keccak256, Digest};
 
 use crate::{
     backend_collector::BackendCollector,
-    call_scilla_server::JsonRpcRequest,
     proto::{proto_scilla_val::ValType, ProtoScillaQuery, ProtoScillaVal},
+    types::{JsonRpcRequest}
 };
 
 pub struct ScillaServer<'a, B: evm::backend::Backend> {

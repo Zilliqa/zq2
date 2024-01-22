@@ -14,8 +14,9 @@ use tracing::*;
 
 use crate::{
     backend_collector::BackendCollector,
-    call_scilla_server::{call_scilla_server, ensure_setup_correct, CheckOutput, JsonRpcResponse},
+    call_scilla_server::{call_scilla_server, ensure_setup_correct},
     scilla_tcp_server::ScillaServer,
+    types::*,
 };
 
 // These are the directories inside the docker container which scilla will look for
@@ -25,7 +26,8 @@ const SCILLA_SERVER_INIT_PATH: &str = "/tmp/scilla_init/init.json";
 const SCILLA_SERVER_INPUT_PATH: &str = "/tmp/scilla_input/input.scilla";
 const SCILLA_SERVER_MESSAGE_PATH: &str = "/tmp/scilla_input/message.scilla";
 
-/// The scheme to calculate scilla contract addresses is different from the EVM.
+/// The scheme to calculate scilla contract addresses is different from the EVM as
+/// the nonce and hash scheme differ
 pub fn calculate_contract_address_scilla(from_addr: H160, account_nonce: u64) -> H160 {
     let mut hasher = Sha256::new();
     hasher.update(from_addr.as_bytes());
@@ -65,21 +67,17 @@ pub fn run_scilla_impl_direct<B: Backend>(
     let code = str::from_utf8(&args.code)
         .expect("unable to convert scilla code to a string")
         .to_string();
-    //let init_data = args.data;
-    //let mut return_value = vec![];
+
     let has_data = !args.data.is_empty();
 
-    // Contract creation needs init data
+    // Note: contract creation needs init data
     let return_value = if is_contract_creation && has_data {
-        debug!("contract creation!");
         handle_contract_creation(&mut tcp_scilla_server, &code, args.data, args.gas_limit, args.apparent_value)
     } else if !is_contract_creation && has_data {
-        debug!("contract call!");
         handle_contract_call(&mut tcp_scilla_server, &code, args.data, args.gas_limit, args.apparent_value)
     } else {
         // todo: contract call without data - is this a valid case?
         panic!("Scilla invokation not a contract creation or call. This is invalid.");
-        Default::default()
     };
 
     let mut state_deltas = tcp_scilla_server.inner.backend.get_result();
@@ -103,9 +101,6 @@ pub fn check_contract<B: evm::backend::Backend>(
     _contract: &[u8],
     gas_limit: u64,
     _init: &Value,
-    //init_path: &str,
-    //lib_path: &str,
-    //input_path: &str,
     tcp_scilla_server: &mut ScillaServer<B>,
 ) -> Result<CheckOutput> {
     let args = vec![
@@ -205,119 +200,109 @@ pub fn create_contract<B: evm::backend::Backend>(
 }
 
 fn handle_contract_creation<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, code: &str, init_data: Vec<u8>, gas_limit: u64, balance: U256) -> Vec<u8> {
-                debug!("contract creation!");
+    debug!("contract creation!");
 
-            let contract_address = tcp_scilla_server.inner.contract_addr;
-            let block_num = tcp_scilla_server.inner.block_number;
+    let contract_address = tcp_scilla_server.inner.contract_addr;
+    let block_num = tcp_scilla_server.inner.block_number;
 
-            let mut init_data: Value = serde_json::from_slice(init_data.as_slice()).unwrap();
-            init_data.as_array_mut().unwrap().push(
-                json!({"vname": "_creation_block", "type": "BNum", "value": block_num.to_string()}),
-            );
-            let contract_address_hex = format!("{contract_address:?}");
-            init_data.as_array_mut().unwrap().push(
-                json!({"vname": "_this_address", "type": "ByStr20", "value": contract_address_hex}),
-            );
+    let mut init_data: Value = serde_json::from_slice(init_data.as_slice()).unwrap();
+    init_data.as_array_mut().unwrap().push(
+        json!({"vname": "_creation_block", "type": "BNum", "value": block_num.to_string()}),
+    );
+    let contract_address_hex = format!("{contract_address:?}");
+    init_data.as_array_mut().unwrap().push(
+        json!({"vname": "_this_address", "type": "ByStr20", "value": contract_address_hex}),
+    );
 
-            // Save the init data to the contract
-            tcp_scilla_server
-                .inner
-                .backend
-                .update_account_storage_scilla(
-                    contract_address,
-                    "init_data",
-                    init_data.to_string().as_bytes(),
-                );
+    // Save the init data to the contract storage for future reference
+    tcp_scilla_server
+        .inner
+        .backend
+        .update_account_storage_scilla(
+            contract_address,
+            "init_data",
+            init_data.to_string().as_bytes(),
+        );
 
-            // Write down to the files the init data and make sure the libs are in order
-            ensure_setup_correct(Some(init_data.clone()), Some(code.clone().into()), None);
+    // Write down to the files the init data and make sure the libs are in order
+    ensure_setup_correct(Some(init_data.clone()), Some(code.clone().into()), None);
 
-            // Create account here
-            tcp_scilla_server.inner.backend.create_account(
+    // Create account with the contract as the code
+    tcp_scilla_server.inner.backend.create_account(
+        contract_address,
+        code.as_bytes().to_vec(),
+        true,
+    );
+
+    let check_output = check_contract(
+        code.as_bytes(),
+        gas_limit,
+        &init_data,
+        tcp_scilla_server,
+    ).unwrap();
+
+    debug!("Check output response: {:?}", check_output);
+
+    let addr_no_prefix = format!("{contract_address:x}");
+
+    for field in check_output.contract_info.fields {
+        let depth_key = format!("{}\x16_depth\x16{}\x16", addr_no_prefix, field.name);
+
+        tcp_scilla_server
+            .inner
+            .backend
+            .update_account_storage_scilla(
                 contract_address,
-                code.as_bytes().to_vec(),
-                true,
+                &depth_key,
+                field.depth.to_string().as_bytes(),
+            );
+        let type_key = format!("{}\x16_type\x16{}\x16", addr_no_prefix, field.name);
+        tcp_scilla_server
+            .inner
+            .backend
+            .update_account_storage_scilla(
+                contract_address,
+                &type_key,
+                field.ty.as_bytes(),
             );
 
-            let check_output = check_contract(
-                code.as_bytes(),
-                gas_limit,
-                &init_data,
-                //init_directory_str,
-                //lib_directory_str,
-                //input_directory_str,
-                tcp_scilla_server,
-            )
-            .unwrap();
+        debug!("check output field: {:?} {:?} {:?}", field, depth_key, type_key);
+    }
 
-            debug!("Check output response: {:?}", check_output);
+    let version_key = format!("{addr_no_prefix}\x16_version\x16");
+    tcp_scilla_server
+        .inner
+        .backend
+        .update_account_storage_scilla(
+            contract_address,
+            &version_key,
+            check_output.contract_info.scilla_major_version.as_bytes(),
+        );
+    let addr_key = format!("{addr_no_prefix}\x16_addr\x16");
+    tcp_scilla_server
+        .inner
+        .backend
+        .update_account_storage_scilla(
+            contract_address,
+            &addr_key,
+            contract_address.as_bytes(),
+        );
 
-            let addr_no_prefix = format!("{contract_address:x}");
+    create_contract(
+        gas_limit,
+        balance,
+        tcp_scilla_server,
+    ).unwrap();
 
-            for field in check_output.contract_info.fields {
-                let depth_key = format!("{}\x16_depth\x16{}\x16", addr_no_prefix, field.name);
-
-                tcp_scilla_server
-                    .inner
-                    .backend
-                    .update_account_storage_scilla(
-                        contract_address,
-                        &depth_key,
-                        field.depth.to_string().as_bytes(),
-                    );
-                let type_key = format!("{}\x16_type\x16{}\x16", addr_no_prefix, field.name);
-                tcp_scilla_server
-                    .inner
-                    .backend
-                    .update_account_storage_scilla(
-                        contract_address,
-                        &type_key,
-                        field.ty.as_bytes(),
-                    );
-
-                debug!(
-                    "check output field: {:?} {:?} {:?}",
-                    field, depth_key, type_key
-                );
-            }
-
-            let version_key = format!("{addr_no_prefix}\x16_version\x16");
-            tcp_scilla_server
-                .inner
-                .backend
-                .update_account_storage_scilla(
-                    contract_address,
-                    &version_key,
-                    check_output.contract_info.scilla_major_version.as_bytes(),
-                );
-            let addr_key = format!("{addr_no_prefix}\x16_addr\x16");
-            tcp_scilla_server
-                .inner
-                .backend
-                .update_account_storage_scilla(
-                    contract_address,
-                    &addr_key,
-                    contract_address.as_bytes(),
-                );
-
-            create_contract(
-                gas_limit,
-                balance,
-                //init_directory_str,
-                //lib_directory_str,
-                //input_directory_str,
-                tcp_scilla_server,
-            )
-            .unwrap();
-
-            code.to_string().into_bytes()
+    code.to_string().into_bytes()
 }
 
 fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, code: &str, data: Vec<u8>, gas_limit: u64, balance: U256) -> Vec<u8> {
 
+    trace!("contract call!");
     let from_addr = tcp_scilla_server.inner.caller;
     let contract_addr = tcp_scilla_server.inner.contract_addr;
-    //let mut msg = serde_json::from_str::<Value>(args.data)?;
+
     let msg = serde_json::from_slice::<Value>(&data)
         .expect("unable to convert scilla data to a Value during contract call");
 
@@ -340,6 +325,8 @@ fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, cod
     trace!("origin addr: {:?}", origin_addr_hex);
 
     // todo: do we use balance, amount, or value as nomenclature?
+    // This is a loop in which contract to contract calls are handled by pushing the next
+    // call onto the stack.
     let mut messages = vec![(true, from_addr, contract_addr, msg, balance)];
     while let Some((
                        recipient_is_contract,
@@ -381,21 +368,16 @@ fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, cod
 
         // TODO: Differentiate between exceptions from contract and errors from Scilla itself.
         let result = invoke_contract(
-            //&code,
             gas_limit,
             balance,
-            //&init_data,
-            //init_directory_str,
-            //lib_directory_str,
-            //input_directory_str,
-            //message_directory_str,
             tcp_scilla_server,
         );
 
+        // todo: cajole this into a InvokeOutput struct
         match result {
             Ok(result) => {
                 let result = result.result.unwrap();
-                debug!("invoke contract resultX: {:?}", result);
+                debug!("invoke contract result: {:?}", result);
 
                 let is_accepted = result.get("_accepted").cloned().unwrap_or(json!(false));
                 let events = result.get("events").cloned().unwrap_or(json!([]));
@@ -415,12 +397,13 @@ fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, cod
                 trace!("scilla_major_version: {:?}", scilla_major_version);
                 trace!("states: {:?}", states);
 
+                // The events are collected by the backend and then added to the tx_trace
                 for event in events.as_array().unwrap().clone() {
                     tcp_scilla_server.inner.backend.add_event(event);
                 }
             }
             Err(err) => {
-                warn!("invoke contract error: {:?}", err);
+                warn!("scilla invoke contract error: {:?}", err);
             }
         }
 
