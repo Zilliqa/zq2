@@ -22,10 +22,14 @@ pub struct ScillaServer<'a, B: evm::backend::Backend> {
     pub inner: Inner<'a, B>,
 }
 
-type OwnerStaterootBlockNum = (H160, H256, U256);
+//type OwnerStaterootBlockNum = (H160, H256, U256);
 pub struct Inner<'a, B: evm::backend::Backend> {
     pub backend: BackendCollector<'a, B>,
-    execution_context: (OwnerStaterootBlockNum), // contract addr, state root, block number
+    //execution_context: (OwnerStaterootBlockNum), // contract addr, state root, block number
+    pub contract_addr: H160,
+    pub state_root: H256,
+    pub block_number: U256,
+    pub caller: H160,
 }
 
 impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
@@ -65,13 +69,18 @@ impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
 
     pub fn new(
         backend: BackendCollector<'a, B>,
+        caller: H160,
         contract_addr: H160,
         state_root: H256,
         block_number: U256,
     ) -> ScillaServer<'a, B> {
         let inner = Inner {
             backend,
-            execution_context: (contract_addr, state_root, block_number),
+            //execution_context: (contract_addr, state_root, block_number, caller),
+            contract_addr,
+            state_root,
+            block_number,
+            caller,
         };
 
         ScillaServer { inner }
@@ -235,7 +244,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             return Err(anyhow!("reserved variable name: {}", query.name));
         }
 
-        let addr = self.execution_context.0;
+        let addr = self.contract_addr;
         let addr_hex = format!("{addr:x}");
         let mut key = format!("{}\x16{}\x16", addr_hex, query.name);
 
@@ -310,7 +319,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
                 trace!("BLOCKNUMBER requested from scilla server");
                 //let Some((_, _, block_number)) = self.execution_context else { return Err(anyhow!("no current contract")); };
                 //Ok(block_number.to_string())
-                Ok(self.execution_context.2.to_string())
+                Ok(self.block_number.to_string())
             }
             "TIMESTAMP" => {
                 trace!("TIMESTAMP requested from scilla server");
@@ -358,7 +367,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         //let account = Account::from_proto(account)?;
         //let account = self.execution_context.0;
         //let account = self.backend.get_account(addr)?;
-        let addr = self.execution_context.0;
+        let addr = self.contract_addr;
         //let basic = self.backend.get_balance(addr);
         let account = self.backend.get_account(addr);
         let balance = self.backend.get_balance(addr);
@@ -452,7 +461,8 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             return Err(anyhow!("reserved variable name: {}", query.name));
         }
 
-        let (addr, _, _) = self.execution_context else { return Err(anyhow!("no current contract")); };
+        //let (addr, _, _) = self.execution_context else { return Err(anyhow!("no current contract")); };
+        let addr = self.contract_addr;
 
         let addr_hex = format!("{addr:x}");
         let mut key = format!("{}\x16{}\x16", addr_hex, query.name);
@@ -615,18 +625,18 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
 
     fn put_state(&mut self, key: &str, value: &[u8]) -> Result<()> {
         self.backend
-            .update_account_storage_scilla(self.execution_context.0, key, value);
+            .update_account_storage_scilla(self.contract_addr, key, value);
         Ok(())
     }
 
     fn get_state(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        let value = self.backend.get_account_storage_scilla(self.execution_context.0, key);
+        let value = self.backend.get_account_storage_scilla(self.contract_addr, key);
         Ok(Some(value))
     }
 
     fn delete_state(&mut self, key: &str) -> Result<()> {
         self.backend
-            .update_account_storage_scilla(self.execution_context.0, key, Default::default());
+            .update_account_storage_scilla(self.contract_addr, key, Default::default());
         Ok(())
     }
 }
