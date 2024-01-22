@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use primitive_types::{H256, H160};
 use serde::Deserialize;
 use serde::Serialize;
@@ -73,9 +74,12 @@ pub struct InvokeOutput {
     #[serde(rename = "_accepted", with = "str_bool")]
     pub accepted: bool,
     #[serde(default)]
-    pub messages: Vec<Message>,
+    pub messages: Option<Vec<Message>>,
     #[serde(default)]
     pub events: Vec<Value>,
+    pub gas_remaining: String,
+    pub scilla_major_version: String,
+    pub states: Vec<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize)]

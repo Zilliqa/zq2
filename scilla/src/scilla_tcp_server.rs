@@ -9,7 +9,6 @@ use prost::Message;
 use serde_json::Value;
 use tracing::*;
 use std::collections::HashMap;
-//use sha2::{Digest, Sha256};
 use sha3::{Keccak256, Digest};
 
 use crate::{
@@ -22,13 +21,10 @@ pub struct ScillaServer<'a, B: evm::backend::Backend> {
     pub inner: Inner<'a, B>,
 }
 
-//type OwnerStaterootBlockNum = (H160, H256, U256);
 pub struct Inner<'a, B: evm::backend::Backend> {
     pub backend: BackendCollector<'a, B>,
-    //execution_context: (OwnerStaterootBlockNum), // contract addr, state root, block number
     pub contract_addr: H160,
     pub state_root: H256,
-    pub block_number: U256,
     pub caller: H160,
 }
 
@@ -50,8 +46,13 @@ impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
             "fetchExternalStateValue" => {
                 self.inner.fetch_external_state_value_b64(&request.params)
             },
-            "updateStateValueB64" => self.inner.update_state_value_b64(&request.params),
+            "updateStateValueB64" => {
+                self.inner.update_state_value_b64(&request.params)
+            }
             "updateStateValue" => {
+                self.inner.update_state_value_b64(&request.params)
+            }
+            "updateStateValueB64" => {
                 self.inner.update_state_value_b64(&request.params)
             }
             "fetchBlockchainInfo" => {
@@ -72,14 +73,11 @@ impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
         caller: H160,
         contract_addr: H160,
         state_root: H256,
-        block_number: U256,
     ) -> ScillaServer<'a, B> {
         let inner = Inner {
             backend,
-            //execution_context: (contract_addr, state_root, block_number, caller),
             contract_addr,
             state_root,
-            block_number,
             caller,
         };
 
@@ -88,6 +86,7 @@ impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
 }
 
 impl<'a, B: evm::backend::Backend> Inner<'a, B> {
+    // Parsing functions, then the inner functions
     pub fn update_state_value_b64(
         &mut self,
         params: &Params,
@@ -128,10 +127,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         &mut self,
         params: &Params,
     ) -> Result<Value, jsonrpc_core::Error> {
-        //fn err(s: &'static str) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
-        //    futures::future::ready(Err(jsonrpc_core::Error::invalid_params(s))).boxed()
-        //}
-
         fn err(s: &'static str) -> Result<Value, jsonrpc_core::Error> {
             debug!("* fetchStateValue ERROR called *** {:?}", s);
             Err(jsonrpc_core::Error::invalid_params(s))
@@ -142,7 +137,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         let Params::Map(params) = params else { return err("expected a map"); };
         let Some(query) = params.get("query") else { return err("expected query in map"); };
         let Some(query) = query.as_str().map(str::to_owned) else { return err("query was not a string"); };
-        //let Ok(query) = b64.decode(query) else { return err("query was not base64"); };
         let query = b64.decode(query.clone()).unwrap_or( query.into() );
         let Ok(query) = ProtoScillaQuery::decode(query.as_slice()) else { return err("could not parse query"); };
 
@@ -156,7 +150,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             Value::Array(arr)
         });
 
-        //future::ready(result).boxed()
         result
     }
 
@@ -165,9 +158,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         &mut self,
         params: &Params,
     ) -> Result<Value, jsonrpc_core::Error> {
-        //fn err(s: &'static str) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
-        //    futures::future::ready(Err(jsonrpc_core::Error::invalid_params(s))).boxed()
-        //}
         fn err(s: &'static str) -> Result<Value, jsonrpc_core::Error> {
             debug!("* fetchExternalStateValue ERROR called *** {:?}", s);
             Err(jsonrpc_core::Error::invalid_params(s))
@@ -201,7 +191,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         });
 
         result
-        //future::ready(result).boxed()
     }
 
     // todo: this.
@@ -209,9 +198,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         &mut self,
         params: &Params,
     ) -> Result<Value, jsonrpc_core::Error> {
-        //fn err(s: &'static str) -> BoxFuture<Result<Value, jsonrpc_core::Error>> {
-        //    futures::future::ready(Err(jsonrpc_core::Error::invalid_params(s))).boxed()
-        //}
         fn err(s: &'static str) -> Result<Value, jsonrpc_core::Error> {
             debug!("* fetchBlockchainInfo ERROR called *** {:?}", s);
             Err(jsonrpc_core::Error::invalid_params(s))
@@ -229,7 +215,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
 
         let result = result.map(|s| Value::Array(vec![true.into(), s.into()]));
 
-        //future::ready(result).boxed()
         result
     }
 
@@ -297,7 +282,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
                 std::cmp::Ordering::Less => {
                     trace!("less");
                     self.delete_by_prefix(&key)?;
-
                     self.map_handler(key, &value)?;
                 }
             }
@@ -317,22 +301,11 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         match query_name.as_str() {
             "BLOCKNUMBER" => {
                 trace!("BLOCKNUMBER requested from scilla server");
-                //let Some((_, _, block_number)) = self.execution_context else { return Err(anyhow!("no current contract")); };
-                //Ok(block_number.to_string())
-                Ok(self.block_number.to_string())
+                Ok(self.backend.get_block_number().to_string())
             }
             "TIMESTAMP" => {
                 trace!("TIMESTAMP requested from scilla server");
-                todo!("not implemented!");
-                //let block_num: u64 = query_args.parse()?;
-                //let block = self
-                //    .db
-                //    .lock()
-                //    .unwrap()
-                //    .get_tx_block(block_num)?
-                //    .ok_or_else(|| anyhow!("invalid block"))?;
-                //let block = TxBlock::from_proto(block)?;
-                //Ok(block.timestamp.to_string())
+                Ok(self.backend.get_timestamp().to_string())
             }
             "BLOCKHASH" => {
                 trace!("BLOCKHASH requested from scilla server");

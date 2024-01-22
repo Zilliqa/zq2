@@ -313,6 +313,18 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         self.backend.code(address)
     }
 
+    pub fn get_timestamp(&self) -> u64 {
+        self.backend.block_timestamp().as_u64()
+    }
+
+    pub fn get_block_number(&self) -> u64 {
+        self.backend.block_number().as_u64()
+    }
+
+    pub fn get_block_hash(&self, num: U256) -> H256 {
+        self.backend.block_hash(num)
+    }
+
     // Get the deltas from all of the operations so far
     pub fn get_result(&self) -> EvmResult {
         let mut applys: Vec<Apply> = vec![];

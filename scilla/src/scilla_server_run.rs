@@ -19,12 +19,13 @@ use crate::{
     types::*,
 };
 
-// These are the directories inside the docker container which scilla will look for
-const SCILLA_SERVER_SOCK_PATH: &str = "/tmp/scilla-server.sock";
-const SCILLA_SERVER_LIB_PATH: &str = "/scilla/0/src/stdlib/";
-const SCILLA_SERVER_INIT_PATH: &str = "/tmp/scilla_init/init.json";
-const SCILLA_SERVER_INPUT_PATH: &str = "/tmp/scilla_input/input.scilla";
-const SCILLA_SERVER_MESSAGE_PATH: &str = "/tmp/scilla_input/message.scilla";
+// These are the directories inside the docker container which scilla will look for.
+// These shouldn't really change ever, unless the docker container changes.
+pub const SCILLA_SERVER_SOCK_PATH: &str = "/tmp/scilla-server.sock";
+pub const SCILLA_SERVER_LIB_PATH: &str = "/scilla/0/src/stdlib/";
+pub const SCILLA_SERVER_INIT_PATH: &str = "/tmp/scilla_init/init.json";
+pub const SCILLA_SERVER_INPUT_PATH: &str = "/tmp/scilla_input/input.scilla";
+pub const SCILLA_SERVER_MESSAGE_PATH: &str = "/tmp/scilla_input/message.scilla";
 
 /// The scheme to calculate scilla contract addresses is different from the EVM as
 /// the nonce and hash scheme differ
@@ -56,7 +57,7 @@ pub fn run_scilla_impl_direct<B: Backend>(
 
     let backend_collector = BackendCollector::new(backend);
     let mut tcp_scilla_server =
-        ScillaServer::new(backend_collector, args.caller, args.address, H256::zero(), block_num);
+        ScillaServer::new(backend_collector, args.caller, args.address, H256::zero());
 
     let is_contract_creation = tcp_scilla_server
         .inner
@@ -129,7 +130,7 @@ pub fn invoke_contract<B: evm::backend::Backend>(
     gas_limit: u64,
     balance: U256, // todo: this
     tcp_scilla_server: &mut ScillaServer<B>,
-) -> Result<JsonRpcResponse> {
+) -> Result<InvokeOutput> {
     let args = vec![
         "-init".to_owned(),
         SCILLA_SERVER_INIT_PATH.to_string(),
@@ -156,13 +157,15 @@ pub fn invoke_contract<B: evm::backend::Backend>(
 
     let response = call_scilla_server("run", params, tcp_scilla_server)?;
 
+    let response: InvokeOutput = serde_json::from_value(response.result.unwrap().clone()).unwrap();
+
     Ok(response)
 }
 pub fn create_contract<B: evm::backend::Backend>(
     gas_limit: u64,
     balance: U256, // todo: this
     tcp_scilla_server: &mut ScillaServer<B>,
-) -> Result<()> {
+) -> Result<InvokeOutput> {
     let args = vec![
         "-i".to_owned(),
         SCILLA_SERVER_INPUT_PATH.to_string(),
@@ -185,16 +188,21 @@ pub fn create_contract<B: evm::backend::Backend>(
 
     let response = call_scilla_server("run", params, tcp_scilla_server)?;
 
+    debug!("Create Response before parsing: {:?}", response);
+
+    let response: InvokeOutput = serde_json::from_value(response.result.unwrap()).unwrap();
+
+    // todo: check this is ok?
     debug!("Create Response: {:?}", response);
 
-    Ok(())
+    Ok(response)
 }
 
 fn handle_contract_creation<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, code: &str, init_data: Vec<u8>, gas_limit: u64, balance: U256) -> Vec<u8> {
     debug!("contract creation!");
 
     let contract_address = tcp_scilla_server.inner.contract_addr;
-    let block_num = tcp_scilla_server.inner.block_number;
+    let block_num = tcp_scilla_server.inner.backend.get_block_number();
 
     let mut init_data: Value = serde_json::from_slice(init_data.as_slice()).unwrap();
     init_data.as_array_mut().unwrap().push(
@@ -369,14 +377,8 @@ fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, cod
             tcp_scilla_server,
         );
 
-        // todo: cajole this into a InvokeOutput struct
         match result {
-            Ok(result) => {
-                let result = result.result.unwrap();
-                debug!("invoke contract result: {:?}", result);
-
-                let invoked = serde_json::from_value::<InvokeOutput>(result).expect("Unable to parse invoke output");
-
+            Ok(invoked) => {
                 debug!("invoke contract invoke: {:?}", invoked);
 
                 // The events are collected by the backend and then added to the tx_trace
@@ -389,7 +391,7 @@ fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, cod
                     todo!("Need to handle contract to contract transfer!");
                 }
 
-                for message in invoked.messages {
+                for message in invoked.messages.unwrap() {
                     let recipient_addr = message.recipient;
 
                     // Check the recipient is a contract
