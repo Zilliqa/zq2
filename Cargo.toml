@@ -7,7 +7,7 @@ members = [
  "z2",
  "evm-ds",
  "eth-trie.rs"
-]
+, "deploy"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,0 +1,10 @@
+name = "devnet"
+nodes = 1
+secret_keys = [
+    "b27aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a3",
+]
+genesis_accounts = [
+    ["7E5F4552091A69125d5DfCb7b8C2659029395Bdf", "5000000000000000000000"],
+]
+gcp_project = "prj-d-zq2-devnet-c83bkpsd"
+gcp_zone = "europe-west2-a"
