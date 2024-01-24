@@ -112,6 +112,7 @@ struct GetTxResponseReceipt {
 impl GetTxResponse {
     pub fn new(verified_tx: VerifiedTransaction, receipt: TransactionReceipt) -> Option<Self> {
         match verified_tx.tx {
+            // todo: make all of the fields correct
             SignedTransaction::Zilliqa { ref tx, .. } => Some(GetTxResponse {
                 id: verified_tx.hash.to_string(),
                 version: "65537".to_string(),

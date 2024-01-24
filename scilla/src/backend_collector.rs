@@ -27,7 +27,7 @@ pub struct BackendCollector<'a, B: evm::backend::Backend> {
     pub backend: &'a B,
     // Map of cached (execution in progress) address to account and any dirty storage.
     // If the value is None, this means a deletion of that account and storage
-    pub account_storage_cached: HashMap<Address, Option<(Account, AccountStorage)>>,
+    pub account_storage_buffered: HashMap<Address, Option<(Account, AccountStorage)>>,
     pub events: Vec<Value>,
 }
 
@@ -35,7 +35,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     pub fn new(backend: &'a B) -> Self {
         Self {
             backend,
-            account_storage_cached: HashMap::new(),
+            account_storage_buffered: HashMap::new(),
             events: vec![],
         }
     }
@@ -43,11 +43,11 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     // todo: refactor this according to pr comments
     pub fn get_account_storage(&self, address: Address, key: H256) -> H256 {
         // If the account does not exist, check the backend
-        if !self.account_storage_cached.contains_key(&address) {
+        if !self.account_storage_buffered.contains_key(&address) {
             trace!("Account not in cache, checking backend");
             self.backend.storage(address, key)
         } else {
-            let entry = self.account_storage_cached.get(&address).unwrap();
+            let entry = self.account_storage_buffered.get(&address).unwrap();
 
             match entry {
                 Some((_, storage)) => storage.get(&key).cloned().unwrap_or(H256::zero()),
@@ -59,29 +59,29 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         }
     }
 
-    // todo: refactor this according to pr comments
     fn update_account_storage(&mut self, address: Address, key: H256, value: H256) {
         // If the account does not exist, check the backend, then create it with empty code and storage
-        if let std::collections::hash_map::Entry::Vacant(e) =
-            self.account_storage_cached.entry(address)
-        {
-            let account = Account {
-                nonce: self.backend.basic(address).nonce.as_u64(),
-                code: self.backend.code(address),
-                storage_root: None,
-                is_scilla: true,
-            };
+        match self.account_storage_buffered.entry(address) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let account = Account {
+                    nonce: self.backend.basic(address).nonce.as_u64(),
+                    code: self.backend.code(address),
+                    storage_root: None,
+                    is_scilla: true,
+                };
 
-            e.insert(Some((account, HashMap::from([(key, value)]))));
-        } else {
-            let entry = self.account_storage_cached.get_mut(&address).unwrap();
+                e.insert(Some((account, HashMap::from([(key, value)]))));
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                let entry = e.get_mut();
 
-            match entry {
-                Some((_, storage)) => {
-                    storage.insert(key, value);
-                }
-                None => {
-                    error!("Account in cache is None: {:?}", address);
+                match entry {
+                    Some((_, storage)) => {
+                        storage.insert(key, value);
+                    }
+                    None => {
+                        error!("Account in cache is None: {:?}", address);
+                    }
                 }
             }
         }
@@ -124,7 +124,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
 
                 // Read each already existing key and increment the pointer after
                 for _i in 0..(keys_number - 1) {
-                    let (_old_val, key) = self.read_compressed(address, key_pointer);
+                    let (_old_val, key) = self.read_mapped(address, key_pointer);
                     key_pointer = increment_h256(key);
                 }
             }
@@ -133,16 +133,16 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
             self.update_account_storage(address, increment_h256(key_start), key_pointer);
 
             // Now we can write the key using the compression scheme
-            self.write_compressed(address, key_pointer, key.as_bytes());
+            self.write_mapped(address, key_pointer, key.as_bytes());
         }
 
         // Write the key normally using the compression scheme
-        self.write_compressed(address, key_as_hash, value);
+        self.write_mapped(address, key_as_hash, value);
     }
 
     /// Internal function to write a compressed value to the database, according
     /// to the scheme described in update_account_storage_scilla
-    fn write_compressed(&mut self, address: Address, mut key: H256, value: &[u8]) -> H256 {
+    fn write_mapped(&mut self, address: Address, mut key: H256, value: &[u8]) -> H256 {
         let value_fixed_width = u64_to_h256(value.len() as u64);
 
         // Key, Value for the length of the proceeding value in bytes
@@ -160,7 +160,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
 
     /// Internal function to read a compressed value from the database, according
     /// to the scheme described in update_account_storage_scilla
-    fn read_compressed(&self, address: Address, mut key: H256) -> (Vec<u8>, H256) {
+    fn read_mapped(&self, address: Address, mut key: H256) -> (Vec<u8>, H256) {
         let value = self.get_account_storage(address, key);
         let value = h256_to_u64(value);
         let len = value.div_ceil(32);
@@ -205,7 +205,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
                 let mut ret = vec![];
                 for _i in 0..keys_number {
                     let (reconstructed_key, last_point) =
-                        self.read_compressed(address, key_pointer);
+                        self.read_mapped(address, key_pointer);
                     key_pointer = increment_h256(last_point);
                     let reconstructed_key = String::from_utf8(reconstructed_key).unwrap();
 
@@ -267,18 +267,18 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     /// 3. put the data at H256 + 1, H256 + 2, etc.
     pub fn get_account_storage_scilla(&self, address: Address, key: &str) -> Vec<u8> {
         let key = H256::from_slice(&Keccak256::digest(key.as_bytes()));
-        self.read_compressed(address, key).0
+        self.read_mapped(address, key).0
     }
 
     pub fn create_account(&mut self, address: Address, code: Vec<u8>, is_scilla: bool) {
         // Insert empty slot into cache if it does not already exist, else just put the code there
-        if let Some(Some((acct, _))) = self.account_storage_cached.get_mut(&address) {
+        if let Some(Some((acct, _))) = self.account_storage_buffered.get_mut(&address) {
             acct.code = code;
             return;
         }
 
         // Fall through
-        self.account_storage_cached.insert(
+        self.account_storage_buffered.insert(
             address,
             Some((
                 Account {
@@ -307,7 +307,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     }
 
     pub fn get_code(&self, address: Address) -> Vec<u8> {
-        if let Some(Some((acct, _))) = self.account_storage_cached.get(&address) {
+        if let Some(Some((acct, _))) = self.account_storage_buffered.get(&address) {
             return acct.code.clone();
         }
 
@@ -334,8 +334,8 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     pub fn get_result(&self) -> EvmResult {
         let mut applys: Vec<Apply> = vec![];
 
-        //for (address, item) in self.account_storage_cached.into_iter() {
-        for (address, item) in self.account_storage_cached.iter() {
+        //for (address, item) in self.account_storage_buffered.into_iter() {
+        for (address, item) in self.account_storage_buffered.iter() {
             match item {
                 Some((acct, stor)) => {
                     applys.push(Apply::Modify {
