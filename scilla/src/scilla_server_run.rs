@@ -310,7 +310,7 @@ fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, cod
 
     let mut msg = msg.clone();
     msg.as_object_mut()
-        .unwrap()
+        .expect("the message should be unwrappable!")
         .insert("_sender".to_owned(), format!("{from_addr:#x}").into());
     msg.as_object_mut()
         .unwrap()
