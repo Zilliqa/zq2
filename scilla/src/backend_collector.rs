@@ -204,8 +204,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
             _ => {
                 let mut ret = vec![];
                 for _i in 0..keys_number {
-                    let (reconstructed_key, last_point) =
-                        self.read_mapped(address, key_pointer);
+                    let (reconstructed_key, last_point) = self.read_mapped(address, key_pointer);
                     key_pointer = increment_h256(last_point);
                     let reconstructed_key = String::from_utf8(reconstructed_key).unwrap();
 
