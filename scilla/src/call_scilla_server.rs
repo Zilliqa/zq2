@@ -210,6 +210,7 @@ pub fn ensure_setup_correct(
         stream
             .write_all(SCILLA_SERVER_INIT_PATH.as_bytes())
             .unwrap();
+        stream.write_all(b" ").unwrap();
         stream
             .write_all(serde_json::to_string(&init_data).unwrap().as_bytes())
             .unwrap();
@@ -221,6 +222,7 @@ pub fn ensure_setup_correct(
         stream
             .write_all(SCILLA_SERVER_INPUT_PATH.as_bytes())
             .unwrap();
+        stream.write_all(b" ").unwrap();
         stream.write_all(&input_data).unwrap();
     }
 
@@ -230,6 +232,7 @@ pub fn ensure_setup_correct(
         stream
             .write_all(SCILLA_SERVER_MESSAGE_PATH.as_bytes())
             .unwrap();
+        stream.write_all(b" ").unwrap();
         stream
             .write_all(serde_json::to_string(&message).unwrap().as_bytes())
             .unwrap();

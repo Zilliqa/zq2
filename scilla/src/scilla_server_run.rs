@@ -133,6 +133,8 @@ pub fn check_contract<B: evm::backend::Backend>(
 
     let response = call_scilla_server("check", params, tcp_scilla_server)?;
 
+    trace!("Scilla check response: {:?}", response);
+
     let response: CheckOutput = serde_json::from_value(response.result.unwrap().clone()).unwrap();
 
     Ok(response)
