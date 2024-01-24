@@ -7,6 +7,10 @@ mod types;
 mod web3;
 pub mod zil;
 
+fn print_type_of<T>(_: &T) {
+    println!("{}", std::any::type_name::<T>())
+}
+
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = RpcModule::new(node.clone());
 
@@ -65,7 +69,10 @@ macro_rules! declare_module {
                     });
 
                     let result = result.map_err(|e| {
-                        tracing::error!(?e);
+                        if !e.to_string().starts_with("Txn Hash not Present") {
+                            tracing::error!(?e);
+                        }
+
                         // If the error is already an `ErrorObjectOwned`, we can just return that. Otherwise, wrap it
                         // with an `InternalError` code.
                         match e.downcast::<jsonrpsee::types::ErrorObjectOwned>() {

@@ -309,21 +309,16 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             }
             "BLOCKHASH" => {
                 trace!("BLOCKHASH requested from scilla server");
-                todo!("not implemented!");
-                //let block_num: u64 = query_args.parse()?;
-                //let block = self
-                //    .db
-                //    .lock()
-                //    .unwrap()
-                //    .get_tx_block(block_num)?
-                //    .ok_or_else(|| anyhow!("invalid block"))?;
-                //let block = TxBlock::from_proto(block)?;
-                //let block_hash = format!("{:x}", block.block_hash);
-                //Ok(block_hash)
+                Ok(self.backend.get_block_hash(self.backend.get_block_number().into()).to_string())
             }
-            // This is also a todo.
-            "CHAINID" => Ok(1.to_string()),
-            _ => Ok(String::new()),
+            "CHAINID" => {
+                trace!("BLOCKHASH requested from scilla server");
+                Ok(self.backend.get_chain_id().to_string())
+            }
+            _ => {
+                warn!("unrecognised request from scilla server {:?}", query_name);
+                Ok(String::new())
+            },
         }
     }
 
@@ -333,6 +328,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         query: Vec<u8>,
     ) -> Result<Option<(ProtoScillaVal, String)>> {
         let mut query = ProtoScillaQuery::decode(query.as_slice())?;
+        // nathan - we are here
 
         trace!("Fetch external state value: {addr:?} - {query:?}");
 

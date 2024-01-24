@@ -159,9 +159,9 @@ impl<'a> Backend for EvmBackend<'a> {
         self.origin
     }
 
-    fn block_hash(&self, _: U256) -> H256 {
-        // TODO: Get the hash of one of the 256 most recent blocks.
-        H256::zero()
+    // todo: this should be the hash of a block by number, not just the current one
+    fn block_hash(&self, num: U256) -> H256 {
+        primitive_types::H256(self.current_block.hash.0)
     }
 
     fn block_number(&self) -> U256 {

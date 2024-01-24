@@ -325,6 +325,10 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         self.backend.block_hash(num)
     }
 
+    pub fn get_chain_id(&self) -> u64 {
+        self.backend.chain_id().as_u64()
+    }
+
     // Get the deltas from all of the operations so far
     pub fn get_result(&self) -> EvmResult {
         let mut applys: Vec<Apply> = vec![];
