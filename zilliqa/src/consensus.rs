@@ -485,6 +485,7 @@ impl Consensus {
         proposal: Proposal,
         during_sync: bool,
     ) -> Result<Option<(PeerId, Vote)>> {
+        self.cleanup_votes();
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
 
@@ -694,6 +695,26 @@ impl Consensus {
             .collect()
     }
 
+    /// Clear up anything in memory that is no longer required. This is to avoid memory leaks.
+    pub fn cleanup_votes(&mut self) {
+        // Wrt votes, we only care about votes on hashes for the current view or higher
+        let keys_to_process: Vec<_> = self.votes.keys().copied().collect();
+
+        for key in keys_to_process {
+            if let Ok(Some(block)) = self.get_block(&key) {
+                if block.view() < self.view.get_view() {
+                    self.votes.remove(&key);
+                }
+            } else {
+                warn!("Missing block for vote (this shouldn't happen), removing from memory");
+                self.votes.remove(&key);
+            }
+        }
+
+        // Wrt new views, we only care about new views for the current view or higher
+        self.new_views.retain(|k, _| *k >= self.view.get_view());
+    }
+
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
         let Some(block) = self.get_block(&vote.block_hash)? else {
             return Ok(None);
@@ -817,8 +838,6 @@ impl Consensus {
                     trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
 
                     return Ok(Some((proposal, applied_transactions)));
-                    // we don't want to keep the collected votes if we proposed a new block
-                    // we should remove the collected votes if we couldn't reach supermajority within the view
                 }
             }
         }
@@ -844,14 +863,6 @@ impl Consensus {
         }
 
         committee.add_validators(self.pending_peers.drain(..));
-
-        if false {
-            warn!(
-                "committee is too small {}, something might be wrong",
-                committee.len()
-            );
-        }
-
         committee
     }
 
