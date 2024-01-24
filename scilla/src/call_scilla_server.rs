@@ -1,21 +1,22 @@
 use std::{
+    env,
     io::{Read, Write},
     net::TcpStream,
     str,
-    env,
 };
 
 use anyhow::{anyhow, Result};
 use jsonrpc_core::Params;
-use serde::{Deserialize, Serialize};
 use serde_json::{from_str, Value};
 use tracing::*;
 
-use crate::scilla_tcp_server::ScillaServer;
-use crate::types::{JsonRpcResponse, JsonRpcRequest};
-use crate::scilla_server_run::SCILLA_SERVER_INIT_PATH;
-use crate::scilla_server_run::SCILLA_SERVER_INPUT_PATH;
-use crate::scilla_server_run::SCILLA_SERVER_MESSAGE_PATH;
+use crate::{
+    scilla_server_run::{
+        SCILLA_SERVER_INIT_PATH, SCILLA_SERVER_INPUT_PATH, SCILLA_SERVER_MESSAGE_PATH,
+    },
+    scilla_tcp_server::ScillaServer,
+    types::{JsonRpcRequest, JsonRpcResponse},
+};
 fn get_scilla_write_port() -> String {
     env::var("SCILLA_WRITE_PORT").unwrap_or_else(|_| "127.0.0.1:12345".to_string())
 }
@@ -27,14 +28,12 @@ fn get_scilla_file_port() -> String {
     env::var("SCILLA_FILE_PORT").unwrap_or_else(|_| "127.0.0.1:12347".to_string())
 }
 
-
 /// Collection of functions to call the Scilla server and decode the result.
 /// The communications are over TCP currently.
 /// The scilla server is unusual in that it sometimes responds with a string as the 'result' which
 /// then has to be further parsed.
 /// There are two tcp connections required. The first is for the request (such as a 'run' command),
 /// and the second is for the backend queries (the server reading and writing to the state).
-
 
 fn respond_json(val: Value, mut connection: &TcpStream, id: u32) {
     let response = JsonRpcResponse {
@@ -208,7 +207,9 @@ pub fn ensure_setup_correct(
     if let Some(init_data) = init_data {
         let mut stream = TcpStream::connect(get_scilla_file_port())
             .expect("unable to connect to scilla server for file setup!");
-        stream.write_all(SCILLA_SERVER_INIT_PATH.as_bytes()).unwrap();
+        stream
+            .write_all(SCILLA_SERVER_INIT_PATH.as_bytes())
+            .unwrap();
         stream
             .write_all(serde_json::to_string(&init_data).unwrap().as_bytes())
             .unwrap();
@@ -217,14 +218,18 @@ pub fn ensure_setup_correct(
     if let Some(input_data) = input_data {
         let mut stream = TcpStream::connect(get_scilla_file_port())
             .expect("unable to connect to scilla server for file setup!");
-        stream.write_all(SCILLA_SERVER_INPUT_PATH.as_bytes()).unwrap();
+        stream
+            .write_all(SCILLA_SERVER_INPUT_PATH.as_bytes())
+            .unwrap();
         stream.write_all(&input_data).unwrap();
     }
 
     if let Some(message) = message {
         let mut stream = TcpStream::connect(get_scilla_file_port())
             .expect("unable to connect to scilla server for file setup!");
-        stream.write_all(SCILLA_SERVER_MESSAGE_PATH.as_bytes()).unwrap();
+        stream
+            .write_all(SCILLA_SERVER_MESSAGE_PATH.as_bytes())
+            .unwrap();
         stream
             .write_all(serde_json::to_string(&message).unwrap().as_bytes())
             .unwrap();

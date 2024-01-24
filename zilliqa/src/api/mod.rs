@@ -7,10 +7,6 @@ mod types;
 mod web3;
 pub mod zil;
 
-fn print_type_of<T>(_: &T) {
-    println!("{}", std::any::type_name::<T>())
-}
-
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = RpcModule::new(node.clone());
 

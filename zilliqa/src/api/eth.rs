@@ -1,7 +1,6 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
 use std::sync::{Arc, Mutex, MutexGuard};
-use crate::api::print_type_of;
 
 use anyhow::{anyhow, Result};
 use itertools::{Either, Itertools};
