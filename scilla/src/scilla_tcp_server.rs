@@ -130,8 +130,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
 
         let result = self.fetch_state_value_inner(query).map_err(convert_err);
 
-        
-
         result.map(|value| {
             let arr = match value {
                 Some(value) => vec![true.into(), b64.encode(value.encode_to_vec()).into()],
@@ -178,8 +176,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             .fetch_external_state_value_inner(addr, query)
             .map_err(convert_err);
 
-        
-
         result.map(|vt| {
             let arr = match vt {
                 Some((value, ty)) => vec![
@@ -219,8 +215,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         let result = self
             .fetch_blockchain_info_inner(query_name, query_args)
             .map_err(convert_err);
-
-        
 
         result.map(|s| Value::Array(vec![true.into(), s.into()]))
     }

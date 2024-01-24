@@ -89,7 +89,8 @@ pub fn run_scilla_impl_direct<B: Backend>(
         )
     } else {
         // todo: contract call without data - is this a valid case?
-        panic!("Scilla invokation not a contract creation or call. This is invalid.");
+        warn!("Scilla invokation not a contract creation or call. This is a transfer.");
+        vec![]
     };
 
     let mut state_deltas = tcp_scilla_server.inner.backend.get_result();
