@@ -562,6 +562,7 @@ impl Consensus {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}.\nHead: {}", parent.state_root_hash(), self.state.root_hash()?, head_block);
             }
 
+            // TODO: re-inject Proposal with locally-known intershard txs
             if !transactions.is_empty() {
                 trace!("applying {} transactions to state", transactions.len());
             }
@@ -835,6 +836,7 @@ impl Consensus {
                     );
                     // as a future improvement, process the proposal before broadcasting it
                     trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
+                    // TODO: filter transactions to avoid broadcasting intershard transactions here
 
                     return Ok(Some((proposal, applied_transactions)));
                 }

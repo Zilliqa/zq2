@@ -122,7 +122,7 @@ impl SignedTransaction {
             SignedTransaction::Eip1559 { tx, .. } => tx.nonce,
             // Zilliqa nonces are 1-indexed rather than zero indexed.
             SignedTransaction::Zilliqa { tx, .. } => tx.nonce - 1,
-            SignedTransaction::Intershard { tx, .. } => tx.nonce,
+            SignedTransaction::Intershard { .. } => u64::MAX,
         }
     }
 
@@ -298,7 +298,7 @@ impl Transaction {
             Transaction::Eip1559(TxEip1559 { nonce, .. }) => *nonce,
             // Zilliqa nonces are 1-indexed rather than zero indexed.
             Transaction::Zilliqa(TxZilliqa { nonce, .. }) => *nonce - 1,
-            Transaction::Intershard(TxIntershard { nonce, .. }) => *nonce,
+            Transaction::Intershard(TxIntershard { .. }) => u64::MAX,
         }
     }
 
@@ -440,7 +440,6 @@ impl TxLegacy {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TxIntershard {
     pub chain_id: u64,
-    pub nonce: u64,
     pub gas_price: u128,
     pub gas_limit: u64,
     pub to_addr: Option<Address>, // do not support cross-shard contract deployments (yet)
@@ -451,7 +450,6 @@ pub struct TxIntershard {
 impl TxIntershard {
     fn encode_fields(&self, rlp: &mut RlpStream) {
         rlp.append(&self.chain_id)
-            .append(&self.nonce)
             .append(&self.gas_price)
             .append(&self.gas_limit)
             .append(&self.to_addr)

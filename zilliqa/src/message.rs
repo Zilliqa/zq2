@@ -173,7 +173,6 @@ pub struct IntershardCall {
     pub gas_price: u128,
     pub gas_limit: u64,
     pub calldata: Vec<u8>,
-    pub nonce: u64,
 }
 
 /// A message intended to be sent over the network as part of p2p communication.

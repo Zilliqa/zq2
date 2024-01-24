@@ -23,7 +23,7 @@ use crate::{
     evm_backend::EvmBackend,
     message::BlockHeader,
     state::{contract_addr, Address, State},
-    transaction::VerifiedTransaction,
+    transaction::{Transaction, VerifiedTransaction},
 };
 
 #[derive(Default)]
@@ -556,18 +556,26 @@ impl State {
 
         let txn = txn.tx.into_transaction();
 
-        // fail early on nonce mismatch
         let mut acct = self.get_account(from_addr).unwrap();
-        if acct.nonce != txn.nonce() {
-            let error_str = format!(
-                "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
-                acct.nonce,
-                txn.nonce(),
-                hash
-            );
-            warn!(error_str);
-            return Err(anyhow!(error_str));
-        }
+
+        // fail early on nonce mismatch
+        // intershard transactions don't have a nonce check, as they originate from a local
+        // subnode, where in turn they come from a source shard tx and the nonce was checked there
+        match txn {
+            Transaction::Intershard(_) => {}
+            _ => {
+                if acct.nonce != txn.nonce() {
+                    let error_str = format!(
+                        "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
+                        acct.nonce,
+                        txn.nonce(),
+                        hash
+                    );
+                    warn!(error_str);
+                    return Err(anyhow!(error_str));
+                }
+            }
+        };
 
         let gas_price = self.get_gas_price()?;
 
@@ -603,8 +611,11 @@ impl State {
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
                 // and we get the return value (which will indicate the error)
-                acct.nonce = acct.nonce.checked_add(1).unwrap();
-                self.save_account(from_addr, acct)?;
+                // Intershard calls don't increment the nonce
+                if !matches!(txn, Transaction::Intershard(_)) {
+                    acct.nonce = acct.nonce.checked_add(1).unwrap();
+                    self.save_account(from_addr, acct)?;
+                }
 
                 Ok(TransactionApplyResult {
                     success,

@@ -3,7 +3,11 @@ use std::{
     collections::{BTreeMap, BinaryHeap},
 };
 
-use crate::{crypto::Hash, state::Address, transaction::VerifiedTransaction};
+use crate::{
+    crypto::Hash,
+    state::Address,
+    transaction::{SignedTransaction, VerifiedTransaction},
+};
 
 /// A pool that manages uncommitted transactions.
 ///
@@ -13,12 +17,18 @@ pub struct TransactionPool {
     /// All transactions in the pool, indexed by (sender, nonce). These transactions are all valid, or might become
     /// valid at some point in the future.
     transactions: BTreeMap<(Address, u64), VerifiedTransaction>,
+    /// All the nonce-less transactions in the pool, indexed by sender. These transactions are
+    /// always valid at all times.
+    /// Currently intershard transactions are nonceless.
+    nonceless_transactions: BTreeMap<Address, Vec<VerifiedTransaction>>,
     /// Indices into `transactions`, sorted by gas price. This contains indices of transactions which are immediately
-    /// executable, because they have a nonce equal to the account's nonce.
+    /// executable, because they have a nonce equal to the account's nonce or are nonceless.
     ready: BinaryHeap<ReadyItem>,
-    /// A map of transaction hash to index into `transactions`. Used for querying transactions from the pool by their
-    /// hash.
-    hash_to_index: BTreeMap<Hash, (Address, u64)>,
+    /// A map of transaction hash to index into `transactions` and `nonceless_transactions`.
+    /// Used for querying transactions from the pool by their hash.
+    /// Boolean determines whether the transaction has a nonce. If true, u64 is the nonce. If
+    /// false, it is the index in the vector in `nonceless_transactions`.
+    hash_to_index: BTreeMap<Hash, (Address, bool, u64)>,
 }
 
 /// A wrapper for (gas price, sender, nonce), stored in the `ready` heap of [TransactionPool].
@@ -27,7 +37,7 @@ pub struct TransactionPool {
 struct ReadyItem {
     gas_price: u128,
     from_addr: Address,
-    nonce: u64,
+    nonce: Option<u64>,
 }
 
 impl PartialEq for ReadyItem {
@@ -55,7 +65,10 @@ impl From<&VerifiedTransaction> for ReadyItem {
         ReadyItem {
             gas_price: txn.tx.gas_price(),
             from_addr: txn.signer,
-            nonce: txn.tx.nonce(),
+            nonce: match txn.tx {
+                SignedTransaction::Intershard { .. } => None,
+                _ => Some(txn.tx.nonce()),
+            },
         }
     }
 }
@@ -112,19 +125,35 @@ impl TransactionPool {
             self.ready.push((&txn).into());
         }
 
-        self.hash_to_index
-            .insert(txn.hash, (txn.signer, txn.tx.nonce()));
-        self.transactions.insert((txn.signer, txn.tx.nonce()), txn);
+        match txn.tx {
+            SignedTransaction::Intershard { .. } => {
+                let vec = self.nonceless_transactions.entry(txn.signer).or_default();
+                self.hash_to_index
+                    .insert(txn.hash, (txn.signer, false, vec.len() as u64));
+                vec.push(txn);
+            }
+            _ => {
+                self.hash_to_index
+                    .insert(txn.hash, (txn.signer, true, txn.tx.nonce()));
+                self.transactions.insert((txn.signer, txn.tx.nonce()), txn);
+            }
+        }
 
         true
     }
 
     pub fn get_transaction(&self, hash: Hash) -> Option<&VerifiedTransaction> {
-        let Some((addr, nonce)) = self.hash_to_index.get(&hash) else {
+        let Some((addr, has_nonce, nonce_or_idx)) = self.hash_to_index.get(&hash) else {
             return None;
         };
-
-        self.transactions.get(&(*addr, *nonce))
+        if *has_nonce {
+            self.transactions.get(&(*addr, *nonce_or_idx))
+        } else {
+            self.nonceless_transactions
+                .get(addr)
+                .map(|vec| vec.get(*nonce_or_idx as usize))
+                .flatten()
+        }
     }
 
     /// Update the pool after a transaction has been executed.
