@@ -5,6 +5,9 @@ pwd
 cargo build --all-targets > /dev/null 2>&1
 RUST_LOG=zilliqa=warn ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 -c config-example.toml > /tmp/zil_log_out.txt 2>&1 &
 
+echo "starting scilla server"
+docker run --rm -it -p 12345-12347:12345-12347 nhutton/scilla_tcp:1.0 /scilla/0/run_scilla_tcp.sh
+
 # Pull submodule
 cd evm_js_tests
 git pull
