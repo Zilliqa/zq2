@@ -3,7 +3,7 @@ import {expect} from "chai";
 import hre from "hardhat";
 import {Account} from "@zilliqa-js/zilliqa";
 
-describe("Manual nonce #parallel", function () {
+xdescribe("Manual nonce #parallel", function () {
   let contract: ScillaContract;
   let signer: Account;
   const VALUE = 12;

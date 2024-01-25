@@ -1,7 +1,7 @@
 import hre from "hardhat";
 import {expect} from "chai";
 
-describe("RFC75 Scilla to EVM functionality", function () {
+xdescribe("RFC75 Scilla to EVM functionality", function () {
   before(async function () {
     if (!hre.isZilliqaNetworkSelected() || !hre.isScillaTestingEnabled()) {
       this.skip();

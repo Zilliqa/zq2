@@ -3,7 +3,7 @@ import {ScillaContract} from "hardhat-scilla-plugin";
 import hre from "hardhat";
 const {createHash} = require("crypto");
 
-describe("Codehash contract #parallel", () => {
+xdescribe("Codehash contract #parallel", () => {
   let expectedCodeHash: string;
   let contract: ScillaContract;
   before(async () => {

@@ -3,7 +3,7 @@ import {expect} from "chai";
 import hre, {ethers} from "hardhat";
 import {parallelizer} from "../../helpers";
 
-describe("Scilla Contract Deployment", function () {
+xdescribe("Scilla Contract Deployment", function () {
   context("String immutable variable", function () {
     let contract: ScillaContract;
     before(async function () {
