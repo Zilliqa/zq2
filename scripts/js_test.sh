@@ -9,7 +9,7 @@ echo "starting scilla server"
 docker run --rm -it -p 12345-12347:12345-12347 nhutton/scilla_tcp:1.0 /scilla/0/run_scilla_tcp.sh
 
 # Pull submodule
-cd evm_js_tests
+cd evm_scilla_js_tests
 git pull
 
 # install nvm and switch to desired
