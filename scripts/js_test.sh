@@ -36,6 +36,10 @@ echo "Installing tests"
 # Install tests
 npm install > /dev/null 2>&1
 
+# Need to fund scilla addresses which are distinct form zilliqa
+echo "Funding tests"
+npx hardhat run scripts/FundAccountsFromEth.ts
+
 echo "Running tests"
 
 # Run tests
