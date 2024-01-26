@@ -14,7 +14,7 @@ use tracing::*;
 
 use crate::{
     backend_collector::BackendCollector,
-    call_scilla_server::{call_scilla_server, ensure_setup_correct},
+    call_scilla_server::{call_scilla_server, ensure_setup_correct, is_scilla_connected},
     scilla_tcp_server::ScillaServer,
     types::*,
 };
@@ -445,4 +445,8 @@ fn handle_contract_call<B: Backend>(
 pub fn reconstruct_kv_pairs<B: Backend>(backend: &B, address: H160) -> Vec<(String, Vec<u8>)> {
     let mut collector = BackendCollector::new(backend);
     collector.reconstruct_kv_pairs(address)
+}
+
+pub fn check_scilla_connected() -> Result<()> {
+    is_scilla_connected()
 }

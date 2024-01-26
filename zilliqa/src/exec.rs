@@ -204,7 +204,7 @@ impl State {
                 calculate_contract_address(from_addr, &backend)
             };
             created_contract_addr = Some(to);
-            trace!("*** Calculated contract address for creation: {}", to);
+            trace!("*** Calculated contract address for creation: {:?}", to);
         }
 
         let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];

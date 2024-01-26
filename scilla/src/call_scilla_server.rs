@@ -238,3 +238,13 @@ pub fn ensure_setup_correct(
             .unwrap();
     }
 }
+
+pub fn is_scilla_connected() -> Result<()> {
+    let addr = get_scilla_write_port();
+    let connection = TcpStream::connect(addr.clone());
+
+    match connection {
+        Ok(_) => Ok(()),
+        Err(e) => Err(anyhow!("Scilla server not connected at address: {:?} error: {:?}", addr, e)),
+    }
+}
