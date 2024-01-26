@@ -204,7 +204,7 @@ impl State {
                 calculate_contract_address(from_addr, &backend)
             };
             created_contract_addr = Some(to);
-            trace!("*** Calculated contract address for creation: {:?}", to);
+            trace!("*** Calculated contract address for creation: {:?} with nonce: {:?}", to, nonce);
         }
 
         let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];
@@ -622,7 +622,12 @@ impl State {
             warn!(error_str);
         }
 
-        trace!("Applying transaction with args: ", ?from_addr, ?txn, ?is_scilla);
+        trace!(
+            ?from_addr,
+            ?txn,
+            ?is_scilla,
+            "Applying transaction with args: "
+        );
 
         let result = self.apply_transaction_inner(
             from_addr,
