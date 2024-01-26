@@ -656,6 +656,7 @@ impl Consensus {
         view: u64,
         cosigned: &BitSlice,
     ) -> Result<()> {
+        info!("apply rewards in view {view}");
         // TODO: Read from a contract.
         let rewards_per_hour = 204_000_000_000_000_000_000_000u128;
         // TODO: Calculate
@@ -663,12 +664,17 @@ impl Consensus {
 
         let rewards_per_block = rewards_per_hour / blocks_per_hour;
 
+        info!("start with state root hash: {}", self.state.root_hash()?);
+
         let proposer = self.leader(committee, view).public_key;
         if let Some(proposer_address) = self.state.get_reward_address(proposer)? {
             let reward = U256::from(rewards_per_block / 2);
+            info!(?proposer_address, ?reward, "proposer reward");
             let balance = self.state.get_native_balance(proposer_address, false)?;
-            self.state
-                .set_native_balance(proposer_address, balance + reward)?;
+            self.state.set_native_balance(
+                proposer_address,
+                balance + reward,
+            )?;
         }
 
         let mut total_cosigner_stake = 0;
@@ -683,14 +689,21 @@ impl Consensus {
                 (reward_address, stake)
             })
             .collect();
+        info!(?total_cosigner_stake, ?cosigner_stake, "total stake");
 
         for (reward_address, stake) in cosigner_stake {
             if let Some(a) = reward_address {
                 let reward = U256::from(((rewards_per_block / 2) * stake) / total_cosigner_stake);
+                info!(?a, ?reward, "cosigner reward");
                 let balance = self.state.get_native_balance(a, false)?;
-                self.state.set_native_balance(a, balance + reward)?;
+                self.state.set_native_balance(
+                    a,
+                    balance + reward,
+                )?;
             }
         }
+
+        info!("end with state root hash: {}", self.state.root_hash()?);
 
         Ok(())
     }
@@ -765,8 +778,9 @@ impl Consensus {
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
         let Some(block) = self.get_block(&vote.block_hash)? else {
+            trace!(vote_view = vote.view, "ignoring vote, missing block");
             return Ok(None);
-        }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
+        };
         let block_hash = block.hash();
         let block_view = block.view();
         let current_view = self.view.get_view();
