@@ -245,6 +245,10 @@ pub fn is_scilla_connected() -> Result<()> {
 
     match connection {
         Ok(_) => Ok(()),
-        Err(e) => Err(anyhow!("Scilla server not connected at address: {:?} error: {:?}", addr, e)),
+        Err(e) => Err(anyhow!(
+            "Scilla server not connected at address: {:?} error: {:?}",
+            addr,
+            e
+        )),
     }
 }

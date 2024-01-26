@@ -5,11 +5,11 @@ use anyhow::Result;
 use clap::Parser;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use opentelemetry_sdk::runtime;
+use scilla::scilla_server_run::check_scilla_connected;
 use tokio::time::Duration;
 use tracing::*;
 use tracing_subscriber::EnvFilter;
 use zilliqa::{cfg::Config, crypto::SecretKey, p2p_node::P2pNode};
-use scilla::scilla_server_run::check_scilla_connected;
 
 #[derive(Parser, Debug)]
 struct Args {

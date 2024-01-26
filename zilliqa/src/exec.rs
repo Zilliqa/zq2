@@ -622,6 +622,8 @@ impl State {
             warn!(error_str);
         }
 
+        trace!("Applying transaction with args: ", ?from_addr, ?txn, ?is_scilla);
+
         let result = self.apply_transaction_inner(
             from_addr,
             txn.to_addr(),
