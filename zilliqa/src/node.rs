@@ -144,7 +144,9 @@ impl Node {
                 }
             }
             ExternalMessage::Vote(m) => {
-                if let Some((block, transactions)) = self.consensus.vote(m)? {
+                if let Some((block, mut transactions)) = self.consensus.vote(m)? {
+                    // intershard transactions are not meant to be broadcast
+                    transactions.retain(|tx| !matches!(tx, SignedTransaction::Intershard { .. }));
                     self.message_sender
                         .broadcast_external_message(ExternalMessage::Proposal(
                             Proposal::from_parts(block, transactions),

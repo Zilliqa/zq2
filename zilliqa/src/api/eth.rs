@@ -440,7 +440,7 @@ pub(super) fn get_transaction_inner(
         max_priority_fee_per_gas,
         hash: H256(hash.0),
         input: transaction.payload().to_vec(),
-        nonce: transaction.nonce(),
+        nonce: transaction.nonce().unwrap_or(u64::MAX),
         to: transaction.to_addr(),
         transaction_index: block
             .map(|b| b.transactions.iter().position(|t| *t == hash).unwrap() as u64),

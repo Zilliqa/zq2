@@ -23,7 +23,7 @@ use crate::{
     evm_backend::EvmBackend,
     message::BlockHeader,
     state::{contract_addr, Address, State},
-    transaction::{Transaction, VerifiedTransaction},
+    transaction::VerifiedTransaction,
 };
 
 #[derive(Default)]
@@ -559,21 +559,14 @@ impl State {
         let mut acct = self.get_account(from_addr).unwrap();
 
         // fail early on nonce mismatch
-        // intershard transactions don't have a nonce check, as they originate from a local
-        // subnode, where in turn they come from a source shard tx and the nonce was checked there
-        match txn {
-            Transaction::Intershard(_) => {}
-            _ => {
-                if acct.nonce != txn.nonce() {
-                    let error_str = format!(
-                        "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
-                        acct.nonce,
-                        txn.nonce(),
-                        hash
-                    );
-                    warn!(error_str);
-                    return Err(anyhow!(error_str));
-                }
+        if let Some(tx_nonce) = txn.nonce() {
+            if acct.nonce != tx_nonce {
+                let error_str = format!(
+                    "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
+                    acct.nonce, tx_nonce, hash
+                );
+                warn!(error_str);
+                return Err(anyhow!(error_str));
             }
         };
 
@@ -610,9 +603,9 @@ impl State {
                 self.apply_delta(result.apply)?;
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
-                // and we get the return value (which will indicate the error)
-                // Intershard calls don't increment the nonce
-                if !matches!(txn, Transaction::Intershard(_)) {
+                // and we get the return value (which will indicate the error).
+                // Except nonceless txs (such as intershard calls) which don't increment the nonce.
+                if txn.nonce().is_some() {
                     acct.nonce = acct.nonce.checked_add(1).unwrap();
                     self.save_account(from_addr, acct)?;
                 }

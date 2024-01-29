@@ -170,9 +170,11 @@ pub struct BlockBatchResponse {
 pub struct IntershardCall {
     pub source_address: H160,
     pub target_address: Option<H160>,
+    pub source_chain_id: u64,
+    pub bridge_nonce: u64,
+    pub calldata: Vec<u8>,
     pub gas_price: u128,
     pub gas_limit: u64,
-    pub calldata: Vec<u8>,
 }
 
 /// A message intended to be sent over the network as part of p2p communication.

@@ -115,14 +115,14 @@ impl SignedTransaction {
         }
     }
 
-    pub fn nonce(&self) -> u64 {
+    pub fn nonce(&self) -> Option<u64> {
         match self {
-            SignedTransaction::Legacy { tx, .. } => tx.nonce,
-            SignedTransaction::Eip2930 { tx, .. } => tx.nonce,
-            SignedTransaction::Eip1559 { tx, .. } => tx.nonce,
+            SignedTransaction::Legacy { tx, .. } => Some(tx.nonce),
+            SignedTransaction::Eip2930 { tx, .. } => Some(tx.nonce),
+            SignedTransaction::Eip1559 { tx, .. } => Some(tx.nonce),
             // Zilliqa nonces are 1-indexed rather than zero indexed.
-            SignedTransaction::Zilliqa { tx, .. } => tx.nonce - 1,
-            SignedTransaction::Intershard { .. } => u64::MAX,
+            SignedTransaction::Zilliqa { tx, .. } => Some(tx.nonce - 1),
+            SignedTransaction::Intershard { .. } => None,
         }
     }
 
@@ -291,14 +291,14 @@ impl Transaction {
         }
     }
 
-    pub fn nonce(&self) -> u64 {
+    pub fn nonce(&self) -> Option<u64> {
         match self {
-            Transaction::Legacy(TxLegacy { nonce, .. }) => *nonce,
-            Transaction::Eip2930(TxEip2930 { nonce, .. }) => *nonce,
-            Transaction::Eip1559(TxEip1559 { nonce, .. }) => *nonce,
+            Transaction::Legacy(TxLegacy { nonce, .. }) => Some(*nonce),
+            Transaction::Eip2930(TxEip2930 { nonce, .. }) => Some(*nonce),
+            Transaction::Eip1559(TxEip1559 { nonce, .. }) => Some(*nonce),
             // Zilliqa nonces are 1-indexed rather than zero indexed.
-            Transaction::Zilliqa(TxZilliqa { nonce, .. }) => *nonce - 1,
-            Transaction::Intershard(TxIntershard { .. }) => u64::MAX,
+            Transaction::Zilliqa(TxZilliqa { nonce, .. }) => Some(*nonce - 1),
+            Transaction::Intershard(TxIntershard { .. }) => None,
         }
     }
 
@@ -437,6 +437,7 @@ impl TxLegacy {
     }
 }
 
+/// Nonceless
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TxIntershard {
     pub chain_id: u64,

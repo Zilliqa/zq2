@@ -527,6 +527,9 @@ impl Consensus {
             }
         }
 
+        // TODO: re-inject Proposal with locally-known intershard txs, and verify all txs are
+        // present
+
         self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
 
         let proposal_view = block.view();
@@ -562,7 +565,6 @@ impl Consensus {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}.\nHead: {}", parent.state_root_hash(), self.state.root_hash()?, head_block);
             }
 
-            // TODO: re-inject Proposal with locally-known intershard txs
             if !transactions.is_empty() {
                 trace!("applying {} transactions to state", transactions.len());
             }
@@ -690,7 +692,12 @@ impl Consensus {
             .filter(|txn| {
                 let account_nonce = self.state.must_get_account(txn.signer).nonce;
                 // Ignore this transaction if it is no longer valid.
-                txn.tx.nonce() >= account_nonce
+                // Transactions are (or will be) valid iff their nonce is greater than the account
+                // nonce OR if they have no nonce
+                txn.tx
+                    .nonce()
+                    .map(|tx_nonce| tx_nonce >= account_nonce)
+                    .unwrap_or(true)
             })
             .collect()
     }
@@ -836,7 +843,6 @@ impl Consensus {
                     );
                     // as a future improvement, process the proposal before broadcasting it
                     trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
-                    // TODO: filter transactions to avoid broadcasting intershard transactions here
 
                     return Ok(Some((proposal, applied_transactions)));
                 }
