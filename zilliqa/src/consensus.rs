@@ -365,11 +365,6 @@ impl Consensus {
     pub fn head_block(&self) -> Block {
         let highest_block_number = self.db.get_highest_block_number().unwrap().unwrap();
 
-        trace!(
-            "head block request: highest block number: {}",
-            highest_block_number
-        );
-
         self.block_store
             .get_block_by_number(highest_block_number)
             .unwrap()
@@ -535,7 +530,7 @@ impl Consensus {
         let parent = self
             .get_block(&block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block parent"))?;
-        let block_state_root = block.state_root_hash();
+        //let block_state_root = block.state_root_hash();
 
         trace!("checking if block view {} is safe", block.view());
 
@@ -547,8 +542,6 @@ impl Consensus {
                 block.number(),
                 block.hash()
             );
-
-            let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
 
             if head_block.hash() != parent.hash() || block.number() != head_block.header.number + 1
             {
@@ -564,58 +557,7 @@ impl Consensus {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}.\nHead: {}", parent.state_root_hash(), self.state.root_hash()?, head_block);
             }
 
-            if !transactions.is_empty() {
-                trace!("applying {} transactions to state", transactions.len());
-            }
-
-            for txn in transactions {
-                let txn = txn.verify()?;
-                self.new_transaction(txn.clone())?;
-                let tx_hash = txn.hash;
-                if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
-                    self.db
-                        .insert_block_hash_reverse_index(&tx_hash, &block.hash())?;
-                    let receipt = TransactionReceipt {
-                        block_hash: block.hash(),
-                        tx_hash,
-                        success: result.success,
-                        contract_address: result.contract_address,
-                        logs: result.logs,
-                        gas_used: result.gas_used,
-                    };
-                    info!(?receipt, "applied transaction {:?}", receipt);
-                    block_receipts.push(receipt);
-                } else {
-                    warn!("Failed to apply TX! Something might be wrong");
-                }
-            }
-
-            self.apply_rewards(&parent.committee, block.view(), &block.qc.cosigned)?;
-
-            // If we were the proposer we would've already processed the transactions
-            if !self.db.contains_transaction_receipts(&block.hash())? {
-                self.db
-                    .insert_transaction_receipts(&block.hash(), &block_receipts)?;
-            }
-
-            // Important - only add blocks we are going to execute because they can potentially
-            // overwrite the mapping of block height to block, which there should only be one of.
-            // for example, this HAS to be after the deal with fork call
-            self.add_block(block.clone())?;
-
-            if self.state.root_hash()? != block_state_root {
-                warn!(
-                    "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {}",
-                    self.state.root_hash()?,
-                    block_state_root,
-                    block
-                );
-                return Err(anyhow!(
-                    "state root hash mismatch, expected: {:?}, actual: {:?}",
-                    block_state_root,
-                    self.state.root_hash()
-                ));
-            }
+            self.execute_block(&block, transactions)?;
 
             if self.view.get_view() != proposal_view + 1 {
                 self.view.set_view(proposal_view + 1);
@@ -1757,11 +1699,40 @@ impl Consensus {
     }
 
     /// Deal with the fork to this block. The block is assumed to be valid to switch to.
+    /// Set the current head block to the parent of the proposed block,
     /// This will make it so the block is ready to become the new head
     fn deal_with_fork(&mut self, block: &Block) -> Result<()> {
-        // Start at the head block and recursively unwind the changes that have been made
-        // until the head block is the parent of this block.
-        while self.head_block().header.number >= block.header.number {
+        // To generically deal with forks where the proposed block could be at any height, we
+        // Find the common ancestor (backward) of the head block and the new block
+        // Then, revert the blocks from the head block to the common ancestor
+        // Then, apply the blocks (forward) from the common ancestor to the parent of the new block
+        let mut head = self.head_block();
+        let mut head_height = head.number();
+        let mut proposed_block = block.clone();
+        let mut proposed_block_height = block.number();
+
+        // Need to make sure both pointers are at the same height
+        while head_height > proposed_block_height {
+            trace!("Stepping back head block pointer");
+            head = self.get_block(&head.parent_hash())?.unwrap();
+            head_height = head.number();
+        }
+
+        while proposed_block_height > head_height {
+            trace!("Stepping back proposed block pointer");
+            proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
+            proposed_block_height = proposed_block.number();
+        }
+
+        // We now have both hash pointers at the same height, we can walk back until they are equal.
+        while head.hash() != proposed_block.hash() {
+            trace!("Stepping back both pointers");
+            head = self.get_block(&head.parent_hash())?.unwrap();
+            proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
+        }
+
+        // Now, we want to revert the blocks until the head block is the common ancestor
+        while self.head_block().hash() != head.hash() {
             let head_block = self.head_block();
             let parent_block = self.get_block(&head_block.parent_hash())?.ok_or_else(|| {
                 anyhow!(
@@ -1781,7 +1752,7 @@ impl Consensus {
             self.db.remove_transaction_receipts(&head_block.hash())?;
 
             // State is easily set - must be to the parent block, though
-            trace!("Setting state to: {}", parent_block.state_root_hash());
+            trace!("Setting state to: {} aka block: {}", parent_block.state_root_hash(), parent_block);
             self.state
                 .set_to_root(H256(parent_block.state_root_hash().0));
 
@@ -1814,6 +1785,99 @@ impl Consensus {
             self.db.put_highest_block_number(new_highest)?;
 
             // touched address index: TODO
+        }
+
+        // Now, we execute forward from the common ancestor to the new block parent which can
+        // be required in rare cases.
+        // We have the chain of blocks from the ancestor upwards to the proposed block via walking back.
+        while self.head_block().hash() != block.parent_hash() {
+            trace!("Advancing the head block to prepare for proposed block fork.");
+            trace!("Head block: {}", self.head_block());
+            trace!("desired block hash: {}", block.parent_hash());
+
+            let desired_block_height = self.head_block().number() + 1;
+            // Pointer to parent of head block
+            let mut block_pointer = self.get_block(&block.parent_hash())?.ok_or_else(|| anyhow!("missing block when advancing head block pointer"))?;
+
+            // If the parent of the proposed
+            if block_pointer.header.number < desired_block_height {
+                panic!("block height mismatch when advancing head block pointer");
+            }
+
+            while block_pointer.header.number != desired_block_height {
+                block_pointer = self.get_block(&block_pointer.parent_hash())?.ok_or_else(|| anyhow!("missing block when advancing head block pointer"))?;
+            }
+
+            // We now have the block pointer at the desired height, we can apply it.
+            trace!("Fork execution of block: {}", block_pointer);
+            let transactions = block_pointer.transactions.clone();
+            let transactions = transactions
+                .iter()
+                .map(|tx_hash| self.get_transaction_by_hash(*tx_hash).unwrap().unwrap().tx)
+                .collect();
+            self.execute_block(&block_pointer, transactions)?;
+            self.db.put_highest_block_number(block_pointer.number())?;
+        }
+
+        Ok(())
+    }
+
+    fn execute_block(&mut self, block: &Block, transactions: Vec<SignedTransaction>) -> Result<()> {
+
+        let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
+        let parent = self.get_block(&block.parent_hash())?.ok_or_else(|| anyhow!("missing parent block when executing block!"))?;
+
+        if !transactions.is_empty() {
+            trace!("applying {} transactions to state", transactions.len());
+        }
+
+        for txn in transactions {
+            let txn = txn.verify()?;
+            self.new_transaction(txn.clone())?;
+            let tx_hash = txn.hash;
+            if let Some(result) = self.apply_transaction(txn.clone(), block.header)? {
+                self.db
+                    .insert_block_hash_reverse_index(&tx_hash, &block.hash())?;
+                let receipt = TransactionReceipt {
+                    block_hash: block.hash(),
+                    tx_hash,
+                    success: result.success,
+                    contract_address: result.contract_address,
+                    logs: result.logs,
+                    gas_used: result.gas_used,
+                };
+                info!(?receipt, "applied transaction {:?}", receipt);
+                block_receipts.push(receipt);
+            } else {
+                warn!("Failed to apply TX! Something might be wrong");
+            }
+        }
+
+        self.apply_rewards(&parent.committee, block.view(), &block.qc.cosigned)?;
+
+        // If we were the proposer we would've already processed the transactions
+        if !self.db.contains_transaction_receipts(&block.hash())? {
+            self.db
+                .insert_transaction_receipts(&block.hash(), &block_receipts)?;
+        }
+
+        // Important - only add blocks we are going to execute because they can potentially
+        // overwrite the mapping of block height to block, which there should only be one of.
+        // for example, this HAS to be after the deal with fork call
+        self.add_block(block.clone())?;
+
+        if self.state.root_hash()? != block.state_root_hash() {
+            warn!(
+                    "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {}",
+                    self.state.root_hash()?,
+                    block.state_root_hash(),
+                    block
+                );
+            return Err(anyhow!(
+                    "state root hash mismatch, expected: {:?}, actual: {:?}",
+                    block.state_root_hash(),
+                    self.state.root_hash()
+                ));
         }
 
         Ok(())
