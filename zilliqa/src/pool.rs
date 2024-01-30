@@ -1,31 +1,74 @@
+use crate::{
+    crypto::Hash,
+    state::Address,
+    transaction::{SignedTransaction, VerifiedTransaction},
+};
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, BinaryHeap, VecDeque},
+    collections::{BTreeMap, BinaryHeap},
 };
-use tracing::warn;
 
-use crate::{crypto::Hash, state::Address, transaction::VerifiedTransaction};
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct NoncedTxIndex {
+    pub address: Address,
+    pub nonce: u64,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct IntershardTxIndex {
+    pub source_shard: u64,
+    pub link_nonce: u64,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum TxIndex {
+    /// from_address, nonce (unique for that address)
+    Nonced(Address, u64),
+    /// source_shard, nonce (unique for the bridge from that shard)
+    Intershard(u64, u64),
+}
+
+trait MempoolIndex {
+    fn mempool_index(&self) -> TxIndex;
+}
+
+impl MempoolIndex for VerifiedTransaction {
+    fn mempool_index(&self) -> TxIndex {
+        match &self.tx {
+            SignedTransaction::Intershard { tx, .. } => {
+                TxIndex::Intershard(tx.source_chain, tx.bridge_nonce)
+            }
+            nonced_tx => {
+                let nonce = match nonced_tx {
+                    SignedTransaction::Legacy { tx, .. } => tx.nonce,
+                    SignedTransaction::Eip2930 { tx, .. } => tx.nonce,
+                    SignedTransaction::Eip1559 { tx, .. } => tx.nonce,
+                    SignedTransaction::Zilliqa { tx, .. } => tx.nonce,
+                    SignedTransaction::Intershard { .. } => {
+                        unreachable!("Will have been matched in outer match statement.")
+                    }
+                };
+                TxIndex::Nonced(self.signer, nonce)
+            }
+        }
+    }
+}
 
 /// A pool that manages uncommitted transactions.
 ///
 /// It provides transactions to the chain via [`TransactionPool::best_transaction`].
 #[derive(Debug, Default)]
 pub struct TransactionPool {
-    /// All transactions in the pool, indexed by (sender, nonce). These transactions are all valid, or might become
+    /// All transactions in the pool. These transactions are all valid, or might become
     /// valid at some point in the future.
-    transactions: BTreeMap<(Address, u64), VerifiedTransaction>,
-    /// All the nonce-less transactions in the pool, indexed by sender. These transactions are
-    /// always valid at all times.
-    /// Currently intershard transactions are nonceless.
-    nonceless_transactions: BTreeMap<Address, VecDeque<VerifiedTransaction>>,
+    transactions: BTreeMap<TxIndex, VerifiedTransaction>,
     /// Indices into `transactions`, sorted by gas price. This contains indices of transactions which are immediately
     /// executable, because they have a nonce equal to the account's nonce or are nonceless.
+    /// It may also contain stale (invalidated) transactions, which are evicted lazily.
     ready: BinaryHeap<ReadyItem>,
-    /// A map of transaction hash to index into `transactions` and `nonceless_transactions`.
+    /// A map of transaction hash to index into `transactions`.
     /// Used for querying transactions from the pool by their hash.
-    /// Boolean determines whether the transaction has a nonce. If true, u64 is the nonce. If
-    /// false, it is the index in the vector in `nonceless_transactions`.
-    hash_to_index: BTreeMap<Hash, (Address, bool, u64)>,
+    hash_to_index: BTreeMap<Hash, TxIndex>,
 }
 
 /// A wrapper for (gas price, sender, nonce), stored in the `ready` heap of [TransactionPool].
@@ -33,8 +76,7 @@ pub struct TransactionPool {
 #[derive(Debug)]
 struct ReadyItem {
     gas_price: u128,
-    from_addr: Address,
-    nonce: Option<u64>,
+    tx_index: TxIndex,
 }
 
 impl PartialEq for ReadyItem {
@@ -61,8 +103,7 @@ impl From<&VerifiedTransaction> for ReadyItem {
     fn from(txn: &VerifiedTransaction) -> Self {
         ReadyItem {
             gas_price: txn.tx.gas_price(),
-            from_addr: txn.signer,
-            nonce: txn.tx.nonce(),
+            tx_index: txn.mempool_index(),
         }
     }
 }
@@ -74,35 +115,23 @@ impl TransactionPool {
     /// consecutive with a previously returned transaction, from the same sender.
     pub fn best_transaction(&mut self) -> Option<VerifiedTransaction> {
         loop {
-            let Some(ReadyItem {
-                from_addr,
-                nonce: maybe_nonce,
-                ..
-            }) = self.ready.pop()
-            else {
+            let Some(ReadyItem { tx_index, .. }) = self.ready.pop() else {
                 return None;
             };
-            let transaction = if let Some(nonce) = maybe_nonce {
-                let Some(transaction) = self.transactions.remove(&(from_addr, nonce)) else {
-                    // A nonce-bearing transaction might have been ready, but then we learnt that the sender's
-                    // nonce increased, making it invalid. In this case, we will have removed the transaction
-                    // from `transactions` in `update_nonce`. We loop until we find a transaction that hasn't been made invalid.
-                    continue;
-                };
-                transaction
-            } else {
-                let queue = self.nonceless_transactions.entry(from_addr).or_default();
-                let Some(transaction) = queue.pop_front() else {
-                    // A nonceless transaction should never exist in self.ready but not in the
-                    // deque.
-                    warn!("Nonceless transaction from {from_addr} was not found in pool!");
-                    return None;
-                };
-                transaction
+            let Some(transaction) = self.transactions.remove(&tx_index) else {
+                // A transaction might have been ready, but it might have gotten popped
+                // or the sender's nonce might have increased, making it invalid. In this case,
+                // we will have removed the transaction from `transactions` (in `update_nonce`
+                // or `pop_transaction`), but a stale reference would still exist in the heap.
+                //
+                // We loop until we find a transaction that hasn't been made invalid.
+                continue;
             };
 
-            if let Some(nonce) = maybe_nonce {
-                if let Some(next_txn) = self.transactions.get(&(from_addr, nonce + 1)) {
+            // If we've popped a nonced transaction, that may have made a subsequent one valid
+            if let TxIndex::Nonced(address, nonce) = tx_index {
+                if let Some(next_txn) = self.transactions.get(&TxIndex::Nonced(address, nonce + 1))
+                {
                     self.ready.push(next_txn.into());
                 }
             }
@@ -118,9 +147,13 @@ impl TransactionPool {
         }
 
         if let Some(tx_nonce) = txn.tx.nonce() {
-            if let Some(existing_txn) = self.transactions.get(&(txn.signer, tx_nonce)) {
-                // There is already a transaction in the mempool with the same signer and nonce. Only proceed if this one
-                // is better. Note that if they are equally good, we prioritise the existing transaction to avoid the need
+            if let Some(existing_txn) = self
+                .transactions
+                .get(&TxIndex::Nonced(txn.signer, tx_nonce))
+            {
+                // There is already a transaction in the mempool with the same signer
+                // and nonce. Only proceed if this one is better. Note that if they are
+                // equally good, we prioritise the existing transaction to avoid the need
                 // to broadcast a new transaction to the network.
                 if ReadyItem::from(existing_txn) >= ReadyItem::from(&txn) {
                     return false;
@@ -139,31 +172,24 @@ impl TransactionPool {
         }
 
         // Finally we insert it into the tx store and the hash reverse-index
-        if let Some(tx_nonce) = txn.tx.nonce() {
-            self.hash_to_index
-                .insert(txn.hash, (txn.signer, true, tx_nonce));
-            self.transactions.insert((txn.signer, tx_nonce), txn);
-        } else {
-            let queue = self.nonceless_transactions.entry(txn.signer).or_default();
-            self.hash_to_index
-                .insert(txn.hash, (txn.signer, false, queue.len() as u64));
-            queue.push_back(txn);
-        }
+        self.hash_to_index.insert(txn.hash, txn.mempool_index());
+        self.transactions.insert(txn.mempool_index(), txn);
 
         true
     }
 
     pub fn get_transaction(&self, hash: Hash) -> Option<&VerifiedTransaction> {
-        let Some((addr, has_nonce, nonce_or_idx)) = self.hash_to_index.get(&hash) else {
+        let Some(tx_index) = self.hash_to_index.get(&hash) else {
             return None;
         };
-        if *has_nonce {
-            self.transactions.get(&(*addr, *nonce_or_idx))
-        } else {
-            self.nonceless_transactions
-                .get(addr)
-                .and_then(|vec| vec.get(*nonce_or_idx as usize))
-        }
+        self.transactions.get(tx_index)
+    }
+
+    pub fn pop_transaction(&mut self, hash: Hash) -> Option<VerifiedTransaction> {
+        let Some(tx_index) = self.hash_to_index.get(&hash) else {
+            return None;
+        };
+        self.transactions.remove(tx_index)
     }
 
     /// Update the pool after a transaction has been executed.
@@ -171,26 +197,26 @@ impl TransactionPool {
     /// It is important to call this for all executed transactions, otherwise permanently invalidated transactions
     /// will be left indefinitely in the pool.
     pub fn update_nonce(&mut self, txn: &VerifiedTransaction) {
-        // If this was a nonce-bearing tx, then:
-        if let Some(tx_nonce) = txn.tx.nonce() {
-            // remove a transaction from this sender with the previous nonce, if it exists
-            self.transactions.remove(&(txn.signer, tx_nonce));
-            self.hash_to_index.remove(&txn.hash); // cleanup index too
-            if let Some(next_txn) = self.transactions.get(&(txn.signer, tx_nonce + 1)) {
-                // then mark the transaction with the following nonce as ready (if there is one)
-                self.ready.push(next_txn.into());
-            }
-        };
+        let Some(nonce) = txn.tx.nonce() else { return }; // nothing to do if there's no nonce
+
+        self.transactions
+            .remove(&TxIndex::Nonced(txn.signer, nonce)); // if this existed, it's now invalid
+        self.hash_to_index.remove(&txn.hash); // cleanup index too
+
+        if let Some(next_txn) = self
+            .transactions
+            .get(&TxIndex::Nonced(txn.signer, nonce + 1))
+        {
+            // if THIS exists, it's now valid
+            self.ready.push(next_txn.into());
+        }
     }
 
     /// Clear the transaction pool, returning all remaining transactions in an unspecified order.
     pub fn drain(&mut self) -> impl Iterator<Item = VerifiedTransaction> {
         self.ready.clear();
         self.hash_to_index.clear();
-        std::mem::take(&mut self.nonceless_transactions)
-            .into_values()
-            .flat_map(|deque| deque.into_iter())
-            .chain(std::mem::take(&mut self.transactions).into_values())
+        std::mem::take(&mut self.transactions).into_values()
     }
 }
 

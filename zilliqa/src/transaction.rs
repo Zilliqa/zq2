@@ -441,9 +441,12 @@ impl TxLegacy {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TxIntershard {
     pub chain_id: u64,
+    /// The bridge nonce alongside the source chain together guarantee hash uniqueness.
+    pub bridge_nonce: u64,
+    pub source_chain: u64,
     pub gas_price: u128,
     pub gas_limit: u64,
-    pub to_addr: Option<Address>, // do not support cross-shard contract deployments (yet)
+    pub to_addr: Option<Address>,
     // Amount intentionally missing: cannot send native amount cross-shard
     pub payload: Vec<u8>,
 }
@@ -451,6 +454,8 @@ pub struct TxIntershard {
 impl TxIntershard {
     fn encode_fields(&self, rlp: &mut RlpStream) {
         rlp.append(&self.chain_id)
+            .append(&self.source_chain)
+            .append(&self.bridge_nonce)
             .append(&self.gas_price)
             .append(&self.gas_limit)
             .append(&self.to_addr)

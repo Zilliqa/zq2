@@ -1,5 +1,10 @@
 use crate::blockhooks;
-use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    error::Error,
+    fmt::Display,
+    sync::Arc,
+};
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
@@ -527,9 +532,6 @@ impl Consensus {
             }
         }
 
-        // TODO: re-inject Proposal with locally-known intershard txs, and verify all txs are
-        // present
-
         self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
 
         let proposal_view = block.view();
@@ -569,8 +571,24 @@ impl Consensus {
                 trace!("applying {} transactions to state", transactions.len());
             }
 
+            // We re-inject any missing Intershard transactions (or really, any missing
+            // transactions) from our mempool. If any txs are unavailable either in the
+            // message or locally, the proposal cannot be applied
+            let transactions: Result<Vec<_>> =
+                transactions.into_iter().map(|tx| tx.verify()).collect();
+            let mut transactions = transactions?;
+            let provided_txns: HashSet<_> = transactions.iter().map(|tx| tx.hash).collect();
+            for tx_hash in &block.transactions {
+                if !provided_txns.contains(tx_hash) {
+                    let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
+                        warn!("Proposal {} at view {} referenced a transaction that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view());
+                        return Ok(None);
+                    };
+                    transactions.push(local_tx);
+                }
+            }
+
             for txn in transactions {
-                let txn = txn.verify()?;
                 self.new_transaction(txn.clone())?;
                 let tx_hash = txn.hash;
                 if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
