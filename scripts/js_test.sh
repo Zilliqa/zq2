@@ -21,14 +21,14 @@ INTERVAL=5
 
 while true; do
     # Check if the port is open using netcat
-    nc -z localhost $PORT
+    nc -z 127.0.0.1 $PORT
 
     # Check exit status of netcat; 0 if success (port is open)
     if [ $? -eq 0 ]; then
-        echo "Port $PORT is open!"
+        echo "Scilla port $PORT is open!"
         break
     else
-        echo "Port $PORT is not open yet. Checking again in $INTERVAL seconds..."
+        echo "Scilla port $PORT is not open yet. Checking again in $INTERVAL seconds..."
     fi
 
     # Wait for a bit before checking again
