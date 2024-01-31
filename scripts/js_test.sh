@@ -8,7 +8,7 @@ RUST_LOG=zilliqa=warn,zilliqa=info ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6
 echo "starting scilla server"
 docker run --rm -p 12345-12347:12345-12347 nhutton/scilla_tcp:1.0 /scilla/0/run_scilla_tcp.sh &
 
-sleep 2
+sleep 10
 
 # Pull submodule
 cd evm_scilla_js_tests
