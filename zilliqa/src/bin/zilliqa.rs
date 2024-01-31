@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
     if !args.no_scilla {
         info!("Checking scilla server is running... if you don't want to do this, pass the arg --no-scilla");
         info!("Refer to the scilla README for instructions on how to run the scilla server.");
-        //check_scilla_connected()?;
+        check_scilla_connected()?;
     }
 
     let config = if args.config_file.exists() {

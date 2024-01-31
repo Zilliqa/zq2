@@ -8,7 +8,32 @@ RUST_LOG=zilliqa=warn,zilliqa=info ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6
 echo "starting scilla server"
 docker run --rm -p 12345-12347:12345-12347 nhutton/scilla_tcp:1.0 /scilla/0/run_scilla_tcp.sh &
 
-sleep 10
+sudo add-apt-repository ppa:ethereum/ethereum > /dev/null 2>&1
+sudo apt-get update > /dev/null 2>&1
+sudo apt-get install solc libsecp256k1-dev netcat > /dev/null 2>&1
+
+# Block here until we know the scilla server has come online
+PORT=12345
+# Timeout for each netcat attempt in seconds
+TIMEOUT=1
+# Interval between checks in seconds
+INTERVAL=5
+
+while true; do
+    # Check if the port is open using netcat
+    nc -z localhost $PORT
+
+    # Check exit status of netcat; 0 if success (port is open)
+    if [ $? -eq 0 ]; then
+        echo "Port $PORT is open!"
+        break
+    else
+        echo "Port $PORT is not open yet. Checking again in $INTERVAL seconds..."
+    fi
+
+    # Wait for a bit before checking again
+    sleep $INTERVAL
+done
 
 # Pull submodule
 cd evm_scilla_js_tests
@@ -28,10 +53,6 @@ nvm install 16.0
 echo "Using nvm"
 nvm use 16.0
 node --version
-
-sudo add-apt-repository ppa:ethereum/ethereum > /dev/null 2>&1
-sudo apt-get update > /dev/null 2>&1
-sudo apt-get install solc libsecp256k1-dev > /dev/null 2>&1
 
 echo "Installing tests"
 
