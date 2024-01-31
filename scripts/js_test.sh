@@ -35,11 +35,9 @@ pwd
 cargo build --all-targets > /dev/null 2>&1
 RUST_LOG=zilliqa=warn,zilliqa=info ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 -c config-example.toml > /tmp/zil_log_out.txt 2>&1 &
 
-# Pull submodule
 cd evm_scilla_js_tests
-git pull
 
-# install nvm and switch to desired
+# install nvm and switch to desired version
 curl https://raw.githubusercontent.com/creationix/nvm/master/install.sh | bash
 source ~/.profile
 
@@ -50,7 +48,7 @@ export NVM_DIR="$HOME/.nvm"
 echo "Installing nvm"
 nvm install 16.0
 
-echo "Using nvm"
+echo "Using nvm 16"
 nvm use 16.0
 node --version
 
@@ -59,7 +57,7 @@ echo "Installing tests"
 # Install tests
 npm install > /dev/null 2>&1
 
-# Need to fund scilla addresses which are distinct form zilliqa
+# Need to fund scilla addresses which are distinct from zilliqa, or they will fail due to out of funds
 echo "Funding tests"
 npx hardhat run scripts/FundAccountsFromEth.ts
 
