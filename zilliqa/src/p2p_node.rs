@@ -291,7 +291,12 @@ impl P2pNode {
                             request_response::Message::Response {..} => {}
                         }
                     }
-
+                    SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::InboundFailure { peer, error, .. })) => {
+                        error!(%peer, ?error, "receiving direct message failed");
+                    }
+                    SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { peer, error, .. })) => {
+                        error!(%peer, ?error, "sending direct message failed");
+                    }
                     _ => {},
                 },
                 message = self.local_message_receiver.next() => {
