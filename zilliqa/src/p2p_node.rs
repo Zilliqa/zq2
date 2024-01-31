@@ -244,18 +244,22 @@ impl P2pNode {
                     SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
                         for (peer_id, addr) in list {
                             info!(%peer_id, %addr, "discovered peer via mDNS");
-                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                            self.swarm.behaviour_mut().request_response.add_address(&peer_id, addr);
                             self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                         }
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
                         for (peer_id, addr) in list {
                             self.swarm.behaviour_mut().kademlia.remove_address(&peer_id, &addr);
+                            self.swarm.behaviour_mut().request_response.remove_address(&peer_id, &addr);
                         }
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id })) => {
+                        info!(%peer_id, ?listen_addrs, %observed_addr, "identify received");
                         for addr in listen_addrs {
-                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                            self.swarm.behaviour_mut().request_response.add_address(&peer_id, addr);
                         }
                         // Mark the address observed for us by the external peer as confirmed.
                         // TODO: We shouldn't trust this, instead we should confirm our own address manually or using
@@ -297,7 +301,9 @@ impl P2pNode {
                     SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { peer, error, .. })) => {
                         error!(%peer, ?error, "sending direct message failed");
                     }
-                    _ => {},
+                    e => {
+                        error!(?e, "unhandled swarm event");
+                    },
                 },
                 message = self.local_message_receiver.next() => {
                     let (source, destination, message) = message.expect("message stream should be infinite");
