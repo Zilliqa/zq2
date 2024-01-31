@@ -1,5 +1,6 @@
 use primitive_types::{H160, U256};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 // File to keep all of the misc logging and tracing code
 // made when calling the evm
@@ -73,6 +74,7 @@ pub struct LoggingEventListener {
     pub otter_call_tracer: Vec<OtterscanCallContext>,
     pub otter_transaction_error: String,
     pub otter_addresses_called: Vec<String>,
+    pub scilla_events: Vec<Value>,
     pub enabled: bool,
 }
 
@@ -114,6 +116,7 @@ impl LoggingEventListener {
             otter_call_tracer: Default::default(),
             otter_transaction_error: "0x".to_string(),
             otter_addresses_called: Default::default(),
+            scilla_events: Default::default(),
             enabled,
         }
     }

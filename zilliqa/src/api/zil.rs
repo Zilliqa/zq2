@@ -3,21 +3,24 @@
 use std::{
     fmt::Display,
     str::FromStr,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
-use primitive_types::{H160, U256};
+use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
 
 use super::types::zil;
 use crate::{
+    api::types::zil::{CreateTransactionResponse, GetTxResponse},
+    crypto::Hash,
+    exec::get_created_scilla_contract_addr,
     message::BlockNumber,
     node::Node,
     schnorr,
-    transaction::{SignedTransaction, TxZilliqa},
+    transaction::{SignedTransaction, TxZilliqa, VerifiedTransaction},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -25,6 +28,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
         node,
         [
             ("CreateTransaction", create_transaction),
+            ("GetSmartContractState", get_smart_contract_state),
+            ("GetTransaction", get_transaction),
             ("GetBalance", get_balance),
             ("GetCurrentMiniEpoch", get_current_mini_epoch),
             ("GetLatestTxBlock", get_latest_tx_block),
@@ -65,7 +70,10 @@ where
     s.parse().map_err(serde::de::Error::custom)
 }
 
-fn create_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+fn create_transaction(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<CreateTransactionResponse> {
     let transaction: TransactionParams = params.one()?;
     let mut node = node.lock().unwrap();
 
@@ -88,6 +96,9 @@ fn create_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
     let key = schnorr::PublicKey::from_sec1_bytes(&key)?;
     let sig = schnorr::Signature::from_str(&transaction.signature)?;
 
+    let nonce = transaction.nonce;
+    let to_addr = transaction.to_addr;
+
     let transaction = SignedTransaction::Zilliqa {
         tx: TxZilliqa {
             chain_id: chain_id as u16,
@@ -103,10 +114,73 @@ fn create_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
         sig,
     };
 
-    let transaction_hash = node.create_transaction(transaction)?;
-    let transaction_hash = hex::encode(transaction_hash.0);
+    let transaction_hash = node.create_transaction(transaction.clone())?;
+    let transaction_verified: VerifiedTransaction = transaction.verify()?;
 
-    Ok(json!({"TranID": transaction_hash}))
+    let contract_address =
+        get_created_scilla_contract_addr(nonce, transaction_verified.signer, to_addr);
+
+    let response = CreateTransactionResponse {
+        contract_address,
+        info: "Txn processed".to_string(),
+        tran_id: transaction_hash.0.into(),
+    };
+
+    Ok(response)
+}
+
+//fn get_transaction<'a, T: std::clone::Clone>(params: Params<'a>, node: &'a Arc<Mutex<Node>>) -> Result<JsonResponse<'a, T>> {
+//    let hash: H256 = params.one()?;
+//    let hash: Hash = Hash(hash.0);
+//
+//    let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?;
+//    let mut receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
+//
+//    // Note: the scilla api expects an err json rpc response if the transaction is not found
+//    // Canonical example:
+//    //     "error": {
+//    //     "code": -20,
+//    //     "data": null,
+//    //     "message": "Txn Hash not Present"
+//    // },
+//    let receipt = receipt.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+//    let tx = tx.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+//
+//    Ok(GetTxResponse::new(tx, receipt))
+//}
+
+fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<GetTxResponse>> {
+    let hash: H256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+
+    let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?;
+    let receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
+
+    // Note: the scilla api expects an err json rpc response if the transaction is not found
+    // Canonical example:
+    //     "error": {
+    //     "code": -20,
+    //     "data": null,
+    //     "message": "Txn Hash not Present"
+    // },
+    let receipt = receipt.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+    let tx = tx.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+
+    Ok(GetTxResponse::new(tx, receipt))
+}
+
+pub(super) fn get_scilla_transaction_inner(
+    hash: Hash,
+    node: &MutexGuard<Node>,
+) -> Result<Option<VerifiedTransaction>> {
+    let Some(tx) = node.get_transaction_by_hash(hash)? else {
+        return Ok(None);
+    };
+
+    match tx.tx {
+        SignedTransaction::Zilliqa { .. } => Ok(Some(tx)),
+        _ => Ok(None),
+    }
 }
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
@@ -153,4 +227,27 @@ fn get_network_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
 fn get_git_commit(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(env!("VERGEN_GIT_DESCRIBE").to_string())
+}
+
+fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+    let smart_contract_address: H160 = params.one()?;
+    let node = node.lock().unwrap();
+
+    // First get the account and check that its a scilla account
+    let _account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
+    let balance = node.get_native_balance(smart_contract_address, BlockNumber::Latest)?;
+
+    let acccount_data = node.get_scilla_kv_pairs(smart_contract_address, BlockNumber::Latest)?;
+
+    let mut return_json = serde_json::Value::Object(Default::default());
+    return_json["_balance"] = serde_json::Value::String(balance.to_string());
+
+    for (key, value) in acccount_data {
+        let as_string = String::from_utf8(value).unwrap();
+        // Remove any quotation marks around the whole string
+        let as_string = as_string.trim_matches('"');
+        return_json[key] = serde_json::Value::String(as_string.to_string());
+    }
+
+    Ok(return_json)
 }

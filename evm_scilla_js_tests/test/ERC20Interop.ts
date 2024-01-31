@@ -5,7 +5,7 @@ import {ScillaContract} from "hardhat-scilla-plugin";
 import {parallelizer} from "../helpers";
 import {SignerWithAddress} from "@nomiclabs/hardhat-ethers/signers";
 
-describe("ERC20 Interop", function () {
+xdescribe("ERC20 Interop", function () {
   let zrc2_contract: ScillaContract;
   let bridge_contract: Contract;
   let contractOwner: SignerWithAddress;

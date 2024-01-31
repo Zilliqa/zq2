@@ -329,7 +329,14 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { to_addr, .. }) => *to_addr,
             Transaction::Eip2930(TxEip2930 { to_addr, .. }) => *to_addr,
             Transaction::Eip1559(TxEip1559 { to_addr, .. }) => *to_addr,
-            Transaction::Zilliqa(TxZilliqa { to_addr, .. }) => Some(*to_addr),
+            // Note: we map the zero address to 'None' here so it is consistent with eth txs (contract creation).
+            Transaction::Zilliqa(TxZilliqa { to_addr, .. }) => {
+                if !to_addr.is_zero() {
+                    Some(*to_addr)
+                } else {
+                    None
+                }
+            }
             Transaction::Intershard(TxIntershard { to_addr, .. }) => *to_addr,
         }
     }
@@ -346,20 +353,21 @@ impl Transaction {
         }
     }
 
-    pub fn payload(&self) -> &[u8] {
+    pub fn payload(&self) -> (&[u8], &[u8]) {
         match self {
-            Transaction::Legacy(TxLegacy { payload, .. }) => payload,
-            Transaction::Eip2930(TxEip2930 { payload, .. }) => payload,
-            Transaction::Eip1559(TxEip1559 { payload, .. }) => payload,
+            Transaction::Legacy(TxLegacy { payload, .. }) => (payload, <&[u8]>::default()),
+            Transaction::Eip2930(TxEip2930 { payload, .. }) => (payload, <&[u8]>::default()),
+            Transaction::Eip1559(TxEip1559 { payload, .. }) => (payload, <&[u8]>::default()),
             // Zilliqa transactions can have both code and data set, but code takes precedence if it is non-empty.
             Transaction::Zilliqa(TxZilliqa { code, data, .. }) => {
-                if !code.is_empty() {
-                    code.as_bytes()
-                } else {
-                    data.as_bytes()
+                match (!code.is_empty(), !data.is_empty()) {
+                    (true, false) => (code.as_bytes(), <&[u8]>::default()),
+                    (false, true) => (data.as_bytes(), <&[u8]>::default()),
+                    (true, true) => (code.as_bytes(), data.as_bytes()),
+                    (false, false) => (<&[u8]>::default(), <&[u8]>::default()),
                 }
             }
-            Transaction::Intershard(TxIntershard { payload, .. }) => payload,
+            Transaction::Intershard(TxIntershard { payload, .. }) => (payload, <&[u8]>::default()),
         }
     }
 
@@ -552,6 +560,7 @@ pub struct TransactionReceipt {
     pub gas_used: u64,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
+    pub scilla_events: String,
 }
 
 fn strip_leading_zeroes(bytes: &[u8]) -> &[u8] {

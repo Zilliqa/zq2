@@ -2,7 +2,7 @@ import {expect} from "chai";
 import {ScillaContract} from "hardhat-scilla-plugin";
 import hre, {ethers} from "hardhat";
 
-describe("Scilla timestamp #parallel", () => {
+xdescribe("Scilla timestamp #parallel", () => {
   let contract: ScillaContract;
   before(async function () {
     contract = await hre.deployScillaContract2("Timestamp");

@@ -16,6 +16,8 @@ use evm_ds::{
     tracing_logging::LoggingEventListener,
 };
 use primitive_types::{H160, U256};
+use scilla::scilla_server_run::{calculate_contract_address_scilla, run_scilla_impl_direct};
+use serde_json::Value;
 use tracing::*;
 
 use crate::{
@@ -23,7 +25,7 @@ use crate::{
     evm_backend::EvmBackend,
     message::BlockHeader,
     state::{contract_addr, Address, State},
-    transaction::VerifiedTransaction,
+    transaction::{SignedTransaction, VerifiedTransaction},
 };
 
 #[derive(Default)]
@@ -103,6 +105,8 @@ pub struct TransactionApplyResult {
     pub traces: Arc<Mutex<LoggingEventListener>>,
     /// The gas paid by the transaction
     pub gas_used: u64,
+    /// The scilla events, if any
+    pub scilla_events: Value,
 }
 
 impl State {
@@ -163,11 +167,13 @@ impl State {
         gas_limit: u64,
         amount: U256,
         payload: Vec<u8>,
+        payload_initdata: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
         tracing: bool,
         estimate: bool,
         print_enabled: bool,
+        is_scilla: bool,
     ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
         let caller = from_addr;
         let is_static = false;
@@ -180,20 +186,26 @@ impl State {
         let mut created_contract_addr: Option<Address> = None;
 
         let mut code: Vec<u8> = account.code;
-        let mut data: Vec<u8> = payload;
+        let mut data: Vec<u8> = payload.clone();
         let mut traces: Arc<Mutex<LoggingEventListener>> =
             Arc::new(Mutex::new(LoggingEventListener::new(tracing)));
 
         // The backend is provided to the evm as a way to read accounts and state during execution
         let mut backend = EvmBackend::new(self, U256::zero(), caller, chain_id, current_block);
 
-        // if this is none, it is contract creation
+        // if this is none, it is contract creation. Note that scilla TXs
+        // have had the zero address mapped to None so this check is always correct
         if to_addr.is_none() {
             code = data;
-            data = vec![];
-            to = calculate_contract_address(from_addr, &backend);
+            data = payload_initdata.clone();
+            // Note that scilla has an off by one for the account nonce
+            to = if is_scilla {
+                calculate_contract_address_scilla(from_addr, account.nonce + 1)
+            } else {
+                calculate_contract_address(from_addr, &backend)
+            };
             created_contract_addr = Some(to);
-            info!("Calculated contract address for creation: {}", to);
+            trace!("*** Calculated contract address for creation: {:?}", to);
         }
 
         let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];
@@ -218,6 +230,7 @@ impl State {
             enable_cps: true,
             tx_trace_enabled: true,
             tx_trace: traces.clone(),
+            is_scilla,
         });
         let mut result;
         let mut run_succeeded;
@@ -269,7 +282,7 @@ impl State {
 
         if print_enabled {
             debug!(
-                "*** Evm invocation begin - with args {:?}",
+                "*** Virtual machine invocation begin - with args {:?}",
                 continuation_stack
             );
         }
@@ -284,7 +297,11 @@ impl State {
             }
 
             backend.origin = call_args.caller;
-            result = run_evm_impl_direct(call_args.clone(), &backend);
+            result = if call_args.is_scilla {
+                run_scilla_impl_direct(call_args.clone(), &backend)
+            } else {
+                run_evm_impl_direct(call_args.clone(), &backend)
+            };
 
             if print_enabled {
                 debug!("Evm invocation complete - applying result {:?}", result);
@@ -429,6 +446,7 @@ impl State {
                             backend.create_account(
                                 prior_node_continuation.get_address(),
                                 result.return_value.clone(),
+                                is_scilla,
                             );
 
                             trace!(
@@ -449,7 +467,11 @@ impl State {
         // If this was contract creation, apply this to the deltas for the convenience of
         // the caller
         if let Some(created_contract_addr) = created_contract_addr {
-            backend.create_account(created_contract_addr, result.return_value.clone());
+            backend.create_account(
+                created_contract_addr,
+                result.return_value.clone(),
+                is_scilla,
+            );
         }
 
         // If the result was a revert, kill all applys
@@ -476,6 +498,7 @@ impl State {
                 continuations,
                 traces,
             ));
+
             let call_args = continuation_stack.pop().unwrap();
 
             if print_enabled {
@@ -515,6 +538,13 @@ impl State {
                 "*** Loop complete - returning final results {:?} {:?}",
                 backend_result, created_contract_addr
             );
+
+            if !backend_result.succeeded() {
+                warn!(
+                    "Tx failed to execute! Return value: {:?}",
+                    backend_result.exit_reason
+                );
+            }
         }
 
         Ok((backend_result, created_contract_addr))
@@ -534,10 +564,12 @@ impl State {
             u64::MAX,
             U256::zero(),
             payload,
+            vec![],
             0,
             BlockHeader::default(),
             false,
             true,
+            false,
             false,
         )
     }
@@ -553,17 +585,28 @@ impl State {
         let hash = txn.hash;
         let from_addr = txn.signer;
         info!(?hash, ?txn, "executing txn");
+        let mut is_scilla = false;
+
+        if let SignedTransaction::Zilliqa { .. } = txn.tx {
+            info!("Zilliqa transaction detected, using zilliqa interpreter...");
+            is_scilla = true;
+        }
 
         let txn = txn.tx.into_transaction();
 
         // fail early on nonce mismatch
         let mut acct = self.get_account(from_addr).unwrap();
-        if acct.nonce != txn.nonce() {
+
+        // todo: this should be +1 but it is not.
+        let desired_account_nonce = acct.nonce;
+
+        if desired_account_nonce != txn.nonce() {
             let error_str = format!(
-                "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {}",
-                acct.nonce,
+                "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {} from account {}",
+                desired_account_nonce,
                 txn.nonce(),
-                hash
+                hash,
+                from_addr
             );
             warn!(error_str);
             return Err(anyhow!(error_str));
@@ -580,18 +623,27 @@ impl State {
             warn!(error_str);
         }
 
+        trace!(
+            ?from_addr,
+            ?txn,
+            ?is_scilla,
+            "Applying transaction with args: "
+        );
+
         let result = self.apply_transaction_inner(
             from_addr,
             txn.to_addr(),
             txn.max_fee_per_gas(),
             txn.gas_limit(),
             txn.amount().into(),
-            txn.payload().to_vec(),
+            txn.payload().0.to_vec(),
+            txn.payload().1.to_vec(),
             chain_id,
             current_block,
             tracing,
             false,
             true,
+            is_scilla,
         );
 
         match result {
@@ -612,6 +664,9 @@ impl State {
                     logs: result.logs,
                     traces: result.tx_trace.clone(),
                     gas_used: txn.gas_limit() - result.remaining_gas,
+                    scilla_events: scilla_events_to_single(
+                        result.tx_trace.lock().unwrap().scilla_events.clone(),
+                    ),
                 })
             }
             Err(e) => {
@@ -623,6 +678,7 @@ impl State {
                     logs: Default::default(),
                     traces: Default::default(),
                     gas_used: 0,
+                    scilla_events: Default::default(),
                 })
             }
         }
@@ -777,12 +833,14 @@ impl State {
             u64::MAX,
             U256::zero(),
             data,
+            vec![],
             // The chain ID and current block are not accessed when the native balance is updated, so we just pass in
             // some dummy values.
             0,
             BlockHeader::default(),
             false,
             true,
+            false,
             false,
         );
 
@@ -833,11 +891,13 @@ impl State {
             gas,
             value,
             data,
+            vec![],
             chain_id,
             current_block,
             false,
             true,
             print_enabled,
+            false,
         );
 
         if print_enabled {
@@ -899,11 +959,13 @@ impl State {
             u64::MAX,
             amount,
             data,
+            vec![],
             chain_id,
             current_block,
             tracing,
             true,
             print_enabled,
+            false,
         );
 
         if print_enabled {
@@ -953,6 +1015,24 @@ impl State {
             evm_context: "fund_transfer".to_string(),
             is_static: false,
             tx_trace_enabled: true,
+            is_scilla: false,
         }
     }
+}
+
+// Convenience function to calculate the contract address for a given transaction, if it is created
+pub fn get_created_scilla_contract_addr(
+    nonce: u64,
+    from_addr: H160,
+    to_addr: H160,
+) -> Option<H160> {
+    if to_addr == Address::zero() {
+        Some(calculate_contract_address_scilla(from_addr, nonce))
+    } else {
+        None
+    }
+}
+
+fn scilla_events_to_single(events: Vec<Value>) -> Value {
+    Value::Array(events.clone())
 }

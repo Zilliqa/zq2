@@ -1,8 +1,13 @@
-use primitive_types::{H256, H512};
+use primitive_types::{H160, H256, H512};
 use serde::Serialize;
+use serde_json::Value;
 
 use super::hex;
-use crate::{message::Block, time::SystemTime};
+use crate::{
+    message::Block,
+    time::SystemTime,
+    transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
+};
 
 #[derive(Clone, Serialize)]
 pub struct TxBlock {
@@ -65,6 +70,75 @@ struct TxBlockHeader {
     timestamp: u64,
     txn_fees: u64,
     version: u32,
+}
+
+#[derive(Clone, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTxResponse {
+    #[serde(rename = "ID")]
+    id: String,
+    version: String,
+    nonce: String,
+    to_addr: H160,
+    sender_pub_key: String,
+    amount: String,
+    signature: String,
+    receipt: GetTxResponseReceipt,
+    gas_price: String,
+    gas_limit: String,
+    code: String,
+    data: String,
+}
+
+#[derive(Clone, Serialize, Debug)]
+#[serde(rename_all = "PascalCase")]
+pub struct CreateTransactionResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_address: Option<H160>,
+    pub info: String,
+    #[serde(rename = "TranID")]
+    pub tran_id: H256,
+}
+
+#[derive(Clone, Serialize, Debug)]
+struct GetTxResponseReceipt {
+    cumulative_gas: String,
+    epoch_num: String,
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_logs: Option<Vec<Value>>,
+}
+
+impl GetTxResponse {
+    pub fn new(verified_tx: VerifiedTransaction, receipt: TransactionReceipt) -> Option<Self> {
+        match verified_tx.tx {
+            // todo: make all of the fields correct
+            SignedTransaction::Zilliqa { ref tx, .. } => Some(GetTxResponse {
+                id: verified_tx.hash.to_string(),
+                version: "65537".to_string(),
+                nonce: tx.nonce.to_string(),
+                to_addr: tx.to_addr, // Note this appears to have no 0x prefix in zq1
+                sender_pub_key: hex::encode(verified_tx.signer),
+                amount: tx.amount.to_string(),
+                signature: format!(
+                    "0x{}{}",
+                    hex::encode(verified_tx.tx.sig_r()),
+                    hex::encode(verified_tx.tx.sig_s())
+                ),
+                receipt: GetTxResponseReceipt {
+                    cumulative_gas: receipt.gas_used.to_string(),
+                    epoch_num: "1".to_string(), // todo here
+                    success: receipt.success,
+                    event_logs: Some(serde_json::from_str(&receipt.scilla_events).unwrap()),
+                },
+                gas_price: "2000000000".to_string(),
+                gas_limit: "50000".to_string(),
+                code: tx.code.to_string(),
+                data: tx.data.to_string(),
+            }),
+            _ => None, // todo: the others
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]

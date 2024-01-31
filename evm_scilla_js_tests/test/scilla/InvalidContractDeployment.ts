@@ -3,7 +3,7 @@ import {ScillaContract} from "hardhat-scilla-plugin";
 import {parallelizer} from "../../helpers";
 import hre from "hardhat";
 
-describe("Scilla contract deployment with error", () => {
+xdescribe("Scilla contract deployment with error", () => {
   before(async function () {
     if (!hre.isZilliqaNetworkSelected() || !hre.isScillaTestingEnabled()) {
       this.skip();

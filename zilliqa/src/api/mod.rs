@@ -65,7 +65,10 @@ macro_rules! declare_module {
                     });
 
                     let result = result.map_err(|e| {
-                        tracing::error!(?e);
+                        if !e.to_string().starts_with("Txn Hash not Present") {
+                            tracing::error!(?e);
+                        }
+
                         // If the error is already an `ErrorObjectOwned`, we can just return that. Otherwise, wrap it
                         // with an `InternalError` code.
                         match e.downcast::<jsonrpsee::types::ErrorObjectOwned>() {
