@@ -1,6 +1,6 @@
 //! A node in the Zilliqa P2P network. May coordinate multiple shard nodes.
 
-use std::{collections::HashMap, iter};
+use std::{collections::HashMap, iter, time::Duration};
 
 use anyhow::{anyhow, Result};
 use libp2p::{
@@ -8,12 +8,12 @@ use libp2p::{
     futures::StreamExt,
     gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
     identify,
-    kad::{self, store::MemoryStore},
+    kad::{self, store::MemoryStore, GetClosestPeersOk, ProgressStep, QueryResult},
     mdns,
     multiaddr::{Multiaddr, Protocol},
     noise,
     request_response::{self, ProtocolSupport},
-    swarm::{self, NetworkBehaviour, SwarmEvent},
+    swarm::{self, dial_opts::DialOpts, NetworkBehaviour, SwarmEvent},
     tcp, yamux, PeerId, StreamProtocol, Swarm, Transport,
 };
 use tokio::{
@@ -23,7 +23,7 @@ use tokio::{
     task::JoinSet,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     cfg::{Config, ConsensusConfig, NodeConfig},
@@ -39,7 +39,7 @@ type DirectMessage = (u64, ExternalMessage);
 struct Behaviour {
     request_response: request_response::json::Behaviour<DirectMessage, DirectMessage>,
     gossipsub: gossipsub::Behaviour,
-    mdns: mdns::tokio::Behaviour,
+    //mdns: mdns::tokio::Behaviour,
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
 }
@@ -104,7 +104,7 @@ impl P2pNode {
                     .map_err(|e| anyhow!(e))?,
             )
             .map_err(|e| anyhow!(e))?,
-            mdns: mdns::Behaviour::new(Default::default(), peer_id)?,
+            //mdns: mdns::Behaviour::new(Default::default(), peer_id)?,
             identify: identify::Behaviour::new(identify::Config::new(
                 "/ipfs/id/1.0.0".to_owned(),
                 key_pair.public(),
@@ -226,6 +226,7 @@ impl P2pNode {
         self.swarm.listen_on(addr)?;
 
         if let Some((peer, address)) = &self.config.bootstrap_address {
+            self.swarm.dial(DialOpts::peer_id(*peer).addresses(vec![address.clone()]).build())?;
             self.swarm
                 .behaviour_mut()
                 .kademlia
@@ -233,38 +234,61 @@ impl P2pNode {
             self.swarm.behaviour_mut().kademlia.bootstrap()?;
         }
 
+        // Bootstrap every 5 minutes
+        let mut bootstrap = tokio::time::interval(Duration::from_secs(5));
+
         let mut terminate = signal::unix::signal(SignalKind::terminate())?;
+
 
         loop {
             select! {
-                event = self.swarm.next() => match event.expect("swarm stream should be infinite") {
+                _ = bootstrap.tick() => {
+                    let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
+                }
+                event = self.swarm.next() => {
+                    debug!("connected peers: {:?}", self.swarm.connected_peers().collect::<Vec<_>>());
+                    debug!(?event, "swarm event"); match event.expect("swarm stream should be infinite") {
                     SwarmEvent::NewListenAddr { address, .. } => {
                         info!(%address, "started listening");
                     }
-                    SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
-                        for (peer_id, addr) in list {
-                            info!(%peer_id, %addr, "discovered peer via mDNS");
-                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
-                            self.swarm.behaviour_mut().request_response.add_address(&peer_id, addr);
-                            self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-                        }
-                    }
-                    SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
-                        for (peer_id, addr) in list {
-                            self.swarm.behaviour_mut().kademlia.remove_address(&peer_id, &addr);
-                            self.swarm.behaviour_mut().request_response.remove_address(&peer_id, &addr);
-                        }
-                    }
+                    //SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
+                    //    for (peer_id, addr) in list {
+                    //        info!(%peer_id, %addr, "discovered peer via mDNS");
+                    //        self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                    //        self.swarm.behaviour_mut().request_response.add_address(&peer_id, addr);
+                    //        self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                    //    }
+                    //}
+                    //SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
+                    //    for (peer_id, addr) in list {
+                    //        self.swarm.behaviour_mut().kademlia.remove_address(&peer_id, &addr);
+                    //        self.swarm.behaviour_mut().request_response.remove_address(&peer_id, &addr);
+                    //    }
+                    //}
                     SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id })) => {
                         info!(%peer_id, ?listen_addrs, %observed_addr, "identify received");
                         for addr in listen_addrs {
+                            let local = addr.iter().any(|p| match p {
+                                Protocol::Ip4(addr) => addr.is_loopback(),
+                                Protocol::Ip6(addr) => addr.is_loopback(),
+                                _ => false,
+                            });
+                            if local {
+                                continue;
+                            }
                             self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
-                            self.swarm.behaviour_mut().request_response.add_address(&peer_id, addr);
                         }
+                        //if !bootstrapped {
+                        //    self.swarm.behaviour_mut().kademlia.bootstrap()?;
+                        //    bootstrapped = true;
+                        //}
                         // Mark the address observed for us by the external peer as confirmed.
                         // TODO: We shouldn't trust this, instead we should confirm our own address manually or using
                         // `libp2p-autonat`.
                         self.swarm.add_external_address(observed_addr);
+                    }
+                    SwarmEvent::Behaviour(BehaviourEvent::Kademlia(kad::Event::RoutingUpdated { peer, addresses, .. })) => {
+                        let _ = self.swarm.dial(DialOpts::peer_id(peer).addresses(addresses.into_vec()).build());
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
                         message: gossipsub::Message {
@@ -302,9 +326,9 @@ impl P2pNode {
                         error!(%peer, ?error, "sending direct message failed");
                     }
                     e => {
-                        error!(?e, "unhandled swarm event");
+                        //error!(?e, "unhandled swarm event");
                     },
-                },
+                }},
                 message = self.local_message_receiver.next() => {
                     let (source, destination, message) = message.expect("message stream should be infinite");
                     match message {

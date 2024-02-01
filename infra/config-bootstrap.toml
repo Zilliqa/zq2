@@ -1,4 +1,5 @@
 otlp_collector_endpoint = "http://otel-collector:4317"
+bootstrap_address = [ "12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU", "/ip4/10.5.0.10/tcp/3333" ]
 p2p_port = 3333
 
 [[nodes]]
