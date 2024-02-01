@@ -83,7 +83,6 @@ pub fn run_scilla_impl_direct<B: Backend>(
     } else if !is_contract_creation && has_data {
         handle_contract_call(
             &mut tcp_scilla_server,
-            &code,
             args.data,
             args.gas_limit,
             args.apparent_value,

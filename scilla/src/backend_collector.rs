@@ -27,7 +27,7 @@ pub struct BackendCollector<'a, B: evm::backend::Backend> {
     pub backend: &'a B,
     // Map of cached (execution in progress) address to account and any dirty storage.
     // If the value is None, this means a deletion of that account and storage
-    pub account_storage_cached: HashMap<Address, Option<(Account, AccountStorage)>>,
+    pub account_storage_buffered: HashMap<Address, Option<(Account, AccountStorage)>>,
     pub events: Vec<Value>,
 }
 
@@ -43,11 +43,11 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     // todo: refactor this according to pr comments
     pub fn get_account_storage(&self, address: Address, key: H256) -> H256 {
         // If the account does not exist, check the backend
-        if !self.account_storage_cached.contains_key(&address) {
+        if !self.account_storage_buffered.contains_key(&address) {
             trace!("Account not in cache, checking backend");
             self.backend.storage(address, key)
         } else {
-            let entry = self.account_storage_cached.get(&address).unwrap();
+            let entry = self.account_storage_buffered.get(&address).unwrap();
 
             match entry {
                 Some((_, storage)) => storage.get(&key).cloned().unwrap_or(H256::zero()),
@@ -62,7 +62,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     fn update_account_storage(&mut self, address: Address, key: H256, value: H256) {
         // If the account does not exist, check the backend, then create it with empty code and storage
         if let std::collections::hash_map::Entry::Vacant(e) =
-            self.account_storage_cached.entry(address)
+            self.account_storage_buffered.entry(address)
         {
             let account = Account {
                 nonce: self.backend.basic(address).nonce.as_u64(),
@@ -73,7 +73,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
 
             e.insert(Some((account, HashMap::from([(key, value)]))));
         } else {
-            let entry = self.account_storage_cached.get_mut(&address).unwrap();
+            let entry = self.account_storage_buffered.get_mut(&address).unwrap();
 
             match entry {
                 Some((_, storage)) => {
@@ -271,13 +271,13 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
 
     pub fn create_account(&mut self, address: Address, code: Vec<u8>, is_scilla: bool) {
         // Insert empty slot into cache if it does not already exist, else just put the code there
-        if let Some(Some((acct, _))) = self.account_storage_cached.get_mut(&address) {
+        if let Some(Some((acct, _))) = self.account_storage_buffered.get_mut(&address) {
             acct.code = code;
             return;
         }
 
         // Fall through
-        self.account_storage_cached.insert(
+        self.account_storage_buffered.insert(
             address,
             Some((
                 Account {
@@ -306,7 +306,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     }
 
     pub fn get_code(&self, address: Address) -> Vec<u8> {
-        if let Some(Some((acct, _))) = self.account_storage_cached.get(&address) {
+        if let Some(Some((acct, _))) = self.account_storage_buffered.get(&address) {
             return acct.code.clone();
         }
 
@@ -333,8 +333,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     pub fn get_result(&self) -> EvmResult {
         let mut applys: Vec<Apply> = vec![];
 
-        //for (address, item) in self.account_storage_cached.into_iter() {
-        for (address, item) in self.account_storage_cached.iter() {
+        for (address, item) in self.account_storage_buffered.iter() {
             match item {
                 Some((acct, stor)) => {
                     applys.push(Apply::Modify {
