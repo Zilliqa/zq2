@@ -1,5 +1,4 @@
 use std::sync::{Arc, Mutex};
-use crate::api::print_type_of;
 
 use anyhow::{anyhow, Result};
 use evm_ds::tracing_logging::InternalOperationOtter;

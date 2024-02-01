@@ -1,8 +1,8 @@
 use std::collections::HashMap;
-use primitive_types::{H256, H160};
-use serde::Deserialize;
-use serde::Serialize;
+
 use jsonrpc_core::Params;
+use primitive_types::{H160, H256};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone)]

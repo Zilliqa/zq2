@@ -1,20 +1,18 @@
-use std::str;
+use std::{collections::HashMap, str};
 
-use crate::proto::proto_scilla_val;
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use jsonrpc_core::Params;
-use primitive_types::{H160, H256, U256};
+use primitive_types::{H160, H256};
 use prost::Message;
 use serde_json::Value;
+use sha3::{Digest, Keccak256};
 use tracing::*;
-use std::collections::HashMap;
-use sha3::{Keccak256, Digest};
 
 use crate::{
     backend_collector::BackendCollector,
-    proto::{proto_scilla_val::ValType, ProtoScillaQuery, ProtoScillaVal},
-    types::{JsonRpcRequest}
+    proto::{proto_scilla_val, proto_scilla_val::ValType, ProtoScillaQuery, ProtoScillaVal},
+    types::JsonRpcRequest,
 };
 
 pub struct ScillaServer<'a, B: evm::backend::Backend> {
@@ -34,30 +32,16 @@ impl<'a, B: evm::backend::Backend> ScillaServer<'a, B> {
         request: &JsonRpcRequest,
     ) -> Result<Value, jsonrpc_core::Error> {
         match request.method.as_str() {
-            "fetchStateValueB64" => {
-                self.inner.fetch_state_value_b64(&request.params)
-            },
-            "fetchStateValue" => {
-                self.inner.fetch_state_value_b64(&request.params)
-            },
+            "fetchStateValueB64" => self.inner.fetch_state_value_b64(&request.params),
+            "fetchStateValue" => self.inner.fetch_state_value_b64(&request.params),
             "fetchExternalStateValueB64" => {
                 self.inner.fetch_external_state_value_b64(&request.params)
-            },
-            "fetchExternalStateValue" => {
-                self.inner.fetch_external_state_value_b64(&request.params)
-            },
-            "updateStateValueB64" => {
-                self.inner.update_state_value_b64(&request.params)
             }
-            "updateStateValue" => {
-                self.inner.update_state_value_b64(&request.params)
-            }
-            "updateStateValueB64" => {
-                self.inner.update_state_value_b64(&request.params)
-            }
-            "fetchBlockchainInfo" => {
-                self.inner.fetch_blockchain_info(&request.params)
-            },
+            "fetchExternalStateValue" => self.inner.fetch_external_state_value_b64(&request.params),
+            "updateStateValueB64" => self.inner.update_state_value_b64(&request.params),
+            "updateStateValue" => self.inner.update_state_value_b64(&request.params),
+            "updateStateValueB64" => self.inner.update_state_value_b64(&request.params),
+            "fetchBlockchainInfo" => self.inner.fetch_blockchain_info(&request.params),
             _ => {
                 warn!(
                     "Scilla server made a request for invalid method: {:?}",
@@ -123,10 +107,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
     }
 
     // todo: this.
-    fn fetch_state_value_b64(
-        &mut self,
-        params: &Params,
-    ) -> Result<Value, jsonrpc_core::Error> {
+    fn fetch_state_value_b64(&mut self, params: &Params) -> Result<Value, jsonrpc_core::Error> {
         fn err(s: &'static str) -> Result<Value, jsonrpc_core::Error> {
             debug!("* fetchStateValue ERROR called *** {:?}", s);
             Err(jsonrpc_core::Error::invalid_params(s))
@@ -134,23 +115,31 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
 
         let b64 = base64::engine::general_purpose::STANDARD;
 
-        let Params::Map(params) = params else { return err("expected a map"); };
-        let Some(query) = params.get("query") else { return err("expected query in map"); };
-        let Some(query) = query.as_str().map(str::to_owned) else { return err("query was not a string"); };
-        let query = b64.decode(query.clone()).unwrap_or( query.into() );
-        let Ok(query) = ProtoScillaQuery::decode(query.as_slice()) else { return err("could not parse query"); };
+        let Params::Map(params) = params else {
+            return err("expected a map");
+        };
+        let Some(query) = params.get("query") else {
+            return err("expected query in map");
+        };
+        let Some(query) = query.as_str().map(str::to_owned) else {
+            return err("query was not a string");
+        };
+        let query = b64.decode(query.clone()).unwrap_or(query.into());
+        let Ok(query) = ProtoScillaQuery::decode(query.as_slice()) else {
+            return err("could not parse query");
+        };
 
         let result = self.fetch_state_value_inner(query).map_err(convert_err);
 
-        let result = result.map(|value| {
+        
+
+        result.map(|value| {
             let arr = match value {
                 Some(value) => vec![true.into(), b64.encode(value.encode_to_vec()).into()],
                 None => vec![false.into(), String::new().into()],
             };
             Value::Array(arr)
-        });
-
-        result
+        })
     }
 
     // Todo: this.
@@ -165,20 +154,34 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
 
         let b64 = base64::engine::general_purpose::STANDARD;
 
-        let Params::Map(params) = params else { return err("expected a map"); };
-        let Some(addr) = params.get("addr") else { return err("expected addr in map"); };
-        let Some(addr) = addr.as_str().map(str::to_owned) else { return err("addr was not a string"); };
-        let Ok(addr) = addr.parse::<H160>() else { return err("addr parsing failed"); };
-        let Some(query) = params.get("query") else { return err("expected query in map"); };
-        let Some(query) = query.as_str().map(str::to_owned) else { return err("query was not a string"); };
+        let Params::Map(params) = params else {
+            return err("expected a map");
+        };
+        let Some(addr) = params.get("addr") else {
+            return err("expected addr in map");
+        };
+        let Some(addr) = addr.as_str().map(str::to_owned) else {
+            return err("addr was not a string");
+        };
+        let Ok(addr) = addr.parse::<H160>() else {
+            return err("addr parsing failed");
+        };
+        let Some(query) = params.get("query") else {
+            return err("expected query in map");
+        };
+        let Some(query) = query.as_str().map(str::to_owned) else {
+            return err("query was not a string");
+        };
         //let Ok(query) = b64.decode(query) else { return err("query was not base64"); };
-        let query = b64.decode(query.clone()).unwrap_or( query.into() );
+        let query = b64.decode(query.clone()).unwrap_or(query.into());
 
         let result = self
             .fetch_external_state_value_inner(addr, query)
             .map_err(convert_err);
 
-        let result = result.map(|vt| {
+        
+
+        result.map(|vt| {
             let arr = match vt {
                 Some((value, ty)) => vec![
                     true.into(),
@@ -188,36 +191,40 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
                 None => vec![false.into(), String::new().into(), String::new().into()],
             };
             Value::Array(arr)
-        });
-
-        result
+        })
     }
 
     // todo: this.
-    fn fetch_blockchain_info(
-        &mut self,
-        params: &Params,
-    ) -> Result<Value, jsonrpc_core::Error> {
+    fn fetch_blockchain_info(&mut self, params: &Params) -> Result<Value, jsonrpc_core::Error> {
         fn err(s: &'static str) -> Result<Value, jsonrpc_core::Error> {
             debug!("* fetchBlockchainInfo ERROR called *** {:?}", s);
             Err(jsonrpc_core::Error::invalid_params(s))
         }
 
-        let Params::Map(params) = params else { return err("expected a map"); };
-        let Some(query_name) = params.get("query_name") else { return err("expected query_name in map"); };
-        let Some(query_name) = query_name.as_str().map(str::to_owned) else { return err("query_name was not a string"); };
-        let Some(query_args) = params.get("query_args") else { return err("expected query_args in map"); };
-        let Some(query_args) = query_args.as_str().map(str::to_owned) else { return err("query_args was not a string"); };
+        let Params::Map(params) = params else {
+            return err("expected a map");
+        };
+        let Some(query_name) = params.get("query_name") else {
+            return err("expected query_name in map");
+        };
+        let Some(query_name) = query_name.as_str().map(str::to_owned) else {
+            return err("query_name was not a string");
+        };
+        let Some(query_args) = params.get("query_args") else {
+            return err("expected query_args in map");
+        };
+        let Some(query_args) = query_args.as_str().map(str::to_owned) else {
+            return err("query_args was not a string");
+        };
 
         let result = self
             .fetch_blockchain_info_inner(query_name, query_args)
             .map_err(convert_err);
 
-        let result = result.map(|s| Value::Array(vec![true.into(), s.into()]));
+        
 
-        result
+        result.map(|s| Value::Array(vec![true.into(), s.into()]))
     }
-
 
     fn update_state_value_inner(&mut self, query: Vec<u8>, value: Vec<u8>) -> Result<Value> {
         let query = ProtoScillaQuery::decode(query.as_slice())?;
@@ -309,7 +316,10 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             }
             "BLOCKHASH" => {
                 trace!("BLOCKHASH requested from scilla server");
-                Ok(self.backend.get_block_hash(self.backend.get_block_number().into()).to_string())
+                Ok(self
+                    .backend
+                    .get_block_hash(self.backend.get_block_number().into())
+                    .to_string())
             }
             "CHAINID" => {
                 trace!("BLOCKHASH requested from scilla server");
@@ -318,7 +328,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             _ => {
                 warn!("unrecognised request from scilla server {:?}", query_name);
                 Ok(String::new())
-            },
+            }
         }
     }
 
@@ -340,7 +350,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         //let basic = self.backend.get_balance(addr);
         let account = self.backend.get_account(addr);
         let balance = self.backend.get_balance(addr);
-        let code_hash = Keccak256::digest(&account.code); // todo: need to create this code hash - is this correct?
+        let _code_hash = Keccak256::digest(&account.code); // todo: need to create this code hash - is this correct?
         let code = account.code;
 
         fn scilla_val(b: Vec<u8>) -> ProtoScillaVal {
@@ -381,7 +391,10 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
                 return Ok(Some((val, String::new())));
             }
             _ => {
-                warn!("fetch_external_state_value_inner: unknown query name: {:?}", query.name);
+                warn!(
+                    "fetch_external_state_value_inner: unknown query name: {:?}",
+                    query.name
+                );
             }
         }
 
@@ -396,14 +409,16 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
                 .map(String::from_utf8)
                 .transpose()?
         };
-        let Some(ty) = ty else { return Ok(None); };
+        let Some(ty) = ty else {
+            return Ok(None);
+        };
 
         let depth_key = format!("{}\x16_depth\x16{}\x16", addr_hex, query.name);
         let depth = String::from_utf8(
             self.get_state(&depth_key)?
                 .ok_or_else(|| anyhow!("no depth"))?,
         )?
-            .parse()?;
+        .parse()?;
         query.mapdepth = depth;
 
         //let Some(contract) = account.contract else { return Err(anyhow!("state read from non-contract")); };
@@ -449,7 +464,9 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
                 //let bytes = self.db.lock().unwrap().get_contract_state_data(&key)?;
                 let bytes = self.get_state(&key)?;
 
-                let Some(bytes) = bytes else { return Ok(None); };
+                let Some(bytes) = bytes else {
+                    return Ok(None);
+                };
 
                 ProtoScillaVal {
                     val_type: Some(ValType::Bval(bytes)),
@@ -457,7 +474,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             }
             std::cmp::Ordering::Less => {
                 // We're fetching a map value. We need to iterate through the DB lexicographically.
-                let mut entries : HashMap<String, Vec<u8>> = HashMap::new();
+                let entries: HashMap<String, Vec<u8>> = HashMap::new();
 
                 //let existing_entries: Vec<_> = self
                 //    .db
@@ -491,7 +508,11 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
 
                     let mut val_ref = &mut val;
                     for index in &indices {
-                        let Some(ValType::Mval(proto_scilla_val::Map { ref mut m })) = val_ref.val_type else { unreachable!(); };
+                        let Some(ValType::Mval(proto_scilla_val::Map { ref mut m })) =
+                            val_ref.val_type
+                        else {
+                            unreachable!();
+                        };
                         val_ref = m.entry((*index).to_owned()).or_insert(ProtoScillaVal {
                             val_type: Some(ValType::Mval(Default::default())),
                         });
@@ -599,7 +620,9 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
     }
 
     fn get_state(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        let value = self.backend.get_account_storage_scilla(self.contract_addr, key);
+        let value = self
+            .backend
+            .get_account_storage_scilla(self.contract_addr, key);
         Ok(Some(value))
     }
 

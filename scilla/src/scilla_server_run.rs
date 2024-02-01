@@ -1,6 +1,6 @@
 use std::str;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result};
 use evm::ExitSucceed;
 use evm_ds::{
     evm::backend::Backend,
@@ -73,9 +73,21 @@ pub fn run_scilla_impl_direct<B: Backend>(
 
     // Note: contract creation needs init data
     let return_value = if is_contract_creation && has_data {
-        handle_contract_creation(&mut tcp_scilla_server, &code, args.data, args.gas_limit, args.apparent_value)
+        handle_contract_creation(
+            &mut tcp_scilla_server,
+            &code,
+            args.data,
+            args.gas_limit,
+            args.apparent_value,
+        )
     } else if !is_contract_creation && has_data {
-        handle_contract_call(&mut tcp_scilla_server, &code, args.data, args.gas_limit, args.apparent_value)
+        handle_contract_call(
+            &mut tcp_scilla_server,
+            &code,
+            args.data,
+            args.gas_limit,
+            args.apparent_value,
+        )
     } else {
         // todo: contract call without data - is this a valid case?
         panic!("Scilla invokation not a contract creation or call. This is invalid.");
@@ -198,20 +210,28 @@ pub fn create_contract<B: evm::backend::Backend>(
     Ok(response)
 }
 
-fn handle_contract_creation<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, code: &str, init_data: Vec<u8>, gas_limit: u64, balance: U256) -> Vec<u8> {
+fn handle_contract_creation<B: Backend>(
+    tcp_scilla_server: &mut ScillaServer<B>,
+    code: &str,
+    init_data: Vec<u8>,
+    gas_limit: u64,
+    balance: U256,
+) -> Vec<u8> {
     debug!("contract creation!");
 
     let contract_address = tcp_scilla_server.inner.contract_addr;
     let block_num = tcp_scilla_server.inner.backend.get_block_number();
 
     let mut init_data: Value = serde_json::from_slice(init_data.as_slice()).unwrap();
-    init_data.as_array_mut().unwrap().push(
-        json!({"vname": "_creation_block", "type": "BNum", "value": block_num.to_string()}),
-    );
+    init_data
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"vname": "_creation_block", "type": "BNum", "value": block_num.to_string()}));
     let contract_address_hex = format!("{contract_address:?}");
-    init_data.as_array_mut().unwrap().push(
-        json!({"vname": "_this_address", "type": "ByStr20", "value": contract_address_hex}),
-    );
+    init_data
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"vname": "_this_address", "type": "ByStr20", "value": contract_address_hex}));
 
     // Save the init data to the contract storage for future reference
     tcp_scilla_server
@@ -224,7 +244,7 @@ fn handle_contract_creation<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>,
         );
 
     // Write down to the files the init data and make sure the libs are in order
-    ensure_setup_correct(Some(init_data.clone()), Some(code.clone().into()), None);
+    ensure_setup_correct(Some(init_data.clone()), Some(code.into()), None);
 
     // Create account with the contract as the code
     tcp_scilla_server.inner.backend.create_account(
@@ -233,12 +253,8 @@ fn handle_contract_creation<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>,
         true,
     );
 
-    let check_output = check_contract(
-        code.as_bytes(),
-        gas_limit,
-        &init_data,
-        tcp_scilla_server,
-    ).unwrap();
+    let check_output =
+        check_contract(code.as_bytes(), gas_limit, &init_data, tcp_scilla_server).unwrap();
 
     debug!("Check output response: {:?}", check_output);
 
@@ -259,13 +275,12 @@ fn handle_contract_creation<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>,
         tcp_scilla_server
             .inner
             .backend
-            .update_account_storage_scilla(
-                contract_address,
-                &type_key,
-                field.ty.as_bytes(),
-            );
+            .update_account_storage_scilla(contract_address, &type_key, field.ty.as_bytes());
 
-        debug!("check output field: {:?} {:?} {:?}", field, depth_key, type_key);
+        debug!(
+            "check output field: {:?} {:?} {:?}",
+            field, depth_key, type_key
+        );
     }
 
     let version_key = format!("{addr_no_prefix}\x16_version\x16");
@@ -281,23 +296,21 @@ fn handle_contract_creation<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>,
     tcp_scilla_server
         .inner
         .backend
-        .update_account_storage_scilla(
-            contract_address,
-            &addr_key,
-            contract_address.as_bytes(),
-        );
+        .update_account_storage_scilla(contract_address, &addr_key, contract_address.as_bytes());
 
-    create_contract(
-        gas_limit,
-        balance,
-        tcp_scilla_server,
-    ).unwrap();
+    create_contract(gas_limit, balance, tcp_scilla_server).unwrap();
 
     // todo: think about return values and how neccessary they are for scilla.
     code.to_string().into_bytes()
 }
 
-fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, code: &str, data: Vec<u8>, gas_limit: u64, balance: U256) -> Vec<u8> {
+fn handle_contract_call<B: Backend>(
+    tcp_scilla_server: &mut ScillaServer<B>,
+    _code: &str,
+    data: Vec<u8>,
+    gas_limit: u64,
+    balance: U256,
+) -> Vec<u8> {
     trace!("contract call!");
 
     let from_addr = tcp_scilla_server.inner.caller;
@@ -329,14 +342,18 @@ fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, cod
     // call onto the stack.
     let mut messages = vec![(true, from_addr, contract_addr, msg, balance)];
     while let Some((
-                       recipient_is_contract,
-                       from_addr,
-                       to_addr,
-                       message,
-                       _amount, // unused...
-                   )) = messages.pop()
+        recipient_is_contract,
+        from_addr,
+        to_addr,
+        message,
+        _amount, // unused...
+    )) = messages.pop()
     {
-        trace!("Updating scilla backend context to from_addr {:?} and to_addr {:?}", from_addr, to_addr);
+        trace!(
+            "Updating scilla backend context to from_addr {:?} and to_addr {:?}",
+            from_addr,
+            to_addr
+        );
         tcp_scilla_server.inner.caller = from_addr;
         tcp_scilla_server.inner.contract_addr = to_addr;
 
@@ -371,11 +388,7 @@ fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, cod
         ensure_setup_correct(Some(init_data.clone()), Some(code.clone()), Some(message));
 
         // TODO: Differentiate between exceptions from contract and errors from Scilla itself.
-        let result = invoke_contract(
-            gas_limit,
-            balance,
-            tcp_scilla_server,
-        );
+        let result = invoke_contract(gas_limit, balance, tcp_scilla_server);
 
         match result {
             Ok(invoked) => {
@@ -395,19 +408,17 @@ fn handle_contract_call<B: Backend>(tcp_scilla_server: &mut ScillaServer<B>, cod
                     let recipient_addr = message.recipient;
 
                     // Check the recipient is a contract
-                    let recipient_contract = tcp_scilla_server
-                        .inner
-                        .backend
-                        .get_code(recipient_addr);
+                    let recipient_contract =
+                        tcp_scilla_server.inner.backend.get_code(recipient_addr);
                     let addr_hex = format!("{to_addr:#x}");
 
                     let input_message = json!({
-                            "_sender": addr_hex,
-                            "_origin": origin_addr_hex,
-                            "_amount": message.amount,
-                            "_tag": message.tag,
-                            "params": message.params,
-                        });
+                        "_sender": addr_hex,
+                        "_origin": origin_addr_hex,
+                        "_amount": message.amount,
+                        "_tag": message.tag,
+                        "params": message.params,
+                    });
 
                     trace!("Pushing on input message/call: {:?}", input_message);
 

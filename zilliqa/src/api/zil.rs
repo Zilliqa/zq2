@@ -5,14 +5,12 @@ use std::{
     str::FromStr,
     sync::{Arc, Mutex, MutexGuard},
 };
-use crate::api::print_type_of;
 
 use anyhow::{anyhow, Result};
-use jsonrpsee::{types::Params, RpcModule, types::Response as JsonResponse};
+use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
-use tracing::trace;
 
 use super::types::zil;
 use crate::{
@@ -156,7 +154,7 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<Get
     let hash: Hash = Hash(hash.0);
 
     let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?;
-    let mut receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
+    let receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
 
     // Note: the scilla api expects an err json rpc response if the transaction is not found
     // Canonical example:

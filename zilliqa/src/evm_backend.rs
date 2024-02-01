@@ -160,7 +160,7 @@ impl<'a> Backend for EvmBackend<'a> {
     }
 
     // todo: this should be the hash of a block by number, not just the current one
-    fn block_hash(&self, num: U256) -> H256 {
+    fn block_hash(&self, _num: U256) -> H256 {
         primitive_types::H256(self.current_block.hash.0)
     }
 
