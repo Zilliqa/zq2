@@ -1,6 +1,6 @@
 use std::str;
 
-use anyhow::{Result};
+use anyhow::Result;
 use evm::ExitSucceed;
 use evm_ds::{
     evm::backend::Backend,

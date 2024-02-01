@@ -7,7 +7,6 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use jsonrpc_core::Params;
-
 use serde_json::{from_str, Value};
 use tracing::*;
 
