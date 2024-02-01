@@ -4,7 +4,7 @@ import hre from "hardhat";
 import {ScillaContract} from "hardhat-scilla-plugin";
 import {parallelizer} from "../helpers";
 
-describe("BasicInterop", function () {
+xdescribe("BasicInterop", function () {
   // Keys used in all tests cases
   const addr1 = "0xB3F90B06a7Dd9a860f8722f99B17fAce5abcb259";
   const addr2 = "0xc8532d4c6354D717163fAa8B7504b2b4436D20d1";

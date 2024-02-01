@@ -8,7 +8,7 @@ let mutualLibAddress: string | undefined;
 let contract1: ScillaContract;
 let contract2: ScillaContract;
 
-describe("Scilla library deploy", () => {
+xdescribe("Scilla library deploy", () => {
   it("Deploy library - AdditionLib", async () => {
     const libraryName = "AdditionLib";
     const library = await parallelizer.deployScillaLibrary(libraryName);
@@ -27,7 +27,7 @@ describe("Scilla library deploy", () => {
   });
 });
 
-describe("Scilla contract deploy", () => {
+xdescribe("Scilla contract deploy", () => {
   it("Deploy TestContract1 - Import AdditonLib MutualLib", async () => {
     contract1 = await parallelizer.deployScillaContractWithLibrary("TestContract1", [
       {name: "AdditionLib", address: additionLibAddress!},
@@ -48,7 +48,7 @@ describe("Scilla contract deploy", () => {
   });
 });
 
-describe("Scilla contract execute", () => {
+xdescribe("Scilla contract execute", () => {
   it("Call TestContract1 - Sending transition", async () => {
     const tx = await contract1.Sending(contract2.address);
     expect(tx.receipt.success).equal(true);

@@ -335,15 +335,10 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
 
         trace!("Fetch external state value: {addr:?} - {query:?}");
 
-        //let Some(account) = self.db.lock().unwrap().get_account(addr)? else { return Ok(None); };
-        //let account = Account::from_proto(account)?;
-        //let account = self.execution_context.0;
-        //let account = self.backend.get_account(addr)?;
         let addr = self.contract_addr;
-        //let basic = self.backend.get_balance(addr);
         let account = self.backend.get_account(addr);
         let balance = self.backend.get_balance(addr);
-        let _code_hash = Keccak256::digest(&account.code); // todo: need to create this code hash - is this correct?
+        let code_hash = Keccak256::digest(&account.code); // todo: need to create this code hash - is this correct?
         let code = account.code;
 
         fn scilla_val(b: Vec<u8>) -> ProtoScillaVal {
@@ -368,18 +363,11 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
                     return Ok(Some((val, "ByStr20".to_owned())));
                 }
             }
-            //"_codehash" => {
-            //    let code_hash = account.contract.map(|c| c.code_hash).unwrap_or_default();
-            //    let val = scilla_val(format!("\"0x{:?}\"", code_hash).into_bytes());
-            //    return Ok(Some((val, "ByStr32".to_owned())));
-            //}
+            "_codehash" => {
+                let val = scilla_val(format!("\"0x{:?}\"", code_hash).into_bytes());
+                return Ok(Some((val, "ByStr32".to_owned())));
+            }
             "_code" => {
-                //let code = self
-                //    .db
-                //    .lock()
-                //    .unwrap()
-                //    .get_contract_code(addr)?
-                //    .unwrap_or_default();
                 let val = scilla_val(code);
                 return Ok(Some((val, String::new())));
             }

@@ -329,7 +329,14 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { to_addr, .. }) => *to_addr,
             Transaction::Eip2930(TxEip2930 { to_addr, .. }) => *to_addr,
             Transaction::Eip1559(TxEip1559 { to_addr, .. }) => *to_addr,
-            Transaction::Zilliqa(TxZilliqa { to_addr, .. }) => Some(*to_addr),
+            // Note: we map the zero address to 'None' here so it is consistent with eth txs (contract creation).
+            Transaction::Zilliqa(TxZilliqa { to_addr, .. }) => {
+                if !to_addr.is_zero() {
+                    Some(*to_addr)
+                } else {
+                    None
+                }
+            }
             Transaction::Intershard(TxIntershard { to_addr, .. }) => *to_addr,
         }
     }

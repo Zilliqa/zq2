@@ -35,7 +35,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
     pub fn new(backend: &'a B) -> Self {
         Self {
             backend,
-            account_storage_cached: HashMap::new(),
+            account_storage_buffered: HashMap::new(),
             events: vec![],
         }
     }
@@ -59,7 +59,6 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         }
     }
 
-    // todo: refactor this according to pr comments
     fn update_account_storage(&mut self, address: Address, key: H256, value: H256) {
         // If the account does not exist, check the backend, then create it with empty code and storage
         if let std::collections::hash_map::Entry::Vacant(e) =

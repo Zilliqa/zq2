@@ -14,7 +14,7 @@ use tracing::*;
 
 use crate::{
     backend_collector::BackendCollector,
-    call_scilla_server::{call_scilla_server, ensure_setup_correct},
+    call_scilla_server::{call_scilla_server, ensure_setup_correct, is_scilla_connected},
     scilla_tcp_server::ScillaServer,
     types::*,
 };
@@ -90,7 +90,8 @@ pub fn run_scilla_impl_direct<B: Backend>(
         )
     } else {
         // todo: contract call without data - is this a valid case?
-        panic!("Scilla invokation not a contract creation or call. This is invalid.");
+        warn!("Scilla invokation not a contract creation or call. This is a transfer.");
+        vec![]
     };
 
     let mut state_deltas = tcp_scilla_server.inner.backend.get_result();
@@ -132,7 +133,6 @@ pub fn check_contract<B: evm::backend::Backend>(
     let params: Params = from_value(params).unwrap();
 
     let response = call_scilla_server("check", params, tcp_scilla_server)?;
-
     let response: CheckOutput = serde_json::from_value(response.result.unwrap().clone()).unwrap();
 
     Ok(response)
@@ -306,7 +306,6 @@ fn handle_contract_creation<B: Backend>(
 
 fn handle_contract_call<B: Backend>(
     tcp_scilla_server: &mut ScillaServer<B>,
-    _code: &str,
     data: Vec<u8>,
     gas_limit: u64,
     balance: U256,
@@ -444,4 +443,8 @@ fn handle_contract_call<B: Backend>(
 pub fn reconstruct_kv_pairs<B: Backend>(backend: &B, address: H160) -> Vec<(String, Vec<u8>)> {
     let mut collector = BackendCollector::new(backend);
     collector.reconstruct_kv_pairs(address)
+}
+
+pub fn check_scilla_connected() -> Result<()> {
+    is_scilla_connected()
 }

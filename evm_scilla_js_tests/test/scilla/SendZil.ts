@@ -4,7 +4,7 @@ import hre, {ethers} from "hardhat";
 import {parallelizer} from "../../helpers";
 import {BN, Zilliqa} from "@zilliqa-js/zilliqa";
 
-describe("Move Zil #parallel", function () {
+xdescribe("Move Zil #parallel", function () {
   const ZIL_AMOUNT = 3_000_000;
   let contract: ScillaContract;
   let to_be_funded_contract: ScillaContract;

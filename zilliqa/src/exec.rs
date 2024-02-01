@@ -193,8 +193,9 @@ impl State {
         // The backend is provided to the evm as a way to read accounts and state during execution
         let mut backend = EvmBackend::new(self, U256::zero(), caller, chain_id, current_block);
 
-        // if this is none, it is contract creation
-        if to_addr.is_none() || to_addr.is_some_and(|x| x == Address::zero()) {
+        // if this is none, it is contract creation. Note that scilla TXs
+        // have had the zero address mapped to None so this check is always correct
+        if to_addr.is_none() {
             code = data;
             data = payload_initdata.clone();
             // Note that scilla has an off by one for the account nonce
@@ -204,7 +205,7 @@ impl State {
                 calculate_contract_address(from_addr, &backend)
             };
             created_contract_addr = Some(to);
-            trace!("*** Calculated contract address for creation: {}", to);
+            trace!("*** Calculated contract address for creation: {:?}", to);
         }
 
         let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];
@@ -621,6 +622,13 @@ impl State {
             );
             warn!(error_str);
         }
+
+        trace!(
+            ?from_addr,
+            ?txn,
+            ?is_scilla,
+            "Applying transaction with args: "
+        );
 
         let result = self.apply_transaction_inner(
             from_addr,

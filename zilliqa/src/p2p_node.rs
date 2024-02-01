@@ -23,7 +23,7 @@ use tokio::{
     task::JoinSet,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::{debug, error, info, warn};
+use tracing::*;
 
 use crate::{
     cfg::{Config, ConsensusConfig, NodeConfig},
@@ -333,7 +333,7 @@ impl P2pNode {
                             match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
                                 Ok(_) => {},
                                 Err(e) => {
-                                    error!(%e, "failed to publish message");
+                                    trace!(%e, "failed to publish message");
                                 }
                             }
                             // Also broadcast the message to ourselves.

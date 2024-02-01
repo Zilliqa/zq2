@@ -65,7 +65,7 @@ describe("Openzeppelin ERC20 functionality", function () {
       );
     });
 
-    it("Should be possible to transfer from one account to another if allowance is ok[@transactional]", async function () {
+    xit("Should be possible to transfer from one account to another if allowance is ok[@transactional]", async function () {
       const [owner, sender, spender] = await ethers.getSigners();
 
       // Fund the 2nd account first

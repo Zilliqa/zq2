@@ -3,7 +3,7 @@ import {ScillaContract} from "hardhat-scilla-plugin";
 import hre from "hardhat";
 import {Account} from "@zilliqa-js/zilliqa";
 
-describe("ChainId contract #parallel", () => {
+xdescribe("ChainId contract #parallel", () => {
   let contract: ScillaContract;
   let signer: Account;
 

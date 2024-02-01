@@ -89,20 +89,16 @@ extendEnvironment((hre: HardhatRuntimeEnvironment) => {
 
   hre.getEthSignerForContractDeployment = async (): Promise<SignerWithAddress> => {
     if (hre.parallel) {
-      console.log("here we are 000");
       return hre.signer_pool.takeEthSigner();
     } else {
-      console.log("here we are 001");
       return (await hre.ethers.getSigners())[0];
     }
   };
 
   hre.getZilSignerForContractDeployment = (): Account => {
     if (hre.parallel) {
-      console.log("Taking signer from pool");
       return hre.signer_pool.takeZilSigner();
     } else {
-      console.log("Taking zil signer from pool");
       return hre.signer_pool.getZilSigner(0);
     }
   };
@@ -134,9 +130,7 @@ extendEnvironment((hre: HardhatRuntimeEnvironment) => {
   };
 
   hre.deployScillaContract2 = async (name: string, ...args: any[]): Promise<ScillaContract> => {
-    console.log("deploying scilla contract0");
     const signer = hre.getZilSignerForContractDeployment();
-    console.log("deploying scilla contract1");
     hre.setActiveAccount(signer);
     return hre.deployScillaContract(name, ...args);
   };
@@ -152,9 +146,7 @@ extendEnvironment((hre: HardhatRuntimeEnvironment) => {
   };
 
   hre.deployContract = async (name: string, ...args: any[]): Promise<Contract> => {
-    console.log("deploying contract huh???");
     const signer = await hre.getEthSignerForContractDeployment();
-    console.log("deploying contract huh?12");
     return hre.deployContractWithSigner(name, signer, ...args);
   };
 

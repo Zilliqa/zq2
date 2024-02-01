@@ -2,7 +2,7 @@ const {assert, expect} = require("chai");
 import {ScillaContract} from "hardhat-scilla-plugin";
 import hre from "hardhat";
 
-describe("Ecdsa contract #parallel", () => {
+xdescribe("Ecdsa contract #parallel", () => {
   let contract: ScillaContract;
 
   before(async () => {

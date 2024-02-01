@@ -18,7 +18,6 @@ export class Parallelizer {
   }
 
   async deployScillaContract(contractName: string, ...args: any[]): Promise<ScillaContract> {
-    console.log("sigh11");
     return hre.deployScillaContract(contractName, ...args);
   }
 
