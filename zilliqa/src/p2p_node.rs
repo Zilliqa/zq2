@@ -1,6 +1,6 @@
 //! A node in the Zilliqa P2P network. May coordinate multiple shard nodes.
 
-use std::{collections::HashMap, iter};
+use std::{collections::HashMap, iter, time::Duration};
 
 use anyhow::{anyhow, Result};
 use libp2p::{
@@ -12,8 +12,8 @@ use libp2p::{
     mdns,
     multiaddr::{Multiaddr, Protocol},
     noise,
-    request_response::{self, ProtocolSupport},
-    swarm::{self, NetworkBehaviour, SwarmEvent},
+    request_response::{self, OutboundFailure, ProtocolSupport},
+    swarm::{self, dial_opts::DialOpts, NetworkBehaviour, SwarmEvent},
     tcp, yamux, PeerId, StreamProtocol, Swarm, Transport,
 };
 use tokio::{
@@ -226,12 +226,19 @@ impl P2pNode {
         self.swarm.listen_on(addr)?;
 
         if let Some((peer, address)) = &self.config.bootstrap_address {
+            self.swarm.dial(
+                DialOpts::peer_id(*peer)
+                    .addresses(vec![address.clone()])
+                    .build(),
+            )?;
             self.swarm
                 .behaviour_mut()
                 .kademlia
                 .add_address(peer, address.clone());
-            self.swarm.behaviour_mut().kademlia.bootstrap()?;
         }
+
+        // Bootstrap Kademlia every 5 minutes to discover new nodes.
+        let mut bootstrap = tokio::time::interval(Duration::from_secs(5 * 60));
 
         let mut terminate = signal::unix::signal(SignalKind::terminate())?;
 
@@ -255,7 +262,17 @@ impl P2pNode {
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id })) => {
                         for addr in listen_addrs {
-                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                            // If the node is advertising a loopback address, ignore it.
+                            let is_loopback = addr.iter().any(|p| match p {
+                                Protocol::Ip4(addr) => addr.is_loopback(),
+                                Protocol::Ip6(addr) => addr.is_loopback(),
+                                _ => false,
+                            });
+                            if is_loopback {
+                                continue;
+                            }
+
+                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
                         }
                         // Mark the address observed for us by the external peer as confirmed.
                         // TODO: We shouldn't trust this, instead we should confirm our own address manually or using
@@ -291,9 +308,17 @@ impl P2pNode {
                             request_response::Message::Response {..} => {}
                         }
                     }
-
+                    SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { error: OutboundFailure::DialFailure, .. })) => {
+                        // We failed to send a message to a peer. The likely reason is that we don't know their
+                        // address. Someone else in the network must know it, because we learnt their peer ID.
+                        // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
+                        self.swarm.behaviour_mut().kademlia.bootstrap()?;
+                    }
                     _ => {},
                 },
+                _ = bootstrap.tick() => {
+                    let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
+                }
                 message = self.local_message_receiver.next() => {
                     let (source, destination, message) = message.expect("message stream should be infinite");
                     match message {
