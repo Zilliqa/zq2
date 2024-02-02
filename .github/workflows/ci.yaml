@@ -15,6 +15,7 @@ env:
   CARGO_TERM_COLOR: always
   # Run a decent number of samples for our randomized
   ZQ_TEST_SAMPLES: 100
+  RUST_BACKTRACE: 1
 
 jobs:
   check:
