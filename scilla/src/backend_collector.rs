@@ -61,28 +61,27 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
 
     fn update_account_storage(&mut self, address: Address, key: H256, value: H256) {
         // If the account does not exist, check the backend, then create it with empty code and storage
-        if let std::collections::hash_map::Entry::Vacant(e) =
-            self.account_storage_buffered.entry(address)
-        {
-            let account = Account {
-                nonce: self.backend.basic(address).nonce.as_u64(),
-                code: self.backend.code(address),
-                storage_root: None,
-                is_scilla: true,
-            };
+        match self.account_storage_buffered.entry(address) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let account = Account {
+                    nonce: self.backend.basic(address).nonce.as_u64(),
+                    code: self.backend.code(address),
+                    storage_root: None,
+                    is_scilla: true,
+                };
 
-            e.insert(Some((account, HashMap::from([(key, value)]))));
-        } else {
-            let entry = self.account_storage_buffered.get_mut(&address).unwrap();
-
-            match entry {
-                Some((_, storage)) => {
-                    storage.insert(key, value);
+                e.insert(Some((account, HashMap::from([(key, value)]))));
+            },
+            std::collections::hash_map::Entry::Occupied(mut o) => {
+                match o.get_mut() {
+                    Some((_, storage)) => {
+                        storage.insert(key, value);
+                    },
+                    None => {
+                        error!("Account in cache is None: {:?}", address);
+                    },
                 }
-                None => {
-                    error!("Account in cache is None: {:?}", address);
-                }
-            }
+            },
         }
     }
 
