@@ -71,15 +71,13 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
                 };
 
                 e.insert(Some((account, HashMap::from([(key, value)]))));
-            },
-            std::collections::hash_map::Entry::Occupied(mut o) => {
-                match o.get_mut() {
-                    Some((_, storage)) => {
-                        storage.insert(key, value);
-                    },
-                    None => {
-                        error!("Account in cache is None: {:?}", address);
-                    },
+            }
+            std::collections::hash_map::Entry::Occupied(mut o) => match o.get_mut() {
+                Some((_, storage)) => {
+                    storage.insert(key, value);
+                }
+                None => {
+                    error!("Account in cache is None: {:?}", address);
                 }
             },
         }
