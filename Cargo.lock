@@ -1581,9 +1581,9 @@ dependencies = [
 
 [[package]]
 name = "ethers-core"
-version = "2.0.12"
+version = "2.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "918b1a9ba585ea61022647def2f27c29ba19f6d2a4a4c8f68a9ae97fd5769737"
+checksum = "aab3cef6cc1c9fd7f787043c81ad3052eff2b96a3878ef1526aa446311bdbfc9"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -1711,9 +1711,9 @@ dependencies = [
 
 [[package]]
 name = "ethers-solc"
-version = "2.0.12"
+version = "2.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc2e46e3ec8ef0c986145901fa9864205dc4dcee701f9846be2d56112d34bdea"
+checksum = "d21df08582e0a43005018a858cc9b465c5fff9cf4056651be64f844e57d1f55f"
 dependencies = [
  "cfg-if",
  "const-hex",
