@@ -144,9 +144,7 @@ impl Node {
                 }
             }
             ExternalMessage::Vote(m) => {
-                if let Some((block, mut transactions)) = self.consensus.vote(m)? {
-                    // intershard transactions are not meant to be broadcast
-                    transactions.retain(|tx| !matches!(tx, SignedTransaction::Intershard { .. }));
+                if let Some((block, transactions)) = self.consensus.vote(m)? {
                     self.message_sender
                         .broadcast_external_message(ExternalMessage::Proposal(
                             Proposal::from_parts(block, transactions),
@@ -229,6 +227,12 @@ impl Node {
             },
             from: intershard_call.source_address,
         };
+        println!(
+            "\nLearned of intershard tx with hash: {}. Currently at block view {} height {}.\n",
+            tx.calculate_hash(),
+            self.consensus.view(),
+            self.consensus.head_block().number()
+        );
         self.consensus.new_transaction(tx.verify()?)?;
         Ok(())
     }
@@ -473,9 +477,11 @@ impl Node {
         Ok(())
     }
 
-    // Convenience function to convert a block to a proposal (add full txs)
+    /// Convenience function to convert a block to a proposal (add full txs)
+    /// NOTE: Includes intershard transactions. Should only be used for syncing history,
+    /// not for consensus messages regarding new blocks.
     fn block_to_proposal(&self, block: Block) -> Proposal {
-        let txs: Vec<SignedTransaction> = block
+        let txs: Vec<_> = block
             .transactions
             .iter()
             .map(|tx_hash| {
@@ -483,10 +489,8 @@ impl Node {
                     .get_transaction_by_hash(*tx_hash)
                     .unwrap()
                     .unwrap()
-                    .tx
             })
-            .filter(|tx| !matches!(tx, SignedTransaction::Intershard { .. }))
-            .collect::<Vec<_>>();
+            .collect();
 
         Proposal::from_parts(block, txs)
     }

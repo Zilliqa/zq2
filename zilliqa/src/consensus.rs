@@ -1,10 +1,5 @@
 use crate::blockhooks;
-use std::{
-    collections::{BTreeMap, HashSet},
-    error::Error,
-    fmt::Display,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
@@ -494,6 +489,13 @@ impl Consensus {
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
 
+        if !self.config.consensus.is_main {
+            println!(
+                "At start of proposal processing, received block had {} transactions",
+                block.transactions.len()
+            );
+            println!("Current node ID is {}", self.peer_id());
+        }
         trace!(
             block_view = block.view(),
             block_number = block.number(),
@@ -571,20 +573,37 @@ impl Consensus {
                 trace!("applying {} transactions to state", transactions.len());
             }
 
-            // We re-inject any missing Intershard transactions (or really, any missing
-            // transactions) from our mempool. If any txs are unavailable either in the
-            // message or locally, the proposal cannot be applied
             let transactions: Result<Vec<_>> =
                 transactions.into_iter().map(|tx| tx.verify()).collect();
             let mut transactions = transactions?;
-            let provided_txns: HashSet<_> = transactions.iter().map(|tx| tx.hash).collect();
-            for tx_hash in &block.transactions {
-                if !provided_txns.contains(tx_hash) {
+
+            // We re-inject any missing Intershard transactions (or really, any missing
+            // transactions) from our mempool. If any txs are unavailable either in the
+            // message or locally, the proposal cannot be applied
+            if !self.config.consensus.is_main {
+                println!(
+                    "There are {} transactions in proposal header, and {} in tx vector",
+                    block.transactions.len(),
+                    transactions.len()
+                );
+                println!("Current node ID is {}", self.peer_id());
+                println!("Expected root hash is {}", block.header.state_root_hash);
+            }
+            for (idx, tx_hash) in block.transactions.iter().enumerate() {
+                if transactions.get(idx).is_some_and(|tx| tx.hash == *tx_hash) {
+                    // all good
+                } else {
+                    println!(
+                        "\nIDENTIFIED probable xshard tx at view {}, height {}",
+                        self.view(),
+                        self.head_block().number()
+                    );
                     let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
+                        println!("\nAAAAAAAAAAAA FOUND MISSING TX!! Current block view: {}, height: {}\n", self.view(), self.head_block().number());
                         warn!("Proposal {} at view {} referenced a transaction that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view());
                         return Ok(None);
                     };
-                    transactions.push(local_tx);
+                    transactions.insert(idx, local_tx);
                 }
             }
 
@@ -740,7 +759,7 @@ impl Consensus {
         self.new_views.retain(|k, _| *k >= self.view.get_view());
     }
 
-    pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<SignedTransaction>)>> {
+    pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         let Some(block) = self.get_block(&vote.block_hash)? else {
             return Ok(None);
         }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
@@ -829,17 +848,20 @@ impl Consensus {
 
                     let transactions = self.get_txns_to_execute();
 
-                    let applied_transactions: Vec<_> = transactions
+                    let mut had_ixshd = false;
+
+                    let mut applied_transactions: Vec<_> = transactions
                         .into_iter()
                         .filter_map(|tx| {
+                            if matches!(tx.tx, SignedTransaction::Intershard { .. }) {
+                                had_ixshd = true;
+                            }
                             let result = self.apply_transaction(tx.clone(), parent_header);
-                            result.transpose().map(|r| r.map(|_| tx.tx.clone()))
+                            result.transpose().map(|r| r.map(|_| tx))
                         })
                         .collect::<Result<_>>()?;
-                    let applied_transaction_hashes: Vec<_> = applied_transactions
-                        .iter()
-                        .map(|tx| tx.calculate_hash())
-                        .collect();
+                    let applied_transaction_hashes: Vec<_> =
+                        applied_transactions.iter().map(|tx| tx.hash).collect();
 
                     let proposal = Block::from_qc(
                         self.secret_key,
@@ -861,6 +883,18 @@ impl Consensus {
                     );
                     // as a future improvement, process the proposal before broadcasting it
                     trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
+                    // intershard transactions are not meant to be broadcast
+                    applied_transactions
+                        .retain(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
+                    if !self.config.consensus.is_main {
+                        println!(
+                            "\nWe are sending {} transactions in proposal header, and {} in tx vector",
+                            proposal.transactions.len(),
+                            applied_transactions.len()
+                        );
+                        println!("Current node ID is {}", self.peer_id());
+                        println!("proposal_hash = {}, view = {}, number = {}, state root hash = {}, HAD IXSHARD? {} ######### vote successful, we are proposing block \n", proposal.hash(), proposal.header.view, proposal.header.number, proposal.header.state_root_hash, had_ixshd);
+                    }
 
                     return Ok(Some((proposal, applied_transactions)));
                 }
@@ -1504,7 +1538,19 @@ impl Consensus {
 
                 let current_head = self.head_block();
 
-                self.proposal(Proposal::from_parts(block, transactions), true)?;
+                self.proposal(
+                    Proposal::from_parts_and_hashes(
+                        block,
+                        transactions
+                            .into_iter()
+                            .map(|tx| {
+                                let hash = tx.calculate_hash();
+                                (tx, hash)
+                            })
+                            .unzip(),
+                    ),
+                    true,
+                )?;
 
                 // Return whether the head block hash changed as to whether it was new
                 Ok(self.head_block().hash() != current_head.hash())

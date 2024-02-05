@@ -18,8 +18,8 @@ contract IntershardBridge {
 
     function bridge(
         uint64 targetShard,
-        address target, // not used if this is contractCreation = true
         bool contractCreation,
+        address target, // not used if this is contractCreation = true
         bytes calldata call,
         uint64 gasLimit,
         uint128 gasPrice

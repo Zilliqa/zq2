@@ -7,6 +7,7 @@ use std::{
     cmp::Ordering,
     collections::{BTreeMap, BinaryHeap},
 };
+use tracing::*;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct NoncedTxIndex {
@@ -162,6 +163,12 @@ impl TransactionPool {
                     self.hash_to_index.remove(&existing_txn.hash);
                 }
             }
+        } else {
+            // now we've confirmed it's nonceless, so ensure its index isn't duplicate
+            if let Some(existing_nonceless_txn) = self.transactions.get(&txn.mempool_index()) {
+                error!(existing = ?existing_nonceless_txn, new = ?txn, "Duplicate-indexed nonceless transactions encountered, this shouldn't happen. Ignoring the new one.");
+                return false;
+            }
         }
 
         // If this transaction ether has a nonce equal to the account's current nonce,
@@ -226,8 +233,11 @@ mod tests {
     use crate::{
         crypto::Hash,
         state::Address,
-        transaction::{EthSignature, SignedTransaction, TxLegacy, VerifiedTransaction},
+        transaction::{
+            EthSignature, SignedTransaction, TxIntershard, TxLegacy, VerifiedTransaction,
+        },
     };
+    use primitive_types::H160;
 
     fn transaction(from_addr: Address, nonce: u64, gas_price: u128) -> VerifiedTransaction {
         VerifiedTransaction {
@@ -248,6 +258,29 @@ mod tests {
                 },
             },
             signer: from_addr,
+            hash: Hash::ZERO,
+        }
+    }
+
+    fn intershard_transaction(
+        from_shard: u64,
+        shard_nonce: u64,
+        gas_price: u128,
+    ) -> VerifiedTransaction {
+        VerifiedTransaction {
+            tx: SignedTransaction::Intershard {
+                tx: TxIntershard {
+                    chain_id: 0,
+                    bridge_nonce: shard_nonce,
+                    source_chain: from_shard,
+                    gas_price,
+                    gas_limit: 0,
+                    to_addr: None,
+                    payload: vec![],
+                },
+                from: H160::zero(),
+            },
+            signer: H160::zero(),
             hash: Hash::ZERO,
         }
     }
@@ -281,10 +314,14 @@ mod tests {
             .parse()
             .unwrap();
 
-        pool.insert_transaction(transaction(from1, 0, 1), 0);
-        pool.insert_transaction(transaction(from2, 0, 2), 0);
+        pool.insert_transaction(intershard_transaction(0, 0, 1), 0);
+        pool.insert_transaction(transaction(from1, 0, 2), 0);
+        pool.insert_transaction(transaction(from2, 0, 3), 0);
         pool.insert_transaction(transaction(from3, 0, 0), 0);
+        pool.insert_transaction(intershard_transaction(0, 1, 5), 0);
 
+        assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 5);
+        assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 3);
         assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 2);
         assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 1);
         assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 0);
