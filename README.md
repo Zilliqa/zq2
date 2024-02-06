@@ -159,3 +159,4 @@ Please open an issue or PR for APIs that you think should be included.
 | `GetVersion`                              | 🟢                                              |
 | `GetRawDSBlock`                           | 🔴                                              |
 | `GetRawTxBlock`                           | 🔴                                              |
+
