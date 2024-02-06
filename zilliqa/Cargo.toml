@@ -65,7 +65,7 @@ serde_json = { version = "1.0.113", features = ["raw_value"] }
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 sled = "0.34.7"
-time = "0.3.0"
+time = "0.3.34"
 tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 tokio-stream = "0.1.14"
 toml = "0.8.9"
@@ -78,7 +78,7 @@ zilliqa-macros = { path = "../zilliqa-macros" }
 [dev-dependencies]
 async-trait = "0.1.77"
 ethers = { version = "2.0.10", default-features = false, features = ["ethers-solc", "legacy"] }
-ethers-solc = { version = "2.0.12", features = ["svm-solc"] }
+ethers-solc = { version = "2.0.13", features = ["svm-solc"] }
 indicatif = "0.17.7"
 tempfile = "3.9.0"
 ureq = "2.9.1"
