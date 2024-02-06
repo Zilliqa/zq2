@@ -166,7 +166,7 @@ impl TransactionPool {
         } else {
             // now we've confirmed it's nonceless, so ensure its index isn't duplicate
             if let Some(existing_nonceless_txn) = self.transactions.get(&txn.mempool_index()) {
-                error!(existing = ?existing_nonceless_txn, new = ?txn, "Duplicate-indexed nonceless transactions encountered, this shouldn't happen. Ignoring the new one.");
+                warn!(tx = ?existing_nonceless_txn, "Duplicate-indexed nonceless transactions encountered, this shouldn't happen. Ignoring the new one.");
                 return false;
             }
         }
@@ -225,6 +225,11 @@ impl TransactionPool {
         self.hash_to_index.clear();
         std::mem::take(&mut self.transactions).into_values()
     }
+
+    #[cfg(test)]
+    pub fn size(&self) -> usize {
+        self.transactions.len()
+    }
 }
 
 #[cfg(test)]
@@ -239,12 +244,12 @@ mod tests {
     };
     use primitive_types::H160;
 
-    fn transaction(from_addr: Address, nonce: u64, gas_price: u128) -> VerifiedTransaction {
+    fn transaction(from_addr: Address, nonce: u8, gas_price: u128) -> VerifiedTransaction {
         VerifiedTransaction {
             tx: SignedTransaction::Legacy {
                 tx: TxLegacy {
                     chain_id: Some(0),
-                    nonce,
+                    nonce: nonce as u64,
                     gas_price,
                     gas_limit: 0,
                     to_addr: None,
@@ -258,21 +263,21 @@ mod tests {
                 },
             },
             signer: from_addr,
-            hash: Hash::ZERO,
+            hash: Hash::compute([from_addr.as_bytes(), &[nonce]]),
         }
     }
 
     fn intershard_transaction(
-        from_shard: u64,
-        shard_nonce: u64,
+        from_shard: u8,
+        shard_nonce: u8,
         gas_price: u128,
     ) -> VerifiedTransaction {
         VerifiedTransaction {
             tx: SignedTransaction::Intershard {
                 tx: TxIntershard {
                     chain_id: 0,
-                    bridge_nonce: shard_nonce,
-                    source_chain: from_shard,
+                    bridge_nonce: shard_nonce as u64,
+                    source_chain: from_shard as u64,
                     gas_price,
                     gas_limit: 0,
                     to_addr: None,
@@ -281,7 +286,7 @@ mod tests {
                 from: H160::zero(),
             },
             signer: H160::zero(),
-            hash: Hash::ZERO,
+            hash: Hash::compute([[shard_nonce], [from_shard]]),
         }
     }
 
@@ -319,12 +324,35 @@ mod tests {
         pool.insert_transaction(transaction(from2, 0, 3), 0);
         pool.insert_transaction(transaction(from3, 0, 0), 0);
         pool.insert_transaction(intershard_transaction(0, 1, 5), 0);
+        assert_eq!(pool.size(), 5);
 
         assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 5);
         assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 3);
         assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 2);
         assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 1);
         assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 0);
+        assert_eq!(pool.size(), 0);
+    }
+
+    #[test]
+    fn pop_removes_transaction() {
+        let mut pool = TransactionPool::default();
+        let from = "0x0000000000000000000000000000000000001234"
+            .parse()
+            .unwrap();
+
+        assert_eq!(pool.size(), 0);
+        let normal_tx = transaction(from, 0, 1);
+        let xshard_tx = intershard_transaction(0, 0, 1);
+        pool.insert_transaction(normal_tx.clone(), 0);
+        assert_eq!(pool.size(), 1);
+        pool.insert_transaction(xshard_tx.clone(), 0);
+        assert_eq!(pool.size(), 2);
+        assert_eq!(pool.pop_transaction(normal_tx.hash), Some(normal_tx));
+        assert_eq!(pool.size(), 1);
+        assert_eq!(pool.pop_transaction(xshard_tx.hash), Some(xshard_tx));
+        assert_eq!(pool.size(), 0);
+        assert_eq!(pool.best_transaction(), None);
     }
 
     #[test]

@@ -489,13 +489,6 @@ impl Consensus {
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
 
-        if !self.config.consensus.is_main {
-            println!(
-                "At start of proposal processing, received block had {} transactions",
-                block.transactions.len()
-            );
-            println!("Current node ID is {}", self.peer_id());
-        }
         trace!(
             block_view = block.view(),
             block_number = block.number(),
@@ -558,8 +551,10 @@ impl Consensus {
             if head_block.hash() != parent.hash() || block.number() != head_block.header.number + 1
             {
                 warn!(
-                    "******* Fork detected! \nHead block: {} \nBlock prop: {}",
-                    head_block, block
+                    "******* Fork detected! \nHead block: {} \nBlock prop: {}. We are node {}",
+                    head_block,
+                    block,
+                    self.peer_id()
                 );
                 self.deal_with_fork(&block)?;
             }
@@ -580,26 +575,11 @@ impl Consensus {
             // We re-inject any missing Intershard transactions (or really, any missing
             // transactions) from our mempool. If any txs are unavailable either in the
             // message or locally, the proposal cannot be applied
-            if !self.config.consensus.is_main {
-                println!(
-                    "There are {} transactions in proposal header, and {} in tx vector",
-                    block.transactions.len(),
-                    transactions.len()
-                );
-                println!("Current node ID is {}", self.peer_id());
-                println!("Expected root hash is {}", block.header.state_root_hash);
-            }
             for (idx, tx_hash) in block.transactions.iter().enumerate() {
                 if transactions.get(idx).is_some_and(|tx| tx.hash == *tx_hash) {
                     // all good
                 } else {
-                    println!(
-                        "\nIDENTIFIED probable xshard tx at view {}, height {}",
-                        self.view(),
-                        self.head_block().number()
-                    );
                     let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
-                        println!("\nAAAAAAAAAAAA FOUND MISSING TX!! Current block view: {}, height: {}\n", self.view(), self.head_block().number());
                         warn!("Proposal {} at view {} referenced a transaction that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view());
                         return Ok(None);
                     };
@@ -886,16 +866,6 @@ impl Consensus {
                     // intershard transactions are not meant to be broadcast
                     applied_transactions
                         .retain(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
-                    if !self.config.consensus.is_main {
-                        println!(
-                            "\nWe are sending {} transactions in proposal header, and {} in tx vector",
-                            proposal.transactions.len(),
-                            applied_transactions.len()
-                        );
-                        println!("Current node ID is {}", self.peer_id());
-                        println!("proposal_hash = {}, view = {}, number = {}, state root hash = {}, HAD IXSHARD? {} ######### vote successful, we are proposing block \n", proposal.hash(), proposal.header.view, proposal.header.number, proposal.header.state_root_hash, had_ixshd);
-                    }
-
                     return Ok(Some((proposal, applied_transactions)));
                 }
             }

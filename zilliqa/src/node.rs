@@ -227,12 +227,6 @@ impl Node {
             },
             from: intershard_call.source_address,
         };
-        println!(
-            "\nLearned of intershard tx with hash: {}. Currently at block view {} height {}.\n",
-            tx.calculate_hash(),
-            self.consensus.view(),
-            self.consensus.head_block().number()
-        );
         self.consensus.new_transaction(tx.verify()?)?;
         Ok(())
     }
