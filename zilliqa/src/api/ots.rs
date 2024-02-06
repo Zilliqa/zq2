@@ -264,7 +264,7 @@ fn get_internal_operations(
         receipt.block_number.into(),
         from,
         tx.to_addr(),
-        tx.payload().to_vec(),
+        tx.payload().0.to_vec(),
         tx.amount().into(),
         true,
     );

@@ -1,7 +1,9 @@
 use ethabi::Token;
-use ethers::prelude::DeploymentTxFactory;
-use ethers::types::BlockNumber;
-use ethers::{providers::Middleware, types::TransactionRequest};
+use ethers::{
+    prelude::DeploymentTxFactory,
+    providers::Middleware,
+    types::{BlockNumber, TransactionRequest},
+};
 use primitive_types::H160;
 use tracing::*;
 use zilliqa::{contracts, state::contract_addr};

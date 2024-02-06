@@ -91,6 +91,7 @@ fn build_call_result<B: Backend>(
 ) -> EvmProto::EvmResult {
     let mut result = EvmProto::EvmResult {
         return_value: runtime.machine().return_value(),
+        tx_trace: trace.clone(),
         ..Default::default()
     };
 

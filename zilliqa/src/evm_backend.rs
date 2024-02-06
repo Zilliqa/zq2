@@ -11,7 +11,7 @@ use evm_ds::{
     protos::evm_proto::{Apply, EvmResult, Storage},
 };
 use primitive_types::{H160, H256, U256};
-use tracing::{error, trace};
+use tracing::*;
 
 use crate::{
     message::BlockHeader,
@@ -48,7 +48,7 @@ impl<'a> EvmBackend<'a> {
         }
     }
 
-    pub fn create_account(&mut self, address: Address, code: Vec<u8>) {
+    pub fn create_account(&mut self, address: Address, code: Vec<u8>, is_scilla: bool) {
         // Insert empty slot into cache if it does not already exist, else just put the code there
         if let Some(Some((acct, _))) = self.account_storage_cached.get_mut(&address) {
             acct.code = code;
@@ -63,6 +63,7 @@ impl<'a> EvmBackend<'a> {
                     nonce: 0,
                     code,
                     storage_root: None,
+                    is_scilla,
                 },
                 HashMap::new(),
             )),
@@ -158,9 +159,9 @@ impl<'a> Backend for EvmBackend<'a> {
         self.origin
     }
 
-    fn block_hash(&self, _: U256) -> H256 {
-        // TODO: Get the hash of one of the 256 most recent blocks.
-        H256::zero()
+    // todo: this should be the hash of a block by number, not just the current one
+    fn block_hash(&self, _num: U256) -> H256 {
+        primitive_types::H256(self.current_block.hash.0)
     }
 
     fn block_number(&self) -> U256 {

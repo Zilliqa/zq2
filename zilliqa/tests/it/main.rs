@@ -4,10 +4,12 @@ mod eth;
 mod persistence;
 mod web3;
 mod zil;
-use ethers::types::{Bytes, TransactionReceipt};
 use std::{env, ops::DerefMut};
 
-use ethers::solc::SHANGHAI_SOLC;
+use ethers::{
+    solc::SHANGHAI_SOLC,
+    types::{Bytes, TransactionReceipt},
+};
 use itertools::Itertools;
 use serde::Deserialize;
 use zilliqa::{
@@ -787,7 +789,7 @@ impl Network {
     }
 
     pub fn remove_node(&mut self, idx: usize) -> TestNode {
-        self.receivers.remove(idx);
+        let _ = self.receivers.remove(idx);
         self.nodes.remove(idx)
     }
 

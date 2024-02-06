@@ -65,6 +65,7 @@ pub struct EvmCallArgs {
     pub enable_cps: bool,
     pub tx_trace_enabled: bool,
     pub tx_trace: Arc<Mutex<LoggingEventListener>>,
+    pub is_scilla: bool,
 }
 
 #[derive(Debug)]

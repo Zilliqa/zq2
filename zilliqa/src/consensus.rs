@@ -1,4 +1,3 @@
-use crate::blockhooks;
 use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc};
 
 use anyhow::{anyhow, Result};
@@ -12,6 +11,7 @@ use tracing::*;
 
 use crate::{
     block_store::BlockStore,
+    blockhooks,
     cfg::NodeConfig,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     db::Db,
@@ -600,6 +600,7 @@ impl Consensus {
                         contract_address: result.contract_address,
                         logs: result.logs,
                         gas_used: result.gas_used,
+                        scilla_events: serde_json::to_string(&result.scilla_events).unwrap(),
                     };
                     info!(?receipt, "applied transaction {:?}", receipt);
                     block_receipts.push(receipt);
@@ -892,14 +893,6 @@ impl Consensus {
         }
 
         committee.add_validators(self.pending_peers.drain(..));
-
-        if committee.len() <= 1 {
-            warn!(
-                "committee is too small {}, something might be wrong",
-                committee.len()
-            );
-        }
-
         committee
     }
 
