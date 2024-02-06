@@ -47,7 +47,7 @@ impl Proposal {
         block: Block,
         transactions: (Vec<SignedTransaction>, Vec<Hash>),
     ) -> Self {
-        let provided_tx_hashes = HashSet::<Hash>::from_iter(transactions.1.into_iter());
+        let provided_tx_hashes = HashSet::<Hash>::from_iter(transactions.1);
         Proposal {
             header: block.header,
             qc: block.qc,
@@ -73,7 +73,7 @@ impl Proposal {
                     .transactions
                     .iter()
                     .map(|txn| txn.calculate_hash())
-                    .chain(self.opaque_transactions.into_iter())
+                    .chain(self.opaque_transactions)
                     .collect(),
             },
             self.transactions,

@@ -1,5 +1,6 @@
 use ethabi::Token;
 use ethers::prelude::DeploymentTxFactory;
+use ethers::types::BlockNumber;
 use ethers::{providers::Middleware, types::TransactionRequest};
 use primitive_types::H160;
 use tracing::*;
@@ -377,26 +378,30 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 50)
         .await;
 
-    // 10. Make sure the transaction was included in the child network (by checking the nonce)
-
-    // quick sanity check first
-    let nonce_before = shard_wallet
-        .get_transaction_count(shard_wallet.address(), None)
-        .await
-        .unwrap();
-    assert_eq!(nonce_before, 0.into());
-
+    // 10. Make sure the transaction gets included in the child network
     network
         .children
         .get_mut(&child_shard_id)
         .unwrap()
         .run_until_async(
             || async {
-                shard_wallet
-                    .get_transaction_count(shard_wallet.address(), None)
+                let latest_block = shard_wallet
+                    .get_block(BlockNumber::Latest)
                     .await
                     .unwrap()
-                    == 1.into()
+                    .unwrap();
+                for tx in latest_block.transactions {
+                    let receipt = shard_wallet
+                        .get_transaction_receipt(tx)
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    if receipt.from == shard_wallet.address() && receipt.contract_address.is_some()
+                    {
+                        return true;
+                    }
+                }
+                false
             },
             200,
         )
