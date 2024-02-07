@@ -77,8 +77,8 @@ zilliqa-macros = { path = "../zilliqa-macros" }
 
 [dev-dependencies]
 async-trait = "0.1.77"
-ethers = { version = "2.0.13", default-features = false, features = ["ethers-solc", "legacy"] }
-ethers-solc = { version = "2.0.13", features = ["svm-solc"] }
+ethers = { version = "2.0.10", default-features = false, features = ["ethers-solc", "legacy"] }
+ethers-solc = { version = "2.0.12", features = ["svm-solc"] }
 indicatif = "0.17.7"
 tempfile = "3.9.0"
 ureq = "2.9.1"
