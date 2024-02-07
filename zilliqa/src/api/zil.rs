@@ -167,11 +167,6 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<Get
     let receipt = receipt.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
     let tx = tx.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
 
-    //let version = tx.tx. & 0xffff;
-    //let chain_id = tx.version >> 16;
-
-    //info!("version: {}, chain_id: {}", version, chain_id);
-
     Ok(GetTxResponse::new(tx, receipt))
 }
 
