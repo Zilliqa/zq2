@@ -455,7 +455,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             }
             std::cmp::Ordering::Less => {
                 // We're fetching a map value. We need to iterate through the DB lexicographically.
-                // todo: this is missing some stuff.
                 let entries: HashMap<String, Vec<u8>> = HashMap::new();
 
                 //let existing_entries: Vec<_> = self

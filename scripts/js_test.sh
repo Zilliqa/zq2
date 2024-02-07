@@ -1,7 +1,7 @@
 echo "The CI is running this script."
 
 echo "Starting scilla server"
-docker run --rm -p 12345-12347:12345-12347 nhutton/scilla_tcp:1.0 /scilla/0/run_scilla_tcp.sh &
+docker run --rm -p 12345-12347:12345-12347 nhutton/scilla_tcp:1.0 /scilla/0/run_scilla_tcp.sh > scilla_log.txt 2>&1 &
 
 sudo add-apt-repository ppa:ethereum/ethereum > /dev/null 2>&1
 sudo apt-get update > /dev/null 2>&1
@@ -32,7 +32,9 @@ done
 
 # Start network early.
 pwd
-cargo build --all-targets > /dev/null 2>&1
+echo "building zilliqa and running it as a detached process"
+cargo build --all-targets
+ls ./target
 RUST_LOG=zilliqa=warn,zilliqa=info ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 -c config-example.toml > /tmp/zil_log_out.txt 2>&1 &
 
 cd evm_scilla_js_tests
