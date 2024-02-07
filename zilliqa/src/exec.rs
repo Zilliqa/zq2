@@ -597,7 +597,7 @@ impl State {
         // fail early on nonce mismatch
         let mut acct = self.get_account(from_addr).unwrap();
 
-        // todo: this should be +1 but it is not.
+        // todo(#705): this should be +1 but it is not.
         let desired_account_nonce = acct.nonce;
 
         if desired_account_nonce != txn.nonce() {

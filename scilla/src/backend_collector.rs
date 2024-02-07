@@ -40,7 +40,6 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
         }
     }
 
-    // todo: refactor this according to pr comments
     pub fn get_account_storage(&self, address: Address, key: H256) -> H256 {
         // If the account does not exist, check the backend
         if !self.account_storage_buffered.contains_key(&address) {
@@ -298,7 +297,7 @@ impl<'a, B: Backend> BackendCollector<'a, B> {
             nonce: self.backend.basic(address).nonce.as_u64(),
             code: self.backend.code(address),
             storage_root: None,
-            is_scilla: true, // todo: this is not neccessarily correct, but it might not matter
+            is_scilla: true, // todo: this is not necessarily correct, but it might not matter
         }
     }
 

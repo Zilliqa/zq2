@@ -1609,7 +1609,7 @@ impl Consensus {
             .map(|i| committee.get_by_index(*i as usize).unwrap().public_key)
             .collect();
 
-        // TODO: Implement batch verification - this will not work atm.
+        // TODO(#706): Implement batch verification - this will not work atm.
         //verify_messages(agg.signature, &messages, &public_keys)
         Ok(())
     }

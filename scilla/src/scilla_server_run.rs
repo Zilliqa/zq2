@@ -89,7 +89,7 @@ pub fn run_scilla_impl_direct<B: Backend>(
         )
     } else {
         // todo: contract call without data - is this a valid case?
-        warn!("Scilla invokation not a contract creation or call. This is a transfer.");
+        warn!("Scilla invocation not a contract creation or call. This is a transfer.");
         vec![]
     };
 
@@ -174,7 +174,7 @@ pub fn invoke_contract<B: evm::backend::Backend>(
 }
 pub fn create_contract<B: evm::backend::Backend>(
     gas_limit: u64,
-    balance: U256, // todo: this
+    balance: U256,
     tcp_scilla_server: &mut ScillaServer<B>,
 ) -> Result<InvokeOutput> {
     let args = vec![
@@ -187,7 +187,7 @@ pub fn create_contract<B: evm::backend::Backend>(
         "-gaslimit".to_owned(),
         gas_limit.to_string(),
         "-balance".to_owned(),
-        balance.to_string(), // todo: this
+        balance.to_string(),
         "-libdir".to_owned(),
         SCILLA_SERVER_LIB_PATH.to_string(),
         "-jsonerrors".to_owned(),
@@ -203,7 +203,6 @@ pub fn create_contract<B: evm::backend::Backend>(
 
     let response: InvokeOutput = serde_json::from_value(response.result.unwrap()).unwrap();
 
-    // todo: check this is ok?
     debug!("Create Response: {:?}", response);
 
     Ok(response)
@@ -299,7 +298,7 @@ fn handle_contract_creation<B: Backend>(
 
     create_contract(gas_limit, balance, tcp_scilla_server).unwrap();
 
-    // todo: think about return values and how neccessary they are for scilla.
+    // todo: think about return values and how necessary they are for scilla.
     code.to_string().into_bytes()
 }
 
@@ -335,7 +334,6 @@ fn handle_contract_call<B: Backend>(
     let origin_addr_hex = format!("{from_addr:#x}");
     trace!("origin addr: {:?}", origin_addr_hex);
 
-    // todo: do we use balance, amount, or value as nomenclature?
     // This is a loop in which contract to contract calls are handled by pushing the next
     // call onto the stack.
     let mut messages = vec![(true, from_addr, contract_addr, msg, balance)];
@@ -398,7 +396,6 @@ fn handle_contract_call<B: Backend>(
                 }
 
                 if invoked.accepted {
-                    //transfer(&mut db.lock().unwrap(), from_addr, to_addr, amount)?;
                     todo!("Need to handle contract to contract transfer!");
                 }
 

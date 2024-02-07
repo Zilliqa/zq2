@@ -105,7 +105,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             .map_err(convert_err)
     }
 
-    // todo: this.
     fn fetch_state_value_b64(&mut self, params: &Params) -> Result<Value, jsonrpc_core::Error> {
         fn err(s: &'static str) -> Result<Value, jsonrpc_core::Error> {
             debug!("* fetchStateValue ERROR called *** {:?}", s);
@@ -139,7 +138,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         })
     }
 
-    // Todo: this.
     fn fetch_external_state_value_b64(
         &mut self,
         params: &Params,
@@ -189,7 +187,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         })
     }
 
-    // todo: this.
     fn fetch_blockchain_info(&mut self, params: &Params) -> Result<Value, jsonrpc_core::Error> {
         fn err(s: &'static str) -> Result<Value, jsonrpc_core::Error> {
             debug!("* fetchBlockchainInfo ERROR called *** {:?}", s);
@@ -338,7 +335,7 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         let addr = self.contract_addr;
         let account = self.backend.get_account(addr);
         let balance = self.backend.get_balance(addr);
-        let code_hash = Keccak256::digest(&account.code); // todo: need to create this code hash - is this correct?
+        let code_hash = Keccak256::digest(&account.code); // todo: check this code hash is correct
         let code = account.code;
 
         fn scilla_val(b: Vec<u8>) -> ProtoScillaVal {
@@ -402,20 +399,11 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
         .parse()?;
         query.mapdepth = depth;
 
-        //let Some(contract) = account.contract else { return Err(anyhow!("state read from non-contract")); };
-        //let contract = account.code;
-
-        // don't need to do this switch I think
-        //let Some((old_addr, old_state_root, block_num)) = self.current_contract_addr else { return Err(anyhow!("no current contract")); };
-        //self.current_contract_addr = Some((addr, contract.state_root, block_num));
-
         let value = self.fetch_state_value_inner(query)?;
-        //self.current_contract_addr = Some((old_addr, old_state_root, block_num));
 
         Ok(value.map(|v| (v, ty)))
     }
 
-    // todo: this.
     fn fetch_state_value_inner(
         &mut self,
         query: ProtoScillaQuery,
@@ -426,7 +414,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
             return Err(anyhow!("reserved variable name: {}", query.name));
         }
 
-        //let (addr, _, _) = self.execution_context else { return Err(anyhow!("no current contract")); };
         let addr = self.contract_addr;
 
         let addr_hex = format!("{addr:x}");
@@ -465,7 +452,6 @@ impl<'a, B: evm::backend::Backend> Inner<'a, B> {
                 //    .collect();
 
                 // todo: this
-                //let existing_entries: Vec<_> = self.get_state_with_prefix(&key).collect();
                 let existing_entries: Vec<_> = self.get_state(&key).unwrap().unwrap();
 
                 if existing_entries.is_empty() && !query.indices.is_empty() {
