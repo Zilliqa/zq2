@@ -137,6 +137,13 @@ impl SignedTransaction {
         }
     }
 
+    pub fn version(&self) -> u32 {
+        match self {
+            SignedTransaction::Zilliqa { tx, .. } => tx.version,
+            _ => 1,
+        }
+    }
+
     pub fn verify(self) -> Result<VerifiedTransaction> {
         let signer = match &self {
             SignedTransaction::Legacy { tx, sig } => {
@@ -542,6 +549,7 @@ impl TxEip1559 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TxZilliqa {
     pub chain_id: u16,
+    pub version: u32,
     pub nonce: u64,
     pub gas_price: u128,
     pub gas_limit: u64,

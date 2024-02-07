@@ -115,7 +115,7 @@ impl GetTxResponse {
             // todo: make all of the fields correct
             SignedTransaction::Zilliqa { ref tx, .. } => Some(GetTxResponse {
                 id: verified_tx.hash.to_string(),
-                version: "65537".to_string(),
+                version: verified_tx.tx.version().to_string(),
                 nonce: tx.nonce.to_string(),
                 to_addr: tx.to_addr, // Note this appears to have no 0x prefix in zq1
                 sender_pub_key: hex::encode(verified_tx.signer),
