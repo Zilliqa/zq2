@@ -29,7 +29,7 @@ use crate::{
     cfg::{Config, ConsensusConfig, NodeConfig},
     crypto::SecretKey,
     message::{ExternalMessage, InternalMessage},
-    node_launcher::NodeLauncher,
+    node_launcher::NodeLauncher, persist_peers,
 };
 
 /// Messages are a tuple of the destination shard ID and the actual message.
@@ -42,6 +42,7 @@ struct Behaviour {
     mdns: mdns::tokio::Behaviour,
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
+    persist_peers: persist_peers::Behaviour,
 }
 
 /// Messages circulating over the p2p network.
@@ -110,6 +111,7 @@ impl P2pNode {
                 key_pair.public(),
             )),
             kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
+            persist_peers: persist_peers::Behaviour::new(sled::open("peers")?)?,
         };
 
         let swarm = Swarm::new(
@@ -273,6 +275,7 @@ impl P2pNode {
                             }
 
                             self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                            self.swarm.behaviour_mut().persist_peers.add_address(peer_id, addr.clone());
                         }
                         // Mark the address observed for us by the external peer as confirmed.
                         // TODO: We shouldn't trust this, instead we should confirm our own address manually or using
@@ -312,9 +315,11 @@ impl P2pNode {
                         // We failed to send a message to a peer. The likely reason is that we don't know their
                         // address. Someone else in the network must know it, because we learnt their peer ID.
                         // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
-                        self.swarm.behaviour_mut().kademlia.bootstrap()?;
+                        let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
                     }
-                    _ => {},
+                    e => {
+                        error!(?e, "unhandled swarm event");
+                    },
                 },
                 _ = bootstrap.tick() => {
                     let _ = self.swarm.behaviour_mut().kademlia.bootstrap();

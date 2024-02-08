@@ -19,3 +19,4 @@ pub mod state;
 pub mod time;
 mod transaction;
 pub mod zq1_proto;
+mod persist_peers;

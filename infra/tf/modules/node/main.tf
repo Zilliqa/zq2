@@ -153,7 +153,7 @@ Description=Zilliqa Node
 [Service]
 Type=simple
 ExecStart=/zilliqa ${var.secret_key} --log-json
-Environment="RUST_LOG=zilliqa=debug"
+Environment="RUST_LOG=zilliqa=debug,zilliqa::consensus=trace"
 Environment="RUST_BACKTRACE=1"
 StandardOutput=append:/zilliqa.log
 

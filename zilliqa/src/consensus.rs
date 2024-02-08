@@ -660,7 +660,8 @@ impl Consensus {
                 let vote = self.vote_from_block(&block);
                 let next_leader = block.committee.leader(self.view.get_view()).peer_id;
 
-                if !during_sync {
+                // TODO: Check if vote would not be too old (e.g. because we're syncing) (copy condition from `fn vote`?)
+                if true {
                     trace!(proposal_view, ?next_leader, "voting for block");
                     return Ok(Some((Some(next_leader), ExternalMessage::Vote(vote))));
                 }
