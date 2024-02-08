@@ -154,7 +154,7 @@ async fn create_shard(network: &mut Network, wallet: &Wallet, child_shard_id: u6
         .get_mut(&child_shard_id)
         .unwrap()
         .run_until_async(
-            || async { shard_wallet.get_block_number().await.unwrap().as_u64() >= 1 },
+            || async { shard_wallet.get_block_number().await.unwrap().as_u64() >= 2 },
             50,
         )
         .await
