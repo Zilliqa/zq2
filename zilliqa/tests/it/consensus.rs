@@ -125,18 +125,11 @@ async fn block_production(mut network: Network) {
 /// Helper function that sets up one child shard on the provided Network.
 /// Returns: a wallet connected to the new shard.
 async fn create_shard(network: &mut Network, wallet: &Wallet, child_shard_id: u64) -> Wallet {
-    // 0. Sanity check - make sure main network is running
-    network
-        .run_until_async(
-            || async { wallet.get_block_number().await.unwrap().as_u64() >= 1 },
-            50,
-        )
-        .await
-        .unwrap();
+    // * Sanity check - make sure main network is running
+    network.run_until_block(wallet, 1.into(), 50).await;
 
+    // * Construct and launch a shard network
     let child_shard_nodes = 4;
-
-    // 1. Construct and launch a shard network
     let mut shard_network = Network::new_shard(
         network.rng.clone(),
         child_shard_nodes,
@@ -147,20 +140,33 @@ async fn create_shard(network: &mut Network, wallet: &Wallet, child_shard_id: u6
     );
     let shard_wallet = shard_network.genesis_wallet().await;
 
+    let shard_node_keys: Vec<_> = shard_network
+        .nodes
+        .iter()
+        .map(|node| node.secret_key)
+        .collect();
+
     network.children.insert(child_shard_id, shard_network);
 
+    // * Run a block or so to stabilise past genesis
     network
         .children
         .get_mut(&child_shard_id)
         .unwrap()
         .run_until_async(
-            || async { shard_wallet.get_block_number().await.unwrap().as_u64() >= 2 },
+            || async { shard_wallet.get_block_number().await.unwrap().as_u64() >= 1 },
             50,
         )
         .await
         .unwrap();
 
-    // 2. Fetch shard's genesis hash
+    // * Add all new nodes to the parent network too -- all nodes must run main shard nodes
+    for key in shard_node_keys {
+        network.add_node_with_key(true, key);
+    }
+    network.run_until_block(wallet, 3.into(), 100).await;
+
+    // * Fetch shard's genesis hash
     let shard_genesis = shard_wallet
         .get_block(0)
         .await
@@ -169,7 +175,7 @@ async fn create_shard(network: &mut Network, wallet: &Wallet, child_shard_id: u6
         .hash
         .unwrap();
 
-    // 3. Deploy shard contract for the shard on the main network
+    // * Deploy shard contract for the shard on the main network
     let deploy_shard_tx = TransactionRequest::new().data(
         contracts::shard::CONSTRUCTOR
             .encode_input(
@@ -189,10 +195,10 @@ async fn create_shard(network: &mut Network, wallet: &Wallet, child_shard_id: u6
         .unwrap();
     let hash = tx.tx_hash();
 
-    let deploy_shard_receipt = network.run_until_receipt(wallet, hash, 50).await;
+    let deploy_shard_receipt = network.run_until_receipt(wallet, hash, 100).await;
     let shard_contract_address = deploy_shard_receipt.contract_address.unwrap();
 
-    // 4. Register the shard in the shard registry on the main shard
+    // * Register the shard in the shard registry on the main shard
     let tx_request = TransactionRequest::new()
         .to(contract_addr::SHARD_REGISTRY)
         .data(
@@ -214,14 +220,14 @@ async fn create_shard(network: &mut Network, wallet: &Wallet, child_shard_id: u6
 
     let tx = wallet.send_transaction(tx_request, None).await.unwrap();
     let hash = tx.tx_hash();
-    network.run_until_receipt(wallet, hash, 50).await;
+    network.run_until_receipt(wallet, hash, 100).await;
 
     let included_block = wallet.get_block_number().await.unwrap();
 
-    // 5. Finalize the block on the main shard and check each main shard node has
+    // * Finalize the block on the main shard and check each main shard node has
     // spawned a child shard node in response
     network
-        .run_until_block(wallet, included_block + 2, 50)
+        .run_until_block(wallet, included_block + 2, 200)
         .await;
 
     network
@@ -230,7 +236,7 @@ async fn create_shard(network: &mut Network, wallet: &Wallet, child_shard_id: u6
                 n.children.get(&child_shard_id).unwrap().nodes.len()
                     == n.nodes.len() + child_shard_nodes
             },
-            50,
+            200,
         )
         .await
         .unwrap();
@@ -253,7 +259,7 @@ async fn launch_shard(mut network: Network) {
         .children
         .get_mut(&child_shard_id)
         .unwrap()
-        .run_until_block(&shard_wallet, check_child_block + 2, 100)
+        .run_until_block(&shard_wallet, check_child_block + 2, 200)
         .await;
 }
 
