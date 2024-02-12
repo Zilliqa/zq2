@@ -17,7 +17,7 @@ ethers = "2.0.13"
 hex = "0.4.3"
 libsecp256k1 = "0.7.1"
 num-bigint = "0.4.4"
-num-integer = "0.1.45"
+num-integer = "0.1.46"
 primitive-types = { version = "0.12.2", features = ["serde"] }
 protobuf = { version = "3.3.0",  features = ["with-bytes"] }
 ripemd = "0.1.3"
