@@ -954,3 +954,41 @@ async fn priority_fees_tx(mut network: Network) {
     // doesn't time out trying to mine
     assert!(wait.is_ok());
 }
+
+#[zilliqa_macros::test]
+async fn pending_transaction_is_returned_by_get_transaction_by_hash(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Send a transaction.
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Check the transaction is returned with null values for the block.
+    let tx = wallet.get_transaction(hash).await.unwrap().unwrap();
+    assert_eq!(tx.block_hash, None);
+    assert_eq!(tx.block_number, None);
+
+    // Wait for the transaction to be mined.
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Check the transaction is returned with non-null values for the block.
+    let tx = wallet.get_transaction(hash).await.unwrap().unwrap();
+    assert!(tx.block_hash.is_some());
+    assert!(tx.block_number.is_some());
+}
