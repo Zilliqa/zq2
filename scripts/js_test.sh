@@ -66,7 +66,7 @@ npx hardhat run scripts/FundAccountsFromEth.ts
 echo "Running tests"
 
 # Run tests
-npx hardhat test ./test/scilla/HelloWorld.ts
+npx hardhat test
 
 retVal=$?
 pkill -INT zilliqa
