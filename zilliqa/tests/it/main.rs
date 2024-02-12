@@ -2,9 +2,10 @@ use ethers::providers::Middleware;
 mod consensus;
 mod eth;
 mod persistence;
+mod unreliable;
 mod web3;
 mod zil;
-use std::{env, ops::DerefMut};
+use std::{collections::HashSet, env, ops::DerefMut};
 
 use ethers::{
     solc::SHANGHAI_SOLC,
@@ -153,6 +154,9 @@ struct Network {
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
     // the borrow checker happy.
     nodes: Vec<TestNode>,
+    // We keep track of a list of disconnected nodes. These nodes will not recieve any messages until they are removed
+    // from this list.
+    disconnected: HashSet<usize>,
     /// A stream of messages from each node. The stream items are a tuple of (source, destination, message).
     /// If the destination is `None`, the message is a broadcast.
     receivers: Vec<BoxStream<'static, StreamMessage>>,
@@ -244,6 +248,7 @@ impl Network {
         Network {
             genesis_committee,
             nodes,
+            disconnected: HashSet::new(),
             is_main,
             shard_id,
             receivers,
@@ -670,14 +675,23 @@ impl Network {
             }
             AnyMessage::External(external_message) => {
                 let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = destination {
-                    vec![self
+                    let (index, node) = self
                         .nodes
                         .iter()
                         .enumerate()
                         .find(|(_, n)| n.peer_id == destination)
-                        .unwrap()]
+                        .unwrap();
+                    if self.disconnected.contains(&index) {
+                        vec![]
+                    } else {
+                        vec![(index, node)]
+                    }
                 } else {
-                    self.nodes.iter().enumerate().collect()
+                    self.nodes
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| !self.disconnected.contains(index))
+                        .collect()
                 };
                 for (index, node) in nodes.iter() {
                     let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
@@ -775,8 +789,34 @@ impl Network {
         .unwrap();
     }
 
+    pub fn disconnect_node(&mut self, index: usize) {
+        self.disconnected.insert(index);
+    }
+
+    pub fn connect_node(&mut self, index: usize) {
+        self.disconnected.remove(&index);
+    }
+
     pub fn random_index(&mut self) -> usize {
         self.rng.lock().unwrap().gen_range(0..self.nodes.len())
+    }
+
+    pub async fn wallet_of_node(
+        &mut self,
+        index: usize,
+    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+        let key = SigningKey::random(self.rng.lock().unwrap().deref_mut());
+        let wallet: LocalWallet = key.into();
+        let node = &self.nodes[index];
+        let client = LocalRpcClient {
+            id: Arc::new(AtomicU64::new(0)),
+            rpc_module: node.rpc_module.clone(),
+        };
+        let provider = Provider::new(client);
+
+        SignerMiddleware::new_with_provider_chain(provider, wallet)
+            .await
+            .unwrap()
     }
 
     /// Returns (index, TestNode)
