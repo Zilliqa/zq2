@@ -84,6 +84,8 @@ const BLOCKS_TREE: &[u8] = b"blocks_tree";
 // single keys stored in default tree in DB
 /// value: u64
 const LATEST_FINALIZED_VIEW: &[u8] = b"latest_finalized_view";
+/// The highest block number we have seen and stored. It is guaranteed that we have the block at this number in our
+/// block store.
 const HIGHEST_BLOCK_NUMBER: &[u8] = b"highest_block_number";
 const HIGH_QC: &[u8] = b"high_qc";
 
