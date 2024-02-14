@@ -5,9 +5,7 @@ use anyhow::Result;
 use clap::Parser;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use opentelemetry_sdk::runtime;
-use scilla::scilla_server_run::check_scilla_connected;
 use tokio::time::Duration;
-use tracing::*;
 use tracing_subscriber::EnvFilter;
 use zilliqa::{cfg::Config, crypto::SecretKey, p2p_node::P2pNode};
 
@@ -19,8 +17,6 @@ struct Args {
     config_file: PathBuf,
     #[clap(long, default_value = "false")]
     log_json: bool,
-    #[clap(long)]
-    no_scilla: bool,
 }
 
 #[tokio::main]
@@ -32,12 +28,6 @@ async fn main() -> Result<()> {
         builder.json().init();
     } else {
         builder.init();
-    }
-
-    if !args.no_scilla {
-        info!("Checking scilla server is running... if you don't want to do this, pass the arg --no-scilla");
-        info!("Refer to the scilla README for instructions on how to run the scilla server.");
-        check_scilla_connected()?;
     }
 
     let config = if args.config_file.exists() {

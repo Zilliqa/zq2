@@ -115,14 +115,14 @@ impl SignedTransaction {
         }
     }
 
-    pub fn nonce(&self) -> u64 {
+    pub fn nonce(&self) -> Option<u64> {
         match self {
-            SignedTransaction::Legacy { tx, .. } => tx.nonce,
-            SignedTransaction::Eip2930 { tx, .. } => tx.nonce,
-            SignedTransaction::Eip1559 { tx, .. } => tx.nonce,
+            SignedTransaction::Legacy { tx, .. } => Some(tx.nonce),
+            SignedTransaction::Eip2930 { tx, .. } => Some(tx.nonce),
+            SignedTransaction::Eip1559 { tx, .. } => Some(tx.nonce),
             // Zilliqa nonces are 1-indexed rather than zero indexed.
-            SignedTransaction::Zilliqa { tx, .. } => tx.nonce - 1,
-            SignedTransaction::Intershard { tx, .. } => tx.nonce,
+            SignedTransaction::Zilliqa { tx, .. } => Some(tx.nonce - 1),
+            SignedTransaction::Intershard { .. } => None,
         }
     }
 
@@ -291,14 +291,14 @@ impl Transaction {
         }
     }
 
-    pub fn nonce(&self) -> u64 {
+    pub fn nonce(&self) -> Option<u64> {
         match self {
-            Transaction::Legacy(TxLegacy { nonce, .. }) => *nonce,
-            Transaction::Eip2930(TxEip2930 { nonce, .. }) => *nonce,
-            Transaction::Eip1559(TxEip1559 { nonce, .. }) => *nonce,
+            Transaction::Legacy(TxLegacy { nonce, .. }) => Some(*nonce),
+            Transaction::Eip2930(TxEip2930 { nonce, .. }) => Some(*nonce),
+            Transaction::Eip1559(TxEip1559 { nonce, .. }) => Some(*nonce),
             // Zilliqa nonces are 1-indexed rather than zero indexed.
-            Transaction::Zilliqa(TxZilliqa { nonce, .. }) => *nonce - 1,
-            Transaction::Intershard(TxIntershard { nonce, .. }) => *nonce,
+            Transaction::Zilliqa(TxZilliqa { nonce, .. }) => Some(*nonce - 1),
+            Transaction::Intershard(TxIntershard { .. }) => None,
         }
     }
 
@@ -445,13 +445,16 @@ impl TxLegacy {
     }
 }
 
+/// Nonceless
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TxIntershard {
     pub chain_id: u64,
-    pub nonce: u64,
+    /// The bridge nonce alongside the source chain together guarantee hash uniqueness.
+    pub bridge_nonce: u64,
+    pub source_chain: u64,
     pub gas_price: u128,
     pub gas_limit: u64,
-    pub to_addr: Option<Address>, // do not support cross-shard contract deployments (yet)
+    pub to_addr: Option<Address>,
     // Amount intentionally missing: cannot send native amount cross-shard
     pub payload: Vec<u8>,
 }
@@ -459,7 +462,8 @@ pub struct TxIntershard {
 impl TxIntershard {
     fn encode_fields(&self, rlp: &mut RlpStream) {
         rlp.append(&self.chain_id)
-            .append(&self.nonce)
+            .append(&self.source_chain)
+            .append(&self.bridge_nonce)
             .append(&self.gas_price)
             .append(&self.gas_limit)
             .append(&self.to_addr)

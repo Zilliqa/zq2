@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashSet},
     fmt,
     fmt::{Display, Formatter},
     str::FromStr,
@@ -17,7 +17,7 @@ use crate::{
     consensus::Validator,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     time::SystemTime,
-    transaction::SignedTransaction,
+    transaction::{SignedTransaction, VerifiedTransaction},
 };
 
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
@@ -32,18 +32,36 @@ pub struct Proposal {
     pub agg: Option<AggregateQc>,
     pub committee: Committee,
     pub transactions: Vec<SignedTransaction>,
+    pub opaque_transactions: Vec<Hash>,
 }
 
 impl Proposal {
-    pub fn from_parts(block: Block, transactions: Vec<SignedTransaction>) -> Self {
+    pub fn from_parts(block: Block, transactions: Vec<VerifiedTransaction>) -> Self {
+        Self::from_parts_and_hashes(
+            block,
+            transactions.into_iter().map(|tx| (tx.tx, tx.hash)).unzip(),
+        )
+    }
+
+    pub fn from_parts_and_hashes(
+        block: Block,
+        transactions: (Vec<SignedTransaction>, Vec<Hash>),
+    ) -> Self {
+        let provided_tx_hashes = HashSet::<Hash>::from_iter(transactions.1);
         Proposal {
             header: block.header,
             qc: block.qc,
             agg: block.agg,
             committee: block.committee,
-            transactions,
+            transactions: transactions.0,
+            opaque_transactions: block
+                .transactions
+                .into_iter()
+                .filter(|hash| !provided_tx_hashes.contains(hash))
+                .collect(),
         }
     }
+
     pub fn into_parts(self) -> (Block, Vec<SignedTransaction>) {
         (
             Block {
@@ -55,6 +73,7 @@ impl Proposal {
                     .transactions
                     .iter()
                     .map(|txn| txn.calculate_hash())
+                    .chain(self.opaque_transactions)
                     .collect(),
             },
             self.transactions,
@@ -170,10 +189,11 @@ pub struct BlockBatchResponse {
 pub struct IntershardCall {
     pub source_address: H160,
     pub target_address: Option<H160>,
+    pub source_chain_id: u64,
+    pub bridge_nonce: u64,
+    pub calldata: Vec<u8>,
     pub gas_price: u128,
     pub gas_limit: u64,
-    pub calldata: Vec<u8>,
-    pub nonce: u64,
 }
 
 /// A message intended to be sent over the network as part of p2p communication.

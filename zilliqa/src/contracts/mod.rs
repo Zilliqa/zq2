@@ -91,8 +91,6 @@ pub mod intershard_bridge {
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
     pub static BRIDGE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("bridge").unwrap().clone());
-    pub static VALIDATE_CALL_NONCE: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("validateCallNonce").unwrap().clone());
     pub static RELAYED_EVT: Lazy<Event> =
         Lazy::new(|| CONTRACT.abi.event("Relayed").unwrap().clone());
 }
