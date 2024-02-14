@@ -88,10 +88,12 @@ impl BlockStore {
     }
 
     pub fn request_blocks(&mut self, peer: Option<PeerId>, number: u64) -> Result<()> {
-        // If the request is higher than our head, lower it to our head, as we don't store
-        // loose blocks
-        let number = std::cmp::min(number, self.db.get_highest_block_number().unwrap().unwrap());
-        let number = std::cmp::max(number, 1); // avoid requesting genesis unnceccessarily
+        let highest_number = self.db.get_highest_block_number().unwrap().unwrap();
+
+        // Clamp the requested block to between 1 (because we already know the genesis block at 0) and the current
+        // highest block number plus 1 (because we don't want to request blocks which don't form a chain with blocks
+        // we already have).
+        let number = number.clamp(1, highest_number + 1);
 
         trace!("Requesting blocks from {}", number);
 
