@@ -10,23 +10,19 @@ use std::{
 use tracing::*;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct NoncedTxIndex {
-    pub address: Address,
-    pub nonce: u64,
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct IntershardTxIndex {
-    pub source_shard: u64,
-    pub link_nonce: u64,
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum TxIndex {
     /// from_address, nonce (unique for that address)
     Nonced(Address, u64),
     /// source_shard, nonce (unique for the bridge from that shard)
     Intershard(u64, u64),
+}
+impl TxIndex {
+    fn next(&self) -> Option<TxIndex> {
+        match self {
+            TxIndex::Nonced(address, nonce) => Some(TxIndex::Nonced(*address, nonce + 1)),
+            _ => None,
+        }
+    }
 }
 
 trait MempoolIndex {
@@ -130,11 +126,8 @@ impl TransactionPool {
             };
 
             // If we've popped a nonced transaction, that may have made a subsequent one valid
-            if let TxIndex::Nonced(address, nonce) = tx_index {
-                if let Some(next_txn) = self.transactions.get(&TxIndex::Nonced(address, nonce + 1))
-                {
-                    self.ready.push(next_txn.into());
-                }
+            if let Some(next) = tx_index.next().and_then(|idx| self.transactions.get(&idx)) {
+                self.ready.push(next.into());
             }
 
             return Some(transaction);
@@ -171,7 +164,7 @@ impl TransactionPool {
             }
         }
 
-        // If this transaction ether has a nonce equal to the account's current nonce,
+        // If this transaction either has a nonce equal to the account's current nonce,
         // or no nonce at all (and is thus executable at any point),
         // then it is added to the ready heap.
         if txn.tx.nonce().is_none() || txn.tx.nonce().is_some_and(|n| n == account_nonce) {

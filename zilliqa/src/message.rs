@@ -36,28 +36,46 @@ pub struct Proposal {
 }
 
 impl Proposal {
-    pub fn from_parts(block: Block, transactions: Vec<VerifiedTransaction>) -> Self {
-        Self::from_parts_and_hashes(
+    /// Constructs a Proposal from a block and a vector of verified transactions.
+    /// ```Arguments```
+    ///
+    /// * `block`: the Block, including the header and the full list of transaction hashes
+    /// included in the block (and proposal)
+    ///
+    /// * `full_transactions`: the transactions whose full `Transaction` bodies will be
+    /// included in the proposal. The difference between `block.transactions` and
+    /// `full_transactions` make up the `opaque_transactions` (i.e. transactions only known
+    /// by their hash).
+    pub fn from_parts(block: Block, full_transactions: Vec<VerifiedTransaction>) -> Self {
+        Self::from_parts_with_hashes(
             block,
-            transactions.into_iter().map(|tx| (tx.tx, tx.hash)).unzip(),
+            full_transactions
+                .into_iter()
+                .map(|tx| (tx.tx, tx.hash))
+                .collect(),
         )
     }
 
-    pub fn from_parts_and_hashes(
+    /// Constructs a Proposal from a block and a vector of transactions alongside their hashes.
+    /// This is analogous to `Proposal::from_parts()`, except for taking pairs of
+    /// `(SignedTransaction, Hash)` instead of `VerifiedTransaction`s, to allow skipping
+    /// verification calculations when it isn't relevant.
+    pub fn from_parts_with_hashes(
         block: Block,
-        transactions: (Vec<SignedTransaction>, Vec<Hash>),
+        full_transactions: Vec<(SignedTransaction, Hash)>,
     ) -> Self {
-        let provided_tx_hashes = HashSet::<Hash>::from_iter(transactions.1);
+        let (tx_bodies, tx_hashes): (Vec<SignedTransaction>, HashSet<Hash>) =
+            full_transactions.into_iter().unzip();
         Proposal {
             header: block.header,
             qc: block.qc,
             agg: block.agg,
             committee: block.committee,
-            transactions: transactions.0,
+            transactions: tx_bodies,
             opaque_transactions: block
                 .transactions
                 .into_iter()
-                .filter(|hash| !provided_tx_hashes.contains(hash))
+                .filter(|hash| !tx_hashes.contains(hash))
                 .collect(),
         }
     }

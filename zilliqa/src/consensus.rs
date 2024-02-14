@@ -829,16 +829,12 @@ impl Consensus {
 
                     let transactions = self.get_txns_to_execute();
 
-                    let mut had_ixshd = false;
-
                     let mut applied_transactions: Vec<_> = transactions
                         .into_iter()
                         .filter_map(|tx| {
-                            if matches!(tx.tx, SignedTransaction::Intershard { .. }) {
-                                had_ixshd = true;
-                            }
-                            let result = self.apply_transaction(tx.clone(), parent_header);
-                            result.transpose().map(|r| r.map(|_| tx))
+                            self.apply_transaction(tx.clone(), parent_header)
+                                .transpose()
+                                .map(|r| r.map(|_| tx))
                         })
                         .collect::<Result<_>>()?;
                     let applied_transaction_hashes: Vec<_> =
@@ -1502,7 +1498,7 @@ impl Consensus {
                 let current_head = self.head_block();
 
                 self.proposal(
-                    Proposal::from_parts_and_hashes(
+                    Proposal::from_parts_with_hashes(
                         block,
                         transactions
                             .into_iter()
@@ -1510,7 +1506,7 @@ impl Consensus {
                                 let hash = tx.calculate_hash();
                                 (tx, hash)
                             })
-                            .unzip(),
+                            .collect(),
                     ),
                     true,
                 )?;
