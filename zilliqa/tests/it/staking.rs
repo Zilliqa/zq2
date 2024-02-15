@@ -41,19 +41,7 @@ async fn deposit_stake(
     // Transfer the new validator enough ZIL to stake.
     let tx = TransactionRequest::pay(reward_address, stake);
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
-    network
-        .run_until_async(
-            || async {
-                wallet
-                    .get_transaction_receipt(hash)
-                    .await
-                    .unwrap()
-                    .is_some()
-            },
-            50,
-        )
-        .await
-        .unwrap();
+    network.run_until_receipt(wallet, hash, 50).await;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
@@ -69,19 +57,7 @@ async fn deposit_stake(
                 .unwrap(),
         );
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
-    network
-        .run_until_async(
-            || async {
-                wallet
-                    .get_transaction_receipt(hash)
-                    .await
-                    .unwrap()
-                    .is_some()
-            },
-            50,
-        )
-        .await
-        .unwrap();
+    network.run_until_receipt(wallet, hash, 50).await;
 }
 
 async fn get_stakers(
@@ -108,13 +84,7 @@ async fn get_stakers(
 async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
     let wallet = network.random_wallet().await;
 
-    network
-        .run_until_async(
-            || async { wallet.get_block(1).await.unwrap().is_some() },
-            50,
-        )
-        .await
-        .unwrap();
+    network.run_until_block(&wallet, 1.into(), 50).await;
 
     check_miner_got_reward(&wallet, 1).await;
 }

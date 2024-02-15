@@ -2,14 +2,14 @@
 pragma solidity ^0.8.20;
 
 struct Staker {
-    // The index of this staker's `blsPubKey` in the `_stakers` array, plus 1. 0 is used for non-existing entries.
+    // The index of this staker's `blsPubKey` in the `_stakerKeys` array, plus 1. 0 is used for non-existing entries.
     uint256 keyIndex;
     uint256 balance;
     address rewardAddress;
 }
 
 contract Deposit {
-    bytes[] _stakers;
+    bytes[] _stakerKeys;
     mapping(bytes => Staker) _stakersMap;
     uint256 totalStake;
 
@@ -25,9 +25,9 @@ contract Deposit {
         _stakersMap[blsPubKey].rewardAddress = rewardAddress;
         uint256 keyIndex = _stakersMap[blsPubKey].keyIndex;
         if (keyIndex == 0) {
-            // The staker will be at index `_stakers.length`. We also need to add 1 to avoid the 0 sentinel value.
-            _stakersMap[blsPubKey].keyIndex = _stakers.length + 1;
-            _stakers.push(blsPubKey);
+            // The staker will be at index `_stakerKeys.length`. We also need to add 1 to avoid the 0 sentinel value.
+            _stakersMap[blsPubKey].keyIndex = _stakerKeys.length + 1;
+            _stakerKeys.push(blsPubKey);
         }
     }
 
@@ -41,9 +41,9 @@ contract Deposit {
         _stakersMap[blsPubKey].rewardAddress = rewardAddress;
         uint256 keyIndex = _stakersMap[blsPubKey].keyIndex;
         if (keyIndex == 0) {
-            // The staker will be at index `_stakers.length`. We also need to add 1 to avoid the 0 sentinel value.
-            _stakersMap[blsPubKey].keyIndex = _stakers.length + 1;
-            _stakers.push(blsPubKey);
+            // The staker will be at index `_stakerKeys.length`. We also need to add 1 to avoid the 0 sentinel value.
+            _stakersMap[blsPubKey].keyIndex = _stakerKeys.length + 1;
+            _stakerKeys.push(blsPubKey);
         }
     }
 
@@ -66,6 +66,6 @@ contract Deposit {
     }
 
     function getStakers() public view returns (bytes[] memory) {
-        return _stakers;
+        return _stakerKeys;
     }
 }
