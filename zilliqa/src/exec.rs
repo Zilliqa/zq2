@@ -883,7 +883,7 @@ impl State {
         value: U256,
     ) -> Result<u64> {
         if print_enabled {
-            debug!("estimating gas from: {:?} to: {:?}", from_addr, to_addr);
+            info!("estimating gas from: {:?} to: {:?}", from_addr, to_addr);
         }
 
         let gas_price = self.get_gas_price()?;
@@ -905,7 +905,7 @@ impl State {
         );
 
         if print_enabled {
-            debug!("finished contact gas estimation");
+            info!("finished contact gas estimation");
         }
 
         match result {
@@ -925,7 +925,7 @@ impl State {
 
                 let res = gas - result.remaining_gas + gas_price;
 
-                debug!(
+                info!(
                     "gas estimation: {} {} {} -> {}",
                     gas, result.remaining_gas, gas_price, res
                 );

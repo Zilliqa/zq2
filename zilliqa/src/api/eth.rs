@@ -104,7 +104,7 @@ fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("estimate_gas: params: {:?}", params);
+    info!("estimate_gas: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: EstimateGasParams = params.next()?;
     let block_number: BlockNumber = params.next().unwrap_or(BlockNumber::Latest);
@@ -118,6 +118,8 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.gas_price,
         call_params.value,
     )?;
+
+    info!("estimate_gas: return_value: {:?}", return_value);
 
     Ok(return_value.mul(2).to_hex())
 }
