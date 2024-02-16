@@ -212,6 +212,8 @@ impl State {
         let native_balance = self.get_native_balance(from_addr, false).unwrap();
         let target_balance = self.get_native_balance(to, false).unwrap();
 
+        info!("Funds at from and to addresses: {} and {}", native_balance, target_balance);
+
         // The first continuation in the stack is the tx itself
         continuation_stack.push(EvmProto::EvmCallArgs {
             address: to,
