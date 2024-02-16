@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use ethabi::Token;
+use ethabi::{ParamType, Token};
 use evm_ds::{
     evm::{backend::Backend, tracing::EventListener},
     evm_server_run::{
@@ -910,7 +910,43 @@ impl State {
                     let error_str =
                         format!("Estimate gas failed with error: {:?}", result.exit_reason);
                     warn!(error_str);
-                    return Err(anyhow!(error_str));
+
+                    // Try to decode revert message provided by EVM
+                    let input_type = [ParamType::String];
+                    let decoded_error = ethabi::decode(&input_type, &result.return_value);
+                    let generic_error = "execution reverted";
+
+                    // See: https://github.com/ethereum/go-ethereum/blob/9b9a1b677d894db951dc4714ea1a46a2e7b74ffc/internal/ethapi/api.go#L1026
+                    const REVERT_ERROR_CODE: i32 = 3;
+
+                    let generic_response = jsonrpsee::types::ErrorObjectOwned::owned(
+                        REVERT_ERROR_CODE,
+                        generic_error,
+                        Some(hex::encode(result.return_value)),
+                    );
+                    let Ok(vec) = decoded_error else {
+                        return Err(generic_response.into());
+                    };
+
+                    let Some(token) = vec.get(0) else {
+                        return Err(generic_response.into());
+                    };
+
+                    let Token::String(error_value) = token else {
+                        return Err(generic_response.into());
+                    };
+
+                    if error_value.is_empty() {
+                        return Err(generic_response.into());
+                    }
+
+                    let complex_err = format!("{}:{}", generic_error, error_value);
+                    let complex_response = jsonrpsee::types::ErrorObjectOwned::owned(
+                        REVERT_ERROR_CODE,
+                        &complex_err,
+                        generic_response.data(),
+                    );
+                    return Err(complex_response.into());
                 }
 
                 if result.remaining_gas > gas {

@@ -65,19 +65,28 @@ macro_rules! declare_module {
                     });
 
                     let result = result.map_err(|e| {
-                        if !e.to_string().starts_with("Txn Hash not Present") {
-                            tracing::error!(?e);
-                        }
+                        let error_cde = {
+                            if e.to_string().starts_with("execution reverted") {
+                                jsonrpsee::types::error::ErrorCode::ServerError(3).code()
+                            }
+                            else {
+                                jsonrpsee::types::error::ErrorCode::InternalError.code()
+                            }
+                        };
 
                         // If the error is already an `ErrorObjectOwned`, we can just return that. Otherwise, wrap it
                         // with an `InternalError` code.
                         match e.downcast::<jsonrpsee::types::ErrorObjectOwned>() {
                             Ok(e) => e,
-                            Err(e) => jsonrpsee::types::ErrorObject::owned(
-                                jsonrpsee::types::error::ErrorCode::InternalError.code(),
+                            Err(e) => {
+                                if !e.to_string().starts_with("Txn Hash not Present") {
+                                     tracing::error!(?e);
+                                }
+                                jsonrpsee::types::ErrorObject::owned(
+                                error_cde,
                                 e.to_string(),
                                 None as Option<String>,
-                            )
+                            )}
                         }
                     });
                     if let Err(err) = &result {
