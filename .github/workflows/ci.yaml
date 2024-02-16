@@ -30,7 +30,7 @@ jobs:
     - name: Switch to nightly
       run: rustup override set nightly-${{ steps.select-version.outputs.version }}
     - name: Install dependencies
-      run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential
+      run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev
     - uses: actions/checkout@v4
       with:
         submodules: recursive
