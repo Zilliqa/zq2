@@ -1,5 +1,6 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
+use std::ops::Mul;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{anyhow, Result};
@@ -118,7 +119,7 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.value,
     )?;
 
-    Ok(return_value.to_hex())
+    Ok(return_value.mul(2).to_hex())
 }
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
