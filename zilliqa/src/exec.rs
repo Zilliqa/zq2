@@ -594,23 +594,25 @@ impl State {
 
         let txn = txn.tx.into_transaction();
 
-        // fail early on nonce mismatch
         let mut acct = self.get_account(from_addr).unwrap();
 
-        // todo: this should be +1 but it is not.
-        let desired_account_nonce = acct.nonce;
+        // fail early on nonce mismatch
+        if let Some(tx_nonce) = txn.nonce() {
+            // todo: this should be +1 but it is not.
+            let desired_account_nonce = acct.nonce;
 
-        if desired_account_nonce != txn.nonce() {
-            let error_str = format!(
+            if desired_account_nonce != tx_nonce {
+                let error_str = format!(
                 "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {} from account {}",
                 desired_account_nonce,
-                txn.nonce(),
+                tx_nonce,
                 hash,
                 from_addr
             );
-            warn!(error_str);
-            return Err(anyhow!(error_str));
-        }
+                warn!(error_str);
+                return Err(anyhow!(error_str));
+            }
+        };
 
         let gas_price = self.get_gas_price()?;
 
@@ -654,9 +656,12 @@ impl State {
                 self.apply_delta(result.apply)?;
 
                 // Note that success can be false, the tx won't apply changes, but the nonce increases
-                // and we get the return value (which will indicate the error)
-                acct.nonce = acct.nonce.checked_add(1).unwrap();
-                self.save_account(from_addr, acct)?;
+                // and we get the return value (which will indicate the error).
+                // Except nonceless txs (such as intershard calls) which don't increment the nonce.
+                if txn.nonce().is_some() {
+                    acct.nonce = acct.nonce.checked_add(1).unwrap();
+                    self.save_account(from_addr, acct)?;
+                }
 
                 Ok(TransactionApplyResult {
                     success,
