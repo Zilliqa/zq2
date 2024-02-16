@@ -23,7 +23,9 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let builder = tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).with_line_number(true);
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_line_number(true);
     if args.log_json {
         builder.json().init();
     } else {
