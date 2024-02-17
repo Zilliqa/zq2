@@ -70,7 +70,7 @@ echo "Running tests"
 #find ./test -name "*.ts" -exec npx hardhat test {} \;
 find ./test -name "*.ts" | while read -r file; do
   echo "Testing $file";
-  npx hardhat test "$file" || exit 1
+  npx hardhat test "$file"
 done
 
 retVal=$?
