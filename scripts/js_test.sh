@@ -66,11 +66,9 @@ npx hardhat run scripts/FundAccountsFromEth.ts
 echo "Running tests"
 
 # Run tests
-#for npx hardhat test
-#find ./test -name "*.ts" -exec npx hardhat test {} \;
 find ./test -name "*.ts" | while read -r file; do
   echo "Testing $file";
-  npx hardhat test "$file"
+  npx hardhat test "$file" || exit 1
 done
 
 retVal=$?

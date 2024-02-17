@@ -213,7 +213,10 @@ impl State {
         let target_balance = self.get_native_balance(to, false).unwrap();
 
         if print_enabled {
-            info!("Funds at from and to addresses: {} and {}", native_balance, target_balance);
+            info!(
+                "Funds at from and to addresses: {} and {}",
+                native_balance, target_balance
+            );
         }
 
         // The first continuation in the stack is the tx itself

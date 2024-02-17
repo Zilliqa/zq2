@@ -1,7 +1,9 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
-use std::ops::Mul;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+    ops::Mul,
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use anyhow::{anyhow, Result};
 use itertools::{Either, Itertools};
