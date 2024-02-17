@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashSet},
     fmt,
     fmt::{Display, Formatter},
     str::FromStr,
@@ -17,7 +17,7 @@ use crate::{
     consensus::Validator,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     time::SystemTime,
-    transaction::SignedTransaction,
+    transaction::{SignedTransaction, VerifiedTransaction},
 };
 
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
@@ -32,18 +32,54 @@ pub struct Proposal {
     pub agg: Option<AggregateQc>,
     pub committee: Committee,
     pub transactions: Vec<SignedTransaction>,
+    pub opaque_transactions: Vec<Hash>,
 }
 
 impl Proposal {
-    pub fn from_parts(block: Block, transactions: Vec<SignedTransaction>) -> Self {
+    /// Constructs a Proposal from a block and a vector of verified transactions.
+    /// ```Arguments```
+    ///
+    /// * `block`: the Block, including the header and the full list of transaction hashes
+    /// included in the block (and proposal)
+    ///
+    /// * `full_transactions`: the transactions whose full `Transaction` bodies will be
+    /// included in the proposal. The difference between `block.transactions` and
+    /// `full_transactions` make up the `opaque_transactions` (i.e. transactions only known
+    /// by their hash).
+    pub fn from_parts(block: Block, full_transactions: Vec<VerifiedTransaction>) -> Self {
+        Self::from_parts_with_hashes(
+            block,
+            full_transactions
+                .into_iter()
+                .map(|tx| (tx.tx, tx.hash))
+                .collect(),
+        )
+    }
+
+    /// Constructs a Proposal from a block and a vector of transactions alongside their hashes.
+    /// This is analogous to `Proposal::from_parts()`, except for taking pairs of
+    /// `(SignedTransaction, Hash)` instead of `VerifiedTransaction`s, to allow skipping
+    /// verification calculations when it isn't relevant.
+    pub fn from_parts_with_hashes(
+        block: Block,
+        full_transactions: Vec<(SignedTransaction, Hash)>,
+    ) -> Self {
+        let (tx_bodies, tx_hashes): (Vec<SignedTransaction>, HashSet<Hash>) =
+            full_transactions.into_iter().unzip();
         Proposal {
             header: block.header,
             qc: block.qc,
             agg: block.agg,
             committee: block.committee,
-            transactions,
+            transactions: tx_bodies,
+            opaque_transactions: block
+                .transactions
+                .into_iter()
+                .filter(|hash| !tx_hashes.contains(hash))
+                .collect(),
         }
     }
+
     pub fn into_parts(self) -> (Block, Vec<SignedTransaction>) {
         (
             Block {
@@ -55,6 +91,7 @@ impl Proposal {
                     .transactions
                     .iter()
                     .map(|txn| txn.calculate_hash())
+                    .chain(self.opaque_transactions)
                     .collect(),
             },
             self.transactions,
@@ -170,10 +207,11 @@ pub struct BlockBatchResponse {
 pub struct IntershardCall {
     pub source_address: H160,
     pub target_address: Option<H160>,
+    pub source_chain_id: u64,
+    pub bridge_nonce: u64,
+    pub calldata: Vec<u8>,
     pub gas_price: u128,
     pub gas_limit: u64,
-    pub calldata: Vec<u8>,
-    pub nonce: u64,
 }
 
 /// A message intended to be sent over the network as part of p2p communication.

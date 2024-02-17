@@ -4,35 +4,27 @@ pragma solidity ^0.8.4;
 contract IntershardBridge {
     event Relayed(
         uint64 indexed targetChainId,
-        address source,
-        bool contract_creation,
-        address target,
+        address indexed source,
+        bool contractCreation, // the order of this and target is important for ease of parsing
+        address indexed target,
+        uint64 sourceChainId,
+        uint64 bridgeNonce,
         bytes call,
         uint64 gasLimit,
-        uint128 gasPrice,
-        uint64 indexed nonce
+        uint128 gasPrice
     );
 
-    // shard_id => nonce => is_dispatched
-    mapping(uint64 => mapping(uint64 => bool)) public dispatched;
-    uint64 public nonce;
+    uint64 nonce; // internal value used to guarantee transaction hash uniqueness
 
     function bridge(
         uint64 targetShard,
-        bool contract_creation,
-        address target,
+        bool contractCreation,
+        address target, // not used if this is contractCreation = true
         bytes calldata call,
         uint64 gasLimit,
         uint128 gasPrice
-    ) external returns (uint) {
-        emit Relayed(targetShard, msg.sender, contract_creation, target, call, gasLimit, gasPrice, nonce);
-        return nonce++;
-    }
-
-    function validateCallNonce(uint64 sourceShardId, uint64 callNonce) internal {
-        if (dispatched[sourceShardId][callNonce]) {
-            revert("Nonce already used.");
-        }
-        dispatched[sourceShardId][callNonce] = true;
+    ) external {
+        ++nonce;
+        emit Relayed(targetShard, msg.sender, contractCreation, target, uint64(block.chainid), nonce, call, gasLimit, gasPrice);
     }
 }
