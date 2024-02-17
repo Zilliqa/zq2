@@ -123,7 +123,7 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     info!("estimate_gas: return_value: {:?}", return_value);
 
-    Ok(return_value.mul(100000).to_hex())
+    Ok(return_value.mul(1000000).to_hex())
 }
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
