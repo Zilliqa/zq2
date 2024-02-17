@@ -259,5 +259,5 @@ pub fn default_gas() -> u64 {
 }
 
 pub fn default_gas_price() -> u64 {
-    1000000
+    1
 }
