@@ -103,10 +103,11 @@ pub fn get_cross_shard_messages(
                     } else {
                         Some(values.next().unwrap().into_address().unwrap())
                     },
+                    source_chain_id: values.next().unwrap().into_uint().unwrap().as_u64(),
+                    bridge_nonce: values.next().unwrap().into_uint().unwrap().as_u64(),
                     calldata: values.next().unwrap().into_bytes().unwrap(),
                     gas_limit: values.next().unwrap().into_uint().unwrap().as_u64(),
                     gas_price: values.next().unwrap().into_uint().unwrap().as_u128(),
-                    nonce: values.next().unwrap().into_uint().unwrap().as_u64(),
                 },
             ))
         })
