@@ -66,6 +66,8 @@ enum AnyMessage {
     Internal(u64, u64, InternalMessage),
 }
 
+type Wallet = SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>;
+
 type StreamMessage = (PeerId, Option<PeerId>, AnyMessage);
 
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
@@ -742,7 +744,7 @@ impl Network {
 
     pub async fn run_until_receipt(
         &mut self,
-        wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+        wallet: &Wallet,
         hash: H256,
         timeout: usize,
     ) -> TransactionReceipt {
@@ -761,12 +763,7 @@ impl Network {
         wallet.get_transaction_receipt(hash).await.unwrap().unwrap()
     }
 
-    pub async fn run_until_block(
-        &mut self,
-        wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-        target_block: U64,
-        timeout: usize,
-    ) {
+    pub async fn run_until_block(&mut self, wallet: &Wallet, target_block: U64, timeout: usize) {
         self.run_until_async(
             || async { wallet.get_block_number().await.unwrap() >= target_block },
             timeout,
@@ -800,10 +797,7 @@ impl Network {
         self.nodes[index].inner.lock().unwrap()
     }
 
-    pub async fn wallet_from_key(
-        &mut self,
-        key: SigningKey,
-    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+    pub async fn wallet_from_key(&mut self, key: SigningKey) -> Wallet {
         let wallet: LocalWallet = key.into();
         let node = self
             .nodes
@@ -821,15 +815,11 @@ impl Network {
             .unwrap()
     }
 
-    pub async fn genesis_wallet(
-        &mut self,
-    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+    pub async fn genesis_wallet(&mut self) -> Wallet {
         self.wallet_from_key(self.genesis_key.clone()).await
     }
 
-    pub async fn random_wallet(
-        &mut self,
-    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+    pub async fn random_wallet(&mut self) -> Wallet {
         let key = SigningKey::random(self.rng.lock().unwrap().deref_mut());
         self.wallet_from_key(key).await
     }
@@ -936,7 +926,7 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
 async fn deploy_contract(
     path: &str,
     contract: &str,
-    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+    wallet: &Wallet,
     network: &mut Network,
 ) -> (H256, Contract) {
     let (abi, bytecode) = compile_contract(path, contract);
