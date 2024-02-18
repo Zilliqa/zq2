@@ -1,6 +1,9 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+    ops::Mul,
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use anyhow::{anyhow, Result};
 use itertools::{Either, Itertools};
@@ -103,7 +106,7 @@ fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("estimate_gas: params: {:?}", params);
+    info!("estimate_gas: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: EstimateGasParams = params.next()?;
     let block_number: BlockNumber = params.next().unwrap_or(BlockNumber::Latest);
@@ -118,7 +121,9 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.value,
     )?;
 
-    Ok(return_value.to_hex())
+    info!("estimate_gas: return_value: {:?}", return_value);
+
+    Ok(return_value.mul(1000000).to_hex())
 }
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {

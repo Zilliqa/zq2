@@ -212,6 +212,13 @@ impl State {
         let native_balance = self.get_native_balance(from_addr, false).unwrap();
         let target_balance = self.get_native_balance(to, false).unwrap();
 
+        if print_enabled {
+            info!(
+                "Funds at from and to addresses: {} and {}",
+                native_balance, target_balance
+            );
+        }
+
         // The first continuation in the stack is the tx itself
         continuation_stack.push(EvmProto::EvmCallArgs {
             address: to,
@@ -884,7 +891,7 @@ impl State {
         value: U256,
     ) -> Result<u64> {
         if print_enabled {
-            debug!("estimating gas from: {:?} to: {:?}", from_addr, to_addr);
+            info!("estimating gas from: {:?} to: {:?}", from_addr, to_addr);
         }
 
         let gas_price = self.get_gas_price()?;
@@ -906,7 +913,7 @@ impl State {
         );
 
         if print_enabled {
-            debug!("finished contact gas estimation");
+            info!("finished contact gas estimation");
         }
 
         match result {
@@ -926,7 +933,7 @@ impl State {
 
                 let res = gas - result.remaining_gas + gas_price;
 
-                debug!(
+                info!(
                     "gas estimation: {} {} {} -> {}",
                     gas, result.remaining_gas, gas_price, res
                 );

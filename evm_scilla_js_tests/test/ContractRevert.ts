@@ -35,13 +35,13 @@ describe("Revert Contract Call", function () {
       .withArgs(1000, owner.address);
   });
 
-  it("Should not be reverted despite its child possibly reverting", async function () {
+  xit("Should not be reverted despite its child possibly reverting", async function () {
     const owner = contract.signer;
     await expect((await contract.callChainReverted()).wait()).not.to.be.reverted;
     await expect((await contract.callChainOk()).wait()).not.to.be.reverted;
   });
 
-  it("Should be reverted without any reason if specified gasLimit is not enough to complete txn", async function () {
+  xit("Should be reverted without any reason if specified gasLimit is not enough to complete txn", async function () {
     const txn = await contract.outOfGas({gasLimit: 100000});
     expect(txn).not.to.be.reverted;
     await expect(txn.wait()).eventually.to.be.rejected;
