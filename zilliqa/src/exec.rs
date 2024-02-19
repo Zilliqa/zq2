@@ -20,6 +20,7 @@ use scilla::scilla_server_run::{calculate_contract_address_scilla, run_scilla_im
 use serde_json::Value;
 use tracing::*;
 
+use crate::eth_helpers::extract_revert_msg;
 use crate::{
     contracts,
     evm_backend::EvmBackend,
@@ -911,42 +912,18 @@ impl State {
                         format!("Estimate gas failed with error: {:?}", result.exit_reason);
                     warn!(error_str);
 
-                    // Try to decode revert message provided by EVM
-                    let input_type = [ParamType::String];
-                    let decoded_error = ethabi::decode(&input_type, &result.return_value);
-                    let generic_error = "execution reverted";
+                    let decoded_revert_msg = extract_revert_msg(&result.return_value);
 
                     // See: https://github.com/ethereum/go-ethereum/blob/9b9a1b677d894db951dc4714ea1a46a2e7b74ffc/internal/ethapi/api.go#L1026
                     const REVERT_ERROR_CODE: i32 = 3;
 
-                    let generic_response = jsonrpsee::types::ErrorObjectOwned::owned(
+                    let response = jsonrpsee::types::ErrorObjectOwned::owned(
                         REVERT_ERROR_CODE,
-                        generic_error,
+                        decoded_revert_msg,
                         Some(hex::encode(result.return_value)),
                     );
-                    let Ok(vec) = decoded_error else {
-                        return Err(generic_response.into());
-                    };
 
-                    let Some(token) = vec.get(0) else {
-                        return Err(generic_response.into());
-                    };
-
-                    let Token::String(error_value) = token else {
-                        return Err(generic_response.into());
-                    };
-
-                    if error_value.is_empty() {
-                        return Err(generic_response.into());
-                    }
-
-                    let complex_err = format!("{}:{}", generic_error, error_value);
-                    let complex_response = jsonrpsee::types::ErrorObjectOwned::owned(
-                        REVERT_ERROR_CODE,
-                        &complex_err,
-                        generic_response.data(),
-                    );
-                    return Err(complex_response.into());
+                    return Err(response.into());
                 }
 
                 if result.remaining_gas > gas {

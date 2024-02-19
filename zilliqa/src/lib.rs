@@ -6,6 +6,7 @@ pub mod consensus;
 pub mod contracts;
 pub mod crypto;
 mod db;
+mod eth_helpers;
 mod evm_backend;
 mod exec;
 mod health;
