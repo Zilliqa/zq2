@@ -569,8 +569,6 @@ impl Consensus {
                 );
             }
 
-            self.save_highest_view(block.hash(), block.number(), proposal_view)?;
-
             if !block.committee.iter().any(|v| v.peer_id == self.peer_id()) {
                 trace!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
@@ -1831,7 +1829,6 @@ impl Consensus {
                 .map(|tx_hash| self.get_transaction_by_hash(*tx_hash).unwrap().unwrap().tx)
                 .collect();
             self.execute_block(&block_pointer, transactions)?;
-            self.db.put_highest_block_number(block_pointer.number())?;
         }
 
         Ok(())
@@ -1899,6 +1896,8 @@ impl Consensus {
         // overwrite the mapping of block height to block, which there should only be one of.
         // for example, this HAS to be after the deal with fork call
         self.add_block(block.clone())?;
+
+        self.save_highest_view(block.hash(), block.number(), block.view())?;
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(
