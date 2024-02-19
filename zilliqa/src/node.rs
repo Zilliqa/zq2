@@ -219,7 +219,8 @@ impl Node {
         let tx = SignedTransaction::Intershard {
             tx: TxIntershard {
                 chain_id: self.config.eth_chain_id,
-                nonce: intershard_call.nonce,
+                bridge_nonce: intershard_call.bridge_nonce,
+                source_chain: intershard_call.source_chain_id,
                 gas_price: intershard_call.gas_price,
                 gas_limit: intershard_call.gas_limit,
                 to_addr: intershard_call.target_address,
@@ -491,9 +492,11 @@ impl Node {
         Ok(())
     }
 
-    // Convenience function to convert a block to a proposal (add full txs)
+    /// Convenience function to convert a block to a proposal (add full txs)
+    /// NOTE: Includes intershard transactions. Should only be used for syncing history,
+    /// not for consensus messages regarding new blocks.
     fn block_to_proposal(&self, block: Block) -> Proposal {
-        let txs: Vec<SignedTransaction> = block
+        let txs: Vec<_> = block
             .transactions
             .iter()
             .map(|tx_hash| {
@@ -501,9 +504,8 @@ impl Node {
                     .get_transaction_by_hash(*tx_hash)
                     .unwrap()
                     .unwrap()
-                    .tx
             })
-            .collect::<Vec<_>>();
+            .collect();
 
         Proposal::from_parts(block, txs)
     }
