@@ -21,11 +21,11 @@ pub(crate) fn extract_revert_msg(encoded: &[u8]) -> String {
     let Ok(vec) = (match prefix {
         REVERT_SELECTOR => {
             let input_type = [ParamType::String];
-            ethabi::decode(&input_type, &payload)
+            ethabi::decode(&input_type, payload)
         }
         PANIC_SELECTOR => {
             let input_type = [ParamType::Uint(256)];
-            ethabi::decode(&input_type, &payload)
+            ethabi::decode(&input_type, payload)
         }
         _ => {
             return generic_error;
@@ -34,17 +34,17 @@ pub(crate) fn extract_revert_msg(encoded: &[u8]) -> String {
         return generic_error;
     };
 
-    let Some(token) = vec.get(0) else {
+    let Some(token) = vec.first() else {
         return generic_error;
     };
 
-    return match token {
+    match token {
         Token::String(value) => generic_error + ": " + value,
         Token::Uint(value) => {
             format!("{}: panic due to: {}", generic_error, value)
         }
         _ => generic_error,
-    };
+    }
 }
 
 #[cfg(test)]
