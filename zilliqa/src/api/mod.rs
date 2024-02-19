@@ -65,15 +65,6 @@ macro_rules! declare_module {
                     });
 
                     let result = result.map_err(|e| {
-                        let error_cde = {
-                            if e.to_string().starts_with("execution reverted") {
-                                jsonrpsee::types::error::ErrorCode::ServerError(3).code()
-                            }
-                            else {
-                                jsonrpsee::types::error::ErrorCode::InternalError.code()
-                            }
-                        };
-
                         // If the error is already an `ErrorObjectOwned`, we can just return that. Otherwise, wrap it
                         // with an `InternalError` code.
                         match e.downcast::<jsonrpsee::types::ErrorObjectOwned>() {
