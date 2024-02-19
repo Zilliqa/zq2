@@ -13,9 +13,12 @@ pub(crate) fn extract_revert_msg(encoded: &[u8]) -> String {
     if encoded.len() < REVERT_SELECTOR.len() + 1 {
         return generic_error;
     }
-    let payload = encoded[4..];
+    // It is safe since we check the size above
+    let prefix: [u8; 4] = unsafe { *encoded.as_ptr().cast::<[u8; 4]>() };
 
-    let Some(vec) = (match encoded[0..4] {
+    let payload = &encoded[4..];
+
+    let Ok(vec) = (match prefix {
         REVERT_SELECTOR => {
             let input_type = [ParamType::String];
             ethabi::decode(&input_type, &payload)
@@ -38,8 +41,28 @@ pub(crate) fn extract_revert_msg(encoded: &[u8]) -> String {
     return match token {
         Token::String(value) => generic_error + ": " + value,
         Token::Uint(value) => {
-            format!("{}: Panic due to: {}", generic_error, value)
+            format!("{}: panic due to: {}", generic_error, value)
         }
         _ => generic_error,
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::eth_helpers::extract_revert_msg;
+
+    #[test]
+    fn revert() {
+        // Based on https://github.com/ethereum/go-ethereum/blob/master/accounts/abi/abi_test.go#L1187
+        let cases = [
+            ("", "execution reverted"),
+            ("08c379a1", "execution reverted"),
+            ("08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000d72657665727420726561736f6e00000000000000000000000000000000000000", "execution reverted: revert reason"),
+            ("4e487b710000000000000000000000000000000000000000000000000000000000000000", "execution reverted: panic due to: 0"),
+        ];
+        for (input, expected) in cases {
+            let as_bytes = hex::decode(input).unwrap();
+            assert_eq!(extract_revert_msg(&as_bytes), expected.to_string());
+        }
+    }
 }

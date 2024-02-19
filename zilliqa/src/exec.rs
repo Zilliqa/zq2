@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use ethabi::{ParamType, Token};
+use ethabi::Token;
 use evm_ds::{
     evm::{backend::Backend, tracing::EventListener},
     evm_server_run::{
@@ -920,7 +920,7 @@ impl State {
                     let response = jsonrpsee::types::ErrorObjectOwned::owned(
                         REVERT_ERROR_CODE,
                         decoded_revert_msg,
-                        Some(hex::encode(result.return_value)),
+                        Some("0x".to_string() + &hex::encode(result.return_value)),
                     );
 
                     return Err(response.into());
