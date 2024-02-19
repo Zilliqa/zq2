@@ -74,7 +74,7 @@ macro_rules! declare_module {
                                      tracing::error!(?e);
                                 }
                                 jsonrpsee::types::ErrorObject::owned(
-                                error_cde,
+                                jsonrpsee::types::error::ErrorCode::InternalError.code(),
                                 e.to_string(),
                                 None as Option<String>,
                             )}
