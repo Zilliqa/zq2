@@ -13,23 +13,17 @@ pub(crate) fn extract_revert_msg(encoded: &[u8]) -> String {
     if encoded.len() < REVERT_SELECTOR.len() + 1 {
         return generic_error;
     }
-    // It is safe since we check the size above
-    let prefix: [u8; 4] = unsafe { *encoded.as_ptr().cast::<[u8; 4]>() };
 
     let payload = &encoded[4..];
 
-    let Ok(vec) = (match prefix {
-        REVERT_SELECTOR => {
-            let input_type = [ParamType::String];
-            ethabi::decode(&input_type, payload)
-        }
-        PANIC_SELECTOR => {
-            let input_type = [ParamType::Uint(256)];
-            ethabi::decode(&input_type, payload)
-        }
-        _ => {
-            return generic_error;
-        }
+    let Ok(vec) = (if encoded.starts_with(&REVERT_SELECTOR) {
+        let input_type = [ParamType::String];
+        ethabi::decode(&input_type, payload)
+    } else if encoded.starts_with(&PANIC_SELECTOR) {
+        let input_type = [ParamType::Uint(256)];
+        ethabi::decode(&input_type, payload)
+    } else {
+        return generic_error;
     }) else {
         return generic_error;
     };
