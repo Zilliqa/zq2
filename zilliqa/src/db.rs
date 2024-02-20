@@ -55,6 +55,16 @@ macro_rules! get_and_insert_methods {
                         .transpose()?
                 )
             }
+
+            #[allow(dead_code)]
+            pub fn [<insert_ $name _batch>](&self, items: &[($key, $val)]) -> Result<()> {
+                let mut batch = sled::Batch::default();
+                for (k, v) in items {
+                    batch.insert(k.as_bytes(), bincode::serialize(&v)?);
+                }
+                self.$name.apply_batch(batch)?;
+                Ok(())
+            }
         }
     };
 }
