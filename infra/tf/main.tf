@@ -13,36 +13,43 @@ terraform {
       version = ">= 2.23.0"
     }
     kubectl = {
-      source = "gavinbunney/kubectl"
+      source  = "gavinbunney/kubectl"
       version = ">= 1.14.0"
     }
   }
 }
 
 variable "project_id" {
-  type = string
+  type     = string
   nullable = false
 }
 
 variable "eth_chain_id" {
-  type = number
+  type     = number
   nullable = false
 }
 
 variable "subdomain" {
-  type = string
+  type     = string
   nullable = false
 }
 
 variable "network_name" {
-  type = string
+  type     = string
   nullable = false
+}
+
+variable "labels" {
+  type        = map(string)
+  description = "A single-level map/object with key value pairs of metadata labels to apply to the GCP resources. All keys should use underscores and values should use hyphens. All values must be wrapped in quotes."
+  nullable    = true
+  default     = {}
 }
 
 provider "google" {
   project = var.project_id
-  region = "europe-west2"
-  zone = "europe-west2-a"
+  region  = "europe-west2"
+  zone    = "europe-west2-a"
 }
 
 resource "google_storage_bucket" "binaries" {
@@ -53,6 +60,7 @@ resource "google_storage_bucket" "binaries" {
 
 locals {
   binary_location = "${path.module}/../../target/x86_64-unknown-linux-gnu/release/zilliqa"
+  labels          = merge(var.labels, { "zq2-network" = var.network_name })
 }
 
 resource "null_resource" "build_binary" {
@@ -61,16 +69,16 @@ resource "null_resource" "build_binary" {
   }
 
   provisioner "local-exec" {
-    command = "cross build --target x86_64-unknown-linux-gnu --profile release"
+    command     = "cross build --target x86_64-unknown-linux-gnu --profile release"
     working_dir = "${path.module}/../.."
   }
 }
 
 resource "google_storage_bucket_object" "binary" {
-  depends_on = [ null_resource.build_binary ]
-  name   = "zq2-binary"
-  source = local.binary_location
-  bucket = google_storage_bucket.binaries.name
+  depends_on = [null_resource.build_binary]
+  name       = "zq2-binary"
+  source     = local.binary_location
+  bucket     = google_storage_bucket.binaries.name
 }
 
 resource "google_compute_network" "this" {
@@ -163,7 +171,7 @@ resource "random_id" "genesis_key" {
 }
 
 data "external" "genesis_key_converted" {
-  program = ["cargo", "run", "--bin", "convert-key"]
+  program     = ["cargo", "run", "--bin", "convert-key"]
   working_dir = "${path.module}/../.."
   query = {
     secret_key = random_id.genesis_key.hex
@@ -175,7 +183,7 @@ resource "random_id" "bootstrap_key" {
 }
 
 data "external" "bootstrap_key_converted" {
-  program = ["cargo", "run", "--bin", "convert-key"]
+  program     = ["cargo", "run", "--bin", "convert-key"]
   working_dir = "${path.module}/../.."
   query = {
     secret_key = random_id.bootstrap_key.hex
@@ -184,8 +192,8 @@ data "external" "bootstrap_key_converted" {
 
 locals {
   bootstrap_public_key = data.external.bootstrap_key_converted.result.public_key
-  bootstrap_peer_id = data.external.bootstrap_key_converted.result.peer_id
-  genesis_address = data.external.genesis_key_converted.result.address
+  bootstrap_peer_id    = data.external.bootstrap_key_converted.result.peer_id
+  genesis_address      = data.external.genesis_key_converted.result.address
 }
 
 module "bootstrap_node" {
@@ -210,6 +218,7 @@ module "bootstrap_node" {
   EOT
   secret_key            = random_id.bootstrap_key.hex
   zq_network_name       = var.network_name
+  labels                = local.labels
 }
 
 resource "random_id" "secret_key" {
@@ -219,7 +228,7 @@ resource "random_id" "secret_key" {
 
 module "node" {
   source = "./modules/node"
-  count = 3
+  count  = 3
 
   name                  = "zq2-node-${count.index}"
   service_account_email = google_service_account.node.email
@@ -239,8 +248,8 @@ module "node" {
   consensus.genesis_committee = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}"] ]
   consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
   EOT
-  secret_key = random_id.secret_key[count.index].hex
-  zq_network_name = var.network_name
+  secret_key            = random_id.secret_key[count.index].hex
+  zq_network_name       = var.network_name
 }
 
 resource "google_project_service" "osconfig" {
