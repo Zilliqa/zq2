@@ -20,6 +20,7 @@ use scilla::scilla_server_run::{calculate_contract_address_scilla, run_scilla_im
 use serde_json::Value;
 use tracing::*;
 
+use crate::eth_helpers::extract_revert_msg;
 use crate::{
     contracts,
     evm_backend::EvmBackend,
@@ -915,7 +916,19 @@ impl State {
                     let error_str =
                         format!("Estimate gas failed with error: {:?}", result.exit_reason);
                     warn!(error_str);
-                    return Err(anyhow!(error_str));
+
+                    let decoded_revert_msg = extract_revert_msg(&result.return_value);
+
+                    // See: https://github.com/ethereum/go-ethereum/blob/9b9a1b677d894db951dc4714ea1a46a2e7b74ffc/internal/ethapi/api.go#L1026
+                    const REVERT_ERROR_CODE: i32 = 3;
+
+                    let response = jsonrpsee::types::ErrorObjectOwned::owned(
+                        REVERT_ERROR_CODE,
+                        decoded_revert_msg,
+                        Some("0x".to_string() + &hex::encode(result.return_value)),
+                    );
+
+                    return Err(response.into());
                 }
 
                 if result.remaining_gas > gas {

@@ -22,6 +22,7 @@ describe("Create2 instruction #parallel", function () {
     const addrDerived = await contract.getAddress(byteCode, SALT);
 
     const deployResult = await contract.deploy(SALT, {gasLimit: 25000000});
+    await deployResult.wait();
 
     // Using the address we calculated, point at the deployed contract
     const deployedContract = new web3.eth.Contract(
