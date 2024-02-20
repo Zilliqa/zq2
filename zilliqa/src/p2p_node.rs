@@ -244,77 +244,81 @@ impl P2pNode {
 
         loop {
             select! {
-                event = self.swarm.next() => match event.expect("swarm stream should be infinite") {
-                    SwarmEvent::NewListenAddr { address, .. } => {
-                        info!(%address, "started listening");
-                    }
-                    SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
-                        for (peer_id, addr) in list {
-                            info!(%peer_id, %addr, "discovered peer via mDNS");
-                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
-                            self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                event = self.swarm.next() => {
+                    let event = event.expect("swarm stream should be infinite");
+                    debug!(?event, "swarm event");
+                    match event {
+                        SwarmEvent::NewListenAddr { address, .. } => {
+                            info!(%address, "started listening");
                         }
-                    }
-                    SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
-                        for (peer_id, addr) in list {
-                            self.swarm.behaviour_mut().kademlia.remove_address(&peer_id, &addr);
-                        }
-                    }
-                    SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id })) => {
-                        for addr in listen_addrs {
-                            // If the node is advertising a loopback address, ignore it.
-                            let is_loopback = addr.iter().any(|p| match p {
-                                Protocol::Ip4(addr) => addr.is_loopback(),
-                                Protocol::Ip6(addr) => addr.is_loopback(),
-                                _ => false,
-                            });
-                            if is_loopback {
-                                continue;
+                        SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
+                            for (peer_id, addr) in list {
+                                info!(%peer_id, %addr, "discovered peer via mDNS");
+                                self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                                self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                             }
-
-                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
                         }
-                        // Mark the address observed for us by the external peer as confirmed.
-                        // TODO: We shouldn't trust this, instead we should confirm our own address manually or using
-                        // `libp2p-autonat`.
-                        self.swarm.add_external_address(observed_addr);
-                    }
-                    SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
-                        message: gossipsub::Message {
-                            source,
-                            data,
-                            topic: topic_hash, ..
-                        }, ..
-                    })) => {
-                        let source = source.expect("message should have a source");
-                        let message = serde_json::from_slice::<ExternalMessage>(&data).unwrap();
-                        let message_type = message.name();
-                        let to = self.peer_id;
-                        debug!(%source, %to, message_type, "broadcast recieved");
-                        self.forward_external_message_to_node(&topic_hash, source, message)?;
-                    }
-
-                    SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: source })) => {
-                        match message {
-                            request_response::Message::Request {request, channel, ..} => {
-                                let to = self.peer_id;
-                                let (shard_id, external_message) = request;
-                                let message_type = external_message.name();
-                                debug!(%source, %to, message_type, "message received");
-                                let topic = Self::shard_id_to_topic(shard_id);
-                                self.forward_external_message_to_node(&topic.hash(), source, external_message)?;
-                                let _ = self.swarm.behaviour_mut().request_response.send_response(channel, (shard_id, ExternalMessage::RequestResponse));
+                        SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
+                            for (peer_id, addr) in list {
+                                self.swarm.behaviour_mut().kademlia.remove_address(&peer_id, &addr);
                             }
-                            request_response::Message::Response {..} => {}
                         }
+                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id })) => {
+                            for addr in listen_addrs {
+                                // If the node is advertising a loopback address, ignore it.
+                                let is_loopback = addr.iter().any(|p| match p {
+                                    Protocol::Ip4(addr) => addr.is_loopback(),
+                                    Protocol::Ip6(addr) => addr.is_loopback(),
+                                    _ => false,
+                                });
+                                if is_loopback {
+                                    continue;
+                                }
+
+                                self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                            }
+                            // Mark the address observed for us by the external peer as confirmed.
+                            // TODO: We shouldn't trust this, instead we should confirm our own address manually or using
+                            // `libp2p-autonat`.
+                            self.swarm.add_external_address(observed_addr);
+                        }
+                        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
+                            message: gossipsub::Message {
+                                source,
+                                data,
+                                topic: topic_hash, ..
+                            }, ..
+                        })) => {
+                            let source = source.expect("message should have a source");
+                            let message = serde_json::from_slice::<ExternalMessage>(&data).unwrap();
+                            let message_type = message.name();
+                            let to = self.peer_id;
+                            debug!(%source, %to, message_type, "broadcast recieved");
+                            self.forward_external_message_to_node(&topic_hash, source, message)?;
+                        }
+
+                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: source })) => {
+                            match message {
+                                request_response::Message::Request {request, channel, ..} => {
+                                    let to = self.peer_id;
+                                    let (shard_id, external_message) = request;
+                                    let message_type = external_message.name();
+                                    debug!(%source, %to, message_type, "message received");
+                                    let topic = Self::shard_id_to_topic(shard_id);
+                                    self.forward_external_message_to_node(&topic.hash(), source, external_message)?;
+                                    let _ = self.swarm.behaviour_mut().request_response.send_response(channel, (shard_id, ExternalMessage::RequestResponse));
+                                }
+                                request_response::Message::Response {..} => {}
+                            }
+                        }
+                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { error: OutboundFailure::DialFailure, .. })) => {
+                            // We failed to send a message to a peer. The likely reason is that we don't know their
+                            // address. Someone else in the network must know it, because we learnt their peer ID.
+                            // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
+                            let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
+                        }
+                        _ => {},
                     }
-                    SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { error: OutboundFailure::DialFailure, .. })) => {
-                        // We failed to send a message to a peer. The likely reason is that we don't know their
-                        // address. Someone else in the network must know it, because we learnt their peer ID.
-                        // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
-                        let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
-                    }
-                    _ => {},
                 },
                 _ = bootstrap.tick() => {
                     let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
