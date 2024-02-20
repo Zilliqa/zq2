@@ -16,7 +16,7 @@ pub(crate) fn extract_revert_msg(encoded: &[u8]) -> String {
 
     let payload = &encoded[4..];
 
-    let Ok(vec) = (if encoded.starts_with(&REVERT_SELECTOR) {
+    let vec = if encoded.starts_with(&REVERT_SELECTOR) {
         let input_type = [ParamType::String];
         ethabi::decode(&input_type, payload)
     } else if encoded.starts_with(&PANIC_SELECTOR) {
@@ -24,7 +24,9 @@ pub(crate) fn extract_revert_msg(encoded: &[u8]) -> String {
         ethabi::decode(&input_type, payload)
     } else {
         return generic_error;
-    }) else {
+    };
+
+    let Ok(vec) = vec else {
         return generic_error;
     };
 
