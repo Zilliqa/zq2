@@ -34,6 +34,11 @@ variable "subdomain" {
   nullable = false
 }
 
+variable "network_name" {
+  type = string
+  nullable = false
+}
+
 provider "google" {
   project = var.project_id
   region = "europe-west2"
@@ -204,6 +209,7 @@ module "bootstrap_node" {
   consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
   EOT
   secret_key            = random_id.bootstrap_key.hex
+  zq_network_name       = var.network_name
 }
 
 resource "random_id" "secret_key" {
@@ -234,6 +240,7 @@ module "node" {
   consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
   EOT
   secret_key = random_id.secret_key[count.index].hex
+  zq_network_name = var.network_name
 }
 
 resource "google_project_service" "osconfig" {

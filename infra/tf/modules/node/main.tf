@@ -38,6 +38,11 @@ variable "secret_key" {
     nullable = false
 }
 
+variable "zq_network_name" {
+    type = string
+    nullable = false
+}
+
 # Add a random suffix to the compute instance names. This ensures that when they are re-created, their `self_link`
 # changes and any instance groups containing them are updated.
 resource "random_id" "name_suffix" {
@@ -59,6 +64,10 @@ resource "google_compute_instance" "this" {
   name                      = "${var.name}-${random_id.name_suffix.hex}"
   machine_type              = "e2-standard-2"
   allow_stopping_for_update = true
+
+  labels {
+    zq2-network = var.zq_network_name
+  }
 
   service_account {
     email = var.service_account_email
