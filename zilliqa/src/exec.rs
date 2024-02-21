@@ -740,8 +740,6 @@ impl State {
             return Ok(U256::zero());
         }
 
-        info!("Querying balance of addr {:?}", address);
-
         let data = contracts::native_token::BALANCE_OF
             .encode_input(&[Token::Address(address)])
             .unwrap();
