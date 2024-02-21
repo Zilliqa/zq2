@@ -15,7 +15,7 @@ use crate::{
     cfg::NodeConfig,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     db::Db,
-    exec::{TouchedAddressEventListener, TransactionApplyResult},
+    exec::TransactionApplyResult,
     message::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, Committee, ExternalMessage,
         InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
@@ -676,33 +676,21 @@ impl Consensus {
 
         self.db.insert_transaction(&hash, &txn.tx)?;
 
-        let mut listener = TouchedAddressEventListener::default();
-
-        let result = evm_ds::evm::tracing::using(&mut listener, || {
-            self.state.apply_transaction(
-                txn.clone(),
-                self.config.eth_chain_id,
-                current_block,
-                false,
-            )
-        })?;
+        let result = self.state.apply_transaction(
+            txn.clone(),
+            self.config.eth_chain_id,
+            current_block,
+            false,
+        )?;
 
         // Tell the transaction pool that the sender's nonce has been incremented.
         self.transaction_pool.update_nonce(&txn);
-
-        for address in listener.touched {
-            self.db.add_touched_address(address, hash)?;
-        }
 
         if !result.success {
             info!("Transaction was a failure...");
         }
 
         Ok(Some(result))
-    }
-
-    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
-        self.db.get_touched_address_index(address)
     }
 
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
@@ -1732,8 +1720,6 @@ impl Consensus {
             // to change finalized height
             let new_highest = head_block.header.number.saturating_sub(1);
             self.db.put_highest_block_number(new_highest)?;
-
-            // touched address index: TODO
         }
 
         Ok(())

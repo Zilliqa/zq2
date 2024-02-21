@@ -461,10 +461,6 @@ impl Node {
         self.consensus.get_transaction_by_hash(hash)
     }
 
-    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
-        self.consensus.get_touched_transactions(address)
-    }
-
     fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
         let block = match request.0 {
             crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
