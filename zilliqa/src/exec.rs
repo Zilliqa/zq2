@@ -373,10 +373,11 @@ impl State {
 
                         // Set up the next continuation, adjust the relevant parameters
                         let call_args_next = EvmProto::EvmCallArgs {
-                            address: call_addr,
+                            address: call.context.destination,
+                            caller,
                             code: code_next,
                             data: call_data_next,
-                            apparent_value: value,
+                            apparent_value: call.context.apparent_value,
                             tx_trace: traces.clone(),
                             continuations: continuations.clone(),
                             node_continuation: None,
