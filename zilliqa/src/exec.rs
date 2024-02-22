@@ -309,7 +309,7 @@ impl State {
             }
 
             // Apply the results to the backend so they can be used in the next continuation
-            backend.apply_update(result.take_apply());
+            backend.apply_update(result.take_apply(), &call_args);
             run_succeeded = result.succeeded();
 
             // Handle potential traps. The continuation which was executing needs to get its
@@ -320,6 +320,12 @@ impl State {
 
                 match result.trap_data.unwrap() {
                     EvmProto::TrapData::Create(create) => {
+                        // Accounts cannot be created in static calls
+                        if call_args.is_static {
+                            run_succeeded = false;
+                            break;
+                        }
+
                         let addr_to_create =
                             calculate_contract_address_scheme(create.scheme, &backend);
 
@@ -362,11 +368,14 @@ impl State {
                         let call_data_next = call.call_data;
                         let call_addr = call.callee_address;
                         let caller = call.context.caller;
-                        let value: U256 = if let Some(transfer) = call.transfer {
-                            transfer.value
-                        } else {
-                            U256::zero()
-                        };
+
+                        // Transfers are only allowed in non-static calls
+                        let mut value = U256::zero();
+                        if !call.is_static {
+                            if let Some(transfer) = call.transfer {
+                                value = transfer.value
+                            }
+                        }
 
                         // Fetch the code to be called from the backend
                         let code_next = backend.code(call_addr);
@@ -382,6 +391,7 @@ impl State {
                             continuations: continuations.clone(),
                             node_continuation: None,
                             evm_context: Default::default(),
+                            is_static: call.is_static,
                             ..call_args
                         };
 
@@ -513,7 +523,7 @@ impl State {
             }
 
             backend.origin = call_args.caller;
-            let mut gas_result = run_evm_impl_direct(call_args, &backend);
+            let mut gas_result = run_evm_impl_direct(call_args.clone(), &backend);
             traces = gas_result.tx_trace.clone();
 
             if !gas_result.succeeded() {
@@ -525,7 +535,7 @@ impl State {
                 return Err(anyhow!(fail_string));
             }
 
-            backend.apply_update(gas_result.take_apply());
+            backend.apply_update(gas_result.take_apply(), &call_args);
         }
 
         let mut backend_result = backend.get_result();
