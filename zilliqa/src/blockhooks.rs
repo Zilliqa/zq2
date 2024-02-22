@@ -51,11 +51,49 @@ pub fn get_launch_shard_messages(receipts: &[TransactionReceipt]) -> Result<Vec<
                 .and_then(|param| param.value.into_uint())
                 .map_or_else(
                     || {
-                        warn!("LaunchShard event does not contain an id!");
+                        warn!("ShardAdded event does not contain an id!");
                         None
                     },
                     |uint| Some(uint.as_u64()),
                 )
+        })
+        .collect())
+}
+
+pub fn get_link_creation_messages(
+    receipts: &[TransactionReceipt],
+    our_shard_id: u64,
+) -> Result<Vec<u64>> {
+    let link_logs = filter_receipts(
+        receipts,
+        contracts::shard_registry::LINK_ADDED_EVT.clone(),
+        contract_addr::SHARD_REGISTRY,
+    )?;
+    // TODO: this is very ugly
+    // I wonder if there's a better way to parse events in general
+    Ok(link_logs
+        .into_iter()
+        .filter_map(|log| {
+            let (names, mut values): (Vec<_>, Vec<_>) = log
+                .params
+                .into_iter()
+                .map(|param| (param.name, param.value))
+                .unzip();
+            if names != ["from", "to"] {
+                warn!("LinkAdded event does not contain expected (from, to) values!");
+                None
+            } else if values
+                .pop()
+                .and_then(|to| to.into_uint())
+                .is_some_and(|to| to.as_u64() == our_shard_id)
+            {
+                values
+                    .pop()
+                    .and_then(|from| from.into_uint())
+                    .map(|from| from.as_u64())
+            } else {
+                None
+            }
         })
         .collect())
 }

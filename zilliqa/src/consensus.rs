@@ -1320,12 +1320,17 @@ impl Consensus {
         }
 
         if self.config.consensus.is_main {
-            // Check for new shards to join
-            // TODO: this will be switched to use the bridge registering mechanism from the shard
-            // registry in the future
+            // Main shard will join all new shards
             for new_shard_id in blockhooks::get_launch_shard_messages(&receipts)? {
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::LaunchShard(new_shard_id))?;
+            }
+        } else {
+            for linked_shard_id in
+                blockhooks::get_link_creation_messages(&receipts, self.config.eth_chain_id)?
+            {
+                self.message_sender
+                    .send_message_to_coordinator(InternalMessage::LaunchShard(linked_shard_id))?;
             }
         }
 

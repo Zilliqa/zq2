@@ -5,8 +5,12 @@ import "./shard.sol";
 
 contract ShardRegistry is Shard {
     event ShardAdded(uint id);
-    mapping(uint => uint) indices;
+    event LinkAdded(uint from, uint indexed to);
+
     address[] shards;
+    mapping(uint => uint) indices;
+
+    mapping(uint => uint) links;
 
     // We construct this at genesis so we cannot know the genesis hash. Hence we pass 0.
     //
@@ -23,6 +27,24 @@ contract ShardRegistry is Shard {
         shards.push(shardContract);
         indices[shardId] = shards.length - 1;
         emit ShardAdded(shardId);
+    }
+
+    function addLink(uint sourceId, uint targetId) public {
+        uint indexFrom = indices[sourceId];
+        if (indexFrom == 0) {
+            revert("Source shard not registered.");
+        }
+        uint indexTo = indices[targetId];
+        if (indexTo == 0) {
+            revert("Target shard not registered.");
+        }
+
+        if (msg.sender != shards[indexFrom]) {
+            revert("Unauthorized.");
+        }
+
+        links[sourceId] = targetId;
+        emit LinkAdded(sourceId, targetId);
     }
 }
 

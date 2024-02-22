@@ -264,6 +264,114 @@ async fn launch_shard(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
+async fn dynamic_cross_shard_link_creation(mut network: Network) {
+    let main_wallet = network.genesis_wallet().await;
+
+    // 1. Create two independent shards
+    let shard_1_id = 80000u64;
+    let shard_2_id = 90000u64;
+
+    let shard_1_wallet = create_shard(&mut network, &main_wallet, shard_1_id).await;
+    println!("First network created successfully!");
+    let shard_2_wallet = create_shard(&mut network, &main_wallet, shard_1_id).await;
+    println!("Second network created successfully!");
+
+    // 2. Create a (uni-directional) link from shard 1 to shard 2
+    let create_link_tx = TransactionRequest::new()
+        .to(contract_addr::SHARD_REGISTRY)
+        .data(
+            contracts::shard_registry::ADD_LINK
+                .encode_input(&[
+                    Token::Uint(shard_1_id.into()),
+                    Token::Uint(shard_2_id.into()),
+                ])
+                .unwrap(),
+        );
+    let tx = main_wallet
+        .send_transaction(create_link_tx, None)
+        .await
+        .unwrap();
+    let hash = tx.tx_hash();
+    network.run_until_receipt(&main_wallet, hash, 100).await;
+
+    // 3. Send and verify a cross-shard transfer from 1 to 2
+    // First, fund shard_1_wallet's address on shard_2
+    let xfer_hash = shard_2_wallet
+        .send_transaction(
+            TransactionRequest::pay(shard_1_wallet.address(), 100_000_000_000_000u64),
+            None,
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+    network
+        .children
+        .get_mut(&shard_2_id)
+        .unwrap()
+        .run_until_receipt(&shard_2_wallet, xfer_hash, 100)
+        .await;
+
+    // Then send the transaction on shard 1
+    let destination = network.random_wallet().await.address(); // we just need a random address here
+    let inner_data = contracts::native_token::TRANSFER
+        .encode_input(&[Token::Address(destination), Token::Uint(100_000.into())])
+        .unwrap();
+
+    let data = contracts::intershard_bridge::BRIDGE
+        .encode_input(&[
+            Token::Uint(shard_2_id.into()),
+            Token::Bool(false),
+            Token::Address(contract_addr::NATIVE_TOKEN),
+            Token::Bytes(inner_data),
+            Token::Uint(10_000_000_000u64.into()),
+            Token::Uint(10_000.into()),
+        ])
+        .unwrap();
+    let tx_request = TransactionRequest::new()
+        .to(contract_addr::INTERSHARD_BRIDGE)
+        .data(data);
+
+    // Send it from the shard wallet's address
+    let hash = shard_1_wallet
+        .send_transaction(tx_request, None)
+        .await
+        .unwrap()
+        .tx_hash();
+    let receipt = network
+        .children
+        .get_mut(&shard_1_id)
+        .unwrap()
+        .run_until_receipt(&shard_1_wallet, hash, 100)
+        .await;
+
+    // Finalize the block on shard 1
+    network
+        .children
+        .get_mut(&shard_1_id)
+        .unwrap()
+        .run_until_block(&shard_1_wallet, receipt.block_number.unwrap() + 3, 50)
+        .await;
+
+    // Sanity check
+    assert_eq!(
+        shard_2_wallet.get_balance(destination, None).await.unwrap(),
+        0.into()
+    );
+
+    // Now ensure it's been received on shard 2
+    network
+        .children
+        .get_mut(&shard_2_id)
+        .unwrap()
+        .run_until_async(
+            || async { shard_2_wallet.get_balance(destination, None).await.unwrap() > 0.into() },
+            500,
+        )
+        .await
+        .unwrap();
+}
+
+#[zilliqa_macros::test]
 async fn cross_shard_contract_creation(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
