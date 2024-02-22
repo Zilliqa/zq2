@@ -1,14 +1,11 @@
 //! Manages execution of transactions on state.
 
-use std::{
-    collections::HashSet,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use ethabi::Token;
 use evm_ds::{
-    evm::{backend::Backend, tracing::EventListener},
+    evm::backend::Backend,
     evm_server_run::{
         calculate_contract_address, calculate_contract_address_scheme, run_evm_impl_direct,
     },
@@ -28,71 +25,6 @@ use crate::{
     state::{contract_addr, Address, State},
     transaction::{SignedTransaction, VerifiedTransaction},
 };
-
-#[derive(Default)]
-pub struct TouchedAddressEventListener {
-    pub touched: HashSet<H160>,
-}
-
-impl EventListener for TouchedAddressEventListener {
-    fn event(&mut self, event: evm_ds::evm::tracing::Event<'_>) {
-        match event {
-            evm_ds::evm::tracing::Event::Call {
-                code_address,
-                transfer,
-                ..
-            } => {
-                self.touched.insert(code_address);
-                if let Some(transfer) = transfer {
-                    self.touched.insert(transfer.source);
-                    self.touched.insert(transfer.target); // TODO: Figure out if `transfer.target` is always equal to `code_address`?
-                }
-            }
-            evm_ds::evm::tracing::Event::Create {
-                caller, address, ..
-            } => {
-                self.touched.insert(caller);
-                self.touched.insert(address);
-            }
-            evm_ds::evm::tracing::Event::Suicide {
-                address, target, ..
-            } => {
-                self.touched.insert(address);
-                self.touched.insert(target);
-            }
-            evm_ds::evm::tracing::Event::Exit { .. } => {}
-            evm_ds::evm::tracing::Event::TransactCall {
-                caller, address, ..
-            } => {
-                self.touched.insert(caller);
-                self.touched.insert(address);
-            }
-            evm_ds::evm::tracing::Event::TransactCreate {
-                caller, address, ..
-            } => {
-                self.touched.insert(caller);
-                self.touched.insert(address);
-            }
-            evm_ds::evm::tracing::Event::TransactCreate2 {
-                caller, address, ..
-            } => {
-                self.touched.insert(caller);
-                self.touched.insert(address);
-            }
-            evm_ds::evm::tracing::Event::PrecompileSubcall {
-                code_address,
-                transfer,
-                ..
-            } => {
-                self.touched.insert(code_address);
-                if let Some(transfer) = transfer {
-                    self.touched.insert(transfer.source);
-                    self.touched.insert(transfer.target);
-                }
-            }
-        }
-    }
-}
 
 /// Data returned after applying a [Transaction] to [State].
 pub struct TransactionApplyResult {

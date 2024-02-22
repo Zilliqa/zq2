@@ -6,7 +6,6 @@ use sled::Tree;
 use crate::{
     crypto::Hash,
     message::{Block, BlockHeader, QuorumCertificate},
-    state::Address,
     transaction::{SignedTransaction, TransactionReceipt},
 };
 
@@ -20,9 +19,6 @@ pub struct Db {
     /// Transactions that have been executed and included in a block, and their receipts.
     transaction: Tree,
     transaction_receipts: Tree,
-    /// An index of address to a list of transaction hashes, for which this address appeared somewhere in the
-    /// transaction trace. The list of transations is ordered by execution order.
-    touched_address_index: Tree,
     /// Lookup of block hashes for transaction hashes.
     block_hash_reverse_index: Tree,
 }
@@ -68,8 +64,6 @@ const STATE_TRIE_TREE: &[u8] = b"state_trie";
 const TXS_TREE: &[u8] = b"txs_tree";
 /// Key: block hash; value: vector of transaction receipts in that block
 const RECEIPTS_TREE: &[u8] = b"receipts_tree";
-/// Key: address; value: Vec<tx hash where this address was touched>
-const ADDR_TOUCHED_INDEX: &[u8] = b"addresses_touched_index";
 /// Key: tx_hash; value: corresponding block_hash
 const TX_BLOCK_INDEX: &[u8] = b"tx_block_index";
 /// Key: block hash; value: block header
@@ -109,19 +103,6 @@ impl Db {
         let transaction_receipt = db.open_tree(RECEIPTS_TREE)?;
         let block_hash_reverse_index = db.open_tree(TX_BLOCK_INDEX)?;
 
-        let touched_address_index = db.open_tree(ADDR_TOUCHED_INDEX)?;
-        touched_address_index.set_merge_operator(|_k, old_value, additional_value| {
-            // We unwrap all errors as we assume that the serialization should always be correct.
-            // TODO: maybe use a smarter packing rather than calling bincode twice every time?
-            let mut vec = if let Some(old_value) = old_value {
-                bincode::deserialize::<Vec<Hash>>(old_value).unwrap()
-            } else {
-                vec![]
-            };
-            vec.push(Hash(additional_value.try_into().unwrap()));
-            Some(bincode::serialize(&vec).unwrap())
-        });
-
         Ok(Db {
             root: db,
             block_header,
@@ -131,7 +112,6 @@ impl Db {
             transaction,
             transaction_receipts: transaction_receipt,
             block_hash_reverse_index,
-            touched_address_index,
         })
     }
 
@@ -141,21 +121,6 @@ impl Db {
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
         Ok(TrieStorage::new(self.root.open_tree(STATE_TRIE_TREE)?))
-    }
-
-    pub fn add_touched_address(&self, address: Address, hash: Hash) -> Result<()> {
-        self.touched_address_index
-            .merge(address.as_bytes(), hash.as_bytes())?;
-        Ok(())
-    }
-
-    pub fn get_touched_address_index(&self, address: Address) -> Result<Vec<Hash>> {
-        Ok(self
-            .touched_address_index
-            .get(address.as_bytes())?
-            .map(|b| bincode::deserialize(&b))
-            .transpose()?
-            .unwrap_or_default())
     }
 
     pub fn put_canonical_block_number(&self, number: u64, hash: Hash) -> Result<()> {
