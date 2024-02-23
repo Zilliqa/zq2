@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Result};
 use bytes::{BufMut, BytesMut};
-use evm_ds::protos::evm_proto::Log;
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::sec1::ToEncodedPoint,
@@ -280,6 +279,12 @@ pub enum Transaction {
     Intershard(TxIntershard),
 }
 
+fn scale_zilliqa_tx_amount(amount: u128) -> u128 {
+    // Zilliqa amounts are represented in units of (10^-12) ZILs, whereas our internal representation is in units of
+    // (10^-18) ZILs. Account for this difference by multiplying the amount by (10^6).
+    amount * 10u128.pow(6)
+}
+
 impl Transaction {
     pub fn chain_id(&self) -> Option<u64> {
         match self {
@@ -309,7 +314,9 @@ impl Transaction {
             Transaction::Eip1559(TxEip1559 {
                 max_fee_per_gas, ..
             }) => *max_fee_per_gas,
-            Transaction::Zilliqa(TxZilliqa { gas_price, .. }) => *gas_price,
+            Transaction::Zilliqa(TxZilliqa { gas_price, .. }) => {
+                scale_zilliqa_tx_amount(*gas_price)
+            }
             Transaction::Intershard(TxIntershard { gas_price, .. }) => *gas_price,
         }
     }
@@ -319,7 +326,8 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { gas_limit, .. }) => *gas_limit,
             Transaction::Eip2930(TxEip2930 { gas_limit, .. }) => *gas_limit,
             Transaction::Eip1559(TxEip1559 { gas_limit, .. }) => *gas_limit,
-            Transaction::Zilliqa(TxZilliqa { gas_limit, .. }) => *gas_limit,
+            // Scilla gas is worth 420 times as much as EVM gas.
+            Transaction::Zilliqa(TxZilliqa { gas_limit, .. }) => *gas_limit * 420,
             Transaction::Intershard(TxIntershard { gas_limit, .. }) => *gas_limit,
         }
     }
@@ -346,28 +354,25 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { amount, .. }) => *amount,
             Transaction::Eip2930(TxEip2930 { amount, .. }) => *amount,
             Transaction::Eip1559(TxEip1559 { amount, .. }) => *amount,
-            // Zilliqa amounts are represented in units of (10^-12) ZILs, whereas our internal representation is in
-            // units of (10^-18) ZILs. Account for this difference by multiplying the amount by (10^6).
-            Transaction::Zilliqa(TxZilliqa { amount, .. }) => *amount * 10u128.pow(6),
+            Transaction::Zilliqa(TxZilliqa { amount, .. }) => scale_zilliqa_tx_amount(*amount),
             Transaction::Intershard(_) => 0,
         }
     }
 
-    pub fn payload(&self) -> (&[u8], &[u8]) {
+    pub fn payload(&self) -> &[u8] {
         match self {
-            Transaction::Legacy(TxLegacy { payload, .. }) => (payload, <&[u8]>::default()),
-            Transaction::Eip2930(TxEip2930 { payload, .. }) => (payload, <&[u8]>::default()),
-            Transaction::Eip1559(TxEip1559 { payload, .. }) => (payload, <&[u8]>::default()),
+            Transaction::Legacy(TxLegacy { payload, .. }) => payload,
+            Transaction::Eip2930(TxEip2930 { payload, .. }) => payload,
+            Transaction::Eip1559(TxEip1559 { payload, .. }) => payload,
             // Zilliqa transactions can have both code and data set, but code takes precedence if it is non-empty.
             Transaction::Zilliqa(TxZilliqa { code, data, .. }) => {
-                match (!code.is_empty(), !data.is_empty()) {
-                    (true, false) => (code.as_bytes(), <&[u8]>::default()),
-                    (false, true) => (data.as_bytes(), <&[u8]>::default()),
-                    (true, true) => (code.as_bytes(), data.as_bytes()),
-                    (false, false) => (<&[u8]>::default(), <&[u8]>::default()),
+                if !code.is_empty() {
+                    code.as_bytes()
+                } else {
+                    data.as_bytes()
                 }
             }
-            Transaction::Intershard(TxIntershard { payload, .. }) => (payload, <&[u8]>::default()),
+            Transaction::Intershard(TxIntershard { payload, .. }) => payload,
         }
     }
 
@@ -555,6 +560,13 @@ pub struct TxZilliqa {
     pub data: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Log {
+    pub address: Address,
+    pub topics: Vec<H256>,
+    pub data: Vec<u8>,
+}
+
 /// A transaction receipt stores data about the execution of a transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionReceipt {
@@ -564,7 +576,6 @@ pub struct TransactionReceipt {
     pub gas_used: u64,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
-    pub scilla_events: String,
 }
 
 fn strip_leading_zeroes(bytes: &[u8]) -> &[u8] {
