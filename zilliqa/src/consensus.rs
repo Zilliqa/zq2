@@ -628,7 +628,8 @@ impl Consensus {
 
         for (reward_address, stake) in cosigner_stake {
             if let Some(a) = reward_address {
-                let reward = U256::from(((rewards_per_block / 2) * stake) / total_cosigner_stake);
+                let reward =
+                    U256::from(rewards_per_block / 2) * U256::from(stake) / total_cosigner_stake;
                 let balance = self.state.get_native_balance(a, false)?;
                 self.state.set_native_balance(a, balance + reward)?;
             }
