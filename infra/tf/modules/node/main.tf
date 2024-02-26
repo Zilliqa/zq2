@@ -1,41 +1,53 @@
 variable "name" {
-  type = string
+  type     = string
   nullable = false
 }
 
 variable "service_account_email" {
-    type = string
-    nullable = false
+  type     = string
+  nullable = false
 }
 
 variable "network_name" {
-    type = string
-    nullable = false
+  type     = string
+  nullable = false
 }
 
 variable "subnetwork_name" {
-    type = string
-    nullable = false
+  type     = string
+  nullable = false
 }
 
 variable "binary_url" {
-    type = string
-    nullable = false
+  type     = string
+  nullable = false
 }
 
 variable "binary_md5" {
-    type = string
-    nullable = false
+  type     = string
+  nullable = false
 }
 
 variable "config" {
-    type = string
-    nullable = false
+  type     = string
+  nullable = false
 }
 
 variable "secret_key" {
-    type = string
-    nullable = false
+  type     = string
+  nullable = false
+}
+
+variable "zq_network_name" {
+  type     = string
+  nullable = false
+}
+
+variable "labels" {
+  type        = map(string)
+  description = "A single-level map/object with key value pairs of metadata labels to apply to the GCP resources. All keys should use underscores and values should use hyphens. All values must be wrapped in quotes."
+  nullable    = true
+  default     = {}
 }
 
 # Add a random suffix to the compute instance names. This ensures that when they are re-created, their `self_link`
@@ -44,14 +56,14 @@ resource "random_id" "name_suffix" {
   byte_length = 2
 
   keepers = {
-    name = var.name
+    name                  = var.name
     service_account_email = var.service_account_email
-    network_name = var.network_name
-    subnetwork_name = var.subnetwork_name
-    binary_url = var.binary_url
-    binary_md5 = var.binary_md5
-    config = var.config
-    secret_key = var.secret_key
+    network_name          = var.network_name
+    subnetwork_name       = var.subnetwork_name
+    binary_url            = var.binary_url
+    binary_md5            = var.binary_md5
+    config                = var.config
+    secret_key            = var.secret_key
   }
 }
 
@@ -59,6 +71,9 @@ resource "google_compute_instance" "this" {
   name                      = "${var.name}-${random_id.name_suffix.hex}"
   machine_type              = "e2-standard-2"
   allow_stopping_for_update = true
+
+  labels = merge({ "zq2-network" = var.zq_network_name }, var.labels)
+
 
   service_account {
     email = var.service_account_email
@@ -73,7 +88,7 @@ resource "google_compute_instance" "this" {
 
   boot_disk {
     initialize_params {
-      size = 256
+      size  = 256
       image = "debian-cloud/debian-11"
     }
   }
@@ -82,7 +97,7 @@ resource "google_compute_instance" "this" {
     network    = var.network_name
     subnetwork = var.subnetwork_name
   }
- 
+
   metadata = {
     "enable-guest-attributes" = "TRUE"
     "enable-osconfig"         = "TRUE"

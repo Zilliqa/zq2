@@ -1,7 +1,6 @@
 //! Manages execution of transactions on state.
 
 use std::{
-    collections::HashSet,
     num::NonZeroU128,
     sync::{Arc, Mutex},
 };
@@ -9,7 +8,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use ethabi::Token;
 use evm_ds::{
-    evm::{backend::Backend, tracing::EventListener},
+    evm::backend::Backend,
     evm_server_run::{
         calculate_contract_address, calculate_contract_address_scheme, run_evm_impl_direct,
     },
@@ -21,6 +20,7 @@ use scilla::scilla_server_run::{calculate_contract_address_scilla, run_scilla_im
 use serde_json::Value;
 use tracing::*;
 
+use crate::eth_helpers::extract_revert_msg;
 use crate::{
     contracts,
     crypto::NodePublicKey,
@@ -29,71 +29,6 @@ use crate::{
     state::{contract_addr, Address, State},
     transaction::{SignedTransaction, VerifiedTransaction},
 };
-
-#[derive(Default)]
-pub struct TouchedAddressEventListener {
-    pub touched: HashSet<H160>,
-}
-
-impl EventListener for TouchedAddressEventListener {
-    fn event(&mut self, event: evm_ds::evm::tracing::Event<'_>) {
-        match event {
-            evm_ds::evm::tracing::Event::Call {
-                code_address,
-                transfer,
-                ..
-            } => {
-                self.touched.insert(code_address);
-                if let Some(transfer) = transfer {
-                    self.touched.insert(transfer.source);
-                    self.touched.insert(transfer.target); // TODO: Figure out if `transfer.target` is always equal to `code_address`?
-                }
-            }
-            evm_ds::evm::tracing::Event::Create {
-                caller, address, ..
-            } => {
-                self.touched.insert(caller);
-                self.touched.insert(address);
-            }
-            evm_ds::evm::tracing::Event::Suicide {
-                address, target, ..
-            } => {
-                self.touched.insert(address);
-                self.touched.insert(target);
-            }
-            evm_ds::evm::tracing::Event::Exit { .. } => {}
-            evm_ds::evm::tracing::Event::TransactCall {
-                caller, address, ..
-            } => {
-                self.touched.insert(caller);
-                self.touched.insert(address);
-            }
-            evm_ds::evm::tracing::Event::TransactCreate {
-                caller, address, ..
-            } => {
-                self.touched.insert(caller);
-                self.touched.insert(address);
-            }
-            evm_ds::evm::tracing::Event::TransactCreate2 {
-                caller, address, ..
-            } => {
-                self.touched.insert(caller);
-                self.touched.insert(address);
-            }
-            evm_ds::evm::tracing::Event::PrecompileSubcall {
-                code_address,
-                transfer,
-                ..
-            } => {
-                self.touched.insert(code_address);
-                if let Some(transfer) = transfer {
-                    self.touched.insert(transfer.source);
-                    self.touched.insert(transfer.target);
-                }
-            }
-        }
-    }
-}
 
 /// Data returned after applying a [Transaction] to [State].
 pub struct TransactionApplyResult {
@@ -374,10 +309,11 @@ impl State {
 
                         // Set up the next continuation, adjust the relevant parameters
                         let call_args_next = EvmProto::EvmCallArgs {
-                            address: call_addr,
+                            address: call.context.destination,
+                            caller,
                             code: code_next,
                             data: call_data_next,
-                            apparent_value: value,
+                            apparent_value: call.context.apparent_value,
                             tx_trace: traces.clone(),
                             continuations: continuations.clone(),
                             node_continuation: None,
@@ -1049,7 +985,19 @@ impl State {
                     let error_str =
                         format!("Estimate gas failed with error: {:?}", result.exit_reason);
                     warn!(error_str);
-                    return Err(anyhow!(error_str));
+
+                    let decoded_revert_msg = extract_revert_msg(&result.return_value);
+
+                    // See: https://github.com/ethereum/go-ethereum/blob/9b9a1b677d894db951dc4714ea1a46a2e7b74ffc/internal/ethapi/api.go#L1026
+                    const REVERT_ERROR_CODE: i32 = 3;
+
+                    let response = jsonrpsee::types::ErrorObjectOwned::owned(
+                        REVERT_ERROR_CODE,
+                        decoded_revert_msg,
+                        Some("0x".to_string() + &hex::encode(result.return_value)),
+                    );
+
+                    return Err(response.into());
                 }
 
                 if result.remaining_gas > gas {

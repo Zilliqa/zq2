@@ -1013,10 +1013,10 @@ impl JsonRpcClient for LocalRpcClient {
 
         let (response, _) = self.rpc_module.raw_json_request(&request, 1).await.unwrap();
 
-        let response: Response<Rc<R>> = serde_json::from_str(&response.result).unwrap();
+        let response: Response<Rc<R>> = serde_json::from_str(&response).unwrap();
 
         let r = match response.payload {
-            ResponsePayload::Result(r) => r,
+            ResponsePayload::Success(r) => r,
             ResponsePayload::Error(e) => {
                 return Err(JsonRpcError {
                     code: e.code() as i64,
