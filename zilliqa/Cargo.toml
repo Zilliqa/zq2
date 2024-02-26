@@ -42,7 +42,7 @@ fs_extra = "1.3.0"
 futures = "0.3.30"
 hex = { version = "0.4.3", features = ["serde"] }
 http = "0.2.11"
-hyper = "0.14.27"
+hyper = "1.2.0"
 itertools = "0.12.0"
 jsonrpsee = { version = "0.22.0", features = ["server"] }
 k256 = {version = "0.13.3", features = ["serde", "pem"] }
