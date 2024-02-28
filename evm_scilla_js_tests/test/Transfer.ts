@@ -36,7 +36,7 @@ describe("ForwardZil contract functionality #parallel", function () {
     );
   });
 
-  xit("should be possible to transfer ethers to the contract @block-2", async function () {
+  it("should be possible to transfer ethers to the contract @block-2", async function () {
     const prevBalance = await ethers.provider.getBalance(contract.address);
     const {response} = await hre.sendEthTransaction({
       to: contract.address,
@@ -52,7 +52,7 @@ describe("ForwardZil contract functionality #parallel", function () {
 });
 
 describe("Transfer ethers #parallel", function () {
-  xit("should be possible to transfer ethers to a user account @block-1", async function () {
+  it("should be possible to transfer ethers to a user account @block-1", async function () {
     const payee = ethers.Wallet.createRandom();
 
     const {response} = await hre.sendEthTransaction({
@@ -115,7 +115,7 @@ describe("Transfer ethers #parallel", function () {
     balances.forEach((el) => expect(el).to.be.eq(ACCOUNT_VALUE));
   });
 
-  xit("probably should be possible to use sent funds of smart contract", async function () {
+  it("probably should be possible to use sent funds of smart contract", async function () {
     const TRANSFER_VALUE = 1_000_000;
 
     // Create random account

@@ -28,9 +28,10 @@ describe("Parent Child Contract Functionality #parallel", function () {
     installedChild = await parentContract.installChild(CHILD_CONTRACT_VALUE, {gasLimit: 25000000});
     childContractAddress = await parentContract.childAddress();
     expect(childContractAddress).to.be.properAddress;
+    expect(await ethers.provider.getBalance(parentContract.address)).to.be.eq(0);
   });
 
-  xit(`Should return ${INITIAL_FUND} as the balance of the child contract @block-3`, async function () {
+  it(`Should return ${INITIAL_FUND} as the balance of the child contract @block-3`, async function () {
     expect(await ethers.provider.getBalance(childContractAddress)).to.be.eq(INITIAL_FUND);
   });
 
@@ -45,7 +46,8 @@ describe("Parent Child Contract Functionality #parallel", function () {
   });
 
   it("Should return all funds from the child to its sender contract if returnToSender is called", async function () {
-    await childContract.returnToSender();
+    const tx = await childContract.returnToSender();
+    await tx.wait();
     expect(await ethers.provider.getBalance(parentContract.address)).to.be.eq(INITIAL_FUND);
     expect(await ethers.provider.getBalance(childContract.address)).to.be.eq(0);
   });
