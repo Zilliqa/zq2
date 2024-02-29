@@ -103,7 +103,7 @@ impl<'a> EvmBackend<'a> {
 
         dst_balance.0 += amount;
 
-        info!(
+        debug!(
             "Transfered from: {:?} to: {:?} value: {:?}",
             from, to, amount
         );
@@ -143,12 +143,20 @@ impl<'a> EvmBackend<'a> {
         let this_contract_addr = args.address;
         let is_static = args.is_static;
 
+        let mut beneficiary = None;
+        let mut return_funds = U256::zero();
+
         for apply in applys {
             match apply {
                 Apply::Delete { address } => {
                     if this_contract_addr == address && !is_static {
                         // Insert empty slot into cache
-                        self.account_storage_cached.insert(address, None);
+                        if let Some(Some((_, _, balance))) =
+                            self.account_storage_cached.insert(address, None)
+                        {
+                            // Store balance of deleted account
+                            return_funds = balance.0;
+                        }
                     }
                 }
                 Apply::Modify {
@@ -160,9 +168,17 @@ impl<'a> EvmBackend<'a> {
                     reset_storage,
                 } => {
                     // Allow for changes applied only in non-static runs to 'this' contract
-                    if is_static || address != this_contract_addr {
+                    if is_static {
                         continue;
                     }
+
+                    // If that's selfdestruct - there might be fund recipient
+                    beneficiary = Some(address);
+
+                    if address != this_contract_addr {
+                        continue;
+                    }
+
                     // Get or create the element in the cache, the account will be
                     // reflected but the storage will not.
                     if let std::collections::hash_map::Entry::Vacant(element) =
@@ -204,6 +220,16 @@ impl<'a> EvmBackend<'a> {
                     }
                 }
             }
+        }
+        // Transfer funds to recipient from selfdestructed contract (if)
+        if beneficiary.is_some() && !return_funds.is_zero() {
+            let beneficiary = beneficiary.unwrap();
+            self.load_account(beneficiary);
+            if let Some((_, _, dst_balance)) =
+                self.account_storage_cached.get_mut(&beneficiary).unwrap()
+            {
+                dst_balance.0 += return_funds;
+            };
         }
     }
 

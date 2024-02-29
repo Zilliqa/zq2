@@ -94,8 +94,6 @@ impl State {
         from: H160,
         is_scilla: bool,
     ) -> H160 {
-        // if this is none, it is contract creation. Note that scilla TXs
-        // have had the zero address mapped to None so this check is always correct
         *code = data.to_vec();
         *data = Vec::from(payload_initdata);
         // Note that scilla has an off by one for the account nonce
@@ -239,8 +237,8 @@ impl State {
                     "Prior balances:  {} and {} ",
                     native_balance, target_balance
                 );
-                Self::make_temp_transfer(&mut backend, from_addr, to, amount);
             }
+            Self::make_temp_transfer(&mut backend, from_addr, to, amount);
         }
 
         if print_enabled {
@@ -296,9 +294,8 @@ impl State {
                         let addr_to_create =
                             calculate_contract_address_scheme(create.scheme, &backend);
 
-                        // Transfers are only allowed in non-static calls
                         let value = create.value;
-                        let caller_balance = backend.basic(caller).balance;
+                        let caller_balance = backend.basic(create.caller).balance;
                         if caller_balance < value {
                             run_succeeded = false;
                             break;
@@ -329,16 +326,12 @@ impl State {
                         // Now push on the context we want to execute
                         continuation_stack.push(call_args_next);
 
-                        // Transfer is the first operation made
+                        // Transfer to newly created account goes first
                         Self::make_temp_transfer(
                             &mut backend,
                             create.caller,
                             addr_to_create,
                             value,
-                        );
-                        info!(
-                            "MAKING TRANSFER IN CREATE TRAP from: {:?} to: {:?} amount: {:?}",
-                            caller, addr_to_create, value
                         );
                     }
                     EvmProto::TrapData::Call(call) => {
@@ -393,10 +386,6 @@ impl State {
                             run_succeeded = false;
                             break;
                         }
-                        info!(
-                            "MAKING TRANSFER IN CALL TRAP from: {:?} to: {:?} amount: {:?}",
-                            caller, call.context.destination, value
-                        );
                         Self::make_temp_transfer(
                             &mut backend,
                             caller,
@@ -488,44 +477,6 @@ impl State {
         // For now we send it to origin and assume we will handle rewards later
         // In estimation mode, we do not attempt to deduct the gas (so we should use this mode for
         // system calls)
-        if !estimate {
-
-            /*continuation_stack.push(self.push_transfer(
-                from_addr,
-                contract_addr::COLLECTED_FEES,
-                gas_deduction.into(),
-                continuations,
-                traces,
-            ));
-
-            let call_args = continuation_stack.pop().unwrap();
-
-            if print_enabled {
-                debug!("Applying gas deduction of {}", gas_deduction);
-                debug!(
-                    "our balance is: {}",
-                    self.get_native_balance(from_addr, false).unwrap()
-                );
-                debug!("our caller is: {:?}", call_args.caller);
-            }
-
-            backend.origin = call_args.caller;
-            let mut gas_result = run_evm_impl_direct(call_args.clone(), &backend);
-            traces = gas_result.tx_trace.clone();
-
-            if !gas_result.succeeded() {
-                let fail_string = format!(
-                    "Gas deduction FAILED with error: {:?}",
-                    gas_result.exit_reason
-                );
-                warn!(fail_string);
-                return Err(anyhow!(fail_string));
-            }
-
-            backend.apply_update(gas_result.take_apply(), &call_args);
-            */
-        }
-
         let mut backend_result = backend.get_result();
         backend_result.exit_reason = result.exit_reason;
         backend_result.return_value = result.return_value;
@@ -669,11 +620,8 @@ impl State {
 
                 let gas_used = txn.gas_limit() - result.remaining_gas;
                 let gas_deduction = (gas_used * gas_price) as u128;
-                debug!("Applying gas deduction of {}", gas_deduction);
 
-                let Ok(_) = self.take_gas_fee(from_addr, gas_deduction.into()) else {
-                    panic!("I have gone mad!");
-                };
+                self.take_gas_fee(from_addr, gas_deduction.into())?;
 
                 Ok(TransactionApplyResult {
                     success,
@@ -703,8 +651,6 @@ impl State {
 
     // Apply the changes the EVM is requesting for
     fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm_proto::Apply>) -> Result<()> {
-        info!("DELTA IS: {:?}", &applys);
-
         let mut balances = vec![];
         for apply in applys {
             match apply {
@@ -747,6 +693,7 @@ impl State {
             }
         }
 
+        // Balances have to be applied always in the same order (otherwise state might be inconsistent)
         for (address, balance) in balances
             .into_iter()
             .sorted_by(|left, right| left.0.cmp(&right.0))
@@ -865,15 +812,12 @@ impl State {
             .get_account(contract_addr::NATIVE_TOKEN)
             .unwrap_or_default();
 
-        if let Ok(_) = self.run_evm_internal(
+        self.run_evm_internal(
             Address::zero(),
             contract_addr::NATIVE_TOKEN,
             account.code,
             data,
-        ) {
-            info!("Transferred {} to {:?}", amount, address);
-        }
-        Ok(())
+        )
     }
 
     fn take_gas_fee(&mut self, from_address: Address, amount: U256) -> Result<()> {
@@ -888,13 +832,16 @@ impl State {
             .get_account(contract_addr::NATIVE_TOKEN)
             .unwrap_or_default();
 
-        if let Ok(_) = self.run_evm_internal(
-            from_address,
-            contract_addr::NATIVE_TOKEN,
-            account.code,
-            data,
-        ) {
-            info!(
+        if self
+            .run_evm_internal(
+                from_address,
+                contract_addr::NATIVE_TOKEN,
+                account.code,
+                data,
+            )
+            .is_ok()
+        {
+            debug!(
                 "Moved gas fee: {} to {:?}",
                 amount,
                 contract_addr::COLLECTED_FEES
@@ -941,7 +888,6 @@ impl State {
         let result = run_evm_impl_direct(args, &backend);
         let success = result.succeeded();
 
-        info!("DELTAS NA: {:?}", &result.apply);
         if success {
             for apply in result.apply {
                 match apply {

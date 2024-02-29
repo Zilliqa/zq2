@@ -83,7 +83,7 @@ describe("Transfer ethers #parallel", function () {
     balances.forEach((el) => expect(el).to.be.eq(ACCOUNT_VALUE));
   });
 
-  xit("should be possible to batch transfer using a smart contract and get funds back on self destruct @block-1", async function () {
+  it("should be possible to batch transfer using a smart contract and get funds back on self destruct @block-1", async function () {
     const ACCOUNTS_COUNT = 3;
     const ACCOUNT_VALUE = ethers.utils.parseEther("0.1");
 
