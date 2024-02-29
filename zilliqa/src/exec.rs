@@ -1052,50 +1052,6 @@ impl State {
             backend.transfer(from, to, amount);
         }
     }
-
-    // Convenience function to create a balance transfer for the call stack. Note we do NOT use the
-    // setBalance function as this should only be used at genesis
-    pub fn push_transfer(
-        &self,
-        from: Address,
-        to: Address,
-        amount: U256,
-        continuations: Arc<Mutex<EvmProto::Continuations>>,
-        traces: Arc<Mutex<LoggingEventListener>>,
-    ) -> EvmProto::EvmCallArgs {
-        trace!(
-            "Pushing transfer from: {} -> to: {} amount: {}",
-            from,
-            to,
-            amount
-        );
-
-        let native_token_code = self.get_account(contract_addr::NATIVE_TOKEN).unwrap().code;
-
-        let balance_data = contracts::native_token::TRANSFER
-            .encode_input(&[Token::Address(to), Token::Uint(amount)])
-            .unwrap();
-
-        EvmProto::EvmCallArgs {
-            caller: from,
-            gas_scaling_factor: 1,
-            scaling_factor: None,
-            estimate: false,
-            address: contract_addr::NATIVE_TOKEN,
-            code: native_token_code,
-            data: balance_data,
-            apparent_value: Default::default(),
-            gas_limit: u64::MAX,
-            tx_trace: traces,
-            continuations,
-            enable_cps: true,
-            node_continuation: None,
-            evm_context: "fund_transfer".to_string(),
-            is_static: false,
-            tx_trace_enabled: true,
-            is_scilla: false,
-        }
-    }
 }
 
 // Convenience function to calculate the contract address for a given transaction, if it is created
