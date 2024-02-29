@@ -1045,10 +1045,6 @@ impl State {
 
     pub(crate) fn make_temp_transfer(backend: &mut EvmBackend, from: H160, to: H160, amount: U256) {
         if !amount.is_zero() {
-            info!(
-                "MAKING Temp transfer from: {:?} to: {:?} with value: {:?}",
-                from, to, amount
-            );
             backend.transfer(from, to, amount);
         }
     }
