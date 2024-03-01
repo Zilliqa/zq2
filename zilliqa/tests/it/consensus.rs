@@ -1,10 +1,7 @@
 use ethabi::Token;
-use ethers::{
-    prelude::DeploymentTxFactory,
-    providers::Middleware,
-    types::{BlockNumber, TransactionRequest},
-};
+use ethers::{prelude::DeploymentTxFactory, providers::Middleware, types::TransactionRequest};
 use primitive_types::H160;
+use tokio::sync::Mutex;
 use tracing::*;
 use zilliqa::{contracts, state::contract_addr};
 
@@ -277,6 +274,22 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .genesis_key
         .clone();
 
+    println!(
+        "\n#########\nPrinting all child network nodes at the start of shard_contract_creation!"
+    );
+    for (i, key) in network
+        .children
+        .get(&child_shard_id)
+        .unwrap()
+        .nodes
+        .iter()
+        .map(|node| node.peer_id)
+        .enumerate()
+    {
+        println!("Node {i} has id {key:?}");
+    }
+    println!("\nPrinted all...\n#########\n\n");
+
     // 2. Fund the child_shard_wallet (on the main shard) so we can send a cross-shard
     // transaction from it. This is so we have funds on the child shard (since the child
     // wallet has genesis funds there). An equivalent alternative would have been to fund
@@ -327,18 +340,20 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .await;
 
     // 5. Make sure the transaction gets included in the child network
+    let latest_block = Mutex::new(shard_wallet.get_block_number().await.unwrap());
     network
         .children
         .get_mut(&child_shard_id)
         .unwrap()
         .run_until_async(
             || async {
-                let latest_block = shard_wallet
-                    .get_block(BlockNumber::Latest)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                for tx in latest_block.transactions {
+                let mut latest_block = latest_block.lock().await;
+                let next_block = *latest_block + 1;
+                let Some(check_block) = shard_wallet.get_block(next_block).await.unwrap() else {
+                    return false;
+                };
+                *latest_block = next_block;
+                for tx in check_block.transactions {
                     let receipt = shard_wallet
                         .get_transaction_receipt(tx)
                         .await

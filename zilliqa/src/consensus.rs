@@ -575,14 +575,13 @@ impl Consensus {
                     block.committee.len()
                 );
                 return Ok(None);
-            } else {
-                let vote = self.vote_from_block(&block);
-                let next_leader = self.leader(&block.committee, self.view.get_view()).peer_id;
+            }
+            let vote = self.vote_from_block(&block);
+            let next_leader = self.leader(&block.committee, self.view.get_view()).peer_id;
 
-                if !during_sync {
-                    trace!(proposal_view, ?next_leader, "voting for block");
-                    return Ok(Some((next_leader, vote)));
-                }
+            if !during_sync {
+                trace!(proposal_view, ?next_leader, "voting for block");
+                return Ok(Some((next_leader, vote)));
             }
         } else {
             trace!("block is not safe");
@@ -655,7 +654,7 @@ impl Consensus {
         )?;
 
         // Tell the transaction pool that the sender's nonce has been incremented.
-        self.transaction_pool.update_nonce(&txn);
+        self.transaction_pool.mark_executed(&txn);
 
         if !result.success {
             info!("Transaction was a failure...");
@@ -1842,7 +1841,7 @@ impl Consensus {
                 // all good
             } else {
                 let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
-                    warn!("Proposal {} at view {} referenced a transaction that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view());
+                    warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
                     return Ok(());
                 };
                 transactions.insert(idx, local_tx);
