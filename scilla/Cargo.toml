@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 anyhow = "1.0.80"
-base64 = "0.21.5"
+base64 = "0.22.0"
 evm = { git = "https://github.com/Zilliqa/evm", rev = "08a117eadfd0368cd2cc813763155e8f740bd881", features = ["tracing"] }
 evm_ds = { path = "../evm-ds" }
 jsonrpc-core = "18.0.0"
