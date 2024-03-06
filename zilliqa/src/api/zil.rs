@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Deserializer};
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::types::zil;
 use crate::{
@@ -19,6 +19,7 @@ use crate::{
     message::BlockNumber,
     node::Node,
     schnorr,
+    state::{Contract, ScillaValue},
     transaction::{SignedTransaction, TxZilliqa, VerifiedTransaction},
 };
 
@@ -125,20 +126,20 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<Get
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
 
-    let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?;
-    let receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
+    let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?
+        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+    let receipt = node
+        .lock()
+        .unwrap()
+        .get_transaction_receipt(hash)?
+        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+    let block = node
+        .lock()
+        .unwrap()
+        .get_block_by_hash(receipt.block_hash)?
+        .ok_or_else(|| anyhow!("block does not exist"))?;
 
-    // Note: the scilla api expects an err json rpc response if the transaction is not found
-    // Canonical example:
-    //     "error": {
-    //     "code": -20,
-    //     "data": null,
-    //     "message": "Txn Hash not Present"
-    // },
-    let receipt = receipt.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
-    let tx = tx.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
-
-    Ok(GetTxResponse::new(tx, receipt))
+    Ok(GetTxResponse::new(tx, receipt, block.number()))
 }
 
 pub(super) fn get_scilla_transaction_inner(
@@ -155,7 +156,7 @@ pub(super) fn get_scilla_transaction_inner(
     }
 }
 
-fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let address: H160 = params.one()?;
 
     let node = node.lock().unwrap();
@@ -205,16 +206,26 @@ fn get_git_commit(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(env!("VERGEN_GIT_DESCRIBE").to_string())
 }
 
-fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let smart_contract_address: H160 = params.one()?;
     let node = node.lock().unwrap();
 
     // First get the account and check that its a scilla account
-    let _account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
+    let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
     let balance = node.get_native_balance(smart_contract_address, BlockNumber::Latest)?;
 
-    let mut return_json = serde_json::Value::Object(Default::default());
-    return_json["_balance"] = serde_json::Value::String(balance.to_string());
+    let mut result = json!({
+        "_balance": balance.to_string(),
+    });
 
-    Ok(return_json)
+    if let Contract::Scilla { storage, .. } = account.contract {
+        for (k, (v, _)) in storage {
+            result[k] = match v {
+                ScillaValue::Bytes(b) => serde_json::from_slice(&b)?,
+                ScillaValue::Map(_) => todo!(),
+            };
+        }
+    }
+
+    Ok(result)
 }
