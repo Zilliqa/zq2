@@ -8,6 +8,7 @@ pub mod crypto;
 mod db;
 mod eth_helpers;
 mod exec;
+mod gas;
 mod health;
 pub mod message;
 pub mod node;
