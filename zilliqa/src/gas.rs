@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
-
 /// Minimum gas required to do simple transfer (eth)
 const MIN_ETH_GAS: u64 = 21000;
 /// Gas required to transfer using zilliqa API
