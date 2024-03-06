@@ -163,7 +163,9 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         .lock()
         .unwrap()
         .get_account(address, block_number)?
-        .code
+        .contract
+        .evm_code()
+        .unwrap_or_default()
         .to_hex())
 }
 
@@ -364,6 +366,7 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             Ok(receipt
                 .logs
                 .into_iter()
+                .filter_map(|l| l.into_evm())
                 .enumerate()
                 .map(move |(i, l)| (l, i, txn_index, txn_hash, block_number, block_hash)))
         })
@@ -559,6 +562,8 @@ pub(super) fn get_transaction_receipt_inner(
     let logs = receipt
         .logs
         .into_iter()
+        // Filter non-EVM logs out. TODO: Encode Scilla logs and don't filter them.
+        .filter_map(|log| log.into_evm())
         .enumerate()
         .map(|(log_index, log)| {
             let log = eth::Log::new(

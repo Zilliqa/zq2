@@ -1,12 +1,13 @@
 use primitive_types::{H160, H256, H512};
 use serde::Serialize;
-use serde_json::Value;
 
-use super::hex;
+use super::{hex, hex_no_prefix};
 use crate::{
     message::Block,
+    schnorr,
+    serde_util::num_as_str,
     time::SystemTime,
-    transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
+    transaction::{ScillaLog, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 #[derive(Clone, Serialize)]
@@ -75,19 +76,26 @@ struct TxBlockHeader {
 #[derive(Clone, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTxResponse {
-    #[serde(rename = "ID")]
-    id: String,
-    version: String,
-    nonce: String,
+    #[serde(rename = "ID", serialize_with = "hex_no_prefix")]
+    id: H256,
+    version: u32,
+    #[serde(with = "num_as_str")]
+    nonce: u64,
+    #[serde(serialize_with = "hex_no_prefix")]
     to_addr: H160,
-    sender_pub_key: String,
-    amount: String,
-    signature: String,
+    sender_pub_key: schnorr::PublicKey,
+    #[serde(with = "num_as_str")]
+    amount: u128,
+    signature: schnorr::Signature,
     receipt: GetTxResponseReceipt,
-    gas_price: String,
-    gas_limit: String,
-    code: String,
-    data: String,
+    #[serde(with = "num_as_str")]
+    gas_price: u128,
+    #[serde(with = "num_as_str")]
+    gas_limit: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<String>,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -102,41 +110,50 @@ pub struct CreateTransactionResponse {
 
 #[derive(Clone, Serialize, Debug)]
 struct GetTxResponseReceipt {
-    cumulative_gas: String,
-    epoch_num: String,
+    #[serde(with = "num_as_str")]
+    cumulative_gas: u64,
+    #[serde(with = "num_as_str")]
+    epoch_num: u64,
     success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    event_logs: Option<Vec<Value>>,
+    event_logs: Option<Vec<ScillaLog>>,
 }
 
 impl GetTxResponse {
-    pub fn new(verified_tx: VerifiedTransaction, receipt: TransactionReceipt) -> Option<Self> {
-        match verified_tx.tx {
-            // todo: make all of the fields correct
-            SignedTransaction::Zilliqa { ref tx, .. } => Some(GetTxResponse {
-                id: verified_tx.hash.to_string(),
-                version: "65537".to_string(),
-                nonce: tx.nonce.to_string(),
-                to_addr: tx.to_addr, // Note this appears to have no 0x prefix in zq1
-                sender_pub_key: hex::encode(verified_tx.signer),
-                amount: tx.amount.to_string(),
-                signature: format!(
-                    "0x{}{}",
-                    hex::encode(verified_tx.tx.sig_r()),
-                    hex::encode(verified_tx.tx.sig_s())
-                ),
+    pub fn new(
+        tx: VerifiedTransaction,
+        receipt: TransactionReceipt,
+        block_number: u64,
+    ) -> Option<Self> {
+        let VerifiedTransaction { tx, hash, .. } = tx;
+        if let SignedTransaction::Zilliqa { tx, key, sig } = tx {
+            Some(GetTxResponse {
+                id: H256(hash.0),
+                version: ((tx.chain_id as u32) << 16) | 1,
+                nonce: tx.nonce,
+                to_addr: tx.to_addr,
+                sender_pub_key: key,
+                amount: tx.amount,
+                signature: sig,
                 receipt: GetTxResponseReceipt {
-                    cumulative_gas: receipt.gas_used.to_string(),
-                    epoch_num: "1".to_string(), // todo here
+                    cumulative_gas: receipt.gas_used,
+                    epoch_num: block_number,
                     success: receipt.success,
-                    event_logs: None,
+                    event_logs: (!receipt.logs.is_empty()).then(|| {
+                        receipt
+                            .logs
+                            .into_iter()
+                            .filter_map(|log| log.into_scilla()) // TODO: Expose EVM logs in Scilla API.
+                            .collect()
+                    }),
                 },
-                gas_price: "2000000000".to_string(),
-                gas_limit: "50000".to_string(),
-                code: tx.code.to_string(),
-                data: tx.data.to_string(),
-            }),
-            _ => None, // todo: the others
+                gas_price: tx.gas_price,
+                gas_limit: tx.gas_limit,
+                code: (!tx.code.is_empty()).then_some(tx.code),
+                data: (!tx.data.is_empty()).then_some(tx.data),
+            })
+        } else {
+            None
         }
     }
 }

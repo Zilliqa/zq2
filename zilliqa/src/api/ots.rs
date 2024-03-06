@@ -116,7 +116,9 @@ fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
         .lock()
         .unwrap()
         .get_account(address, block_number)?
-        .code
+        .contract
+        .evm_code()
+        .unwrap_or_default()
         .is_empty();
 
     Ok(!empty)

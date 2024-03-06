@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
@@ -69,6 +69,16 @@ pub struct ConsensusConfig {
     pub genesis_hash: Option<Hash>,
     /// Accounts that will be pre-funded at genesis.
     pub genesis_accounts: Vec<(Address, String)>,
+    /// Address of the Scilla server. Defaults to "http://localhost:3000".
+    pub scilla_address: String,
+    /// The directory in which files will be created when communicating with the Scilla server. Note that a randomly
+    /// named subdirectory will be created within this directory, to prevent polution between processes. If not set,
+    /// `env::temp_dir()` will be used.
+    pub scilla_file_dir: Option<PathBuf>,
+    /// Hostname at which this process is accessible by the Scilla process. Defaults to "localhost". If running the
+    /// Scilla process in Docker and this process on the host, you probably want to pass
+    /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
+    pub local_address: String,
 }
 
 impl Default for ConsensusConfig {
@@ -81,6 +91,9 @@ impl Default for ConsensusConfig {
             genesis_deposits: vec![],
             genesis_hash: None,
             genesis_accounts: Vec::new(),
+            scilla_address: "http://localhost:3000".to_owned(),
+            scilla_file_dir: None,
+            local_address: "localhost".to_owned(),
         }
     }
 }
