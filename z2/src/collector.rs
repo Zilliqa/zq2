@@ -1,5 +1,3 @@
-use std::vec::Vec;
-
 use eyre::Result;
 use futures::future::JoinAll;
 use tempfile::NamedTempFile;

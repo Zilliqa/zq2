@@ -20,7 +20,6 @@ use zilliqa::{
     state::Address,
 };
 
-extern crate fs_extra;
 use std::{
     collections::HashMap,
     fmt::Debug,
