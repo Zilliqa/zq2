@@ -15,7 +15,7 @@ pub(crate) fn calc_deploy_eth_gas(code: &[u8], data: &[u8]) -> u64 {
     const CONTRACT_DEPLOYMENT_BASE_FEE: u64 = 32000;
 
     fn calculate(input: &[u8]) -> u64 {
-        input.into_iter().fold(0u64, |acc, byte| {
+        input.iter().fold(0u64, |acc, byte| {
             if *byte == 0 {
                 acc + GAS_COST_FOR_ZERO_DATA
             } else {
