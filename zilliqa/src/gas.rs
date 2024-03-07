@@ -165,7 +165,7 @@ mod tests {
 
         tracker.account_zil_gas(238);
         assert_eq!(tracker.get_left_zil(), 0);
-        assert_eq!(true, tracker.get_left_eth() > 0);
+        assert!(tracker.get_left_eth() > 0);
     }
 
     #[test]
