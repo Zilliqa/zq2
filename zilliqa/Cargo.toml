@@ -75,7 +75,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 [dev-dependencies]
 async-trait = "0.1.77"
 ethers = { version = "2.0.13", default-features = false, features = ["ethers-solc", "legacy"] }
-ethers-solc = { version = "2.0.13", features = ["svm-solc"] }
+ethers-solc = { version = "2.0.14", features = ["svm-solc"] }
 fs_extra = "1.3.0"
 indicatif = "0.17.8"
 tempfile = "3.9.0"
