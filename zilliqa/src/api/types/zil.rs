@@ -129,7 +129,7 @@ impl GetTxResponse {
                     cumulative_gas: receipt.gas_used.to_string(),
                     epoch_num: "1".to_string(), // todo here
                     success: receipt.success,
-                    event_logs: Some(serde_json::from_str(&receipt.scilla_events).unwrap()),
+                    event_logs: None,
                 },
                 gas_price: "2000000000".to_string(),
                 gas_limit: "50000".to_string(),

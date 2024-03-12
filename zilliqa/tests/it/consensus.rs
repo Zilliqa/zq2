@@ -285,7 +285,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
     // the main shard wallet's address on the child shard and send the xshard tx from it.
     let xfer_hash = wallet
         .send_transaction(
-            TransactionRequest::pay(shard_wallet.address(), 100_000_000_000_000u64),
+            TransactionRequest::pay(shard_wallet.address(), 1_000_000_000_000_000_000_000u128),
             None,
         )
         .await
@@ -300,14 +300,16 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .unwrap();
     let inner_data = deployer.tx.data().unwrap().clone().to_vec();
 
+    let gas_price = wallet.get_gas_price().await.unwrap();
+
     let data = contracts::intershard_bridge::BRIDGE
         .encode_input(&[
             Token::Uint(child_shard_id.into()),
             Token::Bool(true),
             Token::Address(H160::zero()),
             Token::Bytes(inner_data),
-            Token::Uint(10_000_000_000u64.into()),
-            Token::Uint(10_000.into()),
+            Token::Uint(1_000_000u64.into()),
+            Token::Uint(gas_price),
         ])
         .unwrap();
     let tx_request = TransactionRequest::new()

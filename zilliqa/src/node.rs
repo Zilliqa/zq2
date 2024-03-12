@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use evm_ds::protos::evm_proto::{self as EvmProto};
+
 use libp2p::PeerId;
-use primitive_types::{H256, U256};
-use scilla::scilla_server_run::reconstruct_kv_pairs;
+use primitive_types::H256;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::*;
 
@@ -13,7 +12,7 @@ use crate::{
     consensus::Consensus,
     crypto::{Hash, NodePublicKey, SecretKey},
     db::Db,
-    evm_backend::EvmBackend,
+    exec::GAS_PRICE,
     message::{
         Block, BlockBatchRequest, BlockBatchResponse, BlockNumber, BlockRequest, BlockResponse,
         ExternalMessage, InternalMessage, IntershardCall, Proposal,
@@ -289,14 +288,13 @@ impl Node {
     }
 
     pub fn call_contract(
-        &self,
+        &mut self,
         block_number: BlockNumber,
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
-        amount: U256,
-        tracing: bool,
-    ) -> Result<EvmProto::EvmResult> {
+        amount: u128,
+    ) -> Result<Vec<u8>> {
         let block = self
             .get_block_by_number(self.get_number(block_number))?
             .ok_or_else(|| anyhow!("block not found"))?;
@@ -315,8 +313,6 @@ impl Node {
             amount,
             self.config.eth_chain_id,
             block.header,
-            true,
-            tracing,
         )
     }
 
@@ -336,20 +332,20 @@ impl Node {
         self.consensus.state().get_reward_address(proposer)
     }
 
-    pub fn get_gas_price(&self) -> u64 {
-        self.consensus.state().get_gas_price().unwrap()
+    pub fn get_gas_price(&self) -> u128 {
+        GAS_PRICE
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn estimate_gas(
-        &self,
+        &mut self,
         block_number: BlockNumber,
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
-        gas: u64,
-        gas_price: u64,
-        value: U256,
+        gas: Option<u64>,
+        gas_price: Option<u128>,
+        value: u128,
     ) -> Result<u64> {
         // TODO: optimise this to get header directly once persistance is merged
         // (which will provide a header index)
@@ -367,7 +363,6 @@ impl Node {
             data,
             self.config.eth_chain_id,
             block.header,
-            true,
             gas,
             gas_price,
             value,
@@ -399,30 +394,12 @@ impl Node {
             .get_account_storage(address, index)
     }
 
-    pub fn get_scilla_kv_pairs(
-        &self,
-        address: Address,
-        block_number: BlockNumber,
-    ) -> Result<Vec<(String, Vec<u8>)>> {
-        let block_header = self
-            .get_block_by_blocknum(block_number)
-            .unwrap()
-            .unwrap()
-            .header;
-        let backend = EvmBackend::new(
-            self.consensus.state(),
-            U256::zero(),
-            address,
-            0,
-            block_header,
-        );
-        Ok(reconstruct_kv_pairs(&backend, address))
-    }
-
-    pub fn get_native_balance(&self, address: Address, block_number: BlockNumber) -> Result<U256> {
-        self.consensus
+    pub fn get_native_balance(&self, address: Address, block_number: BlockNumber) -> Result<u128> {
+        Ok(self
+            .consensus
             .try_get_state_at(self.get_number(block_number))?
-            .get_native_balance(address, false)
+            .get_account(address)?
+            .balance)
     }
 
     pub fn get_latest_block(&self) -> Result<Option<Block>> {

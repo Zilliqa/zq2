@@ -1,13 +1,15 @@
-use std::{convert::TryInto, hash::Hash, sync::Arc};
+use crate::exec::{BLOCK_GAS_LIMIT, GAS_PRICE};
+use std::{hash::Hash, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::{Constructor, Token};
 use primitive_types::{H160, H256, U256};
+use revm::primitives::ResultAndState;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
-use crate::{cfg::ConsensusConfig, contracts, crypto, db::TrieStorage};
+use crate::{cfg::ConsensusConfig, contracts, crypto, db::TrieStorage, message::BlockHeader};
 
 #[derive(Debug)]
 /// The state of the blockchain, consisting of:
@@ -50,30 +52,19 @@ impl State {
             state.force_deploy_contract(shard_data, Some(contract_addr::SHARD_REGISTRY))?;
         };
 
-        let native_token_data = contracts::native_token::CONSTRUCTOR
-            .encode_input(contracts::native_token::BYTECODE.to_vec(), &[])?;
-        state.force_deploy_contract(native_token_data, Some(contract_addr::NATIVE_TOKEN))?;
-
-        let gas_price_data = contracts::gas_price::CONSTRUCTOR
-            .encode_input(contracts::gas_price::BYTECODE.to_vec(), &[])?;
-        state.force_deploy_contract(gas_price_data, Some(contract_addr::GAS_PRICE))?;
-
         let intershard_bridge_data = contracts::intershard_bridge::BYTECODE.to_vec();
         state.force_deploy_contract(
             intershard_bridge_data,
             Some(contract_addr::INTERSHARD_BRIDGE),
         )?;
 
-        let _ = state.set_gas_price(default_gas_price().into());
-
         if config.genesis_accounts.is_empty() {
             panic!("No genesis accounts provided");
         }
 
         for (address, balance) in config.genesis_accounts {
-            state.set_native_balance(address, U256::from_dec_str(&balance)?)?;
-            let account_new = state.get_account(address)?;
-            state.save_account(address, account_new)?;
+            let balance: u128 = balance.parse()?;
+            state.mutate_account(address, |a| a.balance = balance)?;
         }
 
         let deposit_data = Constructor { inputs: vec![] }
@@ -86,11 +77,24 @@ impl State {
                 Token::Address(reward_address),
                 Token::Uint(U256::from_dec_str(&stake)?),
             ])?;
-            let (result, _) = state.force_execute_payload(Some(contract_addr::DEPOSIT), data)?;
-            if !result.succeeded() {
+            let ResultAndState {
+                result,
+                state: result_state,
+            } = state.apply_transaction_inner(
+                Address::zero(),
+                Some(contract_addr::DEPOSIT),
+                GAS_PRICE,
+                BLOCK_GAS_LIMIT,
+                0,
+                data,
+                None,
+                0,
+                BlockHeader::default(),
+            )?;
+            if !result.is_success() {
                 return Err(anyhow!("setting stake failed: {result:?}"));
             }
-            state.apply_delta(result.apply)?;
+            state.apply_delta(result_state)?;
         }
 
         Ok(state)
@@ -125,7 +129,7 @@ impl State {
     }
 
     /// Canonical method to obtain trie key for an account's storage trie's storage node
-    fn account_storage_key(address: Address, index: H256) -> Vec<u8> {
+    pub fn account_storage_key(address: Address, index: H256) -> Vec<u8> {
         let mut h = Keccak256::new();
         h.update(address.as_bytes());
         h.update(index.as_bytes());
@@ -152,8 +156,19 @@ impl State {
         })
     }
 
+    pub fn mutate_account<F: FnOnce(&mut Account)>(
+        &mut self,
+        address: Address,
+        mutation: F,
+    ) -> Result<()> {
+        let mut account = self.get_account(address)?;
+        mutation(&mut account);
+        self.save_account(address, account)?;
+        Ok(())
+    }
+
     /// If using this to modify the account, ensure save_account gets called
-    fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
+    pub fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
         Ok(match self.get_account(address)?.storage_root {
             Some(root) => PatriciaTrie::new(self.db.clone()).at_root(root),
             None => PatriciaTrie::new(self.db.clone()),
@@ -191,34 +206,26 @@ impl State {
         index: H256,
         value: H256,
     ) -> Result<()> {
-        let mut account = self.get_account(address)?;
         let mut trie = self.get_account_trie(address)?;
         trie.insert(&Self::account_storage_key(address, index), value.as_bytes())?;
-        account.storage_root = Some(trie.root_hash()?);
-        self.save_account(address, account)?;
+        let root = trie.root_hash()?;
+        self.mutate_account(address, |a| a.storage_root = Some(root))?;
 
         Ok(())
     }
 
     pub fn remove_account_storage(&mut self, address: Address, index: H256) -> Result<bool> {
-        let mut account = self.get_account(address)?;
         let mut trie = self.get_account_trie(address)?;
         let ret = trie.remove(&Self::account_storage_key(address, index))?;
-        account.storage_root = Some(trie.root_hash()?);
-        self.save_account(address, account)?;
+        let root = trie.root_hash()?;
+        self.mutate_account(address, |a| a.storage_root = Some(root))?;
 
         Ok(ret)
     }
 
     pub fn clear_account_storage(&mut self, address: Address) -> Result<()> {
-        let account = self.get_account(address)?;
-        self.save_account(
-            address,
-            Account {
-                storage_root: None,
-                ..account
-            },
-        )
+        self.mutate_account(address, |a| a.storage_root = None)?;
+        Ok(())
     }
 
     /// Returns an error if there are any issues accessing the storage trie
@@ -249,12 +256,6 @@ pub mod contract_addr {
 
     use super::Address;
 
-    /// Address of the native token ERC-20 contract.
-    pub const NATIVE_TOKEN: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL");
-    /// Address of the gas contract
-    pub const GAS_PRICE: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0GAS");
-    /// Gas fees go here
-    pub const COLLECTED_FEES: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0FEE");
     /// For intershard transactions, call this address
     pub const INTERSHARD_BRIDGE: Address = H160(*b"\0\0\0\0\0\0\0\0ZQINTERSHARD");
     /// Address of the shard registry - only present on the root shard.
@@ -265,16 +266,8 @@ pub mod contract_addr {
 #[derive(Debug, Clone, Default, Hash, Serialize, Deserialize)]
 pub struct Account {
     pub nonce: u64,
+    pub balance: u128,
     #[serde(with = "serde_bytes")]
     pub code: Vec<u8>,
     pub storage_root: Option<H256>,
-    pub is_scilla: bool,
-}
-
-pub fn default_gas() -> u64 {
-    10000000
-}
-
-pub fn default_gas_price() -> u64 {
-    1000000
 }
