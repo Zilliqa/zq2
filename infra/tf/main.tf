@@ -53,7 +53,7 @@ provider "google" {
 }
 
 resource "google_storage_bucket" "binaries" {
-  name                        = "${var.project_id}-zq2-binaries"
+  name                        = "${var.project_id}-${var.network_name}-binaries"
   location                    = "EUROPE-WEST2"
   uniform_bucket_level_access = true
 }
@@ -76,18 +76,18 @@ resource "null_resource" "build_binary" {
 
 resource "google_storage_bucket_object" "binary" {
   depends_on = [null_resource.build_binary]
-  name       = "zq2-binary"
+  name       = "${var.network_name}-binary"
   source     = local.binary_location
   bucket     = google_storage_bucket.binaries.name
 }
 
 resource "google_compute_network" "this" {
-  name                    = "zq2"
+  name                    = "${var.network_name}"
   auto_create_subnetworks = false
 }
 
 resource "google_compute_subnetwork" "subnet" {
-  name                     = "zq2"
+  name                     = "${var.network_name}"
   ip_cidr_range            = "10.2.0.0/20"
   network                  = google_compute_network.this.name
   region                   = "europe-west2"
@@ -95,7 +95,7 @@ resource "google_compute_subnetwork" "subnet" {
 }
 
 resource "google_compute_subnetwork" "proxy_subnet" {
-  name          = "zq2-proxy"
+  name          = "${var.network_name}-proxy"
   ip_cidr_range = "10.3.0.0/20"
   network       = google_compute_network.this.name
   region        = "europe-west2"
@@ -104,7 +104,7 @@ resource "google_compute_subnetwork" "proxy_subnet" {
 }
 
 resource "google_compute_firewall" "allow_ingress_from_iap" {
-  name    = "allow-ingress-from-iap"
+  name    = "${var.network_name}-allow-ingress-from-iap"
   network = google_compute_network.this.name
 
   direction     = "INGRESS"
@@ -117,7 +117,7 @@ resource "google_compute_firewall" "allow_ingress_from_iap" {
 }
 
 resource "google_compute_firewall" "allow_internal_p2p" {
-  name    = "allow-internal-p2p"
+  name    = "${var.network_name}-allow-internal-p2p"
   network = google_compute_network.this.name
 
   direction     = "INGRESS"
@@ -130,7 +130,7 @@ resource "google_compute_firewall" "allow_internal_p2p" {
 }
 
 resource "google_compute_firewall" "allow_external_jsonrpc" {
-  name    = "allow-external-jsonrpc"
+  name    = "${var.network_name}-allow-external-jsonrpc"
   network = google_compute_network.this.name
 
   direction     = "INGRESS"
@@ -143,7 +143,7 @@ resource "google_compute_firewall" "allow_external_jsonrpc" {
 }
 
 resource "google_service_account" "node" {
-  account_id = "zq2-node"
+  account_id = "${var.network_name}-node"
 }
 
 data "google_project" "this" {}
@@ -199,7 +199,7 @@ locals {
 module "bootstrap_node" {
   source = "./modules/node"
 
-  name                  = "zq2-bootstrap-node"
+  name                  = "${var.network_name}-bootstrap-node"
   service_account_email = google_service_account.node.email
   network_name          = google_compute_network.this.name
   subnetwork_name       = google_compute_subnetwork.subnet.name
@@ -230,7 +230,7 @@ module "node" {
   source = "./modules/node"
   count  = 3
 
-  name                  = "zq2-node-${count.index}"
+  name                  = "${var.network_name}-node-${count.index}"
   service_account_email = google_service_account.node.email
   network_name          = google_compute_network.this.name
   subnetwork_name       = google_compute_subnetwork.subnet.name
@@ -257,7 +257,7 @@ resource "google_project_service" "osconfig" {
 }
 
 resource "google_compute_instance_group" "api" {
-  name      = "zq2-nodes"
+  name      = "${var.network_name}-nodes"
   zone      = "europe-west2-a"
   instances = [module.bootstrap_node.self_link]
 
@@ -269,7 +269,7 @@ resource "google_compute_instance_group" "api" {
 }
 
 resource "google_compute_backend_service" "api" {
-  name                  = "zq2-nodes"
+  name                  = "${var.network_name}-nodes"
   health_checks         = [google_compute_health_check.api.id]
   port_name             = "jsonrpc"
   load_balancing_scheme = "EXTERNAL_MANAGED"
@@ -283,7 +283,7 @@ resource "google_compute_backend_service" "api" {
 }
 
 resource "google_compute_health_check" "api" {
-  name = "zq2-jsonrpc"
+  name = "${var.network_name}-jsonrpc"
 
   http_health_check {
     port_name          = "jsonrpc"
@@ -293,17 +293,17 @@ resource "google_compute_health_check" "api" {
 }
 
 resource "google_compute_url_map" "api" {
-  name            = "zq2"
+  name            = "${var.network_name}"
   default_service = google_compute_backend_service.api.id
 }
 
 resource "google_compute_target_http_proxy" "api" {
-  name    = "zq2-target-proxy"
+  name    = "${var.network_name}-target-proxy"
   url_map = google_compute_url_map.api.id
 }
 
 resource "google_compute_target_https_proxy" "api" {
-  name             = "zq2-target-proxy"
+  name             = "${var.network_name}-target-proxy"
   url_map          = google_compute_url_map.api.id
   ssl_certificates = [google_compute_managed_ssl_certificate.api.id]
 }
@@ -315,7 +315,7 @@ data "google_compute_global_address" "api" {
 resource "google_compute_global_forwarding_rule" "api_http" {
   depends_on = [google_compute_subnetwork.proxy_subnet]
 
-  name                  = "zq2-forwarding-rule-http"
+  name                  = "${var.network_name}-forwarding-rule-http"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "80"
@@ -326,7 +326,7 @@ resource "google_compute_global_forwarding_rule" "api_http" {
 resource "google_compute_global_forwarding_rule" "api_https" {
   depends_on = [google_compute_subnetwork.proxy_subnet]
 
-  name                  = "zq2-forwarding-rule-https"
+  name                  = "${var.network_name}-forwarding-rule-https"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "443"
@@ -335,7 +335,7 @@ resource "google_compute_global_forwarding_rule" "api_https" {
 }
 
 resource "google_compute_managed_ssl_certificate" "api" {
-  name = "zq2-api"
+  name = "${var.network_name}-api"
 
   managed {
     domains = ["api.${var.subdomain}"]

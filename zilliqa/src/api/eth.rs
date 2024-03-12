@@ -12,7 +12,7 @@ use tracing::*;
 
 use super::{
     to_hex::ToHex,
-    types::eth::{self, CallParams, EstimateGasParams, HashOrTransaction, OneOrMany},
+    types::eth::{self, CallParams, HashOrTransaction, OneOrMany},
 };
 use crate::{
     crypto::Hash,
@@ -82,8 +82,7 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.from,
         call_params.to,
         call_params.data.clone(),
-        U256::from(call_params.value),
-        false,
+        call_params.value.to(),
     )?;
 
     trace!(
@@ -92,10 +91,10 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.from,
         call_params.to,
         call_params.data,
-        ret.return_value.to_hex()
+        ret.to_hex()
     );
 
-    Ok(ret.return_value.to_hex())
+    Ok(ret.to_hex())
 }
 
 fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -105,7 +104,7 @@ fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("estimate_gas: params: {:?}", params);
     let mut params = params.sequence();
-    let call_params: EstimateGasParams = params.next()?;
+    let call_params: CallParams = params.next()?;
     let block_number: BlockNumber = params.next().unwrap_or(BlockNumber::Latest);
 
     let return_value = node.lock().unwrap().estimate_gas(
@@ -113,9 +112,9 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.from,
         call_params.to,
         call_params.data.clone(),
-        call_params.gas,
-        call_params.gas_price,
-        call_params.value,
+        call_params.gas.map(|g| g.to()),
+        call_params.gas_price.map(|g| g.to()),
+        call_params.value.to(),
     )?;
 
     Ok(return_value.to_hex())
@@ -437,12 +436,12 @@ pub(super) fn get_transaction_inner(
         block_hash: block.as_ref().map(|b| b.hash().0.into()),
         block_number: block.as_ref().map(|b| b.number()),
         from,
-        gas: 0,
+        gas: transaction.gas_limit(),
         gas_price,
         max_fee_per_gas,
         max_priority_fee_per_gas,
         hash: H256(hash.0),
-        input: transaction.payload().0.to_vec(),
+        input: transaction.payload().to_vec(),
         nonce: transaction.nonce().unwrap_or(u64::MAX),
         to: transaction.to_addr(),
         transaction_index: block

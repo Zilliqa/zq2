@@ -1,33 +1,29 @@
 //! Manages execution of transactions on state.
 
-use std::{
-    num::NonZeroU128,
-    sync::{Arc, Mutex},
-};
+use crate::state::contract_addr;
+use ethabi::Token;
+use std::num::NonZeroU128;
 
 use anyhow::{anyhow, Result};
-use ethabi::Token;
-use evm_ds::{
-    evm::backend::Backend,
-    evm_server_run::{
-        calculate_contract_address, calculate_contract_address_scheme, run_evm_impl_direct,
+use eth_trie::Trie;
+use primitive_types::{H160, H256, U256};
+use revm::{
+    primitives::{
+        AccountInfo, BlockEnv, Bytecode, BytecodeState, ExecutionResult, HandlerCfg, Output,
+        ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
     },
-    protos::evm_proto::{self as EvmProto, ExitReasonCps},
-    tracing_logging::LoggingEventListener,
+    Database, Evm,
 };
-use primitive_types::{H160, U256};
-use scilla::scilla_server_run::{calculate_contract_address_scilla, run_scilla_impl_direct};
-use serde_json::Value;
 use tracing::*;
 
-use crate::eth_helpers::extract_revert_msg;
 use crate::{
-    contracts,
-    crypto::NodePublicKey,
-    evm_backend::EvmBackend,
+    contracts, crypto::Hash, crypto::NodePublicKey, eth_helpers::extract_revert_msg,
+    state::Account, time::SystemTime, transaction::Log,
+};
+use crate::{
     message::BlockHeader,
-    state::{contract_addr, Address, State},
-    transaction::{SignedTransaction, VerifiedTransaction},
+    state::{Address, State},
+    transaction::VerifiedTransaction,
 };
 
 /// Data returned after applying a [Transaction] to [State].
@@ -37,14 +33,65 @@ pub struct TransactionApplyResult {
     /// If the transaction was a contract creation, the address of the resulting contract.
     pub contract_address: Option<Address>,
     /// The logs emitted by the transaction execution.
-    pub logs: Vec<EvmProto::Log>,
-    /// The traces from the EVM, if enabled
-    pub traces: Arc<Mutex<LoggingEventListener>>,
+    pub logs: Vec<Log>,
     /// The gas paid by the transaction
     pub gas_used: u64,
-    /// The scilla events, if any
-    pub scilla_events: Value,
 }
+
+impl Database for &State {
+    type Error = anyhow::Error;
+
+    fn basic(
+        &mut self,
+        address: revm::primitives::Address,
+    ) -> Result<Option<AccountInfo>, Self::Error> {
+        let address = H160(address.into_array());
+
+        if !self.try_has_account(address)? {
+            return Ok(None);
+        }
+
+        let account = self.get_account(address)?;
+        let account_info = AccountInfo {
+            balance: revm::primitives::U256::from(account.balance),
+            nonce: account.nonce,
+            code_hash: KECCAK_EMPTY,
+            code: Some(Bytecode {
+                bytecode: account.code.into(),
+                state: BytecodeState::Raw,
+            }),
+        };
+
+        Ok(Some(account_info))
+    }
+
+    fn code_by_hash(&mut self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
+        unimplemented!()
+    }
+
+    fn storage(
+        &mut self,
+        address: revm::primitives::Address,
+        index: revm::primitives::U256,
+    ) -> Result<revm::primitives::U256, Self::Error> {
+        let address = H160(address.into_array());
+        let index = H256(index.to_be_bytes());
+
+        let result = self.get_account_storage(address, index)?;
+
+        Ok(revm::primitives::U256::from_be_bytes(result.0))
+    }
+
+    fn block_hash(&mut self, _number: revm::primitives::U256) -> Result<B256, Self::Error> {
+        // TODO
+        Ok(B256::ZERO)
+    }
+}
+
+pub const BLOCK_GAS_LIMIT: u64 = 84_000_000;
+pub const GAS_PRICE: u128 = 4761904800000;
+
+const SPEC_ID: SpecId = SpecId::SHANGHAI;
 
 impl State {
     /// Used primarily during genesis to set up contracts for chain functionality.
@@ -54,47 +101,45 @@ impl State {
         creation_bytecode: Vec<u8>,
         override_address: Option<Address>,
     ) -> Result<Address> {
-        let (mut result, evm_address) = self.force_execute_payload(None, creation_bytecode)?;
+        let ResultAndState { result, mut state } = self.apply_transaction_inner(
+            H160::zero(),
+            None,
+            GAS_PRICE,
+            BLOCK_GAS_LIMIT,
+            0,
+            creation_bytecode,
+            None,
+            0,
+            BlockHeader::genesis(Hash::ZERO),
+        )?;
 
-        match result.exit_reason {
-            ExitReasonCps::Succeed(_) => {
-                let evm_address = evm_address.expect(
-                    "Transaction submitted to force_deploy_contract must be a contract creation.",
-                );
+        match result {
+            ExecutionResult::Success {
+                output: Output::Create(_, Some(addr)),
+                ..
+            } => {
+                let addr = if let Some(override_address) = override_address {
+                    let override_address = revm::primitives::Address::from(override_address.0);
+                    let account = state
+                        .remove(&addr)
+                        .ok_or_else(|| anyhow!("deployment did not change the contract account"))?;
+                    state.insert(override_address, account);
+                    addr
+                } else {
+                    addr
+                };
 
-                let actual_address = override_address.unwrap_or(evm_address);
-
-                if let Some(override_address) = override_address {
-                    // Overwrite applys to use the desired address.
-                    for apply in result.apply.iter_mut() {
-                        match apply {
-                            EvmProto::Apply::Modify { address, .. } => {
-                                if *address == evm_address {
-                                    *address = override_address;
-                                }
-                            }
-                            EvmProto::Apply::Delete { address, .. } => {
-                                if *address == evm_address {
-                                    *address = override_address;
-                                }
-                            }
-                        }
-                    }
-                }
-                self.apply_delta(result.apply)?;
-                Ok(actual_address)
+                self.apply_delta(state)?;
+                Ok(H160(addr.into_array()))
             }
-            _ => Err(anyhow!("{:?}", result.exit_reason)),
+            ExecutionResult::Success { .. } => {
+                Err(anyhow!("deployment did not create a transaction"))
+            }
+            ExecutionResult::Revert { .. } => Err(anyhow!("deployment reverted")),
+            ExecutionResult::Halt { reason, .. } => Err(anyhow!("deployment halted: {reason:?}")),
         }
     }
 
-    // Call this function with your transaction and it will return whether is succeeded and the state deltas that
-    // you should apply if you want to commit this transaction.
-    //
-    // The way it works is by using a continuation passing style. At each point the Tx makes a call,
-    // or some other operations,
-    // a trap is generated and the Tx is paused (continuation). The continuation is then pushed onto a stack and the next
-    // continuation (the call to make) is pushed onto the stack.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_transaction_inner(
         &self,
@@ -102,414 +147,58 @@ impl State {
         to_addr: Option<Address>,
         gas_price: u128,
         gas_limit: u64,
-        amount: U256,
+        amount: u128,
         payload: Vec<u8>,
-        payload_initdata: Vec<u8>,
+        nonce: Option<u64>,
         chain_id: u64,
         current_block: BlockHeader,
-        tracing: bool,
-        estimate: bool,
-        print_enabled: bool,
-        is_scilla: bool,
-    ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
-        let caller = from_addr;
-        let is_static = false;
-        let context = "".to_string();
-        let continuations: Arc<Mutex<EvmProto::Continuations>> = Default::default();
-        let account = self
-            .get_account(to_addr.unwrap_or(Address::zero()))
-            .unwrap_or_default();
-        let mut to = to_addr.unwrap_or(Address::zero());
-        let mut created_contract_addr: Option<Address> = None;
+    ) -> Result<ResultAndState> {
+        let mut evm = Evm::builder()
+            .with_db(self)
+            .with_block_env(BlockEnv {
+                number: revm::primitives::U256::from(current_block.number),
+                coinbase: revm::primitives::Address::ZERO,
+                timestamp: revm::primitives::U256::from(
+                    current_block
+                        .timestamp
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                ),
+                gas_limit: revm::primitives::U256::from(BLOCK_GAS_LIMIT),
+                basefee: revm::primitives::U256::from(GAS_PRICE),
+                difficulty: revm::primitives::U256::from(1),
+                prevrandao: Some(B256::ZERO),
+                blob_excess_gas_and_price: None,
+            })
+            .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
+            .modify_cfg_env(|c| {
+                c.chain_id = chain_id;
+                // We disable the balance check (which ensures the from account's balance is greater than the
+                // transaction's `gas_price * gas_limit`), because Scilla transactions are often submitted with
+                // overly high `gas_limit`s. This is probably because there is no gas estimation feature for Scilla
+                // transactions.
+                c.disable_balance_check = true;
+            })
+            .with_tx_env(TxEnv {
+                caller: from_addr.0.into(),
+                gas_limit,
+                gas_price: revm::primitives::U256::from(gas_price),
+                transact_to: to_addr
+                    .map(|a| TransactTo::call(a.0.into()))
+                    .unwrap_or_else(TransactTo::create),
+                value: revm::primitives::U256::from(amount),
+                data: payload.clone().into(),
+                nonce,
+                chain_id: Some(chain_id),
+                access_list: vec![],
+                gas_priority_fee: None,
+                blob_hashes: vec![],
+                max_fee_per_blob_gas: None,
+            })
+            .build();
 
-        let mut code: Vec<u8> = account.code;
-        let mut data: Vec<u8> = payload.clone();
-        let mut traces: Arc<Mutex<LoggingEventListener>> =
-            Arc::new(Mutex::new(LoggingEventListener::new(tracing)));
-
-        // The backend is provided to the evm as a way to read accounts and state during execution
-        let mut backend = EvmBackend::new(self, U256::zero(), caller, chain_id, current_block);
-
-        // if this is none, it is contract creation. Note that scilla TXs
-        // have had the zero address mapped to None so this check is always correct
-        if to_addr.is_none() {
-            code = data;
-            data = payload_initdata.clone();
-            // Note that scilla has an off by one for the account nonce
-            to = if is_scilla {
-                calculate_contract_address_scilla(from_addr, account.nonce + 1)
-            } else {
-                calculate_contract_address(from_addr, &backend)
-            };
-            created_contract_addr = Some(to);
-            trace!("*** Calculated contract address for creation: {:?}", to);
-        }
-
-        let mut continuation_stack: Vec<EvmProto::EvmCallArgs> = vec![];
-        let native_balance = self.get_native_balance(from_addr, false).unwrap();
-        let target_balance = self.get_native_balance(to, false).unwrap();
-
-        // The first continuation in the stack is the tx itself
-        continuation_stack.push(EvmProto::EvmCallArgs {
-            address: to,
-            code,
-            data,
-            apparent_value: amount,
-            gas_limit,
-            caller,
-            gas_scaling_factor: 1,
-            scaling_factor: None,
-            estimate,
-            is_static,
-            evm_context: context,
-            node_continuation: None,
-            continuations: continuations.clone(),
-            enable_cps: true,
-            tx_trace_enabled: true,
-            tx_trace: traces.clone(),
-            is_scilla,
-        });
-        let mut result;
-        let mut run_succeeded;
-
-        // For gas, we need to check that the caller has enough balance to pay for the gas and the
-        // transfer (gas price). After execution, we can then deduct the gas used from the caller's balance.
-        let gas_cost_max: U256 = (gas_price * gas_limit as u128).into();
-        let upfront_reserve = if estimate {
-            amount
-        } else {
-            gas_cost_max + amount
-        };
-
-        // Check the sender has enough balance and deduct it before any other operations happen, sending
-        // it to the destination address or contract creation address
-        if gas_price > 0 && native_balance <= upfront_reserve {
-            let error_str = format!(
-                "Transaction attempted to use more funds \
-             and gas than it actually had! Amount: {}, Balance: {}, gas_price: {}, \
-              addr: {}",
-                upfront_reserve, native_balance, gas_price, from_addr
-            );
-            warn!(error_str);
-            return Err(anyhow!(error_str));
-        }
-
-        // If the contract is to have funds during its execution, we need to push a transfer from
-        // the sender to the contract onto the stack to execute first
-        if amount > U256::zero() {
-            if print_enabled {
-                debug!(
-                    "During execution: populating account {}->{} with balance: {}",
-                    from_addr, to, amount
-                );
-                debug!(
-                    "Prior balances:  {} and {} ",
-                    native_balance, target_balance
-                );
-            }
-
-            continuation_stack.push(self.push_transfer(
-                from_addr,
-                to,
-                amount,
-                continuations.clone(),
-                traces.clone(),
-            ));
-        }
-
-        if print_enabled {
-            debug!(
-                "*** Virtual machine invocation begin - with args {:?}",
-                continuation_stack
-            );
-        }
-
-        // Set the first continuation as our current context and then loop while there is still
-        // a continuation, pushing onto the stack when there are more continuations
-        loop {
-            let mut call_args = continuation_stack.pop().unwrap();
-
-            if print_enabled {
-                debug!("Running execution loop...");
-            }
-
-            backend.origin = call_args.caller;
-            result = if call_args.is_scilla {
-                run_scilla_impl_direct(call_args.clone(), &backend)
-            } else {
-                run_evm_impl_direct(call_args.clone(), &backend)
-            };
-
-            if print_enabled {
-                debug!("Evm invocation complete - applying result {:?}", result);
-            }
-
-            // Apply the results to the backend so they can be used in the next continuation
-            backend.apply_update(result.take_apply());
-            run_succeeded = result.succeeded();
-
-            // Handle potential traps. The continuation which was executing needs to get its
-            // feedback set for when it resumes
-            if result.has_trap() {
-                let mut cont =
-                    EvmProto::ContinuationFb::new(continuations.lock().unwrap().last_created());
-
-                match result.trap_data.unwrap() {
-                    EvmProto::TrapData::Create(create) => {
-                        let addr_to_create =
-                            calculate_contract_address_scheme(create.scheme, &backend);
-
-                        cont.feedback_type = EvmProto::Type::Create;
-                        cont.feedback_data = Some(EvmProto::FeedbackData::Address(addr_to_create));
-                        trace!("Contract is creating at: {}", addr_to_create);
-
-                        call_args.node_continuation = Some(cont);
-
-                        // Set up the next continuation, adjust the relevant parameters
-                        let call_args_next = EvmProto::EvmCallArgs {
-                            caller: create.caller,
-                            address: addr_to_create,
-                            code: create.call_data,
-                            data: vec![],
-                            tx_trace: traces.clone(),
-                            continuations: continuations.clone(),
-                            node_continuation: None,
-                            evm_context: Default::default(),
-                            ..call_args
-                        };
-
-                        // This is the paused execution, push it back
-                        continuation_stack.push(call_args);
-
-                        // Now push on the context we want to execute
-                        continuation_stack.push(call_args_next);
-                    }
-                    EvmProto::TrapData::Call(call) => {
-                        cont.feedback_type = EvmProto::Type::Call;
-                        cont.feedback_data =
-                            Some(EvmProto::FeedbackData::CallData(EvmProto::Call {
-                                data: Vec::new(),
-                                memory_offset: call.memory_offset,
-                                offset_len: call.offset_len,
-                            }));
-
-                        call_args.node_continuation = Some(cont);
-
-                        let call_data_next = call.call_data;
-                        let call_addr = call.callee_address;
-                        let caller = call.context.caller;
-                        let value: U256 = if let Some(transfer) = call.transfer {
-                            transfer.value
-                        } else {
-                            U256::zero()
-                        };
-
-                        // Fetch the code to be called from the backend
-                        let code_next = backend.code(call_addr);
-
-                        // Set up the next continuation, adjust the relevant parameters
-                        let call_args_next = EvmProto::EvmCallArgs {
-                            address: call.context.destination,
-                            caller,
-                            code: code_next,
-                            data: call_data_next,
-                            apparent_value: call.context.apparent_value,
-                            tx_trace: traces.clone(),
-                            continuations: continuations.clone(),
-                            node_continuation: None,
-                            evm_context: Default::default(),
-                            ..call_args
-                        };
-
-                        // This is the paused execution, push it back
-                        continuation_stack.push(call_args);
-
-                        // Now push on the context we want to execute
-                        continuation_stack.push(call_args_next);
-
-                        // If the call also has a value transfer, we need to execute that first
-                        if !value.is_zero() {
-                            continuation_stack.push(self.push_transfer(
-                                caller,
-                                call_addr,
-                                value,
-                                continuations.clone(),
-                                traces.clone(),
-                            ));
-                        }
-                    }
-                }
-            } else if !continuation_stack.is_empty() && !backend.origin.is_zero() {
-                if !run_succeeded {
-                    warn!(
-                        "Tx failed to execute! Call context: {}",
-                        call_args.evm_context
-                    );
-
-                    // In the case it was a fund transfer, what is on the stack is what
-                    // would have executed if it had the funds, so we need to pop it additionally.
-                    if call_args.evm_context == *"fund_transfer" {
-                        continuation_stack.pop();
-                    }
-                }
-
-                // We need to let the continuation prior know the return result
-                let prior = continuation_stack.last_mut().unwrap();
-
-                // Check whether we completed a call or a create trap just now
-                let prior_node_continuation = prior.node_continuation.as_mut();
-
-                if let Some(prior_node_continuation) = prior_node_continuation {
-                    match prior_node_continuation.feedback_type {
-                        EvmProto::Type::Call => {
-                            let old_calldata = prior_node_continuation.get_calldata();
-                            prior_node_continuation.feedback_data =
-                                Some(EvmProto::FeedbackData::CallData(EvmProto::Call {
-                                    data: result.return_value.clone(),
-                                    ..*old_calldata
-                                }));
-                            prior_node_continuation.succeeded = run_succeeded;
-                            prior_node_continuation.logs = result.logs.clone();
-                        }
-                        EvmProto::Type::Create => {
-                            prior_node_continuation.feedback_data =
-                                Some(EvmProto::FeedbackData::Address(
-                                    prior_node_continuation.get_address(),
-                                ));
-                            prior_node_continuation.succeeded = run_succeeded;
-                            prior_node_continuation.logs = result.logs.clone();
-
-                            // We also need to write down the data + address of the contract we
-                            // just created
-                            backend.create_account(
-                                prior_node_continuation.get_address(),
-                                result.return_value.clone(),
-                                is_scilla,
-                            );
-
-                            trace!(
-                                "Writing back contract created at: {:?}",
-                                prior_node_continuation.get_address()
-                            );
-                        }
-                    }
-                }
-            }
-
-            // We have finished looping, break
-            if continuation_stack.is_empty() {
-                break;
-            }
-        }
-
-        // If this was contract creation, apply this to the deltas for the convenience of
-        // the caller
-        if let Some(created_contract_addr) = created_contract_addr {
-            backend.create_account(
-                created_contract_addr,
-                result.return_value.clone(),
-                is_scilla,
-            );
-        }
-
-        // If the result was a revert, kill all applys
-        if !run_succeeded {
-            debug!("Transaction failed, clearing applys.");
-            backend.account_storage_cached.clear();
-        }
-
-        // Finally, we want to deduct the gas used by the caller and send it to the miner
-        // For now we send it to origin and assume we will handle rewards later
-        // In estimation mode, we do not attempt to deduct the gas (so we should use this mode for
-        // system calls)
-        if !estimate {
-            if result.remaining_gas > gas_limit {
-                panic!("More gas remains than we specified at the beginning of execution!");
-            }
-
-            let gas_deduction = (gas_limit - result.remaining_gas) as u128 * gas_price;
-
-            continuation_stack.push(self.push_transfer(
-                from_addr,
-                contract_addr::COLLECTED_FEES,
-                gas_deduction.into(),
-                continuations,
-                traces,
-            ));
-
-            let call_args = continuation_stack.pop().unwrap();
-
-            if print_enabled {
-                debug!("Applying gas deduction of {}", gas_deduction);
-                debug!(
-                    "our balance is: {}",
-                    self.get_native_balance(from_addr, false).unwrap()
-                );
-                debug!("our caller is: {:?}", call_args.caller);
-            }
-
-            backend.origin = call_args.caller;
-            let mut gas_result = run_evm_impl_direct(call_args, &backend);
-            traces = gas_result.tx_trace.clone();
-
-            if !gas_result.succeeded() {
-                let fail_string = format!(
-                    "Gas deduction FAILED with error: {:?}",
-                    gas_result.exit_reason
-                );
-                warn!(fail_string);
-                return Err(anyhow!(fail_string));
-            }
-
-            backend.apply_update(gas_result.take_apply());
-        }
-
-        let mut backend_result = backend.get_result();
-        backend_result.exit_reason = result.exit_reason;
-        backend_result.return_value = result.return_value;
-        backend_result.remaining_gas = result.remaining_gas;
-        backend_result.logs = result.logs;
-        backend_result.tx_trace = traces.clone();
-
-        if print_enabled {
-            debug!(
-                "*** Loop complete - returning final results {:?} {:?}",
-                backend_result, created_contract_addr
-            );
-
-            if !backend_result.succeeded() {
-                warn!(
-                    "Tx failed to execute! Return value: {:?}",
-                    backend_result.exit_reason
-                );
-            }
-        }
-
-        Ok((backend_result, created_contract_addr))
-    }
-
-    /// Helper wrapper around apply_transaction_inner when only the EVM payload matters
-    /// Used for internal system transactions
-    pub(crate) fn force_execute_payload(
-        &mut self,
-        to_addr: Option<Address>,
-        payload: Vec<u8>,
-    ) -> Result<(EvmProto::EvmResult, Option<Address>)> {
-        self.apply_transaction_inner(
-            Address::zero(),
-            to_addr,
-            u128::MIN,
-            u64::MAX,
-            U256::zero(),
-            payload,
-            vec![],
-            0,
-            BlockHeader::default(),
-            false,
-            true,
-            false,
-            false,
-        )
+        Ok(evm.transact()?)
     }
 
     /// Apply a transaction to the account state.
@@ -518,264 +207,102 @@ impl State {
         txn: VerifiedTransaction,
         chain_id: u64,
         current_block: BlockHeader,
-        tracing: bool,
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash;
         let from_addr = txn.signer;
         info!(?hash, ?txn, "executing txn");
-        let mut is_scilla = false;
-
-        if let SignedTransaction::Zilliqa { .. } = txn.tx {
-            info!("Zilliqa transaction detected, using zilliqa interpreter...");
-            is_scilla = true;
-        }
 
         let txn = txn.tx.into_transaction();
 
-        let mut acct = self.get_account(from_addr).unwrap();
-
-        // fail early on nonce mismatch
-        if let Some(tx_nonce) = txn.nonce() {
-            // todo: this should be +1 but it is not.
-            let desired_account_nonce = acct.nonce;
-
-            if desired_account_nonce != tx_nonce {
-                let error_str = format!(
-                "Nonce mismatch during tx execution! Expected: {}, Actual: {} tx hash: {} from account {}",
-                desired_account_nonce,
-                tx_nonce,
-                hash,
-                from_addr
-            );
-                warn!(error_str);
-                return Err(anyhow!(error_str));
-            }
-        };
-
-        let gas_price = self.get_gas_price()?;
-
-        if txn.gas_limit() < gas_price {
-            let error_str = format!(
-                "Transaction gas limit is less than the gas price! Tx limit: {}, Gas price: {}",
-                txn.gas_limit(),
-                gas_price
-            );
-            warn!(error_str);
-        }
-
-        trace!(
-            ?from_addr,
-            ?txn,
-            ?is_scilla,
-            "Applying transaction with args: "
-        );
-
-        let result = self.apply_transaction_inner(
+        let ResultAndState { result, state } = self.apply_transaction_inner(
             from_addr,
             txn.to_addr(),
             txn.max_fee_per_gas(),
             txn.gas_limit(),
-            txn.amount().into(),
-            txn.payload().0.to_vec(),
-            txn.payload().1.to_vec(),
+            txn.amount(),
+            txn.payload().to_vec(),
+            txn.nonce(),
             chain_id,
             current_block,
-            tracing,
-            false,
-            true,
-            is_scilla,
-        );
+        )?;
 
-        match result {
-            Ok((result, contract_addr)) => {
-                // Apply the state changes only if success
-                let success = result.succeeded();
+        self.apply_delta(state)?;
 
-                self.apply_delta(result.apply)?;
-
-                // Note that success can be false, the tx won't apply changes, but the nonce increases
-                // and we get the return value (which will indicate the error).
-                // Except nonceless txs (such as intershard calls) which don't increment the nonce.
-                if txn.nonce().is_some() {
-                    acct.nonce = acct.nonce.checked_add(1).unwrap();
-                    self.save_account(from_addr, acct)?;
-                }
-
-                Ok(TransactionApplyResult {
-                    success,
-                    contract_address: contract_addr,
-                    logs: result.logs,
-                    traces: result.tx_trace.clone(),
-                    gas_used: txn.gas_limit() - result.remaining_gas,
-                    scilla_events: scilla_events_to_single(
-                        result.tx_trace.lock().unwrap().scilla_events.clone(),
-                    ),
+        Ok(TransactionApplyResult {
+            success: result.is_success(),
+            contract_address: if let ExecutionResult::Success {
+                output: Output::Create(_, c),
+                ..
+            } = result
+            {
+                c.map(|a| H160(a.into_array()))
+            } else {
+                None
+            },
+            logs: result
+                .logs()
+                .into_iter()
+                .map(|l| Log {
+                    address: H160(l.address.into_array()),
+                    topics: l.topics().iter().map(|t| H256(t.0)).collect(),
+                    data: l.data.data.to_vec(),
                 })
-            }
-            Err(e) => {
-                error!("Error applying transaction: {:?}", e);
-
-                Ok(TransactionApplyResult {
-                    success: false,
-                    contract_address: None,
-                    logs: Default::default(),
-                    traces: Default::default(),
-                    gas_used: 0,
-                    scilla_events: Default::default(),
-                })
-            }
-        }
+                .collect(),
+            gas_used: result.gas_used(),
+        })
     }
 
-    // Apply the changes the EVM is requesting for
-    pub fn apply_delta(&mut self, applys: Vec<evm_ds::protos::evm_proto::Apply>) -> Result<()> {
-        for apply in applys {
-            match apply {
-                EvmProto::Apply::Delete { address } => {
-                    let _account = self.delete_account(address);
-                }
-                EvmProto::Apply::Modify {
-                    address,
-                    balance: _,
-                    nonce: _,
-                    code,
-                    storage,
-                    reset_storage,
-                } => {
-                    let mut account = self.get_account(address).unwrap_or_default();
+    pub(crate) fn apply_delta(
+        &mut self,
+        state: revm::primitives::HashMap<revm::primitives::Address, revm::primitives::Account>,
+    ) -> Result<()> {
+        for (address, account) in state {
+            let address = H160(address.into_array());
 
-                    if !code.is_empty() {
-                        account.code = code.to_vec();
-                    }
+            let mut storage = self.get_account_trie(address)?;
 
-                    if reset_storage {
-                        self.clear_account_storage(address)?;
-                    }
+            for (index, value) in account.changed_storage_slots() {
+                let index = H256(index.to_be_bytes());
+                let value = H256(value.present_value().to_be_bytes());
+                trace!(?address, ?index, ?value, "update storage");
 
-                    self.save_account(address, account)?;
-
-                    for item in storage {
-                        if item.value.is_zero() {
-                            self.remove_account_storage(address, item.key)?;
-                        } else {
-                            self.set_account_storage(address, item.key, item.value)?;
-                        }
-                    }
-                }
+                storage.insert(&Self::account_storage_key(address, index), value.as_bytes())?;
             }
+
+            let account = Account {
+                nonce: account.info.nonce,
+                balance: account.info.balance.try_into()?,
+                code: account
+                    .info
+                    .code
+                    .map(|c| c.original_bytes().to_vec())
+                    .unwrap_or_default(),
+                storage_root: if storage.iter().count() != 0 {
+                    Some(storage.root_hash()?)
+                } else {
+                    None
+                },
+            };
+            trace!(?address, ?account, "update account");
+            self.save_account(address, account)?;
         }
 
         Ok(())
     }
 
-    pub fn get_native_balance(&self, address: Address, print_enabled: bool) -> Result<U256> {
-        // For these accounts, we hardcode the balance we return to the EVM engine as zero. Otherwise, we have an
-        // infinite recursion because getting the native balance of any account requires this method to be called for
-        // these two 'special' accounts.
-        if address == contract_addr::NATIVE_TOKEN || address.is_zero() {
-            return Ok(U256::zero());
-        }
-
-        let data = contracts::native_token::BALANCE_OF
-            .encode_input(&[Token::Address(address)])
-            .unwrap();
-
-        if print_enabled {
-            debug!("Calling contract to get balance...");
-        }
-
-        let balance = self
-            .call_contract(
-                Address::zero(),
-                Some(contract_addr::NATIVE_TOKEN),
-                data,
-                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
-                // dummy values.
-                U256::zero(),
-                0,
-                BlockHeader::default(),
-                false,
-                print_enabled,
-            )?
-            .return_value;
-        let balance = U256::from_big_endian(&balance);
-
-        trace!("Queried balance of addr {} is: {}", address, balance);
-
-        Ok(balance)
-    }
-
-    pub fn set_gas_price(&mut self, price: U256) -> Result<()> {
-        let data = contracts::gas_price::SET_GAS
-            .encode_input(&[Token::Uint(price)])
-            .unwrap();
-
-        debug!("****** setting gas price to: {}", price);
-        let result = self.force_execute_payload(Some(contract_addr::GAS_PRICE), data);
-
-        match result {
-            Ok((result, _)) => {
-                // Apply the state changes only if success
-                let success = result.succeeded();
-
-                if success {
-                    self.apply_delta(result.apply)?;
-                } else {
-                    panic!(
-                        "Failed to set gas price with error: {:?}",
-                        result.exit_reason
-                    );
-                }
-
-                Ok(())
-            }
-            Err(e) => {
-                panic!("Failed to set gas with error: {:?}", e);
-            }
-        }
-    }
-
-    pub fn get_gas_price(&self) -> Result<u64> {
-        let data = contracts::gas_price::GET_GAS.encode_input(&[]).unwrap();
-
-        let gas_price = self
-            .call_contract(
-                Address::zero(),
-                Some(contract_addr::GAS_PRICE),
-                data,
-                U256::zero(),
-                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
-                // dummy values.
-                0,
-                BlockHeader::default(),
-                false,
-                false,
-            )?
-            .return_value;
-        let gas_price = U256::from_big_endian(&gas_price);
-
-        trace!("Queried GAS! is: {}", gas_price);
-
-        Ok(gas_price.as_u64())
-    }
-
     pub fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
         let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
 
-        let stakers = self
-            .call_contract(
-                Address::zero(),
-                Some(contract_addr::DEPOSIT),
-                data,
-                U256::zero(),
-                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
-                // dummy values.
-                0,
-                BlockHeader::default(),
-                false,
-                false,
-            )?
-            .return_value;
+        let stakers = self.call_contract(
+            Address::zero(),
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // dummy values.
+            0,
+            BlockHeader::default(),
+        )?;
 
         let stakers = contracts::deposit::GET_STAKERS
             .decode_output(&stakers)
@@ -794,20 +321,16 @@ impl State {
         let data =
             contracts::deposit::GET_STAKE.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
 
-        let stake = self
-            .call_contract(
-                Address::zero(),
-                Some(contract_addr::DEPOSIT),
-                data,
-                U256::zero(),
-                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
-                // dummy values.
-                0,
-                BlockHeader::default(),
-                false,
-                false,
-            )?
-            .return_value;
+        let stake = self.call_contract(
+            Address::zero(),
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // dummy values.
+            0,
+            BlockHeader::default(),
+        )?;
 
         Ok(NonZeroU128::new(U256::from_big_endian(&stake).as_u128()))
     }
@@ -816,20 +339,16 @@ impl State {
         let data = contracts::deposit::GET_REWARD_ADDRESS
             .encode_input(&[Token::Bytes(public_key.as_bytes())])?;
 
-        let return_value = self
-            .call_contract(
-                Address::zero(),
-                Some(contract_addr::DEPOSIT),
-                data,
-                U256::zero(),
-                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
-                // dummy values.
-                0,
-                BlockHeader::default(),
-                false,
-                false,
-            )?
-            .return_value;
+        let return_value = self.call_contract(
+            Address::zero(),
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // dummy values.
+            0,
+            BlockHeader::default(),
+        )?;
 
         let addr = contracts::deposit::GET_REWARD_ADDRESS.decode_output(&return_value)?[0]
             .clone()
@@ -839,49 +358,19 @@ impl State {
         Ok((!addr.is_zero()).then_some(addr))
     }
 
-    pub fn get_total_supply(&self) -> Result<u128> {
-        let data = contracts::native_token::TOTAL_SUPPLY.encode_input(&[])?;
-
-        let return_value = self
-            .call_contract(
-                Address::zero(),
-                Some(contract_addr::NATIVE_TOKEN),
-                data,
-                U256::zero(),
-                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
-                // dummy values.
-                0,
-                BlockHeader::default(),
-                false,
-                false,
-            )?
-            .return_value;
-
-        let amount = contracts::native_token::TOTAL_SUPPLY.decode_output(&return_value)?[0]
-            .clone()
-            .into_uint()
-            .unwrap();
-
-        Ok(amount.as_u128())
-    }
-
     pub fn get_total_stake(&self) -> Result<u128> {
         let data = contracts::deposit::TOTAL_STAKE.encode_input(&[])?;
 
-        let return_value = self
-            .call_contract(
-                Address::zero(),
-                Some(contract_addr::DEPOSIT),
-                data,
-                U256::zero(),
-                // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
-                // dummy values.
-                0,
-                BlockHeader::default(),
-                false,
-                false,
-            )?
-            .return_value;
+        let return_value = self.call_contract(
+            Address::zero(),
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // dummy values.
+            0,
+            BlockHeader::default(),
+        )?;
 
         let amount = contracts::deposit::TOTAL_STAKE.decode_output(&return_value)?[0]
             .clone()
@@ -889,55 +378,6 @@ impl State {
             .unwrap();
 
         Ok(amount.as_u128())
-    }
-
-    pub fn set_native_balance(&mut self, address: Address, amount: U256) -> Result<()> {
-        let data = contracts::native_token::SET_BALANCE
-            .encode_input(&[Token::Address(address), Token::Uint(amount)])
-            .unwrap();
-
-        debug!(
-            "****** Setting native balance of {} to: {}",
-            address, amount
-        );
-
-        let result = self.apply_transaction_inner(
-            Address::zero(),
-            Some(contract_addr::NATIVE_TOKEN),
-            u128::MIN,
-            u64::MAX,
-            U256::zero(),
-            data,
-            vec![],
-            // The chain ID and current block are not accessed when the native balance is updated, so we just pass in
-            // some dummy values.
-            0,
-            BlockHeader::default(),
-            false,
-            true,
-            false,
-            false,
-        );
-
-        match result {
-            Ok((result, _)) => {
-                // Apply the state changes only if success
-                let success = result.succeeded();
-
-                trace!("Set native balance result: {:?}", result);
-
-                if success {
-                    self.apply_delta(result.apply)?;
-                } else {
-                    panic!("Failed to set balance: {result:?}");
-                }
-
-                Ok(())
-            }
-            Err(e) => {
-                panic!("Failed to set balance with error: {:?}", e);
-            }
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -948,78 +388,44 @@ impl State {
         data: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
-        print_enabled: bool,
-        gas: u64,
-        _gas_price: u64,
-        value: U256,
+        gas: Option<u64>,
+        gas_price: Option<u128>,
+        value: u128,
     ) -> Result<u64> {
-        if print_enabled {
-            debug!("estimating gas from: {:?} to: {:?}", from_addr, to_addr);
-        }
+        let gas_price = gas_price.unwrap_or(GAS_PRICE);
+        let gas = gas.unwrap_or(BLOCK_GAS_LIMIT);
 
-        let gas_price = self.get_gas_price()?;
-
-        let result = self.apply_transaction_inner(
+        let ResultAndState { result, .. } = self.apply_transaction_inner(
             from_addr,
             to_addr,
-            0,
+            gas_price,
             gas,
             value,
             data,
-            vec![],
+            None,
             chain_id,
             current_block,
-            false,
-            true,
-            print_enabled,
-            false,
-        );
-
-        if print_enabled {
-            debug!("finished contact gas estimation");
-        }
+        )?;
 
         match result {
-            Ok((result, _)) => {
-                if !result.succeeded() {
-                    let error_str =
-                        format!("Estimate gas failed with error: {:?}", result.exit_reason);
-                    warn!(error_str);
+            ExecutionResult::Success { gas_used, .. } => Ok(gas_used),
+            ExecutionResult::Revert {
+                gas_used: _,
+                output,
+            } => {
+                let decoded_revert_msg = extract_revert_msg(&output);
+                // See: https://github.com/ethereum/go-ethereum/blob/9b9a1b677d894db951dc4714ea1a46a2e7b74ffc/internal/ethapi/api.go#L1026
+                const REVERT_ERROR_CODE: i32 = 3;
 
-                    let decoded_revert_msg = extract_revert_msg(&result.return_value);
-
-                    // See: https://github.com/ethereum/go-ethereum/blob/9b9a1b677d894db951dc4714ea1a46a2e7b74ffc/internal/ethapi/api.go#L1026
-                    const REVERT_ERROR_CODE: i32 = 3;
-
-                    let response = jsonrpsee::types::ErrorObjectOwned::owned(
-                        REVERT_ERROR_CODE,
-                        decoded_revert_msg,
-                        Some("0x".to_string() + &hex::encode(result.return_value)),
-                    );
-
-                    return Err(response.into());
-                }
-
-                if result.remaining_gas > gas {
-                    let error_str = format!("More gas remaining than was specified in the estimate! Remaining gas: {} Provided: {}", result.remaining_gas, gas);
-                    warn!(error_str);
-                    return Err(anyhow!(error_str));
-                }
-
-                let res = gas - result.remaining_gas + gas_price;
-
-                debug!(
-                    "gas estimation: {} {} {} -> {}",
-                    gas, result.remaining_gas, gas_price, res
+                let response = jsonrpsee::types::ErrorObjectOwned::owned(
+                    REVERT_ERROR_CODE,
+                    decoded_revert_msg,
+                    None::<()>,
                 );
 
-                Ok(res)
+                Err(response.into())
             }
-            Err(e) => {
-                let error_str = format!("Estimate gas failed with error: {:?}", e);
-                warn!(error_str);
-                Err(anyhow!(error_str))
-            }
+            ExecutionResult::Halt { reason, .. } => Err(anyhow!("halted due to: {reason:?}")),
         }
     }
 
@@ -1029,97 +435,26 @@ impl State {
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
-        amount: U256,
+        amount: u128,
         chain_id: u64,
         current_block: BlockHeader,
-        print_enabled: bool,
-        tracing: bool,
-    ) -> Result<EvmProto::EvmResult> {
-        if print_enabled {
-            debug!("Calling contract from: {:?} to: {:?}", from_addr, to_addr);
-        }
-
-        let result = self.apply_transaction_inner(
+    ) -> Result<Vec<u8>> {
+        let ResultAndState { result, .. } = self.apply_transaction_inner(
             from_addr,
             to_addr,
-            0,
-            u64::MAX,
+            GAS_PRICE,
+            BLOCK_GAS_LIMIT,
             amount,
             data,
-            vec![],
+            None,
             chain_id,
             current_block,
-            tracing,
-            true,
-            print_enabled,
-            false,
-        );
+        )?;
 
-        if print_enabled {
-            debug!("finished contact call");
-        }
-
-        Ok(result?.0)
-    }
-
-    // Convenience function to create a balance transfer for the call stack. Note we do NOT use the
-    // setBalance function as this should only be used at genesis
-    pub fn push_transfer(
-        &self,
-        from: Address,
-        to: Address,
-        amount: U256,
-        continuations: Arc<Mutex<EvmProto::Continuations>>,
-        traces: Arc<Mutex<LoggingEventListener>>,
-    ) -> EvmProto::EvmCallArgs {
-        trace!(
-            "Pushing transfer from: {} -> to: {} amount: {}",
-            from,
-            to,
-            amount
-        );
-
-        let native_token_code = self.get_account(contract_addr::NATIVE_TOKEN).unwrap().code;
-
-        let balance_data = contracts::native_token::TRANSFER
-            .encode_input(&[Token::Address(to), Token::Uint(amount)])
-            .unwrap();
-
-        EvmProto::EvmCallArgs {
-            caller: from,
-            gas_scaling_factor: 1,
-            scaling_factor: None,
-            estimate: false,
-            address: contract_addr::NATIVE_TOKEN,
-            code: native_token_code,
-            data: balance_data,
-            apparent_value: Default::default(),
-            gas_limit: u64::MAX,
-            tx_trace: traces,
-            continuations,
-            enable_cps: true,
-            node_continuation: None,
-            evm_context: "fund_transfer".to_string(),
-            is_static: false,
-            tx_trace_enabled: true,
-            is_scilla: false,
+        match result {
+            ExecutionResult::Success { output, .. } => Ok(output.into_data().to_vec()),
+            ExecutionResult::Revert { output, .. } => Ok(output.to_vec()),
+            ExecutionResult::Halt { reason, .. } => Err(anyhow!("halted due to: {reason:?}")),
         }
     }
-}
-
-// Convenience function to calculate the contract address for a given transaction, if it is created
-pub fn get_created_scilla_contract_addr(
-    nonce: u64,
-    from_addr: H160,
-    to_addr: H160,
-) -> Option<H160> {
-    if to_addr == Address::zero() {
-        Some(calculate_contract_address_scilla(from_addr, nonce))
-    } else {
-        None
-    }
-}
-
-fn scilla_events_to_single(events: Vec<Value>) -> Value {
-    Value::Array(events.clone())
 }

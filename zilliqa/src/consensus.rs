@@ -607,10 +607,10 @@ impl Consensus {
 
         let proposer = self.leader(committee, view).public_key;
         if let Some(proposer_address) = self.state.get_reward_address(proposer)? {
-            let reward = U256::from(rewards_per_block / 2);
-            let balance = self.state.get_native_balance(proposer_address, false)?;
-            self.state
-                .set_native_balance(proposer_address, balance + reward)?;
+            let reward = rewards_per_block / 2;
+            let mut account = self.state.get_account(proposer_address)?;
+            account.balance += reward;
+            self.state.save_account(proposer_address, account)?;
         }
 
         let mut total_cosigner_stake = 0;
@@ -630,8 +630,9 @@ impl Consensus {
             if let Some(a) = reward_address {
                 let reward =
                     U256::from(rewards_per_block / 2) * U256::from(stake) / total_cosigner_stake;
-                let balance = self.state.get_native_balance(a, false)?;
-                self.state.set_native_balance(a, balance + reward)?;
+                let mut account = self.state.get_account(a)?;
+                account.balance += reward.as_u128();
+                self.state.save_account(a, account)?;
             }
         }
 
@@ -647,12 +648,16 @@ impl Consensus {
 
         self.db.insert_transaction(&hash, &txn.tx)?;
 
-        let result = self.state.apply_transaction(
-            txn.clone(),
-            self.config.eth_chain_id,
-            current_block,
-            false,
-        )?;
+        let result =
+            self.state
+                .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block);
+        let result = match result {
+            Ok(r) => r,
+            Err(error) => {
+                warn!(?hash, ?error, "transaction failed to execute");
+                return Ok(None);
+            }
+        };
 
         // Tell the transaction pool that the sender's nonce has been incremented.
         self.transaction_pool.update_nonce(&txn);
@@ -1852,23 +1857,21 @@ impl Consensus {
         for txn in transactions {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
-            if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
-                self.db
-                    .insert_block_hash_reverse_index(&tx_hash, &block.hash())?;
-                let receipt = TransactionReceipt {
-                    block_hash: block.hash(),
-                    tx_hash,
-                    success: result.success,
-                    contract_address: result.contract_address,
-                    logs: result.logs,
-                    gas_used: result.gas_used,
-                    scilla_events: serde_json::to_string(&result.scilla_events).unwrap(),
-                };
-                info!(?receipt, "applied transaction {:?}", receipt);
-                block_receipts.push(receipt);
-            } else {
-                warn!("Failed to apply TX! Something might be wrong");
-            }
+            let result = self
+                .apply_transaction(txn.clone(), parent.header)?
+                .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
+            self.db
+                .insert_block_hash_reverse_index(&tx_hash, &block.hash())?;
+            let receipt = TransactionReceipt {
+                block_hash: block.hash(),
+                tx_hash,
+                success: result.success,
+                contract_address: result.contract_address,
+                logs: result.logs,
+                gas_used: result.gas_used,
+            };
+            info!(?receipt, "applied transaction {:?}", receipt);
+            block_receipts.push(receipt);
         }
 
         self.apply_rewards(&parent.committee, block.view(), &block.qc.cosigned)?;
