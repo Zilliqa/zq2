@@ -279,6 +279,14 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .genesis_key
         .clone();
 
+    // stabilize shard
+    network
+        .children
+        .get_mut(&child_shard_id)
+        .unwrap()
+        .run_until_block(&shard_wallet, 10.into(), 300)
+        .await;
+
     // 2. Fund the child_shard_wallet (on the main shard) so we can send a cross-shard
     // transaction from it. This is so we have funds on the child shard (since the child
     // wallet has genesis funds there). An equivalent alternative would have been to fund
@@ -330,6 +338,8 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 50)
         .await;
 
+    println!("\n\n#########################################\nWaiting for child network now!\n##############################################\n\n");
+
     // 5. Make sure the transaction gets included in the child network
     let latest_block = Mutex::new(shard_wallet.get_block_number().await.unwrap());
     network
@@ -357,7 +367,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
                 }
                 false
             },
-            500,
+            300,
         )
         .await
         .unwrap();

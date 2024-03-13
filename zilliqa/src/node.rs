@@ -227,6 +227,7 @@ impl Node {
             },
             from: intershard_call.source_address,
         };
+        // println!("\nGot intershard transaction {}!", tx.calculate_hash());
         self.consensus.new_transaction(tx.verify()?)?;
         Ok(())
     }
