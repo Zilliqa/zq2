@@ -1,8 +1,12 @@
 //! Manages execution of transactions on state.
 
+use crate::state::contract_addr;
+use ethabi::Token;
+use std::num::NonZeroU128;
+
 use anyhow::{anyhow, Result};
 use eth_trie::Trie;
-use primitive_types::{H160, H256};
+use primitive_types::{H160, H256, U256};
 use revm::{
     primitives::{
         AccountInfo, BlockEnv, Bytecode, BytecodeState, ExecutionResult, HandlerCfg, Output,
@@ -13,8 +17,8 @@ use revm::{
 use tracing::*;
 
 use crate::{
-    crypto::Hash, eth_helpers::extract_revert_msg, state::Account, time::SystemTime,
-    transaction::Log,
+    contracts, crypto::Hash, crypto::NodePublicKey, eth_helpers::extract_revert_msg,
+    state::Account, time::SystemTime, transaction::Log,
 };
 use crate::{
     message::BlockHeader,
@@ -137,7 +141,7 @@ impl State {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn apply_transaction_inner(
+    pub(crate) fn apply_transaction_inner(
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
@@ -248,7 +252,7 @@ impl State {
         })
     }
 
-    fn apply_delta(
+    pub(crate) fn apply_delta(
         &mut self,
         state: revm::primitives::HashMap<revm::primitives::Address, revm::primitives::Account>,
     ) -> Result<()> {
@@ -284,6 +288,96 @@ impl State {
         }
 
         Ok(())
+    }
+
+    pub fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
+        let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
+
+        let stakers = self.call_contract(
+            Address::zero(),
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // dummy values.
+            0,
+            BlockHeader::default(),
+        )?;
+
+        let stakers = contracts::deposit::GET_STAKERS
+            .decode_output(&stakers)
+            .unwrap()[0]
+            .clone()
+            .into_array()
+            .unwrap();
+
+        Ok(stakers
+            .into_iter()
+            .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
+            .collect())
+    }
+
+    pub fn get_stake(&self, public_key: NodePublicKey) -> Result<Option<NonZeroU128>> {
+        let data =
+            contracts::deposit::GET_STAKE.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
+
+        let stake = self.call_contract(
+            Address::zero(),
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // dummy values.
+            0,
+            BlockHeader::default(),
+        )?;
+
+        Ok(NonZeroU128::new(U256::from_big_endian(&stake).as_u128()))
+    }
+
+    pub fn get_reward_address(&self, public_key: NodePublicKey) -> Result<Option<Address>> {
+        let data = contracts::deposit::GET_REWARD_ADDRESS
+            .encode_input(&[Token::Bytes(public_key.as_bytes())])?;
+
+        let return_value = self.call_contract(
+            Address::zero(),
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // dummy values.
+            0,
+            BlockHeader::default(),
+        )?;
+
+        let addr = contracts::deposit::GET_REWARD_ADDRESS.decode_output(&return_value)?[0]
+            .clone()
+            .into_address()
+            .unwrap();
+
+        Ok((!addr.is_zero()).then_some(addr))
+    }
+
+    pub fn get_total_stake(&self) -> Result<u128> {
+        let data = contracts::deposit::TOTAL_STAKE.encode_input(&[])?;
+
+        let return_value = self.call_contract(
+            Address::zero(),
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // dummy values.
+            0,
+            BlockHeader::default(),
+        )?;
+
+        let amount = contracts::deposit::TOTAL_STAKE.decode_output(&return_value)?[0]
+            .clone()
+            .into_uint()
+            .unwrap();
+
+        Ok(amount.as_u128())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -337,7 +431,7 @@ impl State {
 
     #[allow(clippy::too_many_arguments)]
     pub fn call_contract(
-        &mut self,
+        &self,
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,

@@ -563,18 +563,6 @@ impl Committee {
         self.0.iter().nth(index).copied()
     }
 
-    pub fn leader(&self, view: u64) -> Validator {
-        *self.0.iter().nth(self.leader_index(view)).unwrap()
-    }
-
-    pub fn leader_index(&self, view: u64) -> usize {
-        view as usize % self.0.len()
-    }
-
-    pub fn total_weight(&self) -> u128 {
-        self.0.iter().map(|v| v.weight).sum()
-    }
-
     pub fn add_validators(&mut self, validators: impl IntoIterator<Item = Validator>) {
         self.0.extend(validators);
     }

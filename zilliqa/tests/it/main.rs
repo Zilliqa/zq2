@@ -2,6 +2,7 @@ use ethers::providers::Middleware;
 mod consensus;
 mod eth;
 mod persistence;
+mod staking;
 mod web3;
 mod zil;
 use std::{env, ops::DerefMut};
@@ -147,6 +148,7 @@ struct TestNode {
 
 struct Network {
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
+    pub genesis_deposits: Vec<(NodePublicKey, String, Address)>,
     /// Child shards.
     pub children: HashMap<u64, Network>,
     pub is_main: bool,
@@ -202,10 +204,24 @@ impl Network {
         let genesis_committee = vec![validator];
         let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
+        // The initial stake of each node.
+        let stake = 32_000_000_000_000_000_000u128;
+        let genesis_deposits: Vec<_> = keys
+            .iter()
+            .map(|k| {
+                (
+                    k.node_public_key(),
+                    stake.to_string(),
+                    Address::random_using(rng.lock().unwrap().deref_mut()),
+                )
+            })
+            .collect();
+
         let config = NodeConfig {
             eth_chain_id: shard_id,
             consensus: ConsensusConfig {
                 genesis_committee: genesis_committee.clone(),
+                genesis_deposits: genesis_deposits.clone(),
                 genesis_hash: None,
                 is_main,
                 consensus_timeout: Duration::from_secs(1),
@@ -244,6 +260,7 @@ impl Network {
 
         Network {
             genesis_committee,
+            genesis_deposits,
             nodes,
             is_main,
             shard_id,
@@ -292,6 +309,7 @@ impl Network {
             eth_chain_id: self.shard_id,
             consensus: ConsensusConfig {
                 genesis_committee,
+                genesis_deposits: self.genesis_deposits.clone(),
                 genesis_hash,
                 is_main: self.is_main,
                 consensus_timeout: Duration::from_secs(1),
@@ -341,6 +359,19 @@ impl Network {
         );
         let genesis_committee = vec![validator];
 
+        // The initial stake of each node.
+        let stake = 32_000_000_000_000_000_000u128;
+        let genesis_deposits: Vec<_> = keys
+            .iter()
+            .map(|k| {
+                (
+                    k.node_public_key(),
+                    stake.to_string(),
+                    Address::random_using(self.rng.lock().unwrap().deref_mut()),
+                )
+            })
+            .collect();
+
         for nodes in &mut self.nodes {
             nodes.inner.lock().unwrap().db.flush();
         }
@@ -367,6 +398,7 @@ impl Network {
                     eth_chain_id: self.shard_id,
                     consensus: ConsensusConfig {
                         genesis_committee: genesis_committee.clone(),
+                        genesis_deposits: genesis_deposits.clone(),
                         genesis_hash: None,
                         is_main: self.is_main,
                         consensus_timeout: Duration::from_secs(1),
@@ -683,13 +715,6 @@ impl Network {
                 for (index, node) in nodes.iter() {
                     let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                     span.in_scope(|| {
-                        if destination.is_some() {
-                            info!(
-                                "destination: {}, node being used: {}",
-                                destination.unwrap(),
-                                node.inner.lock().unwrap().peer_id()
-                            );
-                        }
                         node.inner
                             .lock()
                             .unwrap()
@@ -785,6 +810,10 @@ impl Network {
 
     pub fn get_node(&self, index: usize) -> MutexGuard<Node> {
         self.nodes[index].inner.lock().unwrap()
+    }
+
+    pub fn get_node_raw(&self, index: usize) -> &TestNode {
+        &self.nodes[index]
     }
 
     pub fn remove_node(&mut self, idx: usize) -> TestNode {

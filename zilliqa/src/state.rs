@@ -1,13 +1,16 @@
+use crate::exec::BLOCK_GAS_LIMIT;
+use crate::exec::GAS_PRICE;
 use std::{hash::Hash, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
-use ethabi::Token;
-use primitive_types::{H160, H256};
+use ethabi::{Constructor, Token};
+use primitive_types::{H160, H256, U256};
+use revm::primitives::ResultAndState;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
-use crate::{cfg::ConsensusConfig, contracts, crypto, db::TrieStorage};
+use crate::{cfg::ConsensusConfig, contracts, crypto, db::TrieStorage, message::BlockHeader};
 
 #[derive(Debug)]
 /// The state of the blockchain, consisting of:
@@ -64,6 +67,36 @@ impl State {
             let mut account = state.get_account(address)?;
             account.balance = balance.parse()?;
             state.save_account(address, account)?;
+        }
+
+        let deposit_data = Constructor { inputs: vec![] }
+            .encode_input(contracts::deposit::BYTECODE.to_vec(), &[])?;
+        state.force_deploy_contract(deposit_data, Some(contract_addr::DEPOSIT))?;
+
+        for (pub_key, stake, reward_address) in config.genesis_deposits {
+            let data = contracts::deposit::SET_STAKE.encode_input(&[
+                Token::Bytes(pub_key.as_bytes()),
+                Token::Address(reward_address),
+                Token::Uint(U256::from_dec_str(&stake)?),
+            ])?;
+            let ResultAndState {
+                result,
+                state: result_state,
+            } = state.apply_transaction_inner(
+                Address::zero(),
+                Some(contract_addr::DEPOSIT),
+                GAS_PRICE,
+                BLOCK_GAS_LIMIT,
+                0,
+                data,
+                None,
+                0,
+                BlockHeader::default(),
+            )?;
+            if !result.is_success() {
+                return Err(anyhow!("setting stake failed: {result:?}"));
+            }
+            state.apply_delta(result_state)?;
         }
 
         Ok(state)
@@ -226,6 +259,7 @@ pub mod contract_addr {
     pub const INTERSHARD_BRIDGE: Address = H160(*b"\0\0\0\0\0\0\0\0ZQINTERSHARD");
     /// Address of the shard registry - only present on the root shard.
     pub const SHARD_REGISTRY: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD");
+    pub const DEPOSIT: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0ZILDEPOSIT");
 }
 
 #[derive(Debug, Clone, Default, Hash, Serialize, Deserialize)]

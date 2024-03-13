@@ -60,8 +60,8 @@ pub struct Block {
     pub uncles: Vec<H256>,
 }
 
-impl From<&message::Block> for Block {
-    fn from(block: &message::Block) -> Self {
+impl Block {
+    pub fn from_block(block: &message::Block, miner: H160) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Block {
             number: block.number(),
@@ -73,7 +73,7 @@ impl From<&message::Block> for Block {
             transactions_root: H256::zero(),
             state_root: H256(block.state_root_hash().0),
             receipts_root: H256::zero(),
-            miner: H160::zero(),
+            miner,
             difficulty: 0,
             total_difficulty: 0,
             extra_data: vec![],

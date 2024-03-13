@@ -301,7 +301,7 @@ impl Node {
 
         trace!("call_contract: block={:?}", block);
 
-        let mut state = self
+        let state = self
             .consensus
             .state()
             .at_root(H256(block.state_root_hash().0));
@@ -314,6 +314,22 @@ impl Node {
             self.config.eth_chain_id,
             block.header,
         )
+    }
+
+    pub fn get_proposer_reward_address(&self, block: &Block) -> Result<Option<Address>> {
+        // Return the zero address for the genesis block. There was no reward for it.
+        if block.view() == 0 {
+            return Ok(None);
+        }
+
+        let parent = self
+            .get_block_by_hash(block.parent_hash())?
+            .ok_or_else(|| anyhow!("missing parent: {}", block.parent_hash()))?;
+        let proposer = self
+            .consensus
+            .leader(&parent.committee, block.view())
+            .public_key;
+        self.consensus.state().get_reward_address(proposer)
     }
 
     pub fn get_gas_price(&self) -> u128 {
