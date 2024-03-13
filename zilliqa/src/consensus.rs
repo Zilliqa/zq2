@@ -575,13 +575,14 @@ impl Consensus {
                     block.committee.len()
                 );
                 return Ok(None);
-            }
-            let vote = self.vote_from_block(&block);
-            let next_leader = self.leader(&block.committee, self.view.get_view()).peer_id;
+            } else {
+                let vote = self.vote_from_block(&block);
+                let next_leader = self.leader(&block.committee, self.view.get_view()).peer_id;
 
-            if !during_sync {
-                trace!(proposal_view, ?next_leader, "voting for block");
-                return Ok(Some((next_leader, vote)));
+                if !during_sync {
+                    trace!(proposal_view, ?next_leader, "voting for block");
+                    return Ok(Some((next_leader, vote)));
+                }
             }
         } else {
             trace!("block is not safe");

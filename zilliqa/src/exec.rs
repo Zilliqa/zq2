@@ -17,17 +17,12 @@ use tracing::*;
 
 use crate::{
     contracts,
-    crypto::Hash,
-    crypto::NodePublicKey,
+    crypto::{Hash, NodePublicKey},
     eth_helpers::extract_revert_msg,
-    state::{contract_addr, Account},
-    time::SystemTime,
-    transaction::Log,
-};
-use crate::{
     message::BlockHeader,
-    state::{Address, State},
-    transaction::VerifiedTransaction,
+    state::{contract_addr, Account, Address, State},
+    time::SystemTime,
+    transaction::{Log, VerifiedTransaction},
 };
 
 /// Data returned after applying a [Transaction] to [State].
@@ -256,7 +251,7 @@ impl State {
         })
     }
 
-    pub fn apply_delta(
+    pub(crate) fn apply_delta(
         &mut self,
         state: revm::primitives::HashMap<revm::primitives::Address, revm::primitives::Account>,
     ) -> Result<()> {
