@@ -38,6 +38,19 @@ variable "secret_key" {
   nullable = false
 }
 
+variable "node_type" {
+  type = string
+  default = "e2-standard-2"
+  nullable = false
+}
+
+variable "node_zone" {
+  type = string
+  default = "europe-west2-a"
+  nullable = false
+}
+
+
 variable "zq_network_name" {
   type     = string
   nullable = false
@@ -69,11 +82,10 @@ resource "random_id" "name_suffix" {
 
 resource "google_compute_instance" "this" {
   name                      = "${var.name}-${random_id.name_suffix.hex}"
-  machine_type              = "e2-standard-2"
+  machine_type              = var.node_type
   allow_stopping_for_update = true
-
+  zone = var.node_zone
   labels = merge({ "zq2-network" = var.zq_network_name }, var.labels)
-
 
   service_account {
     email = var.service_account_email

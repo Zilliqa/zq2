@@ -9,7 +9,7 @@ resource "google_compute_subnetwork" "zq2_apps" {
   name                     = "${var.network_name}-apps"
   ip_cidr_range            = "10.10.0.0/24"
   network                  = google_compute_network.zq2_apps.name
-  region                   = "europe-west2"
+  region                   = var.region
   private_ip_google_access = true
 }
 
@@ -19,7 +19,7 @@ resource "google_service_account" "zq2_apps" {
 
 resource "google_container_cluster" "zq2_apps" {
   name     = "${var.network_name}-apps"
-  location = "europe-west2"
+  location = var.region
 
   network    = google_compute_network.zq2_apps.name
   subnetwork = google_compute_subnetwork.zq2_apps.name
@@ -53,6 +53,7 @@ resource "google_compute_router_nat" "nat" {
   router                             = google_compute_router.router.name
   nat_ip_allocate_option             = "AUTO_ONLY"
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+  region                             = var.region
 }
 
 data "google_client_config" "default" {}
@@ -97,7 +98,7 @@ module "faucet" {
   env = [
     ["RPC_URL", "https://api.${var.subdomain}"],
     ["NATIVE_TOKEN_SYMBOL", "ZIL"],
-    ["PRIVATE_KEY", random_id.genesis_key.hex],
+    ["PRIVATE_KEY", local.genesis_key],
     ["ETH_AMOUNT", "100"],
     ["EXPLORER_URL", "https://explorer.${var.subdomain}"],
     ["MINIMUM_SECONDS_BETWEEN_REQUESTS", "60"],
