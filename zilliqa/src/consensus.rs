@@ -776,7 +776,6 @@ impl Consensus {
                 vote_view = block_view + 1,
                 "storing vote"
             );
-            println!("\nWe're {}, received vote for proposal {} (number {}, view {}), current proportion is {}", self.peer_id(), block.hash(), block.number(), block.view(), cosigned_weight as f64 / total_weight as f64);
             if supermajority_reached {
                 // if we are already in the round in which the vote counts and have reached supermajority
                 if block_view + 1 == self.view.get_view() {
@@ -833,7 +832,6 @@ impl Consensus {
                     // intershard transactions are not meant to be broadcast
                     applied_transactions
                         .retain(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
-                    println!("Proposal {} (number {}, view {}) has been successful, with {} transactions. We're {}, and are now broadcasting the next proposal {} (number {}, view {}), with {} transactions of which {} are being broadcast. Its leader will be {}.\n", block.hash(), block.number(), block.view(), block.transactions.len(), self.peer_id(), proposal.hash(), proposal.header.number, proposal.header.view, proposal.transactions.len(), applied_transactions.len(), self.leader(&proposal.committee, proposal.view()).peer_id);
                     return Ok(Some((proposal, applied_transactions)));
                 }
             }
@@ -1290,12 +1288,6 @@ impl Consensus {
     /// Intended to be used with the oldest pending block, to move the
     /// finalized tip forward by one. Does not update view/height.
     pub fn finalize(&mut self, hash: Hash, view: u64) -> Result<()> {
-        println!(
-            "\nWe are {}. Finalizing block {} (view {})\n",
-            self.peer_id(),
-            hash,
-            view
-        );
         self.finalized_view = view;
         self.db.put_latest_finalized_view(view)?;
 
@@ -1707,13 +1699,6 @@ impl Consensus {
     /// Set the current head block to the parent of the proposed block,
     /// This will make it so the block is ready to become the new head
     fn deal_with_fork(&mut self, block: &Block) -> Result<()> {
-        println!(
-            "We're {}, and we're forking back to block {} (number {}, view {})!",
-            self.peer_id(),
-            block.hash(),
-            block.number(),
-            block.view()
-        );
         // To generically deal with forks where the proposed block could be at any height, we
         // Find the common ancestor (backward) of the head block and the new block
         // Then, revert the blocks from the head block to the common ancestor
@@ -1852,16 +1837,6 @@ impl Consensus {
         let transactions: Result<Vec<_>> = transactions.into_iter().map(|tx| tx.verify()).collect();
         let mut transactions = transactions?;
 
-        println!(
-            "\nWe are {}. Executing block {} at height {} (view {}) with {} transaction, of which {} are broadcast",
-            self.peer_id(),
-            block.hash(),
-            block.number(),
-            block.view(),
-            block.transactions.len(),
-            transactions.len()
-        );
-
         // We re-inject any missing Intershard transactions (or really, any missing
         // transactions) from our mempool. If any txs are unavailable either in the
         // message or locally, the proposal cannot be applied
@@ -1871,15 +1846,8 @@ impl Consensus {
             } else {
                 let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
                     warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
-                    println!("X Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
                     return Ok(());
                 };
-                println!(
-                    "V Proposal {} at view {} referenced a transaction {} that WAS found locally",
-                    block.hash(),
-                    block.view(),
-                    tx_hash
-                );
                 transactions.insert(idx, local_tx);
             }
         }
