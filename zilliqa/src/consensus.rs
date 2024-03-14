@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc};
 
 use anyhow::{anyhow, Result};
@@ -128,6 +129,8 @@ pub struct Consensus {
     message_sender: MessageSender,
     pub block_store: BlockStore,
     votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128, bool)>,
+    missing_blocks_votes: HashMap<Hash, (u64, Vec<(PeerId, Vote)>)>,
+    missing_blocks_node_votes: HashMap<PeerId, u64>,
     new_views: BTreeMap<u64, NewViewVote>,
     high_qc: QuorumCertificate,
     view: View,
@@ -281,6 +284,8 @@ impl Consensus {
             block_store,
             message_sender,
             votes: BTreeMap::new(),
+            missing_blocks_votes: HashMap::new(),
+            missing_blocks_node_votes: HashMap::new(),
             new_views: BTreeMap::new(),
             high_qc,
             view: View::new(start_view),
@@ -576,6 +581,8 @@ impl Consensus {
                 );
                 return Ok(None);
             } else {
+                // Check if we have a vote for that block
+                self.apply_future_votes_for_block(&block);
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader(&block.committee, self.view.get_view()).peer_id;
 
@@ -589,6 +596,48 @@ impl Consensus {
         }
 
         Ok(None)
+    }
+
+    fn handle_vote_for_unknown_block(&mut self, peer_id: PeerId, vote: Vote) {
+        // Don't process votes for old views
+        if vote.view < self.view.get_view() {
+            return;
+        }
+
+        // Don't process votes far from future
+        if vote.view > self.view.get_view() + 1 {
+            return;
+        }
+
+        // We don't allow peers to vote for more than one missing block
+        if self.missing_blocks_node_votes.contains_key(&peer_id) {
+            return;
+        }
+
+        self.missing_blocks_node_votes.insert(peer_id, vote.view);
+
+        if let Some((_, votes)) = self.missing_blocks_votes.get_mut(&vote.block_hash) {
+            votes.push((peer_id, vote));
+        } else {
+            self.missing_blocks_votes
+                .insert(vote.block_hash, (vote.view, vec![(peer_id, vote)]));
+        }
+    }
+    fn apply_future_votes_for_block(&mut self, block: &Block) {
+        let Some((_, votes)) = self.missing_blocks_votes.get(&block.hash()) else {
+            return;
+        };
+
+        let votes = votes.clone();
+        self.missing_blocks_votes.remove(&block.hash());
+
+        // Apply all future votes for given block
+        // The assumption is that supermajority is never reached from future votes
+        // Otherwise, we have to propose new block from current proposal if we're leader
+        for (peer_id, vote) in votes {
+            self.missing_blocks_node_votes.remove(&peer_id);
+            let _ = self.vote_for_block(vote, block.clone());
+        }
     }
 
     fn apply_rewards(
@@ -702,13 +751,33 @@ impl Consensus {
 
         // Wrt new views, we only care about new views for the current view or higher
         self.new_views.retain(|k, _| *k >= self.view.get_view());
+
+        // Remove all future votes that have expired (and individual vote entries from <peer_id, vote> map
+        self.missing_blocks_votes.retain(|_, (view, _)| {
+            self.missing_blocks_node_votes
+                .retain(|_, view| *view < self.view.get_view());
+            *view < self.view.get_view()
+        });
     }
 
-    pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    pub fn vote(
+        &mut self,
+        peer_id: PeerId,
+        vote: Vote,
+    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         let Some(block) = self.get_block(&vote.block_hash)? else {
-            trace!(vote_view = vote.view, "ignoring vote, missing block");
+            self.handle_vote_for_unknown_block(peer_id, vote);
             return Ok(None);
         };
+
+        self.vote_for_block(vote, block)
+    }
+
+    fn vote_for_block(
+        &mut self,
+        vote: Vote,
+        block: Block,
+    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         let block_hash = block.hash();
         let block_view = block.view();
         let current_view = self.view.get_view();

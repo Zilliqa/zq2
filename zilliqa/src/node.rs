@@ -144,7 +144,7 @@ impl Node {
                 }
             }
             ExternalMessage::Vote(m) => {
-                if let Some((block, transactions)) = self.consensus.vote(m)? {
+                if let Some((block, transactions)) = self.consensus.vote(from, m)? {
                     self.message_sender
                         .broadcast_external_message(ExternalMessage::Proposal(
                             Proposal::from_parts(block, transactions),
