@@ -799,13 +799,15 @@ impl Consensus {
             return Ok(None);
         }
 
-        // verify the sender's signature on block_hash
-        let (index, _) = block
+        // verify the sender's signature on block_hash (if present)
+        let Some((index, _)) = block
             .committee
             .iter()
             .enumerate()
             .find(|(_, v)| v.public_key == vote.public_key)
-            .unwrap();
+        else {
+            return Ok(None);
+        };
         vote.verify()?;
 
         let committee_size = block.committee.len();
