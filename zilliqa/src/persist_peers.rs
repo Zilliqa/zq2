@@ -1,7 +1,19 @@
-use std::{collections::{hash_map::Entry, HashMap}, mem, task::{Context, Poll}};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    mem,
+    task::{Context, Poll},
+};
 
 use anyhow::{anyhow, Result};
-use libp2p::{core::Endpoint, kad::Addresses, swarm::{behaviour::ConnectionEstablished, dummy::ConnectionHandler, ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandler, THandlerInEvent, THandlerOutEvent, ToSwarm}, Multiaddr, PeerId};
+use libp2p::{
+    core::Endpoint,
+    kad::Addresses,
+    swarm::{
+        behaviour::ConnectionEstablished, dummy::ConnectionHandler, ConnectionDenied, ConnectionId,
+        FromSwarm, NetworkBehaviour, THandler, THandlerInEvent, THandlerOutEvent, ToSwarm,
+    },
+    Multiaddr, PeerId,
+};
 use sled::Db;
 use tracing::{debug, error};
 
@@ -13,7 +25,7 @@ pub struct Behaviour {
 impl Behaviour {
     pub fn new(db: Db) -> Result<Self> {
         let mut peers: HashMap<_, Addresses> = HashMap::new();
-        
+
         for kv in db.iter() {
             let (p, a) = kv?;
 
@@ -44,8 +56,12 @@ impl Behaviour {
                 tracing::info!(%peer_id, %addr, "got peer from disk");
 
                 match peers.entry(peer_id) {
-                    Entry::Occupied(e) => { e.into_mut().insert(addr); },
-                    Entry::Vacant(e) => { e.insert(Addresses::new(addr)); },
+                    Entry::Occupied(e) => {
+                        e.into_mut().insert(addr);
+                    }
+                    Entry::Vacant(e) => {
+                        e.insert(Addresses::new(addr));
+                    }
                 }
 
                 i += addr_size;
@@ -54,17 +70,18 @@ impl Behaviour {
 
         tracing::info!(?peers, "read peers from disk");
 
-        Ok(Behaviour {
-            peers,
-            db,
-        })
+        Ok(Behaviour { peers, db })
     }
 
     pub fn add_address(&mut self, peer_id: PeerId, addr: Multiaddr) {
         tracing::info!(%peer_id, %addr, "added addr");
         match self.peers.entry(peer_id) {
-            Entry::Occupied(e) => { e.into_mut().insert(addr); },
-            Entry::Vacant(e) => { e.insert(Addresses::new(addr)); },
+            Entry::Occupied(e) => {
+                e.into_mut().insert(addr);
+            }
+            Entry::Vacant(e) => {
+                e.insert(Addresses::new(addr));
+            }
         }
     }
 
@@ -90,7 +107,6 @@ impl Drop for Behaviour {
         self.flush();
     }
 }
-
 
 #[derive(Debug)]
 pub enum Void {}
@@ -130,9 +146,15 @@ impl NetworkBehaviour for Behaviour {
         _: Endpoint,
     ) -> Result<Vec<Multiaddr>, ConnectionDenied> {
         tracing::info!(?maybe_peer, ?addrs, "current addrs on pending connection");
-        let Some(peer) = maybe_peer else { return Ok(vec![]); };
+        let Some(peer) = maybe_peer else {
+            return Ok(vec![]);
+        };
 
-        let addrs = self.peers.get(&peer).map(|addrs| addrs.iter().cloned().collect()).unwrap_or_default();
+        let addrs = self
+            .peers
+            .get(&peer)
+            .map(|addrs| addrs.iter().cloned().collect())
+            .unwrap_or_default();
 
         Ok(addrs)
     }
@@ -148,7 +170,10 @@ impl NetworkBehaviour for Behaviour {
         match event {}
     }
 
-    fn poll(&mut self, _cx: &mut Context<'_>) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
+    fn poll(
+        &mut self,
+        _cx: &mut Context<'_>,
+    ) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
         // TODO
         Poll::Pending
     }

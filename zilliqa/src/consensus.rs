@@ -124,7 +124,6 @@ pub struct Consensus {
     pub block_store: BlockStore,
     votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128, bool)>,
     /// Votes for a block we don't have stored. They are retained in case we recieve the block later.
-    // TODO(#719): Consider how to limit the size of this.
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
     new_views: BTreeMap<u64, NewViewVote>,
     high_qc: QuorumCertificate,
@@ -629,15 +628,19 @@ impl Consensus {
 
             self.save_highest_view(block.hash(), block.number(), proposal_view)?;
 
-            if let Some(buffered_votes) = self.buffered_votes.remove(&block.hash()) {
+            if let Some(mut buffered_votes) = self.buffered_votes.remove(&block.hash()) {
                 // If we've buffered votes for this block, process them now.
+
+                // Prioritize my vote
+                let my_vote = self.vote_from_block(&block);
+                buffered_votes.push(my_vote);
+
                 let count = buffered_votes.len();
-                for (i, vote) in buffered_votes.into_iter().enumerate() {
+                for (i, vote) in buffered_votes.into_iter().rev().enumerate() {
                     trace!("applying buffered vote {} of {count}", i + 1);
                     if let Some((block, transactions)) = self.vote(vote)? {
                         // If we reached the supermajority while processing this vote, send the next block proposal.
                         // Further votes are ignored (including our own).
-                        // TODO(#720): We should prioritise our own vote.
                         trace!("supermajority reached, sending next proposal");
                         return Ok(Some((
                             None,
@@ -765,10 +768,38 @@ impl Consensus {
             // If we don't have the block yet, we buffer the vote in case we recieve the block later. Note that we
             // don't know the leader of this view without the block, so we may be storing this unnecessarily, however
             // non-malicious nodes should only have sent us this vote if they thought we were the leader.
-            self.buffered_votes
-                .entry(block_hash)
-                .or_default()
-                .push(vote);
+
+            // Don't allow to buffer votes for more than MAX_MISSING_BLOCKS blocks
+            const MAX_MISSING_BLOCKS: usize = 2;
+            if self.buffered_votes.len() > MAX_MISSING_BLOCKS {
+                return Ok(None);
+            }
+
+            // Determine committee size based on the latest block
+            let latest_block = self
+                .db
+                .get_latest_finalized_view()?
+                .map(|view| {
+                    self.block_store
+                        .get_block_by_view(view)?
+                        .ok_or_else(|| anyhow!("no header found at view {view}"))
+                })
+                .transpose()?;
+
+            if latest_block.is_none() {
+                return Ok(None);
+            }
+            // Try to estimate new committee size and how many votes for blocks we can collect
+            // New committee should not be bigger than last_committee_size * multiplier
+            const NEW_COMMITTEE_SIZE_MUL: usize = 2;
+            let new_committee_size = latest_block.unwrap().committee.len() * NEW_COMMITTEE_SIZE_MUL;
+
+            if let Some(entry) = self.buffered_votes.get_mut(&block_hash) {
+                if entry.len() < new_committee_size {
+                    return Ok(None);
+                }
+                entry.push(vote);
+            }
             return Ok(None);
         };
 
@@ -784,12 +815,14 @@ impl Consensus {
         }
 
         // verify the sender's signature on block_hash
-        let (index, sender) = block
+        let Some((index, sender)) = block
             .committee
             .iter()
             .enumerate()
             .find(|(_, v)| v.public_key == vote.public_key)
-            .unwrap();
+        else {
+            return Ok(None);
+        };
 
         let committee_size = block.committee.len();
         let (mut signatures, mut cosigned, mut cosigned_weight, mut supermajority_reached) =

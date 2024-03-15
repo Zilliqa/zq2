@@ -29,7 +29,8 @@ use crate::{
     cfg::{Config, ConsensusConfig, NodeConfig},
     crypto::SecretKey,
     message::{ExternalMessage, InternalMessage},
-    node_launcher::NodeLauncher, persist_peers,
+    node_launcher::NodeLauncher,
+    persist_peers,
 };
 
 /// Messages are a tuple of the destination shard ID and the actual message.
