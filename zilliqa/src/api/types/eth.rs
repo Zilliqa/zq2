@@ -1,4 +1,4 @@
-use primitive_types::{H160, H256, U256};
+use primitive_types::{H160, H256};
 use serde::{
     de::{self, Unexpected},
     Deserialize, Deserializer, Serialize,
@@ -7,10 +7,7 @@ use sha3::{Digest, Keccak256};
 
 use super::{bool_as_int, hex, option_hex, vec_hex};
 use crate::{
-    crypto::Hash,
-    message,
-    state::{default_gas, default_gas_price, Address},
-    time::SystemTime,
+    crypto::Hash, exec::BLOCK_GAS_LIMIT, message, state::Address, time::SystemTime, transaction,
 };
 
 #[derive(Clone, Serialize)]
@@ -63,8 +60,8 @@ pub struct Block {
     pub uncles: Vec<H256>,
 }
 
-impl From<&message::Block> for Block {
-    fn from(block: &message::Block) -> Self {
+impl Block {
+    pub fn from_block(block: &message::Block, miner: H160) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Block {
             number: block.number(),
@@ -76,12 +73,12 @@ impl From<&message::Block> for Block {
             transactions_root: H256::zero(),
             state_root: H256(block.state_root_hash().0),
             receipts_root: H256::zero(),
-            miner: H160::zero(),
+            miner,
             difficulty: 0,
             total_difficulty: 0,
             extra_data: vec![],
             size: 0,
-            gas_limit: 0,
+            gas_limit: BLOCK_GAS_LIMIT,
             gas_used: 0,
             timestamp: block
                 .timestamp()
@@ -199,7 +196,7 @@ pub struct Log {
 
 impl Log {
     pub fn new(
-        log: evm_ds::protos::evm_proto::Log,
+        log: transaction::Log,
         log_index: usize,
         transaction_index: usize,
         transaction_hash: Hash,
@@ -268,34 +265,17 @@ impl<T: PartialEq> OneOrMany<T> {
     }
 }
 
-/// Parameters passed to `eth_call`.
-#[derive(Deserialize, Serialize)]
-pub struct CallParams {
-    #[serde(default)]
-    pub from: H160,
-    pub to: Option<H160>,
-    #[serde(deserialize_with = "deserialize_data")]
-    pub data: Vec<u8>,
-    #[serde(default)]
-    pub value: u64,
-}
-
-/// Parameters passed to `estimate_gas`.
+/// Parameters passed to `eth_call` and `eth_estimateGas`.
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EstimateGasParams {
+pub struct CallParams {
     #[serde(default = "Address::zero")]
     pub from: Address,
     pub to: Option<Address>,
-    #[serde(default = "default_gas", deserialize_with = "deserialize_hex_str")]
-    pub gas: u64,
-    #[serde(
-        default = "default_gas_price",
-        deserialize_with = "deserialize_hex_str"
-    )]
-    pub gas_price: u64,
+    pub gas: Option<ruint::aliases::U64>,
+    pub gas_price: Option<ruint::aliases::U128>,
     #[serde(default)]
-    pub value: U256,
+    pub value: ruint::aliases::U128,
     #[serde(default, deserialize_with = "deserialize_data")]
     pub data: Vec<u8>,
 }
@@ -308,16 +288,6 @@ fn deserialize_data<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8
     })?;
 
     hex::decode(s).map_err(de::Error::custom)
-}
-
-fn deserialize_hex_str<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
-    let s = String::deserialize(deserializer)?;
-
-    let s = s.strip_prefix("0x").ok_or_else(|| {
-        de::Error::invalid_value(Unexpected::Str(&s), &"a string prefixed with \"0x\"")
-    })?;
-
-    Ok(u64::from_str_radix(s, 16).unwrap_or_default())
 }
 
 #[cfg(test)]

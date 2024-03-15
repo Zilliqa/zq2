@@ -11,7 +11,7 @@ keywords = ["patricia", "mpt", "evm", "trie", "ethereum"]
 [dependencies]
 hashbrown = "0.14.3"
 keccak-hash = "0.10.0"
-log = "0.4.20"
+log = "0.4.21"
 parking_lot = "0.12.1"
 rlp = "0.5.2"
 

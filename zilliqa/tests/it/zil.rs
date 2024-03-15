@@ -58,8 +58,9 @@ async fn create_transaction(mut network: Network) {
         .parse()
         .unwrap();
     let amount = 200u128 * 10u128.pow(12);
-    let gas_price = 100u128;
-    let gas_limit = 50u64;
+    // TODO: Consider impact of scaling on gas parameters.
+    let gas_price = wallet.get_gas_price().await.unwrap().as_u128();
+    let gas_limit = 50_000u64;
     let proto = ProtoTransactionCoreInfo {
         version,
         toaddr: to_addr.as_bytes().to_vec(),

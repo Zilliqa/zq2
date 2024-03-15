@@ -1,5 +1,7 @@
+use crate::deploy_contract;
 use ethabi::Token;
 use ethers::{
+    abi::FunctionExt,
     prelude::DeploymentTxFactory,
     providers::Middleware,
     types::{BlockNumber, TransactionRequest},
@@ -267,7 +269,7 @@ async fn launch_shard(mut network: Network) {
 async fn dynamic_cross_shard_link_creation(mut network: Network) {
     let main_wallet = network.genesis_wallet().await;
 
-    // 1. Create two independent shards
+    // * Create two independent shards
     let shard_1_id = 80000u64;
     let shard_2_id = 90000u64;
 
@@ -276,7 +278,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
     let shard_2_wallet = create_shard(&mut network, &main_wallet, shard_1_id).await;
     println!("Second network created successfully!");
 
-    // 2. Create a (uni-directional) link from shard 1 to shard 2
+    // * Create a (uni-directional) link from shard 1 to shard 2
     let create_link_tx = TransactionRequest::new()
         .to(contract_addr::SHARD_REGISTRY)
         .data(
@@ -294,8 +296,24 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
     let hash = tx.tx_hash();
     network.run_until_receipt(&main_wallet, hash, 100).await;
 
-    // 3. Send and verify a cross-shard transfer from 1 to 2
-    // First, fund shard_1_wallet's address on shard_2
+    // * Send and verify a cross-shard tx from 1 to 2.
+    // First, deploy a callable contract on 2
+    let (hash, contract) = deploy_contract(
+        "tests/it/contracts/SetGetContractValue.sol",
+        "SetGetContractValue",
+        &shard_2_wallet,
+        network.children.get_mut(&shard_2_id).unwrap(),
+    )
+    .await;
+    let contract_address = shard_2_wallet
+        .get_transaction_receipt(hash)
+        .await
+        .unwrap()
+        .unwrap()
+        .contract_address
+        .unwrap();
+
+    // Then fund the shard 1 wallet on shard 2
     let xfer_hash = shard_2_wallet
         .send_transaction(
             TransactionRequest::pay(shard_1_wallet.address(), 100_000_000_000_000u64),
@@ -311,17 +329,17 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .run_until_receipt(&shard_2_wallet, xfer_hash, 100)
         .await;
 
-    // Then send the transaction on shard 1
-    let destination = network.random_wallet().await.address(); // we just need a random address here
-    let inner_data = contracts::native_token::TRANSFER
-        .encode_input(&[Token::Address(destination), Token::Uint(100_000.into())])
+    // Then send the actual cross-shard tx (from shard 1)
+    let setter = contract.function("setInt256").unwrap();
+    let inner_data = setter
+        .encode_input(&[Token::Int((-100_000).into())])
         .unwrap();
 
     let data = contracts::intershard_bridge::BRIDGE
         .encode_input(&[
             Token::Uint(shard_2_id.into()),
             Token::Bool(false),
-            Token::Address(contract_addr::NATIVE_TOKEN),
+            Token::Address(contract_address),
             Token::Bytes(inner_data),
             Token::Uint(10_000_000_000u64.into()),
             Token::Uint(10_000.into()),
@@ -352,10 +370,18 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .run_until_block(&shard_1_wallet, receipt.block_number.unwrap() + 3, 50)
         .await;
 
-    // Sanity check
+    let getter = contract.function("getInt256").unwrap();
+    let get_call = TransactionRequest::new()
+        .to(contract_address)
+        .data(getter.selector());
+
     assert_eq!(
-        shard_2_wallet.get_balance(destination, None).await.unwrap(),
-        0.into()
+        shard_2_wallet
+            .call(&get_call.clone().into(), None)
+            .await
+            .unwrap()
+            .to_vec(),
+        Token::Int(99.into()).into_bytes().unwrap()
     );
 
     // Now ensure it's been received on shard 2
@@ -364,7 +390,14 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .get_mut(&shard_2_id)
         .unwrap()
         .run_until_async(
-            || async { shard_2_wallet.get_balance(destination, None).await.unwrap() > 0.into() },
+            || async {
+                shard_2_wallet
+                    .call(&get_call.clone().into(), None)
+                    .await
+                    .unwrap()
+                    .to_vec()
+                    == Token::Int((-100_000).into()).into_bytes().unwrap()
+            },
             500,
         )
         .await
@@ -391,7 +424,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
     // the main shard wallet's address on the child shard and send the xshard tx from it.
     let xfer_hash = wallet
         .send_transaction(
-            TransactionRequest::pay(shard_wallet.address(), 100_000_000_000_000u64),
+            TransactionRequest::pay(shard_wallet.address(), 1_000_000_000_000_000_000_000u128),
             None,
         )
         .await
@@ -406,14 +439,16 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .unwrap();
     let inner_data = deployer.tx.data().unwrap().clone().to_vec();
 
+    let gas_price = wallet.get_gas_price().await.unwrap();
+
     let data = contracts::intershard_bridge::BRIDGE
         .encode_input(&[
             Token::Uint(child_shard_id.into()),
             Token::Bool(true),
             Token::Address(H160::zero()),
             Token::Bytes(inner_data),
-            Token::Uint(10_000_000_000u64.into()),
-            Token::Uint(10_000.into()),
+            Token::Uint(1_000_000u64.into()),
+            Token::Uint(gas_price),
         ])
         .unwrap();
     let tx_request = TransactionRequest::new()

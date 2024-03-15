@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
-use primitive_types::{H160, H256, U256};
+use primitive_types::{H160, H256};
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
 
@@ -16,7 +16,6 @@ use super::types::zil;
 use crate::{
     api::types::zil::{CreateTransactionResponse, GetTxResponse},
     crypto::Hash,
-    exec::get_created_scilla_contract_addr,
     message::BlockNumber,
     node::Node,
     schnorr,
@@ -96,9 +95,6 @@ fn create_transaction(
     let key = schnorr::PublicKey::from_sec1_bytes(&key)?;
     let sig = schnorr::Signature::from_str(&transaction.signature)?;
 
-    let nonce = transaction.nonce;
-    let to_addr = transaction.to_addr;
-
     let transaction = SignedTransaction::Zilliqa {
         tx: TxZilliqa {
             chain_id: chain_id as u16,
@@ -115,39 +111,15 @@ fn create_transaction(
     };
 
     let transaction_hash = node.create_transaction(transaction.clone())?;
-    let transaction_verified: VerifiedTransaction = transaction.verify()?;
-
-    let contract_address =
-        get_created_scilla_contract_addr(nonce, transaction_verified.signer, to_addr);
 
     let response = CreateTransactionResponse {
-        contract_address,
+        contract_address: None,
         info: "Txn processed".to_string(),
         tran_id: transaction_hash.0.into(),
     };
 
     Ok(response)
 }
-
-//fn get_transaction<'a, T: std::clone::Clone>(params: Params<'a>, node: &'a Arc<Mutex<Node>>) -> Result<JsonResponse<'a, T>> {
-//    let hash: H256 = params.one()?;
-//    let hash: Hash = Hash(hash.0);
-//
-//    let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?;
-//    let mut receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
-//
-//    // Note: the scilla api expects an err json rpc response if the transaction is not found
-//    // Canonical example:
-//    //     "error": {
-//    //     "code": -20,
-//    //     "data": null,
-//    //     "message": "Txn Hash not Present"
-//    // },
-//    let receipt = receipt.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
-//    let tx = tx.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
-//
-//    Ok(GetTxResponse::new(tx, receipt))
-//}
 
 fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<GetTxResponse>> {
     let hash: H256 = params.one()?;
@@ -190,7 +162,7 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Va
 
     let balance = node.get_native_balance(address, BlockNumber::Latest)?;
     // We need to scale the balance from units of (10^-18) ZIL to (10^-12) ZIL. The value is truncated in this process.
-    let balance = balance / U256::from(10).pow(U256::from(6));
+    let balance = balance / 10u128.pow(6);
     let balance = balance.to_string();
     let nonce = node.get_account(address, BlockNumber::Latest)?.nonce;
 
@@ -211,7 +183,11 @@ fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBloc
 }
 
 fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    Ok(node.lock().unwrap().get_gas_price().to_string())
+    let price = node.lock().unwrap().get_gas_price();
+    // We need to scale the balance from units of (10^-18) ZIL to (10^-12) ZIL. The value is truncated in this process.
+    let price = price / 10u128.pow(6);
+
+    Ok(price.to_string())
 }
 
 fn network_id(eth_chain_id: u64) -> u64 {
@@ -237,17 +213,8 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<s
     let _account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
     let balance = node.get_native_balance(smart_contract_address, BlockNumber::Latest)?;
 
-    let acccount_data = node.get_scilla_kv_pairs(smart_contract_address, BlockNumber::Latest)?;
-
     let mut return_json = serde_json::Value::Object(Default::default());
     return_json["_balance"] = serde_json::Value::String(balance.to_string());
-
-    for (key, value) in acccount_data {
-        let as_string = String::from_utf8(value).unwrap();
-        // Remove any quotation marks around the whole string
-        let as_string = as_string.trim_matches('"');
-        return_json[key] = serde_json::Value::String(as_string.to_string());
-    }
 
     Ok(return_json)
 }

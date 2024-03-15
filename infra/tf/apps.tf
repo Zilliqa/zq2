@@ -1,12 +1,12 @@
 ## Ancilliary applications for ZQ2 networks are deployed to a GKE cluster.
 
 resource "google_compute_network" "zq2_apps" {
-  name                    = "zq2-apps"
+  name                    = "${var.network_name}-apps"
   auto_create_subnetworks = false
 }
 
 resource "google_compute_subnetwork" "zq2_apps" {
-  name                     = "zq2-apps"
+  name                     = "${var.network_name}-apps"
   ip_cidr_range            = "10.10.0.0/24"
   network                  = google_compute_network.zq2_apps.name
   region                   = "europe-west2"
@@ -14,11 +14,11 @@ resource "google_compute_subnetwork" "zq2_apps" {
 }
 
 resource "google_service_account" "zq2_apps" {
-  account_id = "zq2-apps"
+  account_id = "${var.network_name}-apps"
 }
 
 resource "google_container_cluster" "zq2_apps" {
-  name     = "zq2-apps"
+  name     = "${var.network_name}-apps"
   location = "europe-west2"
 
   network    = google_compute_network.zq2_apps.name
@@ -44,12 +44,12 @@ resource "google_container_cluster" "zq2_apps" {
 }
 
 resource "google_compute_router" "router" {
-  name    = "zq2-apps-router"
+  name    = "${var.network_name}-apps-router"
   network = google_compute_network.zq2_apps.name
 }
 
 resource "google_compute_router_nat" "nat" {
-  name                               = "zq2-apps-nat"
+  name                               = "${var.network_name}-apps-nat"
   router                             = google_compute_router.router.name
   nat_ip_allocate_option             = "AUTO_ONLY"
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
@@ -74,6 +74,7 @@ provider "kubectl" {
   token = data.google_client_config.default.access_token
 
   cluster_ca_certificate = base64decode(google_container_cluster.zq2_apps.master_auth.0.cluster_ca_certificate)
+  load_config_file       = false
 }
 
 module "otterscan" {

@@ -1,16 +1,15 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
-use evm_ds::tracing_logging::InternalOperationOtter;
+
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
-use tracing::trace;
 
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},
     types::ots,
 };
-use crate::{crypto::Hash, message::BlockNumber, node::Node, state::Address, time::SystemTime};
+use crate::{crypto::Hash, message::BlockNumber, node::Node};
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
@@ -21,9 +20,6 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("ots_getBlockDetailsByHash", get_block_details_by_hash),
             ("ots_getBlockTransactions", get_block_transactions),
             ("ots_hasCode", has_code),
-            ("ots_searchTransactionsAfter", search_transactions_after),
-            ("ots_searchTransactionsBefore", search_transactions_before),
-            ("ots_getInternalOperations", get_internal_operations),
         ],
     )
 }
@@ -36,14 +32,15 @@ fn get_otterscan_api_level(_: Params, _: &Arc<Mutex<Node>>) -> Result<u64> {
 fn get_block_details(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<ots::BlockDetails>> {
     let block: u64 = params.one()?;
 
-    let block = node
-        .lock()
-        .unwrap()
-        .get_block_by_number(block)?
-        .as_ref()
-        .map(ots::BlockDetails::from);
+    let Some(ref block) = node.lock().unwrap().get_block_by_number(block)? else {
+        return Ok(None);
+    };
+    let miner = node.lock().unwrap().get_proposer_reward_address(block)?;
 
-    Ok(block)
+    Ok(Some(ots::BlockDetails::from_block(
+        block,
+        miner.unwrap_or_default(),
+    )))
 }
 
 fn get_block_details_by_hash(
@@ -52,14 +49,15 @@ fn get_block_details_by_hash(
 ) -> Result<Option<ots::BlockDetails>> {
     let block_hash: H256 = params.one()?;
 
-    let block = node
-        .lock()
-        .unwrap()
-        .get_block_by_hash(Hash(block_hash.0))?
-        .as_ref()
-        .map(ots::BlockDetails::from);
+    let Some(ref block) = node.lock().unwrap().get_block_by_hash(Hash(block_hash.0))? else {
+        return Ok(None);
+    };
+    let miner = node.lock().unwrap().get_proposer_reward_address(block)?;
 
-    Ok(block)
+    Ok(Some(ots::BlockDetails::from_block(
+        block,
+        miner.unwrap_or_default(),
+    )))
 }
 
 fn get_block_transactions(
@@ -76,6 +74,7 @@ fn get_block_transactions(
     let Some(block) = node.get_block_by_number(block_num)? else {
         return Ok(None);
     };
+    let miner = node.get_proposer_reward_address(&block)?;
 
     let start = usize::min(page_number * page_size, block.transactions.len());
     let end = usize::min((page_number + 1) * page_size, block.transactions.len());
@@ -94,7 +93,7 @@ fn get_block_transactions(
 
     let full_block = ots::BlockWithTransactions {
         transactions,
-        block: (&block).into(),
+        block: ots::Block::from_block(&block, miner.unwrap_or_default()),
     };
 
     Ok(Some(ots::BlockTransactions {
@@ -116,164 +115,4 @@ fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
         .is_empty();
 
     Ok(!empty)
-}
-
-fn search_transactions_inner(
-    node: &Arc<Mutex<Node>>,
-    address: Address,
-    block_number: u64,
-    page_size: usize,
-    reverse: bool,
-) -> Result<ots::Transactions> {
-    let mut touched = node.lock().unwrap().get_touched_transactions(address)?;
-
-    // If searching in reverse, we should start with the most recent transaction and work backwards.
-    if reverse {
-        touched.reverse();
-    }
-
-    let mut transactions = Vec::with_capacity(page_size);
-    let mut receipts = Vec::with_capacity(page_size);
-
-    // Keep track of the current block number. Once we reach `page_size` transactions, we still need to continue adding
-    // transactions from the current block.
-    let mut current_block = u64::MAX;
-    // This will be set to false if we break out of the loop, indicating to the caller there are further pages.
-    let mut finished = true;
-
-    for hash in touched {
-        let txn = get_transaction_inner(hash, &node.lock().unwrap())
-            .unwrap()
-            .unwrap();
-
-        let txn_block_number = match txn.block_number {
-            Some(txn_block_number) => txn_block_number,
-            None => continue,
-        };
-
-        let cmp = if !reverse {
-            PartialOrd::le
-        } else {
-            PartialOrd::ge
-        };
-        if cmp(&txn_block_number, &block_number) {
-            continue;
-        }
-
-        // Don't break until we have at least `page_size` transactions AND we've added everything from the last searched block.
-        if transactions.len() >= page_size && txn_block_number != current_block {
-            finished = false;
-            break;
-        }
-
-        let timestamp = node
-            .lock()
-            .unwrap()
-            .get_block_by_hash(Hash(txn.block_hash.unwrap_or_default().0))?
-            .unwrap()
-            .timestamp();
-
-        transactions.push(txn);
-
-        let node = node.lock().unwrap();
-        let receipt = ots::TransactionReceiptWithTimestamp {
-            receipt: get_transaction_receipt_inner(hash, &node).unwrap().unwrap(),
-            timestamp: timestamp
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        };
-        receipts.push(receipt);
-
-        current_block = txn_block_number;
-    }
-
-    // The results should always be returned in descending order (latest to earliest). If we were searching forwards
-    // in time, we should reverse the results to ensure they are in descending order.
-    if !reverse {
-        transactions.reverse();
-        receipts.reverse();
-    }
-
-    // `first_page` should be set if this was the latest page in time and `last_page` should be set if this was the
-    // earliest page in time.
-    let (first_page, last_page) = if reverse {
-        (block_number == u64::MAX, finished)
-    } else {
-        (finished, block_number == 0)
-    };
-
-    Ok(ots::Transactions {
-        transactions,
-        receipts,
-        first_page,
-        last_page,
-    })
-}
-
-fn search_transactions_after(params: Params, node: &Arc<Mutex<Node>>) -> Result<ots::Transactions> {
-    let mut params = params.sequence();
-    let address: H160 = params.next()?;
-    let block_number: u64 = params.next()?;
-    let page_size: usize = params.next()?;
-
-    search_transactions_inner(node, address, block_number, page_size, false)
-}
-
-fn search_transactions_before(
-    params: Params,
-    node: &Arc<Mutex<Node>>,
-) -> Result<ots::Transactions> {
-    let mut params = params.sequence();
-    let address: H160 = params.next()?;
-    let mut block_number: u64 = params.next()?;
-    let page_size: usize = params.next()?;
-
-    // A `block_number` of `0` tells us to search from the most recent block.
-    if block_number == 0 {
-        block_number = u64::MAX;
-    }
-
-    search_transactions_inner(node, address, block_number, page_size, true)
-}
-
-fn get_internal_operations(
-    params: Params,
-    node: &Arc<Mutex<Node>>,
-) -> Result<Vec<InternalOperationOtter>> {
-    trace!("get_internal_operations called");
-    let hash: H256 = params.one()?;
-    let hash: Hash = Hash(hash.0);
-
-    let node = node.lock().unwrap();
-
-    let tx = node.get_transaction_by_hash(hash)?;
-
-    let receipt = get_transaction_receipt_inner(hash, &node)?;
-
-    if tx.is_none() || receipt.is_none() {
-        return Err(anyhow!("transaction not yet executed: {hash}"));
-    }
-
-    let tx = tx.unwrap();
-    let from = tx.signer;
-    let tx = tx.tx.into_transaction();
-    let receipt = receipt.unwrap();
-
-    let call_result = node.call_contract(
-        receipt.block_number.into(),
-        from,
-        tx.to_addr(),
-        tx.payload().0.to_vec(),
-        tx.amount().into(),
-        true,
-    );
-
-    Ok(call_result
-        .unwrap()
-        .tx_trace
-        .lock()
-        .unwrap()
-        .otter_internal_tracer
-        .clone())
 }

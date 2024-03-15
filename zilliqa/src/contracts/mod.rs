@@ -1,41 +1,27 @@
 use serde_json::Value;
 
-pub mod gas_price {
-    use ethabi::{Constructor, Function};
+pub mod deposit {
+    use ethabi::Function;
     use once_cell::sync::Lazy;
 
     use super::{contract, Contract};
 
     static CONTRACT: Lazy<Contract> =
-        Lazy::new(|| contract("src/contracts/gas_price.sol", "GasPrice"));
+        Lazy::new(|| contract("src/contracts/deposit.sol", "Deposit"));
 
     pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
-    pub static CONSTRUCTOR: Lazy<Constructor> =
-        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
-    pub static SET_GAS: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("setGas").unwrap().clone());
-    pub static GET_GAS: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("value").unwrap().clone());
-}
-
-pub mod native_token {
-    use ethabi::{Constructor, Function};
-    use once_cell::sync::Lazy;
-
-    use super::{contract, Contract};
-
-    static CONTRACT: Lazy<Contract> =
-        Lazy::new(|| contract("src/contracts/native_token.sol", "NativeToken"));
-
-    pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
-    pub static CONSTRUCTOR: Lazy<Constructor> =
-        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
-    pub static BALANCE_OF: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("balanceOf").unwrap().clone());
-    pub static SET_BALANCE: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("setBalance").unwrap().clone());
-    pub static TRANSFER: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("transfer").unwrap().clone());
+    pub static DEPOSIT: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("deposit").unwrap().clone());
+    pub static SET_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("setStake").unwrap().clone());
+    pub static GET_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getStake").unwrap().clone());
+    pub static GET_REWARD_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getRewardAddress").unwrap().clone());
+    pub static GET_STAKERS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getStakers").unwrap().clone());
+    pub static TOTAL_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("totalStake").unwrap().clone());
 }
 
 pub mod shard {
@@ -132,9 +118,8 @@ mod tests {
             language: "Solidity".to_owned(),
             sources: Source::read_all(
                 [
-                    "gas_price.sol",
+                    "deposit.sol",
                     "intershard_bridge.sol",
-                    "native_token.sol",
                     "shard.sol",
                     "shard_registry.sol",
                 ]

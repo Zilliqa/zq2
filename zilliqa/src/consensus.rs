@@ -4,8 +4,14 @@ use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use ethabi::{Event, Log, RawLog};
 use libp2p::PeerId;
-use primitive_types::H256;
-use rand::{prelude::IteratorRandom, rngs::SmallRng};
+use primitive_types::{H256, U256};
+use rand::{
+    distributions::{Distribution, WeightedIndex},
+    prelude::IteratorRandom,
+    rngs::SmallRng,
+};
+use rand_chacha::ChaCha8Rng;
+use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
 use tracing::*;
 
@@ -15,7 +21,7 @@ use crate::{
     cfg::NodeConfig,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     db::Db,
-    exec::{TouchedAddressEventListener, TransactionApplyResult},
+    exec::TransactionApplyResult,
     message::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, Committee, ExternalMessage,
         InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
@@ -40,7 +46,6 @@ struct NewViewVote {
 pub struct Validator {
     pub public_key: NodePublicKey,
     pub peer_id: PeerId,
-    pub weight: u128, // Validators are weighted by their stake for leader selection and also signing power
 }
 
 impl PartialEq for Validator {
@@ -226,11 +231,10 @@ impl Consensus {
                         (None, 0, 0, hash)
                     }
                     (1, hash) => {
-                        let (public_key, peer_id) = config.consensus.genesis_committee[0];
+                        let (public_key, peer_id) = &config.consensus.genesis_committee[0];
                         let genesis_validator = Validator {
-                            public_key,
-                            peer_id,
-                            weight: 100,
+                            public_key: *public_key,
+                            peer_id: *peer_id,
                         };
                         let genesis =
                             Block::genesis(Committee::new(genesis_validator), state.root_hash()?);
@@ -319,22 +323,21 @@ impl Consensus {
         peer_id: PeerId,
         public_key: NodePublicKey,
     ) -> Result<Option<(Option<PeerId>, ExternalMessage)>> {
-        trace!(%peer_id, "adding peer to consensus");
-        if self.pending_peers.contains(&Validator {
-            peer_id,
-            public_key,
-            weight: 100,
-        }) {
+        if self.state.get_stake(public_key)?.is_none() {
+            info!(%peer_id, "peer does not have sufficient stake");
             return Ok(None);
         }
+        if let Some(existing) = self.pending_peers.iter_mut().find(|v| v.peer_id == peer_id) {
+            existing.public_key = public_key;
+            info!(%peer_id, "peer already exists");
+            return Ok(None);
+        }
+        info!(%peer_id, "adding peer to consensus");
 
         self.pending_peers.push(Validator {
             peer_id,
             public_key,
-            weight: 100,
         });
-
-        debug!(%peer_id, "added pending peer");
 
         if self.view.get_view() == 1 {
             let Some(genesis) = self.get_block_by_view(0)? else {
@@ -350,7 +353,7 @@ impl Consensus {
                 .any(|v| v.peer_id == self.peer_id())
             {
                 trace!("voting for genesis block");
-                let leader = genesis.committee.leader(self.view.get_view());
+                let leader = self.leader(&genesis.committee, self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
                 return Ok(Some((Some(leader.peer_id), ExternalMessage::Vote(vote))));
             }
@@ -361,11 +364,6 @@ impl Consensus {
 
     pub fn head_block(&self) -> Block {
         let highest_block_number = self.db.get_highest_block_number().unwrap().unwrap();
-
-        trace!(
-            "head block request: highest block number: {}",
-            highest_block_number
-        );
 
         self.block_store
             .get_block_by_number(highest_block_number)
@@ -410,7 +408,7 @@ impl Consensus {
                 .any(|v| v.peer_id == self.peer_id())
             {
                 info!("timeout in view 1, we will vote for genesis block rather than incrementing view");
-                let leader = genesis.committee.leader(self.view.get_view());
+                let leader = self.leader(&genesis.committee, self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
                 return Ok(Some((leader.peer_id, ExternalMessage::Vote(vote))));
             } else {
@@ -457,14 +455,13 @@ impl Consensus {
         let _ = self.download_blocks_up_to_head();
         self.view.set_view(self.view.get_view() + 1);
 
-        let leader = self
+        let committee = self
             .get_block(&self.high_qc.block_hash)?
             .ok_or_else(|| {
                 anyhow!("missing block corresponding to our high qc - this should never happen")
             })?
-            .committee
-            .leader(self.view.get_view())
-            .peer_id;
+            .committee;
+        let leader = self.leader(&committee, self.view.get_view()).peer_id;
 
         let new_view = NewView::new(
             self.secret_key,
@@ -533,7 +530,6 @@ impl Consensus {
         let parent = self
             .get_block(&block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block parent"))?;
-        let block_state_root = block.state_root_hash();
 
         trace!("checking if block view {} is safe", block.view());
 
@@ -545,8 +541,6 @@ impl Consensus {
                 block.number(),
                 block.hash()
             );
-
-            let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
 
             if head_block.hash() != parent.hash() || block.number() != head_block.header.number + 1
             {
@@ -564,75 +558,7 @@ impl Consensus {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}.\nHead: {}", parent.state_root_hash(), self.state.root_hash()?, head_block);
             }
 
-            if !transactions.is_empty() {
-                trace!("applying {} transactions to state", transactions.len());
-            }
-
-            let transactions: Result<Vec<_>> =
-                transactions.into_iter().map(|tx| tx.verify()).collect();
-            let mut transactions = transactions?;
-
-            // We re-inject any missing Intershard transactions (or really, any missing
-            // transactions) from our mempool. If any txs are unavailable either in the
-            // message or locally, the proposal cannot be applied
-            for (idx, tx_hash) in block.transactions.iter().enumerate() {
-                if transactions.get(idx).is_some_and(|tx| tx.hash == *tx_hash) {
-                    // all good
-                } else {
-                    let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
-                        warn!("Proposal {} at view {} referenced a transaction that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view());
-                        return Ok(None);
-                    };
-                    transactions.insert(idx, local_tx);
-                }
-            }
-
-            for txn in transactions {
-                self.new_transaction(txn.clone())?;
-                let tx_hash = txn.hash;
-                if let Some(result) = self.apply_transaction(txn.clone(), parent.header)? {
-                    self.db
-                        .insert_block_hash_reverse_index(&tx_hash, &block.hash())?;
-                    let receipt = TransactionReceipt {
-                        block_hash: block.hash(),
-                        tx_hash,
-                        success: result.success,
-                        contract_address: result.contract_address,
-                        logs: result.logs,
-                        gas_used: result.gas_used,
-                        scilla_events: serde_json::to_string(&result.scilla_events).unwrap(),
-                    };
-                    info!(?receipt, "applied transaction {:?}", receipt);
-                    block_receipts.push(receipt);
-                } else {
-                    warn!("Failed to apply TX! Something might be wrong");
-                }
-            }
-
-            // If we were the proposer we would've already processed the transactions
-            if !self.db.contains_transaction_receipts(&block.hash())? {
-                self.db
-                    .insert_transaction_receipts(&block.hash(), &block_receipts)?;
-            }
-
-            // Important - only add blocks we are going to execute because they can potentially
-            // overwrite the mapping of block height to block, which there should only be one of.
-            // for example, this HAS to be after the deal with fork call
-            self.add_block(block.clone())?;
-
-            if self.state.root_hash()? != block_state_root {
-                warn!(
-                    "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {}",
-                    self.state.root_hash()?,
-                    block_state_root,
-                    block
-                );
-                return Err(anyhow!(
-                    "state root hash mismatch, expected: {:?}, actual: {:?}",
-                    block_state_root,
-                    self.state.root_hash()
-                ));
-            }
+            self.execute_block(&block, transactions)?;
 
             if self.view.get_view() != proposal_view + 1 {
                 self.view.set_view(proposal_view + 1);
@@ -643,8 +569,6 @@ impl Consensus {
                 );
             }
 
-            self.save_highest_view(block.hash(), block.number(), proposal_view)?;
-
             if !block.committee.iter().any(|v| v.peer_id == self.peer_id()) {
                 trace!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
@@ -653,7 +577,7 @@ impl Consensus {
                 return Ok(None);
             } else {
                 let vote = self.vote_from_block(&block);
-                let next_leader = block.committee.leader(self.view.get_view()).peer_id;
+                let next_leader = self.leader(&block.committee, self.view.get_view()).peer_id;
 
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
@@ -667,6 +591,54 @@ impl Consensus {
         Ok(None)
     }
 
+    fn apply_rewards(
+        &mut self,
+        committee: &Committee,
+        view: u64,
+        cosigned: &BitSlice,
+    ) -> Result<()> {
+        info!("apply rewards in view {view}");
+        // TODO: Read from a contract.
+        let rewards_per_hour = 204_000_000_000_000_000_000_000u128;
+        // TODO: Calculate
+        let blocks_per_hour = 50_000;
+
+        let rewards_per_block = rewards_per_hour / blocks_per_hour;
+
+        let proposer = self.leader(committee, view).public_key;
+        if let Some(proposer_address) = self.state.get_reward_address(proposer)? {
+            let reward = rewards_per_block / 2;
+            let mut account = self.state.get_account(proposer_address)?;
+            account.balance += reward;
+            self.state.save_account(proposer_address, account)?;
+        }
+
+        let mut total_cosigner_stake = 0;
+        let cosigner_stake: Vec<_> = committee
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| cosigned[*i])
+            .map(|(_, v)| {
+                let reward_address = self.state.get_reward_address(v.public_key).unwrap();
+                let stake = self.state.get_stake(v.public_key).unwrap().unwrap().get();
+                total_cosigner_stake += stake;
+                (reward_address, stake)
+            })
+            .collect();
+
+        for (reward_address, stake) in cosigner_stake {
+            if let Some(a) = reward_address {
+                let reward =
+                    U256::from(rewards_per_block / 2) * U256::from(stake) / total_cosigner_stake;
+                let mut account = self.state.get_account(a)?;
+                account.balance += reward.as_u128();
+                self.state.save_account(a, account)?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn apply_transaction(
         &mut self,
         txn: VerifiedTransaction,
@@ -676,33 +648,25 @@ impl Consensus {
 
         self.db.insert_transaction(&hash, &txn.tx)?;
 
-        let mut listener = TouchedAddressEventListener::default();
-
-        let result = evm_ds::evm::tracing::using(&mut listener, || {
-            self.state.apply_transaction(
-                txn.clone(),
-                self.config.eth_chain_id,
-                current_block,
-                false,
-            )
-        })?;
+        let result =
+            self.state
+                .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block);
+        let result = match result {
+            Ok(r) => r,
+            Err(error) => {
+                warn!(?hash, ?error, "transaction failed to execute");
+                return Ok(None);
+            }
+        };
 
         // Tell the transaction pool that the sender's nonce has been incremented.
         self.transaction_pool.update_nonce(&txn);
-
-        for address in listener.touched {
-            self.db.add_touched_address(address, hash)?;
-        }
 
         if !result.success {
             info!("Transaction was a failure...");
         }
 
         Ok(Some(result))
-    }
-
-    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
-        self.db.get_touched_address_index(address)
     }
 
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
@@ -742,8 +706,9 @@ impl Consensus {
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         let Some(block) = self.get_block(&vote.block_hash)? else {
+            trace!(vote_view = vote.view, "ignoring vote, missing block");
             return Ok(None);
-        }; // TODO: Is this the right response when we recieve a vote for a block we don't know about?
+        };
         let block_hash = block.hash();
         let block_view = block.view();
         let current_view = self.view.get_view();
@@ -766,7 +731,7 @@ impl Consensus {
         }
 
         // verify the sender's signature on block_hash
-        let (index, sender) = block
+        let (index, _) = block
             .committee
             .iter()
             .enumerate()
@@ -797,14 +762,18 @@ impl Consensus {
         if !cosigned[index] {
             signatures.push(vote.signature());
             cosigned.set(index, true);
-            cosigned_weight += sender.weight;
+            let Some(weight) = self.state.get_stake(vote.public_key)? else {
+                return Err(anyhow!("vote from validator without stake"));
+            };
+            cosigned_weight += weight.get();
 
-            supermajority_reached = cosigned_weight * 3 > block.committee.total_weight() * 2;
+            let total_weight = self.total_weight(&block.committee);
+            supermajority_reached = cosigned_weight * 3 > total_weight * 2;
             let current_view = self.view.get_view();
             trace!(
                 cosigned_weight,
                 supermajority_reached,
-                total_weight = block.committee.total_weight(),
+                total_weight,
                 current_view,
                 vote_view = block_view + 1,
                 "storing vote"
@@ -839,6 +808,8 @@ impl Consensus {
                         .collect::<Result<_>>()?;
                     let applied_transaction_hashes: Vec<_> =
                         applied_transactions.iter().map(|tx| tx.hash).collect();
+
+                    self.apply_rewards(&parent.committee, block_view + 1, &qc.cosigned)?;
 
                     let proposal = Block::from_qc(
                         self.secret_key,
@@ -913,7 +884,7 @@ impl Consensus {
             }
         };
 
-        Some(parent.committee.leader(view).peer_id)
+        Some(self.leader(&parent.committee, view).peer_id)
     }
 
     fn committee_for_hash(&mut self, parent_hash: Hash) -> Result<Committee> {
@@ -989,10 +960,13 @@ impl Consensus {
             signatures.push(new_view.signature);
             signers.push(index as u16);
             cosigned.set(index, true);
-            cosigned_weight += sender.weight;
+            let Some(weight) = self.state.get_stake(new_view.public_key)? else {
+                return Err(anyhow!("vote from validator without stake"));
+            };
+            cosigned_weight += weight.get();
             qcs.push(new_view.qc);
 
-            supermajority = cosigned_weight * 3 > committee.total_weight() * 2;
+            supermajority = cosigned_weight * 3 > self.total_weight(&committee) * 2;
 
             let num_signers = signers.len();
             let current_view = self.view.get_view();
@@ -1023,7 +997,15 @@ impl Consensus {
                     let parent = self
                         .get_block(&parent_hash)?
                         .ok_or_else(|| anyhow!("missing block"))?;
-                    let state_root_hash = parent.state_root_hash();
+
+                    let previous_state_root_hash = self.state.root_hash()?;
+
+                    if previous_state_root_hash != parent.state_root_hash() {
+                        warn!("when proposing, state root hash mismatch, expected: {:?}, actual: {:?}", parent.state_root_hash(), previous_state_root_hash);
+                        self.state.set_to_root(H256(parent.state_root_hash().0));
+                    }
+
+                    self.apply_rewards(&committee, new_view.view, &high_qc.cosigned)?;
 
                     // why does this have no txn?
                     let proposal = Block::from_agg(
@@ -1033,10 +1015,12 @@ impl Consensus {
                         high_qc.clone(),
                         agg,
                         parent_hash,
-                        state_root_hash,
+                        self.state.root_hash()?,
                         SystemTime::max(SystemTime::now(), parent.timestamp()),
                         self.get_next_committee(parent.committee),
                     );
+
+                    self.state.set_to_root(H256(previous_state_root_hash.0));
 
                     trace!("Our high QC is {:?}", self.high_qc);
 
@@ -1366,7 +1350,7 @@ impl Consensus {
         };
 
         // Derive the proposer from the block's view
-        let proposer = parent.committee.leader(block.view());
+        let proposer = self.leader(&parent.committee, block.view());
 
         trace!(
             "(check block) I think the block proposer is: {}, we are {}",
@@ -1657,14 +1641,23 @@ impl Consensus {
         Ok(())
     }
 
+    // TODO: Consider if these checking functions should be implemented at the deposit contract level instead?
+
     fn check_quorum_in_bits(&self, cosigned: &BitSlice, committee: &Committee) -> Result<()> {
         let cosigned_sum: u128 = committee
             .iter()
             .enumerate()
-            .map(|(i, v)| if cosigned[i] { v.weight } else { 0 })
+            .map(|(i, v)| {
+                cosigned[i]
+                    .then(|| {
+                        let stake = self.state.get_stake(v.public_key).unwrap().unwrap();
+                        stake.get()
+                    })
+                    .unwrap_or_default()
+            })
             .sum();
 
-        if cosigned_sum * 3 <= committee.total_weight() * 2 {
+        if cosigned_sum * 3 <= self.total_weight(committee) * 2 {
             return Err(anyhow!("no quorum"));
         }
 
@@ -1672,28 +1665,85 @@ impl Consensus {
     }
 
     fn check_quorum_in_indices(&self, signers: &[u16], committee: &Committee) -> Result<()> {
-        let signed_sum: u128 = signers
+        let cosigned_sum: u128 = signers
             .iter()
-            .map(|i| committee.get_by_index(*i as usize).unwrap().weight)
+            .map(|i| {
+                let v = committee.get_by_index(*i as usize).unwrap();
+                let stake = self.state.get_stake(v.public_key).unwrap().unwrap();
+                stake.get()
+            })
             .sum();
 
-        if signed_sum * 3 <= committee.total_weight() * 2 {
+        if cosigned_sum * 3 <= self.total_weight(committee) * 2 {
             return Err(anyhow!("no quorum"));
         }
 
         Ok(())
     }
 
+    pub fn leader(&self, committee: &Committee, view: u64) -> Validator {
+        let mut rng = ChaCha8Rng::seed_from_u64(view);
+        let dist = WeightedIndex::new(committee.iter().map(|v| {
+            let stake = self.state.get_stake(v.public_key).unwrap().unwrap();
+            stake.get()
+        }))
+        .unwrap();
+        let index = dist.sample(&mut rng);
+        committee.iter().nth(index).unwrap()
+    }
+
+    fn total_weight(&self, committee: &Committee) -> u128 {
+        committee
+            .iter()
+            .map(|v| {
+                let stake = self.state.get_stake(v.public_key).unwrap().unwrap();
+                stake.get()
+            })
+            .sum()
+    }
+
     /// Deal with the fork to this block. The block is assumed to be valid to switch to.
+    /// Set the current head block to the parent of the proposed block,
     /// This will make it so the block is ready to become the new head
     fn deal_with_fork(&mut self, block: &Block) -> Result<()> {
-        // Start at the head block and recursively unwind the changes that have been made
-        // until the head block is the parent of this block.
-        while self.head_block().header.number >= block.header.number {
+        // To generically deal with forks where the proposed block could be at any height, we
+        // Find the common ancestor (backward) of the head block and the new block
+        // Then, revert the blocks from the head block to the common ancestor
+        // Then, apply the blocks (forward) from the common ancestor to the parent of the new block
+        let mut head = self.head_block();
+        let mut head_height = head.number();
+        let mut proposed_block = block.clone();
+        let mut proposed_block_height = block.number();
+
+        // Need to make sure both pointers are at the same height
+        while head_height > proposed_block_height {
+            trace!("Stepping back head block pointer");
+            head = self.get_block(&head.parent_hash())?.unwrap();
+            head_height = head.number();
+        }
+
+        while proposed_block_height > head_height {
+            trace!("Stepping back proposed block pointer");
+            proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
+            proposed_block_height = proposed_block.number();
+        }
+
+        // We now have both hash pointers at the same height, we can walk back until they are equal.
+        while head.hash() != proposed_block.hash() {
+            trace!("Stepping back both pointers");
+            head = self.get_block(&head.parent_hash())?.unwrap();
+            proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
+        }
+
+        // Now, we want to revert the blocks until the head block is the common ancestor
+        while self.head_block().hash() != head.hash() {
             let head_block = self.head_block();
-            let parent_block = self
-                .get_block(&head_block.parent_hash())?
-                .ok_or_else(|| anyhow!("missing block parent when reverting blocks!"))?;
+            let parent_block = self.get_block(&head_block.parent_hash())?.ok_or_else(|| {
+                anyhow!(
+                    "missing block parent when reverting blocks: {}",
+                    head_block.parent_hash()
+                )
+            })?;
 
             if head_block.header.view == 0 {
                 panic!("genesis block is not supposed to be reverted");
@@ -1706,7 +1756,11 @@ impl Consensus {
             self.db.remove_transaction_receipts(&head_block.hash())?;
 
             // State is easily set - must be to the parent block, though
-            trace!("Setting state to: {}", parent_block.state_root_hash());
+            trace!(
+                "Setting state to: {} aka block: {}",
+                parent_block.state_root_hash(),
+                parent_block
+            );
             self.state
                 .set_to_root(H256(parent_block.state_root_hash().0));
 
@@ -1737,8 +1791,121 @@ impl Consensus {
             // to change finalized height
             let new_highest = head_block.header.number.saturating_sub(1);
             self.db.put_highest_block_number(new_highest)?;
+        }
 
-            // touched address index: TODO
+        // Now, we execute forward from the common ancestor to the new block parent which can
+        // be required in rare cases.
+        // We have the chain of blocks from the ancestor upwards to the proposed block via walking back.
+        while self.head_block().hash() != block.parent_hash() {
+            trace!("Advancing the head block to prepare for proposed block fork.");
+            trace!("Head block: {}", self.head_block());
+            trace!("desired block hash: {}", block.parent_hash());
+
+            let desired_block_height = self.head_block().number() + 1;
+            // Pointer to parent of head block
+            let mut block_pointer = self
+                .get_block(&block.parent_hash())?
+                .ok_or_else(|| anyhow!("missing block when advancing head block pointer"))?;
+
+            // If the parent of the proposed
+            if block_pointer.header.number < desired_block_height {
+                panic!("block height mismatch when advancing head block pointer");
+            }
+
+            while block_pointer.header.number != desired_block_height {
+                block_pointer = self
+                    .get_block(&block_pointer.parent_hash())?
+                    .ok_or_else(|| anyhow!("missing block when advancing head block pointer"))?;
+            }
+
+            // We now have the block pointer at the desired height, we can apply it.
+            trace!("Fork execution of block: {}", block_pointer);
+            let transactions = block_pointer.transactions.clone();
+            let transactions = transactions
+                .iter()
+                .map(|tx_hash| self.get_transaction_by_hash(*tx_hash).unwrap().unwrap().tx)
+                .collect();
+            self.execute_block(&block_pointer, transactions)?;
+        }
+
+        Ok(())
+    }
+
+    fn execute_block(&mut self, block: &Block, transactions: Vec<SignedTransaction>) -> Result<()> {
+        let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
+        let parent = self
+            .get_block(&block.parent_hash())?
+            .ok_or_else(|| anyhow!("missing parent block when executing block!"))?;
+
+        if !transactions.is_empty() {
+            trace!("applying {} transactions to state", transactions.len());
+        }
+
+        let transactions: Result<Vec<_>> = transactions.into_iter().map(|tx| tx.verify()).collect();
+        let mut transactions = transactions?;
+
+        // We re-inject any missing Intershard transactions (or really, any missing
+        // transactions) from our mempool. If any txs are unavailable either in the
+        // message or locally, the proposal cannot be applied
+        for (idx, tx_hash) in block.transactions.iter().enumerate() {
+            if transactions.get(idx).is_some_and(|tx| tx.hash == *tx_hash) {
+                // all good
+            } else {
+                let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
+                    warn!("Proposal {} at view {} referenced a transaction that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view());
+                    return Ok(());
+                };
+                transactions.insert(idx, local_tx);
+            }
+        }
+
+        for txn in transactions {
+            self.new_transaction(txn.clone())?;
+            let tx_hash = txn.hash;
+            let result = self
+                .apply_transaction(txn.clone(), parent.header)?
+                .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
+            self.db
+                .insert_block_hash_reverse_index(&tx_hash, &block.hash())?;
+            let receipt = TransactionReceipt {
+                block_hash: block.hash(),
+                tx_hash,
+                success: result.success,
+                contract_address: result.contract_address,
+                logs: result.logs,
+                gas_used: result.gas_used,
+            };
+            info!(?receipt, "applied transaction {:?}", receipt);
+            block_receipts.push(receipt);
+        }
+
+        self.apply_rewards(&parent.committee, block.view(), &block.qc.cosigned)?;
+
+        // If we were the proposer we would've already processed the transactions
+        if !self.db.contains_transaction_receipts(&block.hash())? {
+            self.db
+                .insert_transaction_receipts(&block.hash(), &block_receipts)?;
+        }
+
+        // Important - only add blocks we are going to execute because they can potentially
+        // overwrite the mapping of block height to block, which there should only be one of.
+        // for example, this HAS to be after the deal with fork call
+        self.add_block(block.clone())?;
+
+        self.save_highest_view(block.hash(), block.number(), block.view())?;
+
+        if self.state.root_hash()? != block.state_root_hash() {
+            warn!(
+                "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {}",
+                self.state.root_hash()?,
+                block.state_root_hash(),
+                block
+            );
+            return Err(anyhow!(
+                "state root hash mismatch, expected: {:?}, actual: {:?}",
+                block.state_root_hash(),
+                self.state.root_hash()
+            ));
         }
 
         Ok(())

@@ -2,12 +2,10 @@
 resolver = "2"
 
 members = [
+ "eth-trie.rs",
  "zilliqa",
  "zilliqa-macros",
  "z2",
- "evm-ds",
- "scilla",
- "eth-trie.rs"
 ]
 
 [workspace.package]

@@ -576,19 +576,20 @@ async fn send_eip1559_transaction(mut network: Network) {
         }]);
         (to, access_list)
     };
+    let gas_price = network.random_wallet().await.get_gas_price().await.unwrap();
     let tx = Eip1559TransactionRequest::new()
         .to(to)
         .value(456)
         .access_list(access_list.clone())
-        .max_fee_per_gas(5000)
-        .max_priority_fee_per_gas(5000)
+        .max_fee_per_gas(gas_price)
+        .max_priority_fee_per_gas(gas_price)
         .into();
     let (tx, receipt) = send_transaction(&mut network, tx).await;
 
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 2);
     assert_eq!(tx.access_list.unwrap(), access_list);
-    assert_eq!(tx.max_fee_per_gas.unwrap().as_u64(), 5000);
-    assert_eq!(tx.max_priority_fee_per_gas.unwrap().as_u64(), 5000);
+    assert_eq!(tx.max_fee_per_gas.unwrap(), gas_price);
+    assert_eq!(tx.max_priority_fee_per_gas.unwrap(), gas_price);
     assert_eq!(receipt.to.unwrap(), to);
 }
 
@@ -725,8 +726,7 @@ async fn revert_transaction(mut network: Network) {
     let revert_call = TransactionRequest::new()
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(false)]).unwrap())
-        .gas(10_000_000_000u64); // Pass a gas limit, otherwise estimate_gas is called and fails
-                                 // due to the revert
+        .gas(1_000_000); // Pass a gas limit, otherwise estimate_gas is called and fails due to the revert
     let (_, receipt) = send_transaction(&mut network, revert_call.into()).await;
     assert_eq!(receipt.status.unwrap().as_u32(), 0);
 
@@ -741,9 +741,6 @@ async fn revert_transaction(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn gas_charged_on_revert(mut network: Network) {
-    const SMALL_GAS_LIMIT: u64 = 10;
-    const LARGE_GAS_LIMIT: u64 = 10_000_000_000;
-
     let wallet = network.genesis_wallet().await;
 
     let (hash, abi) = deploy_contract(
@@ -762,17 +759,18 @@ async fn gas_charged_on_revert(mut network: Network) {
 
     // Revert on contract failure. Ensure gas is consumed according to execution.
     let balance_before_call = wallet.get_balance(wallet.address(), None).await.unwrap();
+    let large_gas_limit = 1_000_000;
     let revert_call = TransactionRequest::new()
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(false)]).unwrap())
-        .gas(LARGE_GAS_LIMIT);
+        .gas(large_gas_limit);
     let (_, receipt) = send_transaction(&mut network, revert_call.into()).await;
 
     assert_eq!(receipt.status.unwrap().as_u32(), 0);
     assert!(receipt.gas_used.is_some());
     let gas_used = receipt.gas_used.unwrap();
     assert!(gas_used > 0.into());
-    assert!(gas_used < LARGE_GAS_LIMIT.into());
+    assert!(gas_used < large_gas_limit.into());
     let balance_after_call = wallet.get_balance(wallet.address(), None).await.unwrap();
     assert_eq!(
         balance_after_call,
@@ -782,17 +780,20 @@ async fn gas_charged_on_revert(mut network: Network) {
     // Revert on out-of-gas. Ensure entire gas limit is consumed.
     let balance_before_call = wallet.get_balance(wallet.address(), None).await.unwrap();
 
+    // Set the gas limit of this transaction to be half of the previous successful call. This guarantees we will fail
+    // due to running out of gas.
+    let small_gas_limit = gas_used / 2;
     let fail_out_of_gas_call = TransactionRequest::new()
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(true)]).unwrap())
-        .gas(SMALL_GAS_LIMIT);
+        .gas(small_gas_limit);
     let (_, receipt) = send_transaction(&mut network, fail_out_of_gas_call.into()).await;
 
     assert_eq!(receipt.status.unwrap().as_u32(), 0);
     let balance_after_call = wallet.get_balance(wallet.address(), None).await.unwrap();
     assert_eq!(
         balance_after_call,
-        balance_before_call - gas_price * SMALL_GAS_LIMIT
+        balance_before_call - gas_price * small_gas_limit
     );
 }
 
@@ -953,4 +954,42 @@ async fn priority_fees_tx(mut network: Network) {
 
     // doesn't time out trying to mine
     assert!(wait.is_ok());
+}
+
+#[zilliqa_macros::test]
+async fn pending_transaction_is_returned_by_get_transaction_by_hash(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Send a transaction.
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Check the transaction is returned with null values for the block.
+    let tx = wallet.get_transaction(hash).await.unwrap().unwrap();
+    assert_eq!(tx.block_hash, None);
+    assert_eq!(tx.block_number, None);
+
+    // Wait for the transaction to be mined.
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Check the transaction is returned with non-null values for the block.
+    let tx = wallet.get_transaction(hash).await.unwrap().unwrap();
+    assert!(tx.block_hash.is_some());
+    assert!(tx.block_number.is_some());
 }
