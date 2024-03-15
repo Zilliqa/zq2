@@ -658,7 +658,11 @@ impl Consensus {
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     block.committee.len()
                 );
-                return Ok(None);
+                // I'm fully synced but I'm not in the committee yet - let's join
+                return Ok(Some((
+                    None,
+                    ExternalMessage::JoinCommittee(self.public_key()),
+                )));
             } else {
                 let vote = self.vote_from_block(&block);
                 let next_leader = block.committee.leader(self.view.get_view()).peer_id;

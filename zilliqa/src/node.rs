@@ -143,12 +143,6 @@ impl Node {
                     } else {
                         self.message_sender.broadcast_external_message(message)?;
                     }
-                } else {
-                    info!("We had nothing to respond to proposal, lets try to join committee for view {m_view:}");
-                    self.message_sender.send_external_message(
-                        from,
-                        ExternalMessage::JoinCommittee(self.consensus.public_key()),
-                    )?;
                 }
             }
             ExternalMessage::Vote(m) => {
@@ -190,7 +184,13 @@ impl Node {
             }
             ExternalMessage::BlockBatchResponse(m) => {
                 if !to_self {
-                    self.handle_blocks_response(from, m)?;
+                    let is_synced = self.handle_blocks_response(from, m)?;
+                    if is_synced {
+                        self.message_sender.send_external_message(
+                            from,
+                            ExternalMessage::JoinCommittee(self.consensus.public_key()),
+                        )?;
+                    }
                 } else {
                     debug!("ignoring blocks response to self");
                 }
@@ -563,7 +563,7 @@ impl Node {
         Ok(())
     }
 
-    fn handle_blocks_response(&mut self, _: PeerId, response: BlockBatchResponse) -> Result<()> {
+    fn handle_blocks_response(&mut self, _: PeerId, response: BlockBatchResponse) -> Result<bool> {
         trace!(
             "Received blocks response of length {}",
             response.proposals.len()
@@ -589,8 +589,8 @@ impl Node {
                 self.consensus.head_block().header.number
             );
             self.consensus.download_blocks_up_to_head()?;
+            return Ok(false);
         }
-
-        Ok(())
+        Ok(true)
     }
 }
