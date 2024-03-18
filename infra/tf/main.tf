@@ -164,6 +164,8 @@ module "bootstrap_node" {
   consensus.consensus_timeout = { secs = 60, nanos = 0 }
   consensus.genesis_committee = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}"] ]
   consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
+  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "32000000000000000000", "${local.genesis_address}"] ]
+
   EOT
   secret_key            = local.bootstrap_key
   zq_network_name       = var.network_name
@@ -196,6 +198,8 @@ module "node" {
   consensus.consensus_timeout = { secs = 60, nanos = 0 }
   consensus.genesis_committee = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}"] ]
   consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
+  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "32000000000000000000", "${local.genesis_address}"] ]
+
   EOT
   secret_key            = local.secret_keys[count.index]
   zq_network_name       = var.network_name
