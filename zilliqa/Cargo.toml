@@ -24,7 +24,7 @@ vergen = { version = "8.3.1", features = ["git", "gitcl"] }
 
 [dependencies]
 anyhow = { version = "1.0.81", features = ["backtrace"] }
-async-trait = "0.1.77"
+async-trait = "0.1.78"
 bincode = "1.3.3"
 bitvec = { version = "1.0.1", features = ["serde"] }
 bls-signatures = "0.15.0"
@@ -73,7 +73,7 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 
 [dev-dependencies]
-async-trait = "0.1.77"
+async-trait = "0.1.78"
 ethers = { version = "2.0.14", default-features = false, features = ["ethers-solc", "legacy"] }
 ethers-solc = { version = "2.0.13", features = ["svm-solc"] }
 fs_extra = "1.3.0"
