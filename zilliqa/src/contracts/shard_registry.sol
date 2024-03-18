@@ -7,6 +7,12 @@ contract ShardRegistry is Shard {
     event ShardAdded(uint id);
     event LinkAdded(uint from, uint indexed to);
 
+    /// Tried to register a shard that is already registered
+    error ShardAlreadyExists(uint id);
+    error LinkSourceDoesntExist();
+    error LinkTargetDoesntExist();
+    error NotAuthorizedToLink();
+
     address[] shards;
     mapping(uint => uint) indices;
 
@@ -22,7 +28,7 @@ contract ShardRegistry is Shard {
 
     function addShard(uint shardId, address shardContract) public {
         if (indices[shardId] != 0) {
-            revert("Shard was already registered.");
+            revert ShardAlreadyExists(shardId);
         }
         shards.push(shardContract);
         indices[shardId] = shards.length - 1;
@@ -32,15 +38,15 @@ contract ShardRegistry is Shard {
     function addLink(uint sourceId, uint targetId) public {
         uint indexFrom = indices[sourceId];
         if (indexFrom == 0) {
-            revert("Source shard not registered.");
+            revert("Source doesn't exist");
         }
         uint indexTo = indices[targetId];
         if (indexTo == 0) {
-            revert("Target shard not registered.");
+            revert("Target doesn't exist");
         }
 
         if (msg.sender != shards[indexFrom]) {
-            revert("Unauthorized.");
+            revert("Not authorized");
         }
 
         links[sourceId] = targetId;

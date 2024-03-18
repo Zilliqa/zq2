@@ -1,4 +1,4 @@
-use ethers::providers::Middleware;
+use ethers::{abi::Tokenize, providers::Middleware};
 mod consensus;
 mod eth;
 mod persistence;
@@ -957,10 +957,20 @@ async fn deploy_contract(
     wallet: &Wallet,
     network: &mut Network,
 ) -> (H256, Contract) {
+    deploy_contract_with_args(path, contract, (), wallet, network).await
+}
+
+async fn deploy_contract_with_args<T: Tokenize>(
+    path: &str,
+    contract: &str,
+    constructor_args: T,
+    wallet: &Wallet,
+    network: &mut Network,
+) -> (H256, Contract) {
     let (abi, bytecode) = compile_contract(path, contract);
 
     let factory = DeploymentTxFactory::new(abi, bytecode, wallet.clone());
-    let deployer = factory.deploy(()).unwrap();
+    let deployer = factory.deploy(constructor_args).unwrap();
     let abi = deployer.abi().clone();
     {
         let hash = wallet
