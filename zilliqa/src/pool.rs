@@ -151,15 +151,14 @@ impl TransactionPool {
                 // to broadcast a new transaction to the network.
                 if ReadyItem::from(existing_txn) >= ReadyItem::from(&txn) {
                     return false;
-                } else {
-                    // Remove the existing transaction from `hash_to_index` if we're about to replace it.
-                    self.hash_to_index.remove(&existing_txn.hash);
                 }
+                // Remove the existing transaction from `hash_to_index` if we're about to replace it.
+                self.hash_to_index.remove(&existing_txn.hash);
             }
         } else {
             // now we've confirmed it's nonceless, so ensure its index isn't duplicate
             if let Some(existing_nonceless_txn) = self.transactions.get(&txn.mempool_index()) {
-                warn!(tx = ?existing_nonceless_txn, "Duplicate-indexed nonceless transactions encountered, this shouldn't happen. Ignoring the new one.");
+                info!(tx = ?existing_nonceless_txn, "Duplicate-indexed nonceless transactions encountered, ignoring the new one.");
                 return false;
             }
         }
@@ -196,19 +195,13 @@ impl TransactionPool {
     ///
     /// It is important to call this for all executed transactions, otherwise permanently invalidated transactions
     /// will be left indefinitely in the pool.
-    pub fn update_nonce(&mut self, txn: &VerifiedTransaction) {
-        let Some(nonce) = txn.tx.nonce() else { return }; // nothing to do if there's no nonce
+    pub fn mark_executed(&mut self, txn: &VerifiedTransaction) {
+        let tx_index = txn.mempool_index();
+        self.transactions.remove(&tx_index);
+        self.hash_to_index.remove(&txn.hash);
 
-        self.transactions
-            .remove(&TxIndex::Nonced(txn.signer, nonce)); // if this existed, it's now invalid
-        self.hash_to_index.remove(&txn.hash); // cleanup index too
-
-        if let Some(next_txn) = self
-            .transactions
-            .get(&TxIndex::Nonced(txn.signer, nonce + 1))
-        {
-            // if THIS exists, it's now valid
-            self.ready.push(next_txn.into());
+        if let Some(next) = tx_index.next().and_then(|idx| self.transactions.get(&idx)) {
+            self.ready.push(next.into());
         }
     }
 
@@ -358,7 +351,7 @@ mod tests {
         pool.insert_transaction(transaction(from, 0, 0), 0);
         pool.insert_transaction(transaction(from, 1, 0), 0);
 
-        pool.update_nonce(&transaction(from, 0, 0));
+        pool.mark_executed(&transaction(from, 0, 0));
 
         assert_eq!(pool.best_transaction().unwrap().tx.nonce().unwrap(), 1);
     }
