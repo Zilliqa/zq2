@@ -443,8 +443,8 @@ impl Consensus {
             let empty_block_timeout_ms =
                 self.config.consensus.empty_block_timeout.as_millis() as u64;
 
-            let transactions = self.get_txns_to_execute();
-            if time_since_last_block > empty_block_timeout_ms || transactions.len() > 0 {
+            let transactions_count = self.transaction_pool.size();
+            if time_since_last_block > empty_block_timeout_ms || transactions_count > 0 {
                 self.create_next_block_on_timeout = false;
                 info!(
                     "Elapsed {} milliseconds, proposing new block!",
@@ -708,7 +708,7 @@ impl Consensus {
                 return Ok(None);
             }
         };
-
+        info!("APPLIED TXN: {:?}", txn.hash);
         // Tell the transaction pool that the sender's nonce has been incremented.
         self.transaction_pool.update_nonce(&txn);
 
@@ -836,10 +836,14 @@ impl Consensus {
                 // if we are already in the round in which the vote counts and have reached supermajority
                 // We propose new block immediately if there's something in mempool or it's the first view
                 // Otherwise the block will be proposed on timeout
-                let transactions = self.get_txns_to_execute();
+
+                let transactions_count = self.transaction_pool.size();
+
+                info!("NUMBER OF TXNS TO BE EXECUTED: {}", transactions_count);
                 if (self.view.get_view() == 1)
-                    || (block_view + 1 == self.view.get_view() && transactions.len() > 0)
+                    || (block_view + 1 == self.view.get_view() && transactions_count > 0)
                 {
+                    info!("PROPOSING!");
                     return self.propose_new_block();
                 } else {
                     self.create_next_block_on_timeout = true;
