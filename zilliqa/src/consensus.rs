@@ -523,7 +523,7 @@ impl Consensus {
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
 
-        info!(
+        debug!(
             block_view = block.view(),
             block_number = block.number(),
             "handling block proposal {}",
@@ -695,7 +695,6 @@ impl Consensus {
                 return Ok(None);
             }
         };
-        info!("APPLIED TXN: {:?}", txn.hash);
         // Tell the transaction pool that the sender's nonce has been incremented.
         self.transaction_pool.update_nonce(&txn);
 
@@ -826,19 +825,15 @@ impl Consensus {
 
                 let transactions_count = self.transaction_pool.size();
 
-                info!("NUMBER OF TXNS TO BE EXECUTED: {}", transactions_count);
                 if (self.view.get_view() == 1)
                     || (block_view + 1 == self.view.get_view() && transactions_count > 0)
                 {
-                    info!("PROPOSING!");
                     return self.propose_new_block();
                 } else {
                     self.create_next_block_on_timeout = true;
                     self.reset_timeout
                         .send(self.config.consensus.empty_block_timeout.as_millis() as u64 + 1)?;
-                    //self.message_sender.me
-                    //self.reset_timeout.send(crate::node::DEFAULT_SLEEP_TIME_MS)?;
-                    info!("I'll be sleeping for some time because #txns == 0");
+                    trace!("Empty transaction pool, will create new block on timeout");
                 }
             }
         } else {
