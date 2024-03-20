@@ -157,7 +157,6 @@ module "bootstrap_node" {
   binary_md5            = google_storage_bucket_object.binary.md5hash
   config                = <<-EOT
   p2p_port = 3333
-  region = var.region
   [[nodes]]
   eth_chain_id = ${var.eth_chain_id}
   allowed_timestamp_skew = { secs = 60, nanos = 0 }
