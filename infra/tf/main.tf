@@ -184,6 +184,7 @@ module "node" {
   name                  = "${var.network_name}-node-${count.index}"
   service_account_email = google_service_account.node.email
   network_name          = local.network_name
+  node_zone             = var.node_zone
   subnetwork_name       = data.google_compute_subnetwork.default.name
   binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
   binary_md5            = google_storage_bucket_object.binary.md5hash

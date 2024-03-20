@@ -15,6 +15,12 @@ variable "region" {
   default     = "europe-west2"
 }
 
+variable "node_zone" {
+  type     = string
+  default  = "europe-west2-a"
+  nullable = false
+}
+
 variable "eth_chain_id" {
   description = "ZQ2 EVM Chain ID"
   type        = number
