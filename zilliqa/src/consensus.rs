@@ -33,6 +33,7 @@ use crate::{
     time::SystemTime,
     transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
+use crate::node::NetworkMessage;
 
 #[derive(Debug)]
 struct NewViewVote {
@@ -401,7 +402,7 @@ impl Consensus {
             .map(|v| v.peer_id)
     }
 
-    pub fn timeout(&mut self) -> Result<Option<(Option<PeerId>, ExternalMessage)>> {
+    pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
         // We never want to timeout while on view 1
         if self.view.get_view() == 1 {
             let genesis = self
@@ -429,11 +430,6 @@ impl Consensus {
         let head_block = self.head_block();
         let head_block_view = head_block.view();
 
-        info!(
-            "Head block view: {}, self.get_view: {}",
-            head_block_view,
-            self.view.get_view()
-        );
         if head_block_view + 1 == self.view.get_view() && self.create_next_block_on_timeout {
             let time_since_last_block = SystemTime::now()
                 .duration_since(self.view.last_timeout())
@@ -446,10 +442,6 @@ impl Consensus {
             let transactions_count = self.transaction_pool.size();
             if time_since_last_block > empty_block_timeout_ms || transactions_count > 0 {
                 self.create_next_block_on_timeout = false;
-                info!(
-                    "Elapsed {} milliseconds, proposing new block!",
-                    time_since_last_block
-                );
                 let Ok(Some((block, transactions))) = self.propose_new_block() else {
                     return Ok(None);
                 };
@@ -458,10 +450,6 @@ impl Consensus {
                     ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
                 )));
             } else {
-                info!(
-                    "Elapsed only: {}",
-                    empty_block_timeout_ms - time_since_last_block
-                );
                 self.reset_timeout
                     .send(empty_block_timeout_ms - time_since_last_block + 1)?;
                 return Ok(None);

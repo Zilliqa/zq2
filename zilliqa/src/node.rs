@@ -69,6 +69,10 @@ impl MessageSender {
     }
 }
 
+/// Messages sent by [Consensus].
+/// Tuple of (destination, message).
+pub type NetworkMessage = (Option<PeerId>, ExternalMessage);
+
 /// The central data structure for a blockchain node.
 ///
 /// # Transaction Lifecycle
