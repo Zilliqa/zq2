@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::*;
 
-use crate::node::NetworkMessage;
 use crate::{
     block_store::BlockStore,
     blockhooks,
@@ -28,7 +27,7 @@ use crate::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, Committee, ExternalMessage,
         InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
     },
-    node::MessageSender,
+    node::{MessageSender, NetworkMessage},
     pool::TransactionPool,
     state::{Address, State},
     time::SystemTime,
