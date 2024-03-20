@@ -86,7 +86,7 @@ impl Default for ConsensusConfig {
             genesis_deposits: vec![],
             genesis_hash: None,
             genesis_accounts: Vec::new(),
-            empty_block_timeout: Duration::from_millis(50),
+            empty_block_timeout: Duration::from_millis(25),
         }
     }
 }
