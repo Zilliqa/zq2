@@ -3,14 +3,18 @@
 resource "google_compute_network" "zq2_apps" {
   name                    = "${var.network_name}-apps"
   auto_create_subnetworks = false
+  count                   = local.devnet_resources
+
 }
 
 resource "google_compute_subnetwork" "zq2_apps" {
   name                     = "${var.network_name}-apps"
   ip_cidr_range            = "10.10.0.0/24"
-  network                  = google_compute_network.zq2_apps.name
+  network                  = local.devnet_resources != 0 ? google_compute_network.zq2_apps.0.name : local.network_name
   region                   = var.region
   private_ip_google_access = true
+  count                    = local.devnet_resources
+
 }
 
 resource "google_service_account" "zq2_apps" {
@@ -21,8 +25,8 @@ resource "google_container_cluster" "zq2_apps" {
   name     = "${var.network_name}-apps"
   location = var.region
 
-  network    = google_compute_network.zq2_apps.name
-  subnetwork = google_compute_subnetwork.zq2_apps.name
+  network    = local.devnet_resources != 0 ? google_compute_network.zq2_apps.0.name : local.network_name
+  subnetwork = local.devnet_resources != 0 ? google_compute_subnetwork.zq2_apps.0.name : data.google_compute_subnetwork.default.name
 
   enable_autopilot = true
 
@@ -45,15 +49,18 @@ resource "google_container_cluster" "zq2_apps" {
 
 resource "google_compute_router" "router" {
   name    = "${var.network_name}-apps-router"
-  network = google_compute_network.zq2_apps.name
+  network = google_compute_network.zq2_apps.0.name
+  count   = local.devnet_resources
+
 }
 
 resource "google_compute_router_nat" "nat" {
   name                               = "${var.network_name}-apps-nat"
-  router                             = google_compute_router.router.name
+  router                             = google_compute_router.router.0.name
   nat_ip_allocate_option             = "AUTO_ONLY"
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
   region                             = var.region
+  count                              = local.devnet_resources
 }
 
 data "google_client_config" "default" {}

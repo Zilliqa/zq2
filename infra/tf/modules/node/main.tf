@@ -56,6 +56,13 @@ variable "zq_network_name" {
   nullable = false
 }
 
+variable "region" {
+  description = "The region ID to host the network in"
+  type        = string
+  default     = "europe-west2"
+}
+
+
 variable "labels" {
   type        = map(string)
   description = "A single-level map/object with key value pairs of metadata labels to apply to the GCP resources. All keys should use underscores and values should use hyphens. All values must be wrapped in quotes."

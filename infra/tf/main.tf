@@ -150,13 +150,14 @@ module "bootstrap_node" {
 
   name                  = "${var.network_name}-bootstrap-node"
   service_account_email = google_service_account.node.email
+  node_zone             = var.node_zone
   network_name          = local.network_name
   subnetwork_name       = data.google_compute_subnetwork.default.name
   binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
   binary_md5            = google_storage_bucket_object.binary.md5hash
   config                = <<-EOT
   p2p_port = 3333
-
+  region = var.region
   [[nodes]]
   eth_chain_id = ${var.eth_chain_id}
   allowed_timestamp_skew = { secs = 60, nanos = 0 }
@@ -188,7 +189,8 @@ module "node" {
   subnetwork_name       = data.google_compute_subnetwork.default.name
   binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
   binary_md5            = google_storage_bucket_object.binary.md5hash
-  config                = <<-EOT
+
+  config          = <<-EOT
   p2p_port = 3333
   bootstrap_address = [ "${local.bootstrap_peer_id}", "/ip4/${module.bootstrap_node.network_ip}/tcp/3333" ]
 
@@ -202,8 +204,8 @@ module "node" {
   consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "32000000000000000000", "${local.genesis_address}"] ]
 
   EOT
-  secret_key            = local.secret_keys[count.index]
-  zq_network_name       = var.network_name
+  secret_key      = local.secret_keys[count.index]
+  zq_network_name = var.network_name
 }
 
 resource "google_project_service" "osconfig" {
