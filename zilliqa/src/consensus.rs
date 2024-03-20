@@ -937,7 +937,7 @@ impl Consensus {
         trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
         // intershard transactions are not meant to be broadcast
         applied_transactions.retain(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
-        return Ok(Some((proposal, applied_transactions)));
+        Ok(Some((proposal, applied_transactions)))
     }
 
     fn get_next_committee(&mut self, mut committee: Committee) -> Committee {
