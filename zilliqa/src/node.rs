@@ -194,7 +194,11 @@ impl Node {
             }
             ExternalMessage::RequestResponse => {}
             ExternalMessage::NewTransaction(t) => {
-                self.consensus.new_transaction(t.verify()?)?;
+                let inserted = self.consensus.new_transaction(t.verify()?)?;
+                if inserted {
+                    // Try to create new block if that has been scheduled
+                    self.consensus.timeout()?;
+                }
             }
             ExternalMessage::JoinCommittee(public_key) => {
                 self.add_peer(from, public_key)?;

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::*;
 
+use crate::node::NetworkMessage;
 use crate::{
     block_store::BlockStore,
     blockhooks,
@@ -33,7 +34,6 @@ use crate::{
     time::SystemTime,
     transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
-use crate::node::NetworkMessage;
 
 #[derive(Debug)]
 struct NewViewVote {
@@ -441,14 +441,13 @@ impl Consensus {
 
             let transactions_count = self.transaction_pool.size();
             if time_since_last_block > empty_block_timeout_ms || transactions_count > 0 {
-                self.create_next_block_on_timeout = false;
-                let Ok(Some((block, transactions))) = self.propose_new_block() else {
-                    return Ok(None);
+                if let Ok(Some((block, transactions))) = self.propose_new_block() {
+                    self.create_next_block_on_timeout = false;
+                    return Ok(Some((
+                        None,
+                        ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
+                    )));
                 };
-                return Ok(Some((
-                    None,
-                    ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
-                )));
             } else {
                 self.reset_timeout
                     .send(empty_block_timeout_ms - time_since_last_block + 1)?;
