@@ -1,13 +1,15 @@
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BinaryHeap},
+};
+
+use tracing::*;
+
 use crate::{
     crypto::Hash,
     state::Address,
     transaction::{SignedTransaction, VerifiedTransaction},
 };
-use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, BinaryHeap},
-};
-use tracing::*;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum TxIndex {
@@ -112,9 +114,7 @@ impl TransactionPool {
     /// consecutive with a previously returned transaction, from the same sender.
     pub fn best_transaction(&mut self) -> Option<VerifiedTransaction> {
         loop {
-            let Some(ReadyItem { tx_index, .. }) = self.ready.pop() else {
-                return None;
-            };
+            let ReadyItem { tx_index, .. } = self.ready.pop()?;
             let Some(transaction) = self.transactions.remove(&tx_index) else {
                 // A transaction might have been ready, but it might have gotten popped
                 // or the sender's nonce might have increased, making it invalid. In this case,
@@ -179,16 +179,12 @@ impl TransactionPool {
     }
 
     pub fn get_transaction(&self, hash: Hash) -> Option<&VerifiedTransaction> {
-        let Some(tx_index) = self.hash_to_index.get(&hash) else {
-            return None;
-        };
+        let tx_index = self.hash_to_index.get(&hash)?;
         self.transactions.get(tx_index)
     }
 
     pub fn pop_transaction(&mut self, hash: Hash) -> Option<VerifiedTransaction> {
-        let Some(tx_index) = self.hash_to_index.get(&hash) else {
-            return None;
-        };
+        let tx_index = self.hash_to_index.get(&hash)?;
         self.transactions.remove(tx_index)
     }
 
@@ -227,6 +223,8 @@ impl TransactionPool {
 
 #[cfg(test)]
 mod tests {
+    use primitive_types::H160;
+
     use super::TransactionPool;
     use crate::{
         crypto::Hash,
@@ -235,7 +233,6 @@ mod tests {
             EthSignature, SignedTransaction, TxIntershard, TxLegacy, VerifiedTransaction,
         },
     };
-    use primitive_types::H160;
 
     fn transaction(from_addr: Address, nonce: u8, gas_price: u128) -> VerifiedTransaction {
         VerifiedTransaction {
