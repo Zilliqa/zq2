@@ -1,11 +1,10 @@
 //! Manages execution of transactions on state.
 
-use crate::state::contract_addr;
-use ethabi::Token;
 use std::num::NonZeroU128;
 
 use anyhow::{anyhow, Result};
 use eth_trie::Trie;
+use ethabi::Token;
 use primitive_types::{H160, H256, U256};
 use revm::{
     primitives::{
@@ -17,13 +16,13 @@ use revm::{
 use tracing::*;
 
 use crate::{
-    contracts, crypto::Hash, crypto::NodePublicKey, eth_helpers::extract_revert_msg,
-    state::Account, time::SystemTime, transaction::Log,
-};
-use crate::{
+    contracts,
+    crypto::{Hash, NodePublicKey},
+    eth_helpers::extract_revert_msg,
     message::BlockHeader,
-    state::{Address, State},
-    transaction::VerifiedTransaction,
+    state::{contract_addr, Account, Address, State},
+    time::SystemTime,
+    transaction::{Log, VerifiedTransaction},
 };
 
 /// Data returned after applying a [Transaction] to [State].
