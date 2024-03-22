@@ -1,6 +1,7 @@
 //! Manages execution of transactions on state.
 
 use std::num::NonZeroU128;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use eth_trie::Trie;
@@ -8,13 +9,14 @@ use ethabi::Token;
 use primitive_types::{H160, H256, U256};
 use revm::{
     primitives::{
-        AccountInfo, BlockEnv, Bytecode, BytecodeState, ExecutionResult, HandlerCfg, Output,
-        ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
+        AccountInfo, Address as AddressRevm, BlockEnv, Bytecode, BytecodeState, ExecutionResult,
+        HandlerCfg, Output, ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
     },
-    Database, Evm,
+    ContextPrecompile, Database, Evm,
 };
 use tracing::*;
 
+use crate::precompiles::ERC20Precompile;
 use crate::{
     contracts,
     crypto::{Hash, NodePublicKey},
@@ -195,9 +197,23 @@ impl State {
                 blob_hashes: vec![],
                 max_fee_per_blob_gas: None,
             })
+            .append_handler_register(|handler| {
+                let precompiles = handler.pre_execution.load_precompiles();
+                handler.pre_execution.load_precompiles = Arc::new(move || {
+                    let mut precompiles = precompiles.clone();
+                    precompiles.extend([(
+                        AddressRevm::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"),
+                        ContextPrecompile::ContextStateful(Arc::new(ERC20Precompile)),
+                    )]);
+                    precompiles
+                });
+            })
             .build();
 
-        Ok(evm.transact()?)
+        let result = evm
+            .transact()
+            .map_err(|err| anyhow!("Execution failed: {:?}", err))?;
+        Ok(result)
     }
 
     /// Apply a transaction to the account state.
@@ -240,7 +256,7 @@ impl State {
             },
             logs: result
                 .logs()
-                .into_iter()
+                .iter()
                 .map(|l| Log {
                     address: H160(l.address.into_array()),
                     topics: l.topics().iter().map(|t| H256(t.0)).collect(),
