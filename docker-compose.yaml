@@ -81,5 +81,19 @@ services:
     image: otterscan/otterscan:develop
     ports:
       - "5100:80"
+  faucet:
+    image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa/eth-spout:89eb40d3
+    environment:
+      RPC_URL: "http://localhost:4201" # Replace with actual value or env var
+      NATIVE_TOKEN_SYMBOL: "ZIL"
+      PRIVATE_KEY: "db670cbff28f4b15297d03fafdab8f5303d68b7591bd59e31eaef215dd0f246a" # Replace with actual value or secure management system
+      ETH_AMOUNT: "100"
+      EXPLORER_URL: "http://localhost:5200" # Replace with actual value or env var
+      MINIMUM_SECONDS_BETWEEN_REQUESTS: "60"
+      BECH32_HRP: "zil"
+    ports:
+      - "5200:80" # Replace with actual ports needed by the faucet service
+    # Fast shutdown - Don't gracefully close open connections.
+    stop_signal: SIGKILL
     # Fast shutdown - Don't gracefully close open connections.
     stop_signal: SIGKILL
