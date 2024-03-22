@@ -335,7 +335,7 @@ impl P2pNode {
                                     || Self::generate_child_config(self.config.nodes.first().unwrap(), shard_id));
                             self.add_shard_node(shard_config.clone()).await?;
                         },
-                        InternalMessage::IntershardCall(_) => {
+                        InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                             self.forward_local_message_to_shard(&Self::shard_id_to_topic(destination).hash(), source, message)?;
                         }
                     }

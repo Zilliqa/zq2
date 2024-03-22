@@ -1295,6 +1295,10 @@ impl Consensus {
 
         let receipts = self.db.get_transaction_receipts(&hash)?.unwrap_or_default();
 
+        if !receipts.is_empty() {
+            println!("Block finalized with receipts: {:?}", receipts);
+        }
+
         for (destination_shard, intershard_call) in blockhooks::get_cross_shard_messages(&receipts)?
         {
             self.message_sender.send_message_to_shard(
@@ -1309,13 +1313,14 @@ impl Consensus {
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::LaunchShard(new_shard_id))?;
             }
-        } else {
-            for linked_shard_id in
-                blockhooks::get_link_creation_messages(&receipts, self.config.eth_chain_id)?
-            {
-                self.message_sender
-                    .send_message_to_coordinator(InternalMessage::LaunchShard(linked_shard_id))?;
-            }
+        }
+        for (from, to) in blockhooks::get_link_creation_messages(&receipts)? {
+            println!(
+                    "Detected link creation message from shard {} to shard {}! Notifying destination shard (if any)",
+                    from, to
+                );
+            self.message_sender
+                .send_message_to_shard(to, InternalMessage::LaunchLink(from))?;
         }
 
         Ok(())

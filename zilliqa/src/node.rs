@@ -207,6 +207,10 @@ impl Node {
             InternalMessage::IntershardCall(intershard_call) => {
                 self.inject_intershard_transaction(intershard_call)?
             }
+            InternalMessage::LaunchLink(source) => {
+                self.message_sender
+                    .send_message_to_coordinator(InternalMessage::LaunchShard(source))?;
+            }
             InternalMessage::LaunchShard(_) => {
                 warn!("LaunchShard messages should be handled by the coordinator, not forwarded to a node.");
             }

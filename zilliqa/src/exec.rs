@@ -226,6 +226,14 @@ impl State {
             current_block,
         )?;
 
+        if !result.is_success() {
+            println!(
+                "\n\nFailed transaction! Result: {result:?}, message: {}, gas limit was: {}",
+                extract_revert_msg(result.output().unwrap()),
+                txn.gas_limit()
+            );
+        }
+
         self.apply_delta(state)?;
 
         Ok(TransactionApplyResult {

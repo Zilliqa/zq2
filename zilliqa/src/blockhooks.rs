@@ -28,6 +28,7 @@ fn filter_receipts(
                 })
                 .map_err(|e| {
                     warn!("Error parsing event log: {e}. The log was: {log:?}");
+                    println!("Error parsing event log: {e}. The log was: {log:?}");
                     e
                 })
         })
@@ -60,10 +61,7 @@ pub fn get_launch_shard_messages(receipts: &[TransactionReceipt]) -> Result<Vec<
         .collect())
 }
 
-pub fn get_link_creation_messages(
-    receipts: &[TransactionReceipt],
-    our_shard_id: u64,
-) -> Result<Vec<u64>> {
+pub fn get_link_creation_messages(receipts: &[TransactionReceipt]) -> Result<Vec<(u64, u64)>> {
     let link_logs = filter_receipts(
         receipts,
         contracts::shard_registry::LINK_ADDED_EVT.clone(),
@@ -71,10 +69,13 @@ pub fn get_link_creation_messages(
     )?;
     // TODO: this is very ugly
     // I wonder if there's a better way to parse events in general
+    if receipts.iter().flat_map(|r| &r.logs).count() > 0 {
+        println!("Filtering receipts from LINK_ADDED_EVT! {:?}", link_logs);
+    }
     Ok(link_logs
         .into_iter()
         .filter_map(|log| {
-            let (names, mut values): (Vec<_>, Vec<_>) = log
+            let (names, values): (Vec<_>, Vec<_>) = log
                 .params
                 .into_iter()
                 .map(|param| (param.name, param.value))
@@ -82,17 +83,12 @@ pub fn get_link_creation_messages(
             if names != ["from", "to"] {
                 warn!("LinkAdded event does not contain expected (from, to) values!");
                 None
-            } else if values
-                .pop()
-                .and_then(|to| to.into_uint())
-                .is_some_and(|to| to.as_u64() == our_shard_id)
-            {
-                values
-                    .pop()
-                    .and_then(|from| from.into_uint())
-                    .map(|from| from.as_u64())
             } else {
-                None
+                let mut values = values.into_iter();
+                Some((
+                    values.next().unwrap().into_uint().unwrap().as_u64(),
+                    values.next().unwrap().into_uint().unwrap().as_u64(),
+                ))
             }
         })
         .collect())
