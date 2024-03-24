@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Deserializer};
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::types::zil;
 use crate::{
@@ -34,7 +34,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetLatestTxBlock", get_latest_tx_block),
             ("GetMinimumGasPrice", get_minimum_gas_price),
             ("GetNetworkId", get_network_id),
-            ("GetVersion", get_git_commit),
+            ("GetVersion", get_version),
         ],
     )
 }
@@ -201,8 +201,13 @@ fn get_network_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(network_id.to_string())
 }
 
-fn get_git_commit(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
-    Ok(env!("VERGEN_GIT_DESCRIBE").to_string())
+fn get_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<Value> {
+    let commit = env!("VERGEN_GIT_SHA");
+    let version = env!("VERGEN_GIT_DESCRIBE");
+    Ok(json!({
+        "Commit": commit,
+        "Version": version,
+    }))
 }
 
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
