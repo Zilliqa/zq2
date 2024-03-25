@@ -6,6 +6,8 @@ RUN apt update -y && \
 
 RUN apt autoremove
 
+WORKDIR /zilliqa
+
 RUN mkdir build
 
 COPY . .
@@ -13,9 +15,9 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/target \
     cargo build --bin zilliqa && \
-    mv /target/debug/zilliqa /build/
+    mv ./target/debug/zilliqa ./build/
 
 
 FROM gcr.io/distroless/cc-debian11
 
-COPY --from=builder /build/zilliqa /zilliqa
+COPY --from=builder /zilliqa/build/zilliqa /zilliqa

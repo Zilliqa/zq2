@@ -1,5 +1,4 @@
 .cache
-.git
 **/target/
 
 docker-compose.yaml
