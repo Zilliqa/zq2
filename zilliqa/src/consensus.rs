@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc};
+use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
@@ -127,7 +127,7 @@ pub struct Consensus {
     secret_key: SecretKey,
     config: NodeConfig,
     message_sender: MessageSender,
-    reset_timeout: UnboundedSender<u64>,
+    reset_timeout: UnboundedSender<Duration>,
     pub block_store: BlockStore,
     votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128, bool)>,
     new_views: BTreeMap<u64, NewViewVote>,
@@ -196,7 +196,7 @@ impl Consensus {
         secret_key: SecretKey,
         config: NodeConfig,
         message_sender: MessageSender,
-        reset_timeout: UnboundedSender<u64>,
+        reset_timeout: UnboundedSender<Duration>,
         db: Arc<Db>,
     ) -> Result<Self> {
         trace!(
@@ -448,8 +448,9 @@ impl Consensus {
                     )));
                 };
             } else {
-                self.reset_timeout
-                    .send(empty_block_timeout_ms - time_since_last_block + 1)?;
+                self.reset_timeout.send(Duration::from_millis(
+                    empty_block_timeout_ms - time_since_last_block + 1,
+                ))?;
                 return Ok(None);
             }
         }
@@ -614,6 +615,7 @@ impl Consensus {
             } else {
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader(&block.committee, self.view.get_view()).peer_id;
+                self.create_next_block_on_timeout = false;
 
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
@@ -831,7 +833,7 @@ impl Consensus {
                 } else {
                     self.create_next_block_on_timeout = true;
                     self.reset_timeout
-                        .send(self.config.consensus.empty_block_timeout.as_millis() as u64 + 1)?;
+                        .send(self.config.consensus.empty_block_timeout)?;
                     trace!("Empty transaction pool, will create new block on timeout");
                 }
             }
@@ -842,6 +844,19 @@ impl Consensus {
             );
         }
 
+        Ok(None)
+    }
+
+    pub fn try_to_propose_new_block(&mut self) -> Result<Option<NetworkMessage>> {
+        if self.create_next_block_on_timeout {
+            if let Ok(Some((block, transactions))) = self.propose_new_block() {
+                self.create_next_block_on_timeout = false;
+                return Ok(Some((
+                    None,
+                    ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
+                )));
+            };
+        }
         Ok(None)
     }
 

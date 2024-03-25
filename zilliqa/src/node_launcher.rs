@@ -43,7 +43,7 @@ pub struct NodeLauncher {
     /// The corresponding receiver is handled here, forwarding messages to the node struct.
     pub local_inbound_message_receiver: UnboundedReceiverStream<(u64, InternalMessage)>,
     /// Channel used to steer next sleep time
-    pub reset_timeout_receiver: UnboundedReceiverStream<u64>,
+    pub reset_timeout_receiver: UnboundedReceiverStream<Duration>,
     node_launched: bool,
 }
 
@@ -149,7 +149,7 @@ impl NodeLauncher {
                 r = self.reset_timeout_receiver.next() => {
                     let sleep_time = r.expect("reset timeout stream should be infinite");
                     info!("timeout reset");
-                    sleep.as_mut().reset(Instant::now() + Duration::from_millis(sleep_time));
+                    sleep.as_mut().reset(Instant::now() + sleep_time);
                 },
             }
         }

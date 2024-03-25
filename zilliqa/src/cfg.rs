@@ -1,4 +1,3 @@
-use serde_with::serde_as;
 use std::time::Duration;
 
 use libp2p::{Multiaddr, PeerId};
@@ -51,7 +50,6 @@ pub struct NodeConfig {
     pub data_dir: Option<String>,
 }
 
-#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ConsensusConfig {
@@ -72,7 +70,6 @@ pub struct ConsensusConfig {
     /// Accounts that will be pre-funded at genesis.
     pub genesis_accounts: Vec<(Address, String)>,
     /// Minimum time to wait for consensus to propose new block if there are no transactions.
-    #[serde_as(as = "serde_with::DurationMilliSeconds")]
     pub empty_block_timeout: Duration,
 }
 
@@ -86,7 +83,7 @@ impl Default for ConsensusConfig {
             genesis_deposits: vec![],
             genesis_hash: None,
             genesis_accounts: Vec::new(),
-            empty_block_timeout: Duration::from_millis(25),
+            empty_block_timeout: Duration::from_millis(1000),
         }
     }
 }

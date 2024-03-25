@@ -1,6 +1,7 @@
-use std::sync::Arc;
-
 use anyhow::{anyhow, Result};
+use std::sync::Arc;
+use std::time::Duration;
+
 use libp2p::PeerId;
 use primitive_types::H256;
 use tokio::sync::mpsc::UnboundedSender;
@@ -93,11 +94,11 @@ pub struct Node {
     pub db: Arc<Db>,
     peer_id: PeerId,
     message_sender: MessageSender,
-    reset_timeout: UnboundedSender<u64>,
+    reset_timeout: UnboundedSender<Duration>,
     consensus: Consensus,
 }
 
-const DEFAULT_SLEEP_TIME_MS: u64 = 5000;
+const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
 
 impl Node {
     pub fn new(
@@ -105,7 +106,7 @@ impl Node {
         secret_key: SecretKey,
         message_sender_channel: UnboundedSender<OutboundMessageTuple>,
         local_sender_channel: UnboundedSender<LocalMessageTuple>,
-        reset_timeout: UnboundedSender<u64>,
+        reset_timeout: UnboundedSender<Duration>,
     ) -> Result<Node> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let message_sender = MessageSender {
@@ -194,7 +195,12 @@ impl Node {
             }
             ExternalMessage::RequestResponse => {}
             ExternalMessage::NewTransaction(t) => {
-                self.consensus.new_transaction(t.verify()?)?;
+                let inserted = self.consensus.new_transaction(t.verify()?)?;
+                if inserted {
+                    if let Some((_, message)) = self.consensus.try_to_propose_new_block()? {
+                        self.message_sender.broadcast_external_message(message)?;
+                    }
+                }
             }
             ExternalMessage::JoinCommittee(public_key) => {
                 self.add_peer(from, public_key)?;
