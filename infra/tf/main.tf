@@ -26,31 +26,6 @@ resource "google_storage_bucket_object" "binary" {
   bucket     = google_storage_bucket.binaries.name
 }
 
-resource "google_compute_network" "this" {
-  name                    = var.network_name
-  auto_create_subnetworks = false
-  count                   = local.devnet_resources
-}
-
-resource "google_compute_subnetwork" "subnet" {
-  name                     = var.network_name
-  ip_cidr_range            = var.subnet_cidr
-  network                  = google_compute_network.this.0.name
-  region                   = var.region
-  private_ip_google_access = true
-  count                    = local.devnet_resources
-}
-
-resource "google_compute_subnetwork" "proxy_subnet" {
-  name          = "${var.network_name}-proxy"
-  ip_cidr_range = var.proxy_subnet_cidr
-  network       = google_compute_network.this.0.name
-  region        = var.region
-  purpose       = "REGIONAL_MANAGED_PROXY"
-  role          = "ACTIVE"
-  count         = local.devnet_resources
-}
-
 resource "google_compute_firewall" "allow_ingress_from_iap" {
   name    = "${var.network_name}-allow-ingress-from-iap"
   network = local.network_name
@@ -115,35 +90,24 @@ resource "google_storage_bucket_iam_member" "this" {
   member = "serviceAccount:${google_service_account.node.email}"
 }
 
-resource "random_id" "genesis_key" {
-  count       = local.devnet_resources
-  byte_length = 32
-}
 
 data "external" "genesis_key_converted" {
   program     = ["cargo", "run", "--bin", "convert-key"]
   working_dir = "${path.module}/../.."
   query = {
-    secret_key = local.genesis_key
+    secret_key = var.genesis_key
   }
 }
 
-resource "random_id" "bootstrap_key" {
-  count       = local.devnet_resources
-  byte_length = 32
-}
 
 data "external" "bootstrap_key_converted" {
   program     = ["cargo", "run", "--bin", "convert-key"]
   working_dir = "${path.module}/../.."
   query = {
-    secret_key = local.bootstrap_key
+    secret_key = var.bootstrap_key
   }
 }
 
-locals {
-
-}
 
 module "bootstrap_node" {
   source = "./modules/node"
@@ -167,15 +131,11 @@ module "bootstrap_node" {
   consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "32000000000000000000", "${local.genesis_address}"] ]
 
   EOT
-  secret_key            = local.bootstrap_key
+  secret_key            = var.bootstrap_key
   zq_network_name       = var.network_name
   labels                = local.labels
 }
 
-resource "random_id" "secret_key" {
-  count       = local.devnet_resources == 1 ? var.node_count : 0
-  byte_length = 32
-}
 
 module "node" {
   source = "./modules/node"
@@ -203,7 +163,7 @@ module "node" {
   consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "32000000000000000000", "${local.genesis_address}"] ]
 
   EOT
-  secret_key      = local.secret_keys[count.index]
+  secret_key      = var.secret_keys[count.index]
   zq_network_name = var.network_name
 }
 
@@ -268,8 +228,6 @@ data "google_compute_global_address" "api" {
 }
 
 resource "google_compute_global_forwarding_rule" "api_http" {
-  depends_on = [google_compute_subnetwork.proxy_subnet]
-
   name                  = "${var.network_name}-forwarding-rule-http"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
@@ -279,8 +237,6 @@ resource "google_compute_global_forwarding_rule" "api_http" {
 }
 
 resource "google_compute_global_forwarding_rule" "api_https" {
-  depends_on = [google_compute_subnetwork.proxy_subnet]
-
   name                  = "${var.network_name}-forwarding-rule-https"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
