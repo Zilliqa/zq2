@@ -9,14 +9,14 @@ use ethabi::Token;
 use primitive_types::{H160, H256, U256};
 use revm::{
     primitives::{
-        AccountInfo, Address as AddressRevm, BlockEnv, Bytecode, BytecodeState, ExecutionResult,
-        HandlerCfg, Output, ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
+        AccountInfo, BlockEnv, Bytecode, BytecodeState, ExecutionResult, HandlerCfg, Output,
+        ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
     },
-    ContextPrecompile, Database, Evm,
+    Database, Evm,
 };
 use tracing::*;
 
-use crate::precompiles::ERC20Precompile;
+use crate::precompiles::get_custom_precompiles;
 use crate::{
     contracts,
     crypto::{Hash, NodePublicKey},
@@ -201,10 +201,7 @@ impl State {
                 let precompiles = handler.pre_execution.load_precompiles();
                 handler.pre_execution.load_precompiles = Arc::new(move || {
                     let mut precompiles = precompiles.clone();
-                    precompiles.extend([(
-                        AddressRevm::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"),
-                        ContextPrecompile::ContextStateful(Arc::new(ERC20Precompile)),
-                    )]);
+                    precompiles.extend(get_custom_precompiles());
                     precompiles
                 });
             })
