@@ -1,7 +1,6 @@
 otlp_collector_endpoint = "http://otel-collector:4317"
 
 [[nodes]]
-
 # This is the public key and peer ID corresponding to the first private key in `docker-compose.yaml`.
 consensus.genesis_committee = [ ["b27aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a3", "12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU"] ]
 consensus.genesis_accounts = [

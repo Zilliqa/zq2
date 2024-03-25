@@ -148,7 +148,7 @@ impl NodeLauncher {
                 },
                 r = self.reset_timeout_receiver.next() => {
                     let sleep_time = r.expect("reset timeout stream should be infinite");
-                    info!("timeout reset");
+                    trace!(?sleep_time, "timeout reset");
                     sleep.as_mut().reset(Instant::now() + sleep_time);
                 },
             }
