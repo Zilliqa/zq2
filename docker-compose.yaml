@@ -82,18 +82,18 @@ services:
     ports:
       - "5100:80"
   faucet:
+    depends_on:
+      - node0
     image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa/eth-spout:89eb40d3
     environment:
-      RPC_URL: "http://localhost:4201" # Replace with actual value or env var
-      NATIVE_TOKEN_SYMBOL: "ZIL"
-      PRIVATE_KEY: "db670cbff28f4b15297d03fafdab8f5303d68b7591bd59e31eaef215dd0f246a" # Replace with actual value or secure management system
-      ETH_AMOUNT: "100"
-      EXPLORER_URL: "http://localhost:5200" # Replace with actual value or env var
-      MINIMUM_SECONDS_BETWEEN_REQUESTS: "60"
-      BECH32_HRP: "zil"
+      RPC_URL: http://node0:4201
+      NATIVE_TOKEN_SYMBOL: ZIL
+      PRIVATE_KEY: 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227
+      ETH_AMOUNT: 100
+      EXPLORER_URL: http://localhost:5200
+      MINIMUM_SECONDS_BETWEEN_REQUESTS: 60
+      BECH32_HRP: zil
     ports:
-      - "5200:80" # Replace with actual ports needed by the faucet service
-    # Fast shutdown - Don't gracefully close open connections.
-    stop_signal: SIGKILL
+      - "5200:80"
     # Fast shutdown - Don't gracefully close open connections.
     stop_signal: SIGKILL
