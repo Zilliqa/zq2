@@ -672,6 +672,9 @@ impl Consensus {
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
         std::iter::from_fn(|| self.transaction_pool.best_transaction())
             .filter(|txn| {
+                if txn.tx.nonce().is_none() {
+                    println!("Including nonceless transaction {}", txn.hash);
+                }
                 let account_nonce = self.state.must_get_account(txn.signer).nonce;
                 // Ignore this transaction if it is no longer valid.
                 // Transactions are (or will be) valid iff their nonce is greater than the account
@@ -1295,10 +1298,6 @@ impl Consensus {
 
         let receipts = self.db.get_transaction_receipts(&hash)?.unwrap_or_default();
 
-        if !receipts.is_empty() {
-            println!("Block finalized with receipts: {:?}", receipts);
-        }
-
         for (destination_shard, intershard_call) in blockhooks::get_cross_shard_messages(&receipts)?
         {
             self.message_sender.send_message_to_shard(
@@ -1857,9 +1856,11 @@ impl Consensus {
                 // all good
             } else {
                 let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
+                    println!("CANNOT execute block WITHOUT local (i.e. intershard) transaction. We are: {}, tx hash: {}", self.peer_id(), tx_hash);
                     warn!("Proposal {} at view {} referenced a transaction that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view());
                     return Ok(());
                 };
+                println!("Executing block with local (i.e. intershard) transaction. We are: {}, tx hash: {}", self.peer_id(), tx_hash);
                 transactions.insert(idx, local_tx);
             }
         }

@@ -135,6 +135,9 @@ impl TransactionPool {
     }
 
     pub fn insert_transaction(&mut self, txn: VerifiedTransaction, account_nonce: u64) -> bool {
+        if txn.tx.nonce().is_none() {
+            println!("    POOL: inserting nonceless transaction {}", txn.hash);
+        }
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
             // This transaction is permanently invalid, so there is nothing to do.
             return false;

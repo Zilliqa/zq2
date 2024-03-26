@@ -231,6 +231,12 @@ impl Node {
             },
             from: intershard_call.source_address,
         };
+        println!(
+            "\nInjecting intershard transaction in shard {}. We are: {}, tx hash: {}",
+            self.config.eth_chain_id,
+            self.peer_id,
+            tx.calculate_hash()
+        );
         self.consensus.new_transaction(tx.verify()?)?;
         Ok(())
     }
