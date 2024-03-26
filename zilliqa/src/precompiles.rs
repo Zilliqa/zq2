@@ -58,7 +58,9 @@ impl ERC20Precompile {
 
 fn make_selector(signature: &str) -> [u8; 4] {
     let signature = Keccak256::digest(signature).to_vec();
-    signature.as_slice().try_into().unwrap_or([0u8; 4])
+    let slice = signature.as_slice();
+    let res: [u8; 4] = slice[..4].try_into().unwrap();
+    res
 }
 
 impl ContextStatefulPrecompile<&State> for ERC20Precompile {

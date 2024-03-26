@@ -597,7 +597,7 @@ impl Consensus {
         view: u64,
         cosigned: &BitSlice,
     ) -> Result<()> {
-        info!("apply rewards in view {view}");
+        debug!("apply rewards in view {view}");
         // TODO: Read from a contract.
         let rewards_per_hour = 204_000_000_000_000_000_000_000u128;
         // TODO: Calculate
