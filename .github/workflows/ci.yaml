@@ -22,6 +22,13 @@ jobs:
     steps:
     - name: Install Rust
       run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    - name: Select nightly version
+      id: select-version
+      # We select the nightly version from the final day of the previous month. This ensures we use a reasonably
+      # up-to-date compiler, but also that we don't invalidate our cache every night when a new version is released.
+      run: echo "version=$(date -d "$(date +'%Y%m01') -1 day" +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+    - name: Switch to nightly
+      run: rustup override set nightly-${{ steps.select-version.outputs.version }}
     - name: Install dependencies
       run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential
     - uses: actions/checkout@v4
@@ -35,10 +42,10 @@ jobs:
     - name: Test
       run: cargo test --release --all-targets --all-features
       timeout-minutes: 30
-    - name: Verify working directory is clean
-      run: git diff --exit-code
     - name: rustfmt
       run: cargo fmt --all --check
+    - name: Verify working directory is clean
+      run: git diff --exit-code
   e2e_test:
     runs-on: ubuntu-latest
     steps:
