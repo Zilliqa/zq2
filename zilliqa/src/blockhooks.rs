@@ -17,6 +17,7 @@ fn filter_receipts(
     let logs: Result<Vec<_>, _> = receipts
         .iter()
         .flat_map(|receipt| &receipt.logs)
+        .filter_map(|log| log.as_evm()) // Only consider EVM logs
         .filter(|log| log.address == emitter && log.topics[0] == event.signature())
         .map(|log| {
             event
