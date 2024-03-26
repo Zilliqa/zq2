@@ -30,7 +30,6 @@ use ethers::{
     types::{Bytes, TransactionReceipt, H256, U64},
     utils::secret_key_to_address,
 };
-
 use fs_extra::dir::*;
 use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
 use itertools::Itertools;

@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Result};
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use primitive_types::H256;
 use tokio::sync::mpsc::UnboundedSender;
