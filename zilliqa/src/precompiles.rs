@@ -21,11 +21,11 @@ pub(crate) struct ERC20Precompile;
 
 impl ERC20Precompile {
     fn get_balance(
-        _input: &[u8],
+        input: &[u8],
         _gas_price: u64,
-        _context: &mut InnerEvmContext<&State>,
+        context: &mut InnerEvmContext<&State>,
     ) -> PrecompileResult {
-        let Ok(decoded) = ethabi::decode(&[ParamType::Address], _input) else {
+        let Ok(decoded) = ethabi::decode(&[ParamType::Address], input) else {
             return Err(PrecompileError::Other(
                 "Unable to decode provided account address".into(),
             ));
@@ -43,7 +43,7 @@ impl ERC20Precompile {
             ));
         };
 
-        let Ok(account) = _context.db.get_account(address) else {
+        let Ok(account) = context.db.get_account(address) else {
             return Err(PrecompileError::Other(
                 "Unable to get account with given address".into(),
             ));
@@ -52,6 +52,7 @@ impl ERC20Precompile {
         let balance = primitive_types::U256::from(account.balance);
         let output = encode(&[Token::Uint(balance)]);
 
+        // Don't charge gas
         Ok((0u64, output.into()))
     }
 }
