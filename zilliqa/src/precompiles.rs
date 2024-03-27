@@ -1,14 +1,16 @@
-use crate::state::State;
-use ethabi::{encode, ParamType, Token};
 use std::sync::Arc;
 
-use revm::precompile::PrecompileError;
-use revm::primitives::alloy_primitives::private::alloy_rlp::Encodable;
+use ethabi::{encode, ParamType, Token};
 use revm::{
-    primitives::{Address, Bytes, PrecompileResult},
+    precompile::PrecompileError,
+    primitives::{
+        alloy_primitives::private::alloy_rlp::Encodable, Address, Bytes, PrecompileResult,
+    },
     ContextPrecompile, ContextStatefulPrecompile, InnerEvmContext,
 };
 use sha3::{Digest, Keccak256};
+
+use crate::state::State;
 
 pub(crate) fn get_custom_precompiles<'a>() -> Vec<(Address, ContextPrecompile<&'a State>)> {
     vec![(
@@ -67,11 +69,11 @@ fn make_selector(signature: &str) -> [u8; 4] {
 impl ContextStatefulPrecompile<&State> for ERC20Precompile {
     fn call(
         &self,
-        _input: &Bytes,
-        _gas_price: u64,
-        _context: &mut InnerEvmContext<&State>,
+        input: &Bytes,
+        gas_price: u64,
+        context: &mut InnerEvmContext<&State>,
     ) -> PrecompileResult {
-        if _input.length() < 4 {
+        if input.length() < 4 {
             return Err(PrecompileError::Other(
                 "Provided input must be at least 4-byte long".into(),
             ));
@@ -82,13 +84,13 @@ impl ContextStatefulPrecompile<&State> for ERC20Precompile {
 
         let Some(handler) = dispatch_table
             .iter()
-            .find(|&predicate| predicate.0 == _input[..4])
+            .find(|&predicate| predicate.0 == input[..4])
         else {
             return Err(PrecompileError::Other(
                 "Unable to find handler with given selector".to_string(),
             ));
         };
 
-        handler.1(&_input[4..], _gas_price, _context)
+        handler.1(&input[4..], gas_price, context)
     }
 }

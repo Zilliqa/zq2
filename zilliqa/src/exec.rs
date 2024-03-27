@@ -1,7 +1,6 @@
 //! Manages execution of transactions on state.
 
-use std::num::NonZeroU128;
-use std::sync::Arc;
+use std::{num::NonZeroU128, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use eth_trie::Trie;
@@ -16,12 +15,12 @@ use revm::{
 };
 use tracing::*;
 
-use crate::precompiles::get_custom_precompiles;
 use crate::{
     contracts,
     crypto::{Hash, NodePublicKey},
     eth_helpers::extract_revert_msg,
     message::BlockHeader,
+    precompiles::get_custom_precompiles,
     state::{contract_addr, Account, Address, State},
     time::SystemTime,
     transaction::{Log, VerifiedTransaction},
