@@ -655,7 +655,6 @@ impl Consensus {
             Ok(r) => r,
             Err(error) => {
                 warn!(?hash, ?error, "transaction failed to execute");
-                println!("transaction {} failed to execute", txn.hash);
                 return Ok(None);
             }
         };
@@ -673,9 +672,6 @@ impl Consensus {
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
         std::iter::from_fn(|| self.transaction_pool.best_transaction())
             .filter(|txn| {
-                if txn.tx.nonce().is_none() {
-                    println!("Considering nonceless transaction {}...", txn.hash);
-                }
                 let account_nonce = self.state.must_get_account(txn.signer).nonce;
                 // Ignore this transaction if it is no longer valid.
                 // Transactions are (or will be) valid iff their nonce is greater than the account
@@ -801,13 +797,6 @@ impl Consensus {
                     }
 
                     let transactions = self.get_txns_to_execute();
-                    if transactions.len() > 0 {
-                        println!(
-                            "Including {} transactions in block: {:?}",
-                            transactions.len(),
-                            transactions
-                        );
-                    }
 
                     let mut applied_transactions: Vec<_> = transactions
                         .into_iter()
@@ -845,9 +834,6 @@ impl Consensus {
                     // intershard transactions are not meant to be broadcast
                     applied_transactions
                         .retain(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
-                    if proposal.transactions.len() > 0 {
-                        println!("Proposing block {} at height {}, view {}. It has {} transactions, of which {} are being broadcast. We are {}.\n", proposal.hash(), proposal.header.number, proposal.header.view, proposal.transactions.len(), applied_transactions.len(), self.peer_id());
-                    }
                     return Ok(Some((proposal, applied_transactions)));
                 }
             }
@@ -1304,7 +1290,7 @@ impl Consensus {
     /// Intended to be used with the oldest pending block, to move the
     /// finalized tip forward by one. Does not update view/height.
     pub fn finalize(&mut self, hash: Hash, view: u64) -> Result<()> {
-        println!("Finalizing block {hash}. We are {}", self.peer_id());
+        trace!("Finalizing block {hash}");
         self.finalized_view = view;
         self.db.put_latest_finalized_view(view)?;
 
@@ -1326,10 +1312,6 @@ impl Consensus {
             }
         }
         for (from, to) in blockhooks::get_link_creation_messages(&receipts)? {
-            println!(
-                    "Detected link creation message from shard {} to shard {}! Notifying destination shard (if any)",
-                    from, to
-                );
             self.message_sender
                 .send_message_to_shard(to, InternalMessage::LaunchLink(from))?;
         }
@@ -1730,7 +1712,13 @@ impl Consensus {
         let mut head_height = head.number();
         let mut proposed_block = block.clone();
         let mut proposed_block_height = block.number();
-        println!("Dealing with fork! We're {}. Current head hash: {}, height: {}. Rolling back to block {} at height {}", self.peer_id(), head.hash(), head_height, block.hash(), block.number());
+        trace!(
+            "Dealing with fork: from block {} (height {}), back to block {} (height {})",
+            head.hash(),
+            head_height,
+            proposed_block.hash(),
+            proposed_block_height
+        );
 
         // Need to make sure both pointers are at the same height
         while head_height > proposed_block_height {
@@ -1869,11 +1857,9 @@ impl Consensus {
                 // all good
             } else {
                 let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
-                    println!("CANNOT execute block WITHOUT local (i.e. intershard) transaction. We are: {}, tx hash: {}", self.peer_id(), tx_hash);
                     warn!("Proposal {} at view {} referenced a transaction that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view());
                     return Ok(());
                 };
-                println!("Executing block with local (i.e. intershard) transaction. We are: {}, tx hash: {}", self.peer_id(), tx_hash);
                 transactions.insert(idx, local_tx);
             }
         }

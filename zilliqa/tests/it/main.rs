@@ -343,11 +343,6 @@ impl Network {
         self.receivers.push(receiver);
         self.receivers.push(local_receiver);
 
-        println!(
-            "Network {} just added new node, current count is {}!",
-            self.shard_id,
-            self.nodes.len()
-        );
         index
     }
 
@@ -640,11 +635,6 @@ impl Network {
                 self.handle_message(m.clone());
                 false
             }
-            // big biiig hack
-            // AnyMessage::External(_) => {
-            //     self.handle_message(m.clone());
-            //     false
-            // }
             _ => true,
         });
         // This is rather hacky, but probably the best way to get it working: IFF we're a child
@@ -652,7 +642,7 @@ impl Network {
         if let Some(send_to_parent) = self.send_to_parent.as_ref() {
             messages.retain(|m| {
                 if let AnyMessage::Internal(_, _, InternalMessage::LaunchShard(new_network_id)) = m.2 {
-                    println!("Child network {} got LaunchShard({new_network_id}) message; forwarding to parent to handle", self.shard_id);
+                    trace!("Child network {} got LaunchShard({new_network_id}) message; forwarding to parent to handle", self.shard_id);
                     send_to_parent.send(m.clone()).unwrap();
                     return false;
                 }
@@ -686,19 +676,12 @@ impl Network {
                         if let Some(child_network) = self.children.get_mut(new_network_id) {
                             if child_network.find_node(source).is_none() {
                                 trace!("Launching shard node for {new_network_id} - adding new node to shard");
-                                println!(
-                                    "Launching shard node for {new_network_id} - adding new node to shard - on request from {source_shard}"
-                                    );
                                 child_network.add_node_with_key(true, secret_key);
                             } else {
                                 trace!("Received messaged to launch new node in {new_network_id}, but node {source} already exists in that network");
-                                println!("Received messaged to launch new node in {new_network_id}, but node {source} already exists in that network");
                             }
                         } else {
                             info!("Launching node in new shard network {new_network_id}");
-                            println!(
-                                "Launching new network {new_network_id} - on request from {source_shard}! By the way, we are {}", self.shard_id
-                            );
                             self.children.insert(
                                 *new_network_id,
                                 Network::new_shard(
@@ -713,13 +696,11 @@ impl Network {
                         }
                     }
                     InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
-                        // println!("Observed intershard message from shard {} to shard {}. We are shard {}.", source_shard, destination_shard, self.shard_id);
                         if *destination_shard == self.shard_id {
                             let destination = destination.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
                             let idx_node = self.find_node(destination);
                             if let Some((idx, node)) = idx_node {
                                 trace!("Handling intershard message {:?} from shard {}, in node {} of shard {}", internal_message, source_shard, idx, self.shard_id);
-                                // println!("Handling intershard message {:?} from shard {}, in node {} of shard {}", internal_message, source_shard, idx, self.shard_id);
                                 node.inner
                                     .lock()
                                     .unwrap()
@@ -733,7 +714,6 @@ impl Network {
                                     "Dropping intershard message addressed to node that isn't running that shard!"
                                 );
                                 trace!(?message);
-                                // println!("Intershard transcation to node that isn't running that shard - on shard {destination_shard}");
                             }
                         } else if let Some(network) = self.children.get_mut(destination_shard) {
                             trace!(
@@ -741,19 +721,13 @@ impl Network {
                                 self.shard_id,
                                 destination_shard
                             );
-                            // println!(
-                            //     "Forwarding intershard message from shard {} to subshard {}...",
-                            //     self.shard_id, destination_shard
-                            // );
                             network.resend_message.send(message).unwrap();
                         } else if let Some(send_to_parent) = self.send_to_parent.as_ref() {
                             trace!("Found intershard message that matches none of our children, forwarding it to our parent so they may hopefully route it...");
-                            // println!("Found intershard message that matches none of our children, forwarding it to our parent so they may hopefully route it...");
                             send_to_parent.send(message).unwrap();
                         } else {
                             warn!("Dropping intershard message for shard that does not exist");
                             trace!(?message);
-                            // println!("Intershard message for shard that does not exist! Source: {}, destination: {}", source_shard, destination_shard);
                         }
                     }
                 }

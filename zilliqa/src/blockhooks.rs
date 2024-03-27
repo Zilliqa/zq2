@@ -28,7 +28,6 @@ fn filter_receipts(
                 })
                 .map_err(|e| {
                     warn!("Error parsing event log: {e}. The log was: {log:?}");
-                    println!("Error parsing event log: {e}. The log was: {log:?}");
                     e
                 })
         })
@@ -69,9 +68,6 @@ pub fn get_link_creation_messages(receipts: &[TransactionReceipt]) -> Result<Vec
     )?;
     // TODO: this is very ugly
     // I wonder if there's a better way to parse events in general
-    if receipts.iter().flat_map(|r| &r.logs).count() > 0 {
-        println!("Filtering receipts from LINK_ADDED_EVT! {:?}", link_logs);
-    }
     Ok(link_logs
         .into_iter()
         .filter_map(|log| {

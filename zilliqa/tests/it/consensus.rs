@@ -228,7 +228,6 @@ async fn create_shard(
         child_shard_nodes
     );
 
-    println!("Sending tx to register shard {child_shard_id}!");
     let tx = wallet.send_transaction(tx_request, None).await.unwrap();
     let hash = tx.tx_hash();
     network.run_until_receipt(wallet, hash, 100).await;
@@ -499,7 +498,6 @@ async fn cross_shard_contract_creation(mut network: Network) {
     let inner_data = deployer.tx.data().unwrap().clone().to_vec();
 
     let gas_price = shard_wallet.get_gas_price().await.unwrap();
-    println!("Using gas price of {gas_price}!");
 
     let data = contracts::intershard_bridge::BRIDGE
         .encode_input(&[

@@ -198,14 +198,7 @@ impl State {
             })
             .build();
 
-        let res = evm.transact();
-        if res.is_err() {
-            println!(
-                "        Error transacting! Error: {res:?}. Gas price was: {}, base fee was: {}",
-                gas_price, GAS_PRICE
-            );
-        }
-        Ok(res?)
+        Ok(evm.transact()?)
     }
 
     /// Apply a transaction to the account state.
@@ -218,11 +211,6 @@ impl State {
         let hash = txn.hash;
         let from_addr = txn.signer;
         info!(?hash, ?txn, "executing txn");
-
-        let is_nonceless = txn.tx.nonce().is_none();
-        // if is_nonceless {
-        //     println!("    Executing nonceless tx {}...", txn.hash);
-        // }
 
         let txn = txn.tx.into_transaction();
 
@@ -238,22 +226,7 @@ impl State {
             current_block,
         )?;
 
-        // if is_nonceless {
-        //     println!("    Executed, got result {:?}", result);
-        // }
-
-        if !result.is_success() {
-            println!(
-                "\n\nFailed transaction! Result: {result:?}, message: {}, gas limit was: {}",
-                extract_revert_msg(result.output().unwrap()),
-                txn.gas_limit()
-            );
-        }
-
         self.apply_delta(state)?;
-        // if is_nonceless {
-        //     println!("    Deltas applied");
-        // }
 
         Ok(TransactionApplyResult {
             success: result.is_success(),
