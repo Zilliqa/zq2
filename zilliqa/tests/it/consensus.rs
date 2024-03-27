@@ -375,14 +375,16 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .encode_input(&[Token::Uint((custom_value).into())])
         .unwrap();
 
+    let gas_price = shard_2_wallet.get_gas_price().await.unwrap();
+
     let data = contracts::intershard_bridge::BRIDGE
         .encode_input(&[
             Token::Uint(shard_2_id.into()),
             Token::Bool(false),
             Token::Address(contract_address),
             Token::Bytes(inner_data),
-            Token::Uint(10_000_000_000u64.into()),
-            Token::Uint(10_000.into()),
+            Token::Uint(1_000_000u64.into()),
+            Token::Uint(gas_price),
         ])
         .unwrap();
     let tx_request = TransactionRequest::new()
@@ -428,12 +430,12 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         ),
         U256::from(initial_value)
     );
-    println!("\nInitial assert checked successfully! Initial value: {initial_value}. Now waiting on final condition...");
-
     let node_count = network.children.get_mut(&shard_2_id).unwrap().nodes.len();
     println!("Shard 2 node count just before starting to wait: {node_count}");
     let node_count = network.children.get_mut(&shard_1_id).unwrap().nodes.len();
     println!("Shard 1 node count just before starting to wait: {node_count}");
+
+    println!("\n\n***********************************\nInitial assert checked successfully! Initial value: {initial_value}. Now waiting on final condition...\n\n");
 
     network.tick().await; // Forward all the messages between the shards
 
@@ -496,7 +498,8 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .unwrap();
     let inner_data = deployer.tx.data().unwrap().clone().to_vec();
 
-    let gas_price = wallet.get_gas_price().await.unwrap();
+    let gas_price = shard_wallet.get_gas_price().await.unwrap();
+    println!("Using gas price of {gas_price}!");
 
     let data = contracts::intershard_bridge::BRIDGE
         .encode_input(&[
