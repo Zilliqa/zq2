@@ -287,16 +287,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
 
     let (shard_1_wallet, shard_1_contract) =
         create_shard(&mut network, &main_wallet, shard_1_id).await;
-    println!("First network created successfully!");
     let (shard_2_wallet, _) = create_shard(&mut network, &main_wallet, shard_2_id).await;
-    println!("Second network created successfully!");
-
-    let node_count = network.children.get_mut(&shard_2_id).unwrap().nodes.len();
-    println!("Shard 2 node count before creating link: {node_count}");
-    let node_count = network.children.get_mut(&shard_1_id).unwrap().nodes.len();
-    println!("Shard 1 node count before creating link: {node_count}");
-    let node_count = network.nodes.len();
-    println!("Main shard node count before creating link: {node_count}");
 
     // * Create a (uni-directional) link from shard 1 to shard 2
     // potential TODO: consider caching the compilation of LinkableShard, otherwise this test compiles the
@@ -318,11 +309,9 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
     let hash = tx.tx_hash();
     let link_receipt = network.run_until_receipt(&main_wallet, hash, 200).await;
     assert!(link_receipt.status.unwrap() == 1.into());
-    println!("Link creation initiated successfully!");
     network
         .run_until_block(&main_wallet, link_receipt.block_number.unwrap() + 5, 100)
         .await; // Finalize
-    println!("\nLink finalized successfully!\n************************************\n\n");
     network.children.get_mut(&shard_2_id).unwrap().tick().await; // handle all the LaunchLink messages
     network.children.get_mut(&shard_2_id).unwrap().tick().await; // ...and forward them back to parent
     network
@@ -332,7 +321,6 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         )
         .await
         .unwrap();
-    println!("\nLink established successfully!\n************************************\n\n");
 
     // * Send and verify a cross-shard tx from 1 to 2.
     // First, deploy a callable contract on 2
@@ -366,7 +354,6 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .unwrap()
         .run_until_receipt(&shard_2_wallet, xfer_hash, 200)
         .await;
-    println!("Funded successsfully!");
 
     // Then send the actual cross-shard tx (from shard 1)
     let setter = contract.function("setUint256").unwrap();
@@ -402,7 +389,6 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .unwrap()
         .run_until_receipt(&shard_1_wallet, hash, 100)
         .await;
-    println!("Cross-shard transaction initiated successfully!");
 
     // Finalize the block on shard 1
     network
@@ -412,7 +398,6 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .run_until_block(&shard_1_wallet, receipt.block_number.unwrap() + 3, 200)
         .await;
 
-    println!("Cross-shard transaction finalised successfully!");
     let getter = contract.function("getUint256").unwrap();
     let get_call = TransactionRequest::new()
         .to(contract_address)
@@ -429,12 +414,6 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         ),
         U256::from(initial_value)
     );
-    let node_count = network.children.get_mut(&shard_2_id).unwrap().nodes.len();
-    println!("Shard 2 node count just before starting to wait: {node_count}");
-    let node_count = network.children.get_mut(&shard_1_id).unwrap().nodes.len();
-    println!("Shard 1 node count just before starting to wait: {node_count}");
-
-    println!("\n\n***********************************\nInitial assert checked successfully! Initial value: {initial_value}. Now waiting on final condition...\n\n");
 
     network.tick().await; // Forward all the messages between the shards
 
@@ -445,16 +424,14 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .unwrap()
         .run_until_async(
             || async {
-                let current_val = U256::from_big_endian(
+                U256::from_big_endian(
                     shard_2_wallet
                         .call(&get_call.clone().into(), None)
                         .await
                         .unwrap()
                         .to_vec()
                         .as_slice(),
-                );
-                println!("Current value: {}", current_val.as_u128());
-                current_val == U256::from(custom_value)
+                ) == U256::from(custom_value)
             },
             200,
         )

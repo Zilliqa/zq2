@@ -38,15 +38,15 @@ contract ShardRegistry is Shard {
     function addLink(uint sourceId, uint targetId) public {
         uint indexFrom = indices[sourceId];
         if (indexFrom == 0) {
-            revert("Source doesn't exist");
+            revert LinkSourceDoesntExist();
         }
         uint indexTo = indices[targetId];
         if (indexTo == 0) {
-            revert("Target doesn't exist");
+            revert LinkTargetDoesntExist();
         }
 
         if (msg.sender != shards[indexFrom]) {
-            revert("Not authorized");
+            revert NotAuthorizedToLink();
         }
 
         links[sourceId] = targetId;

@@ -1310,10 +1310,13 @@ impl Consensus {
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::LaunchShard(new_shard_id))?;
             }
-        }
-        for (from, to) in blockhooks::get_link_creation_messages(&receipts)? {
-            self.message_sender
-                .send_message_to_shard(to, InternalMessage::LaunchLink(from))?;
+
+            // Main shard also hosts the shard registry, so will be notified of newly established
+            // links. Notify corresponding shard nodes of said links, if any
+            for (from, to) in blockhooks::get_link_creation_messages(&receipts)? {
+                self.message_sender
+                    .send_message_to_shard(to, InternalMessage::LaunchLink(from))?;
+            }
         }
 
         Ok(())
