@@ -206,6 +206,10 @@ impl Node {
             InternalMessage::IntershardCall(intershard_call) => {
                 self.inject_intershard_transaction(intershard_call)?
             }
+            InternalMessage::LaunchLink(source) => {
+                self.message_sender
+                    .send_message_to_coordinator(InternalMessage::LaunchShard(source))?;
+            }
             InternalMessage::LaunchShard(_) => {
                 warn!("LaunchShard messages should be handled by the coordinator, not forwarded to a node.");
             }
@@ -226,7 +230,9 @@ impl Node {
             },
             from: intershard_call.source_address,
         };
-        self.consensus.new_transaction(tx.verify()?)?;
+        let verified_tx = tx.verify()?;
+        trace!("Injecting intershard transaction {}", verified_tx.hash);
+        self.consensus.new_transaction(verified_tx)?;
         Ok(())
     }
 

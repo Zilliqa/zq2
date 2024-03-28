@@ -669,7 +669,7 @@ async fn eth_call(mut network: Network) {
         .await
         .unwrap();
 
-    let getter = abi.function("getInt256").unwrap();
+    let getter = abi.function("getUint256").unwrap();
 
     let receipt = wallet.get_transaction_receipt(hash).await;
 

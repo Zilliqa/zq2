@@ -67,10 +67,16 @@ pub mod shard_registry {
     pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
     pub static CONSTRUCTOR: Lazy<Constructor> =
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+
     pub static ADD_SHARD: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("addShard").unwrap().clone());
     pub static SHARD_ADDED_EVT: Lazy<Event> =
         Lazy::new(|| CONTRACT.abi.event("ShardAdded").unwrap().clone());
+
+    pub static ADD_LINK: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("addLink").unwrap().clone());
+    pub static LINK_ADDED_EVT: Lazy<Event> =
+        Lazy::new(|| CONTRACT.abi.event("LinkAdded").unwrap().clone());
 }
 
 const COMPILED: &str = include_str!("compiled.json");

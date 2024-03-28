@@ -1290,6 +1290,7 @@ impl Consensus {
     /// Intended to be used with the oldest pending block, to move the
     /// finalized tip forward by one. Does not update view/height.
     pub fn finalize(&mut self, hash: Hash, view: u64) -> Result<()> {
+        trace!("Finalizing block {hash}");
         self.finalized_view = view;
         self.db.put_latest_finalized_view(view)?;
 
@@ -1304,12 +1305,17 @@ impl Consensus {
         }
 
         if self.config.consensus.is_main {
-            // Check for new shards to join
-            // TODO: this will be switched to use the bridge registering mechanism from the shard
-            // registry in the future
+            // Main shard will join all new shards
             for new_shard_id in blockhooks::get_launch_shard_messages(&receipts)? {
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::LaunchShard(new_shard_id))?;
+            }
+
+            // Main shard also hosts the shard registry, so will be notified of newly established
+            // links. Notify corresponding shard nodes of said links, if any
+            for (from, to) in blockhooks::get_link_creation_messages(&receipts)? {
+                self.message_sender
+                    .send_message_to_shard(to, InternalMessage::LaunchLink(from))?;
             }
         }
 
@@ -1709,6 +1715,13 @@ impl Consensus {
         let mut head_height = head.number();
         let mut proposed_block = block.clone();
         let mut proposed_block_height = block.number();
+        trace!(
+            "Dealing with fork: from block {} (height {}), back to block {} (height {})",
+            head.hash(),
+            head_height,
+            proposed_block.hash(),
+            proposed_block_height
+        );
 
         // Need to make sure both pointers are at the same height
         while head_height > proposed_block_height {
