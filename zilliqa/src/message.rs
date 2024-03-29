@@ -711,14 +711,10 @@ impl Block {
         state_root_hash: Hash,
         transactions: Vec<Hash>,
         timestamp: SystemTime,
-        committee: Committee,
+        committee: &[NodePublicKey],
     ) -> Block {
         // FIXME: Just concatenating the keys is dumb.
-        let committee_keys: Vec<_> = committee
-            .0
-            .iter()
-            .flat_map(|v| v.public_key.as_bytes())
-            .collect();
+        let committee_keys: Vec<_> = committee.iter().flat_map(|v| v.as_bytes()).collect();
 
         let digest = Hash::compute([
             &view.to_be_bytes(),
@@ -743,7 +739,6 @@ impl Block {
             qc,
             agg: None,
             transactions,
-            committee,
         }
     }
 

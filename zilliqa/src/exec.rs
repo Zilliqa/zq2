@@ -19,7 +19,7 @@ use crate::{
     contracts,
     crypto::{Hash, NodePublicKey},
     eth_helpers::extract_revert_msg,
-    message::BlockHeader,
+    message::{Block, BlockHeader},
     state::{contract_addr, Account, Address, State},
     time::SystemTime,
     transaction::{Log, VerifiedTransaction},
@@ -287,6 +287,19 @@ impl State {
         }
 
         Ok(())
+    }
+
+    pub fn get_stakers_at_block(&mut self, block: &Block) -> Result<Vec<NodePublicKey>> {
+        let curr_root_hash = self.root_hash()?;
+        let block_root_hash = block.state_root_hash();
+
+        self.set_to_root(H256(block_root_hash.0));
+
+        let stakers = self.get_stakers();
+
+        self.set_to_root(H256(curr_root_hash.0));
+
+        stakers
     }
 
     pub fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
