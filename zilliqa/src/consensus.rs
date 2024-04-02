@@ -278,6 +278,15 @@ impl Consensus {
             }
         };
 
+        let peers = config
+            .consensus
+            .genesis_committee
+            .iter()
+            .map(|(public_key, peer_id)| Validator {
+                public_key: *public_key,
+                peer_id: *peer_id,
+            })
+            .collect();
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -288,7 +297,7 @@ impl Consensus {
             high_qc,
             view: View::new(start_view),
             finalized_view: start_view.saturating_sub(1),
-            pending_peers: Vec::new(),
+            pending_peers: peers,
             state,
             db,
             transaction_pool: Default::default(),
@@ -598,7 +607,9 @@ impl Consensus {
 
         let rewards_per_block = rewards_per_hour / blocks_per_hour;
         let block = self.head_block();
-        let parent_block = self.get_block_by_number(block.number() - 1)?.unwrap();
+        let parent_block = self
+            .get_block_by_number(block.number().saturating_sub(1))?
+            .unwrap();
 
         let proposer = self.leader_at_block(&parent_block, view).public_key;
         if let Some(proposer_address) = self.state.get_reward_address(proposer)? {
