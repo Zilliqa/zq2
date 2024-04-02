@@ -197,10 +197,12 @@ fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option
     let block_number: BlockNumber = params.next()?;
     let full: bool = params.next()?;
 
-    let node = node.lock().unwrap();
+    let mut node = node.lock().unwrap();
     let block = node.get_block_by_blocknum(block_number)?;
 
-    let block = block.map(|b| convert_block(&node, &b, full)).transpose()?;
+    let block = block
+        .map(|b| convert_block(&mut node, &b, full))
+        .transpose()?;
 
     Ok(block)
 }
@@ -210,16 +212,16 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
     let hash: H256 = params.next()?;
     let full: bool = params.next()?;
 
-    let node = node.lock().unwrap();
+    let mut node = node.lock().unwrap();
     let block = node
         .get_block_by_hash(Hash(hash.0))?
-        .map(|b| convert_block(&node, &b, full))
+        .map(|b| convert_block(&mut node, &b, full))
         .transpose()?;
 
     Ok(block)
 }
 
-fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
+fn convert_block(node: &mut MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
     if !full {
         let miner = node.get_proposer_reward_address(block)?;
         Ok(eth::Block::from_block(block, miner.unwrap_or_default()))

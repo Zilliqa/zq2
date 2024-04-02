@@ -856,16 +856,9 @@ fn format_message(
 ) -> String {
     let message = match message {
         AnyMessage::External(message) => match message {
-            ExternalMessage::Proposal(proposal) => format!(
-                "{} [{}] ({:?})",
-                message.name(),
-                proposal.header.number,
-                proposal
-                    .committee
-                    .iter()
-                    .map(|v| nodes.iter().find(|n| n.peer_id == v.peer_id).unwrap().index)
-                    .collect::<Vec<_>>()
-            ),
+            ExternalMessage::Proposal(proposal) => {
+                format!("{} [{}]", message.name(), proposal.header.number,)
+            }
             ExternalMessage::BlockRequest(request) => {
                 format!("{} [{:?}]", message.name(), request.0)
             }

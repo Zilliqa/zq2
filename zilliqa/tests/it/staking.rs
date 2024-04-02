@@ -84,6 +84,9 @@ async fn get_stakers(
 async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
     let wallet = network.random_wallet().await;
 
+    let stakers = get_stakers(&wallet).await;
+    assert_eq!(stakers.len(), 4);
+
     network.run_until_block(&wallet, 1.into(), 50).await;
 
     check_miner_got_reward(&wallet, 1).await;

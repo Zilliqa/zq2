@@ -315,7 +315,7 @@ impl Node {
         )
     }
 
-    pub fn get_proposer_reward_address(&self, block: &Block) -> Result<Option<Address>> {
+    pub fn get_proposer_reward_address(&mut self, block: &Block) -> Result<Option<Address>> {
         // Return the zero address for the genesis block. There was no reward for it.
         if block.view() == 0 {
             return Ok(None);
@@ -326,7 +326,7 @@ impl Node {
             .ok_or_else(|| anyhow!("missing parent: {}", block.parent_hash()))?;
         let proposer = self
             .consensus
-            .leader(&parent.committee, block.view())
+            .leader_at_block(&parent, block.view())
             .public_key;
         self.consensus.state().get_reward_address(proposer)
     }

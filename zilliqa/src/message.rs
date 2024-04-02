@@ -30,7 +30,6 @@ pub struct Proposal {
     pub header: BlockHeader,
     pub qc: QuorumCertificate,
     pub agg: Option<AggregateQc>,
-    pub committee: Committee,
     pub transactions: Vec<SignedTransaction>,
     pub opaque_transactions: Vec<Hash>,
 }
@@ -70,7 +69,6 @@ impl Proposal {
             header: block.header,
             qc: block.qc,
             agg: block.agg,
-            committee: block.committee,
             transactions: tx_bodies,
             opaque_transactions: block
                 .transactions
@@ -86,7 +84,6 @@ impl Proposal {
                 header: self.header,
                 qc: self.qc,
                 agg: self.agg,
-                committee: self.committee,
                 transactions: self
                     .transactions
                     .iter()
@@ -598,15 +595,6 @@ impl Display for Block {
             write!(f, "Agg QC view: {}, ", agg.view)?;
         }
         write!(f, "Transactions: {:?}, ", self.transactions)?;
-        write!(
-            f,
-            "Committee: {:?}, ",
-            self.committee
-                .0
-                .iter()
-                .map(|c| c.peer_id)
-                .collect::<Vec<_>>()
-        )?;
         Ok(())
     }
 }
@@ -660,17 +648,14 @@ impl Block {
             },
             agg: None,
             transactions: vec![],
-            committee,
         }
     }
 
-    pub fn verify_hash(&self) -> Result<()> {
+    pub fn verify_hash(&self, committee: &[NodePublicKey]) -> Result<()> {
         // FIXME: Just concatenating the keys is dumb.
-        let committee_keys: Vec<_> = self
-            .committee
-            .0
+        let committee_keys: Vec<_> = committee
             .iter()
-            .flat_map(|v| v.public_key.as_bytes())
+            .flat_map(|&public_key| public_key.as_bytes())
             .collect();
 
         let computed_hash = if let Some(agg) = &self.agg {
@@ -752,13 +737,12 @@ impl Block {
         parent_hash: Hash,
         state_root_hash: Hash,
         timestamp: SystemTime,
-        committee: Committee,
+        committee: &[NodePublicKey],
     ) -> Block {
         // FIXME: Just concatenating the keys is dumb.
         let committee_keys: Vec<_> = committee
-            .0
             .iter()
-            .flat_map(|v| v.public_key.as_bytes())
+            .flat_map(|&public_key| public_key.as_bytes())
             .collect();
 
         let digest = Hash::compute([
@@ -784,7 +768,6 @@ impl Block {
             qc,
             agg: Some(agg),
             transactions: vec![],
-            committee,
         }
     }
 
