@@ -404,7 +404,7 @@ impl Consensus {
             let stakers = self.state.get_stakers()?;
             if stakers.iter().any(|v| *v == self.public_key()) {
                 info!("timeout in view 1, we will vote for genesis block rather than incrementing view");
-                let leader = self.leader_at_block(&genesis, self.view.get_view());
+                let leader = self.leader(self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
                 return Ok(Some((leader.peer_id, ExternalMessage::Vote(vote))));
             } else {
@@ -855,7 +855,7 @@ impl Consensus {
             );
         }
 
-        committee.add_validators(self.pending_peers.drain(..));
+        //committee.add_validators(self.pending_peers.drain(..));
         committee
     }
 
@@ -1702,9 +1702,15 @@ impl Consensus {
         .unwrap();
         let index = dist.sample(&mut rng);
         let public_key = *committee.iter().nth(index).unwrap();
+        let peer_id = self
+            .pending_peers
+            .iter()
+            .find(|&v| v.public_key == public_key)
+            .unwrap()
+            .peer_id;
         Validator {
             public_key,
-            peer_id: PeerId::random(),
+            peer_id,
         }
     }
 

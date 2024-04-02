@@ -535,7 +535,7 @@ impl FromStr for BlockNumber {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 // Invariant: The set is non-empty
 pub struct Committee(BTreeSet<Validator>);
 
