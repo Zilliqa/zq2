@@ -298,7 +298,13 @@ async fn main() -> Result<()> {
             let zq1_db = zq1::Db::new(zq1_persistence_directory)?;
             let zq2_config = fs::read_to_string(zq2_config_file)?;
             let zq2_config: zilliqa::cfg::Config = toml::from_str(&zq2_config)?;
-            let zq2_db = Db::new(Some(zq2_data_dir), 0)?;
+            let shard_id: u64 = match zq2_config.nodes.get(0).and_then(|node| Some(node.eth_chain_id)) {
+                Some(id) => id,
+                None => {
+                    0
+                }
+            };
+            let zq2_db = Db::new(Some(zq2_data_dir), shard_id)?;
 
             convert_persistence(zq1_db, zq2_db, zq2_config, skip_accounts)?;
         }
