@@ -135,6 +135,13 @@ impl TransactionPool {
     }
 
     pub fn insert_transaction(&mut self, txn: VerifiedTransaction, account_nonce: u64) -> bool {
+        if txn.tx.nonce().is_none() {
+            println!(
+                "    POOL: inserting nonceless transaction {}. Index: {:?}",
+                txn.hash,
+                txn.mempool_index()
+            );
+        }
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
             // This transaction is permanently invalid, so there is nothing to do.
             return false;
@@ -180,16 +187,28 @@ impl TransactionPool {
 
     pub fn get_transaction(&self, hash: Hash) -> Option<&VerifiedTransaction> {
         let Some(tx_index) = self.hash_to_index.get(&hash) else {
+            println!("    POOL: tried to get index for tx {hash}, didn't find one...");
             return None;
         };
-        self.transactions.get(tx_index)
+        let res = self.transactions.get(tx_index);
+        println!(
+            "    POOL: got intershard index for tx {hash}! self.transactions contained it: {}. Index: {:?}",
+            res.is_some(), tx_index
+        );
+        res
     }
 
     pub fn pop_transaction(&mut self, hash: Hash) -> Option<VerifiedTransaction> {
         let Some(tx_index) = self.hash_to_index.get(&hash) else {
+            println!("    POOL: tried to get index for tx {hash}, didn't find one...");
             return None;
         };
-        self.transactions.remove(tx_index)
+        let res = self.transactions.remove(tx_index);
+        println!(
+            "    POOL: got intershard index for tx {hash}! self.transactions contained it: {}. Index: {:?}",
+            res.is_some(), tx_index
+        );
+        res
     }
 
     /// Update the pool after a transaction has been executed.
@@ -199,6 +218,7 @@ impl TransactionPool {
     pub fn update_nonce(&mut self, txn: &VerifiedTransaction) {
         let Some(nonce) = txn.tx.nonce() else { return }; // nothing to do if there's no nonce
 
+        println!("    POOL: removing tx with index {:?}", txn.mempool_index());
         self.transactions
             .remove(&TxIndex::Nonced(txn.signer, nonce)); // if this existed, it's now invalid
         self.hash_to_index.remove(&txn.hash); // cleanup index too
@@ -219,7 +239,6 @@ impl TransactionPool {
         std::mem::take(&mut self.transactions).into_values()
     }
 
-    #[cfg(test)]
     pub fn size(&self) -> usize {
         self.transactions.len()
     }

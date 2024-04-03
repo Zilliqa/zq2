@@ -2,12 +2,11 @@ use crate::deploy_contract;
 use crate::deploy_contract_with_args;
 use ethabi::Token;
 use ethers::{
-    abi::FunctionExt,
-    prelude::DeploymentTxFactory,
-    providers::Middleware,
-    types::{BlockNumber, TransactionRequest},
+    abi::FunctionExt, prelude::DeploymentTxFactory, providers::Middleware,
+    types::TransactionRequest,
 };
 use primitive_types::{H160, U256};
+use tokio::sync::Mutex;
 use tracing::*;
 use zilliqa::{
     contracts,
@@ -504,6 +503,9 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 50)
         .await;
 
+    println!("\n\n\n*************************************************************************\n\nWaiting on final condition now!\n\n\n");
+    let latest_block = Mutex::new(shard_wallet.get_block_number().await.unwrap());
+
     // 5. Make sure the transaction gets included in the child network
     network
         .children
@@ -511,12 +513,13 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .unwrap()
         .run_until_async(
             || async {
-                let latest_block = shard_wallet
-                    .get_block(BlockNumber::Latest)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                for tx in latest_block.transactions {
+                let mut latest_block = latest_block.lock().await;
+                let next_block = *latest_block + 1;
+                let Some(check_block) = shard_wallet.get_block(next_block).await.unwrap() else {
+                    return false;
+                };
+                *latest_block = next_block;
+                for tx in check_block.transactions {
                     let receipt = shard_wallet
                         .get_transaction_receipt(tx)
                         .await
@@ -529,7 +532,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
                 }
                 false
             },
-            500,
+            200,
         )
         .await
         .unwrap();
