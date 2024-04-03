@@ -3,8 +3,6 @@ use std::{
     collections::{BTreeMap, BinaryHeap},
 };
 
-use tracing::*;
-
 use crate::{
     crypto::Hash,
     state::Address,
@@ -140,27 +138,19 @@ impl TransactionPool {
             return false;
         }
 
-        if let Some(tx_nonce) = txn.tx.nonce() {
-            if let Some(existing_txn) = self
-                .transactions
-                .get(&TxIndex::Nonced(txn.signer, tx_nonce))
-            {
-                // There is already a transaction in the mempool with the same signer
-                // and nonce. Only proceed if this one is better. Note that if they are
-                // equally good, we prioritise the existing transaction to avoid the need
-                // to broadcast a new transaction to the network.
-                if ReadyItem::from(existing_txn) >= ReadyItem::from(&txn) {
-                    return false;
-                }
-                // Remove the existing transaction from `hash_to_index` if we're about to replace it.
-                self.hash_to_index.remove(&existing_txn.hash);
-            }
-        } else {
-            // now we've confirmed it's nonceless, so ensure its index isn't duplicate
-            if let Some(existing_nonceless_txn) = self.transactions.get(&txn.mempool_index()) {
-                info!(tx = ?existing_nonceless_txn, "Duplicate-indexed nonceless transactions encountered, ignoring the new one.");
+        if let Some(existing_txn) = self.transactions.get(&txn.mempool_index()) {
+            // Only proceed if the new transaction is better. Note that if they are
+            // equally good, we prioritise the existing transaction to avoid the need
+            // to broadcast a new transaction to the network.
+            // N.B.: This will in theory never affect intershard/nonceless transactions - since
+            // with the current bridge design it is not possible to broadcast a different one while
+            // keeping the same nonce. So for those, it will always discard the new (identical)
+            // one.
+            if ReadyItem::from(existing_txn) >= ReadyItem::from(&txn) {
                 return false;
             }
+            // Remove the existing transaction from `hash_to_index` if we're about to replace it.
+            self.hash_to_index.remove(&existing_txn.hash);
         }
 
         // If this transaction either has a nonce equal to the account's current nonce,
