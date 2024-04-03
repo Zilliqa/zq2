@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
-
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
 

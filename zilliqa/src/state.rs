@@ -1,5 +1,3 @@
-use crate::exec::BLOCK_GAS_LIMIT;
-use crate::exec::GAS_PRICE;
 use std::{hash::Hash, sync::Arc};
 
 use anyhow::{anyhow, Result};
@@ -10,7 +8,13 @@ use revm::primitives::ResultAndState;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
-use crate::{cfg::ConsensusConfig, contracts, crypto, db::TrieStorage, message::BlockHeader};
+use crate::{
+    cfg::ConsensusConfig,
+    contracts, crypto,
+    db::TrieStorage,
+    exec::{BLOCK_GAS_LIMIT, GAS_PRICE},
+    message::BlockHeader,
+};
 
 #[derive(Debug)]
 /// The state of the blockchain, consisting of:

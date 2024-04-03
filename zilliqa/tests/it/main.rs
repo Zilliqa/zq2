@@ -5,26 +5,12 @@ mod persistence;
 mod staking;
 mod web3;
 mod zil;
-use std::{env, ops::DerefMut};
-
-use ethers::{
-    solc::SHANGHAI_SOLC,
-    types::{Bytes, TransactionReceipt},
-};
-use itertools::Itertools;
-use serde::Deserialize;
-use zilliqa::{
-    cfg::{ConsensusConfig, NodeConfig},
-    crypto::{NodePublicKey, SecretKey},
-    message::{ExternalMessage, InternalMessage},
-    node::Node,
-    state::Address,
-};
-
 use std::{
     collections::HashMap,
+    env,
     fmt::Debug,
     fs,
+    ops::DerefMut,
     rc::Rc,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -40,11 +26,13 @@ use ethers::{
     prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, SignerMiddleware},
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::LocalWallet,
-    types::{H256, U64},
+    solc::SHANGHAI_SOLC,
+    types::{Bytes, TransactionReceipt, H256, U64},
     utils::secret_key_to_address,
 };
 use fs_extra::dir::*;
 use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
+use itertools::Itertools;
 use jsonrpsee::{
     types::{Id, RequestSer, Response, ResponsePayload},
     RpcModule,
@@ -53,11 +41,18 @@ use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
+use zilliqa::{
+    cfg::{ConsensusConfig, NodeConfig},
+    crypto::{NodePublicKey, SecretKey},
+    message::{ExternalMessage, InternalMessage},
+    node::Node,
+    state::Address,
+};
 
 /// (source, destination, message) for both
 #[derive(Debug, Clone, Serialize, Deserialize)]

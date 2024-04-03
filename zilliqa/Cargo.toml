@@ -20,18 +20,19 @@ test_contract_bytecode = []
 fake_time = []
 
 [build-dependencies]
-vergen = { version = "8.3.1", features = ["git", "gitcl"] }
+anyhow = { version = "1.0.81", features = ["backtrace"] }
+vergen = { version = "8.3.1", features = ["git", "git2"] }
 
 [dependencies]
-anyhow = { version = "1.0.80", features = ["backtrace"] }
-async-trait = "0.1.77"
+anyhow = { version = "1.0.81", features = ["backtrace"] }
+async-trait = "0.1.79"
 bincode = "1.3.3"
 bitvec = { version = "1.0.1", features = ["serde"] }
 bls-signatures = "0.15.0"
 bls12_381 = "0.8.0"
-bs58 = "0.5.0"
-bytes = "1.5.0"
-clap = { version = "4.5.1", features = ["derive"] }
+bs58 = "0.5.1"
+bytes = "1.6.0"
+clap = { version = "4.5.4", features = ["derive"] }
 crypto-bigint = "=0.5.5"
 eth_trie = {path =  "../eth-trie.rs"}
 ethabi = "18.0.0"
@@ -40,7 +41,7 @@ hex = { version = "0.4.3", features = ["serde"] }
 http = "0.2.11"
 hyper = "0.14.27"
 itertools = "0.12.0"
-jsonrpsee = { version = "0.22.0", features = ["server"] }
+jsonrpsee = { version = "0.22.3", features = ["server"] }
 k256 = {version = "0.13.3", features = ["serde", "pem"] }
 libp2p = { version = "0.53.2", features = ["gossipsub", "macros", "tcp", "tokio", "noise", "mdns", "request-response", "json", "kad", "identify", "serde", "yamux"] }
 lru = "0.12"
@@ -56,25 +57,25 @@ rand_chacha = "0.3.1"
 rand_core = "0.6.4"
 revm = { version = "6.0.0", features = ["optional_balance_check"] }
 rlp = "0.5.2"
-ruint = { version = "1.12.0", features = ["serde"] }
+ruint = { version = "1.12.1", features = ["serde"] }
 serde = { version = "1.0.196", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"
-serde_json = { version = "1.0.114", features = ["raw_value"] }
+serde_json = { version = "1.0.115", features = ["raw_value"] }
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 sled = "0.34.7"
 time = { version = "0.3.34", features = ["formatting", "macros"] }
-tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread", "signal", "sync"] }
-tokio-stream = "0.1.14"
-toml = "0.8.9"
+tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread", "signal", "sync"] }
+tokio-stream = "0.1.15"
+toml = "0.8.12"
 tower = "0.4.13"
 tower-http = { version = "0.4.4", features = ["cors"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 
 [dev-dependencies]
-async-trait = "0.1.77"
-ethers = { version = "2.0.13", default-features = false, features = ["ethers-solc", "legacy"] }
+async-trait = "0.1.79"
+ethers = { version = "2.0.14", default-features = false, features = ["ethers-solc", "legacy"] }
 ethers-solc = { version = "2.0.13", features = ["svm-solc"] }
 fs_extra = "1.3.0"
 indicatif = "0.17.8"
