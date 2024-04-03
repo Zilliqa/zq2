@@ -1,66 +1,11 @@
-terraform {
-  required_providers {
-    google = {
-      source  = "hashicorp/google"
-      version = ">= 4.73.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = ">= 3.5.1"
-    }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = ">= 2.23.0"
-    }
-    kubectl = {
-      source  = "gavinbunney/kubectl"
-      version = ">= 1.14.0"
-    }
-  }
-}
-
-variable "project_id" {
-  type     = string
-  nullable = false
-}
-
-variable "eth_chain_id" {
-  type     = number
-  nullable = false
-}
-
-variable "subdomain" {
-  type     = string
-  nullable = false
-}
-
-variable "network_name" {
-  type     = string
-  nullable = false
-}
-
-variable "labels" {
-  type        = map(string)
-  description = "A single-level map/object with key value pairs of metadata labels to apply to the GCP resources. All keys should use underscores and values should use hyphens. All values must be wrapped in quotes."
-  nullable    = true
-  default     = {}
-}
-
-provider "google" {
-  project = var.project_id
-  region  = "europe-west2"
-  zone    = "europe-west2-a"
-}
+################################################################################
+# ZQ2 GCP Terraform main resources
+################################################################################
 
 resource "google_storage_bucket" "binaries" {
   name                        = "${var.project_id}-${var.network_name}-binaries"
-  location                    = "EUROPE-WEST2"
+  location                    = upper(var.region)
   uniform_bucket_level_access = true
-}
-
-locals {
-  binary_location = "${path.module}/../../target/x86_64-unknown-linux-gnu/release/zilliqa"
-  labels          = merge(var.labels, { "zq2-network" = var.network_name })
 }
 
 resource "null_resource" "build_binary" {
@@ -81,31 +26,9 @@ resource "google_storage_bucket_object" "binary" {
   bucket     = google_storage_bucket.binaries.name
 }
 
-resource "google_compute_network" "this" {
-  name                    = "${var.network_name}"
-  auto_create_subnetworks = false
-}
-
-resource "google_compute_subnetwork" "subnet" {
-  name                     = "${var.network_name}"
-  ip_cidr_range            = "10.2.0.0/20"
-  network                  = google_compute_network.this.name
-  region                   = "europe-west2"
-  private_ip_google_access = true
-}
-
-resource "google_compute_subnetwork" "proxy_subnet" {
-  name          = "${var.network_name}-proxy"
-  ip_cidr_range = "10.3.0.0/20"
-  network       = google_compute_network.this.name
-  region        = "europe-west2"
-  purpose       = "REGIONAL_MANAGED_PROXY"
-  role          = "ACTIVE"
-}
-
 resource "google_compute_firewall" "allow_ingress_from_iap" {
   name    = "${var.network_name}-allow-ingress-from-iap"
-  network = google_compute_network.this.name
+  network = local.network_name
 
   direction     = "INGRESS"
   source_ranges = ["35.235.240.0/20"]
@@ -118,10 +41,11 @@ resource "google_compute_firewall" "allow_ingress_from_iap" {
 
 resource "google_compute_firewall" "allow_internal_p2p" {
   name    = "${var.network_name}-allow-internal-p2p"
-  network = google_compute_network.this.name
+  network = local.network_name
+
 
   direction     = "INGRESS"
-  source_ranges = ["10.0.0.0/8"] # FIXME: too wide?
+  source_ranges = [data.google_compute_subnetwork.default.ip_cidr_range]
 
   allow {
     protocol = "tcp"
@@ -131,7 +55,7 @@ resource "google_compute_firewall" "allow_internal_p2p" {
 
 resource "google_compute_firewall" "allow_external_jsonrpc" {
   name    = "${var.network_name}-allow-external-jsonrpc"
-  network = google_compute_network.this.name
+  network = local.network_name
 
   direction     = "INGRESS"
   source_ranges = ["0.0.0.0/0"]
@@ -166,48 +90,37 @@ resource "google_storage_bucket_iam_member" "this" {
   member = "serviceAccount:${google_service_account.node.email}"
 }
 
-resource "random_id" "genesis_key" {
-  byte_length = 32
-}
 
 data "external" "genesis_key_converted" {
   program     = ["cargo", "run", "--bin", "convert-key"]
   working_dir = "${path.module}/../.."
   query = {
-    secret_key = random_id.genesis_key.hex
+    secret_key = var.genesis_key
   }
 }
 
-resource "random_id" "bootstrap_key" {
-  byte_length = 32
-}
 
 data "external" "bootstrap_key_converted" {
   program     = ["cargo", "run", "--bin", "convert-key"]
   working_dir = "${path.module}/../.."
   query = {
-    secret_key = random_id.bootstrap_key.hex
+    secret_key = var.bootstrap_key
   }
 }
 
-locals {
-  bootstrap_public_key = data.external.bootstrap_key_converted.result.public_key
-  bootstrap_peer_id    = data.external.bootstrap_key_converted.result.peer_id
-  genesis_address      = data.external.genesis_key_converted.result.address
-}
 
 module "bootstrap_node" {
   source = "./modules/node"
 
   name                  = "${var.network_name}-bootstrap-node"
   service_account_email = google_service_account.node.email
-  network_name          = google_compute_network.this.name
-  subnetwork_name       = google_compute_subnetwork.subnet.name
+  node_zone             = var.node_zone
+  network_name          = local.network_name
+  subnetwork_name       = data.google_compute_subnetwork.default.name
   binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
   binary_md5            = google_storage_bucket_object.binary.md5hash
   config                = <<-EOT
   p2p_port = 3333
-
   [[nodes]]
   eth_chain_id = ${var.eth_chain_id}
   allowed_timestamp_skew = { secs = 60, nanos = 0 }
@@ -215,28 +128,28 @@ module "bootstrap_node" {
   consensus.consensus_timeout = { secs = 60, nanos = 0 }
   consensus.genesis_committee = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}"] ]
   consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
+  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "32000000000000000000", "${local.genesis_address}"] ]
+
   EOT
-  secret_key            = random_id.bootstrap_key.hex
+  secret_key            = var.bootstrap_key
   zq_network_name       = var.network_name
   labels                = local.labels
 }
 
-resource "random_id" "secret_key" {
-  count       = 3
-  byte_length = 32
-}
 
 module "node" {
   source = "./modules/node"
-  count  = 3
+  count  = var.node_count
 
   name                  = "${var.network_name}-node-${count.index}"
   service_account_email = google_service_account.node.email
-  network_name          = google_compute_network.this.name
-  subnetwork_name       = google_compute_subnetwork.subnet.name
+  network_name          = local.network_name
+  node_zone             = var.node_zone
+  subnetwork_name       = data.google_compute_subnetwork.default.name
   binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
   binary_md5            = google_storage_bucket_object.binary.md5hash
-  config                = <<-EOT
+
+  config          = <<-EOT
   p2p_port = 3333
   bootstrap_address = [ "${local.bootstrap_peer_id}", "/ip4/${module.bootstrap_node.network_ip}/tcp/3333" ]
 
@@ -247,9 +160,11 @@ module "node" {
   consensus.consensus_timeout = { secs = 60, nanos = 0 }
   consensus.genesis_committee = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}"] ]
   consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
+  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "32000000000000000000", "${local.genesis_address}"] ]
+
   EOT
-  secret_key            = random_id.secret_key[count.index].hex
-  zq_network_name       = var.network_name
+  secret_key      = var.secret_keys[count.index]
+  zq_network_name = var.network_name
 }
 
 resource "google_project_service" "osconfig" {
@@ -258,7 +173,7 @@ resource "google_project_service" "osconfig" {
 
 resource "google_compute_instance_group" "api" {
   name      = "${var.network_name}-nodes"
-  zone      = "europe-west2-a"
+  zone      = "${var.region}-a"
   instances = [module.bootstrap_node.self_link]
 
 
@@ -293,7 +208,7 @@ resource "google_compute_health_check" "api" {
 }
 
 resource "google_compute_url_map" "api" {
-  name            = "${var.network_name}"
+  name            = var.network_name
   default_service = google_compute_backend_service.api.id
 }
 
@@ -313,8 +228,6 @@ data "google_compute_global_address" "api" {
 }
 
 resource "google_compute_global_forwarding_rule" "api_http" {
-  depends_on = [google_compute_subnetwork.proxy_subnet]
-
   name                  = "${var.network_name}-forwarding-rule-http"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
@@ -324,8 +237,6 @@ resource "google_compute_global_forwarding_rule" "api_http" {
 }
 
 resource "google_compute_global_forwarding_rule" "api_https" {
-  depends_on = [google_compute_subnetwork.proxy_subnet]
-
   name                  = "${var.network_name}-forwarding-rule-https"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"

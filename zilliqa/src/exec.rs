@@ -1,10 +1,10 @@
 //! Manages execution of transactions on state.
 
-use ethabi::Token;
 use std::num::NonZeroU128;
 
 use anyhow::{anyhow, Result};
 use eth_trie::Trie;
+use ethabi::Token;
 use primitive_types::{H160, H256, U256};
 use revm::{
     primitives::{
