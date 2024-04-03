@@ -163,12 +163,13 @@ EOF
 sudo systemctl restart google-cloud-ops-agent
 
 # Ensure pigz is installed
+
 apt update -y
 apt install -y pigz
 
 # Download and extract the persistence
 if [[ -n "${var.persistence_url}" ]]; then
-  PERSISTENCE_DIR="${var.data_dir}"
+  PERSISTENCE_DIR="/data"
   PERSISTENCE_URL=${var.persistence_url}
   PERSISTENCE_FILENAME="$${PERSISTENCE_URL##*/}"
   mkdir -p "$${PERSISTENCE_DIR}"
