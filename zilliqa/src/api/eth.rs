@@ -47,6 +47,14 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 get_block_transaction_count_by_number
             ),
             ("eth_getLogs", get_logs),
+            (
+                "eth_getTransactionByBlockHashAndIndex",
+                get_transaction_by_block_hash_and_index
+            ),
+            (
+                "eth_getTransactionByBlockNumberAndIndex",
+                get_transaction_by_block_number_and_index
+            ),
             ("eth_getTransactionByHash", get_transaction_by_hash),
             ("eth_getTransactionReceipt", get_transaction_receipt),
             ("eth_sendRawTransaction", send_raw_transaction),
@@ -378,6 +386,46 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
     });
 
     logs.collect()
+}
+
+fn get_transaction_by_block_hash_and_index(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<eth::Transaction>> {
+    let mut params = params.sequence();
+    let block_hash: H256 = params.next()?;
+    let index: ruint::aliases::U64 = params.next()?;
+
+    let node = node.lock().unwrap();
+
+    let Some(block) = node.get_block_by_hash(Hash(block_hash.0))? else {
+        return Ok(None);
+    };
+    let Some(txn_hash) = block.transactions.get(index.to::<usize>()) else {
+        return Ok(None);
+    };
+
+    get_transaction_inner(*txn_hash, &node)
+}
+
+fn get_transaction_by_block_number_and_index(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<eth::Transaction>> {
+    let mut params = params.sequence();
+    let block_number: BlockNumber = params.next()?;
+    let index: ruint::aliases::U64 = params.next()?;
+
+    let node = node.lock().unwrap();
+
+    let Some(block) = node.get_block_by_blocknum(block_number)? else {
+        return Ok(None);
+    };
+    let Some(txn_hash) = block.transactions.get(index.to::<usize>()) else {
+        return Ok(None);
+    };
+
+    get_transaction_inner(*txn_hash, &node)
 }
 
 fn get_transaction_by_hash(
