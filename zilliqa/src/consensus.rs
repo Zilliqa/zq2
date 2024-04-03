@@ -796,7 +796,7 @@ impl Consensus {
 
                     let transactions = self.get_txns_to_execute();
 
-                    let mut applied_transactions: Vec<_> = transactions
+                    let applied_transactions: Vec<_> = transactions
                         .into_iter()
                         .filter_map(|tx| {
                             self.apply_transaction(tx.clone(), parent_header)
@@ -830,9 +830,19 @@ impl Consensus {
                     // as a future improvement, process the proposal before broadcasting it
                     trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
                     // intershard transactions are not meant to be broadcast
-                    applied_transactions
-                        .retain(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
-                    return Ok(Some((proposal, applied_transactions)));
+                    let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
+                        applied_transactions
+                            .into_iter()
+                            .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
+                    // however, for the transactions that we are NOT broadcasting, we re-insert
+                    // them into the pool - this is because upon broadcasting the proposal, we will
+                    // have to re-execute it ourselves (in order to vote on it) and thus will
+                    // need those transactions again
+                    for tx in opaque_transactions {
+                        let account_nonce = self.state.get_account(tx.signer)?.nonce;
+                        self.transaction_pool.insert_transaction(tx, account_nonce);
+                    }
+                    return Ok(Some((proposal, broadcasted_transactions)));
                 }
             }
         }
