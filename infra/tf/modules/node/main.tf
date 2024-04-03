@@ -162,15 +162,18 @@ logging:
 EOF
 sudo systemctl restart google-cloud-ops-agent
 
-# Download and extract the persistence
+# Ensure pigz is installed
+apt update -y
+apt install -y pigz
 
+# Download and extract the persistence
 if [[ -n "${var.persistence_url}" ]]; then
   PERSISTENCE_DIR="${var.data_dir}"
   PERSISTENCE_URL=${var.persistence_url}
   PERSISTENCE_FILENAME="$${PERSISTENCE_URL##*/}"
   mkdir -p "$${PERSISTENCE_DIR}"
   gsutil cp "$${PERSISTENCE_URL}" "$${PERSISTENCE_DIR}/$${PERSISTENCE_FILENAME}"
-  cd "$${PERSISTENCE_DIR}" && tar xjf "$${PERSISTENCE_FILENAME}" && rm -f "$${PERSISTENCE_FILENAME}"
+  cd "$${PERSISTENCE_DIR}" && tar xf "$${PERSISTENCE_FILENAME}" && rm -f "$${PERSISTENCE_FILENAME}"
 fi
 
 # Download the Zilliqa binary
