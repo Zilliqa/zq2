@@ -610,9 +610,8 @@ impl Consensus {
         let proposer = self.leader(committee, view).public_key;
         if let Some(proposer_address) = self.state.get_reward_address(proposer)? {
             let reward = rewards_per_block / 2;
-            let mut account = self.state.get_account(proposer_address)?;
-            account.balance += reward;
-            self.state.save_account(proposer_address, account)?;
+            self.state
+                .mutate_account(proposer_address, |a| a.balance += reward)?;
         }
 
         let mut total_cosigner_stake = 0;
@@ -629,12 +628,11 @@ impl Consensus {
             .collect();
 
         for (reward_address, stake) in cosigner_stake {
-            if let Some(a) = reward_address {
+            if let Some(cosigner) = reward_address {
                 let reward =
                     U256::from(rewards_per_block / 2) * U256::from(stake) / total_cosigner_stake;
-                let mut account = self.state.get_account(a)?;
-                account.balance += reward.as_u128();
-                self.state.save_account(a, account)?;
+                self.state
+                    .mutate_account(cosigner, |a| a.balance += reward.as_u128())?;
             }
         }
 
@@ -662,7 +660,7 @@ impl Consensus {
         };
 
         // Tell the transaction pool that the sender's nonce has been incremented.
-        self.transaction_pool.update_nonce(&txn);
+        self.transaction_pool.mark_executed(&txn);
 
         if !result.success {
             info!("Transaction was a failure...");
@@ -713,7 +711,7 @@ impl Consensus {
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        println!("");
+        println!();
         let Some(block) = self.get_block(&vote.block_hash)? else {
             trace!(vote_view = vote.view, "ignoring vote, missing block");
             return Ok(None);
@@ -807,7 +805,7 @@ impl Consensus {
 
                     let transactions = self.get_txns_to_execute();
 
-                    let mut applied_transactions: Vec<_> = transactions
+                    let applied_transactions: Vec<_> = transactions
                         .into_iter()
                         .filter_map(|tx| {
                             self.apply_transaction(tx.clone(), parent_header)
@@ -861,6 +859,10 @@ impl Consensus {
                         applied_transactions
                             .into_iter()
                             .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
+                    // however, for the transactions that we are NOT broadcasting, we re-insert
+                    // them into the pool - this is because upon broadcasting the proposal, we will
+                    // have to re-execute it ourselves (in order to vote on it) and thus will
+                    // need those transactions again
                     for tx in opaque_transactions {
                         let account_nonce = self.state.get_account(tx.signer)?.nonce;
                         self.transaction_pool.insert_transaction(tx, account_nonce);
@@ -1906,7 +1908,7 @@ impl Consensus {
                 // all good
             } else {
                 let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
-                    warn!("Proposal {} at view {} referenced a transaction that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view());
+                    warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
                     return Ok(());
                 };
                 transactions.insert(idx, local_tx);

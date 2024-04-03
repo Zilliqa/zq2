@@ -138,7 +138,6 @@ async fn create_shard(
     network.run_until_block(wallet, 1.into(), 50).await;
 
     let starting_children = network.children.len();
-    let starting_nodes = network.nodes.len();
 
     // * Construct and launch a shard network
     let child_shard_nodes = 4;
@@ -173,10 +172,15 @@ async fn create_shard(
         .unwrap();
 
     // * Add all new nodes to the parent network too -- all nodes must run main shard nodes
+    let initial_main_shard_nodes = network.nodes.len();
     for key in shard_node_keys {
         network.add_node_with_key(true, key);
     }
     network.run_until_block(wallet, 3.into(), 100).await;
+    assert_eq!(
+        network.nodes.len(),
+        initial_main_shard_nodes + child_shard_nodes
+    ); // sanity check
 
     // * Fetch shard's genesis hash
     let shard_genesis = shard_wallet
@@ -243,7 +247,7 @@ async fn create_shard(
         .run_until(
             |n| {
                 n.children.get(&child_shard_id).unwrap().nodes.len()
-                    == starting_nodes + child_shard_nodes
+                    == initial_main_shard_nodes + child_shard_nodes
             },
             200,
         )
@@ -452,6 +456,14 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .genesis_key
         .clone();
 
+    // stabilize shard
+    network
+        .children
+        .get_mut(&child_shard_id)
+        .unwrap()
+        .run_until_block(&shard_wallet, 10.into(), 300)
+        .await;
+
     // 2. Fund the child_shard_wallet (on the main shard) so we can send a cross-shard
     // transaction from it. This is so we have funds on the child shard (since the child
     // wallet has genesis funds there). An equivalent alternative would have been to fund
@@ -504,9 +516,9 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .await;
 
     println!("\n\n\n*************************************************************************\n\nWaiting on final condition now!\n\n\n");
-    let latest_block = Mutex::new(shard_wallet.get_block_number().await.unwrap());
 
     // 5. Make sure the transaction gets included in the child network
+    let latest_block = Mutex::new(shard_wallet.get_block_number().await.unwrap());
     network
         .children
         .get_mut(&child_shard_id)
