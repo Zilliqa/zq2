@@ -760,7 +760,6 @@ fn left_pad_arr<const N: usize>(v: &[u8]) -> Result<[u8; N]> {
     Ok(arr)
 }
 
-// These are no-ops basically
 fn get_uncle_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
     Ok("0x0".to_string())
 }

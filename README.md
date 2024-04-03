@@ -80,10 +80,10 @@ Please open an issue or PR for APIs that you think should be included.
 | `eth_getTransactionByHash`                | 🟢                                              |
 | `eth_getTransactionCount`                 | 🟢                                              |
 | `eth_getTransactionReceipt`               | 🟢                                              |
-| `eth_getUncleByBlockHashAndIndex`         | 🔴                                              |
-| `eth_getUncleByBlockNumberAndIndex`       | 🔴                                              |
-| `eth_getUncleCountByBlockHash`            | 🔴                                              |
-| `eth_getUncleCountByBlockNumber`          | 🔴                                              |
+| `eth_getUncleByBlockHashAndIndex`         | 🟢                                              |
+| `eth_getUncleByBlockNumberAndIndex`       | 🟢                                              |
+| `eth_getUncleCountByBlockHash`            | 🟢                                              |
+| `eth_getUncleCountByBlockNumber`          | 🟢                                              |
 | `eth_newFilter`                           | 🔴                                              |
 | `eth_newBlockFilter`                      | 🔴                                              |
 | `eth_newPendingTransactionFilter`         | 🔴                                              |
