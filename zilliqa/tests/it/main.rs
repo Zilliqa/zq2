@@ -648,11 +648,13 @@ impl Network {
                 match internal_message {
                     InternalMessage::LaunchShard(new_network_id) => {
                         let secret_key = self.find_node(source).unwrap().1.secret_key;
-                        if let Some(network) = self.children.get_mut(new_network_id) {
-                            trace!(
-                                "Launching shard node for {new_network_id} - adding new node to shard"
-                            );
-                            network.add_node_with_key(true, secret_key);
+                        if let Some(shard_network) = self.children.get_mut(new_network_id) {
+                            if shard_network.find_node(source).is_none() {
+                                trace!(
+                                    "Launching shard node for {new_network_id} - adding new node to shard"
+                                );
+                                shard_network.add_node_with_key(true, secret_key);
+                            }
                         } else {
                             info!("Launching node in new shard network {new_network_id}");
                             self.children.insert(

@@ -1,10 +1,7 @@
 use ethabi::Token;
-use ethers::{
-    prelude::DeploymentTxFactory,
-    providers::Middleware,
-    types::{BlockNumber, TransactionRequest},
-};
+use ethers::{prelude::DeploymentTxFactory, providers::Middleware, types::TransactionRequest};
 use primitive_types::H160;
+use tokio::sync::Mutex;
 use tracing::*;
 use zilliqa::{contracts, state::contract_addr};
 
@@ -161,10 +158,15 @@ async fn create_shard(network: &mut Network, wallet: &Wallet, child_shard_id: u6
         .unwrap();
 
     // * Add all new nodes to the parent network too -- all nodes must run main shard nodes
+    let initial_main_shard_nodes = network.nodes.len();
     for key in shard_node_keys {
         network.add_node_with_key(true, key);
     }
     network.run_until_block(wallet, 3.into(), 100).await;
+    assert_eq!(
+        network.nodes.len(),
+        initial_main_shard_nodes + child_shard_nodes
+    ); // sanity check
 
     // * Fetch shard's genesis hash
     let shard_genesis = shard_wallet
@@ -234,7 +236,7 @@ async fn create_shard(network: &mut Network, wallet: &Wallet, child_shard_id: u6
         .run_until(
             |n| {
                 n.children.get(&child_shard_id).unwrap().nodes.len()
-                    == n.nodes.len() + child_shard_nodes
+                    == initial_main_shard_nodes + child_shard_nodes
             },
             200,
         )
@@ -276,6 +278,14 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .unwrap()
         .genesis_key
         .clone();
+
+    // stabilize shard
+    network
+        .children
+        .get_mut(&child_shard_id)
+        .unwrap()
+        .run_until_block(&shard_wallet, 10.into(), 300)
+        .await;
 
     // 2. Fund the child_shard_wallet (on the main shard) so we can send a cross-shard
     // transaction from it. This is so we have funds on the child shard (since the child
@@ -329,18 +339,20 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .await;
 
     // 5. Make sure the transaction gets included in the child network
+    let latest_block = Mutex::new(shard_wallet.get_block_number().await.unwrap());
     network
         .children
         .get_mut(&child_shard_id)
         .unwrap()
         .run_until_async(
             || async {
-                let latest_block = shard_wallet
-                    .get_block(BlockNumber::Latest)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                for tx in latest_block.transactions {
+                let mut latest_block = latest_block.lock().await;
+                let next_block = *latest_block + 1;
+                let Some(check_block) = shard_wallet.get_block(next_block).await.unwrap() else {
+                    return false;
+                };
+                *latest_block = next_block;
+                for tx in check_block.transactions {
                     let receipt = shard_wallet
                         .get_transaction_receipt(tx)
                         .await
@@ -353,7 +365,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
                 }
                 false
             },
-            500,
+            300,
         )
         .await
         .unwrap();
