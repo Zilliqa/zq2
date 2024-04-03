@@ -119,6 +119,7 @@ module "bootstrap_node" {
   subnetwork_name       = data.google_compute_subnetwork.default.name
   binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
   binary_md5            = google_storage_bucket_object.binary.md5hash
+  persistence_url       = var.persistence_url
   config                = <<-EOT
   p2p_port = 3333
   [[nodes]]
@@ -148,6 +149,7 @@ module "node" {
   subnetwork_name       = data.google_compute_subnetwork.default.name
   binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
   binary_md5            = google_storage_bucket_object.binary.md5hash
+  persistence_url       = var.persistence_url
 
   config          = <<-EOT
   p2p_port = 3333

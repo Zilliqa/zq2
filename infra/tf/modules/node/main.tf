@@ -39,17 +39,21 @@ variable "secret_key" {
 }
 
 variable "node_type" {
-  type = string
-  default = "e2-standard-2"
+  type     = string
+  default  = "e2-standard-2"
   nullable = false
 }
 
 variable "node_zone" {
-  type = string
-  default = "europe-west2-a"
+  type     = string
+  default  = "europe-west2-a"
   nullable = false
 }
 
+variable "persistence_url" {
+  type     = string
+  nullable = true
+}
 
 variable "zq_network_name" {
   type     = string
@@ -91,8 +95,8 @@ resource "google_compute_instance" "this" {
   name                      = "${var.name}-${random_id.name_suffix.hex}"
   machine_type              = var.node_type
   allow_stopping_for_update = true
-  zone = var.node_zone
-  labels = merge({ "zq2-network" = var.zq_network_name }, var.labels)
+  zone                      = var.node_zone
+  labels                    = merge({ "zq2-network" = var.zq_network_name }, var.labels)
 
   service_account {
     email = var.service_account_email
@@ -157,6 +161,17 @@ logging:
         processors: [ json, move_fields ]
 EOF
 sudo systemctl restart google-cloud-ops-agent
+
+# Download and extract the persistence
+
+if [[ -n "${var.persistence_url}" ]]; then
+  PERSISTENCE_DIR="${var.data_dir}"
+  PERSISTENCE_URL=${var.persistence_url}
+  PERSISTENCE_FILENAME="$${PERSISTENCE_URL##*/}"
+  mkdir -p "$${PERSISTENCE_DIR}"
+  gsutil cp "$${PERSISTENCE_URL}" "$${PERSISTENCE_DIR}/$${PERSISTENCE_FILENAME}"
+  cd "$${PERSISTENCE_DIR}" && tar xjf "$${PERSISTENCE_FILENAME}" && rm -f "$${PERSISTENCE_FILENAME}"
+fi
 
 # Download the Zilliqa binary
 gsutil cp ${var.binary_url} /zilliqa
