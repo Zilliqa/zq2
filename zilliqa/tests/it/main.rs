@@ -1,4 +1,9 @@
-use ethers::{abi::Tokenize, providers::Middleware};
+use ethers::{
+    abi::Tokenize,
+    providers::{Middleware, PubsubClient},
+};
+use primitive_types::U256;
+use serde_json::{value::RawValue, Value};
 mod consensus;
 mod eth;
 mod persistence;
@@ -11,6 +16,7 @@ use std::{
     fmt::Debug,
     fs,
     ops::DerefMut,
+    pin::Pin,
     rc::Rc,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -31,10 +37,10 @@ use ethers::{
     utils::secret_key_to_address,
 };
 use fs_extra::dir::*;
-use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
+use futures::{stream::BoxStream, Future, FutureExt, Stream, StreamExt};
 use itertools::Itertools;
 use jsonrpsee::{
-    types::{Id, RequestSer, Response, ResponsePayload},
+    types::{Id, Notification, RequestSer, Response, ResponsePayload},
     RpcModule,
 };
 use k256::ecdsa::SigningKey;
@@ -44,7 +50,7 @@ use rand_chacha::ChaCha8Rng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tracing::*;
 use zilliqa::{
     cfg::{ConsensusConfig, NodeConfig},
@@ -861,6 +867,7 @@ impl Network {
         let client = LocalRpcClient {
             id: Arc::new(AtomicU64::new(0)),
             rpc_module: node.rpc_module.clone(),
+            subscriptions: Arc::new(Mutex::new(HashMap::new())),
         };
         let provider = Provider::new(client);
 
@@ -1029,6 +1036,36 @@ async fn deploy_contract_with_args<T: Tokenize>(
 pub struct LocalRpcClient {
     id: Arc<AtomicU64>,
     rpc_module: RpcModule<Arc<Mutex<Node>>>,
+    subscriptions: Arc<Mutex<HashMap<u64, mpsc::Receiver<String>>>>,
+}
+
+#[async_trait]
+impl PubsubClient for LocalRpcClient {
+    type NotificationStream = Pin<Box<dyn Stream<Item = Box<RawValue>> + Send + Sync + 'static>>;
+
+    fn subscribe<T: Into<U256>>(&self, id: T) -> Result<Self::NotificationStream, Self::Error> {
+        let id: U256 = id.into();
+        let rx = self
+            .subscriptions
+            .lock()
+            .unwrap()
+            .remove(&id.as_u64())
+            .unwrap();
+        Ok(Box::pin(ReceiverStream::new(rx).map(|s| {
+            serde_json::value::to_raw_value(
+                &serde_json::from_str::<Notification<Value>>(&s)
+                    .unwrap()
+                    .params["result"],
+            )
+            .unwrap()
+        })))
+    }
+
+    fn unsubscribe<T: Into<U256>>(&self, id: T) -> Result<(), Self::Error> {
+        let id: U256 = id.into();
+        self.subscriptions.lock().unwrap().remove(&id.as_u64());
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -1040,12 +1077,43 @@ impl JsonRpcClient for LocalRpcClient {
         T: Debug + Serialize + Send + Sync,
         R: DeserializeOwned + Send,
     {
+        // There are some hacks in here for `eth_subscribe` and `eth_unsubscribe`. `RpcModule` does not let us control
+        // the `id_provider` and it produces subscription IDs incompatible with Ethereum clients. Specifically, it
+        // produces integers and `ethers-rs` expects hex-encoded integers. Our hacks convert to this encoding.
+
         let next_id = self.id.fetch_add(1, Ordering::SeqCst);
-        let request = serde_json::value::to_raw_value(&params).unwrap();
-        let payload = RequestSer::owned(Id::Number(next_id), method, Some(request));
+        let mut params: Value = serde_json::to_value(&params).unwrap();
+        if method == "eth_unsubscribe" {
+            let id = params.as_array_mut().unwrap().get_mut(0).unwrap();
+            let str_id = id.as_str().unwrap().strip_prefix("0x").unwrap();
+            *id = u64::from_str_radix(str_id, 16).unwrap().into();
+        }
+        let payload = RequestSer::owned(
+            Id::Number(next_id),
+            method,
+            Some(serde_json::value::to_raw_value(&params).unwrap()),
+        );
         let request = serde_json::to_string(&payload).unwrap();
 
-        let (response, _) = self.rpc_module.raw_json_request(&request, 1).await.unwrap();
+        let (response, rx) = self
+            .rpc_module
+            .raw_json_request(&request, 64)
+            .await
+            .unwrap();
+
+        if method == "eth_subscribe" {
+            let sub_response = serde_json::from_str::<Response<u64>>(&response);
+            if let Ok(Response {
+                payload: ResponsePayload::Success(id),
+                ..
+            }) = sub_response
+            {
+                let id = id.into_owned();
+                self.subscriptions.lock().unwrap().insert(id, rx);
+                let r = serde_json::from_str(&format!("\"{:#x}\"", id)).unwrap();
+                return Ok(r);
+            }
+        }
 
         let response: Response<Rc<R>> = serde_json::from_str(&response).unwrap();
 
@@ -1062,7 +1130,6 @@ impl JsonRpcClient for LocalRpcClient {
         };
 
         let r = Rc::try_unwrap(r.into_owned()).unwrap_or_else(|_| panic!());
-
         Ok(r)
     }
 }

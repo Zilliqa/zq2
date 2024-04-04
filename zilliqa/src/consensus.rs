@@ -13,6 +13,7 @@ use rand::{
 use rand_chacha::ChaCha8Rng;
 use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
 use tracing::*;
 
 use crate::{
@@ -142,6 +143,7 @@ pub struct Consensus {
     transaction_pool: TransactionPool,
     // PRNG - non-cryptographically secure, but we don't need that here
     rng: SmallRng,
+    pub new_blocks: broadcast::Sender<BlockHeader>,
 }
 
 // View in consensus should be have access monitored so last_timeout is always correct
@@ -295,6 +297,7 @@ impl Consensus {
                     .try_into()
                     .unwrap(),
             )),
+            new_blocks: broadcast::Sender::new(4),
         };
 
         // If we're at genesis, add the genesis block.
@@ -1523,6 +1526,7 @@ impl Consensus {
     fn add_block(&mut self, block: Block) -> Result<()> {
         let hash = block.hash();
         debug!(?hash, ?block.header.view, ?block.header.number, "added block");
+        let _ = self.new_blocks.send(block.header);
         self.block_store.process_block(block)?;
         Ok(())
     }
