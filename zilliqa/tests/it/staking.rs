@@ -85,7 +85,7 @@ async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
     let wallet = network.random_wallet().await;
 
     let stakers = get_stakers(&wallet).await;
-    assert_eq!(stakers.len(), 2);
+    assert_eq!(stakers.len(), 4);
 
     network.run_until_block(&wallet, 1.into(), 50).await;
 
@@ -117,6 +117,10 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     assert!(stakers.contains(&new_validator_key.node_public_key()));
 
     info!("STAKERS_SIZE: {}", stakers.len());
+    let peer_id = network.get_node_raw(index).peer_id;
+    network
+        .join_by_node(peer_id, new_validator_key.node_public_key())
+        .unwrap();
     // Check the new validator eventually gets to be a block proposer.
     network
         .run_until_async(
@@ -155,6 +159,11 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
         reward_address,
     )
     .await;
+
+    let peer_id = network.get_node_raw(index).peer_id;
+    network
+        .join_by_node(peer_id, new_validator_key.node_public_key())
+        .unwrap();
 
     // Start counting at the point where the new validator becomes a block proposer. This guarantees it is now part of
     // the consensus committee.

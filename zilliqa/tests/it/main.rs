@@ -846,6 +846,17 @@ impl Network {
         let key = SigningKey::random(self.rng.lock().unwrap().deref_mut());
         self.wallet_from_key(key).await
     }
+
+    pub fn join_by_node(&mut self, peer_id: PeerId, public_key: NodePublicKey) -> Result<()> {
+        self.resend_message
+            .send((
+                peer_id,
+                None,
+                AnyMessage::External(ExternalMessage::JoinCommittee(public_key)),
+            ))
+            .unwrap();
+        Ok(())
+    }
 }
 
 fn format_message(

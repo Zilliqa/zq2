@@ -847,6 +847,12 @@ impl Consensus {
                         &committee,
                     );
 
+                    info!(
+                        "PROPOSING block: {:?}, committee_size: {}",
+                        proposal.header.hash,
+                        committee.len()
+                    );
+
                     self.state.set_to_root(H256(previous_state_root_hash.0));
 
                     self.votes.insert(
@@ -1388,8 +1394,9 @@ impl Consensus {
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 
+        let parent = self.get_block(&block.parent_hash())?.unwrap();
         // Derive the proposer from the block's view
-        let proposer = self.leader(block.view());
+        let proposer = self.leader_at_block(&parent, block.view());
 
         trace!(
             "(check block) I think the block proposer is: {}, we are {}",
