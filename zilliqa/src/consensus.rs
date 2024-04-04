@@ -852,6 +852,7 @@ impl Consensus {
                         proposal.header.hash,
                         committee.len()
                     );
+                    info!(?proposal, "Proposing block = ");
 
                     self.state.set_to_root(H256(previous_state_root_hash.0));
 
@@ -1417,6 +1418,7 @@ impl Consensus {
         }
         let committee = committee.unwrap();
         if verified.is_err() {
+            info!(?block, "Unable to verify block = ");
             return Err(anyhow!("invalid block signature found! block hash: {:?} block view: {:?} committee len {:?}", block.hash(), block.view(), committee.len()));
         }
 
