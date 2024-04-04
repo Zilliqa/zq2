@@ -241,7 +241,7 @@ impl Network {
             .collect();
 
         for node in &nodes {
-            trace!(
+            info!(
                 "Node {}: {} (dir: {})",
                 node.index,
                 node.peer_id,

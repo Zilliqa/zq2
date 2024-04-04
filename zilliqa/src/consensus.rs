@@ -488,7 +488,7 @@ impl Consensus {
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
 
-        trace!(
+        info!(
             block_view = block.view(),
             block_number = block.number(),
             "handling block proposal {}",
@@ -496,7 +496,7 @@ impl Consensus {
         );
 
         if self.block_store.contains_block(block.hash())? {
-            trace!("ignoring block proposal, block store contains this block already");
+            info!("ignoring block proposal, block store contains this block already");
             return Ok(None);
         }
 
@@ -560,8 +560,10 @@ impl Consensus {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}.\nHead: {}", parent.state_root_hash(), self.state.root_hash()?, head_block);
             }
 
-            self.execute_block(&block, transactions)?;
+            let stakers = self.state.get_stakers()?;
 
+            self.execute_block(&block, transactions, &stakers)?;
+            info!("Stakers size after execution: {}", stakers.len());
             if self.view.get_view() != proposal_view + 1 {
                 self.view.set_view(proposal_view + 1);
 
@@ -570,17 +572,25 @@ impl Consensus {
                     self.view.get_view()
                 );
             }
+
+            // Get possibly updated list of stakers
             let stakers = self.state.get_stakers()?;
             if !stakers.iter().any(|v| *v == self.public_key()) {
-                trace!(
+                info!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     stakers.len()
                 );
                 return Ok(None);
             } else {
                 let vote = self.vote_from_block(&block);
+                //info!("Trying to get leader at block: {}", block.header.number);
+                //info!("Last settled block is: {}", head_block.header.number);
+                //info!("current state root: {:?}, head_block root: {:?}, block root: {:?}", self.state.root_hash()?, head_block.header.state_root_hash, block.header.state_root_hash);
+                //info!("Committee size in current state root: {:?}", self.state.get_stakers()?.len());
                 let next_leader = self.leader_at_block(&block, self.view.get_view()).peer_id;
 
+                info!("Created vote. block hash: {:?}, block num: {}, head_block_hash: {:?}, head_block_num: {}", block.header.hash, block.header.number, self.head_block().header.hash, self.head_block().header.number);
+                info!("current state root: {:?}", self.state.root_hash()?);
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
                     return Ok(Some((next_leader, vote)));
@@ -619,6 +629,11 @@ impl Consensus {
             self.state.save_account(proposer_address, account)?;
         }
 
+        info!(
+            "Cosignd size is: {}, stakers size is: {}",
+            cosigned.len(),
+            committee.len()
+        );
         let mut total_cosigner_stake = 0;
         let cosigner_stake: Vec<_> = committee
             .iter()
@@ -637,6 +652,7 @@ impl Consensus {
                 let reward =
                     U256::from(rewards_per_block / 2) * U256::from(stake) / total_cosigner_stake;
                 let mut account = self.state.get_account(a)?;
+                info!("Adding reward to account: {:?}", a);
                 account.balance += reward.as_u128();
                 self.state.save_account(a, account)?;
             }
@@ -718,7 +734,7 @@ impl Consensus {
         let block_hash = block.hash();
         let block_view = block.view();
         let current_view = self.view.get_view();
-        trace!(block_view, current_view, %block_hash, "handling vote");
+        info!(block_view, current_view, %block_hash, "handling vote");
 
         // if we are not the leader of the round in which the vote counts
         // The vote is in the happy path (?) - so the view is block view + 1
@@ -802,6 +818,8 @@ impl Consensus {
                         self.state.set_to_root(H256(parent.state_root_hash().0));
                     }
 
+                    let committee = self.state.get_stakers()?;
+
                     let transactions = self.get_txns_to_execute();
 
                     let mut applied_transactions: Vec<_> = transactions
@@ -815,7 +833,6 @@ impl Consensus {
                     let applied_transaction_hashes: Vec<_> =
                         applied_transactions.iter().map(|tx| tx.hash).collect();
 
-                    let committee = self.state.get_stakers()?;
                     self.apply_rewards(&committee, block_view + 1, &qc.cosigned)?;
 
                     let proposal = Block::from_qc(
@@ -837,7 +854,7 @@ impl Consensus {
                         (signatures, cosigned, cosigned_weight, supermajority_reached),
                     );
                     // as a future improvement, process the proposal before broadcasting it
-                    trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
+                    info!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
                     // intershard transactions are not meant to be broadcast
                     applied_transactions
                         .retain(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
@@ -1328,7 +1345,23 @@ impl Consensus {
 
     /// Check the validity of a block
     fn check_block(&mut self, block: &Block) -> Result<()> {
-        let committee = self.state.get_stakers_at_block(block)?;
+        info!(
+            "Check_block, state_root_is: {:?}, head block is: {:?}, number: {} ",
+            self.state.root_hash()?,
+            self.head_block().header.hash,
+            self.head_block().header.number
+        );
+        info!(
+            "Check_block, blook hash: {:?}, block number: {:?}, block state root: {} ",
+            block.header.hash, block.header.number, block.header.state_root_hash
+        );
+        let parent = self.get_block(&block.parent_hash()).unwrap().unwrap();
+
+        let committee = self.state.get_stakers_at_block(&parent);
+        if committee.is_err() {
+            info!("COMMITTEE is error at block: {}", block.header.number);
+        }
+        let committee = committee.unwrap();
         block.verify_hash(&committee)?;
 
         // This should be checked against genesis
@@ -1368,7 +1401,14 @@ impl Consensus {
             .public_key
             .verify(block.hash().as_bytes(), block.signature());
 
-        let committee = self.state.get_stakers_at_block(&parent)?;
+        let committee = self.state.get_stakers_at_block(&parent);
+        if committee.is_err() {
+            info!(
+                "Unable to get stackers at block num: {}",
+                parent.header.number
+            );
+        }
+        let committee = committee.unwrap();
         if verified.is_err() {
             return Err(anyhow!("invalid block signature found! block hash: {:?} block view: {:?} committee len {:?}", block.hash(), block.view(), committee.len()));
         }
@@ -1703,7 +1743,7 @@ impl Consensus {
     }
 
     pub fn leader(&mut self, view: u64) -> Validator {
-        let committee = self.state.get_stakers().unwrap();
+        let committee = self.get_connected_stakers();
 
         let mut rng = ChaCha8Rng::seed_from_u64(view);
         let dist = WeightedIndex::new(committee.iter().map(|pub_key| {
@@ -1713,6 +1753,12 @@ impl Consensus {
         .unwrap();
         let index = dist.sample(&mut rng);
         let public_key = *committee.iter().nth(index).unwrap();
+
+        info!(
+            "CHOSEN LEADER with IDX: {}, committee size: {}",
+            index,
+            committee.len()
+        );
         let peer_id = self
             .pending_peers
             .iter()
@@ -1723,6 +1769,20 @@ impl Consensus {
             public_key,
             peer_id,
         }
+    }
+
+    fn get_connected_stakers(&self) -> Vec<NodePublicKey> {
+        let committee = self.state.get_stakers().unwrap();
+        let committee = committee
+            .into_iter()
+            .filter(|elem| {
+                self.pending_peers
+                    .iter()
+                    .find(|&active| active.public_key == *elem)
+                    .is_some()
+            })
+            .collect();
+        committee
     }
 
     fn total_weight(&self, committee: &[NodePublicKey]) -> u128 {
@@ -1858,13 +1918,20 @@ impl Consensus {
                 .iter()
                 .map(|tx_hash| self.get_transaction_by_hash(*tx_hash).unwrap().unwrap().tx)
                 .collect();
-            self.execute_block(&block_pointer, transactions)?;
+            let committee = self.state.get_stakers_at_block(&block_pointer)?;
+            self.execute_block(&block_pointer, transactions, &committee)?;
         }
 
         Ok(())
     }
 
-    fn execute_block(&mut self, block: &Block, transactions: Vec<SignedTransaction>) -> Result<()> {
+    fn execute_block(
+        &mut self,
+        block: &Block,
+        transactions: Vec<SignedTransaction>,
+        committee: &[NodePublicKey],
+    ) -> Result<()> {
+        info!("Executing block: {:?}", block.header.hash);
         let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
         let parent = self
             .get_block(&block.parent_hash())?
@@ -1912,7 +1979,6 @@ impl Consensus {
             block_receipts.push(receipt);
         }
 
-        let committee = self.state.get_stakers()?;
         self.apply_rewards(&committee, block.view(), &block.qc.cosigned)?;
 
         // If we were the proposer we would've already processed the transactions

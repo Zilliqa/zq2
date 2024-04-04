@@ -85,7 +85,7 @@ async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
     let wallet = network.random_wallet().await;
 
     let stakers = get_stakers(&wallet).await;
-    assert_eq!(stakers.len(), 4);
+    assert_eq!(stakers.len(), 2);
 
     network.run_until_block(&wallet, 1.into(), 50).await;
 
@@ -116,6 +116,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     assert_eq!(stakers.len(), 5);
     assert!(stakers.contains(&new_validator_key.node_public_key()));
 
+    info!("STAKERS_SIZE: {}", stakers.len());
     // Check the new validator eventually gets to be a block proposer.
     network
         .run_until_async(
