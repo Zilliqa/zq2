@@ -1,4 +1,4 @@
-use std::{path::Path, process::Stdio};
+use std::process::Stdio;
 
 use eyre::Result;
 use futures::future::JoinAll;
@@ -26,13 +26,14 @@ pub struct ExitValue {
 pub enum Message {
     Exited(ExitValue),
     OutputData(OutputData),
+    ErrorData(OutputData),
 }
 
 impl Process {
     pub async fn spawn(
         index: usize,
         key: &str,
-        config_file: &Path,
+        config_file: &str,
         channel: &mpsc::Sender<Message>,
     ) -> Result<Process> {
         let mut cmd = Command::new("target/debug/zilliqa");
@@ -40,11 +41,14 @@ impl Process {
         cmd.arg("--config-file");
         cmd.arg(config_file);
         cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
         let mut child = cmd
             .spawn()
             .expect("Failed to spawn - have you built zilliqa?");
         let stdout = child.stdout.take().expect("No handle to stdout");
+        let stderr = child.stderr.take().expect("No handle to stderr");
         let mut stdout_reader = BufReader::new(stdout).lines();
+        let mut stderr_reader = BufReader::new(stderr).lines();
         let tx_1 = channel.clone();
         let join_handle = tokio::spawn(async move {
             let status = child.wait().await.expect("Child errored");
@@ -66,7 +70,21 @@ impl Process {
                     .await;
             }
         });
-        let joiner = futures::future::join_all(vec![join_handle, output_waiter]);
+
+        let tx_3 = channel.clone();
+        let error_waiter = tokio::spawn(async move {
+            while let Some(line) = stderr_reader.next_line().await.expect("Boo!") {
+                // @todo Not sure if there is much we can do if this fails - rrw 2023-02-22
+                let _ = tx_3
+                    .send(Message::ErrorData(OutputData {
+                        index,
+                        line: line.to_string(),
+                    }))
+                    .await;
+            }
+        });
+
+        let joiner = futures::future::join_all(vec![join_handle, output_waiter, error_waiter]);
         Ok(Process {
             index,
             join_handle: Some(joiner),

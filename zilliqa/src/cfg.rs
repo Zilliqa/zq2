@@ -8,7 +8,7 @@ use crate::{
     state::Address,
 };
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// Individual configuration for every node to run.

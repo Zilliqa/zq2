@@ -1,6 +1,5 @@
 use eyre::Result;
 use futures::future::JoinAll;
-use tempfile::NamedTempFile;
 use tokio::sync::mpsc;
 use zilliqa::crypto::SecretKey;
 
@@ -13,13 +12,13 @@ pub struct Collector {
 }
 
 impl Collector {
-    pub async fn new(keys: &[SecretKey], config_files: &[NamedTempFile]) -> Result<Collector> {
+    pub async fn new(keys: &[SecretKey], config_files: &Vec<String>) -> Result<Collector> {
         let mut runners = Vec::new();
         let (tx, mut rx) = mpsc::channel(32);
         let nr = keys.len();
         // Fire everything up.
-        for (i, (key, config_file)) in keys.iter().zip(config_files).enumerate() {
-            runners.push(runner::Process::spawn(i, &key.to_hex(), config_file.path(), &tx).await?);
+        for (i, (key, config_file)) in keys.iter().zip(config_files.iter()).enumerate() {
+            runners.push(runner::Process::spawn(i, &key.to_hex(), config_file, &tx).await?);
         }
         let reader = tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
@@ -32,6 +31,11 @@ impl Collector {
                         let data = od.line;
                         let index = od.index;
                         println!("Rx#{index}: {data}");
+                    }
+                    runner::Message::ErrorData(od) => {
+                        let data = od.line;
+                        let index = od.index;
+                        println!("Rx!#{index}: {data}");
                     }
                 }
             }

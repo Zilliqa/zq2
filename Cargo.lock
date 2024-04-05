@@ -6919,11 +6919,14 @@ dependencies = [
  "clap",
  "eyre",
  "futures",
+ "libp2p",
  "rand_core",
  "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "tokio-stream",
+ "toml",
  "zilliqa",
 ]
 
