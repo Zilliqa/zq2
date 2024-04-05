@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use std::{
     fs,
     path::PathBuf,
@@ -48,18 +50,33 @@ impl NetworkConfig {
     }
 }
 
-fn get_local_block_number(project: &str, instance: &str, zone: &str) -> Result<u64> {
+async fn get_local_block_number(project: &str, instance: &str, zone: &str) -> Result<u64> {
     let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
-    let output = process::Command::new("gcloud")
-        .arg("--project")
-        .arg(project)
-        .args(["compute", "ssh"])
-        .arg(instance)
-        .args(["--zone", zone])
-        .args(["--command", inner_command])
-        .output()?;
-    if !output.status.success() {
-        return Err(anyhow!("getting local block number failed: {output:?}"));
+    let output = zutils::commands::CommandBuilder::new()
+        .cmd(
+            "gcloud",
+            &vec![
+                "--project",
+                &project,
+                "compute",
+                "ssh",
+                "--ssh-flag=",
+                &instance,
+                "--tunnel-through-iap",
+                "--zone",
+                &zone,
+                "--command",
+                &inner_command,
+            ],
+        )
+        .run()
+        .await?;
+
+    if !output.success {
+        return Err(anyhow!(
+            "getting local block number failed: {:?}",
+            output.stderr
+        ));
     }
 
     let response: Value = serde_json::from_slice(&output.stdout)?;
@@ -75,7 +92,8 @@ fn get_local_block_number(project: &str, instance: &str, zone: &str) -> Result<u
     Ok(block_number)
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -200,25 +218,36 @@ fn main() -> Result<()> {
                     sudo systemctl restart zilliqa.service
                 "#
                 );
-                let output = process::Command::new("gcloud")
-                    .arg("--project")
-                    .arg(&config.gcp_project)
-                    .args(["-q", "compute", "ssh"])
-                    .arg(instance)
-                    .args(["--zone", zone])
-                    .args(["--command", &inner_command])
-                    .output()?;
-                if !output.status.success() {
-                    println!("{output:?}");
+                let output = zutils::commands::CommandBuilder::new()
+                    .cmd(
+                        "gcloud",
+                        &vec![
+                            "--project",
+                            &config.gcp_project,
+                            "compute",
+                            "ssh",
+                            "--ssh-flag=",
+                            &instance,
+                            "--tunnel-through-iap",
+                            "--zone",
+                            &zone,
+                            "--command",
+                            &inner_command,
+                        ],
+                    )
+                    .run()
+                    .await?;
+                if !output.success {
+                    println!("{:?}", output.stderr);
                     return Err(anyhow!("upgrade failed"));
                 }
 
                 // Check the node is making progress
                 let first_block_number =
-                    get_local_block_number(&config.gcp_project, instance, zone)?;
+                    get_local_block_number(&config.gcp_project, instance, zone).await?;
                 loop {
                     let next_block_number =
-                        get_local_block_number(&config.gcp_project, instance, zone)?;
+                        get_local_block_number(&config.gcp_project, instance, zone).await?;
                     println!(
                         "Polled block number at {next_block_number}, waiting for {} more blocks",
                         (first_block_number + 10).saturating_sub(next_block_number)
