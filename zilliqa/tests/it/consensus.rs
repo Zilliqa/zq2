@@ -1,5 +1,3 @@
-use crate::deploy_contract;
-use crate::deploy_contract_with_args;
 use ethabi::Token;
 use ethers::{
     abi::FunctionExt, prelude::DeploymentTxFactory, providers::Middleware,
@@ -13,7 +11,7 @@ use zilliqa::{
     state::contract_addr::{self, SHARD_REGISTRY},
 };
 
-use crate::{compile_contract, Network, Wallet};
+use crate::{compile_contract, deploy_contract, deploy_contract_with_args, Network, Wallet};
 
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)
