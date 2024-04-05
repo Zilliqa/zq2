@@ -336,7 +336,7 @@ impl Consensus {
         public_key: NodePublicKey,
     ) -> Result<Option<(Option<PeerId>, ExternalMessage)>> {
         if self.state.get_stake(public_key)?.is_none() {
-            info!(%peer_id, "peer does not have sufficient stake");
+            warn!(%peer_id, "peer does not have sufficient stake");
             return Ok(None);
         }
         if let Some(existing) = self.pending_peers.iter_mut().find(|v| v.peer_id == peer_id) {
@@ -412,9 +412,10 @@ impl Consensus {
             // If we're in the genesis committee, vote again.
             let stakers = self.state.get_stakers()?;
             if stakers.iter().any(|v| *v == self.public_key()) {
-                info!("timeout in view 1, we will vote for genesis block rather than incrementing view");
+                info!("timeout in view 1, we will vote for genesis block rather than incrementing view, genesis hash: {}", genesis.hash());
                 let leader = self.leader(self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
+                info!("Sending vote to leader: {:?}", leader.peer_id);
                 return Ok(Some((leader.peer_id, ExternalMessage::Vote(vote))));
             } else {
                 info!("We are on view 1 but we are not a validator, so we are waiting.");
@@ -773,9 +774,10 @@ impl Consensus {
             });
 
         if supermajority_reached {
-            trace!(
-                "(vote) supermajority already reached in this round {}",
-                self.view.get_view()
+            info!(
+                "(vote) supermajority already reached in this round {} for block: {:?}",
+                self.view.get_view(),
+                block.header.hash
             );
             return Ok(None);
         }
@@ -839,7 +841,7 @@ impl Consensus {
                         self.secret_key,
                         self.view.get_view(),
                         parent.header.number + 1,
-                        qc,
+                        qc.clone(),
                         parent_hash,
                         self.state.root_hash()?,
                         applied_transaction_hashes,
@@ -848,9 +850,11 @@ impl Consensus {
                     );
 
                     info!(
-                        "PROPOSING block: {:?}, committee_size: {}",
+                        "PROPOSING block: {:?}, committee_size: {}, parent_hash: {:?}, qc_block_hash: {:?}",
                         proposal.header.hash,
-                        committee.len()
+                        committee.len(),
+                        parent_hash,
+                        qc.clone().block_hash
                     );
                     info!(?proposal, "Proposing block = ");
 
@@ -1291,13 +1295,24 @@ impl Consensus {
         // have views N+1, N+2 (the final one being proposal block).
 
         let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else {
-            warn!("missing qc block when checking whether to finalize!");
+            warn!(
+                "missing qc block when checking whether to finalize, hash: {}!",
+                &proposal.qc.block_hash
+            );
             return Err(MissingBlockError::from(proposal.qc.block_hash).into());
         };
+        info!(
+            "QC block_hash: {:?}, qc parent_block_hash: {:?}",
+            proposal.qc.block_hash,
+            qc_block.parent_hash()
+        );
 
         // At genesis it could be fine not to have a qc block, so don't error.
         let Some(qc_parent) = self.get_block(&qc_block.parent_hash())? else {
-            warn!("missing qc parent block when checking whether to finalize!");
+            warn!(
+                "missing qc parent block when checking whether to finalize!, hash: {}",
+                qc_block.parent_hash()
+            );
             return Ok(());
         };
 
