@@ -515,8 +515,6 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 50)
         .await;
 
-    println!("\n\n\n*************************************************************************\n\nWaiting on final condition now!\n\n\n");
-
     // 5. Make sure the transaction gets included in the child network
     let latest_block = Mutex::new(shard_wallet.get_block_number().await.unwrap());
     network

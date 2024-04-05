@@ -486,8 +486,6 @@ impl Consensus {
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
 
-        println!("\nWe are {}, handling proposal {} at height {} and view {}, with {} transactions of which {} were broadcast", self.peer_id(), block.hash(), block.number(), block.view(), block.transactions.len(), transactions.len());
-
         trace!(
             block_view = block.view(),
             block_number = block.number(),
@@ -670,12 +668,6 @@ impl Consensus {
     }
 
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
-        if self.transaction_pool.size() > 0 {
-            println!(
-                "Transaction pool has non-zero stored txs: {}",
-                self.transaction_pool.size()
-            );
-        }
         std::iter::from_fn(|| self.transaction_pool.best_transaction())
             .filter(|txn| {
                 let account_nonce = self.state.must_get_account(txn.signer).nonce;
@@ -711,7 +703,6 @@ impl Consensus {
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        println!();
         let Some(block) = self.get_block(&vote.block_hash)? else {
             trace!(vote_view = vote.view, "ignoring vote, missing block");
             return Ok(None);
@@ -839,22 +830,6 @@ impl Consensus {
                     // as a future improvement, process the proposal before broadcasting it
                     trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
                     // intershard transactions are not meant to be broadcast
-                    println!("We are {}, leader of the current round, successfully proposing block {} at view {}, height {}. It has {} txs ({} bcast). Next leader will be {:?}.", self.peer_id(), proposal.hash(), proposal.view(), proposal.number(), proposal.transactions.len(), applied_transactions.len(), self.leader(&proposal.committee, proposal.view() + 1).peer_id);
-                    println!(
-                        "Also, proposal's committee has {} nodes: {:?}. Previous committe had length {} and nodes: {:?}.\n",
-                        proposal.committee.len(),
-                        proposal
-                            .committee
-                            .iter()
-                            .map(|v| v.peer_id)
-                            .collect::<Vec<_>>(),
-                        parent.committee.len(),
-                        parent
-                            .committee
-                            .iter()
-                            .map(|v| v.peer_id)
-                            .collect::<Vec<_>>(),
-                    );
                     let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
                         applied_transactions
                             .into_iter()
@@ -1327,13 +1302,6 @@ impl Consensus {
         self.finalized_view = view;
         self.db.put_latest_finalized_view(view)?;
 
-        println!(
-            "We are finalizing block {}! View {}. We are {}",
-            hash,
-            view,
-            self.peer_id()
-        );
-
         let receipts = self.db.get_transaction_receipts(&hash)?.unwrap_or_default();
 
         for (destination_shard, intershard_call) in blockhooks::get_cross_shard_messages(&receipts)?
@@ -1761,14 +1729,6 @@ impl Consensus {
             head_height,
             proposed_block.hash(),
             proposed_block_height
-        );
-        println!(
-            "Dealing with fork: from block {} (height {}), back to block {} (height {}), we are {}",
-            head.hash(),
-            head_height,
-            proposed_block.hash(),
-            proposed_block_height,
-            self.peer_id()
         );
 
         // Need to make sure both pointers are at the same height
