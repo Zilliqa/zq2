@@ -48,9 +48,11 @@ impl NetworkConfig {
     }
 }
 
-fn get_local_block_number(instance: &str, zone: &str) -> Result<u64> {
+fn get_local_block_number(project: &str, instance: &str, zone: &str) -> Result<u64> {
     let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
     let output = process::Command::new("gcloud")
+        .arg("--project")
+        .arg(project)
         .args(["compute", "ssh"])
         .arg(instance)
         .args(["--zone", zone])
@@ -136,6 +138,8 @@ fn main() -> Result<()> {
                     .join("release")
                     .join("zilliqa");
                 let status = process::Command::new("gcloud")
+                    .arg("--project")
+                    .arg(&config.gcp_project)
                     .args(["storage", "cp"])
                     .arg(binary)
                     .arg(&binary_location)
@@ -151,6 +155,8 @@ fn main() -> Result<()> {
 
             // Get the list of instances we need to update.
             let output = process::Command::new("gcloud")
+                .arg("--project")
+                .arg(&config.gcp_project)
                 .args(["compute", "instances", "list"])
                 .args(["--format", "json"])
                 .args(["--filter", &format!("labels.zq2-network={}", config.name)])
@@ -194,21 +200,25 @@ fn main() -> Result<()> {
                     sudo systemctl restart zilliqa.service
                 "#
                 );
-                let status = process::Command::new("gcloud")
+                let output = process::Command::new("gcloud")
+                    .arg("--project")
+                    .arg(&config.gcp_project)
                     .args(["-q", "compute", "ssh"])
                     .arg(instance)
                     .args(["--zone", zone])
                     .args(["--command", &inner_command])
-                    .stderr(Stdio::null())
-                    .status()?;
-                if !status.success() {
+                    .output()?;
+                if !output.status.success() {
+                    println!("{output:?}");
                     return Err(anyhow!("upgrade failed"));
                 }
 
                 // Check the node is making progress
-                let first_block_number = get_local_block_number(instance, zone)?;
+                let first_block_number =
+                    get_local_block_number(&config.gcp_project, instance, zone)?;
                 loop {
-                    let next_block_number = get_local_block_number(instance, zone)?;
+                    let next_block_number =
+                        get_local_block_number(&config.gcp_project, instance, zone)?;
                     println!(
                         "Polled block number at {next_block_number}, waiting for {} more blocks",
                         (first_block_number + 10).saturating_sub(next_block_number)
