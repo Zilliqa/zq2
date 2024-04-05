@@ -1314,6 +1314,7 @@ dependencies = [
  "primitive-types",
  "prost 0.12.4",
  "prost-build",
+ "revm",
  "rlp",
  "rs-leveldb",
  "rustc-hex",

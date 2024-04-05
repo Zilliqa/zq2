@@ -48,7 +48,7 @@ mod time_impl {
 
     impl Add<Duration> for SystemTime {
         type Output = SystemTime;
-    
+
         fn add(self, rhs: Duration) -> Self::Output {
             SystemTime(self.0 + rhs)
         }

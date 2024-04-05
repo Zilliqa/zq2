@@ -575,7 +575,7 @@ impl ZilAmount {
         ZilAmount(amount / 10u128.pow(6))
     }
 
-        /// Construct a [ZilAmount] from an amount in (10^-12) ZILs.
+    /// Construct a [ZilAmount] from an amount in (10^-12) ZILs.
     pub fn from_raw(amount: u128) -> ZilAmount {
         ZilAmount(amount)
     }

@@ -3,16 +3,22 @@
 mod zq1;
 
 use std::{
-    collections::BTreeMap, fs, path::PathBuf, process::{self, Stdio}, time::Duration
+    collections::BTreeMap,
+    fs,
+    path::PathBuf,
+    process::{self, Stdio},
+    time::Duration,
 };
 
 use anyhow::{anyhow, Context, Result};
 use bitvec::bitvec;
 use clap::{Parser, Subcommand};
+use ethabi::Token;
 use git2::Repository;
 use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
 use itertools::Itertools;
 use primitive_types::{H160, H256};
+use revm::primitives::ResultAndState;
 use rlp::RlpStream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,9 +27,21 @@ use sha3::Keccak256;
 use tempfile::TempDir;
 use tracing::{trace, warn};
 use zilliqa::{
-    cfg::Config, consensus::Validator, crypto::{Hash, SecretKey}, db::Db, message::{Block, Committee, QuorumCertificate, Vote}, schnorr, state::{Account, Contract, State}, time::SystemTime, transaction::{
-        EthSignature, EvmGas, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxEip1559, TxEip2930, TxLegacy, TxZilliqa, ZilAmount
-    }
+    cfg::Config,
+    consensus::Validator,
+    contracts,
+    crypto::{Hash, SecretKey},
+    db::Db,
+    exec::{BLOCK_GAS_LIMIT, GAS_PRICE},
+    inspector,
+    message::{Block, BlockHeader, Committee, QuorumCertificate, Vote},
+    schnorr,
+    state::{contract_addr, Account, Contract, State},
+    time::SystemTime,
+    transaction::{
+        EthSignature, EvmGas, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxEip1559,
+        TxEip2930, TxLegacy, TxZilliqa, ZilAmount,
+    },
 };
 
 #[derive(Parser)]
@@ -298,11 +316,13 @@ async fn main() -> Result<()> {
             let zq1_db = zq1::Db::new(zq1_persistence_directory)?;
             let zq2_config = fs::read_to_string(zq2_config_file)?;
             let zq2_config: zilliqa::cfg::Config = toml::from_str(&zq2_config)?;
-            let shard_id: u64 = match zq2_config.nodes.get(0).and_then(|node| Some(node.eth_chain_id)) {
+            let shard_id: u64 = match zq2_config
+                .nodes
+                .get(0)
+                .and_then(|node| Some(node.eth_chain_id))
+            {
                 Some(id) => id,
-                None => {
-                    0
-                }
+                None => 0,
             };
             let zq2_db = Db::new(Some(zq2_data_dir), shard_id)?;
 
@@ -313,7 +333,9 @@ async fn main() -> Result<()> {
             block_number,
         } => {
             let db = zq1::Db::new(zq1_persistence_directory)?;
-            let block = db.get_tx_block(block_number)?.ok_or_else(|| anyhow!("block not found"))?;
+            let block = db
+                .get_tx_block(block_number)?
+                .ok_or_else(|| anyhow!("block not found"))?;
             let block = zq1::TxBlock::from_proto(block)?;
             let txn_hashes: Vec<_> = block
                 .mb_infos
@@ -338,7 +360,9 @@ async fn main() -> Result<()> {
             txn_hash,
         } => {
             let db = zq1::Db::new(zq1_persistence_directory)?;
-            let tx = db.get_tx_body(block_number, txn_hash)?.ok_or_else(|| anyhow!("transaction not found"))?;
+            let tx = db
+                .get_tx_body(block_number, txn_hash)?
+                .ok_or_else(|| anyhow!("transaction not found"))?;
             let tx = zq1::Transaction::from_proto(block_number, tx)?;
 
             println!("{tx:?}");
@@ -422,7 +446,33 @@ fn convert_persistence(
         public_key: secret_key.node_public_key(),
         peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
     });
-    // TODO: Add stake for this dude
+    // Add stake for this validator. For now, we just assume they've always had 100 ZIL staked.
+    // This assumptions will need to change for the actual testnet and mainnet launches, where we cannot invent ZIL
+    // out of thin air (like we do below).
+    let data = contracts::deposit::SET_STAKE.encode_input(&[
+        Token::Bytes(secret_key.node_public_key().as_bytes()),
+        Token::Address(H160::from_low_u64_be(1)),
+        Token::Uint(100.into()),
+    ])?;
+    let ResultAndState {
+        result,
+        state: result_state,
+    } = state.apply_transaction_evm(
+        H160::zero(),
+        Some(contract_addr::DEPOSIT),
+        GAS_PRICE,
+        BLOCK_GAS_LIMIT,
+        0,
+        data,
+        None,
+        0,
+        BlockHeader::default(),
+        inspector::noop(),
+    )?;
+    if !result.is_success() {
+        return Err(anyhow!("setting stake failed: {result:?}"));
+    }
+    state.apply_delta_evm(result_state)?;
 
     let max_block = zq1_db.get_tx_blocks_aux("MaxTxBlockNumber")?.unwrap();
 
@@ -616,7 +666,10 @@ fn convert_persistence(
                             dbg!(version),
                             dbg!(chain_id) + 0x8000,
                             dbg!(transaction),
-                        ).with_context(|| format!("failed to infer signature of transaction: {txn_hash:?}"))?;
+                        )
+                        .with_context(|| {
+                            format!("failed to infer signature of transaction: {txn_hash:?}")
+                        })?;
 
                         (transaction, receipt)
                     }
