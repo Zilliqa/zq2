@@ -140,7 +140,7 @@ impl State {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn apply_transaction_inner(
+    pub fn apply_transaction_inner(
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
@@ -251,7 +251,7 @@ impl State {
         })
     }
 
-    pub(crate) fn apply_delta(
+    pub fn apply_delta(
         &mut self,
         state: revm::primitives::HashMap<revm::primitives::Address, revm::primitives::Account>,
     ) -> Result<()> {

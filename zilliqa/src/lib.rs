@@ -7,7 +7,7 @@ pub mod contracts;
 pub mod crypto;
 pub mod db;
 mod eth_helpers;
-mod exec;
+pub mod exec;
 mod health;
 pub mod message;
 pub mod node;

@@ -11,7 +11,7 @@ pub use time_impl::*;
 
 #[cfg(feature = "fake_time")]
 mod time_impl {
-    use std::{error::Error, fmt, sync::Mutex, time::Duration};
+    use std::{error::Error, fmt, ops::Add, sync::Mutex, time::Duration};
 
     use futures::Future;
     use serde::{Deserialize, Serialize};
@@ -43,6 +43,14 @@ mod time_impl {
             self.0
                 .duration_since(other.0)
                 .map_err(|e| SystemTimeError(e.duration()))
+        }
+    }
+
+    impl Add<Duration> for SystemTime {
+        type Output = SystemTime;
+    
+        fn add(self, dur: Duration) -> Self::Output {
+            SystemTime(self.0 + dur)
         }
     }
 
