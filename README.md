@@ -75,8 +75,8 @@ Please open an issue or PR for APIs that you think should be included.
 | `eth_getFilterLogs`                       | 🔴                                              |
 | `eth_getLogs`                             | 🟢                                              |
 | `eth_getStorageAt`                        | 🟢                                              |
-| `eth_getTransactionByBlockHashAndIndex`   | 🔴                                              |
-| `eth_getTransactionByBlockNumberAndIndex` | 🔴                                              |
+| `eth_getTransactionByBlockHashAndIndex`   | 🟢                                              |
+| `eth_getTransactionByBlockNumberAndIndex` | 🟢                                              |
 | `eth_getTransactionByHash`                | 🟢                                              |
 | `eth_getTransactionCount`                 | 🟢                                              |
 | `eth_getTransactionReceipt`               | 🟢                                              |

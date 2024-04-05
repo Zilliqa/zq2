@@ -993,3 +993,41 @@ async fn pending_transaction_is_returned_by_get_transaction_by_hash(mut network:
     assert!(tx.block_hash.is_some());
     assert!(tx.block_number.is_some());
 }
+
+#[zilliqa_macros::test]
+async fn get_transaction_by_index(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let h1 = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+    let h2 = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10).nonce(1), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    let r1 = network.run_until_receipt(&wallet, h1, 50).await;
+    let r2 = network.run_until_receipt(&wallet, h2, 50).await;
+
+    assert_eq!(r1.block_hash, r2.block_hash);
+
+    let block_hash = r1.block_hash.unwrap();
+    let block_number = r1.block_number.unwrap();
+
+    let txn = wallet
+        .get_transaction_by_block_and_index(block_hash, 0u64.into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(txn.hash, h1);
+
+    let txn = wallet
+        .get_transaction_by_block_and_index(block_number, 1u64.into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(txn.hash, h2);
+}
