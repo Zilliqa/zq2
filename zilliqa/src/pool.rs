@@ -168,16 +168,12 @@ impl TransactionPool {
     }
 
     pub fn get_transaction(&self, hash: Hash) -> Option<&VerifiedTransaction> {
-        let Some(tx_index) = self.hash_to_index.get(&hash) else {
-            return None;
-        };
+        let tx_index = self.hash_to_index.get(&hash)?;
         self.transactions.get(tx_index)
     }
 
     pub fn pop_transaction(&mut self, hash: Hash) -> Option<VerifiedTransaction> {
-        let Some(tx_index) = self.hash_to_index.remove(&hash) else {
-            return None;
-        };
+        let tx_index = self.hash_to_index.remove(&hash)?;
         self.transactions.remove(&tx_index)
     }
 
