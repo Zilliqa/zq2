@@ -34,12 +34,16 @@ impl Process {
         index: usize,
         key: &str,
         config_file: &str,
+        debug_spec: &Option<String>,
         channel: &mpsc::Sender<Message>,
     ) -> Result<Process> {
         let mut cmd = Command::new("target/debug/zilliqa");
         cmd.arg(key);
         cmd.arg("--config-file");
         cmd.arg(config_file);
+        if let Some(val) = debug_spec {
+            cmd.env("RUST_LOG", val);
+        }
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
         let mut child = cmd

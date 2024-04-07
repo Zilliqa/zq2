@@ -20,6 +20,17 @@ cargo run --bin zilliqa -- db670cbff28f4b15297d03fafdab8f5303d68b7591bd59e31eaef
 
 You may also want to set `RUST_LOG=zilliqa=trace` to see the most detailed level of logs.
 
+### Running with z2
+
+The `z2` program in this repository will run a small local Zilliqa network for you, for debugging. Do:
+
+```bash
+cargo run --bin z2
+```
+
+for details.
+
+
 ### Bootstrap with docker-compose
 
 Automated bootstrap of a 4 nodes Zilliqa 2.0 aka zq2 network.
@@ -44,6 +55,20 @@ the network.
 
 Some tests involve compiling Solidity code.
 `svm-rs` will automatically download and use a suitable version for your platform when you run these tests.
+
+## Logging
+
+You can get log output globally via
+
+```unset
+RUST_LOG=zilliqa=[warn|info|debug|trace]
+```
+
+Or via individual modules using eg.
+
+```unset
+RUST_LOG=edbug,sled=info,zilliqa::scilla=trace
+```
 
 ## Supported APIs
 
