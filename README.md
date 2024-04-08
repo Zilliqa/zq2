@@ -70,6 +70,15 @@ Or via individual modules using eg.
 RUST_LOG=edbug,sled=info,zilliqa::scilla=trace
 ```
 
+## `rustfmt`
+
+We use a couple of nightly-only rustfmt features. The easiest way to get these is:
+
+```sh
+rustup toolchain install nightly
+cargo +nightly fmt
+```
+
 ## Supported APIs
 
 If an API is not mentioned in this table, support for it is not planned.

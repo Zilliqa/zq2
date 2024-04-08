@@ -1,16 +1,15 @@
-use eyre::{eyre, Result};
-use libp2p::PeerId;
 //use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
+
+use eyre::{eyre, Result};
+use libp2p::PeerId;
 use tokio::fs;
 use toml;
-use zilliqa::cfg;
-use zilliqa::crypto::NodePublicKey;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::SecretKey;
-use zilliqa::state::Address;
+use zilliqa::{cfg, crypto::NodePublicKey, state::Address};
 
 use crate::collector;
 
@@ -74,7 +73,7 @@ impl Setup {
             genesis_deposits.push((
                 self.secret_keys[i].node_public_key(),
                 GENESIS_DEPOSIT.to_string(),
-                self.node_addresses[i].clone(),
+                self.node_addresses[i],
             ))
         }
 
@@ -88,8 +87,12 @@ impl Setup {
         println!("Writing config files to {0}", &self.config_dir);
         for i in 0..self.how_many {
             let mut cfg = zilliqa::cfg::Config::default();
+            // from the oltp module ..
+            // @todo should pass this in!
+            cfg.otlp_collector_endpoint = Some("http://localhost:4317".to_string());
             let mut node_config = cfg::NodeConfig::default();
             node_config.json_rpc_port = usize::try_into(4201 + i)?;
+            println!("Node {i} has RPC port {0}", node_config.json_rpc_port);
             node_config.disable_rpc = false;
             node_config.eth_chain_id = 700 | 0x8000;
             node_config

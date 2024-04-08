@@ -1,6 +1,7 @@
+use std::fmt;
+
 use clap::{Args, Parser, Subcommand};
 use eyre::Result;
-use std::fmt;
 use z2lib::plumbing;
 
 #[derive(Parser, Debug)]
@@ -32,9 +33,15 @@ enum InternalCommand {
 struct RunStruct {
     config_dir: String,
 
-    #[clap(long, short)]
-    #[clap(default_value = "info")]
-    logs: LogLevel,
+    #[clap(long)]
+    #[clap(default_value = "warn")]
+    log_level: LogLevel,
+
+    #[clap(long)]
+    debug_modules: Vec<String>,
+
+    #[clap(long)]
+    trace_modules: Vec<String>,
 }
 
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
@@ -66,7 +73,13 @@ async fn main() -> Result<()> {
     match &cli.command {
         Commands::Internal(int_cmd) => match &int_cmd.command {
             InternalCommand::Run(ref arg) => {
-                plumbing::run_local_net(&arg.config_dir, &arg.logs.to_string()).await?;
+                plumbing::run_local_net(
+                    &arg.config_dir,
+                    &arg.log_level.to_string(),
+                    &arg.debug_modules,
+                    &arg.trace_modules,
+                )
+                .await?;
                 Ok(())
             }
         },
