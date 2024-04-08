@@ -446,13 +446,13 @@ fn convert_persistence(
         public_key: secret_key.node_public_key(),
         peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
     });
-    // Add stake for this validator. For now, we just assume they've always had 100 ZIL staked.
+    // Add stake for this validator. For now, we just assume they've always had 64 ZIL staked.
     // This assumptions will need to change for the actual testnet and mainnet launches, where we cannot invent ZIL
     // out of thin air (like we do below).
     let data = contracts::deposit::SET_STAKE.encode_input(&[
         Token::Bytes(secret_key.node_public_key().as_bytes()),
         Token::Address(H160::from_low_u64_be(1)),
-        Token::Uint(100.into()),
+        Token::Uint((64 * 10u128.pow(18)).into()),
     ])?;
     let ResultAndState {
         result,
