@@ -28,10 +28,12 @@ pub struct Setup {
     pub collector: Option<collector::Collector>,
     /// Where we store config files.
     pub config_dir: String,
+    /// Log spec
+    pub log_spec: String,
 }
 
 impl Setup {
-    pub fn new(how_many: usize, config_dir: &str) -> Result<Self> {
+    pub fn new(how_many: usize, config_dir: &str, log_spec: &str) -> Result<Self> {
         let mut secret_keys = Vec::new();
         let mut node_addresses = Vec::new();
         for i in 0..how_many {
@@ -47,6 +49,7 @@ impl Setup {
             node_addresses,
             collector: None,
             config_dir: config_dir.to_string(),
+            log_spec: log_spec.to_string(),
         })
     }
 
@@ -118,7 +121,9 @@ impl Setup {
             .map(|x| format!("{0}/{1}{2}/config.yaml", self.config_dir, DATADIR_PREFIX, x))
             .collect::<Vec<String>>();
 
-        self.collector = Some(collector::Collector::new(&self.secret_keys, &config_files).await?);
+        self.collector = Some(
+            collector::Collector::new(&self.secret_keys, &config_files, &self.log_spec).await?,
+        );
         if let Some(mut c) = self.collector.take() {
             c.complete().await?;
         }
