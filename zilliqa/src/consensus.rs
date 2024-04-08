@@ -46,7 +46,7 @@ struct NewViewVote {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Validator {
     pub public_key: NodePublicKey,
-    pub peer_id: PeerId,
+    pub peer_id: Option<PeerId>,
 }
 
 impl Validator {}
@@ -237,7 +237,7 @@ impl Consensus {
                         let (public_key, peer_id) = &config.consensus.genesis_committee[0];
                         let genesis_validator = Validator {
                             public_key: *public_key,
-                            peer_id: *peer_id,
+                            peer_id: Some(*peer_id),
                         };
                         let genesis =
                             Block::genesis(Committee::new(genesis_validator), state.root_hash()?);
@@ -278,15 +278,21 @@ impl Consensus {
             }
         };
 
-        let peers = config
+        let mut peers: Vec<_> = config
             .consensus
             .genesis_committee
             .iter()
             .map(|(public_key, peer_id)| Validator {
                 public_key: *public_key,
-                peer_id: *peer_id,
+                peer_id: Some(*peer_id),
             })
             .collect();
+
+        peers.push(Validator {
+            peer_id: Some(secret_key.to_libp2p_keypair().public().to_peer_id()),
+            public_key: secret_key.node_public_key(),
+        });
+
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -336,22 +342,26 @@ impl Consensus {
         public_key: NodePublicKey,
     ) -> Result<Option<(Option<PeerId>, ExternalMessage)>> {
         if self.state.get_stake(public_key)?.is_none() {
-            warn!(%peer_id, "peer does not have sufficient stake");
+            //warn!(%peer_id, "peer does not have sufficient stake");
             return Ok(None);
         }
-        if let Some(existing) = self.pending_peers.iter_mut().find(|v| v.peer_id == peer_id) {
+        if let Some(existing) = self
+            .pending_peers
+            .iter_mut()
+            .find(|v| v.peer_id == Some(peer_id))
+        {
             existing.public_key = public_key;
             info!(%peer_id, "peer already exists");
             return Ok(None);
         }
-        info!(%peer_id, "adding peer to consensus");
+        warn!(%peer_id, "adding peer to consensus");
 
         self.pending_peers.push(Validator {
-            peer_id,
+            peer_id: Some(peer_id),
             public_key,
         });
 
-        if self.view.get_view() == 1 {
+        /*if self.view.get_view() == 1 {
             let Some(genesis) = self.get_block_by_view(0)? else {
                 // if we don't have genesis that means we only have its hash
                 // ergo we weren't, and can't be, part of the network at genesis and
@@ -361,12 +371,12 @@ impl Consensus {
             // If we're in the genesis committee, vote again.
             let stakers = self.state.get_stakers()?;
             if stakers.iter().any(|pub_key| *pub_key == self.public_key()) {
-                trace!("voting for genesis block");
+                info!("voting for genesis block, stakers size: {}, peers size: {}", stakers.len(), self.pending_peers.len());
                 let leader = self.leader_at_block(&genesis, self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
-                return Ok(Some((Some(leader.peer_id), ExternalMessage::Vote(vote))));
+                return Ok(Some((Some(leader.peer_id.unwrap()), ExternalMessage::Vote(vote))));
             }
-        }
+        }*/
 
         Ok(None)
     }
@@ -397,9 +407,9 @@ impl Consensus {
         let our_id = self.peer_id();
         self.pending_peers
             .iter()
-            .filter(|v| v.peer_id != our_id)
+            .filter(|v| v.peer_id.is_some() && v.peer_id.unwrap() != our_id)
             .choose(&mut self.rng)
-            .map(|v| v.peer_id)
+            .map(|v| v.peer_id.unwrap())
     }
 
     pub fn timeout(&mut self) -> Result<Option<(PeerId, ExternalMessage)>> {
@@ -416,7 +426,7 @@ impl Consensus {
                 let leader = self.leader(self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
                 info!("Sending vote to leader: {:?}", leader.peer_id);
-                return Ok(Some((leader.peer_id, ExternalMessage::Vote(vote))));
+                return Ok(Some((leader.peer_id.unwrap(), ExternalMessage::Vote(vote))));
             } else {
                 info!("We are on view 1 but we are not a validator, so we are waiting.");
                 let _ = self.download_blocks_up_to_head();
@@ -451,7 +461,7 @@ impl Consensus {
 
         trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", self.view.get_view(), time_since_last_view_change, exponential_backoff_timeout, head_block_view, head_block.hash());
 
-        info!(
+        warn!(
             "***** TIMEOUT: View is now {} -> {}. Next view change in {}ms",
             self.view.get_view(),
             self.view.get_view() + 1,
@@ -464,7 +474,11 @@ impl Consensus {
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
             anyhow!("missing block corresponding to our high qc - this should never happen")
         })?;
-        let leader = self.leader_at_block(&block, self.view.get_view()).peer_id;
+        let leader = self.leader_at_block(&block, self.view.get_view());
+
+        if leader.peer_id.is_none() {
+            return Ok(None);
+        }
 
         let new_view = NewView::new(
             self.secret_key,
@@ -473,7 +487,10 @@ impl Consensus {
             self.secret_key.node_public_key(),
         );
 
-        Ok(Some((leader, ExternalMessage::NewView(Box::new(new_view)))))
+        Ok(Some((
+            leader.peer_id.unwrap(),
+            ExternalMessage::NewView(Box::new(new_view)),
+        )))
     }
 
     pub fn peer_id(&self) -> PeerId {
@@ -560,11 +577,12 @@ impl Consensus {
             if self.state.root_hash()? != parent.state_root_hash() {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}.\nHead: {}", parent.state_root_hash(), self.state.root_hash()?, head_block);
             }
+            let stakers = self.state.get_stakers()?;
+            trace!("Stakers size before execution: {}", stakers.len());
+            self.execute_block(&block, transactions, &stakers)?;
 
             let stakers = self.state.get_stakers()?;
-
-            self.execute_block(&block, transactions, &stakers)?;
-            info!("Stakers size after execution: {}", stakers.len());
+            trace!("Stakers size after execution: {}", stakers.len());
             if self.view.get_view() != proposal_view + 1 {
                 self.view.set_view(proposal_view + 1);
 
@@ -588,10 +606,21 @@ impl Consensus {
                 //info!("Last settled block is: {}", head_block.header.number);
                 //info!("current state root: {:?}, head_block root: {:?}, block root: {:?}", self.state.root_hash()?, head_block.header.state_root_hash, block.header.state_root_hash);
                 //info!("Committee size in current state root: {:?}", self.state.get_stakers()?.len());
-                let next_leader = self.leader_at_block(&block, self.view.get_view()).peer_id;
+                let next_leader = self.leader_at_block(&block, self.view.get_view());
+                info!(
+                    "I decided that leader from block: {:?} is at: {} with view: {}",
+                    block.header.hash,
+                    hex::encode(next_leader.public_key.as_bytes()),
+                    self.view.get_view()
+                );
+                if next_leader.peer_id.is_none() {
+                    warn!("Next leader is currently not reachable");
+                    return Ok(None);
+                }
 
-                info!("Created vote. block hash: {:?}, block num: {}, head_block_hash: {:?}, head_block_num: {}", block.header.hash, block.header.number, self.head_block().header.hash, self.head_block().header.number);
-                info!("current state root: {:?}", self.state.root_hash()?);
+                let next_leader = next_leader.peer_id.unwrap();
+                info!("Created vote. Stakers size: {}, peers size: {}, block hash: {:?}, block num: {}", stakers.len(), self.pending_peers.len(), block.header.hash, block.header.number);
+                //info!("current state root: {:?}", self.state.root_hash()?);
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
                     return Ok(Some((next_leader, vote)));
@@ -610,7 +639,7 @@ impl Consensus {
         view: u64,
         cosigned: &BitSlice,
     ) -> Result<()> {
-        info!("apply rewards in view {view}");
+        trace!("apply rewards in view {view}");
         // TODO: Read from a contract.
         let rewards_per_hour = 204_000_000_000_000_000_000_000u128;
         // TODO: Calculate
@@ -729,7 +758,7 @@ impl Consensus {
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         let Some(block) = self.get_block(&vote.block_hash)? else {
-            trace!(vote_view = vote.view, "ignoring vote, missing block");
+            warn!(vote_view = vote.view, "ignoring vote, missing block");
             return Ok(None);
         };
         let block_hash = block.hash();
@@ -740,7 +769,7 @@ impl Consensus {
         // if we are not the leader of the round in which the vote counts
         // The vote is in the happy path (?) - so the view is block view + 1
         if !self.are_we_leader_for_view(block_hash, block_view + 1) {
-            trace!(
+            warn!(
                 vote_view = block_view + 1,
                 ?block_hash,
                 "skipping vote, not the leader"
@@ -749,20 +778,45 @@ impl Consensus {
         }
         // if the vote is too old and does not count anymore
         if block_view + 1 < self.view.get_view() {
-            trace!("vote is too old");
+            warn!("vote is too old");
             return Ok(None);
         }
 
-        let committee = self.state.get_stakers()?;
+        let committee = {
+            if block.number() > 0 {
+                let parent_block = self.get_block(&block.parent_hash())?.unwrap();
+                self.state.get_stakers_at_block(&block)?
+                //self.state.get_stakers_at_block(&parent_block)?
+            } else {
+                self.state.get_stakers_at_block(&block)?
+                //self.state.get_stakers()?
+            }
+        };
+
+        trace!(
+            "committee size: {}, peers_size: {}, my Public key: {}",
+            committee.len(),
+            self.pending_peers.len(),
+            hex::encode(self.public_key().as_bytes())
+        );
+        for item in &committee {
+            trace!("Committee has pub_key: {}", hex::encode(item.as_bytes()));
+        }
+        //info!("VOTE PUB KEY: {}", hex::encode(vote.public_key.as_bytes()));
         // verify the sender's signature on block_hash
-        let (index, _) = committee
+        let Some((index, _)) = committee
             .iter()
             .enumerate()
             .find(|(_, &v)| v == vote.public_key)
-            .unwrap();
+        else {
+            warn!("Skipping vote outside of committee");
+            return Ok(None);
+        };
+
         vote.verify()?;
 
         let committee_size = committee.len();
+        trace!("BEFORE EXEC committee is: {}", committee_size);
         let (mut signatures, mut cosigned, mut cosigned_weight, mut supermajority_reached) =
             self.votes.get(&block_hash).cloned().unwrap_or_else(|| {
                 (
@@ -820,7 +874,7 @@ impl Consensus {
                         self.state.set_to_root(H256(parent.state_root_hash().0));
                     }
 
-                    let committee = self.state.get_stakers()?;
+                    //let committee = self.state.get_stakers()?;
 
                     let transactions = self.get_txns_to_execute();
 
@@ -849,18 +903,31 @@ impl Consensus {
                         &committee,
                     );
 
-                    info!(
+                    trace!(
                         "PROPOSING block: {:?}, committee_size: {}, parent_hash: {:?}, qc_block_hash: {:?}",
                         proposal.header.hash,
                         committee.len(),
                         parent_hash,
                         qc.clone().block_hash
                     );
-                    info!(?proposal, "Proposing block = ");
+
+                    info!(
+                        "I'm proposing block, stakers size: {}, peers_size: {}, my pub key is: {}",
+                        committee.len(),
+                        self.pending_peers.len(),
+                        hex::encode(self.public_key().as_bytes())
+                    );
+                    trace!(
+                        "PUBLIC KEYS IN PROPOSED BLOCK COMMITTEE, my: {}",
+                        hex::encode(self.public_key().as_bytes())
+                    );
+                    for item in &committee {
+                        trace!("Committee has pub_key: {}", hex::encode(item.as_bytes()));
+                    }
 
                     self.state.set_to_root(H256(previous_state_root_hash.0));
 
-                    self.votes.insert(
+                    let committee = self.votes.insert(
                         block_hash,
                         (signatures, cosigned, cosigned_weight, supermajority_reached),
                     );
@@ -876,9 +943,17 @@ impl Consensus {
 
         self.votes.insert(
             block_hash,
-            (signatures, cosigned, cosigned_weight, supermajority_reached),
+            (
+                signatures,
+                cosigned.clone(),
+                cosigned_weight,
+                supermajority_reached,
+            ),
         );
-
+        info!(
+            "DIDN't REACHED supermajority yet!, cosigned is {:?}",
+            cosigned
+        );
         Ok(None)
     }
 
@@ -900,26 +975,38 @@ impl Consensus {
 
     fn are_we_leader_for_view(&mut self, parent_hash: Hash, view: u64) -> bool {
         match self.leader_for_view(parent_hash, view) {
-            Some(leader) => leader == self.peer_id(),
+            Some(leader) => leader == self.public_key(),
             None => false,
         }
     }
 
-    fn leader_for_view(&mut self, parent_hash: Hash, view: u64) -> Option<PeerId> {
-        let parent = self.get_block(&parent_hash);
-
-        let parent = match parent {
-            Ok(Some(parent)) => parent,
-            _ => {
+    fn leader_for_view(&mut self, parent_hash: Hash, view: u64) -> Option<NodePublicKey> {
+        if let Ok(Some(parent)) = self.get_block(&parent_hash) {
+            let leader = self.leader_at_block(&parent, view);
+            info!(
+                "Calculated leader for block: {:?} {} for view: {}",
+                parent_hash,
+                hex::encode(leader.public_key.as_bytes()),
+                view
+            );
+            return Some(leader.public_key);
+        } else {
+            if view > 1 {
                 warn!(
                     "parent not found while determining leader for view {}",
                     view
                 );
                 return None;
             }
-        };
-
-        Some(self.leader_at_block(&parent, view).peer_id)
+            let leader = self.leader(view);
+            info!(
+                "Calculated leader for block: {:?} {} for view: {}",
+                parent_hash,
+                hex::encode(leader.public_key.as_bytes()),
+                view
+            );
+            return Some(leader.public_key);
+        }
     }
 
     fn committee_for_hash(&mut self, parent_hash: Hash) -> Result<Vec<NodePublicKey>> {
@@ -1367,23 +1454,38 @@ impl Consensus {
 
     /// Check the validity of a block
     fn check_block(&mut self, block: &Block) -> Result<()> {
-        info!(
+        trace!(
             "Check_block, state_root_is: {:?}, head block is: {:?}, number: {} ",
             self.state.root_hash()?,
             self.head_block().header.hash,
             self.head_block().header.number
         );
-        info!(
-            "Check_block, blook hash: {:?}, block number: {:?}, block state root: {} ",
-            block.header.hash, block.header.number, block.header.state_root_hash
-        );
+        //info!(
+        //    "Check_block, blook hash: {:?}, parent: {:?} block number: {:?}, block state root: {} ",
+        //    block.header.hash,
+        //    block.parent_hash(),
+        //    block.header.number,
+        //    block.header.state_root_hash
+        //);
         let parent = self.get_block(&block.parent_hash()).unwrap().unwrap();
 
         let committee = self.state.get_stakers_at_block(&parent);
         if committee.is_err() {
-            info!("COMMITTEE is error at block: {}", block.header.number);
+            trace!("COMMITTEE is error at block: {}", block.header.number);
         }
         let committee = committee.unwrap();
+
+        trace!(
+            "PUBLIC KEYS IN COMMITTEE check_block, my: {}",
+            hex::encode(self.public_key().as_bytes())
+        );
+        for item in &committee {
+            trace!(
+                "Committee check_block has pub_key: {}",
+                hex::encode(item.as_bytes())
+            );
+        }
+
         block.verify_hash(&committee)?;
 
         // This should be checked against genesis
@@ -1402,7 +1504,7 @@ impl Consensus {
             ));
         }
 
-        let Some(parent) = self.get_block(&block.parent_hash())? else {
+        let Some(_parent) = self.get_block(&block.parent_hash())? else {
             warn!(
                 "Missing parent block while trying to check validity of block {}",
                 block.number()
@@ -1414,9 +1516,9 @@ impl Consensus {
         // Derive the proposer from the block's view
         let proposer = self.leader_at_block(&parent, block.view());
 
-        trace!(
+        info!(
             "(check block) I think the block proposer is: {}, we are {}",
-            proposer.peer_id,
+            hex::encode(proposer.public_key.as_bytes()),
             self.peer_id()
         );
         // Verify the proposer's signature on the block
@@ -1767,7 +1869,7 @@ impl Consensus {
     }
 
     pub fn leader(&mut self, view: u64) -> Validator {
-        let committee = self.get_connected_stakers();
+        let committee = self.state.get_stakers().unwrap(); //self.get_connected_stakers();
 
         let mut rng = ChaCha8Rng::seed_from_u64(view);
         let dist = WeightedIndex::new(committee.iter().map(|pub_key| {
@@ -1779,19 +1881,36 @@ impl Consensus {
         let public_key = *committee.iter().nth(index).unwrap();
 
         info!(
-            "CHOSEN LEADER with IDX: {}, committee size: {}",
+            "CHOSEN LEADER with IDX: {}, committee size: {}, peers size: {}",
             index,
-            committee.len()
+            committee.len(),
+            self.pending_peers.len()
         );
-        let peer_id = self
+
+        trace!("COMMITTE IN CONTRACT HAS KEYS: ");
+        for member in &committee {
+            trace!("MEMBER PUB KEY: {}", hex::encode(member.as_bytes()));
+        }
+
+        trace!("PENDING PEERS has HAS KEYS: ");
+        for member in &self.pending_peers {
+            trace!(
+                "MEMBER PUB KEY: {}",
+                hex::encode(member.public_key.as_bytes())
+            );
+        }
+
+        if let Some(leader) = self
             .pending_peers
             .iter()
             .find(|&v| v.public_key == public_key)
-            .unwrap()
-            .peer_id;
+        {
+            return *leader;
+        };
+
         Validator {
             public_key,
-            peer_id,
+            peer_id: None,
         }
     }
 

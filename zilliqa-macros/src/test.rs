@@ -73,7 +73,7 @@ pub(crate) fn test_macro(_args: TokenStream, item: TokenStream) -> TokenStream {
 
                     async move {
                         let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
-                        let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 2, seed);
+                        let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed);
 
                         // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
                         let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(

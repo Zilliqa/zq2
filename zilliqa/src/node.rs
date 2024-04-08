@@ -135,9 +135,9 @@ impl Node {
                     self.message_sender
                         .send_external_message(leader, ExternalMessage::Vote(vote))?;
                 } else {
-                    info!("We had nothing to respond to proposal, lets try to join committee for view {m_view:}");
-                    self.message_sender.send_external_message(
-                        from,
+                    warn!("We had nothing to respond to proposal, lets try to join committee for view {m_view:}");
+                    self.message_sender.broadcast_external_message(
+                        //from,
                         ExternalMessage::JoinCommittee(self.consensus.public_key()),
                     )?;
                 }

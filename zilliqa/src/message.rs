@@ -565,7 +565,7 @@ impl Committee {
     }
 
     pub fn remove_by_peer_id(&mut self, peer_id: PeerId) {
-        self.0.retain(|v| v.peer_id != peer_id);
+        self.0.retain(|v| v.peer_id != Some(peer_id));
     }
 
     pub fn public_keys(&self) -> Vec<NodePublicKey> {

@@ -240,18 +240,44 @@ impl Network {
             .chain(local_receivers)
             .collect();
 
-        for node in &nodes {
-            info!(
-                "Node {}: {} (dir: {})",
-                node.index,
-                node.peer_id,
-                node.dir.as_ref().unwrap().path().to_string_lossy(),
-            );
-        }
-
         let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
+
+        for node in &nodes {
+            info!(
+                "Node {}: {} {} (dir: {})",
+                node.index,
+                hex::encode(node.secret_key.node_public_key().as_bytes()),
+                node.peer_id,
+                node.dir.as_ref().unwrap().path().to_string_lossy(),
+            );
+
+            /*resend_message
+               .send((
+                   node.peer_id,
+                   None,
+                   AnyMessage::External(ExternalMessage::JoinCommittee(
+                       node.secret_key.node_public_key(),
+                   )),
+               ))
+               .unwrap();
+
+            */
+        }
+
+        for idx in 0..nodes.len() {
+            for inner in 0..nodes.len() {
+                let added_pub_key = &nodes[inner].secret_key.node_public_key();
+                let added_peer = &nodes[inner].peer_id;
+                nodes[idx]
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .add_peer(*added_peer, *added_pub_key)
+                    .unwrap();
+            }
+        }
 
         Network {
             genesis_committee,
@@ -316,23 +342,33 @@ impl Network {
         let (node, receiver, local_receiver) =
             node(config, secret_key, self.nodes.len(), None).unwrap();
 
-        self.resend_message
-            .send((
-                node.peer_id,
-                None,
-                AnyMessage::External(ExternalMessage::JoinCommittee(
-                    node.secret_key.node_public_key(),
-                )),
-            ))
-            .unwrap();
+        /*        self.resend_message
+                   .send((
+                       node.peer_id,
+                       None,
+                       AnyMessage::External(ExternalMessage::JoinCommittee(
+                           node.secret_key.node_public_key(),
+                       )),
+                   ))
+                   .unwrap();
 
-        info!("Node {}: {}", node.index, node.peer_id);
+        */
+
+        info!(
+            "Node {}: {} {}",
+            node.index,
+            hex::encode(node.secret_key.node_public_key().as_bytes()),
+            node.peer_id
+        );
 
         let index = node.index;
+        let peer_id = node.peer_id;
 
         self.nodes.push(node);
         self.receivers.push(receiver);
         self.receivers.push(local_receiver);
+
+        self.join_by_node(peer_id, secret_key.node_public_key());
 
         index
     }
@@ -414,10 +450,11 @@ impl Network {
             .collect();
 
         for node in &nodes {
-            trace!(
-                "Node {}: {} (dir: {})",
+            info!(
+                "Node {}: {} {} (dir: {})",
                 node.index,
                 node.peer_id,
+                hex::encode(node.secret_key.node_public_key().as_bytes()),
                 node.dir.as_ref().unwrap().path().to_string_lossy(),
             );
         }
@@ -847,15 +884,29 @@ impl Network {
         self.wallet_from_key(key).await
     }
 
-    pub fn join_by_node(&mut self, peer_id: PeerId, public_key: NodePublicKey) -> Result<()> {
-        self.resend_message
-            .send((
-                peer_id,
-                None,
-                AnyMessage::External(ExternalMessage::JoinCommittee(public_key)),
-            ))
+    pub fn join_by_node(&mut self, peer_id: PeerId, public_key: NodePublicKey) {
+        for node in &self.nodes {
+            node.inner
+                .lock()
+                .unwrap()
+                .add_peer(peer_id, public_key)
+                .unwrap();
+        }
+        let added_node = self
+            .nodes
+            .iter()
+            .find(|&node| node.peer_id == peer_id)
             .unwrap();
-        Ok(())
+        for node in &self.nodes {
+            if node.peer_id != peer_id {
+                added_node
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .add_peer(node.peer_id, node.secret_key.node_public_key())
+                    .unwrap();
+            }
+        }
     }
 }
 

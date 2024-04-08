@@ -290,7 +290,7 @@ impl State {
     }
 
     pub fn get_stakers_at_block(&mut self, block: &Block) -> Result<Vec<NodePublicKey>> {
-        info!("Calling get_stakers_at_block");
+        //info!("Calling get_stakers_at_block: {:?}", block.header.hash);
         let curr_root_hash = self.root_hash();
         if curr_root_hash.is_err() {
             info!("I CANT GET CURRENT STATET ROOT!");
@@ -298,10 +298,10 @@ impl State {
         let curr_root_hash = curr_root_hash.unwrap();
         let block_root_hash = block.state_root_hash();
 
-        info!(
-            "curr_root_hash: {:?}, block_root_hash: {:?}",
-            curr_root_hash, block_root_hash
-        );
+        //info!(
+        //    "curr_root_hash: {:?}, block_root_hash: {:?}",
+        //    curr_root_hash, block_root_hash
+        //);
         self.set_to_root(H256(block_root_hash.0));
 
         let stakers = self.get_stakers();
