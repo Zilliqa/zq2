@@ -62,6 +62,10 @@ enum Command {
         block_number: u64,
         txn_hash: H256,
     },
+    Debug {
+        zq2_data_dir: PathBuf,
+        shard_id: u64,
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -316,6 +320,20 @@ fn main() -> Result<()> {
 
             println!("{tx:?}");
         }
+        Command::Debug { zq2_data_dir, shard_id } => {
+            let db = Db::new(Some(zq2_data_dir), shard_id)?;
+            let latest_block_view = db.get_latest_finalized_view().unwrap().unwrap();
+            let latest_block_hash = db.get_canonical_block_view(latest_block_view).unwrap().unwrap();
+            let latest_block = db.get_block(&latest_block_hash).unwrap().unwrap();
+            let state = State::new_at_root(db.state_trie().unwrap(), H256(latest_block.state_root_hash().0));
+            
+            println!("Committee is {:?}", latest_block.committee);
+            for v in latest_block.committee.iter() {
+                let stake = state.get_stake(v.public_key).unwrap();
+                println!("Member {:?} has {stake:?} staked", hex::encode(v.public_key.as_bytes()));
+            }
+            println!("Stakers are {:?}", state.get_stakers().unwrap().iter().map(|p| hex::encode(p.as_bytes())).collect::<Vec<_>>());
+        }
     }
 
     Ok(())
@@ -418,6 +436,8 @@ fn convert_persistence(
     if !result.is_success() {
         return Err(anyhow!("setting stake failed: {result:?}"));
     }
+    println!("Set stake result was {result:?}");
+    println!("State delta is {result_state:?}");
     state.apply_delta(result_state)?;
 
     let max_block = zq1_db.get_tx_blocks_aux("MaxTxBlockNumber")?.unwrap();
