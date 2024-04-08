@@ -51,7 +51,7 @@ opentelemetry_sdk = { version = "0.21.2", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.14.0", features = ["metrics"] }
 paste = "1.0.14"
 primitive-types = { version = "0.12.2", features = ["serde"] }
-prost = "0.12.2"
+prost = "0.12.4"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rand_core = "0.6.4"
