@@ -157,6 +157,10 @@ impl P2pNode {
 
     pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
         let topic = Self::shard_id_to_topic(config.eth_chain_id);
+        if self.shard_nodes.contains_key(&topic.hash()) {
+            info!("LaunchShard message received for a shard we're already running. Ignoring...");
+            return Ok(());
+        }
         let mut node = NodeLauncher::new(
             self.secret_key,
             config,

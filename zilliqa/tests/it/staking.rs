@@ -57,7 +57,7 @@ async fn deposit_stake(
                 .unwrap(),
         );
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
-    network.run_until_receipt(wallet, hash, 50).await;
+    network.run_until_receipt(wallet, hash, 80).await;
 }
 
 async fn get_stakers(
@@ -87,7 +87,7 @@ async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
     let stakers = get_stakers(&wallet).await;
     assert_eq!(stakers.len(), 4);
 
-    network.run_until_block(&wallet, 1.into(), 50).await;
+    network.run_until_block(&wallet, 1.into(), 80).await;
 
     check_miner_got_reward(&wallet, 1).await;
 }

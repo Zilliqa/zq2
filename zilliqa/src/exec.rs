@@ -240,7 +240,7 @@ impl State {
             },
             logs: result
                 .logs()
-                .into_iter()
+                .iter()
                 .map(|l| Log {
                     address: H160(l.address.into_array()),
                     topics: l.topics().iter().map(|t| H256(t.0)).collect(),

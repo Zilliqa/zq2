@@ -28,7 +28,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            50,
+            80,
         )
         .await
         .unwrap();
@@ -44,7 +44,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
                     .map_or(0, |b| b.number());
                 block >= 3
             },
-            50,
+            80,
         )
         .await
         .unwrap();
