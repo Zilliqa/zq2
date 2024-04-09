@@ -224,6 +224,7 @@ pub enum ExternalMessage {
     NewTransaction(SignedTransaction),
     RequestResponse,
     JoinCommittee(NodePublicKey),
+    CommitteeJoined(NodePublicKey),
 }
 
 /// A message intended only for local communication between shard nodes and/or the parent p2p node,
@@ -247,6 +248,7 @@ impl ExternalMessage {
             ExternalMessage::NewTransaction(_) => "NewTransaction",
             ExternalMessage::RequestResponse => "RequestResponse",
             ExternalMessage::JoinCommittee(_) => "JoinCommittee",
+            ExternalMessage::CommitteeJoined(_) => "CommitteeJoined",
         }
     }
 }

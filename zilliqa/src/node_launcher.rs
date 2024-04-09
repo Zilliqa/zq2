@@ -131,6 +131,8 @@ impl NodeLauncher {
 
         self.node_launched = true;
 
+        self.node.lock().unwrap().join_peer_committee();
+
         loop {
             select! {
                 _message = self.local_inbound_message_receiver.next() => {

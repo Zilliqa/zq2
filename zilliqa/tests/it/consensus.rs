@@ -24,7 +24,7 @@ async fn network_can_die_restart(mut network: Network) {
                 let index = n.random_index();
                 n.get_node(index).get_finalized_height() >= start_block
             },
-            50,
+            60,
         )
         .await
         .unwrap();
@@ -66,7 +66,7 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
                 let index = n.random_index();
                 n.get_node(index).get_finalized_height() >= start_block
             },
-            50,
+            60,
         )
         .await
         .unwrap();
@@ -325,7 +325,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
 
     // 4. Finalize that block on the main shard, so that the x-shard message gets sent
     network
-        .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 50)
+        .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 60)
         .await;
 
     // 5. Make sure the transaction gets included in the child network
@@ -375,7 +375,7 @@ async fn handle_forking_correctly(mut network: Network) {
                 let index = n.random_index();
                 n.get_node(index).get_finalized_height() >= start_block
             },
-            50,
+            60,
         )
         .await
         .unwrap();

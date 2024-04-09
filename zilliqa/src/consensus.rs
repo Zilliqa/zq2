@@ -4,6 +4,7 @@ use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 //use bls_signatures::Serialize as BlsSerialize;
 use ethabi::{Event, Log, RawLog};
+use itertools::Itertools;
 use libp2p::PeerId;
 use primitive_types::{H256, U256};
 use rand::{
@@ -288,10 +289,25 @@ impl Consensus {
             })
             .collect();
 
-        peers.push(Validator {
-            peer_id: Some(secret_key.to_libp2p_keypair().public().to_peer_id()),
-            public_key: secret_key.node_public_key(),
-        });
+        let public_key = secret_key.node_public_key();
+        let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+
+        if peers
+            .iter()
+            .find(|member| member.public_key == public_key)
+            .is_none()
+        {
+            peers.push(Validator {
+                peer_id: Some(peer_id),
+                public_key,
+            });
+        }
+
+        info!(
+            "Starting consensus, curr peers size: {}, my pub key: {}",
+            peers.len(),
+            hex::encode(secret_key.node_public_key().as_bytes())
+        );
 
         let mut consensus = Consensus {
             secret_key,
@@ -348,20 +364,45 @@ impl Consensus {
         if let Some(existing) = self
             .pending_peers
             .iter_mut()
-            .find(|v| v.peer_id == Some(peer_id))
+            .find(|v| v.public_key == public_key)
         {
-            existing.public_key = public_key;
-            info!(%peer_id, "peer already exists");
-            return Ok(None);
+            existing.peer_id = Some(peer_id);
+            //info!(%peer_id, "peer already exists");
+            info!(
+                "I see {} on my list, replying with my one: {}",
+                hex::encode(public_key.as_bytes()),
+                hex::encode(self.public_key().as_bytes())
+            );
+            return Ok(Some((
+                Some(peer_id),
+                ExternalMessage::CommitteeJoined(self.public_key()),
+            )));
         }
-        warn!(%peer_id, "adding peer to consensus");
+        //warn!(%peer_id, "adding peer to consensus");
 
         self.pending_peers.push(Validator {
             peer_id: Some(peer_id),
-            public_key,
+            public_key: public_key.clone(),
         });
 
-        /*if self.view.get_view() == 1 {
+        info!(
+            "Adding peer {} to consensus, current size: {}, my pub key: {}",
+            hex::encode(public_key.as_bytes()),
+            self.pending_peers.len(),
+            hex::encode(self.public_key().as_bytes())
+        );
+
+        if self.pending_peers.len() > 5 {
+            info!("Peers are suspiciously large. printing");
+            for member in &self.pending_peers {
+                info!(
+                    "Member pub key is: {}",
+                    hex::encode(member.public_key.as_bytes())
+                );
+            }
+        }
+
+        if self.view.get_view() == 1 {
             let Some(genesis) = self.get_block_by_view(0)? else {
                 // if we don't have genesis that means we only have its hash
                 // ergo we weren't, and can't be, part of the network at genesis and
@@ -369,16 +410,58 @@ impl Consensus {
                 return Ok(None);
             };
             // If we're in the genesis committee, vote again.
-            let stakers = self.state.get_stakers()?;
+            /*let stakers = self.state.get_stakers()?;
             if stakers.iter().any(|pub_key| *pub_key == self.public_key()) {
                 info!("voting for genesis block, stakers size: {}, peers size: {}", stakers.len(), self.pending_peers.len());
                 let leader = self.leader_at_block(&genesis, self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
                 return Ok(Some((Some(leader.peer_id.unwrap()), ExternalMessage::Vote(vote))));
-            }
-        }*/
+            }*/
+        }
 
-        Ok(None)
+        return Ok(Some((
+            Some(peer_id),
+            ExternalMessage::CommitteeJoined(self.public_key()),
+        )));
+    }
+
+    pub fn peer_joined(&mut self, replied_peer_id: PeerId, replied_public_key: NodePublicKey) {
+        if let Some(existing) = self
+            .pending_peers
+            .iter_mut()
+            .find(|v| v.public_key == replied_public_key)
+        {
+            //if existing.public_key != self.public_key() {
+            info!(
+                "ConfirmedJoin {} on my list",
+                hex::encode(replied_public_key.as_bytes())
+            );
+            existing.peer_id = Some(replied_peer_id);
+            //}
+            //info!(%replied_peer_id, "Replied peer already exists");
+            return;
+        }
+        //warn!(%replied_peer_id, "adding replied peer to consensus");
+
+        info!(
+            "ConfirmedJoin {} newly added",
+            hex::encode(replied_public_key.as_bytes())
+        );
+
+        self.pending_peers.push(Validator {
+            peer_id: Some(replied_peer_id),
+            public_key: replied_public_key,
+        });
+
+        if self.pending_peers.len() > 5 {
+            info!("JOINED Peers are suspiciously large. printing");
+            for member in &self.pending_peers {
+                info!(
+                    "Member pub key is: {}",
+                    hex::encode(member.public_key.as_bytes())
+                );
+            }
+        }
     }
 
     pub fn head_block(&self) -> Block {
@@ -593,7 +676,7 @@ impl Consensus {
             }
 
             // Get possibly updated list of stakers
-            let stakers = self.state.get_stakers()?;
+            let stakers = self.state.get_stakers_at_block(&block)?;
             if !stakers.iter().any(|v| *v == self.public_key()) {
                 info!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
@@ -1467,7 +1550,13 @@ impl Consensus {
         //    block.header.number,
         //    block.header.state_root_hash
         //);
-        let parent = self.get_block(&block.parent_hash()).unwrap().unwrap();
+        let Some(parent) = self.get_block(&block.parent_hash())? else {
+            warn!(
+                "Missing parent block while trying to check validity of block {}",
+                block.number()
+            );
+            return Err(MissingBlockError::from(block.parent_hash()).into());
+        };
 
         let committee = self.state.get_stakers_at_block(&parent);
         if committee.is_err() {
@@ -1503,14 +1592,6 @@ impl Consensus {
                 finalized_block.view()
             ));
         }
-
-        let Some(_parent) = self.get_block(&block.parent_hash())? else {
-            warn!(
-                "Missing parent block while trying to check validity of block {}",
-                block.number()
-            );
-            return Err(MissingBlockError::from(block.parent_hash()).into());
-        };
 
         let parent = self.get_block(&block.parent_hash())?.unwrap();
         // Derive the proposer from the block's view

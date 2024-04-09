@@ -193,6 +193,9 @@ impl Node {
             ExternalMessage::JoinCommittee(public_key) => {
                 self.add_peer(from, public_key)?;
             }
+            ExternalMessage::CommitteeJoined(replied_public_key) => {
+                self.peer_joined(from, replied_public_key);
+            }
         }
 
         Ok(())
@@ -251,6 +254,21 @@ impl Node {
             }
         }
         Ok(())
+    }
+
+    pub fn peer_joined(&mut self, peer_id: PeerId, public_key: NodePublicKey) {
+        self.consensus.peer_joined(peer_id, public_key);
+    }
+
+    pub fn join_peer_committee(&mut self) {
+        let join_message = ExternalMessage::JoinCommittee(self.consensus.public_key());
+        info!(
+            "Broadcasting join!, my pub_key: {}",
+            hex::encode(self.consensus.public_key().as_bytes())
+        );
+        self.message_sender
+            .broadcast_external_message(join_message)
+            .unwrap();
     }
 
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {

@@ -100,7 +100,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
 
     let peer_id = network.get_node_raw(index).peer_id;
-    network.join_by_node(peer_id, new_validator_key.node_public_key());
+    //network.join_by_node(peer_id, new_validator_key.node_public_key());
 
     let stakers = get_stakers(&wallet).await;
     assert_eq!(stakers.len(), 4);
@@ -116,7 +116,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     .await;
 
     let peer_id = network.get_node_raw(index).peer_id;
-    network.join_by_node(peer_id, new_validator_key.node_public_key());
+    //network.join_by_node(peer_id, new_validator_key.node_public_key());
 
     let stakers = get_stakers(&wallet).await;
     assert_eq!(stakers.len(), 5);
@@ -158,7 +158,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
 
     let peer_id = network.get_node_raw(index).peer_id;
-    network.join_by_node(peer_id, new_validator_key.node_public_key());
+    //network.join_by_node(peer_id, new_validator_key.node_public_key());
 
     deposit_stake(
         &mut network,
@@ -170,7 +170,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     .await;
 
     let peer_id = network.get_node_raw(index).peer_id;
-    network.join_by_node(peer_id, new_validator_key.node_public_key());
+    //network.join_by_node(peer_id, new_validator_key.node_public_key());
 
     // Start counting at the point where the new validator becomes a block proposer. This guarantees it is now part of
     // the consensus committee.

@@ -252,7 +252,7 @@ impl Network {
                 node.peer_id,
                 node.dir.as_ref().unwrap().path().to_string_lossy(),
             );
-
+            node.inner.lock().unwrap().join_peer_committee();
             /*resend_message
                .send((
                    node.peer_id,
@@ -266,7 +266,7 @@ impl Network {
             */
         }
 
-        for idx in 0..nodes.len() {
+        /*for idx in 0..nodes.len() {
             for inner in 0..nodes.len() {
                 let added_pub_key = &nodes[inner].secret_key.node_public_key();
                 let added_peer = &nodes[inner].peer_id;
@@ -277,7 +277,7 @@ impl Network {
                     .add_peer(*added_peer, *added_pub_key)
                     .unwrap();
             }
-        }
+        }*/
 
         Network {
             genesis_committee,
@@ -364,11 +364,13 @@ impl Network {
         let index = node.index;
         let peer_id = node.peer_id;
 
+        node.inner.lock().unwrap().join_peer_committee();
+
         self.nodes.push(node);
         self.receivers.push(receiver);
         self.receivers.push(local_receiver);
 
-        self.join_by_node(peer_id, secret_key.node_public_key());
+        //self.join_by_node(peer_id, secret_key.node_public_key());
 
         index
     }
@@ -457,6 +459,8 @@ impl Network {
                 hex::encode(node.secret_key.node_public_key().as_bytes()),
                 node.dir.as_ref().unwrap().path().to_string_lossy(),
             );
+
+            node.inner.lock().unwrap().join_peer_committee();
         }
 
         let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
