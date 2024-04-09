@@ -99,9 +99,6 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     let new_validator_key = network.get_node_raw(index).secret_key;
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
 
-    let peer_id = network.get_node_raw(index).peer_id;
-    //network.join_by_node(peer_id, new_validator_key.node_public_key());
-
     let stakers = get_stakers(&wallet).await;
     assert_eq!(stakers.len(), 4);
     assert!(!stakers.contains(&new_validator_key.node_public_key()));
@@ -115,17 +112,9 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     )
     .await;
 
-    let peer_id = network.get_node_raw(index).peer_id;
-    //network.join_by_node(peer_id, new_validator_key.node_public_key());
-
     let stakers = get_stakers(&wallet).await;
     assert_eq!(stakers.len(), 5);
     assert!(stakers.contains(&new_validator_key.node_public_key()));
-
-    info!("STAKERS_SIZE: {}", stakers.len());
-    //let peer_id = network.get_node_raw(index).peer_id;
-    //network
-    //    .join_by_node(peer_id, new_validator_key.node_public_key());
 
     // Check the new validator eventually gets to be a block proposer.
     network
@@ -157,9 +146,6 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     let new_validator_key = network.get_node_raw(index).secret_key;
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
 
-    let peer_id = network.get_node_raw(index).peer_id;
-    //network.join_by_node(peer_id, new_validator_key.node_public_key());
-
     deposit_stake(
         &mut network,
         &wallet,
@@ -168,9 +154,6 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
         reward_address,
     )
     .await;
-
-    let peer_id = network.get_node_raw(index).peer_id;
-    //network.join_by_node(peer_id, new_validator_key.node_public_key());
 
     // Start counting at the point where the new validator becomes a block proposer. This guarantees it is now part of
     // the consensus committee.

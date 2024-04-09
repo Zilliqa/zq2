@@ -288,11 +288,7 @@ impl Consensus {
         let public_key = secret_key.node_public_key();
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
 
-        if peers
-            .iter()
-            .find(|member| member.public_key == public_key)
-            .is_none()
-        {
+        if !peers.iter().any(|member| member.public_key == public_key) {
             peers.push(Validator {
                 peer_id: Some(peer_id),
                 public_key,
@@ -378,7 +374,7 @@ impl Consensus {
 
         self.pending_peers.push(Validator {
             peer_id: Some(peer_id),
-            public_key: public_key.clone(),
+            public_key,
         });
 
         info!(
@@ -408,17 +404,24 @@ impl Consensus {
             // If we're in the genesis committee, vote again.
             let stakers = self.state.get_stakers()?;
             if stakers.iter().any(|pub_key| *pub_key == self.public_key()) {
-                info!("voting for genesis block, stakers size: {}, peers size: {}", stakers.len(), self.pending_peers.len());
+                info!(
+                    "voting for genesis block, stakers size: {}, peers size: {}",
+                    stakers.len(),
+                    self.pending_peers.len()
+                );
                 let leader = self.leader_at_block(&genesis, self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
-                return Ok(Some((Some(leader.peer_id.unwrap()), ExternalMessage::Vote(vote))));
+                return Ok(Some((
+                    Some(leader.peer_id.unwrap()),
+                    ExternalMessage::Vote(vote),
+                )));
             }
         }
 
-        return Ok(Some((
+        Ok(Some((
             Some(peer_id),
             ExternalMessage::CommitteeJoined(self.public_key()),
-        )));
+        )))
     }
 
     pub fn peer_joined(&mut self, replied_peer_id: PeerId, replied_public_key: NodePublicKey) {
@@ -860,26 +863,11 @@ impl Consensus {
             return Ok(None);
         }
 
-        let committee = {
-            if block.number() > 0 {
-                let parent_block = self.get_block(&block.parent_hash())?.unwrap();
-                self.state.get_stakers_at_block(&block)?
-                //self.state.get_stakers_at_block(&parent_block)?
-            } else {
-                self.state.get_stakers_at_block(&block)?
-                //self.state.get_stakers()?
-            }
+        let Ok(committee) = self.state.get_stakers_at_block(&block) else {
+            info!("Skipping vote outside of committee");
+            return Ok(None);
         };
 
-        trace!(
-            "committee size: {}, peers_size: {}, my Public key: {}",
-            committee.len(),
-            self.pending_peers.len(),
-            hex::encode(self.public_key().as_bytes())
-        );
-        for item in &committee {
-            trace!("Committee has pub_key: {}", hex::encode(item.as_bytes()));
-        }
         //info!("VOTE PUB KEY: {}", hex::encode(vote.public_key.as_bytes()));
         // verify the sender's signature on block_hash
         let Some((index, _)) = committee
@@ -1002,7 +990,7 @@ impl Consensus {
 
                     self.state.set_to_root(H256(previous_state_root_hash.0));
 
-                    let committee = self.votes.insert(
+                    self.votes.insert(
                         block_hash,
                         (signatures, cosigned, cosigned_weight, supermajority_reached),
                     );
@@ -1039,22 +1027,6 @@ impl Consensus {
         Ok(None)
     }
 
-    fn get_next_committee(&mut self, mut committee: Committee) -> Committee {
-        if committee.is_empty() {
-            panic!("committee is empty, this should never happen");
-        }
-
-        if !self.pending_peers.is_empty() {
-            info!(
-                "*** adding {} pending peers to committee",
-                self.pending_peers.len()
-            );
-        }
-
-        //committee.add_validators(self.pending_peers.drain(..));
-        committee
-    }
-
     fn are_we_leader_for_view(&mut self, parent_hash: Hash, view: u64) -> bool {
         match self.leader_for_view(parent_hash, view) {
             Some(leader) => leader == self.public_key(),
@@ -1071,7 +1043,7 @@ impl Consensus {
                 hex::encode(leader.public_key.as_bytes()),
                 view
             );
-            return Some(leader.public_key);
+            Some(leader.public_key)
         } else {
             if view > 1 {
                 warn!(
@@ -1087,7 +1059,7 @@ impl Consensus {
                 hex::encode(leader.public_key.as_bytes()),
                 view
             );
-            return Some(leader.public_key);
+            Some(leader.public_key)
         }
     }
 
@@ -1954,7 +1926,7 @@ impl Consensus {
         }))
         .unwrap();
         let index = dist.sample(&mut rng);
-        let public_key = *committee.iter().nth(index).unwrap();
+        let public_key = *committee.get(index).unwrap();
 
         info!(
             "CHOSEN LEADER with IDX: {}, committee size: {}, peers size: {}",
@@ -1988,20 +1960,6 @@ impl Consensus {
             public_key,
             peer_id: None,
         }
-    }
-
-    fn get_connected_stakers(&self) -> Vec<NodePublicKey> {
-        let committee = self.state.get_stakers().unwrap();
-        let committee = committee
-            .into_iter()
-            .filter(|elem| {
-                self.pending_peers
-                    .iter()
-                    .find(|&active| active.public_key == *elem)
-                    .is_some()
-            })
-            .collect();
-        committee
     }
 
     fn total_weight(&self, committee: &[NodePublicKey]) -> u128 {
@@ -2198,7 +2156,7 @@ impl Consensus {
             block_receipts.push(receipt);
         }
 
-        self.apply_rewards(&committee, block.view(), &block.qc.cosigned)?;
+        self.apply_rewards(committee, block.view(), &block.qc.cosigned)?;
 
         // If we were the proposer we would've already processed the transactions
         if !self.db.contains_transaction_receipts(&block.hash())? {

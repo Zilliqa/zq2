@@ -362,15 +362,11 @@ impl Network {
         );
 
         let index = node.index;
-        let peer_id = node.peer_id;
-
         node.inner.lock().unwrap().join_peer_committee();
 
         self.nodes.push(node);
         self.receivers.push(receiver);
         self.receivers.push(local_receiver);
-
-        //self.join_by_node(peer_id, secret_key.node_public_key());
 
         index
     }
@@ -888,31 +884,6 @@ impl Network {
     pub async fn random_wallet(&mut self) -> Wallet {
         let key = SigningKey::random(self.rng.lock().unwrap().deref_mut());
         self.wallet_from_key(key).await
-    }
-
-    pub fn join_by_node(&mut self, peer_id: PeerId, public_key: NodePublicKey) {
-        for node in &self.nodes {
-            node.inner
-                .lock()
-                .unwrap()
-                .add_peer(peer_id, public_key)
-                .unwrap();
-        }
-        let added_node = self
-            .nodes
-            .iter()
-            .find(|&node| node.peer_id == peer_id)
-            .unwrap();
-        for node in &self.nodes {
-            if node.peer_id != peer_id {
-                added_node
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .add_peer(node.peer_id, node.secret_key.node_public_key())
-                    .unwrap();
-            }
-        }
     }
 }
 
