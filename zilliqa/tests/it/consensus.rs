@@ -396,7 +396,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .children
         .get_mut(&shard_1_id)
         .unwrap()
-        .run_until_block(&shard_1_wallet, receipt.block_number.unwrap() + 3, 200)
+        .run_until_block(&shard_1_wallet, receipt.block_number.unwrap() + 4, 200)
         .await;
 
     let getter = contract.function("getUint256").unwrap();
