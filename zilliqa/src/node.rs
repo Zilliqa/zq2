@@ -274,7 +274,12 @@ impl Node {
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
         let hash = txn.calculate_hash();
 
-        info!(?hash, "my pub key: {}, seen new txn {:?}", hex::encode(self.consensus.public_key().as_bytes()), txn);
+        info!(
+            ?hash,
+            "my pub key: {}, seen new txn {:?}",
+            hex::encode(self.consensus.public_key().as_bytes()),
+            txn
+        );
 
         if self.consensus.new_transaction(txn.clone().verify()?)? {
             self.message_sender

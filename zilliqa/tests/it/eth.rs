@@ -14,11 +14,9 @@ use ethers::{
     },
     utils::keccak256,
 };
-
 use futures::future::join_all;
 use primitive_types::{H160, H256};
 use serde::Serialize;
-use tracing::warn;
 
 use crate::{deploy_contract, LocalRpcClient, Network};
 
@@ -928,7 +926,6 @@ async fn priority_fees_tx(mut network: Network) {
     // collect the promises and await on them
     let mut promises = Vec::new();
 
-    warn!("To Send transactions count: {}", txs_to_send.len());
     // Send all of them
     for tx in txs_to_send {
         let prom = wallet.send_transaction(tx, None);
@@ -939,6 +936,10 @@ async fn priority_fees_tx(mut network: Network) {
     // as messages too and you can't guarantee which miner will try to create a block
     for prom in promises {
         let _hash = prom.await.unwrap().tx_hash();
+    }
+
+    // Give enough time for all transactions to reach possible proposer
+    for _ in 0..tx_send_iterations {
         network.tick().await;
     }
 
