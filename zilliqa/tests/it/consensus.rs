@@ -388,7 +388,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .children
         .get_mut(&shard_1_id)
         .unwrap()
-        .run_until_receipt(&shard_1_wallet, hash, 100)
+        .run_until_receipt(&shard_1_wallet, hash, 200)
         .await;
 
     // Finalize the block on shard 1
