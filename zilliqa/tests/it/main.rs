@@ -56,7 +56,7 @@ use zilliqa::{
 
 /// (source, destination, message) for both
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(clippy::large-enum-variant)]
+#[allow(clippy::large_enum_variant)]
 enum AnyMessage {
     External(ExternalMessage),
     Internal(u64, u64, InternalMessage),
