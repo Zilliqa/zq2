@@ -673,11 +673,11 @@ impl Network {
                 return true;
             }
             curr_idx += 1;
-            if let ExternalMessage::JoinCommittee(_) = m.2 {
+            if let AnyMessage::External(ExternalMessage::JoinCommittee(_)) = m.2 {
                 self.handle_message(m.clone());
                 return false;
             };
-            if let ExternalMessage::CommitteeJoined(_) = m.2 {
+            if let AnyMessage::External(ExternalMessage::CommitteeJoined(_)) = m.2 {
                 self.handle_message(m.clone());
                 return false;
             }
