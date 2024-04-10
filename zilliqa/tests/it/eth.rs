@@ -939,7 +939,7 @@ async fn priority_fees_tx(mut network: Network) {
     }
 
     // Give enough time for all transactions to reach possible proposer
-    for _ in 0..tx_send_iterations {
+    for _ in 0..txs_to_send.len() {
         network.tick().await;
     }
 

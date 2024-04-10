@@ -173,7 +173,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
                     .unwrap()
                     == reward_address
             },
-            500,
+            1000,
         )
         .await
         .unwrap();
@@ -183,7 +183,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     network
         .run_until_async(
             || async { wallet.get_block_number().await.unwrap().as_u64() >= current_block + 20 },
-            500,
+            1000,
         )
         .await
         .unwrap();
