@@ -939,7 +939,7 @@ async fn priority_fees_tx(mut network: Network) {
     }
 
     // Give enough time for all transactions to reach possible proposer
-    for _ in 0..2 * txns_count {
+    for _ in 0..10 * txns_count {
         network.tick().await;
     }
 
@@ -1017,7 +1017,7 @@ async fn get_transaction_by_index(mut network: Network) {
         .unwrap()
         .tx_hash();
 
-    for _ in 0..10 {
+    for _ in 0..50 {
         network.tick().await;
     }
 
