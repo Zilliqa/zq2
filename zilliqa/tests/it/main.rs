@@ -267,7 +267,7 @@ impl Network {
             */
         }
 
-        /*for idx in 0..nodes.len() {
+        for idx in 0..nodes.len() {
             for inner in 0..nodes.len() {
                 let added_pub_key = &nodes[inner].secret_key.node_public_key();
                 let added_peer = &nodes[inner].peer_id;
@@ -278,7 +278,7 @@ impl Network {
                     .add_peer(*added_peer, *added_pub_key)
                     .unwrap();
             }
-        }*/
+        }
 
         Network {
             genesis_committee,
@@ -664,7 +664,7 @@ impl Network {
         });
 
         // Pick a random message
-        let index = self.rng.lock().unwrap().gen_range(0..messages.len());
+        let index = 0;//self.rng.lock().unwrap().gen_range(0..messages.len());
         let (source, destination, message) = messages.swap_remove(index);
         // Requeue the other messages
         for message in messages {

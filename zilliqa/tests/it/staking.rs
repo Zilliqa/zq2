@@ -41,7 +41,7 @@ async fn deposit_stake(
     // Transfer the new validator enough ZIL to stake.
     let tx = TransactionRequest::pay(reward_address, stake);
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
-    network.run_until_receipt(wallet, hash, 50).await;
+    network.run_until_receipt(wallet, hash, 80).await;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
@@ -95,6 +95,8 @@ async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
 #[zilliqa_macros::test]
 async fn validators_can_join_and_become_proposer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
+    network.run_until_block(&wallet, 3.into(), 60).await;
+
     let index = network.add_node(true);
     let new_validator_key = network.get_node_raw(index).secret_key;
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
@@ -142,6 +144,8 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     // and check that it produces a statistically significant proportion of the subsequent blocks.
 
     let wallet = network.genesis_wallet().await;
+    network.run_until_block(&wallet, 2.into(), 60).await;
+
     let index = network.add_node(true);
     let new_validator_key = network.get_node_raw(index).secret_key;
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());

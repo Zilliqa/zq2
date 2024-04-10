@@ -360,7 +360,7 @@ impl Consensus {
         {
             existing.peer_id = Some(peer_id);
             //info!(%peer_id, "peer already exists");
-            info!(
+            trace!(
                 "I see {} on my list, replying with my one: {}",
                 hex::encode(public_key.as_bytes()),
                 hex::encode(self.public_key().as_bytes())
@@ -431,7 +431,7 @@ impl Consensus {
             .find(|v| v.public_key == replied_public_key)
         {
             //if existing.public_key != self.public_key() {
-            info!(
+            trace!(
                 "ConfirmedJoin {} on my list",
                 hex::encode(replied_public_key.as_bytes())
             );
@@ -442,7 +442,7 @@ impl Consensus {
         }
         //warn!(%replied_peer_id, "adding replied peer to consensus");
 
-        info!(
+        trace!(
             "ConfirmedJoin {} newly added",
             hex::encode(replied_public_key.as_bytes())
         );
@@ -453,9 +453,9 @@ impl Consensus {
         });
 
         if self.pending_peers.len() > 5 {
-            info!("JOINED Peers are suspiciously large. printing");
+            trace!("JOINED Peers are suspiciously large. printing");
             for member in &self.pending_peers {
-                info!(
+                trace!(
                     "Member pub key is: {}",
                     hex::encode(member.public_key.as_bytes())
                 );
@@ -691,7 +691,7 @@ impl Consensus {
                 //info!("current state root: {:?}, head_block root: {:?}, block root: {:?}", self.state.root_hash()?, head_block.header.state_root_hash, block.header.state_root_hash);
                 //info!("Committee size in current state root: {:?}", self.state.get_stakers()?.len());
                 let next_leader = self.leader_at_block(&block, self.view.get_view());
-                info!(
+                trace!(
                     "I decided that leader from block: {:?} is at: {} with view: {}",
                     block.header.hash,
                     hex::encode(next_leader.public_key.as_bytes()),
@@ -703,7 +703,7 @@ impl Consensus {
                 }
 
                 let next_leader = next_leader.peer_id.unwrap();
-                info!("Created vote. Stakers size: {}, peers size: {}, block hash: {:?}, block num: {}", stakers.len(), self.pending_peers.len(), block.header.hash, block.header.number);
+                trace!("Created vote. Stakers size: {}, peers size: {}, block hash: {:?}, block num: {}", stakers.len(), self.pending_peers.len(), block.header.hash, block.header.number);
                 //info!("current state root: {:?}", self.state.root_hash()?);
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
@@ -742,7 +742,7 @@ impl Consensus {
                 .mutate_account(proposer_address, |a| a.balance += reward)?;
         }
 
-        info!(
+        trace!(
             "Cosignd size is: {}, stakers size is: {}",
             cosigned.len(),
             committee.len()
@@ -803,6 +803,7 @@ impl Consensus {
     }
 
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
+        info!("TRANSACTIONS LEN IN POOL: {}", self.transaction_pool.size());
         std::iter::from_fn(|| self.transaction_pool.best_transaction())
             .filter(|txn| {
                 let account_nonce = self.state.must_get_account(txn.signer).nonce;
@@ -961,7 +962,7 @@ impl Consensus {
                         qc.clone(),
                         parent_hash,
                         self.state.root_hash()?,
-                        applied_transaction_hashes,
+                        applied_transaction_hashes.clone(),
                         SystemTime::max(SystemTime::now(), parent_header.timestamp),
                         &committee,
                     );
@@ -975,8 +976,8 @@ impl Consensus {
                     );
 
                     info!(
-                        "I'm proposing block, stakers size: {}, peers_size: {}, my pub key is: {}",
-                        committee.len(),
+                        "I'm proposing block, txn size: {}, peers_size: {}, my pub key is: {}",
+                        applied_transaction_hashes.len(),
                         self.pending_peers.len(),
                         hex::encode(self.public_key().as_bytes())
                     );
@@ -1037,7 +1038,7 @@ impl Consensus {
     fn leader_for_view(&mut self, parent_hash: Hash, view: u64) -> Option<NodePublicKey> {
         if let Ok(Some(parent)) = self.get_block(&parent_hash) {
             let leader = self.leader_at_block(&parent, view);
-            info!(
+            trace!(
                 "Calculated leader for block: {:?} {} for view: {}",
                 parent_hash,
                 hex::encode(leader.public_key.as_bytes()),
@@ -1053,7 +1054,7 @@ impl Consensus {
                 return None;
             }
             let leader = self.leader(view);
-            info!(
+            trace!(
                 "Calculated leader for block: {:?} {} for view: {}",
                 parent_hash,
                 hex::encode(leader.public_key.as_bytes()),
@@ -1564,7 +1565,7 @@ impl Consensus {
         // Derive the proposer from the block's view
         let proposer = self.leader_at_block(&parent, block.view());
 
-        info!(
+        trace!(
             "(check block) I think the block proposer is: {}, we are {}",
             hex::encode(proposer.public_key.as_bytes()),
             self.peer_id()
@@ -1576,7 +1577,7 @@ impl Consensus {
 
         let committee = self.state.get_stakers_at_block(&parent);
         if committee.is_err() {
-            info!(
+            trace!(
                 "Unable to get stackers at block num: {}",
                 parent.header.number
             );
@@ -1928,7 +1929,7 @@ impl Consensus {
         let index = dist.sample(&mut rng);
         let public_key = *committee.get(index).unwrap();
 
-        info!(
+        trace!(
             "CHOSEN LEADER with IDX: {}, committee size: {}, peers size: {}",
             index,
             committee.len(),

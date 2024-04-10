@@ -14,15 +14,19 @@ use ethers::{
     },
     utils::keccak256,
 };
+
 use futures::future::join_all;
 use primitive_types::{H160, H256};
 use serde::Serialize;
+use tracing::warn;
 
 use crate::{deploy_contract, LocalRpcClient, Network};
 
 #[zilliqa_macros::test]
 async fn call_block_number(mut network: Network) {
     let wallet = network.genesis_wallet().await;
+
+    network.run_until_block(&wallet, 2.into(), 60).await;
 
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/CallMe.sol",
@@ -416,6 +420,8 @@ async fn get_logs(mut network: Network) {
 #[zilliqa_macros::test]
 async fn get_storage_at(mut network: Network) {
     let wallet = network.genesis_wallet().await;
+
+    network.run_until_block(&wallet, 2.into(), 60).await;
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
     let (hash, abi) = deploy_contract(
@@ -888,6 +894,8 @@ async fn nonces_respected_ordered(mut network: Network) {
 async fn priority_fees_tx(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
+    network.run_until_block(&wallet, 3.into(), 60).await;
+
     let to: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
@@ -920,6 +928,7 @@ async fn priority_fees_tx(mut network: Network) {
     // collect the promises and await on them
     let mut promises = Vec::new();
 
+    warn!("To Send transactions count: {}", txs_to_send.len());
     // Send all of them
     for tx in txs_to_send {
         let prom = wallet.send_transaction(tx, None);
@@ -997,6 +1006,8 @@ async fn pending_transaction_is_returned_by_get_transaction_by_hash(mut network:
 #[zilliqa_macros::test]
 async fn get_transaction_by_index(mut network: Network) {
     let wallet = network.genesis_wallet().await;
+
+    network.run_until_block(&wallet, 3.into(), 60).await;
 
     let h1 = wallet
         .send_transaction(TransactionRequest::pay(H160::random(), 10), None)

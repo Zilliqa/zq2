@@ -262,7 +262,7 @@ impl Node {
 
     pub fn join_peer_committee(&mut self) {
         let join_message = ExternalMessage::JoinCommittee(self.consensus.public_key());
-        info!(
+        trace!(
             "Broadcasting join!, my pub_key: {}",
             hex::encode(self.consensus.public_key().as_bytes())
         );
@@ -274,7 +274,7 @@ impl Node {
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
         let hash = txn.calculate_hash();
 
-        info!(?hash, "seen new txn {:?}", txn);
+        info!(?hash, "my pub key: {}, seen new txn {:?}", hex::encode(self.consensus.public_key().as_bytes()), txn);
 
         if self.consensus.new_transaction(txn.clone().verify()?)? {
             self.message_sender
