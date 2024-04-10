@@ -64,6 +64,8 @@ enum Command {
         zq1_persistence_directory: PathBuf,
         zq2_data_dir: PathBuf,
         zq2_config_file: PathBuf,
+        #[arg(value_parser = SecretKey::from_hex)]
+        secret_key: SecretKey,
         #[clap(long)]
         skip_accounts: bool,
     },
@@ -311,6 +313,7 @@ async fn main() -> Result<()> {
             zq1_persistence_directory,
             zq2_data_dir,
             zq2_config_file,
+            secret_key,
             skip_accounts,
         } => {
             let zq1_db = zq1::Db::new(zq1_persistence_directory)?;
@@ -326,7 +329,7 @@ async fn main() -> Result<()> {
             };
             let zq2_db = Db::new(Some(zq2_data_dir), shard_id)?;
 
-            convert_persistence(zq1_db, zq2_db, zq2_config, skip_accounts)?;
+            convert_persistence(zq1_db, zq2_db, zq2_config, secret_key, skip_accounts)?;
         }
         Command::PrintTransactionsInBlock {
             zq1_persistence_directory,
@@ -376,10 +379,9 @@ fn convert_persistence(
     zq1_db: zq1::Db,
     zq2_db: Db,
     zq2_config: Config,
+    secret_key: SecretKey,
     skip_accounts: bool,
 ) -> Result<()> {
-    let secret_key = SecretKey::new()?; // TODO
-
     let style = ProgressStyle::with_template(
         "{msg} {wide_bar} [{per_sec}] {human_pos}/~{human_len} ({elapsed}/~{duration})",
     )
