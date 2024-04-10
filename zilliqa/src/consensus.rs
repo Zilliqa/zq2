@@ -803,7 +803,6 @@ impl Consensus {
     }
 
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
-        info!("TRANSACTIONS LEN IN POOL: {}", self.transaction_pool.size());
         std::iter::from_fn(|| self.transaction_pool.best_transaction())
             .filter(|txn| {
                 let account_nonce = self.state.must_get_account(txn.signer).nonce;

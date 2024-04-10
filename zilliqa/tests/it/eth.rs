@@ -936,6 +936,7 @@ async fn priority_fees_tx(mut network: Network) {
     // as messages too and you can't guarantee which miner will try to create a block
     for prom in promises {
         let _hash = prom.await.unwrap().tx_hash();
+        network.tick().await;
     }
 
     // Give enough time for all transactions to reach possible proposer

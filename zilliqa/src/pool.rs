@@ -198,7 +198,7 @@ impl TransactionPool {
         std::mem::take(&mut self.transactions).into_values()
     }
 
-    //#[cfg(test)]
+    #[cfg(test)]
     pub fn size(&self) -> usize {
         self.transactions.len()
     }
