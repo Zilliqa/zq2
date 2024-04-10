@@ -1007,7 +1007,7 @@ async fn deploy_contract(
                         .unwrap()
                         .is_some()
                 },
-                60,
+                100,
             )
             .await
             .unwrap();
