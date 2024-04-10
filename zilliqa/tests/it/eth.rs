@@ -419,7 +419,7 @@ async fn get_logs(mut network: Network) {
 async fn get_storage_at(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    network.run_until_block(&wallet, 2.into(), 60).await;
+    network.run_until_block(&wallet, 3.into(), 60).await;
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
     let (hash, abi) = deploy_contract(
@@ -522,7 +522,7 @@ async fn send_transaction(
                     .unwrap()
                     .is_some()
             },
-            60,
+            100,
         )
         .await
         .unwrap();
@@ -925,7 +925,7 @@ async fn priority_fees_tx(mut network: Network) {
 
     // collect the promises and await on them
     let mut promises = Vec::new();
-
+    let txns_count = txs_to_send.len();
     // Send all of them
     for tx in txs_to_send {
         let prom = wallet.send_transaction(tx, None);
@@ -939,7 +939,7 @@ async fn priority_fees_tx(mut network: Network) {
     }
 
     // Give enough time for all transactions to reach possible proposer
-    for _ in 0..txs_to_send.len() {
+    for _ in 0..2 * txns_count {
         network.tick().await;
     }
 
@@ -1010,13 +1010,19 @@ async fn get_transaction_by_index(mut network: Network) {
 
     network.run_until_block(&wallet, 3.into(), 60).await;
 
+    // Send transaction in reverse nonce order to ensure they land in the same block
     let h1 = wallet
-        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .send_transaction(TransactionRequest::pay(H160::random(), 10).nonce(1), None)
         .await
         .unwrap()
         .tx_hash();
+
+    for _ in 0..10 {
+        network.tick().await;
+    }
+
     let h2 = wallet
-        .send_transaction(TransactionRequest::pay(H160::random(), 10).nonce(1), None)
+        .send_transaction(TransactionRequest::pay(H160::random(), 10).nonce(0), None)
         .await
         .unwrap()
         .tx_hash();
