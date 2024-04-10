@@ -9,6 +9,7 @@ mod db;
 mod eth_helpers;
 mod exec;
 mod health;
+mod inspector;
 pub mod message;
 pub mod node;
 pub mod node_launcher;

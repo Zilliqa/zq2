@@ -12,11 +12,12 @@ use eth_trie::Trie;
 use ethabi::Token;
 use primitive_types::{H160, H256, U256};
 use revm::{
+    inspector_handle_register,
     primitives::{
         AccountInfo, BlockEnv, Bytecode, BytecodeState, ExecutionResult, HandlerCfg, Output,
         ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
     },
-    Database, Evm,
+    Database, Evm, Inspector,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -26,6 +27,7 @@ use crate::{
     contracts,
     crypto::{Hash, NodePublicKey},
     eth_helpers::extract_revert_msg,
+    inspector::{self, ScillaInspector},
     message::BlockHeader,
     precompiles::get_custom_precompiles,
     state::{contract_addr, Account, Address, Contract, ScillaValue, State},
@@ -140,6 +142,7 @@ impl State {
             None,
             0,
             BlockHeader::genesis(Hash::ZERO),
+            inspector::noop(),
         )?;
 
         match result {
@@ -170,7 +173,7 @@ impl State {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn apply_transaction_evm(
+    pub fn apply_transaction_evm<I: for<'s> Inspector<&'s State>>(
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
@@ -181,6 +184,7 @@ impl State {
         nonce: Option<u64>,
         chain_id: u64,
         current_block: BlockHeader,
+        inspector: I,
     ) -> Result<ResultAndState> {
         let mut evm = Evm::builder()
             .with_db(self)
@@ -200,7 +204,9 @@ impl State {
                 prevrandao: Some(B256::ZERO),
                 blob_excess_gas_and_price: None,
             })
+            .with_external_context(inspector)
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
+            .append_handler_register(inspector_handle_register)
             .modify_cfg_env(|c| {
                 c.chain_id = chain_id;
                 // We disable the balance check (which ensures the from account's balance is greater than the
@@ -244,6 +250,7 @@ impl State {
         from_addr: H160,
         current_block: BlockHeader,
         txn: TxZilliqa,
+        inspector: impl ScillaInspector,
     ) -> Result<TransactionApplyResult> {
         let code = self
             .get_account(txn.to_addr)?
@@ -252,11 +259,11 @@ impl State {
             .unwrap_or_default();
 
         if txn.to_addr.is_zero() {
-            self.scilla_create(from_addr, txn, current_block)
+            self.scilla_create(from_addr, txn, current_block, inspector)
         } else if code.is_empty() {
-            self.scilla_transfer_to_eoa(from_addr, txn)
+            self.scilla_transfer_to_eoa(from_addr, txn, inspector)
         } else {
-            self.scilla_call(from_addr, txn)
+            self.scilla_call(from_addr, txn, inspector)
         }
     }
 
@@ -265,6 +272,7 @@ impl State {
         from_addr: H160,
         txn: TxZilliqa,
         current_block: BlockHeader,
+        mut inspector: impl ScillaInspector,
     ) -> Result<TransactionApplyResult> {
         if txn.data.is_empty() {
             return Err(anyhow!("contract creation without init data"));
@@ -344,6 +352,8 @@ impl State {
             acc.nonce += 1;
         })?;
 
+        inspector.create(from_addr, contract_address);
+
         Ok(TransactionApplyResult {
             success: true,
             contract_address: Some(contract_address),
@@ -356,6 +366,7 @@ impl State {
         &mut self,
         from_addr: H160,
         txn: TxZilliqa,
+        mut inspector: impl ScillaInspector,
     ) -> Result<TransactionApplyResult> {
         self.mutate_account(from_addr, |from| {
             from.balance -= txn.amount();
@@ -365,6 +376,8 @@ impl State {
             to.balance += txn.amount();
         })?;
 
+        inspector.transfer(from_addr, txn.to_addr, txn.amount());
+
         Ok(TransactionApplyResult {
             success: true,
             contract_address: None,
@@ -373,7 +386,12 @@ impl State {
         })
     }
 
-    fn scilla_call(&mut self, from_addr: H160, txn: TxZilliqa) -> Result<TransactionApplyResult> {
+    fn scilla_call(
+        &mut self,
+        from_addr: H160,
+        txn: TxZilliqa,
+        mut inspector: impl ScillaInspector,
+    ) -> Result<TransactionApplyResult> {
         // TODO: Interop
         let Contract::Scilla {
             code,
@@ -438,6 +456,8 @@ impl State {
             })
             .collect();
 
+        inspector.call(from_addr, txn.to_addr);
+
         Ok(TransactionApplyResult {
             success: true,
             contract_address: None,
@@ -447,11 +467,12 @@ impl State {
     }
 
     /// Apply a transaction to the account state.
-    pub fn apply_transaction(
+    pub fn apply_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
         &mut self,
         txn: VerifiedTransaction,
         chain_id: u64,
         current_block: BlockHeader,
+        inspector: I,
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash;
         let from_addr = txn.signer;
@@ -459,7 +480,7 @@ impl State {
 
         let txn = txn.tx.into_transaction();
         if let Transaction::Zilliqa(txn) = txn {
-            self.apply_transaction_scilla(from_addr, current_block, txn)
+            self.apply_transaction_scilla(from_addr, current_block, txn, inspector)
         } else {
             let ResultAndState { result, state } = self.apply_transaction_evm(
                 from_addr,
@@ -471,6 +492,7 @@ impl State {
                 txn.nonce(),
                 chain_id,
                 current_block,
+                inspector,
             )?;
 
             self.apply_delta_evm(state)?;
@@ -658,6 +680,7 @@ impl State {
             None,
             chain_id,
             current_block,
+            inspector::noop(),
         )?;
 
         match result {
@@ -702,6 +725,7 @@ impl State {
             None,
             chain_id,
             current_block,
+            inspector::noop(),
         )?;
 
         match result {

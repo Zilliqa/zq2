@@ -181,7 +181,7 @@ pub struct TransactionReceipt {
     pub logs: Vec<Log>,
     #[serde(serialize_with = "hex")]
     pub logs_bloom: [u8; 256],
-    #[serde(serialize_with = "hex")]
+    #[serde(rename = "type", serialize_with = "hex")]
     pub ty: u64,
     #[serde(serialize_with = "bool_as_int")]
     pub status: bool,
