@@ -267,7 +267,7 @@ impl Network {
             */
         }
 
-        for idx in 0..nodes.len() {
+        /*for idx in 0..nodes.len() {
             for inner in 0..nodes.len() {
                 let added_pub_key = &nodes[inner].secret_key.node_public_key();
                 let added_peer = &nodes[inner].peer_id;
@@ -278,7 +278,7 @@ impl Network {
                     .add_peer(*added_peer, *added_pub_key)
                     .unwrap();
             }
-        }
+        }*/
 
         Network {
             genesis_committee,
@@ -639,7 +639,7 @@ impl Network {
         );
 
         if messages.is_empty() {
-            trace!("Messages were empty - advance time and trigger timeout in all nodes!");
+            warn!("Messages were empty - advance time and trigger timeout in all nodes!");
             zilliqa::time::advance(Duration::from_millis(1000));
 
             for (index, node) in self.nodes.iter().enumerate() {
@@ -664,9 +664,9 @@ impl Network {
         });
 
         // Pick a random message
-        //let index = self.rng.lock().unwrap().gen_range(0..messages.len());
-
-        let (source, destination, message) = messages.remove(0);
+        let index = self.rng.lock().unwrap().gen_range(0..messages.len());
+        warn!("MESSAGES LEN: {}", messages.len());
+        let (source, destination, message) = messages.remove(index);
         // Requeue the other messages
         for message in messages {
             self.resend_message.send(message).unwrap();

@@ -394,7 +394,7 @@ impl Consensus {
             }
         }
 
-        if self.view.get_view() == 1 {
+        /*if self.view.get_view() == 1 {
             let Some(genesis) = self.get_block_by_view(0)? else {
                 // if we don't have genesis that means we only have its hash
                 // ergo we weren't, and can't be, part of the network at genesis and
@@ -416,7 +416,7 @@ impl Consensus {
                     ExternalMessage::Vote(vote),
                 )));
             }
-        }
+        }*/
 
         Ok(Some((
             Some(peer_id),

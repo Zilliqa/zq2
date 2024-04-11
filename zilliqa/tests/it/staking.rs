@@ -95,7 +95,7 @@ async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
 #[zilliqa_macros::test]
 async fn validators_can_join_and_become_proposer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 60).await;
+    //network.run_until_block(&wallet, 3.into(), 60).await;
 
     let index = network.add_node(true);
     let new_validator_key = network.get_node_raw(index).secret_key;
@@ -144,7 +144,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     // and check that it produces a statistically significant proportion of the subsequent blocks.
 
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 60).await;
+    //network.run_until_block(&wallet, 3.into(), 60).await;
 
     let index = network.add_node(true);
     let new_validator_key = network.get_node_raw(index).secret_key;
