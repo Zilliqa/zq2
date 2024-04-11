@@ -681,7 +681,7 @@ impl Network {
                 self.handle_message(m.clone());
                 return false;
             }
-            return true;
+            true
         });
 
         let (source, destination, message) = messages.swap_remove(index);
