@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{anyhow, Result};
 use itertools::{Either, Itertools};
-use jsonrpsee::{types::Params, RpcModule};
+use jsonrpsee::{
+    core::StringError, types::Params, PendingSubscriptionSink, RpcModule, SubscriptionMessage,
+};
 use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
 use serde::Deserialize;
@@ -23,7 +25,7 @@ use crate::{
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
-    super::declare_module!(
+    let mut module = super::declare_module!(
         node,
         [
             ("eth_accounts", accounts),
@@ -68,7 +70,18 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("net_peerCount", net_peer_count),
             ("net_listening", net_listening),
         ],
-    )
+    );
+
+    module
+        .register_subscription(
+            "eth_subscribe",
+            "eth_subscription",
+            "eth_unsubscribe",
+            subscribe,
+        )
+        .unwrap();
+
+    module
 }
 
 fn accounts(_: Params, _: &Arc<Mutex<Node>>) -> Result<[(); 0]> {
@@ -229,7 +242,7 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
 
 fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
     if !full {
-        let miner = node.get_proposer_reward_address(block)?;
+        let miner = node.get_proposer_reward_address(block.header)?;
         Ok(eth::Block::from_block(block, miner.unwrap_or_default()))
     } else {
         let transactions = block
@@ -241,7 +254,7 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<e
             })
             .map(|t| Ok(HashOrTransaction::Transaction(t?)))
             .collect::<Result<_>>()?;
-        let miner = node.get_proposer_reward_address(block)?;
+        let miner = node.get_proposer_reward_address(block.header)?;
         let block = eth::Block::from_block(block, miner.unwrap_or_default());
         Ok(eth::Block {
             transactions,
@@ -786,6 +799,36 @@ fn net_peer_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
 
 fn net_listening(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
     Ok(true)
+}
+
+#[allow(clippy::redundant_allocation)]
+async fn subscribe(
+    params: Params<'_>,
+    pending: PendingSubscriptionSink,
+    node: Arc<Arc<Mutex<Node>>>,
+) -> Result<(), StringError> {
+    let mut params = params.sequence();
+    let kind: String = params.next()?;
+
+    match kind.as_str() {
+        "newHeads" => {
+            let sink = pending.accept().await?;
+            let mut new_blocks = node.lock().unwrap().subscribe_to_new_blocks();
+
+            while let Ok(header) = new_blocks.recv().await {
+                let miner = node.lock().unwrap().get_proposer_reward_address(header)?;
+                let header = eth::Header::from_header(header, miner.unwrap_or_default());
+                let _ = sink.send(SubscriptionMessage::from_json(&header)?).await;
+            }
+        }
+        //"logs" => {},
+        //"newPendingTransactions" => {},
+        _ => {
+            return Err("invalid subscription kind".into());
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
