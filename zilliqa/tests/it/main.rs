@@ -665,7 +665,7 @@ impl Network {
 
         // Pick a random message
         //let index = self.rng.lock().unwrap().gen_range(0..messages.len());
-        
+
         let (source, destination, message) = messages.remove(0);
         // Requeue the other messages
         for message in messages {
