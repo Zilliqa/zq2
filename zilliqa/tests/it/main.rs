@@ -664,30 +664,9 @@ impl Network {
         });
 
         // Pick a random message
-        let index = self.rng.lock().unwrap().gen_range(0..messages.len());
-
-        // Handle any JoinCommittee/CommitteeJoined messages if they appeared before selected index
-        /*let mut curr_idx = 0;
-        let mut early_processed = 0;
-        messages.retain(|m| {
-            if curr_idx >= index {
-                return true;
-            }
-            curr_idx += 1;
-            if let AnyMessage::External(ExternalMessage::JoinCommittee(_)) = m.2 {
-                self.handle_message(m.clone());
-                early_processed += 1;
-                return false;
-            };
-            if let AnyMessage::External(ExternalMessage::CommitteeJoined(_)) = m.2 {
-                self.handle_message(m.clone());
-                early_processed += 1;
-                return false;
-            }
-            true
-        });
-        index -= early_processed;*/
-        let (source, destination, message) = messages.swap_remove(index);
+        //let index = self.rng.lock().unwrap().gen_range(0..messages.len());
+        
+        let (source, destination, message) = messages.remove(0);
         // Requeue the other messages
         for message in messages {
             self.resend_message.send(message).unwrap();
