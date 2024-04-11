@@ -359,64 +359,18 @@ impl Consensus {
             .find(|v| v.public_key == public_key)
         {
             existing.peer_id = Some(peer_id);
-            //info!(%peer_id, "peer already exists");
-            trace!(
-                "I see {} on my list, replying with my one: {}",
-                hex::encode(public_key.as_bytes()),
-                hex::encode(self.public_key().as_bytes())
-            );
+            info!(%peer_id, "peer already exists");
             return Ok(Some((
                 Some(peer_id),
                 ExternalMessage::CommitteeJoined(self.public_key()),
             )));
         }
-        //warn!(%peer_id, "adding peer to consensus");
+        info!(%peer_id, "adding peer to consensus");
 
         self.pending_peers.push(Validator {
             peer_id: Some(peer_id),
             public_key,
         });
-
-        info!(
-            "Adding peer {} to consensus, current size: {}, my pub key: {}",
-            hex::encode(public_key.as_bytes()),
-            self.pending_peers.len(),
-            hex::encode(self.public_key().as_bytes())
-        );
-
-        if self.pending_peers.len() > 5 {
-            info!("Peers are suspiciously large. printing");
-            for member in &self.pending_peers {
-                info!(
-                    "Member pub key is: {}",
-                    hex::encode(member.public_key.as_bytes())
-                );
-            }
-        }
-
-        /*if self.view.get_view() == 1 {
-            let Some(genesis) = self.get_block_by_view(0)? else {
-                // if we don't have genesis that means we only have its hash
-                // ergo we weren't, and can't be, part of the network at genesis and
-                // can't vote for it anyway
-                return Ok(None);
-            };
-            // If we're in the genesis committee, vote again.
-            let stakers = self.state.get_stakers()?;
-            if stakers.iter().any(|pub_key| *pub_key == self.public_key()) {
-                info!(
-                    "voting for genesis block, stakers size: {}, peers size: {}",
-                    stakers.len(),
-                    self.pending_peers.len()
-                );
-                let leader = self.leader_at_block(&genesis, self.view.get_view());
-                let vote = self.vote_from_block(&genesis);
-                return Ok(Some((
-                    Some(leader.peer_id.unwrap()),
-                    ExternalMessage::Vote(vote),
-                )));
-            }
-        }*/
 
         Ok(Some((
             Some(peer_id),

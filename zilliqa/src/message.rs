@@ -585,8 +585,6 @@ pub struct Block {
     /// this is not `None`, `qc` will contain a clone of the highest QC within this [AggregateQc];
     pub agg: Option<AggregateQc>,
     pub transactions: Vec<Hash>,
-    //// The consensus committee for this block.
-    //pub committee: Committee,
 }
 
 impl Display for Block {

@@ -419,8 +419,6 @@ async fn get_logs(mut network: Network) {
 async fn get_storage_at(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    //network.run_until_block(&wallet, 3.into(), 60).await;
-
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/Storage.sol",
@@ -892,8 +890,6 @@ async fn nonces_respected_ordered(mut network: Network) {
 async fn priority_fees_tx(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    //network.run_until_block(&wallet, 3.into(), 60).await;
-
     let to: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
@@ -1009,18 +1005,12 @@ async fn pending_transaction_is_returned_by_get_transaction_by_hash(mut network:
 async fn get_transaction_by_index(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    //network.run_until_block(&wallet, 3.into(), 60).await;
-
     // Send transaction in reverse nonce order to ensure they land in the same block
     let h1 = wallet
         .send_transaction(TransactionRequest::pay(H160::random(), 10).nonce(1), None)
         .await
         .unwrap()
         .tx_hash();
-
-    for _ in 0..50 {
-        //network.tick().await;
-    }
 
     let h2 = wallet
         .send_transaction(TransactionRequest::pay(H160::random(), 10).nonce(0), None)

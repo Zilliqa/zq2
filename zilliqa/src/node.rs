@@ -135,9 +135,8 @@ impl Node {
                     self.message_sender
                         .send_external_message(leader, ExternalMessage::Vote(vote))?;
                 } else {
-                    warn!("We had nothing to respond to proposal, lets try to join committee for view {m_view:}");
+                    info!("We had nothing to respond to proposal, lets try to join committee for view {m_view:}");
                     self.message_sender.broadcast_external_message(
-                        //from,
                         ExternalMessage::JoinCommittee(self.consensus.public_key()),
                     )?;
                 }
@@ -262,10 +261,6 @@ impl Node {
 
     pub fn join_peer_committee(&mut self) {
         let join_message = ExternalMessage::JoinCommittee(self.consensus.public_key());
-        trace!(
-            "Broadcasting join!, my pub_key: {}",
-            hex::encode(self.consensus.public_key().as_bytes())
-        );
         self.message_sender
             .broadcast_external_message(join_message)
             .unwrap();
@@ -274,12 +269,7 @@ impl Node {
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
         let hash = txn.calculate_hash();
 
-        info!(
-            ?hash,
-            "my pub key: {}, seen new txn {:?}",
-            hex::encode(self.consensus.public_key().as_bytes()),
-            txn
-        );
+        info!(?hash, "seen new txn {:?}", txn);
 
         if self.consensus.new_transaction(txn.clone().verify()?)? {
             self.message_sender

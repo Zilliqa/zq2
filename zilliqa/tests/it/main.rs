@@ -246,39 +246,14 @@ impl Network {
         receivers.push(receive_resend_message);
 
         for node in &nodes {
-            info!(
-                "Node {}: {} {} (dir: {})",
+            trace!(
+                "Node {}: {} (dir: {})",
                 node.index,
-                hex::encode(node.secret_key.node_public_key().as_bytes()),
                 node.peer_id,
                 node.dir.as_ref().unwrap().path().to_string_lossy(),
             );
             node.inner.lock().unwrap().join_peer_committee();
-            /*resend_message
-               .send((
-                   node.peer_id,
-                   None,
-                   AnyMessage::External(ExternalMessage::JoinCommittee(
-                       node.secret_key.node_public_key(),
-                   )),
-               ))
-               .unwrap();
-
-            */
         }
-
-        /*for idx in 0..nodes.len() {
-            for inner in 0..nodes.len() {
-                let added_pub_key = &nodes[inner].secret_key.node_public_key();
-                let added_peer = &nodes[inner].peer_id;
-                nodes[idx]
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .add_peer(*added_peer, *added_pub_key)
-                    .unwrap();
-            }
-        }*/
 
         Network {
             genesis_committee,
@@ -343,24 +318,7 @@ impl Network {
         let (node, receiver, local_receiver) =
             node(config, secret_key, self.nodes.len(), None).unwrap();
 
-        /*        self.resend_message
-                   .send((
-                       node.peer_id,
-                       None,
-                       AnyMessage::External(ExternalMessage::JoinCommittee(
-                           node.secret_key.node_public_key(),
-                       )),
-                   ))
-                   .unwrap();
-
-        */
-
-        info!(
-            "Node {}: {} {}",
-            node.index,
-            hex::encode(node.secret_key.node_public_key().as_bytes()),
-            node.peer_id
-        );
+        trace!("Node {}: {}", node.index, node.peer_id);
 
         let index = node.index;
         node.inner.lock().unwrap().join_peer_committee();
