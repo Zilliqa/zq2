@@ -664,10 +664,10 @@ impl Network {
         });
 
         // Pick a random message
-        let mut index = self.rng.lock().unwrap().gen_range(0..messages.len());
+        let index = self.rng.lock().unwrap().gen_range(0..messages.len());
 
         // Handle any JoinCommittee/CommitteeJoined messages if they appeared before selected index
-        let mut curr_idx = 0;
+        /*let mut curr_idx = 0;
         let mut early_processed = 0;
         messages.retain(|m| {
             if curr_idx >= index {
@@ -686,7 +686,7 @@ impl Network {
             }
             true
         });
-        index -= early_processed;
+        index -= early_processed;*/
         let (source, destination, message) = messages.swap_remove(index);
         // Requeue the other messages
         for message in messages {

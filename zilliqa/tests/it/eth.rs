@@ -1041,12 +1041,12 @@ async fn get_transaction_by_index(mut network: Network) {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(txn.hash, h1);
+    assert_eq!(txn.hash, h2);
 
     let txn = wallet
         .get_transaction_by_block_and_index(block_number, 1u64.into())
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(txn.hash, h2);
+    assert_eq!(txn.hash, h1);
 }

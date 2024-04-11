@@ -980,6 +980,9 @@ impl Consensus {
                         self.pending_peers.len(),
                         hex::encode(self.public_key().as_bytes())
                     );
+                    for txn in &applied_transaction_hashes {
+                        info!("TXN HASH in block: {:?}", txn);
+                    }
                     trace!(
                         "PUBLIC KEYS IN PROPOSED BLOCK COMMITTEE, my: {}",
                         hex::encode(self.public_key().as_bytes())
