@@ -192,7 +192,9 @@ EOF
 cat << EOF > /etc/logrotate.d/zilliqa.conf
 /zilliqa.log
 {
-    rotate 0
+    rotate 2
+    copytruncate
+    delaycompress
     maxsize 256M
     missingok
 }
