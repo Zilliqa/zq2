@@ -97,3 +97,46 @@ impl ScillaInspector for TouchedAddressInspector {
         self.touched.insert(to);
     }
 }
+
+#[derive(Debug)]
+pub struct CreatorInspector {
+    contract: H160,
+    creator: Option<H160>,
+}
+
+impl CreatorInspector {
+    pub fn new(contract: H160) -> Self {
+        CreatorInspector {
+            contract,
+            creator: None,
+        }
+    }
+
+    pub fn creator(&self) -> Option<H160> {
+        self.creator
+    }
+}
+
+impl<DB: Database> Inspector<DB> for CreatorInspector {
+    fn create_end(
+        &mut self,
+        _: &mut EvmContext<DB>,
+        inputs: &CreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        if let Some(address) = outcome.address {
+            if H160(address.into_array()) == self.contract {
+                self.creator = Some(H160(inputs.caller.into_array()));
+            }
+        }
+        outcome
+    }
+}
+
+impl ScillaInspector for CreatorInspector {
+    fn create(&mut self, creator: H160, contract_address: H160) {
+        if contract_address == self.contract {
+            self.creator = Some(creator);
+        }
+    }
+}

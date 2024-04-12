@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use primitive_types::H256;
+use revm::Inspector;
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
@@ -12,12 +13,13 @@ use crate::{
     crypto::{Hash, NodePublicKey, SecretKey},
     db::Db,
     exec::GAS_PRICE,
+    inspector::{self, ScillaInspector},
     message::{
         Block, BlockBatchRequest, BlockBatchResponse, BlockHeader, BlockNumber, BlockRequest,
         BlockResponse, ExternalMessage, InternalMessage, IntershardCall, Proposal,
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
-    state::{Account, Address},
+    state::{Account, Address, State},
     transaction::{SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction},
 };
 
@@ -297,6 +299,50 @@ impl Node {
 
     pub fn peer_id(&self) -> PeerId {
         self.peer_id
+    }
+
+    pub fn replay_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
+        &self,
+        txn_hash: Hash,
+        inspector: I,
+    ) -> Result<()> {
+        let txn = self
+            .get_transaction_by_hash(txn_hash)?
+            .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
+        let receipt = self
+            .get_transaction_receipt(txn_hash)?
+            .ok_or_else(|| anyhow!("transaction not mined: {txn_hash}"))?;
+
+        let block = self
+            .get_block_by_hash(receipt.block_hash)?
+            .ok_or_else(|| anyhow!("missing block: {}", receipt.block_hash))?;
+        let parent = self
+            .get_block_by_hash(block.parent_hash())?
+            .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
+        let mut state = self
+            .consensus
+            .state()
+            .at_root(H256(parent.state_root_hash().0));
+
+        for other_txn_hash in block.transactions {
+            if txn_hash != other_txn_hash {
+                let other_txn = self
+                    .get_transaction_by_hash(other_txn_hash)?
+                    .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
+                state.apply_transaction(
+                    other_txn,
+                    self.get_chain_id(),
+                    parent.header,
+                    inspector::noop(),
+                )?;
+            } else {
+                state.apply_transaction(txn, self.get_chain_id(), parent.header, inspector)?;
+
+                return Ok(());
+            }
+        }
+
+        Err(anyhow!("transaction not found in block: {txn_hash}"))
     }
 
     pub fn call_contract(
