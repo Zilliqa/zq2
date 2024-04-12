@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::HashSet,
     fmt,
     fmt::{Display, Formatter},
     str::FromStr,
@@ -7,14 +7,12 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
-use libp2p::PeerId;
 use primitive_types::H160;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
 use time::{macros::format_description, OffsetDateTime};
 
 use crate::{
-    consensus::Validator,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     time::SystemTime,
     transaction::{SignedTransaction, VerifiedTransaction},
@@ -543,44 +541,6 @@ impl FromStr for BlockNumber {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-// Invariant: The set is non-empty
-pub struct Committee(BTreeSet<Validator>);
-
-impl Committee {
-    pub fn new(validator: Validator) -> Committee {
-        Committee([validator].into_iter().collect())
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = Validator> + '_ {
-        self.0.iter().copied()
-    }
-
-    pub fn get_by_index(&self, index: usize) -> Option<Validator> {
-        self.0.iter().nth(index).copied()
-    }
-
-    pub fn add_validators(&mut self, validators: impl IntoIterator<Item = Validator>) {
-        self.0.extend(validators);
-    }
-
-    pub fn remove_by_peer_id(&mut self, peer_id: PeerId) {
-        self.0.retain(|v| v.peer_id != Some(peer_id));
-    }
-
-    pub fn public_keys(&self) -> Vec<NodePublicKey> {
-        self.0.iter().map(|v| v.public_key).collect()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub header: BlockHeader,
     /// A block's quorum certificate (QC) is proof that more than `2n/3` nodes (out of `n`) have voted for this block.
@@ -605,7 +565,7 @@ impl Display for Block {
 }
 
 impl Block {
-    pub fn genesis(committee: Committee, state_root_hash: Hash) -> Block {
+    pub fn genesis(committee: &[NodePublicKey], state_root_hash: Hash) -> Block {
         let view = 0u64;
         let number = 0u64;
         let qc = QuorumCertificate {
@@ -619,9 +579,8 @@ impl Block {
 
         // FIXME: Just concatenating the keys is dumb.
         let committee_keys: Vec<_> = committee
-            .0
             .iter()
-            .flat_map(|v| v.public_key.as_bytes())
+            .flat_map(|public_key| public_key.as_bytes())
             .collect();
 
         // Could the hash be all zeroes for genesis perhaps?

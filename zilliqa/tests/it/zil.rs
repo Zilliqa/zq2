@@ -35,7 +35,7 @@ async fn create_transaction(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            60,
+            50,
         )
         .await
         .unwrap();
@@ -102,7 +102,7 @@ async fn create_transaction(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            60,
+            50,
         )
         .await
         .unwrap();
