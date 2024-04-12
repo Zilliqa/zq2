@@ -4,7 +4,7 @@ use std::{
     error::Error,
     fmt::{self, Display, Formatter},
     num::NonZeroU128,
-    sync::Arc
+    sync::Arc,
 };
 
 use anyhow::{anyhow, Result};
