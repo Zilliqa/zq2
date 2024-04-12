@@ -127,7 +127,7 @@ impl Scilla {
         code: &str,
         gas_limit: u64,
         init: &[Value],
-    ) -> Result<Result<CheckOutput, Vec<String>>> {
+    ) -> Result<Result<CheckOutput, Vec<Error>>> {
         let args = vec![
             "-init".to_owned(),
             serde_json::to_string(&init)?,
@@ -155,11 +155,7 @@ impl Scilla {
             )?)),
             Err(ClientError::Call(e)) => {
                 let error: CheckError = serde_json::from_str(e.message())?;
-                Ok(Err(error
-                    .errors
-                    .into_iter()
-                    .map(|e| e.error_message.trim().to_owned())
-                    .collect()))
+                Ok(Err(error.errors))
             }
             Err(e) => Err(anyhow!("{e:?}")),
         }
@@ -173,7 +169,7 @@ impl Scilla {
         gas_limit: u64,
         value: u128,
         init: &[Value],
-    ) -> Result<Result<(CreateOutput, H256), CreateError>> {
+    ) -> Result<Result<(CreateOutput, H256), ErrorResponse>> {
         let args = vec![
             "-i".to_owned(),
             code.to_owned(),
@@ -222,7 +218,7 @@ impl Scilla {
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum OutputOrError {
-            Err(CreateError),
+            Err(ErrorResponse),
             Output(CreateOutput),
         }
 
@@ -245,7 +241,7 @@ impl Scilla {
         value: u128,
         init: &[Value],
         msg: &Value,
-    ) -> Result<(InvokeOutput, H256)> {
+    ) -> Result<Result<(InvokeOutput, H256), ErrorResponse>> {
         let args = vec![
             "-init".to_owned(),
             serde_json::to_string(&init)?,
@@ -288,14 +284,6 @@ impl Scilla {
 
         trace!("Invoke response: {response}");
 
-        if response
-            .as_object()
-            .map(|obj| obj.contains_key("errors"))
-            .unwrap_or(false)
-        {
-            return Err(anyhow!("call failed: {response}"));
-        }
-
         // Sometimes Scilla returns a JSON object within a JSON string. Sometimes it doesn't...
         let response = if let Some(response) = response.as_str() {
             serde_json::from_str(response)?
@@ -303,9 +291,20 @@ impl Scilla {
             serde_json::from_value(response)?
         };
 
-        let root_hash = H256(state.root_hash()?.0);
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum OutputOrError {
+            Err(ErrorResponse),
+            Output(InvokeOutput),
+        }
 
-        Ok((response, root_hash))
+        match serde_json::from_value(response)? {
+            OutputOrError::Err(e) => Ok(Err(e)),
+            OutputOrError::Output(response) => {
+                let root_hash = H256(state.root_hash()?.0);
+                Ok(Ok((response, root_hash)))
+            }
+        }
     }
 }
 
@@ -321,7 +320,13 @@ struct CheckError {
 
 #[derive(Debug, Deserialize)]
 pub struct Error {
+    pub start_location: Location,
     pub error_message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Location {
+    pub line: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -346,7 +351,7 @@ pub struct CreateOutput {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateError {
+pub struct ErrorResponse {
     pub errors: Vec<Error>,
     #[serde(with = "num_as_str")]
     pub gas_remaining: u64,

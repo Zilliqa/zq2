@@ -1927,6 +1927,9 @@ impl Consensus {
                 contract_address: result.contract_address,
                 logs: result.logs,
                 gas_used: result.gas_used,
+                accepted: result.accepted,
+                errors: result.errors,
+                exceptions: result.exceptions,
             };
             info!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push(receipt);

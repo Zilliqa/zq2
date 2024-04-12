@@ -1,8 +1,11 @@
+use std::collections::BTreeMap;
+
 use primitive_types::{H160, H256, H512};
 use serde::Serialize;
 
 use super::{hex, hex_no_prefix};
 use crate::{
+    exec::{ScillaError, ScillaException},
     message::Block,
     schnorr,
     serde_util::num_as_str,
@@ -110,13 +113,19 @@ pub struct CreateTransactionResponse {
 
 #[derive(Clone, Serialize, Debug)]
 struct GetTxResponseReceipt {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accepted: Option<bool>,
     #[serde(with = "num_as_str")]
     cumulative_gas: u64,
     #[serde(with = "num_as_str")]
     epoch_num: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    event_logs: Vec<ScillaLog>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    errors: BTreeMap<u64, Vec<u64>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    exceptions: Vec<ScillaException>,
     success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    event_logs: Option<Vec<ScillaLog>>,
 }
 
 impl GetTxResponse {
@@ -138,14 +147,29 @@ impl GetTxResponse {
                 receipt: GetTxResponseReceipt {
                     cumulative_gas: receipt.gas_used,
                     epoch_num: block_number,
+                    event_logs: receipt
+                        .logs
+                        .into_iter()
+                        .filter_map(|log| log.into_scilla()) // TODO: Expose EVM logs in Scilla API.
+                        .collect(),
                     success: receipt.success,
-                    event_logs: (!receipt.logs.is_empty()).then(|| {
-                        receipt
-                            .logs
-                            .into_iter()
-                            .filter_map(|log| log.into_scilla()) // TODO: Expose EVM logs in Scilla API.
-                            .collect()
-                    }),
+                    accepted: receipt.accepted,
+                    errors: receipt
+                        .errors
+                        .into_iter()
+                        .map(|(k, v)| {
+                            (
+                                k,
+                                v.into_iter()
+                                    .map(|err| match err {
+                                        ScillaError::CallFailed => 7,
+                                        ScillaError::CreateFailed => 8,
+                                    })
+                                    .collect(),
+                            )
+                        })
+                        .collect(),
+                    exceptions: receipt.exceptions,
                 },
                 gas_price: tx.gas_price,
                 gas_limit: tx.gas_limit,
