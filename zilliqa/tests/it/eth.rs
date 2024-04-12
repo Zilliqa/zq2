@@ -14,7 +14,7 @@ use ethers::{
     },
     utils::keccak256,
 };
-use futures::future::join_all;
+use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
 use serde::Serialize;
 
@@ -671,7 +671,7 @@ async fn eth_call(mut network: Network) {
         .await
         .unwrap();
 
-    let getter = abi.function("getInt256").unwrap();
+    let getter = abi.function("getUint256").unwrap();
 
     let receipt = wallet.get_transaction_receipt(hash).await;
 
@@ -1039,4 +1039,29 @@ async fn get_transaction_by_index(mut network: Network) {
         .unwrap()
         .unwrap();
     assert_eq!(txn.hash, h1);
+}
+
+#[zilliqa_macros::test]
+async fn block_subscription(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let mut block_stream = wallet.subscribe_blocks().await.unwrap();
+
+    network.run_until_block(&wallet, 3.into(), 50).await;
+
+    // Assert the stream contains 3 blocks.
+    assert_eq!(
+        block_stream.next().await.unwrap().number.unwrap().as_u64(),
+        1
+    );
+    assert_eq!(
+        block_stream.next().await.unwrap().number.unwrap().as_u64(),
+        2
+    );
+    assert_eq!(
+        block_stream.next().await.unwrap().number.unwrap().as_u64(),
+        3
+    );
+
+    assert!(block_stream.unsubscribe().await.unwrap());
 }

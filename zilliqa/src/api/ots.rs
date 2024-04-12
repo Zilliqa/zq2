@@ -34,7 +34,10 @@ fn get_block_details(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<o
     let Some(ref block) = node.lock().unwrap().get_block_by_number(block)? else {
         return Ok(None);
     };
-    let miner = node.lock().unwrap().get_proposer_reward_address(block)?;
+    let miner = node
+        .lock()
+        .unwrap()
+        .get_proposer_reward_address(block.header)?;
 
     Ok(Some(ots::BlockDetails::from_block(
         block,
@@ -51,7 +54,10 @@ fn get_block_details_by_hash(
     let Some(ref block) = node.lock().unwrap().get_block_by_hash(Hash(block_hash.0))? else {
         return Ok(None);
     };
-    let miner = node.lock().unwrap().get_proposer_reward_address(block)?;
+    let miner = node
+        .lock()
+        .unwrap()
+        .get_proposer_reward_address(block.header)?;
 
     Ok(Some(ots::BlockDetails::from_block(
         block,
@@ -73,7 +79,7 @@ fn get_block_transactions(
     let Some(block) = node.get_block_by_number(block_num)? else {
         return Ok(None);
     };
-    let miner = node.get_proposer_reward_address(&block)?;
+    let miner = node.get_proposer_reward_address(block.header)?;
 
     let start = usize::min(page_number * page_size, block.transactions.len());
     let end = usize::min((page_number + 1) * page_size, block.transactions.len());
