@@ -1,6 +1,11 @@
 //! Manages execution of transactions on state.
 
-use std::{num::NonZeroU128, sync::Arc};
+use std::{
+    error::Error,
+    fmt::{self, Display, Formatter},
+    num::NonZeroU128,
+    sync::Arc
+};
 
 use anyhow::{anyhow, Result};
 use eth_trie::Trie;
@@ -38,8 +43,30 @@ pub struct TransactionApplyResult {
     pub gas_used: u64,
 }
 
+// We need to define a custom error type for our [Database], which implements [Error].
+#[derive(Debug)]
+pub struct DatabaseError(anyhow::Error);
+
+impl From<anyhow::Error> for DatabaseError {
+    fn from(err: anyhow::Error) -> Self {
+        DatabaseError(err)
+    }
+}
+
+impl Display for DatabaseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Error for DatabaseError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.0.source()
+    }
+}
+
 impl Database for &State {
-    type Error = anyhow::Error;
+    type Error = DatabaseError;
 
     fn basic(
         &mut self,
@@ -206,10 +233,8 @@ impl State {
             })
             .build();
 
-        let result = evm
-            .transact()
-            .map_err(|err| anyhow!("Execution failed: {:?}", err))?;
-        Ok(result)
+        let e = evm.transact()?;
+        Ok(e)
     }
 
     /// Apply a transaction to the account state.
