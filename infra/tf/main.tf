@@ -191,7 +191,7 @@ resource "google_compute_backend_service" "api" {
   port_name             = "jsonrpc"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   enable_cdn            = false
-
+  session_affinity      = "CLIENT_IP"
   backend {
     group           = google_compute_instance_group.api.self_link
     balancing_mode  = "UTILIZATION"
