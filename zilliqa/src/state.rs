@@ -78,11 +78,11 @@ impl State {
                 contracts::shard_registry::BYTECODE.to_vec(),
                 &[Token::Uint(config.consensus_timeout.as_millis().into())],
             )?;
-            state.force_deploy_contract(shard_data, Some(contract_addr::SHARD_REGISTRY))?;
+            state.force_deploy_contract_evm(shard_data, Some(contract_addr::SHARD_REGISTRY))?;
         };
 
         let intershard_bridge_data = contracts::intershard_bridge::BYTECODE.to_vec();
-        state.force_deploy_contract(
+        state.force_deploy_contract_evm(
             intershard_bridge_data,
             Some(contract_addr::INTERSHARD_BRIDGE),
         )?;
@@ -98,7 +98,7 @@ impl State {
 
         let deposit_data = Constructor { inputs: vec![] }
             .encode_input(contracts::deposit::BYTECODE.to_vec(), &[])?;
-        state.force_deploy_contract(deposit_data, Some(contract_addr::DEPOSIT))?;
+        state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
 
         for (pub_key, stake, reward_address) in config.genesis_deposits {
             let data = contracts::deposit::SET_STAKE.encode_input(&[
@@ -123,7 +123,7 @@ impl State {
             if !result.is_success() {
                 return Err(anyhow!("setting stake failed: {result:?}"));
             }
-            state.apply_delta(result_state)?;
+            state.apply_delta_evm(result_state)?;
         }
 
         Ok(state)

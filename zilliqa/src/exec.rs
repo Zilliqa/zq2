@@ -125,7 +125,7 @@ const SPEC_ID: SpecId = SpecId::SHANGHAI;
 impl State {
     /// Used primarily during genesis to set up contracts for chain functionality.
     /// If override_address address is set, forces contract deployment to that addess.
-    pub(crate) fn force_deploy_contract(
+    pub(crate) fn force_deploy_contract_evm(
         &mut self,
         creation_bytecode: Vec<u8>,
         override_address: Option<Address>,
@@ -158,7 +158,7 @@ impl State {
                     addr
                 };
 
-                self.apply_delta(state)?;
+                self.apply_delta_evm(state)?;
                 Ok(H160(addr.into_array()))
             }
             ExecutionResult::Success { .. } => {
@@ -245,191 +245,205 @@ impl State {
         current_block: BlockHeader,
         txn: TxZilliqa,
     ) -> Result<TransactionApplyResult> {
-        let is_contract_creation = txn.to_addr.is_zero();
         let code = self
             .get_account(txn.to_addr)?
             .contract
             .scilla_code()
             .unwrap_or_default();
 
-        if is_contract_creation {
-            // Contract creation
-            if txn.data.is_empty() {
-                return Err(anyhow!("contract creation without init data"));
-            }
-
-            let mut hasher = Sha256::new();
-            hasher.update(from_addr.as_bytes());
-            hasher.update((txn.nonce - 1).to_be_bytes());
-            let hashed = hasher.finalize();
-            let contract_address = H160::from_slice(&hashed[12..]);
-
-            let mut init_data: Vec<Value> = serde_json::from_str(&txn.data)?;
-            init_data.push(json!({"vname": "_creation_block", "type": "BNum", "value": current_block.number.to_string()}));
-            let contract_address_hex = format!("{contract_address:#x}");
-            init_data.push(
-                json!({"vname": "_this_address", "type": "ByStr20", "value": contract_address_hex}),
-            );
-
-            let check_output = self
-                .scilla()
-                .check_contract(&txn.code, txn.gas_limit, &init_data)?
-                .map_err(|errors| anyhow!("invalid contract: {errors:?}"))?; // TODO: Check this earlier for better UX
-
-            let storage = check_output
-                .contract_info
-                .fields
-                .into_iter()
-                .map(|p| {
-                    (
-                        p.name,
-                        (
-                            if p.depth == 0 {
-                                ScillaValue::Bytes(Vec::new())
-                            } else {
-                                ScillaValue::map()
-                            },
-                            p.ty,
-                        ),
-                    )
-                })
-                .collect();
-
-            let account = Account {
-                nonce: 0,
-                balance: txn.amount,
-                contract: Contract::Scilla {
-                    code: txn.code.clone(),
-                    init_data: serde_json::to_string(&init_data)?,
-                    storage,
-                },
-            };
-            self.save_account(contract_address, account)?;
-
-            let state = self.try_clone()?;
-            let (_output, root_hash) = match self.scilla().create_contract(
-                contract_address,
-                state,
-                &txn.code,
-                txn.gas_limit,
-                txn.amount,
-                &init_data,
-            )? {
-                Ok(o) => o,
-                Err(e) => {
-                    warn!(?e, "transaction failed");
-                    return Ok(TransactionApplyResult {
-                        success: false,
-                        contract_address: None,
-                        logs: vec![],
-                        gas_used: 0, // TODO
-                    });
-                }
-            };
-            self.set_to_root(root_hash);
-
-            let mut from = self.get_account(from_addr)?;
-            from.nonce += 1;
-            self.save_account(from_addr, from)?;
-
-            Ok(TransactionApplyResult {
-                success: true,
-                contract_address: Some(contract_address),
-                logs: vec![],
-                gas_used: 0, // TODO
-            })
+        if txn.to_addr.is_zero() {
+            self.scilla_create(from_addr, txn, current_block)
         } else if code.is_empty() {
-            // Transfer to an EOA
+            self.scilla_transfer_to_eoa(from_addr, txn)
+        } else {
+            self.scilla_call(from_addr, txn)
+        }
+    }
 
-            let mut from = self.get_account(from_addr)?;
-            let mut to = self.get_account(txn.to_addr)?;
+    fn scilla_create(
+        &mut self,
+        from_addr: H160,
+        txn: TxZilliqa,
+        current_block: BlockHeader,
+    ) -> Result<TransactionApplyResult> {
+        if txn.data.is_empty() {
+            return Err(anyhow!("contract creation without init data"));
+        }
 
+        let mut hasher = Sha256::new();
+        hasher.update(from_addr.as_bytes());
+        hasher.update((txn.nonce - 1).to_be_bytes());
+        let hashed = hasher.finalize();
+        let contract_address = H160::from_slice(&hashed[12..]);
+
+        let mut init_data: Vec<Value> = serde_json::from_str(&txn.data)?;
+        init_data.push(json!({"vname": "_creation_block", "type": "BNum", "value": current_block.number.to_string()}));
+        let contract_address_hex = format!("{contract_address:#x}");
+        init_data.push(
+            json!({"vname": "_this_address", "type": "ByStr20", "value": contract_address_hex}),
+        );
+
+        let check_output = self
+            .scilla()
+            .check_contract(&txn.code, txn.gas_limit, &init_data)?
+            .map_err(|errors| anyhow!("invalid contract: {errors:?}"))?; // TODO: Check this earlier for better UX
+
+        let storage = check_output
+            .contract_info
+            .fields
+            .into_iter()
+            .map(|p| {
+                (
+                    p.name,
+                    (
+                        if p.depth == 0 {
+                            ScillaValue::Bytes(Vec::new())
+                        } else {
+                            ScillaValue::map()
+                        },
+                        p.ty,
+                    ),
+                )
+            })
+            .collect();
+
+        let account = Account {
+            nonce: 0,
+            balance: txn.amount,
+            contract: Contract::Scilla {
+                code: txn.code.clone(),
+                init_data: serde_json::to_string(&init_data)?,
+                storage,
+            },
+        };
+        self.save_account(contract_address, account)?;
+
+        let state = self.try_clone()?;
+        let (_output, root_hash) = match self.scilla().create_contract(
+            contract_address,
+            state,
+            &txn.code,
+            txn.gas_limit,
+            txn.amount,
+            &init_data,
+        )? {
+            Ok(o) => o,
+            Err(e) => {
+                warn!(?e, "transaction failed");
+                return Ok(TransactionApplyResult {
+                    success: false,
+                    contract_address: None,
+                    logs: vec![],
+                    gas_used: 0, // TODO
+                });
+            }
+        };
+        self.set_to_root(root_hash);
+
+        self.mutate_account(from_addr, |acc| {
+            acc.nonce += 1;
+        })?;
+
+        Ok(TransactionApplyResult {
+            success: true,
+            contract_address: Some(contract_address),
+            logs: vec![],
+            gas_used: 0, // TODO
+        })
+    }
+
+    fn scilla_transfer_to_eoa(
+        &mut self,
+        from_addr: H160,
+        txn: TxZilliqa,
+    ) -> Result<TransactionApplyResult> {
+        self.mutate_account(from_addr, |from| {
             from.balance -= txn.amount();
             from.nonce += 1;
+        })?;
+        self.mutate_account(txn.to_addr, |to| {
             to.balance += txn.amount();
+        })?;
 
-            self.save_account(from_addr, from)?;
-            self.save_account(txn.to_addr, to)?;
+        Ok(TransactionApplyResult {
+            success: true,
+            contract_address: None,
+            logs: vec![],
+            gas_used: 0, // TODO
+        })
+    }
 
-            Ok(TransactionApplyResult {
-                success: true,
-                contract_address: None,
-                logs: vec![],
-                gas_used: 0, // TODO
-            })
-        } else {
-            // Transfer or call to a contract
-            // TODO: Interop
-            let Contract::Scilla {
-                code,
-                init_data,
-                storage: _,
-            } = self.get_account(txn.to_addr)?.contract
-            else {
-                return Err(anyhow!("Scilla call to a non-Scilla contract"));
-            };
-            let init_data: Vec<Value> = serde_json::from_str(&init_data)?;
+    fn scilla_call(&mut self, from_addr: H160, txn: TxZilliqa) -> Result<TransactionApplyResult> {
+        // TODO: Interop
+        let Contract::Scilla {
+            code,
+            init_data,
+            storage: _,
+        } = self.get_account(txn.to_addr)?.contract
+        else {
+            return Err(anyhow!("Scilla call to a non-Scilla contract"));
+        };
+        let init_data: Vec<Value> = serde_json::from_str(&init_data)?;
 
-            // TODO: Better parsing here
-            let mut message: Value = serde_json::from_str(&txn.data)?;
-            message["_amount"] = txn.amount.to_string().into();
-            message["_sender"] = format!("{from_addr:#x}").into();
-            message["_origin"] = format!("{from_addr:#x}").into();
+        // TODO: Better parsing here
+        let mut message: Value = serde_json::from_str(&txn.data)?;
+        message["_amount"] = txn.amount.to_string().into();
+        message["_sender"] = format!("{from_addr:#x}").into();
+        message["_origin"] = format!("{from_addr:#x}").into();
 
-            let state = self.try_clone()?;
-            let (output, root_hash) = self.scilla().invoke_contract(
-                txn.to_addr,
-                state,
-                &code,
-                txn.gas_limit,
-                txn.amount,
-                &init_data,
-                &message,
-            )?;
-            self.set_to_root(root_hash);
+        let state = self.try_clone()?;
+        let (output, root_hash) = self.scilla().invoke_contract(
+            txn.to_addr,
+            state,
+            &code,
+            txn.gas_limit,
+            txn.amount,
+            &init_data,
+            &message,
+        )?;
+        self.set_to_root(root_hash);
 
-            info!(?output);
+        info!(?output);
 
-            let mut from = self.get_account(from_addr)?;
-            let mut to = self.get_account(txn.to_addr)?;
-
+        self.mutate_account(from_addr, |from| {
             from.nonce += 1;
             if output.accepted {
                 from.balance -= txn.amount();
+            }
+        })?;
+        self.mutate_account(txn.to_addr, |to| {
+            if output.accepted {
                 to.balance += txn.amount();
             }
+        })?;
 
-            // TODO: Handle `output.messages` for multi-contract calls.
+        // TODO: Handle `output.messages` for multi-contract calls.
 
-            self.save_account(from_addr, from)?;
-            self.save_account(txn.to_addr, to)?;
-
-            let logs = output
-                .events
-                .into_iter()
-                .map(|e| {
-                    Log::scilla(
-                        txn.to_addr,
-                        e.event_name,
-                        e.params
-                            .into_iter()
-                            .map(|p| ScillaParam {
-                                ty: p.ty,
-                                value: p.value,
-                                name: p.name,
-                            })
-                            .collect(),
-                    )
-                })
-                .collect();
-
-            Ok(TransactionApplyResult {
-                success: true,
-                contract_address: None,
-                logs,
-                gas_used: 0, // TODO
+        let logs = output
+            .events
+            .into_iter()
+            .map(|e| {
+                Log::scilla(
+                    txn.to_addr,
+                    e.event_name,
+                    e.params
+                        .into_iter()
+                        .map(|p| ScillaParam {
+                            ty: p.ty,
+                            value: p.value,
+                            name: p.name,
+                        })
+                        .collect(),
+                )
             })
-        }
+            .collect();
+
+        Ok(TransactionApplyResult {
+            success: true,
+            contract_address: None,
+            logs,
+            gas_used: 0, // TODO
+        })
     }
 
     /// Apply a transaction to the account state.
@@ -459,7 +473,7 @@ impl State {
                 current_block,
             )?;
 
-            self.apply_delta(state)?;
+            self.apply_delta_evm(state)?;
 
             Ok(TransactionApplyResult {
                 success: result.is_success(),
@@ -488,7 +502,8 @@ impl State {
         }
     }
 
-    pub(crate) fn apply_delta(
+    /// Applies a state delta from an EVM execution to the state.
+    pub(crate) fn apply_delta_evm(
         &mut self,
         state: revm::primitives::HashMap<revm::primitives::Address, revm::primitives::Account>,
     ) -> Result<()> {
