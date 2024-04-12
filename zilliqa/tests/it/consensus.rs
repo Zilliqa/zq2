@@ -102,7 +102,7 @@ async fn block_production(mut network: Network) {
                     .map_or(0, |b| b.number())
                     >= 5
             },
-            80,
+            50,
         )
         .await
         .unwrap();
@@ -119,7 +119,7 @@ async fn block_production(mut network: Network) {
                     .map_or(0, |b| b.number())
                     >= 10
             },
-            130,
+            100,
         )
         .await
         .unwrap();
@@ -164,7 +164,7 @@ async fn create_shard(
         .unwrap()
         .run_until_async(
             || async { shard_wallet.get_block_number().await.unwrap().as_u64() >= 1 },
-            60,
+            50,
         )
         .await
         .unwrap();
@@ -247,7 +247,7 @@ async fn create_shard(
                 n.children.get(&child_shard_id).unwrap().nodes.len()
                     == initial_main_shard_nodes + child_shard_nodes
             },
-            230,
+            200,
         )
         .await
         .unwrap();
@@ -510,7 +510,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
 
     // 4. Finalize that block on the main shard, so that the x-shard message gets sent
     network
-        .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 60)
+        .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 50)
         .await;
 
     // 5. Make sure the transaction gets included in the child network

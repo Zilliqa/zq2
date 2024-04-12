@@ -24,8 +24,6 @@ use crate::{deploy_contract, LocalRpcClient, Network};
 async fn call_block_number(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    network.run_until_block(&wallet, 2.into(), 60).await;
-
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/CallMe.sol",
         "CallMe",
@@ -57,7 +55,7 @@ async fn call_block_number(mut network: Network) {
     network
         .run_until_async(
             || async { wallet.get_block_number().await.unwrap().as_u64() > block_number },
-            80,
+            50,
         )
         .await
         .unwrap();
@@ -118,7 +116,7 @@ async fn get_block_transaction_count(mut network: Network) {
     network
         .run_until_async(
             || async { wallet.get_block_number().await.unwrap().as_u64() > 1 },
-            60,
+            50,
         )
         .await
         .unwrap();
@@ -139,7 +137,7 @@ async fn get_block_transaction_count(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            60,
+            50,
         )
         .await
         .unwrap();
@@ -184,7 +182,7 @@ async fn get_account_transaction_count(mut network: Network) {
     network
         .run_until_async(
             || async { wallet.get_block_number().await.unwrap().as_u64() > 1 },
-            60,
+            50,
         )
         .await
         .unwrap();
@@ -205,7 +203,7 @@ async fn get_account_transaction_count(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            60,
+            50,
         )
         .await
         .unwrap();
@@ -261,7 +259,7 @@ async fn get_logs(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            60,
+            50,
         )
         .await
         .unwrap();
@@ -473,7 +471,7 @@ async fn get_storage_at(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            60,
+            50,
         )
         .await
         .unwrap();
@@ -520,7 +518,7 @@ async fn send_transaction(
                     .unwrap()
                     .is_some()
             },
-            100,
+            50,
         )
         .await
         .unwrap();
@@ -632,7 +630,7 @@ async fn send_legacy_transaction_without_chain_id(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            60,
+            50,
         )
         .await
         .unwrap();
@@ -666,7 +664,7 @@ async fn eth_call(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            60,
+            50,
         )
         .await
         .unwrap();
@@ -829,7 +827,7 @@ async fn nonces_rejected_too_high(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            60,
+            50,
         )
         .await;
 
@@ -955,7 +953,7 @@ async fn priority_fees_tx(mut network: Network) {
                 wallet.get_balance(to, None).await.unwrap()
                     == (tx_send_amount * tx_send_iterations).into()
             },
-            150,
+            100,
         )
         .await;
 
@@ -990,7 +988,7 @@ async fn pending_transaction_is_returned_by_get_transaction_by_hash(mut network:
                     .unwrap()
                     .is_some()
             },
-            60,
+            50,
         )
         .await
         .unwrap();
