@@ -7,11 +7,16 @@ use serde_json::{json, Value};
 
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},
-    types::ots,
+    types::ots::{self, TraceEntry},
 };
 use crate::{
-    api::to_hex::ToHex, crypto::Hash, inspector::CreatorInspector, message::BlockNumber,
-    node::Node, state::Contract, time::SystemTime,
+    api::to_hex::ToHex,
+    crypto::Hash,
+    inspector::{CreatorInspector, OtterscanTraceInspector},
+    message::BlockNumber,
+    node::Node,
+    state::Contract,
+    time::SystemTime,
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -26,6 +31,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("ots_hasCode", has_code),
             ("ots_searchTransactionsAfter", search_transactions_after),
             ("ots_searchTransactionsBefore", search_transactions_before),
+            ("ots_traceTransaction", trace_transaction),
         ],
     )
 }
@@ -275,4 +281,16 @@ fn search_transactions_before(
     }
 
     search_transactions_inner(node, address, block_number, page_size, true)
+}
+
+fn trace_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TraceEntry>> {
+    let txn_hash: H256 = params.one()?;
+    let txn_hash = Hash(txn_hash.0);
+
+    let mut inspector = OtterscanTraceInspector::default();
+    node.lock()
+        .unwrap()
+        .replay_transaction(txn_hash, &mut inspector)?;
+
+    Ok(inspector.entries())
 }
