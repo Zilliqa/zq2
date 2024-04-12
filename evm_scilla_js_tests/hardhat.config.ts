@@ -1,8 +1,8 @@
 import "@nomicfoundation/hardhat-toolbox";
 import "@nomiclabs/hardhat-web3";
-import {HardhatUserConfig} from "hardhat/types";
+import { HardhatUserConfig } from "hardhat/types";
 import "dotenv/config";
-import {ENV_VARS} from "./helpers/EnvVarParser";
+import { ENV_VARS } from "./helpers/EnvVarParser";
 
 import "./tasks/ZilBalance";
 import "./tasks/Transfer";
@@ -14,7 +14,7 @@ import fs from "fs";
 if (ENV_VARS.scilla) {
   require("hardhat-scilla-plugin");
   const chai = require("chai");
-  const {scillaChaiEventMatcher} = require("hardhat-scilla-plugin");
+  const { scillaChaiEventMatcher } = require("hardhat-scilla-plugin");
   chai.use(scillaChaiEventMatcher);
 }
 
@@ -41,6 +41,17 @@ const config: HardhatUserConfig = {
   defaultNetwork: "isolated_server",
 
   networks: {
+    from_env: {
+      url: process.env.CHAIN_URL ?? "",
+      websocketUrl: process.env.CHAIN_WEBSOCKET_URL ?? "",
+      accounts: [...loadFromSignersFile(process.env.CHAIN_NAME)],
+      chainId: process.env.CHAIN_ID | 0x8000,
+      zilliqaNetwork: true,
+      web3ClientVersion: "Zilliqa/v8.2",
+      protocolVersion: 0x41,
+      miningState: false
+    },
+
     public_devnet: {
       url: "https://api.devnet.zilliqa.com",
       websocketUrl: "ws://api.devnet.zilliqa.com",
@@ -95,7 +106,7 @@ const config: HardhatUserConfig = {
         "0000000000000000000000000000000000000000000000000000000000000003",
         "0000000000000000000000000000000000000000000000000000000000000004",
       ],
-      chainId: 33468,
+      chainId: 0x8001,
       web3ClientVersion: "Zilliqa/v8.2",
       protocolVersion: 0x41,
       zilliqaNetwork: true,
@@ -159,7 +170,7 @@ const config: HardhatUserConfig = {
 
 // Extend hardhat runtime environment to have some utility functions and variables.
 import "./AddConfigHelpersToHre";
-import {extendEnvironment} from "hardhat/config";
+import { extendEnvironment } from "hardhat/config";
 import SignerPool from "./helpers/parallel-tests/SignerPool";
 extendEnvironment(async (hre) => {
   const private_keys: string[] = hre.network["config"]["accounts"] as string[];
@@ -177,5 +188,5 @@ import "./tasks/Test";
 import "./tasks/ZilBalance";
 import "./tasks/Transfer";
 import "./tasks/InitSigners";
-import {initZilliqa} from "hardhat-scilla-plugin";
+import { initZilliqa } from "hardhat-scilla-plugin";
 export default config;
