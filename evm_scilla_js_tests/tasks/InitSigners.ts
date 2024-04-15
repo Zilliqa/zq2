@@ -6,33 +6,49 @@ import {join} from "path";
 import clc from "cli-color";
 import ora from "ora";
 import {getAddressFromPrivateKey} from "@zilliqa-js/zilliqa";
+import {getEthAddress} from "../helpers/SignersHelper";
 
 task("init-signers", "A task to init signers")
   .addParam("from", "Sender's private key")
+  .addParam(
+    "fromAddressType",
+    "It can be either `eth` or `zil`. If eth is selected, Eth address of private key will be used. Otherwise, the zil address will be used."
+  )
   .addParam("count", "Number of signers to be generated")
   .addParam("balance", "Balance of each newly generated signers")
+  .addOptionalParam("fileName", "Output file name")
   .addFlag("append", "Append new signers to the end of the .signer-<network> file")
   .setAction(async (taskArgs, hre) => {
-    const {from, count, balance, append} = taskArgs;
+    const {from, fromAddressType, count, balance, append, fileName} = taskArgs;
 
     const spinner = ora();
     spinner.start(`Creating ${count} accounts...`);
 
-    const accounts = await createAccountsEth(hre, from, hre.ethers.utils.parseEther(balance), count);
+    let accounts = [];
+    if (fromAddressType === "eth") {
+      accounts = await createAccountsEth(hre, from, hre.ethers.utils.parseEther(balance), count);
+    } else if (fromAddressType === "zil") {
+      accounts = await createAccountsZil(hre, from, hre.ethers.utils.parseEther(balance), count);
+    } else {
+      console.log(`--from-address-type should be either eth or zil. ${fromAddressType} is not supported`);
+      spinner.fail();
+      return;
+    }
 
     spinner.succeed();
 
-    const file_name = `${hre.network.name}.json`;
+    const outputFileStem = fileName ?? process.env.CHAIN_NAME ?? `${hre.network.name}`;
+    const outputFileName = `${outputFileStem}.json`;
 
     try {
       await writeToFile(
         accounts.map((account) => account.privateKey),
         append,
-        file_name
+        outputFileName
       );
       console.log();
       console.log(
-        clc.bold(`.signers/${file_name}`),
+        clc.bold(`.signers/${outputFileName}`),
         clc.blackBright(`${append ? "updated" : "created"} successfully.`)
       );
     } catch (error) {
@@ -57,21 +73,42 @@ const createAccountsEth = async (
   count: number
 ) => {
   const wallet = new ethers.Wallet(privateKey, hre.ethers.provider);
-
-  if ((await wallet.getBalance()).isZero()) {
-    throw new Error("Sender doesn't have enough fund in its eth address.");
-  }
-
   const accounts = Array.from({length: count}, (v, k) => ethers.Wallet.createRandom().connect(hre.ethers.provider));
-
   const addresses = [
     ...accounts.map((signer) => signer.address),
     ...accounts.map((signer) => getAddressFromPrivateKey(signer.privateKey).toLocaleLowerCase())
   ];
 
+  const value = amount.mul(addresses.length);
+
+  if ((await wallet.getBalance()).lt(value)) {
+    throw new Error(
+      `Sender doesn't have enough fund in its eth address. Needed ${ethers.utils.formatEther(value)} ether`
+    );
+  }
+
   await hre.deployContractWithSigner("BatchTransferCtor", wallet, addresses, amount, {
-    value: amount.mul(addresses.length)
+    value
   });
 
   return accounts;
+};
+
+const createAccountsZil = async (
+  hre: HardhatRuntimeEnvironment,
+  privateKey: string,
+  amount: BigNumber,
+  count: number
+) => {
+  // Add +amount for the source account itself, add +100 for transaction costs.
+  let gasSupply = BigNumber.from(100).mul(ethers.constants.WeiPerEther);
+  let amountToMove = ethers.utils.formatEther(amount.mul(count * 2).add(gasSupply));
+  await hre.run("transfer", {
+    from: privateKey,
+    to: getEthAddress(privateKey),
+    amount: amountToMove,
+    fromAddressType: "zil"
+  });
+
+  return createAccountsEth(hre, privateKey, amount, count);
 };
