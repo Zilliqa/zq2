@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeMap,
-    path::PathBuf,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
@@ -36,7 +35,6 @@ pub struct State {
     /// tests which don't invoke Scilla, don't spawn the Scilla communication threads or TCP listeners.
     scilla: Arc<OnceLock<Mutex<Scilla>>>,
     scilla_address: String,
-    scilla_file_dir: Option<PathBuf>,
     local_address: String,
 }
 
@@ -48,7 +46,6 @@ impl State {
             accounts: PatriciaTrie::new(db),
             scilla: Arc::new(OnceLock::new()),
             scilla_address: config.scilla_address.clone(),
-            scilla_file_dir: config.scilla_file_dir.clone(),
             local_address: config.local_address.clone(),
         }
     }
@@ -58,7 +55,6 @@ impl State {
             .get_or_init(|| {
                 Mutex::new(Scilla::new(
                     self.scilla_address.clone(),
-                    self.scilla_file_dir.as_deref(),
                     self.local_address.clone(),
                 ))
             })
@@ -135,7 +131,6 @@ impl State {
             accounts: self.accounts.at_root(root_hash),
             scilla: self.scilla.clone(),
             scilla_address: self.scilla_address.clone(),
-            scilla_file_dir: self.scilla_file_dir.clone(),
             local_address: self.local_address.clone(),
         }
     }

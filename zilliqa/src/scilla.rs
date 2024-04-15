@@ -1,10 +1,7 @@
 //! Interface to the Scilla intepreter
 
 use std::{
-    fs::File,
-    io::Write,
     net::{Ipv4Addr, SocketAddr},
-    path::{Path, PathBuf},
     str,
     sync::{
         mpsc::{channel, Receiver, Sender},
@@ -30,7 +27,6 @@ use serde::{
     Deserialize, Deserializer,
 };
 use serde_json::Value;
-use tempfile::TempDir;
 use tokio::runtime;
 use tracing::trace;
 
@@ -46,7 +42,6 @@ pub struct Scilla {
     request_tx: Sender<(&'static str, ObjectParams)>,
     response_rx: Mutex<Receiver<Result<Value, ClientError>>>,
     state_server: Arc<Mutex<StateServer>>,
-    temp_dir: TempDir,
     local_address: String,
 }
 
@@ -70,7 +65,7 @@ impl Scilla {
     ///
     /// After creating the [StateServer], we wrap it in an `Arc<Mutex<T>>` and send a clone back to the main thread,
     /// to enable shared access to the server.
-    pub fn new(address: String, file_dir: Option<&Path>, local_address: String) -> Scilla {
+    pub fn new(address: String, local_address: String) -> Scilla {
         let (request_tx, request_rx) = channel();
         let (response_tx, response_rx) = channel();
 
@@ -116,24 +111,8 @@ impl Scilla {
             request_tx,
             response_rx: Mutex::new(response_rx),
             state_server,
-            temp_dir: file_dir
-                .map(TempDir::new_in)
-                .unwrap_or_else(TempDir::new)
-                .unwrap(),
             local_address,
         }
-    }
-
-    fn create_common_inputs(&mut self, code: &str, init: &[Value]) -> Result<(PathBuf, PathBuf)> {
-        let contract_path = self.temp_dir.path().join("input.scilla");
-        let mut f = File::create(&contract_path)?;
-        f.write_all(code.as_bytes())?;
-
-        let init_path = self.temp_dir.path().join("init.json");
-        let mut f = File::create(&init_path)?;
-        f.write_all(&serde_json::to_vec(&init)?)?;
-
-        Ok((contract_path, init_path))
     }
 
     fn state_server_addr(&self) -> String {
@@ -149,14 +128,12 @@ impl Scilla {
         gas_limit: u64,
         init: &[Value],
     ) -> Result<Result<CheckOutput, Vec<String>>> {
-        let (contract, init) = self.create_common_inputs(code, init)?;
-
         let args = vec![
             "-init".to_owned(),
-            format!("{}", init.display()),
+            serde_json::to_string(&init)?,
             "-libdir".to_owned(),
             "/scilla/0/_build/default/src/stdlib/".to_owned(),
-            format!("{}", contract.display()),
+            code.to_owned(),
             "-gaslimit".to_owned(),
             gas_limit.to_string(),
             "-contractinfo".to_owned(),
@@ -197,13 +174,11 @@ impl Scilla {
         value: u128,
         init: &[Value],
     ) -> Result<Result<(CreateOutput, H256), CreateError>> {
-        let (contract, init) = self.create_common_inputs(code, init)?;
-
         let args = vec![
             "-i".to_owned(),
-            format!("{}", contract.display()),
+            code.to_owned(),
             "-init".to_owned(),
-            format!("{}", init.display()),
+            serde_json::to_string(&init)?,
             "-ipcaddress".to_owned(),
             self.state_server_addr(),
             "-gaslimit".to_owned(),
@@ -227,6 +202,8 @@ impl Scilla {
                     Ok(self.response_rx.lock().unwrap().recv()?)
                 })?;
 
+        trace!(?response, "create response");
+
         let response: Value = match response {
             Ok(r) => r,
             Err(ClientError::Call(e)) => serde_json::from_str(e.message())?,
@@ -234,8 +211,6 @@ impl Scilla {
                 return Err(anyhow!("{e:?}"));
             }
         };
-
-        trace!("Create response: {response}");
 
         // Sometimes Scilla returns a JSON object within a JSON string. Sometimes it doesn't...
         let response = if let Some(response) = response.as_str() {
@@ -271,21 +246,15 @@ impl Scilla {
         init: &[Value],
         msg: &Value,
     ) -> Result<(InvokeOutput, H256)> {
-        let (contract_path, init) = self.create_common_inputs(code, init)?;
-
-        let message_path = self.temp_dir.path().join("input_message.json");
-        let mut f = File::create(&message_path)?;
-        f.write_all(&serde_json::to_vec(&msg)?)?;
-
         let args = vec![
             "-init".to_owned(),
-            format!("{}", init.display()),
+            serde_json::to_string(&init)?,
             "-ipcaddress".to_owned(),
             self.state_server_addr(),
             "-imessage".to_owned(),
-            format!("{}", message_path.display()),
+            serde_json::to_string(&msg)?,
             "-i".to_owned(),
-            format!("{}", contract_path.display()),
+            code.to_owned(),
             "-gaslimit".to_owned(),
             gas_limit.to_string(),
             "-balance".to_owned(),

@@ -74,13 +74,10 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                 // Let Docker auto-assign a free port on the host. The scilla-server listens on port 3000.
                 .arg("--publish")
                 .arg("3000")
-                .arg("--volume")
-                .arg("/tmp:/tmp")
                 .arg("--init")
                 .arg("--rm")
-                .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:7929e643")
-                .arg("ls")
-                .arg("/tmp")
+                .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72")
+                .arg("/scilla/0/bin/scilla-server-http")
                 .spawn()
                 .unwrap();
 
@@ -193,7 +190,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                         Err(e) => {
                             failure += 1;
                             if failure_examples.len() < 16 {
-                                let seed = id_to_seed.get(&e.id()).unwrap();
+                                let seed = id_to_seed.get(&e.id()).expect("task ID not found");
                                 failure_examples.push(seed);
                             }
                         },
@@ -235,7 +232,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                                 // don't want their logs to be printed.
                                 std::panic::set_hook(Box::new(|_| {}));
 
-                                let seed = id_to_seed.get(&id).unwrap();
+                                let seed = id_to_seed.get(&id).expect("task ID not found");
                                 println!("Reproduce this test run by setting ZQ_TEST_RNG_SEED={seed}");
                                 stop();
                                 std::panic::resume_unwind(p);
