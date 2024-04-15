@@ -46,8 +46,9 @@ impl ERC20Precompile {
         };
 
         let Ok(account) = context.db.get_account(address) else {
-            return Err(PrecompileError::Other(
-                "Unable to get account with given address".into(),
+            return Ok((
+                0u64,
+                encode(&[Token::Uint(primitive_types::U256::from(0))]).into(),
             ));
         };
 
