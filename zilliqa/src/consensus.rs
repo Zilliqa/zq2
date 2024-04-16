@@ -13,8 +13,7 @@ use rand::{
 use rand_chacha::ChaCha8Rng;
 use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
@@ -927,63 +926,53 @@ impl Consensus {
 
         let transactions = self.get_txns_to_execute();
 
-                    let applied_transactions: Vec<_> = transactions
-                        .into_iter()
-                        .filter_map(|tx| {
-                            self.apply_transaction(tx.clone(), parent_header)
-                                .transpose()
-                                .map(|r| r.map(|_| tx))
-                        })
-                        .collect::<Result<_>>()?;
-                    let applied_transaction_hashes: Vec<_> =
-                        applied_transactions.iter().map(|tx| tx.hash).collect();
+        let applied_transactions: Vec<_> = transactions
+            .into_iter()
+            .filter_map(|tx| {
+                self.apply_transaction(tx.clone(), parent_header)
+                    .transpose()
+                    .map(|r| r.map(|_| tx))
+            })
+            .collect::<Result<_>>()?;
+        let applied_transaction_hashes: Vec<_> =
+            applied_transactions.iter().map(|tx| tx.hash).collect();
 
-                    self.apply_rewards(&parent.committee, block_view + 1, &qc.cosigned)?;
+        self.apply_rewards(&parent.committee, block_view + 1, &qc.cosigned)?;
 
-                    let proposal = Block::from_qc(
-                        self.secret_key,
-                        self.view.get_view(),
-                        parent.header.number + 1,
-                        qc,
-                        parent_hash,
-                        self.state.root_hash()?,
-                        applied_transaction_hashes,
-                        SystemTime::max(SystemTime::now(), parent_header.timestamp),
-                        self.get_next_committee(parent.committee.clone()),
-                    );
+        let proposal = Block::from_qc(
+            self.secret_key,
+            self.view.get_view(),
+            parent.header.number + 1,
+            qc,
+            parent_hash,
+            self.state.root_hash()?,
+            applied_transaction_hashes,
+            SystemTime::max(SystemTime::now(), parent_header.timestamp),
+            self.get_next_committee(parent.committee.clone()),
+        );
 
-                    self.state.set_to_root(H256(previous_state_root_hash.0));
-
-                    self.votes.insert(
-                        block_hash,
-                        (signatures, cosigned, cosigned_weight, supermajority_reached),
-                    );
-                    // as a future improvement, process the proposal before broadcasting it
-                    trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
-                    // intershard transactions are not meant to be broadcast
-                    let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
-                        applied_transactions
-                            .into_iter()
-                            .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
-                    // however, for the transactions that we are NOT broadcasting, we re-insert
-                    // them into the pool - this is because upon broadcasting the proposal, we will
-                    // have to re-execute it ourselves (in order to vote on it) and thus will
-                    // need those transactions again
-                    for tx in opaque_transactions {
-                        let account_nonce = self.state.get_account(tx.signer)?.nonce;
-                        self.transaction_pool.insert_transaction(tx, account_nonce);
-                    }
-                    return Ok(Some((proposal, broadcasted_transactions)));
-                }
-            }
-        }
+        self.state.set_to_root(H256(previous_state_root_hash.0));
 
         self.votes.insert(
             block_hash,
             (signatures, cosigned, cosigned_weight, supermajority_reached),
         );
-
-        Ok(None)
+        // as a future improvement, process the proposal before broadcasting it
+        trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
+        // intershard transactions are not meant to be broadcast
+        let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
+            applied_transactions
+                .into_iter()
+                .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
+        // however, for the transactions that we are NOT broadcasting, we re-insert
+        // them into the pool - this is because upon broadcasting the proposal, we will
+        // have to re-execute it ourselves (in order to vote on it) and thus will
+        // need those transactions again
+        for tx in opaque_transactions {
+            let account_nonce = self.state.get_account(tx.signer)?.nonce;
+            self.transaction_pool.insert_transaction(tx, account_nonce);
+        }
+        Ok(Some((proposal, broadcasted_transactions)))
     }
 
     fn get_next_committee(&mut self, mut committee: Committee) -> Committee {
