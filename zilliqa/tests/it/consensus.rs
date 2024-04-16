@@ -231,7 +231,7 @@ async fn create_shard(
 
     let tx = wallet.send_transaction(tx_request, None).await.unwrap();
     let hash = tx.tx_hash();
-    network.run_until_receipt(wallet, hash, 100).await;
+    network.run_until_receipt(wallet, hash, 130).await;
 
     let included_block = wallet.get_block_number().await.unwrap();
 
