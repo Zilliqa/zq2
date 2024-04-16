@@ -68,9 +68,8 @@ impl State {
         }
 
         for (address, balance) in config.genesis_accounts {
-            let mut account = state.get_account(address)?;
-            account.balance = balance.parse()?;
-            state.save_account(address, account)?;
+            let balance: u128 = balance.parse()?;
+            state.mutate_account(address, |a| a.balance = balance)?;
         }
 
         let deposit_data = Constructor { inputs: vec![] }
@@ -162,6 +161,17 @@ impl State {
         })
     }
 
+    pub fn mutate_account<F: FnOnce(&mut Account)>(
+        &mut self,
+        address: Address,
+        mutation: F,
+    ) -> Result<()> {
+        let mut account = self.get_account(address)?;
+        mutation(&mut account);
+        self.save_account(address, account)?;
+        Ok(())
+    }
+
     /// If using this to modify the account, ensure save_account gets called
     pub fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
         Ok(match self.get_account(address)?.storage_root {
@@ -201,34 +211,26 @@ impl State {
         index: H256,
         value: H256,
     ) -> Result<()> {
-        let mut account = self.get_account(address)?;
         let mut trie = self.get_account_trie(address)?;
         trie.insert(&Self::account_storage_key(address, index), value.as_bytes())?;
-        account.storage_root = Some(trie.root_hash()?);
-        self.save_account(address, account)?;
+        let root = trie.root_hash()?;
+        self.mutate_account(address, |a| a.storage_root = Some(root))?;
 
         Ok(())
     }
 
     pub fn remove_account_storage(&mut self, address: Address, index: H256) -> Result<bool> {
-        let mut account = self.get_account(address)?;
         let mut trie = self.get_account_trie(address)?;
         let ret = trie.remove(&Self::account_storage_key(address, index))?;
-        account.storage_root = Some(trie.root_hash()?);
-        self.save_account(address, account)?;
+        let root = trie.root_hash()?;
+        self.mutate_account(address, |a| a.storage_root = Some(root))?;
 
         Ok(ret)
     }
 
     pub fn clear_account_storage(&mut self, address: Address) -> Result<()> {
-        let account = self.get_account(address)?;
-        self.save_account(
-            address,
-            Account {
-                storage_root: None,
-                ..account
-            },
-        )
+        self.mutate_account(address, |a| a.storage_root = None)?;
+        Ok(())
     }
 
     /// Returns an error if there are any issues accessing the storage trie

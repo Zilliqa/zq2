@@ -2,6 +2,7 @@ mod erigon;
 pub mod eth;
 mod net;
 mod ots;
+pub mod subscription_id_provider;
 mod to_hex;
 mod types;
 mod web3;

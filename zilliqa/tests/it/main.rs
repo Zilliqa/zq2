@@ -1,4 +1,9 @@
-use ethers::providers::Middleware;
+use ethers::{
+    abi::Tokenize,
+    providers::{Middleware, PubsubClient},
+};
+use primitive_types::U256;
+use serde_json::{value::RawValue, Value};
 mod consensus;
 mod eth;
 mod persistence;
@@ -11,6 +16,7 @@ use std::{
     fmt::Debug,
     fs,
     ops::DerefMut,
+    pin::Pin,
     rc::Rc,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -31,10 +37,10 @@ use ethers::{
     utils::secret_key_to_address,
 };
 use fs_extra::dir::*;
-use futures::{stream::BoxStream, Future, FutureExt, StreamExt};
+use futures::{stream::BoxStream, Future, FutureExt, Stream, StreamExt};
 use itertools::Itertools;
 use jsonrpsee::{
-    types::{Id, RequestSer, Response, ResponsePayload},
+    types::{Id, Notification, RequestSer, Response, ResponsePayload},
     RpcModule,
 };
 use k256::ecdsa::SigningKey;
@@ -44,7 +50,7 @@ use rand_chacha::ChaCha8Rng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tracing::*;
 use zilliqa::{
     cfg::{ConsensusConfig, NodeConfig},
@@ -146,7 +152,6 @@ struct Network {
     pub genesis_deposits: Vec<(NodePublicKey, String, Address)>,
     /// Child shards.
     pub children: HashMap<u64, Network>,
-    pub is_main: bool,
     pub shard_id: u64,
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
     // the borrow checker happy.
@@ -155,6 +160,7 @@ struct Network {
     /// If the destination is `None`, the message is a broadcast.
     receivers: Vec<BoxStream<'static, StreamMessage>>,
     resend_message: UnboundedSender<StreamMessage>,
+    send_to_parent: Option<UnboundedSender<StreamMessage>>,
     rng: Arc<Mutex<ChaCha8Rng>>,
     /// The seed input for the node - because rng.get_seed() returns a different, internal
     /// representation
@@ -168,7 +174,7 @@ impl Network {
         Self::new_shard(
             rng,
             nodes,
-            true,
+            None,
             NodeConfig::default().eth_chain_id,
             seed,
             None,
@@ -178,7 +184,7 @@ impl Network {
     pub fn new_shard(
         rng: Arc<Mutex<ChaCha8Rng>>,
         nodes: usize,
-        is_main: bool,
+        send_to_parent: Option<UnboundedSender<StreamMessage>>,
         shard_id: u64,
         seed: u64,
         keys: Option<Vec<SecretKey>>,
@@ -218,7 +224,7 @@ impl Network {
                 genesis_committee: genesis_committee.clone(),
                 genesis_deposits: genesis_deposits.clone(),
                 genesis_hash: None,
-                is_main,
+                is_main: send_to_parent.is_none(),
                 consensus_timeout: Duration::from_secs(1),
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
@@ -258,7 +264,7 @@ impl Network {
             genesis_committee,
             genesis_deposits,
             nodes,
-            is_main,
+            send_to_parent,
             shard_id,
             receivers,
             resend_message,
@@ -284,6 +290,10 @@ impl Network {
         self.add_node_with_key(genesis, secret_key)
     }
 
+    pub fn is_main(&self) -> bool {
+        self.send_to_parent.is_none()
+    }
+
     pub fn add_node_with_key(&mut self, genesis: bool, secret_key: SecretKey) -> usize {
         let (genesis_committee, genesis_hash) = if genesis {
             (self.genesis_committee.clone(), None)
@@ -307,7 +317,7 @@ impl Network {
                 genesis_committee,
                 genesis_deposits: self.genesis_deposits.clone(),
                 genesis_hash,
-                is_main: self.is_main,
+                is_main: self.is_main(),
                 consensus_timeout: Duration::from_secs(1),
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
@@ -397,7 +407,7 @@ impl Network {
                         genesis_committee: genesis_committee.clone(),
                         genesis_deposits: genesis_deposits.clone(),
                         genesis_hash: None,
-                        is_main: self.is_main,
+                        is_main: self.is_main(),
                         consensus_timeout: Duration::from_secs(1),
                         // Give a genesis account 1 billion ZIL.
                         genesis_accounts: Self::genesis_accounts(&self.genesis_key),
@@ -617,16 +627,32 @@ impl Network {
             return;
         }
 
-        // Immediately forward any intershard messages to children - the child network will randomize them
-        messages.retain(|m| {
-            if let AnyMessage::Internal(_, destination, InternalMessage::IntershardCall(_)) = m.2 {
-                if self.shard_id != destination {
-                    self.handle_message(m.clone());
+        // Immediately forward any IntershardCall or LaunchLink messages to children - the child network will randomize them
+        messages.retain(|m| match m.2 {
+            AnyMessage::Internal(_, destination, InternalMessage::IntershardCall(_))
+                if self.shard_id != destination =>
+            {
+                self.handle_message(m.clone());
+                false
+            }
+            AnyMessage::Internal(_, _, InternalMessage::LaunchLink(_)) => {
+                self.handle_message(m.clone());
+                false
+            }
+            _ => true,
+        });
+        // This is rather hacky, but probably the best way to get it working: IFF we're a child
+        // network, immediately forward all LaunchShard messages to the parent who will handle them
+        if let Some(send_to_parent) = self.send_to_parent.as_ref() {
+            messages.retain(|m| {
+                if let AnyMessage::Internal(_, _, InternalMessage::LaunchShard(new_network_id)) = m.2 {
+                    trace!("Child network {} got LaunchShard({new_network_id}) message; forwarding to parent to handle", self.shard_id);
+                    send_to_parent.send(m.clone()).unwrap();
                     return false;
                 }
-            }
-            true
-        });
+                true
+            });
+        }
 
         // Pick a random message
         let index = self.rng.lock().unwrap().gen_range(0..messages.len());
@@ -651,11 +677,13 @@ impl Network {
                 match internal_message {
                     InternalMessage::LaunchShard(new_network_id) => {
                         let secret_key = self.find_node(source).unwrap().1.secret_key;
-                        if let Some(network) = self.children.get_mut(new_network_id) {
-                            trace!(
-                                "Launching shard node for {new_network_id} - adding new node to shard"
-                            );
-                            network.add_node_with_key(true, secret_key);
+                        if let Some(child_network) = self.children.get_mut(new_network_id) {
+                            if child_network.find_node(source).is_none() {
+                                trace!("Launching shard node for {new_network_id} - adding new node to shard");
+                                child_network.add_node_with_key(true, secret_key);
+                            } else {
+                                trace!("Received messaged to launch new node in {new_network_id}, but node {source} already exists in that network");
+                            }
                         } else {
                             info!("Launching node in new shard network {new_network_id}");
                             self.children.insert(
@@ -663,7 +691,7 @@ impl Network {
                                 Network::new_shard(
                                     self.rng.clone(),
                                     1,
-                                    false,
+                                    Some(self.resend_message.clone()),
                                     *new_network_id,
                                     self.seed,
                                     Some(vec![secret_key]),
@@ -671,12 +699,12 @@ impl Network {
                             );
                         }
                     }
-                    InternalMessage::IntershardCall(_) => {
+                    InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                         if *destination_shard == self.shard_id {
                             let destination = destination.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
                             let idx_node = self.find_node(destination);
                             if let Some((idx, node)) = idx_node {
-                                trace!("Handling intershard transactinon from shard {}, in subshard {} of node {}", self.shard_id, destination_shard, idx);
+                                trace!("Handling intershard message {:?} from shard {}, in node {} of shard {}", internal_message, source_shard, idx, self.shard_id);
                                 node.inner
                                     .lock()
                                     .unwrap()
@@ -687,14 +715,23 @@ impl Network {
                                     .unwrap();
                             } else {
                                 warn!(
-                                    "Intershard transcation to node that isn't running that shard"
+                                    "Dropping intershard message addressed to node that isn't running that shard!"
                                 );
+                                trace!(?message);
                             }
                         } else if let Some(network) = self.children.get_mut(destination_shard) {
-                            trace!("Forwarding intershard transactinon from shard {} to subshard {}...", self.shard_id, destination_shard);
+                            trace!(
+                                "Forwarding intershard message from shard {} to subshard {}...",
+                                self.shard_id,
+                                destination_shard
+                            );
                             network.resend_message.send(message).unwrap();
+                        } else if let Some(send_to_parent) = self.send_to_parent.as_ref() {
+                            trace!("Found intershard message that matches none of our children, forwarding it to our parent so they may hopefully route it...");
+                            send_to_parent.send(message).unwrap();
                         } else {
-                            warn!("Intershard transaction for shard that does not exist");
+                            warn!("Dropping intershard message for shard that does not exist");
+                            trace!(?message);
                         }
                     }
                 }
@@ -833,6 +870,7 @@ impl Network {
         let client = LocalRpcClient {
             id: Arc::new(AtomicU64::new(0)),
             rpc_module: node.rpc_module.clone(),
+            subscriptions: Arc::new(Mutex::new(HashMap::new())),
         };
         let provider = Provider::new(client);
 
@@ -955,11 +993,20 @@ async fn deploy_contract(
     wallet: &Wallet,
     network: &mut Network,
 ) -> (H256, Contract) {
+    deploy_contract_with_args(path, contract, (), wallet, network).await
+}
+
+async fn deploy_contract_with_args<T: Tokenize>(
+    path: &str,
+    contract: &str,
+    constructor_args: T,
+    wallet: &Wallet,
+    network: &mut Network,
+) -> (H256, Contract) {
     let (abi, bytecode) = compile_contract(path, contract);
 
-    // Deploy the contract.
     let factory = DeploymentTxFactory::new(abi, bytecode, wallet.clone());
-    let deployer = factory.deploy(()).unwrap();
+    let deployer = factory.deploy(constructor_args).unwrap();
     let abi = deployer.abi().clone();
     {
         let hash = wallet
@@ -977,7 +1024,7 @@ async fn deploy_contract(
                         .unwrap()
                         .is_some()
                 },
-                50,
+                200,
             )
             .await
             .unwrap();
@@ -992,6 +1039,36 @@ async fn deploy_contract(
 pub struct LocalRpcClient {
     id: Arc<AtomicU64>,
     rpc_module: RpcModule<Arc<Mutex<Node>>>,
+    subscriptions: Arc<Mutex<HashMap<u64, mpsc::Receiver<String>>>>,
+}
+
+#[async_trait]
+impl PubsubClient for LocalRpcClient {
+    type NotificationStream = Pin<Box<dyn Stream<Item = Box<RawValue>> + Send + Sync + 'static>>;
+
+    fn subscribe<T: Into<U256>>(&self, id: T) -> Result<Self::NotificationStream, Self::Error> {
+        let id: U256 = id.into();
+        let rx = self
+            .subscriptions
+            .lock()
+            .unwrap()
+            .remove(&id.as_u64())
+            .unwrap();
+        Ok(Box::pin(ReceiverStream::new(rx).map(|s| {
+            serde_json::value::to_raw_value(
+                &serde_json::from_str::<Notification<Value>>(&s)
+                    .unwrap()
+                    .params["result"],
+            )
+            .unwrap()
+        })))
+    }
+
+    fn unsubscribe<T: Into<U256>>(&self, id: T) -> Result<(), Self::Error> {
+        let id: U256 = id.into();
+        self.subscriptions.lock().unwrap().remove(&id.as_u64());
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -1003,12 +1080,43 @@ impl JsonRpcClient for LocalRpcClient {
         T: Debug + Serialize + Send + Sync,
         R: DeserializeOwned + Send,
     {
+        // There are some hacks in here for `eth_subscribe` and `eth_unsubscribe`. `RpcModule` does not let us control
+        // the `id_provider` and it produces subscription IDs incompatible with Ethereum clients. Specifically, it
+        // produces integers and `ethers-rs` expects hex-encoded integers. Our hacks convert to this encoding.
+
         let next_id = self.id.fetch_add(1, Ordering::SeqCst);
-        let request = serde_json::value::to_raw_value(&params).unwrap();
-        let payload = RequestSer::owned(Id::Number(next_id), method, Some(request));
+        let mut params: Value = serde_json::to_value(&params).unwrap();
+        if method == "eth_unsubscribe" {
+            let id = params.as_array_mut().unwrap().get_mut(0).unwrap();
+            let str_id = id.as_str().unwrap().strip_prefix("0x").unwrap();
+            *id = u64::from_str_radix(str_id, 16).unwrap().into();
+        }
+        let payload = RequestSer::owned(
+            Id::Number(next_id),
+            method,
+            Some(serde_json::value::to_raw_value(&params).unwrap()),
+        );
         let request = serde_json::to_string(&payload).unwrap();
 
-        let (response, _) = self.rpc_module.raw_json_request(&request, 1).await.unwrap();
+        let (response, rx) = self
+            .rpc_module
+            .raw_json_request(&request, 64)
+            .await
+            .unwrap();
+
+        if method == "eth_subscribe" {
+            let sub_response = serde_json::from_str::<Response<u64>>(&response);
+            if let Ok(Response {
+                payload: ResponsePayload::Success(id),
+                ..
+            }) = sub_response
+            {
+                let id = id.into_owned();
+                self.subscriptions.lock().unwrap().insert(id, rx);
+                let r = serde_json::from_str(&format!("\"{:#x}\"", id)).unwrap();
+                return Ok(r);
+            }
+        }
 
         let response: Response<Rc<R>> = serde_json::from_str(&response).unwrap();
 
@@ -1025,7 +1133,6 @@ impl JsonRpcClient for LocalRpcClient {
         };
 
         let r = Rc::try_unwrap(r.into_owned()).unwrap_or_else(|_| panic!());
-
         Ok(r)
     }
 }

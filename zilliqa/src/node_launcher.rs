@@ -19,7 +19,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::*;
 
 use crate::{
-    api,
+    api::{self, subscription_id_provider::EthIdProvider},
     cfg::NodeConfig,
     crypto::SecretKey,
     health::HealthLayer,
@@ -85,6 +85,7 @@ impl NodeLauncher {
             let port = config.json_rpc_port;
             let server = jsonrpsee::server::ServerBuilder::new()
                 .set_http_middleware(middleware)
+                .set_id_provider(EthIdProvider)
                 .build((Ipv4Addr::UNSPECIFIED, port))
                 .await;
 

@@ -13,6 +13,7 @@ use rand::{
 use rand_chacha::ChaCha8Rng;
 use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::*;
 
@@ -146,6 +147,7 @@ pub struct Consensus {
     rng: SmallRng,
     /// Flag indicating that block creation should be postponed due to empty mempool
     create_next_block_on_timeout: bool,
+    pub new_blocks: broadcast::Sender<BlockHeader>,
 }
 
 // View in consensus should be have access monitored so last_timeout is always correct
@@ -302,6 +304,7 @@ impl Consensus {
                     .unwrap(),
             )),
             create_next_block_on_timeout: false,
+            new_blocks: broadcast::Sender::new(4),
         };
 
         // If we're at genesis, add the genesis block.
@@ -535,7 +538,7 @@ impl Consensus {
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
 
-        debug!(
+        trace!(
             block_view = block.view(),
             block_number = block.number(),
             "handling block proposal {}",
@@ -658,9 +661,8 @@ impl Consensus {
         let proposer = self.leader(committee, view).public_key;
         if let Some(proposer_address) = self.state.get_reward_address(proposer)? {
             let reward = rewards_per_block / 2;
-            let mut account = self.state.get_account(proposer_address)?;
-            account.balance += reward;
-            self.state.save_account(proposer_address, account)?;
+            self.state
+                .mutate_account(proposer_address, |a| a.balance += reward)?;
         }
 
         let mut total_cosigner_stake = 0;
@@ -677,12 +679,11 @@ impl Consensus {
             .collect();
 
         for (reward_address, stake) in cosigner_stake {
-            if let Some(a) = reward_address {
+            if let Some(cosigner) = reward_address {
                 let reward =
                     U256::from(rewards_per_block / 2) * U256::from(stake) / total_cosigner_stake;
-                let mut account = self.state.get_account(a)?;
-                account.balance += reward.as_u128();
-                self.state.save_account(a, account)?;
+                self.state
+                    .mutate_account(cosigner, |a| a.balance += reward.as_u128())?;
             }
         }
 
@@ -708,8 +709,9 @@ impl Consensus {
                 return Ok(None);
             }
         };
+
         // Tell the transaction pool that the sender's nonce has been incremented.
-        self.transaction_pool.update_nonce(&txn);
+        self.transaction_pool.mark_executed(&txn);
 
         if !result.success {
             info!("Transaction was a failure...");
@@ -925,42 +927,63 @@ impl Consensus {
 
         let transactions = self.get_txns_to_execute();
 
-        let mut applied_transactions: Vec<_> = transactions
-            .into_iter()
-            .filter_map(|tx| {
-                self.apply_transaction(tx.clone(), parent_header)
-                    .transpose()
-                    .map(|r| r.map(|_| tx))
-            })
-            .collect::<Result<_>>()?;
-        let applied_transaction_hashes: Vec<_> =
-            applied_transactions.iter().map(|tx| tx.hash).collect();
+                    let applied_transactions: Vec<_> = transactions
+                        .into_iter()
+                        .filter_map(|tx| {
+                            self.apply_transaction(tx.clone(), parent_header)
+                                .transpose()
+                                .map(|r| r.map(|_| tx))
+                        })
+                        .collect::<Result<_>>()?;
+                    let applied_transaction_hashes: Vec<_> =
+                        applied_transactions.iter().map(|tx| tx.hash).collect();
 
-        self.apply_rewards(&parent.committee, block_view + 1, &qc.cosigned)?;
+                    self.apply_rewards(&parent.committee, block_view + 1, &qc.cosigned)?;
 
-        let proposal = Block::from_qc(
-            self.secret_key,
-            self.view.get_view(),
-            parent.header.number + 1,
-            qc,
-            parent_hash,
-            self.state.root_hash()?,
-            applied_transaction_hashes,
-            SystemTime::max(SystemTime::now(), parent_header.timestamp),
-            self.get_next_committee(parent.committee),
-        );
+                    let proposal = Block::from_qc(
+                        self.secret_key,
+                        self.view.get_view(),
+                        parent.header.number + 1,
+                        qc,
+                        parent_hash,
+                        self.state.root_hash()?,
+                        applied_transaction_hashes,
+                        SystemTime::max(SystemTime::now(), parent_header.timestamp),
+                        self.get_next_committee(parent.committee.clone()),
+                    );
 
-        self.state.set_to_root(H256(previous_state_root_hash.0));
+                    self.state.set_to_root(H256(previous_state_root_hash.0));
+
+                    self.votes.insert(
+                        block_hash,
+                        (signatures, cosigned, cosigned_weight, supermajority_reached),
+                    );
+                    // as a future improvement, process the proposal before broadcasting it
+                    trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
+                    // intershard transactions are not meant to be broadcast
+                    let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
+                        applied_transactions
+                            .into_iter()
+                            .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
+                    // however, for the transactions that we are NOT broadcasting, we re-insert
+                    // them into the pool - this is because upon broadcasting the proposal, we will
+                    // have to re-execute it ourselves (in order to vote on it) and thus will
+                    // need those transactions again
+                    for tx in opaque_transactions {
+                        let account_nonce = self.state.get_account(tx.signer)?.nonce;
+                        self.transaction_pool.insert_transaction(tx, account_nonce);
+                    }
+                    return Ok(Some((proposal, broadcasted_transactions)));
+                }
+            }
+        }
 
         self.votes.insert(
             block_hash,
             (signatures, cosigned, cosigned_weight, supermajority_reached),
         );
-        // as a future improvement, process the proposal before broadcasting it
-        trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
-        // intershard transactions are not meant to be broadcast
-        applied_transactions.retain(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
-        Ok(Some((proposal, applied_transactions)))
+
+        Ok(None)
     }
 
     fn get_next_committee(&mut self, mut committee: Committee) -> Committee {
@@ -1406,6 +1429,7 @@ impl Consensus {
     /// Intended to be used with the oldest pending block, to move the
     /// finalized tip forward by one. Does not update view/height.
     pub fn finalize(&mut self, hash: Hash, view: u64) -> Result<()> {
+        trace!("Finalizing block {hash}");
         self.finalized_view = view;
         self.db.put_latest_finalized_view(view)?;
 
@@ -1420,12 +1444,17 @@ impl Consensus {
         }
 
         if self.config.consensus.is_main {
-            // Check for new shards to join
-            // TODO: this will be switched to use the bridge registering mechanism from the shard
-            // registry in the future
+            // Main shard will join all new shards
             for new_shard_id in blockhooks::get_launch_shard_messages(&receipts)? {
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::LaunchShard(new_shard_id))?;
+            }
+
+            // Main shard also hosts the shard registry, so will be notified of newly established
+            // links. Notify corresponding shard nodes of said links, if any
+            for (from, to) in blockhooks::get_link_creation_messages(&receipts)? {
+                self.message_sender
+                    .send_message_to_shard(to, InternalMessage::LaunchLink(from))?;
             }
         }
 
@@ -1625,6 +1654,7 @@ impl Consensus {
     fn add_block(&mut self, block: Block) -> Result<()> {
         let hash = block.hash();
         debug!(?hash, ?block.header.view, ?block.header.number, "added block");
+        let _ = self.new_blocks.send(block.header);
         self.block_store.process_block(block)?;
         Ok(())
     }
@@ -1825,6 +1855,13 @@ impl Consensus {
         let mut head_height = head.number();
         let mut proposed_block = block.clone();
         let mut proposed_block_height = block.number();
+        trace!(
+            "Dealing with fork: from block {} (height {}), back to block {} (height {})",
+            head.hash(),
+            head_height,
+            proposed_block.hash(),
+            proposed_block_height
+        );
 
         // Need to make sure both pointers are at the same height
         while head_height > proposed_block_height {
@@ -1963,7 +2000,7 @@ impl Consensus {
                 // all good
             } else {
                 let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
-                    warn!("Proposal {} at view {} referenced a transaction that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view());
+                    warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
                     return Ok(());
                 };
                 transactions.insert(idx, local_tx);

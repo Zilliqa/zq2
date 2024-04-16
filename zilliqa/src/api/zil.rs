@@ -53,9 +53,9 @@ struct TransactionParams {
     #[serde(deserialize_with = "from_str")]
     gas_limit: u64,
     #[serde(default)]
-    code: String,
+    code: Option<String>,
     #[serde(default)]
-    data: String,
+    data: Option<String>,
     signature: String,
 }
 
@@ -103,8 +103,8 @@ fn create_transaction(
             gas_limit: transaction.gas_limit,
             to_addr: transaction.to_addr,
             amount: transaction.amount,
-            code: transaction.code,
-            data: transaction.data,
+            code: transaction.code.unwrap_or_default(),
+            data: transaction.data.unwrap_or_default(),
         },
         key,
         sig,
