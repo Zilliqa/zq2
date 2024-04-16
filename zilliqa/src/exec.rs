@@ -4,6 +4,7 @@ use std::{
     error::Error,
     fmt::{self, Display, Formatter},
     num::NonZeroU128,
+    sync::Arc,
 };
 
 use anyhow::{anyhow, Result};
@@ -24,6 +25,7 @@ use crate::{
     crypto::{Hash, NodePublicKey},
     eth_helpers::extract_revert_msg,
     message::BlockHeader,
+    precompiles::get_custom_precompiles,
     state::{contract_addr, Account, Address, State},
     time::SystemTime,
     transaction::{Log, VerifiedTransaction},
@@ -220,6 +222,14 @@ impl State {
                 gas_priority_fee: None,
                 blob_hashes: vec![],
                 max_fee_per_blob_gas: None,
+            })
+            .append_handler_register(|handler| {
+                let precompiles = handler.pre_execution.load_precompiles();
+                handler.pre_execution.load_precompiles = Arc::new(move || {
+                    let mut precompiles = precompiles.clone();
+                    precompiles.extend(get_custom_precompiles());
+                    precompiles
+                });
             })
             .build();
 

@@ -22,3 +22,6 @@ z2_node_*
 # Profiling
 *.svg
 perf.*
+
+# RustRover
+.idea
