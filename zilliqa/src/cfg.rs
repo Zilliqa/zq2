@@ -71,6 +71,8 @@ pub struct ConsensusConfig {
     pub genesis_accounts: Vec<(Address, String)>,
     /// Minimum time to wait for consensus to propose new block if there are no transactions.
     pub empty_block_timeout: Duration,
+    /// Minimum remaining time allowing to wait for empty block proposal
+    pub minimum_time_left_for_empty_block: Duration,
 }
 
 impl Default for ConsensusConfig {
@@ -84,6 +86,7 @@ impl Default for ConsensusConfig {
             genesis_hash: None,
             genesis_accounts: Vec::new(),
             empty_block_timeout: Duration::from_millis(1000),
+            minimum_time_left_for_empty_block: Duration::from_millis(3000),
         }
     }
 }
