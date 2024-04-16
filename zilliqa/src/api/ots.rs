@@ -8,7 +8,7 @@ use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},
     types::ots,
 };
-use crate::{crypto::Hash, message::BlockNumber, node::Node};
+use crate::{crypto::Hash, message::BlockNumber, node::Node, state::Contract};
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
@@ -112,14 +112,15 @@ fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
     let address: H160 = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
-    let empty = node
+    let contract = node
         .lock()
         .unwrap()
         .get_account(address, block_number)?
-        .contract
-        .evm_code()
-        .unwrap_or_default()
-        .is_empty();
+        .contract;
+    let empty = match contract {
+        Contract::Evm { code, .. } => code.is_empty(),
+        Contract::Scilla { code, .. } => code.is_empty(),
+    };
 
     Ok(!empty)
 }
