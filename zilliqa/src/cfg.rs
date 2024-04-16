@@ -69,6 +69,12 @@ pub struct ConsensusConfig {
     pub genesis_hash: Option<Hash>,
     /// Accounts that will be pre-funded at genesis.
     pub genesis_accounts: Vec<(Address, String)>,
+    /// Address of the Scilla server. Defaults to "http://localhost:3000".
+    pub scilla_address: String,
+    /// Hostname at which this process is accessible by the Scilla process. Defaults to "localhost". If running the
+    /// Scilla process in Docker and this process on the host, you probably want to pass
+    /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
+    pub local_address: String,
 }
 
 impl Default for ConsensusConfig {
@@ -81,6 +87,8 @@ impl Default for ConsensusConfig {
             genesis_deposits: vec![],
             genesis_hash: None,
             genesis_accounts: Vec::new(),
+            scilla_address: "http://localhost:3000".to_owned(),
+            local_address: "localhost".to_owned(),
         }
     }
 }

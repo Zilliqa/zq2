@@ -3,15 +3,27 @@ use primitive_types::{H128, H160, H256, H384, H512, H768, U128, U256, U512};
 /// A version of [hex::ToHex] which is also implemented for integer types. This version also prefixes the produced
 /// string with `"0x"` and omits leading zeroes for quantities (types with fixed lengths).
 pub trait ToHex {
-    fn to_hex(&self) -> String;
+    fn to_hex_inner(&self, prefix: bool) -> String;
+
+    fn to_hex(&self) -> String {
+        self.to_hex_inner(true)
+    }
+
+    fn to_hex_no_prefix(&self) -> String {
+        self.to_hex_inner(false)
+    }
 }
 
 /// Generates an implementation of [ToHex] for types which implement `AsRef<[u8]>`.
 macro_rules! as_ref_impl {
     ($T:ty) => {
         impl ToHex for $T {
-            fn to_hex(&self) -> String {
-                format!("0x{}", hex::encode(self))
+            fn to_hex_inner(&self, prefix: bool) -> String {
+                if prefix {
+                    format!("0x{}", hex::encode(self))
+                } else {
+                    hex::encode(self)
+                }
             }
         }
     };
@@ -21,22 +33,26 @@ macro_rules! as_ref_impl {
 macro_rules! int_impl {
     ($T:ty) => {
         impl ToHex for $T {
-            fn to_hex(&self) -> String {
-                format!("{:#x}", self)
+            fn to_hex_inner(&self, prefix: bool) -> String {
+                if prefix {
+                    format!("{:#x}", self)
+                } else {
+                    format!("{:x}", self)
+                }
             }
         }
     };
 }
 
 impl<T: ToHex> ToHex for &T {
-    fn to_hex(&self) -> String {
-        (*self).to_hex()
+    fn to_hex_inner(&self, prefix: bool) -> String {
+        (*self).to_hex_inner(prefix)
     }
 }
 
 impl<const N: usize> ToHex for [u8; N] {
-    fn to_hex(&self) -> String {
-        self.as_ref().to_hex()
+    fn to_hex_inner(&self, prefix: bool) -> String {
+        self.as_ref().to_hex_inner(prefix)
     }
 }
 

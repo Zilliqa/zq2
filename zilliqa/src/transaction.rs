@@ -314,9 +314,7 @@ impl Transaction {
             Transaction::Eip1559(TxEip1559 {
                 max_fee_per_gas, ..
             }) => *max_fee_per_gas,
-            Transaction::Zilliqa(TxZilliqa { gas_price, .. }) => {
-                scale_zilliqa_tx_amount(*gas_price)
-            }
+            Transaction::Zilliqa(t) => t.gas_price(),
             Transaction::Intershard(TxIntershard { gas_price, .. }) => *gas_price,
         }
     }
@@ -326,8 +324,7 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { gas_limit, .. }) => *gas_limit,
             Transaction::Eip2930(TxEip2930 { gas_limit, .. }) => *gas_limit,
             Transaction::Eip1559(TxEip1559 { gas_limit, .. }) => *gas_limit,
-            // Scilla gas is worth 420 times as much as EVM gas.
-            Transaction::Zilliqa(TxZilliqa { gas_limit, .. }) => *gas_limit * 420,
+            Transaction::Zilliqa(TxZilliqa { gas_limit, .. }) => *gas_limit,
             Transaction::Intershard(TxIntershard { gas_limit, .. }) => *gas_limit,
         }
     }
@@ -354,7 +351,7 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { amount, .. }) => *amount,
             Transaction::Eip2930(TxEip2930 { amount, .. }) => *amount,
             Transaction::Eip1559(TxEip1559 { amount, .. }) => *amount,
-            Transaction::Zilliqa(TxZilliqa { amount, .. }) => scale_zilliqa_tx_amount(*amount),
+            Transaction::Zilliqa(t) => t.amount(),
             Transaction::Intershard(_) => 0,
         }
     }
@@ -560,11 +557,83 @@ pub struct TxZilliqa {
     pub data: String,
 }
 
+impl TxZilliqa {
+    pub fn gas_price(&self) -> u128 {
+        scale_zilliqa_tx_amount(self.gas_price)
+    }
+
+    pub fn amount(&self) -> u128 {
+        scale_zilliqa_tx_amount(self.amount)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Log {
+pub struct EvmLog {
     pub address: Address,
     pub topics: Vec<H256>,
     pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScillaLog {
+    pub address: Address,
+    #[serde(rename = "_eventname")]
+    pub event_name: String,
+    pub params: Vec<ScillaParam>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Log {
+    Evm(EvmLog),
+    Scilla(ScillaLog),
+}
+
+impl Log {
+    pub fn evm(address: Address, topics: Vec<H256>, data: Vec<u8>) -> Self {
+        Log::Evm(EvmLog {
+            address,
+            topics,
+            data,
+        })
+    }
+
+    pub fn scilla(address: Address, event_name: String, params: Vec<ScillaParam>) -> Self {
+        Log::Scilla(ScillaLog {
+            address,
+            event_name,
+            params,
+        })
+    }
+
+    pub fn into_evm(self) -> Option<EvmLog> {
+        match self {
+            Log::Evm(l) => Some(l),
+            _ => None,
+        }
+    }
+
+    pub fn as_evm(&self) -> Option<&EvmLog> {
+        match self {
+            Log::Evm(l) => Some(l),
+            _ => None,
+        }
+    }
+
+    pub fn into_scilla(self) -> Option<ScillaLog> {
+        match self {
+            Log::Scilla(l) => Some(l),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScillaParam {
+    #[serde(rename = "type")]
+    pub ty: String,
+    pub value: String,
+    #[serde(rename = "vname")]
+    pub name: String,
 }
 
 /// A transaction receipt stores data about the execution of a transaction.

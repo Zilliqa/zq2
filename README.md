@@ -111,8 +111,8 @@ Please open an issue or PR for APIs that you think should be included.
 | `GetCurrentDSEpoch`                       | 🔴                                              |
 | `GetNodeType`                             | 🔴                                              |
 | `GetNetworkId`                            | 🟢                                              |
-| `CreateTransaction`                       | 🟠                                              |
-| `GetTransaction`                          | 🔴                                              |
+| `CreateTransaction`                       | 🟢                                              |
+| `GetTransaction`                          | 🟢                                              |
 | `GetSoftConfirmedTransaction`             | 🔴                                              |
 | `GetDsBlock`                              | 🔴                                              |
 | `GetDsBlockVerbose`                       | 🔴                                              |
@@ -125,7 +125,7 @@ Please open an issue or PR for APIs that you think should be included.
 | `GetPrevDSDifficulty`                     | 🔴                                              |
 | `GetPrevDifficulty`                       | 🔴                                              |
 | `GetSmartContracts`                       | 🔴                                              |
-| `GetContractAddressFromTransactionID`     | 🔴                                              |
+| `GetContractAddressFromTransactionID`     | 🟢                                              |
 | `GetNumPeers`                             | 🔴                                              |
 | `GetNumTxBlocks`                          | 🔴                                              |
 | `GetNumDSBlocks`                          | 🔴                                              |
@@ -143,9 +143,9 @@ Please open an issue or PR for APIs that you think should be included.
 | `GetNumTxnsTxEpoch`                       | 🔴                                              |
 | `GetNumTxnsDSEpoch`                       | 🔴                                              |
 | `GetSmartContractSubState`                | 🔴                                              |
-| `GetSmartContractState`                   | 🔴                                              |
-| `GetSmartContractCode`                    | 🔴                                              |
-| `GetSmartContractInit`                    | 🔴                                              |
+| `GetSmartContractState`                   | 🟢                                              |
+| `GetSmartContractCode`                    | 🟢                                              |
+| `GetSmartContractInit`                    | 🟢                                              |
 | `GetTransactionsForTxBlock`               | 🔴                                              |
 | `GetTransactionsForTxBlockEx`             | 🔴                                              |
 | `GetTotalCoinSupply`                      | 🔴                                              |
