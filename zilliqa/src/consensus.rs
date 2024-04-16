@@ -1475,7 +1475,10 @@ impl Consensus {
 
     // Checks for the validity of a block and adds it to our block store if valid.
     // Returns true when the block is valid and newly seen and false otherwise.
-    pub fn receive_block(&mut self, proposal: Proposal) -> Result<bool> {
+    // Optionally returns a proposal that should be sent as the result of this newly received block. This occurs when
+    // the node has buffered votes for a block it doesn't know about and later receives that block, resulting in a new
+    // block proposal.
+    pub fn receive_block(&mut self, proposal: Proposal) -> Result<(bool, Option<Proposal>)> {
         let (block, transactions) = proposal.into_parts();
         trace!(
             "received block: {} number: {}, view: {}",
@@ -1489,7 +1492,7 @@ impl Consensus {
                 block.hash(),
                 self.head_block()
             );
-            return Ok(false);
+            return Ok((false, None));
         }
 
         // Check whether it is loose or not - we do not store loose blocks.
@@ -1502,7 +1505,7 @@ impl Consensus {
             );
             self.block_store
                 .request_blocks(None, block.header.number.saturating_sub(1))?;
-            return Ok(false);
+            return Ok((false, None));
         }
 
         match self.check_block(&block) {
@@ -1518,7 +1521,7 @@ impl Consensus {
 
                 let current_head = self.head_block();
 
-                self.proposal(
+                let result = self.proposal(
                     Proposal::from_parts_with_hashes(
                         block,
                         transactions
@@ -1531,16 +1534,24 @@ impl Consensus {
                     ),
                     true,
                 )?;
+                // Processing the received block can either result in:
+                // * A `Proposal`, if we have buffered votes for this block which form a supermajority, meaning we can
+                // propose the next block.
+                // * A `Vote`, if the block is valid and we are in the proposed block's committee. However, this block
+                // occured in the past, meaning our vote is no longer valid.
+                // Therefore, we filter the result to only include `Proposal`s. This avoids us sending useless `Vote`s
+                // to the network while syncing.
+                let result = result.and_then(|(_, message)| message.into_proposal());
 
                 // Return whether the head block hash changed as to whether it was new
                 let was_new = self.head_block().hash() != current_head.hash();
 
-                Ok(was_new)
+                Ok((was_new, result))
             }
             Err(e) => {
                 warn!(?e, "invalid block received during sync!");
 
-                Ok(false)
+                Ok((false, None))
             }
         }
     }

@@ -572,7 +572,12 @@ impl Node {
         let length_recvd = response.proposals.len();
 
         for block in response.proposals {
-            was_new = self.consensus.receive_block(block)?;
+            let (new, proposal) = self.consensus.receive_block(block)?;
+            was_new = new;
+            if let Some(proposal) = proposal {
+                self.message_sender
+                    .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
+            }
         }
 
         if was_new && length_recvd > 1 {
