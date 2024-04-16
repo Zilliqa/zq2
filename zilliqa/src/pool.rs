@@ -35,15 +35,9 @@ impl MempoolIndex for VerifiedTransaction {
             SignedTransaction::Intershard { tx, .. } => {
                 TxIndex::Intershard(tx.source_chain, tx.bridge_nonce)
             }
-            nonced_tx => {
-                let nonce = match nonced_tx {
-                    SignedTransaction::Legacy { tx, .. } => tx.nonce,
-                    SignedTransaction::Eip2930 { tx, .. } => tx.nonce,
-                    SignedTransaction::Eip1559 { tx, .. } => tx.nonce,
-                    SignedTransaction::Zilliqa { tx, .. } => tx.nonce,
-                    SignedTransaction::Intershard { .. } => {
-                        unreachable!("Will have been matched in outer match statement.")
-                    }
+            tx => {
+                let Some(nonce) = tx.nonce() else {
+                    unreachable!("intershard matched by outer expression")
                 };
                 TxIndex::Nonced(self.signer, nonce)
             }

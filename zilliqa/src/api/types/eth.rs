@@ -7,7 +7,8 @@ use sha3::{Digest, Keccak256};
 
 use super::{bool_as_int, hex, option_hex, vec_hex};
 use crate::{
-    crypto::Hash, exec::BLOCK_GAS_LIMIT, message, state::Address, time::SystemTime, transaction,
+    crypto::Hash, exec::BLOCK_GAS_LIMIT, message, state::Address, time::SystemTime,
+    transaction::EvmLog,
 };
 
 #[derive(Clone, Serialize)]
@@ -211,7 +212,7 @@ pub struct Log {
 
 impl Log {
     pub fn new(
-        log: transaction::Log,
+        log: EvmLog,
         log_index: usize,
         transaction_index: usize,
         transaction_hash: Hash,

@@ -166,11 +166,17 @@ struct Network {
     /// representation
     seed: u64,
     pub genesis_key: SigningKey,
+    scilla_address: String,
 }
 
 impl Network {
     /// Create a main shard network.
-    pub fn new(rng: Arc<Mutex<ChaCha8Rng>>, nodes: usize, seed: u64) -> Network {
+    pub fn new(
+        rng: Arc<Mutex<ChaCha8Rng>>,
+        nodes: usize,
+        seed: u64,
+        scilla_address: String,
+    ) -> Network {
         Self::new_shard(
             rng,
             nodes,
@@ -178,6 +184,7 @@ impl Network {
             NodeConfig::default().eth_chain_id,
             seed,
             None,
+            scilla_address,
         )
     }
 
@@ -188,6 +195,7 @@ impl Network {
         shard_id: u64,
         seed: u64,
         keys: Option<Vec<SecretKey>>,
+        scilla_address: String,
     ) -> Network {
         let mut keys = keys.unwrap_or_else(|| {
             (0..nodes)
@@ -229,6 +237,8 @@ impl Network {
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
+                scilla_address: scilla_address.clone(),
+                local_address: "host.docker.internal".to_owned(),
                 ..Default::default()
             },
             ..Default::default()
@@ -272,6 +282,7 @@ impl Network {
             seed,
             children: HashMap::new(),
             genesis_key,
+            scilla_address,
         }
     }
 
@@ -695,6 +706,7 @@ impl Network {
                                     *new_network_id,
                                     self.seed,
                                     Some(vec![secret_key]),
+                                    self.scilla_address.clone(),
                                 ),
                             );
                         }

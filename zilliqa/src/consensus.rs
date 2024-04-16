@@ -2,7 +2,6 @@ use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Du
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
-use ethabi::{Event, Log, RawLog};
 use libp2p::PeerId;
 use primitive_types::{H256, U256};
 use rand::{
@@ -29,7 +28,7 @@ use crate::{
     },
     node::{MessageSender, NetworkMessage},
     pool::TransactionPool,
-    state::{Address, State},
+    state::State,
     time::SystemTime,
     transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
@@ -219,7 +218,11 @@ impl Consensus {
 
         let mut state = if let Some(latest_block) = &latest_block {
             trace!("Loading state from latest block");
-            State::new_at_root(db.state_trie()?, H256(latest_block.state_root_hash().0))
+            State::new_at_root(
+                db.state_trie()?,
+                H256(latest_block.state_root_hash().0),
+                config.consensus.clone(),
+            )
         } else {
             trace!("Contructing new state from genesis");
             State::new_with_genesis(db.state_trie()?, config.consensus.clone())?
@@ -1207,29 +1210,6 @@ impl Consensus {
         Ok(block_receipts
             .into_iter()
             .find(|receipt| receipt.tx_hash == *hash))
-    }
-
-    pub fn get_logs_in_block(
-        &self,
-        hash: Hash,
-        event: Event,
-        emitter: Address,
-    ) -> Result<Vec<Log>> {
-        let receipts = self.db.get_transaction_receipts(&hash)?.unwrap_or_default();
-
-        let logs: Result<Vec<_>, _> = receipts
-            .into_iter()
-            .flat_map(|receipt| receipt.logs)
-            .filter(|log| log.address == emitter && log.topics[0] == event.signature())
-            .map(|log| {
-                event.parse_log_whole(RawLog {
-                    topics: log.topics,
-                    data: log.data,
-                })
-            })
-            .collect();
-
-        Ok(logs?)
     }
 
     fn save_highest_view(&mut self, block_hash: Hash, number: u64, view: u64) -> Result<()> {
