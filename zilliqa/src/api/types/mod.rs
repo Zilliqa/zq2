@@ -33,3 +33,7 @@ pub fn vec_hex<S: Serializer, T: ToHex>(data: &[T], serializer: S) -> Result<S::
 pub fn bool_as_int<S: Serializer>(b: &bool, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(if *b { "0x1" } else { "0x0" })
 }
+
+pub fn hex_no_prefix<S: Serializer, T: ToHex>(data: T, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&data.to_hex_no_prefix())
+}

@@ -2,7 +2,6 @@ use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Du
 
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
-use ethabi::{Event, Log, RawLog};
 use libp2p::PeerId;
 use primitive_types::{H256, U256};
 use rand::{
@@ -29,7 +28,7 @@ use crate::{
     },
     node::{MessageSender, NetworkMessage},
     pool::TransactionPool,
-    state::{Address, State},
+    state::State,
     time::SystemTime,
     transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
@@ -130,6 +129,9 @@ pub struct Consensus {
     reset_timeout: UnboundedSender<Duration>,
     pub block_store: BlockStore,
     votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128, bool)>,
+    /// Votes for a block we don't have stored. They are retained in case we recieve the block later.
+    // TODO(#719): Consider how to limit the size of this.
+    buffered_votes: BTreeMap<Hash, Vec<Vote>>,
     new_views: BTreeMap<u64, NewViewVote>,
     high_qc: QuorumCertificate,
     view: View,
@@ -219,7 +221,11 @@ impl Consensus {
 
         let mut state = if let Some(latest_block) = &latest_block {
             trace!("Loading state from latest block");
-            State::new_at_root(db.state_trie()?, H256(latest_block.state_root_hash().0))
+            State::new_at_root(
+                db.state_trie()?,
+                H256(latest_block.state_root_hash().0),
+                config.consensus.clone(),
+            )
         } else {
             trace!("Contructing new state from genesis");
             State::new_with_genesis(db.state_trie()?, config.consensus.clone())?
@@ -288,6 +294,7 @@ impl Consensus {
             message_sender,
             reset_timeout,
             votes: BTreeMap::new(),
+            buffered_votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
             high_qc,
             view: View::new(start_view),
@@ -331,7 +338,7 @@ impl Consensus {
         &mut self,
         peer_id: PeerId,
         public_key: NodePublicKey,
-    ) -> Result<Option<(Option<PeerId>, ExternalMessage)>> {
+    ) -> Result<Option<NetworkMessage>> {
         if self.state.get_stake(public_key)?.is_none() {
             info!(%peer_id, "peer does not have sufficient stake");
             return Ok(None);
@@ -532,7 +539,7 @@ impl Consensus {
         &mut self,
         proposal: Proposal,
         during_sync: bool,
-    ) -> Result<Option<(PeerId, Vote)>> {
+    ) -> Result<Option<NetworkMessage>> {
         self.cleanup_votes();
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
@@ -620,6 +627,27 @@ impl Consensus {
                 );
             }
 
+            if let Some(buffered_votes) = self.buffered_votes.remove(&block.hash()) {
+                // If we've buffered votes for this block, process them now.
+                let count = buffered_votes.len();
+                for (i, vote) in buffered_votes.into_iter().enumerate() {
+                    trace!("applying buffered vote {} of {count}", i + 1);
+                    if let Some((block, transactions)) = self.vote(vote)? {
+                        // If we reached the supermajority while processing this vote, send the next block proposal.
+                        // Further votes are ignored (including our own).
+                        // TODO(#720): We should prioritise our own vote.
+                        trace!("supermajority reached, sending next proposal");
+                        return Ok(Some((
+                            None,
+                            ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
+                        )));
+                    }
+                }
+
+                // If we reach this point, we had some buffered votes but they were not sufficient to reach a
+                // supermajority.
+            }
+
             if !block.committee.iter().any(|v| v.peer_id == self.peer_id()) {
                 trace!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
@@ -633,7 +661,7 @@ impl Consensus {
 
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
-                    return Ok(Some((next_leader, vote)));
+                    return Ok(Some((Some(next_leader), ExternalMessage::Vote(vote))));
                 }
             }
         } else {
@@ -755,28 +783,44 @@ impl Consensus {
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        let Some(block) = self.get_block(&vote.block_hash)? else {
-            trace!(vote_view = vote.view, "ignoring vote, missing block");
-            return Ok(None);
-        };
-        let block_hash = block.hash();
-        let block_view = block.view();
+        let block_hash = vote.block_hash;
+        let block_view = vote.view;
         let current_view = self.view.get_view();
         trace!(block_view, current_view, %block_hash, "handling vote");
 
-        // if we are not the leader of the round in which the vote counts
+        // if the vote is too old and does not count anymore
+        if block_view + 1 < self.view.get_view() {
+            trace!("vote is too old");
+            return Ok(None);
+        }
+
+        // Verify the signature in the vote matches the public key in the vote. This tells us that the vote was created
+        // by the owner of `vote.public_key`, but we don't yet know that a vote from that node is valid. In other
+        // words, a malicious node which is not part of the consensus committee may send us a vote and this check will
+        // still pass. We later validate that the owner of `vote.public_key` is a valid voter.
+        vote.verify()?;
+
+        // Retrieve the actual block this vote is for.
+        let Some(block) = self.get_block(&block_hash)? else {
+            trace!("vote for unknown block, buffering");
+            // If we don't have the block yet, we buffer the vote in case we recieve the block later. Note that we
+            // don't know the leader of this view without the block, so we may be storing this unnecessarily, however
+            // non-malicious nodes should only have sent us this vote if they thought we were the leader.
+            self.buffered_votes
+                .entry(block_hash)
+                .or_default()
+                .push(vote);
+            return Ok(None);
+        };
+
+        // Check if we are the leader if we are not the leader of the round in which the vote counts
         // The vote is in the happy path (?) - so the view is block view + 1
-        if !self.are_we_leader_for_view(block_hash, block_view + 1) {
+        if self.leader(&block.committee, block_view + 1).peer_id != self.peer_id() {
             trace!(
                 vote_view = block_view + 1,
                 ?block_hash,
                 "skipping vote, not the leader"
             );
-            return Ok(None);
-        }
-        // if the vote is too old and does not count anymore
-        if block_view + 1 < self.view.get_view() {
-            trace!("vote is too old");
             return Ok(None);
         }
 
@@ -787,7 +831,6 @@ impl Consensus {
             .enumerate()
             .find(|(_, v)| v.public_key == vote.public_key)
             .unwrap();
-        vote.verify()?;
 
         let committee_size = block.committee.len();
         let (mut signatures, mut cosigned, mut cosigned_weight, mut supermajority_reached) =
@@ -834,6 +877,14 @@ impl Consensus {
             );
             if supermajority_reached {
                 // if we are already in the round in which the vote counts and have reached supermajority
+                if block_view + 1 == self.view.get_view() {
+                    let qc =
+                        self.qc_from_bits(block_hash, &signatures, cosigned.clone(), block_view);
+                    let parent_hash = qc.block_hash;
+                    let parent = self
+                        .get_block(&parent_hash)?
+                        .ok_or_else(|| anyhow!("missing block"))?;
+                    let parent_header = parent.header;
                 // We propose new block immediately if there's something in mempool or it's the first view
                 // Otherwise the block will be proposed on timeout
 
@@ -1209,29 +1260,6 @@ impl Consensus {
             .find(|receipt| receipt.tx_hash == *hash))
     }
 
-    pub fn get_logs_in_block(
-        &self,
-        hash: Hash,
-        event: Event,
-        emitter: Address,
-    ) -> Result<Vec<Log>> {
-        let receipts = self.db.get_transaction_receipts(&hash)?.unwrap_or_default();
-
-        let logs: Result<Vec<_>, _> = receipts
-            .into_iter()
-            .flat_map(|receipt| receipt.logs)
-            .filter(|log| log.address == emitter && log.topics[0] == event.signature())
-            .map(|log| {
-                event.parse_log_whole(RawLog {
-                    topics: log.topics,
-                    data: log.data,
-                })
-            })
-            .collect();
-
-        Ok(logs?)
-    }
-
     fn save_highest_view(&mut self, block_hash: Hash, number: u64, view: u64) -> Result<()> {
         self.block_store.set_canonical(number, view, block_hash)?;
         self.db.put_highest_block_number(number)?;
@@ -1572,7 +1600,10 @@ impl Consensus {
 
     // Checks for the validity of a block and adds it to our block store if valid.
     // Returns true when the block is valid and newly seen and false otherwise.
-    pub fn receive_block(&mut self, proposal: Proposal) -> Result<bool> {
+    // Optionally returns a proposal that should be sent as the result of this newly received block. This occurs when
+    // the node has buffered votes for a block it doesn't know about and later receives that block, resulting in a new
+    // block proposal.
+    pub fn receive_block(&mut self, proposal: Proposal) -> Result<(bool, Option<Proposal>)> {
         let (block, transactions) = proposal.into_parts();
         trace!(
             "received block: {} number: {}, view: {}",
@@ -1586,7 +1617,7 @@ impl Consensus {
                 block.hash(),
                 self.head_block()
             );
-            return Ok(false);
+            return Ok((false, None));
         }
 
         // Check whether it is loose or not - we do not store loose blocks.
@@ -1599,7 +1630,7 @@ impl Consensus {
             );
             self.block_store
                 .request_blocks(None, block.header.number.saturating_sub(1))?;
-            return Ok(false);
+            return Ok((false, None));
         }
 
         match self.check_block(&block) {
@@ -1615,7 +1646,7 @@ impl Consensus {
 
                 let current_head = self.head_block();
 
-                self.proposal(
+                let result = self.proposal(
                     Proposal::from_parts_with_hashes(
                         block,
                         transactions
@@ -1628,14 +1659,24 @@ impl Consensus {
                     ),
                     true,
                 )?;
+                // Processing the received block can either result in:
+                // * A `Proposal`, if we have buffered votes for this block which form a supermajority, meaning we can
+                // propose the next block.
+                // * A `Vote`, if the block is valid and we are in the proposed block's committee. However, this block
+                // occured in the past, meaning our vote is no longer valid.
+                // Therefore, we filter the result to only include `Proposal`s. This avoids us sending useless `Vote`s
+                // to the network while syncing.
+                let result = result.and_then(|(_, message)| message.into_proposal());
 
                 // Return whether the head block hash changed as to whether it was new
-                Ok(self.head_block().hash() != current_head.hash())
+                let was_new = self.head_block().hash() != current_head.hash();
+
+                Ok((was_new, result))
             }
             Err(e) => {
                 warn!(?e, "invalid block received during sync!");
 
-                Ok(false)
+                Ok((false, None))
             }
         }
     }

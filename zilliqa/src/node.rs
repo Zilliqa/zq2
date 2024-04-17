@@ -136,10 +136,13 @@ impl Node {
             ExternalMessage::Proposal(m) => {
                 let m_view = m.header.view;
 
-                if let Some((leader, vote)) = self.consensus.proposal(m, false)? {
+                if let Some((to, message)) = self.consensus.proposal(m, false)? {
                     self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
-                    self.message_sender
-                        .send_external_message(leader, ExternalMessage::Vote(vote))?;
+                    if let Some(to) = to {
+                        self.message_sender.send_external_message(to, message)?;
+                    } else {
+                        self.message_sender.broadcast_external_message(message)?;
+                    }
                 } else {
                     info!("We had nothing to respond to proposal, lets try to join committee for view {m_view:}");
                     self.message_sender.send_external_message(
@@ -580,7 +583,12 @@ impl Node {
         let length_recvd = response.proposals.len();
 
         for block in response.proposals {
-            was_new = self.consensus.receive_block(block)?;
+            let (new, proposal) = self.consensus.receive_block(block)?;
+            was_new = new;
+            if let Some(proposal) = proposal {
+                self.message_sender
+                    .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
+            }
         }
 
         if was_new && length_recvd > 1 {

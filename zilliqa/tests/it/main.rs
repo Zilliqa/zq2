@@ -8,10 +8,12 @@ mod consensus;
 mod eth;
 mod persistence;
 mod staking;
+mod unreliable;
 mod web3;
 mod zil;
+
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     fmt::Debug,
     fs,
@@ -156,6 +158,9 @@ struct Network {
     // We keep `nodes` and `receivers` separate so we can independently borrow each half of this struct, while keeping
     // the borrow checker happy.
     nodes: Vec<TestNode>,
+    // We keep track of a list of disconnected nodes. These nodes will not recieve any messages until they are removed
+    // from this list.
+    disconnected: HashSet<usize>,
     /// A stream of messages from each node. The stream items are a tuple of (source, destination, message).
     /// If the destination is `None`, the message is a broadcast.
     receivers: Vec<BoxStream<'static, StreamMessage>>,
@@ -166,11 +171,17 @@ struct Network {
     /// representation
     seed: u64,
     pub genesis_key: SigningKey,
+    scilla_address: String,
 }
 
 impl Network {
     /// Create a main shard network.
-    pub fn new(rng: Arc<Mutex<ChaCha8Rng>>, nodes: usize, seed: u64) -> Network {
+    pub fn new(
+        rng: Arc<Mutex<ChaCha8Rng>>,
+        nodes: usize,
+        seed: u64,
+        scilla_address: String,
+    ) -> Network {
         Self::new_shard(
             rng,
             nodes,
@@ -178,6 +189,7 @@ impl Network {
             NodeConfig::default().eth_chain_id,
             seed,
             None,
+            scilla_address,
         )
     }
 
@@ -188,6 +200,7 @@ impl Network {
         shard_id: u64,
         seed: u64,
         keys: Option<Vec<SecretKey>>,
+        scilla_address: String,
     ) -> Network {
         let mut keys = keys.unwrap_or_else(|| {
             (0..nodes)
@@ -229,6 +242,8 @@ impl Network {
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
+                scilla_address: scilla_address.clone(),
+                local_address: "host.docker.internal".to_owned(),
                 ..Default::default()
             },
             ..Default::default()
@@ -264,6 +279,7 @@ impl Network {
             genesis_committee,
             genesis_deposits,
             nodes,
+            disconnected: HashSet::new(),
             send_to_parent,
             shard_id,
             receivers,
@@ -272,6 +288,7 @@ impl Network {
             seed,
             children: HashMap::new(),
             genesis_key,
+            scilla_address,
         }
     }
 
@@ -695,6 +712,7 @@ impl Network {
                                     *new_network_id,
                                     self.seed,
                                     Some(vec![secret_key]),
+                                    self.scilla_address.clone(),
                                 ),
                             );
                         }
@@ -738,14 +756,23 @@ impl Network {
             }
             AnyMessage::External(external_message) => {
                 let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = destination {
-                    vec![self
+                    let (index, node) = self
                         .nodes
                         .iter()
                         .enumerate()
                         .find(|(_, n)| n.peer_id == destination)
-                        .unwrap()]
+                        .unwrap();
+                    if self.disconnected.contains(&index) {
+                        vec![]
+                    } else {
+                        vec![(index, node)]
+                    }
                 } else {
-                    self.nodes.iter().enumerate().collect()
+                    self.nodes
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| !self.disconnected.contains(index))
+                        .collect()
                 };
                 for (index, node) in nodes.iter() {
                     let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
@@ -831,8 +858,35 @@ impl Network {
         .unwrap();
     }
 
+    pub fn disconnect_node(&mut self, index: usize) {
+        self.disconnected.insert(index);
+    }
+
+    pub fn connect_node(&mut self, index: usize) {
+        self.disconnected.remove(&index);
+    }
+
     pub fn random_index(&mut self) -> usize {
         self.rng.lock().unwrap().gen_range(0..self.nodes.len())
+    }
+
+    pub async fn wallet_of_node(
+        &mut self,
+        index: usize,
+    ) -> SignerMiddleware<Provider<LocalRpcClient>, LocalWallet> {
+        let key = SigningKey::random(self.rng.lock().unwrap().deref_mut());
+        let wallet: LocalWallet = key.into();
+        let node = &self.nodes[index];
+        let client = LocalRpcClient {
+            id: Arc::new(AtomicU64::new(0)),
+            rpc_module: node.rpc_module.clone(),
+            subscriptions: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let provider = Provider::new(client);
+
+        SignerMiddleware::new_with_provider_chain(provider, wallet)
+            .await
+            .unwrap()
     }
 
     /// Returns (index, TestNode)
