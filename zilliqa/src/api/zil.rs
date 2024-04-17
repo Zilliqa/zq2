@@ -36,6 +36,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 get_contract_address_from_transaction_id
             ),
             ("GetBlockchainInfo", get_blockchain_info),
+            ("GetNumTxBlocks", get_num_tx_blocks),
             ("GetSmartContractState", get_smart_contract_state),
             ("GetSmartContractCode", get_smart_contract_code),
             ("GetSmartContractInit", get_smart_contract_init),
@@ -262,6 +263,12 @@ fn get_blockchain_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<BlockchainI
         num_txns_tx_epoch: 0,
         sharding_structure: ShardingStructure { num_peers: vec![0] },
     })
+}
+
+fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+
+    Ok(node.get_chain_tip().to_string())
 }
 
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
