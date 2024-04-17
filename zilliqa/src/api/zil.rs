@@ -32,6 +32,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 "GetContractAddressFromTransactionID",
                 get_contract_address_from_transaction_id
             ),
+            ("GetNumTxBlocks", get_num_tx_blocks),
             ("GetSmartContractState", get_smart_contract_state),
             ("GetSmartContractCode", get_smart_contract_code),
             ("GetSmartContractInit", get_smart_contract_init),
@@ -234,6 +235,12 @@ fn get_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<Value> {
         "Commit": commit,
         "Version": version,
     }))
+}
+
+fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+
+    Ok(node.get_chain_tip().to_string())
 }
 
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
