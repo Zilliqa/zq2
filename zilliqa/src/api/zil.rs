@@ -12,7 +12,10 @@ use primitive_types::{H160, H256};
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 
-use super::{to_hex::ToHex, types::zil};
+use super::{
+    to_hex::ToHex,
+    types::zil::{self, BlockchainInfo, ShardingStructure},
+};
 use crate::{
     api::types::zil::{CreateTransactionResponse, GetTxResponse},
     crypto::Hash,
@@ -32,6 +35,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 "GetContractAddressFromTransactionID",
                 get_contract_address_from_transaction_id
             ),
+            ("GetBlockchainInfo", get_blockchain_info),
             ("GetSmartContractState", get_smart_contract_state),
             ("GetSmartContractCode", get_smart_contract_code),
             ("GetSmartContractInit", get_smart_contract_init),
@@ -237,6 +241,27 @@ fn get_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<Value> {
         "Commit": commit,
         "Version": version,
     }))
+}
+
+fn get_blockchain_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<BlockchainInfo> {
+    let node = node.lock().unwrap();
+
+    let num_tx_blocks = node.get_chain_tip();
+
+    Ok(BlockchainInfo {
+        num_peers: 0,
+        num_tx_blocks,
+        num_ds_blocks: (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1,
+        num_transactions: 0,
+        transaction_rate: 0.0,
+        tx_block_rate: 0.0,
+        ds_block_rate: 0.0,
+        current_mini_epoch: num_tx_blocks,
+        current_ds_epoch: (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1,
+        num_txns_ds_epoch: 0,
+        num_txns_tx_epoch: 0,
+        sharding_structure: ShardingStructure { num_peers: vec![0] },
+    })
 }
 
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
