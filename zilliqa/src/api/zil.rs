@@ -42,6 +42,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetMinimumGasPrice", get_minimum_gas_price),
             ("GetNetworkId", get_network_id),
             ("GetVersion", get_version),
+            ("GetTxBlock", |p, n| get_tx_block(p, n, false)),
+            ("GetTxBlockVerbose", |p, n| get_tx_block(p, n, true)),
         ],
     )
 }
@@ -290,4 +292,33 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     } else {
         Err(anyhow!("not a scilla contract"))
     }
+}
+
+pub const TRANSACTIONS_PER_PAGE: usize = 2500;
+pub const TX_BLOCKS_PER_DS_BLOCK: u64 = 100;
+
+fn get_tx_block(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+    verbose: bool,
+) -> Result<Option<zil::TxBlock>> {
+    let block_number: String = params.one()?;
+    let block_number: u64 = block_number.parse()?;
+
+    let node = node.lock().unwrap();
+    let Some(block) = node.get_block_by_number(block_number)? else {
+        return Ok(None);
+    };
+    let mut block: zil::TxBlock = (&block).into();
+
+    if verbose {
+        block.header.committee_hash = Some(H256::zero());
+        block.body.cosig_bitmap_1 = vec![true; 8];
+        block.body.cosig_bitmap_2 = vec![true; 8];
+        let mut scalar = [0; 32];
+        scalar[31] = 1;
+        block.body.cosig_1 = Some(schnorr::Signature::from_scalars(scalar, scalar).unwrap());
+    }
+
+    Ok(Some(block))
 }
