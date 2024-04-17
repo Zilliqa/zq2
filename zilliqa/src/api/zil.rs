@@ -12,13 +12,14 @@ use primitive_types::{H160, H256};
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 
-use super::types::zil;
+use super::{to_hex::ToHex, types::zil};
 use crate::{
     api::types::zil::{CreateTransactionResponse, GetTxResponse},
     crypto::Hash,
     message::BlockNumber,
     node::Node,
     schnorr,
+    state::{Contract, ScillaValue},
     transaction::{SignedTransaction, TxZilliqa, VerifiedTransaction},
 };
 
@@ -27,7 +28,13 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
         node,
         [
             ("CreateTransaction", create_transaction),
+            (
+                "GetContractAddressFromTransactionID",
+                get_contract_address_from_transaction_id
+            ),
             ("GetSmartContractState", get_smart_contract_state),
+            ("GetSmartContractCode", get_smart_contract_code),
+            ("GetSmartContractInit", get_smart_contract_init),
             ("GetTransaction", get_transaction),
             ("GetBalance", get_balance),
             ("GetCurrentMiniEpoch", get_current_mini_epoch),
@@ -53,9 +60,9 @@ struct TransactionParams {
     #[serde(deserialize_with = "from_str")]
     gas_limit: u64,
     #[serde(default)]
-    code: String,
+    code: Option<String>,
     #[serde(default)]
-    data: String,
+    data: Option<String>,
     signature: String,
 }
 
@@ -103,8 +110,8 @@ fn create_transaction(
             gas_limit: transaction.gas_limit,
             to_addr: transaction.to_addr,
             amount: transaction.amount,
-            code: transaction.code,
-            data: transaction.data,
+            code: transaction.code.unwrap_or_default(),
+            data: transaction.data.unwrap_or_default(),
         },
         key,
         sig,
@@ -121,24 +128,43 @@ fn create_transaction(
     Ok(response)
 }
 
+fn get_contract_address_from_transaction_id(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<String> {
+    let hash: H256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+    let receipt = node
+        .lock()
+        .unwrap()
+        .get_transaction_receipt(hash)?
+        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+
+    let contract_address = receipt
+        .contract_address
+        .ok_or_else(|| anyhow!("ID is not a contract txn"))?;
+
+    Ok(contract_address.to_hex_no_prefix())
+}
+
 fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<GetTxResponse>> {
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
 
-    let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?;
-    let receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
+    let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?
+        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+    let receipt = node
+        .lock()
+        .unwrap()
+        .get_transaction_receipt(hash)?
+        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+    let block = node
+        .lock()
+        .unwrap()
+        .get_block_by_hash(receipt.block_hash)?
+        .ok_or_else(|| anyhow!("block does not exist"))?;
 
-    // Note: the scilla api expects an err json rpc response if the transaction is not found
-    // Canonical example:
-    //     "error": {
-    //     "code": -20,
-    //     "data": null,
-    //     "message": "Txn Hash not Present"
-    // },
-    let receipt = receipt.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
-    let tx = tx.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
-
-    Ok(GetTxResponse::new(tx, receipt))
+    Ok(GetTxResponse::new(tx, receipt, block.number()))
 }
 
 pub(super) fn get_scilla_transaction_inner(
@@ -155,7 +181,7 @@ pub(super) fn get_scilla_transaction_inner(
     }
 }
 
-fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let address: H160 = params.one()?;
 
     let node = node.lock().unwrap();
@@ -210,16 +236,58 @@ fn get_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<Value> {
     }))
 }
 
-fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let smart_contract_address: H160 = params.one()?;
     let node = node.lock().unwrap();
 
     // First get the account and check that its a scilla account
-    let _account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
-    let balance = node.get_native_balance(smart_contract_address, BlockNumber::Latest)?;
+    let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
 
-    let mut return_json = serde_json::Value::Object(Default::default());
-    return_json["_balance"] = serde_json::Value::String(balance.to_string());
+    let mut result = json!({
+        "_balance": account.balance.to_string(),
+    });
 
-    Ok(return_json)
+    fn convert(value: ScillaValue) -> Result<Value> {
+        let value = match value {
+            ScillaValue::Bytes(b) => serde_json::from_slice(&b)?,
+            ScillaValue::Map(m) => Value::Object(
+                m.into_iter()
+                    .map(|(k, v)| Ok((serde_json::from_str(&k)?, convert(v)?)))
+                    .collect::<Result<_>>()?,
+            ),
+        };
+        Ok(value)
+    }
+
+    if let Contract::Scilla { storage, .. } = account.contract {
+        for (k, (v, _)) in storage {
+            result[k] = convert(v)?;
+        }
+    }
+
+    Ok(result)
+}
+
+fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
+    let smart_contract_address: H160 = params.one()?;
+    let node = node.lock().unwrap();
+    let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
+
+    if let Contract::Scilla { code, .. } = account.contract {
+        Ok(json!({ "code": code }))
+    } else {
+        Err(anyhow!("not a scilla contract"))
+    }
+}
+
+fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
+    let smart_contract_address: H160 = params.one()?;
+    let node = node.lock().unwrap();
+    let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
+
+    if let Contract::Scilla { init_data, .. } = account.contract {
+        Ok(serde_json::from_str(&init_data)?)
+    } else {
+        Err(anyhow!("not a scilla contract"))
+    }
 }

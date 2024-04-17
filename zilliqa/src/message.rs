@@ -229,11 +229,24 @@ pub enum ExternalMessage {
     JoinCommittee(NodePublicKey),
 }
 
+impl ExternalMessage {
+    pub fn into_proposal(self) -> Option<Proposal> {
+        match self {
+            ExternalMessage::Proposal(p) => Some(p),
+            _ => None,
+        }
+    }
+}
+
 /// A message intended only for local communication between shard nodes and/or the parent p2p node,
 /// but not sent over the network.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InternalMessage {
+    /// Notifies the coordinator process to spawn a node of the given shard
     LaunchShard(u64),
+    /// Notifes the destination shard to start bridging from the given source shard
+    LaunchLink(u64),
+    /// Routes intershard call information between two locally running, bridged, shard processes
     IntershardCall(IntershardCall),
 }
 
@@ -258,6 +271,7 @@ impl InternalMessage {
     pub fn name(&self) -> &'static str {
         match self {
             InternalMessage::LaunchShard(_) => "LaunchShard",
+            InternalMessage::LaunchLink(_) => "LaunchLink",
             InternalMessage::IntershardCall(_) => "IntershardCall",
         }
     }

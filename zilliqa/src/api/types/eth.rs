@@ -7,7 +7,8 @@ use sha3::{Digest, Keccak256};
 
 use super::{bool_as_int, hex, option_hex, vec_hex};
 use crate::{
-    crypto::Hash, exec::BLOCK_GAS_LIMIT, message, state::Address, time::SystemTime, transaction,
+    crypto::Hash, exec::BLOCK_GAS_LIMIT, message, state::Address, time::SystemTime,
+    transaction::EvmLog,
 };
 
 #[derive(Clone, Serialize)]
@@ -22,6 +23,32 @@ pub enum HashOrTransaction {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Block {
+    #[serde(flatten)]
+    pub header: Header,
+    #[serde(serialize_with = "hex")]
+    pub size: u64,
+    pub transactions: Vec<HashOrTransaction>,
+    pub uncles: Vec<H256>,
+}
+
+impl Block {
+    pub fn from_block(block: &message::Block, miner: H160) -> Self {
+        Block {
+            header: Header::from_header(block.header, miner),
+            size: 0,
+            transactions: block
+                .transactions
+                .iter()
+                .map(|h| HashOrTransaction::Hash(H256(h.0)))
+                .collect(),
+            uncles: vec![],
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Header {
     #[serde(serialize_with = "hex")]
     pub number: u64,
     #[serde(serialize_with = "hex")]
@@ -49,48 +76,37 @@ pub struct Block {
     #[serde(serialize_with = "hex")]
     pub extra_data: Vec<u8>,
     #[serde(serialize_with = "hex")]
-    pub size: u64,
-    #[serde(serialize_with = "hex")]
     pub gas_limit: u64,
     #[serde(serialize_with = "hex")]
     pub gas_used: u64,
     #[serde(serialize_with = "hex")]
     pub timestamp: u64,
-    pub transactions: Vec<HashOrTransaction>,
-    pub uncles: Vec<H256>,
 }
 
-impl Block {
-    pub fn from_block(block: &message::Block, miner: H160) -> Self {
+impl Header {
+    pub fn from_header(header: message::BlockHeader, miner: H160) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
-        Block {
-            number: block.number(),
-            hash: H256(block.hash().0),
-            parent_hash: H256(block.parent_hash().0),
+        Header {
+            number: header.number,
+            hash: H256(header.hash.0),
+            parent_hash: H256(header.parent_hash.0),
             nonce: [0; 8],
             sha_3_uncles: H256::zero(),
             logs_bloom: [0; 256],
             transactions_root: H256::zero(),
-            state_root: H256(block.state_root_hash().0),
+            state_root: H256(header.state_root_hash.0),
             receipts_root: H256::zero(),
             miner,
             difficulty: 0,
             total_difficulty: 0,
             extra_data: vec![],
-            size: 0,
             gas_limit: BLOCK_GAS_LIMIT,
             gas_used: 0,
-            timestamp: block
-                .timestamp()
+            timestamp: header
+                .timestamp
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            transactions: block
-                .transactions
-                .iter()
-                .map(|h| HashOrTransaction::Hash(H256(h.0)))
-                .collect(),
-            uncles: vec![],
         }
     }
 }
@@ -196,7 +212,7 @@ pub struct Log {
 
 impl Log {
     pub fn new(
-        log: transaction::Log,
+        log: EvmLog,
         log_index: usize,
         transaction_index: usize,
         transaction_hash: Hash,

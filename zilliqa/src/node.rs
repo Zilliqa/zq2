@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use primitive_types::H256;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
@@ -13,8 +13,8 @@ use crate::{
     db::Db,
     exec::GAS_PRICE,
     message::{
-        Block, BlockBatchRequest, BlockBatchResponse, BlockNumber, BlockRequest, BlockResponse,
-        ExternalMessage, InternalMessage, IntershardCall, Proposal,
+        Block, BlockBatchRequest, BlockBatchResponse, BlockHeader, BlockNumber, BlockRequest,
+        BlockResponse, ExternalMessage, InternalMessage, IntershardCall, Proposal,
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     state::{Account, Address},
@@ -68,6 +68,10 @@ impl MessageSender {
         Ok(())
     }
 }
+
+/// Messages sent by [Consensus].
+/// Tuple of (destination, message).
+pub type NetworkMessage = (Option<PeerId>, ExternalMessage);
 
 /// The central data structure for a blockchain node.
 ///
@@ -130,10 +134,13 @@ impl Node {
             ExternalMessage::Proposal(m) => {
                 let m_view = m.header.view;
 
-                if let Some((leader, vote)) = self.consensus.proposal(m, false)? {
+                if let Some((to, message)) = self.consensus.proposal(m, false)? {
                     self.reset_timeout.send(())?;
-                    self.message_sender
-                        .send_external_message(leader, ExternalMessage::Vote(vote))?;
+                    if let Some(to) = to {
+                        self.message_sender.send_external_message(to, message)?;
+                    } else {
+                        self.message_sender.broadcast_external_message(message)?;
+                    }
                 } else {
                     info!("We had nothing to respond to proposal, lets try to join committee for view {m_view:}");
                     self.message_sender.send_external_message(
@@ -206,6 +213,10 @@ impl Node {
             InternalMessage::IntershardCall(intershard_call) => {
                 self.inject_intershard_transaction(intershard_call)?
             }
+            InternalMessage::LaunchLink(source) => {
+                self.message_sender
+                    .send_message_to_coordinator(InternalMessage::LaunchShard(source))?;
+            }
             InternalMessage::LaunchShard(_) => {
                 warn!("LaunchShard messages should be handled by the coordinator, not forwarded to a node.");
             }
@@ -226,7 +237,9 @@ impl Node {
             },
             from: intershard_call.source_address,
         };
-        self.consensus.new_transaction(tx.verify()?)?;
+        let verified_tx = tx.verify()?;
+        trace!("Injecting intershard transaction {}", verified_tx.hash);
+        self.consensus.new_transaction(verified_tx)?;
         Ok(())
     }
 
@@ -315,18 +328,18 @@ impl Node {
         )
     }
 
-    pub fn get_proposer_reward_address(&self, block: &Block) -> Result<Option<Address>> {
+    pub fn get_proposer_reward_address(&self, header: BlockHeader) -> Result<Option<Address>> {
         // Return the zero address for the genesis block. There was no reward for it.
-        if block.view() == 0 {
+        if header.view == 0 {
             return Ok(None);
         }
 
         let parent = self
-            .get_block_by_hash(block.parent_hash())?
-            .ok_or_else(|| anyhow!("missing parent: {}", block.parent_hash()))?;
+            .get_block_by_hash(header.parent_hash)?
+            .ok_or_else(|| anyhow!("missing parent: {}", header.parent_hash))?;
         let proposer = self
             .consensus
-            .leader(&parent.committee, block.view())
+            .leader(&parent.committee, header.view)
             .public_key;
         self.consensus.state().get_reward_address(proposer)
     }
@@ -366,6 +379,10 @@ impl Node {
             gas_price,
             value,
         )
+    }
+
+    pub fn subscribe_to_new_blocks(&self) -> broadcast::Receiver<BlockHeader> {
+        self.consensus.new_blocks.subscribe()
     }
 
     pub fn get_chain_id(&self) -> u64 {
@@ -555,7 +572,12 @@ impl Node {
         let length_recvd = response.proposals.len();
 
         for block in response.proposals {
-            was_new = self.consensus.receive_block(block)?;
+            let (new, proposal) = self.consensus.receive_block(block)?;
+            was_new = new;
+            if let Some(proposal) = proposal {
+                self.message_sender
+                    .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
+            }
         }
 
         if was_new && length_recvd > 1 {

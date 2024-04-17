@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{anyhow, Result};
 use itertools::{Either, Itertools};
-use jsonrpsee::{types::Params, RpcModule};
+use jsonrpsee::{
+    core::StringError, types::Params, PendingSubscriptionSink, RpcModule, SubscriptionMessage,
+};
 use primitive_types::{H160, H256, U256};
 use rlp::Rlp;
 use serde::Deserialize;
@@ -23,7 +25,7 @@ use crate::{
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
-    super::declare_module!(
+    let mut module = super::declare_module!(
         node,
         [
             ("eth_accounts", accounts),
@@ -47,6 +49,14 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 get_block_transaction_count_by_number
             ),
             ("eth_getLogs", get_logs),
+            (
+                "eth_getTransactionByBlockHashAndIndex",
+                get_transaction_by_block_hash_and_index
+            ),
+            (
+                "eth_getTransactionByBlockNumberAndIndex",
+                get_transaction_by_block_number_and_index
+            ),
             ("eth_getTransactionByHash", get_transaction_by_hash),
             ("eth_getTransactionReceipt", get_transaction_receipt),
             ("eth_sendRawTransaction", send_raw_transaction),
@@ -60,7 +70,18 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("net_peerCount", net_peer_count),
             ("net_listening", net_listening),
         ],
-    )
+    );
+
+    module
+        .register_subscription(
+            "eth_subscribe",
+            "eth_subscription",
+            "eth_unsubscribe",
+            subscribe,
+        )
+        .unwrap();
+
+    module
 }
 
 fn accounts(_: Params, _: &Arc<Mutex<Node>>) -> Result<[(); 0]> {
@@ -142,7 +163,9 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         .lock()
         .unwrap()
         .get_account(address, block_number)?
-        .code
+        .contract
+        .evm_code()
+        .unwrap_or_default()
         .to_hex())
 }
 
@@ -221,7 +244,7 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
 
 fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
     if !full {
-        let miner = node.get_proposer_reward_address(block)?;
+        let miner = node.get_proposer_reward_address(block.header)?;
         Ok(eth::Block::from_block(block, miner.unwrap_or_default()))
     } else {
         let transactions = block
@@ -233,7 +256,7 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<e
             })
             .map(|t| Ok(HashOrTransaction::Transaction(t?)))
             .collect::<Result<_>>()?;
-        let miner = node.get_proposer_reward_address(block)?;
+        let miner = node.get_proposer_reward_address(block.header)?;
         let block = eth::Block::from_block(block, miner.unwrap_or_default());
         Ok(eth::Block {
             transactions,
@@ -343,6 +366,7 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             Ok(receipt
                 .logs
                 .into_iter()
+                .filter_map(|l| l.into_evm())
                 .enumerate()
                 .map(move |(i, l)| (l, i, txn_index, txn_hash, block_number, block_hash)))
         })
@@ -378,6 +402,46 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
     });
 
     logs.collect()
+}
+
+fn get_transaction_by_block_hash_and_index(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<eth::Transaction>> {
+    let mut params = params.sequence();
+    let block_hash: H256 = params.next()?;
+    let index: ruint::aliases::U64 = params.next()?;
+
+    let node = node.lock().unwrap();
+
+    let Some(block) = node.get_block_by_hash(Hash(block_hash.0))? else {
+        return Ok(None);
+    };
+    let Some(txn_hash) = block.transactions.get(index.to::<usize>()) else {
+        return Ok(None);
+    };
+
+    get_transaction_inner(*txn_hash, &node)
+}
+
+fn get_transaction_by_block_number_and_index(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<eth::Transaction>> {
+    let mut params = params.sequence();
+    let block_number: BlockNumber = params.next()?;
+    let index: ruint::aliases::U64 = params.next()?;
+
+    let node = node.lock().unwrap();
+
+    let Some(block) = node.get_block_by_blocknum(block_number)? else {
+        return Ok(None);
+    };
+    let Some(txn_hash) = block.transactions.get(index.to::<usize>()) else {
+        return Ok(None);
+    };
+
+    get_transaction_inner(*txn_hash, &node)
 }
 
 fn get_transaction_by_hash(
@@ -498,6 +562,8 @@ pub(super) fn get_transaction_receipt_inner(
     let logs = receipt
         .logs
         .into_iter()
+        // Filter non-EVM logs out. TODO: Encode Scilla logs and don't filter them.
+        .filter_map(|log| log.into_evm())
         .enumerate()
         .map(|(log_index, log)| {
             let log = eth::Log::new(
@@ -712,7 +778,6 @@ fn left_pad_arr<const N: usize>(v: &[u8]) -> Result<[u8; N]> {
     Ok(arr)
 }
 
-// These are no-ops basically
 fn get_uncle_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
     Ok("0x0".to_string())
 }
@@ -739,6 +804,36 @@ fn net_peer_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
 
 fn net_listening(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
     Ok(true)
+}
+
+#[allow(clippy::redundant_allocation)]
+async fn subscribe(
+    params: Params<'_>,
+    pending: PendingSubscriptionSink,
+    node: Arc<Arc<Mutex<Node>>>,
+) -> Result<(), StringError> {
+    let mut params = params.sequence();
+    let kind: String = params.next()?;
+
+    match kind.as_str() {
+        "newHeads" => {
+            let sink = pending.accept().await?;
+            let mut new_blocks = node.lock().unwrap().subscribe_to_new_blocks();
+
+            while let Ok(header) = new_blocks.recv().await {
+                let miner = node.lock().unwrap().get_proposer_reward_address(header)?;
+                let header = eth::Header::from_header(header, miner.unwrap_or_default());
+                let _ = sink.send(SubscriptionMessage::from_json(&header)?).await;
+            }
+        }
+        //"logs" => {},
+        //"newPendingTransactions" => {},
+        _ => {
+            return Err("invalid subscription kind".into());
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

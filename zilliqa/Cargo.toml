@@ -25,7 +25,8 @@ vergen = { version = "8.3.1", features = ["git", "git2"] }
 
 [dependencies]
 anyhow = { version = "1.0.81", features = ["backtrace"] }
-async-trait = "0.1.79"
+async-trait = "0.1.80"
+base64 = "0.22.0"
 bincode = "1.3.3"
 bitvec = { version = "1.0.1", features = ["serde"] }
 bls-signatures = "0.15.0"
@@ -41,7 +42,7 @@ hex = { version = "0.4.3", features = ["serde"] }
 http = "0.2.11"
 hyper = "0.14.27"
 itertools = "0.12.0"
-jsonrpsee = { version = "0.22.3", features = ["server"] }
+jsonrpsee = { version = "0.22.3", features = ["jsonrpsee-http-client", "server"] }
 k256 = {version = "0.13.3", features = ["serde", "pem"] }
 libp2p = { version = "0.53.2", features = ["gossipsub", "macros", "tcp", "tokio", "noise", "mdns", "request-response", "json", "kad", "identify", "serde", "yamux"] }
 lru = "0.12"
@@ -51,11 +52,11 @@ opentelemetry_sdk = { version = "0.21.2", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.14.0", features = ["metrics"] }
 paste = "1.0.14"
 primitive-types = { version = "0.12.2", features = ["serde"] }
-prost = "0.12.2"
+prost = "0.12.4"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rand_core = "0.6.4"
-revm = { version = "6.0.0", features = ["optional_balance_check"] }
+revm = { version = "8.0.0", features = ["optional_balance_check"] }
 rlp = "0.5.2"
 ruint = { version = "1.12.1", features = ["serde"] }
 serde = { version = "1.0.196", features = ["derive", "rc"] }
@@ -64,7 +65,8 @@ serde_json = { version = "1.0.115", features = ["raw_value"] }
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 sled = "0.34.7"
-time = { version = "0.3.34", features = ["formatting", "macros"] }
+tempfile = "3.9.0"
+time = { version = "0.3.36", features = ["formatting", "macros"] }
 tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 tokio-stream = "0.1.15"
 toml = "0.8.12"
@@ -74,12 +76,11 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 
 [dev-dependencies]
-async-trait = "0.1.79"
+async-trait = "0.1.80"
 ethers = { version = "2.0.14", default-features = false, features = ["ethers-solc", "legacy"] }
 ethers-solc = { version = "2.0.13", features = ["svm-solc"] }
 fs_extra = "1.3.0"
 indicatif = "0.17.8"
-tempfile = "3.9.0"
 ureq = "2.9.1"
 zilliqa = { path = ".", default-features = false, features = ["fake_time"] }
 zilliqa-macros = { path = "../zilliqa-macros" }
