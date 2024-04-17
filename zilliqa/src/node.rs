@@ -12,7 +12,7 @@ use crate::{
     consensus::Consensus,
     crypto::{Hash, NodePublicKey, SecretKey},
     db::Db,
-    exec::GAS_PRICE,
+    exec::{TransactionApplyResult, GAS_PRICE},
     inspector::{self, ScillaInspector},
     message::{
         Block, BlockBatchRequest, BlockBatchResponse, BlockHeader, BlockNumber, BlockRequest,
@@ -305,7 +305,7 @@ impl Node {
         &self,
         txn_hash: Hash,
         inspector: I,
-    ) -> Result<()> {
+    ) -> Result<TransactionApplyResult> {
         let txn = self
             .get_transaction_by_hash(txn_hash)?
             .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
@@ -336,9 +336,10 @@ impl Node {
                     inspector::noop(),
                 )?;
             } else {
-                state.apply_transaction(txn, self.get_chain_id(), parent.header, inspector)?;
+                let result =
+                    state.apply_transaction(txn, self.get_chain_id(), parent.header, inspector)?;
 
-                return Ok(());
+                return Ok(result);
             }
         }
 

@@ -48,6 +48,9 @@ pub struct TransactionApplyResult {
     pub logs: Vec<Log>,
     /// The gas paid by the transaction
     pub gas_used: u64,
+    /// The output of the transaction execution. Note that Scilla calls cannot return data, so the output will always
+    /// be empty.
+    pub output: TransactionOutput,
     /// If the transaction was a call to a Scilla contract, whether the called contract accepted the ZIL sent to it.
     pub accepted: Option<bool>,
     /// Errors from calls to Scilla contracts. Indexed by the call depth of erroring contract.
@@ -334,6 +337,7 @@ impl State {
                         contract_address: Some(contract_address),
                         logs: vec![],
                         gas_used: 0, // TODO
+                        output: TransactionOutput::Error,
                         accepted: Some(false),
                         errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
                         exceptions: e.into_iter().map(Into::into).collect(),
@@ -388,6 +392,7 @@ impl State {
                     contract_address: Some(contract_address),
                     logs: vec![],
                     gas_used: 0, // TODO
+                    output: TransactionOutput::Error,
                     accepted: Some(false),
                     errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
                     exceptions: e.errors.into_iter().map(Into::into).collect(),
@@ -407,6 +412,7 @@ impl State {
             contract_address: Some(contract_address),
             logs: vec![],
             gas_used: 0, // TODO
+            output: TransactionOutput::Success(vec![]),
             accepted: None,
             errors: BTreeMap::new(),
             exceptions: vec![],
@@ -434,6 +440,7 @@ impl State {
             contract_address: None,
             logs: vec![],
             gas_used: 0, // TODO
+            output: TransactionOutput::Success(vec![]),
             accepted: None,
             errors: BTreeMap::new(),
             exceptions: vec![],
@@ -481,6 +488,7 @@ impl State {
                     contract_address: None,
                     logs: vec![],
                     gas_used: 0, // TODO
+                    output: TransactionOutput::Error,
                     accepted: Some(false),
                     errors: [(0, vec![ScillaError::CallFailed])].into_iter().collect(),
                     exceptions: e.errors.into_iter().map(Into::into).collect(),
@@ -531,6 +539,7 @@ impl State {
             contract_address: None,
             logs,
             gas_used: 0, // TODO
+            output: TransactionOutput::Success(vec![]),
             accepted: Some(output.accepted),
             errors: BTreeMap::new(),
             exceptions: vec![],
@@ -591,6 +600,15 @@ impl State {
                     })
                     .collect(),
                 gas_used: result.gas_used(),
+                output: match result {
+                    ExecutionResult::Success { output, .. } => {
+                        TransactionOutput::Success(output.into_data().to_vec())
+                    }
+                    ExecutionResult::Revert { output, .. } => {
+                        TransactionOutput::Revert(output.to_vec())
+                    }
+                    ExecutionResult::Halt { .. } => TransactionOutput::Error,
+                },
                 accepted: None,
                 errors: BTreeMap::new(),
                 exceptions: vec![],
@@ -806,6 +824,22 @@ impl State {
             ExecutionResult::Success { output, .. } => Ok(output.into_data().to_vec()),
             ExecutionResult::Revert { output, .. } => Ok(output.to_vec()),
             ExecutionResult::Halt { reason, .. } => Err(anyhow!("halted due to: {reason:?}")),
+        }
+    }
+}
+
+pub enum TransactionOutput {
+    Success(Vec<u8>),
+    Revert(Vec<u8>),
+    Error,
+}
+
+impl TransactionOutput {
+    pub fn into_vec(self) -> Vec<u8> {
+        match self {
+            TransactionOutput::Success(v) => v,
+            TransactionOutput::Revert(v) => v,
+            TransactionOutput::Error => vec![],
         }
     }
 }
