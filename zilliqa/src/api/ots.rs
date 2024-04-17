@@ -11,13 +11,13 @@ use serde_json::{json, Value};
 
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},
-    types::ots::{self, TraceEntry},
+    types::ots::{self, Operation, TraceEntry},
 };
 use crate::{
     api::to_hex::ToHex,
     crypto::Hash,
     exec::TransactionOutput,
-    inspector::{self, CreatorInspector, OtterscanTraceInspector},
+    inspector::{self, CreatorInspector, OtterscanOperationInspector, OtterscanTraceInspector},
     message::BlockNumber,
     node::Node,
     state::Contract,
@@ -33,6 +33,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("ots_getBlockDetailsByHash", get_block_details_by_hash),
             ("ots_getBlockTransactions", get_block_transactions),
             ("ots_getContractCreator", get_contract_creator),
+            ("ots_getInternalOperations", get_internal_operations),
             ("ots_getTransactionError", get_transaction_error),
             ("ots_hasCode", has_code),
             ("ots_searchTransactionsAfter", search_transactions_after),
@@ -150,6 +151,18 @@ fn get_contract_creator(params: Params, node: &Arc<Mutex<Node>>) -> Result<Optio
     }
 
     Ok(None)
+}
+
+fn get_internal_operations(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Operation>> {
+    let txn_hash: H256 = params.one()?;
+    let txn_hash = Hash(txn_hash.0);
+
+    let mut inspector = OtterscanOperationInspector::default();
+    node.lock()
+        .unwrap()
+        .replay_transaction(txn_hash, &mut inspector)?;
+
+    Ok(inspector.entries())
 }
 
 fn get_transaction_error(params: Params, node: &Arc<Mutex<Node>>) -> Result<Cow<'static, str>> {
