@@ -873,47 +873,46 @@ impl Consensus {
             );
             self.votes.insert(
                 block_hash,
-                (signatures, cosigned, cosigned_weight, supermajority_reached),
+                (
+                    signatures.clone(),
+                    cosigned.clone(),
+                    cosigned_weight,
+                    supermajority_reached,
+                ),
             );
             if supermajority_reached {
                 // if we are already in the round in which the vote counts and have reached supermajority
                 if block_view + 1 == self.view.get_view() {
-                    let qc =
-                        self.qc_from_bits(block_hash, &signatures, cosigned.clone(), block_view);
-                    let parent_hash = qc.block_hash;
-                    let parent = self
-                        .get_block(&parent_hash)?
-                        .ok_or_else(|| anyhow!("missing block"))?;
-                    let parent_header = parent.header;
-                // We propose new block immediately if there's something in mempool or it's the first view
-                // Otherwise the block will be proposed on timeout
+                    // We propose new block immediately if there's something in mempool or it's the first view
+                    // Otherwise the block will be proposed on timeout
 
-                let transactions_count = self.transaction_pool.size();
+                    let transactions_count = self.transaction_pool.size();
 
-                if (self.view.get_view() == 1)
-                    || (block_view + 1 == self.view.get_view() && transactions_count > 0)
-                {
-                    return self.propose_new_block();
-                } else {
-                    // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
-                    let (time_since_last_view_change, exponential_backoff_timeout) =
-                        self.get_consensus_timeout_params();
-                    let minimum_time_left_for_empty_block =
-                        self.config
-                            .consensus
-                            .minimum_time_left_for_empty_block
-                            .as_millis() as u64;
-
-                    if time_since_last_view_change + minimum_time_left_for_empty_block
-                        >= exponential_backoff_timeout
+                    if (self.view.get_view() == 1)
+                        || (block_view + 1 == self.view.get_view() && transactions_count > 0)
                     {
                         return self.propose_new_block();
-                    }
+                    } else {
+                        // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
+                        let (time_since_last_view_change, exponential_backoff_timeout) =
+                            self.get_consensus_timeout_params();
+                        let minimum_time_left_for_empty_block =
+                            self.config
+                                .consensus
+                                .minimum_time_left_for_empty_block
+                                .as_millis() as u64;
 
-                    self.create_next_block_on_timeout = true;
-                    self.reset_timeout
-                        .send(self.config.consensus.empty_block_timeout)?;
-                    trace!("Empty transaction pool, will create new block on timeout");
+                        if time_since_last_view_change + minimum_time_left_for_empty_block
+                            >= exponential_backoff_timeout
+                        {
+                            return self.propose_new_block();
+                        }
+
+                        self.create_next_block_on_timeout = true;
+                        self.reset_timeout
+                            .send(self.config.consensus.empty_block_timeout)?;
+                        trace!("Empty transaction pool, will create new block on timeout");
+                    }
                 }
             }
         } else {
