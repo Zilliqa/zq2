@@ -34,6 +34,10 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("ots_getBlockTransactions", get_block_transactions),
             ("ots_getContractCreator", get_contract_creator),
             ("ots_getInternalOperations", get_internal_operations),
+            (
+                "ots_getTransactionBySenderAndNonce",
+                get_transaction_by_sender_and_nonce
+            ),
             ("ots_getTransactionError", get_transaction_error),
             ("ots_hasCode", has_code),
             ("ots_searchTransactionsAfter", search_transactions_after),
@@ -163,6 +167,31 @@ fn get_internal_operations(params: Params, node: &Arc<Mutex<Node>>) -> Result<Ve
         .replay_transaction(txn_hash, &mut inspector)?;
 
     Ok(inspector.entries())
+}
+
+fn get_transaction_by_sender_and_nonce(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<String>> {
+    let mut params = params.sequence();
+    let sender: H160 = params.next()?;
+    let nonce: u64 = params.next()?;
+
+    let node = node.lock().unwrap();
+    let touched = node.get_touched_transactions(sender)?;
+
+    // Iterate over each transaction which touched the sender. This will include transactions which weren't sent by the
+    // sender which we need to filter out.
+    for txn_hash in touched {
+        let txn = node
+            .get_transaction_by_hash(txn_hash)?
+            .ok_or_else(|| anyhow!("missing transaction: {txn_hash}"))?;
+        if txn.signer == sender && txn.tx.nonce().map(|n| n == nonce).unwrap_or(false) {
+            return Ok(Some(H256(txn_hash.0).to_hex()));
+        }
+    }
+
+    Ok(None)
 }
 
 fn get_transaction_error(params: Params, node: &Arc<Mutex<Node>>) -> Result<Cow<'static, str>> {
