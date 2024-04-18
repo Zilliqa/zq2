@@ -20,7 +20,7 @@ use crate::{
     node::Node,
     schnorr,
     state::{Contract, ScillaValue},
-    transaction::{SignedTransaction, TxZilliqa, VerifiedTransaction},
+    transaction::{SignedTransaction, TxZilliqa, VerifiedTransaction, ZilAmount},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -55,10 +55,10 @@ struct TransactionParams {
     nonce: u64,
     to_addr: H160,
     #[serde(deserialize_with = "from_str")]
-    amount: u128,
+    amount: ZilAmount,
     pub_key: String,
     #[serde(deserialize_with = "from_str")]
-    gas_price: u128,
+    gas_price: ZilAmount,
     #[serde(deserialize_with = "from_str")]
     gas_limit: u64,
     #[serde(default)]
@@ -252,7 +252,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
     let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
 
     let mut result = json!({
-        "_balance": account.balance.to_string(),
+        "_balance": ZilAmount::from_amount(account.balance).to_string(),
     });
 
     fn convert(value: ScillaValue) -> Result<Value> {

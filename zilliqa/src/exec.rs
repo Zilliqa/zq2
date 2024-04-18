@@ -362,7 +362,7 @@ impl State {
 
         let account = Account {
             nonce: 0,
-            balance: txn.amount,
+            balance: txn.amount.get(),
             contract: Contract::Scilla {
                 code: txn.code.clone(),
                 init_data: serde_json::to_string(&init_data)?,
@@ -420,14 +420,14 @@ impl State {
         mut inspector: impl ScillaInspector,
     ) -> Result<TransactionApplyResult> {
         self.mutate_account(from_addr, |from| {
-            from.balance -= txn.amount();
+            from.balance -= txn.amount.get();
             from.nonce += 1;
         })?;
         self.mutate_account(txn.to_addr, |to| {
-            to.balance += txn.amount();
+            to.balance += txn.amount.get();
         })?;
 
-        inspector.transfer(from_addr, txn.to_addr, txn.amount());
+        inspector.transfer(from_addr, txn.to_addr, txn.amount.get());
 
         Ok(TransactionApplyResult {
             success: true,
@@ -494,12 +494,12 @@ impl State {
         self.mutate_account(from_addr, |from| {
             from.nonce += 1;
             if output.accepted {
-                from.balance -= txn.amount();
+                from.balance -= txn.amount.get();
             }
         })?;
         self.mutate_account(txn.to_addr, |to| {
             if output.accepted {
-                to.balance += txn.amount();
+                to.balance += txn.amount.get();
             }
         })?;
 

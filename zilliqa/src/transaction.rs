@@ -1,4 +1,8 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Display, Formatter},
+    str::FromStr,
+};
 
 use anyhow::{anyhow, Result};
 use bytes::{BufMut, BytesMut};
@@ -135,7 +139,7 @@ impl SignedTransaction {
             SignedTransaction::Eip2930 { tx, .. } => tx.gas_price,
             // We ignore the priority fee and just use the maximum fee.
             SignedTransaction::Eip1559 { tx, .. } => tx.max_fee_per_gas,
-            SignedTransaction::Zilliqa { tx, .. } => tx.gas_price,
+            SignedTransaction::Zilliqa { tx, .. } => tx.gas_price.get(),
             SignedTransaction::Intershard { tx, .. } => tx.gas_price,
         }
     }
@@ -283,12 +287,6 @@ pub enum Transaction {
     Intershard(TxIntershard),
 }
 
-fn scale_zilliqa_tx_amount(amount: u128) -> u128 {
-    // Zilliqa amounts are represented in units of (10^-12) ZILs, whereas our internal representation is in units of
-    // (10^-18) ZILs. Account for this difference by multiplying the amount by (10^6).
-    amount * 10u128.pow(6)
-}
-
 impl Transaction {
     pub fn chain_id(&self) -> Option<u64> {
         match self {
@@ -318,7 +316,7 @@ impl Transaction {
             Transaction::Eip1559(TxEip1559 {
                 max_fee_per_gas, ..
             }) => *max_fee_per_gas,
-            Transaction::Zilliqa(t) => t.gas_price(),
+            Transaction::Zilliqa(t) => t.gas_price.get(),
             Transaction::Intershard(TxIntershard { gas_price, .. }) => *gas_price,
         }
     }
@@ -355,7 +353,7 @@ impl Transaction {
             Transaction::Legacy(TxLegacy { amount, .. }) => *amount,
             Transaction::Eip2930(TxEip2930 { amount, .. }) => *amount,
             Transaction::Eip1559(TxEip1559 { amount, .. }) => *amount,
-            Transaction::Zilliqa(t) => t.amount(),
+            Transaction::Zilliqa(t) => t.amount.get(),
             Transaction::Intershard(_) => 0,
         }
     }
@@ -553,21 +551,49 @@ impl TxEip1559 {
 pub struct TxZilliqa {
     pub chain_id: u16,
     pub nonce: u64,
-    pub gas_price: u128,
+    pub gas_price: ZilAmount,
     pub gas_limit: u64,
     pub to_addr: Address,
-    pub amount: u128,
+    pub amount: ZilAmount,
     pub code: String,
     pub data: String,
 }
 
-impl TxZilliqa {
-    pub fn gas_price(&self) -> u128 {
-        scale_zilliqa_tx_amount(self.gas_price)
+/// A wrapper for ZIL amounts in the Zilliqa API. These are represented in units of (10^-12) ZILs, rather than (10^-18)
+/// like in the rest of our code. The implementations of [Serialize], [Deserialize], [Display] and [FromStr] represent
+/// the amount in units of (10^-12) ZILs, so this type can be used in the Zilliqa API layer.
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct ZilAmount(u128);
+
+impl ZilAmount {
+    /// Construct a [ZilAmount] from an amount in (10^-18) ZILs. The value will be truncated and rounded down.
+    pub fn from_amount(amount: u128) -> ZilAmount {
+        ZilAmount(amount / 10u128.pow(6))
     }
 
-    pub fn amount(&self) -> u128 {
-        scale_zilliqa_tx_amount(self.amount)
+    /// Get the ZIL amount in units of (10^-18) ZILs.
+    pub fn get(self) -> u128 {
+        self.0.checked_mul(10u128.pow(6)).expect("amount overflow")
+    }
+
+    /// Return the memory representation of this amount as a big-endian byte array.
+    pub fn to_be_bytes(self) -> [u8; 16] {
+        self.0.to_be_bytes()
+    }
+}
+
+impl Display for ZilAmount {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for ZilAmount {
+    type Err = <u128 as FromStr>::Err;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(u128::from_str(s)?))
     }
 }
 

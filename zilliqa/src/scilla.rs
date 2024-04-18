@@ -34,6 +34,7 @@ use crate::{
     scilla_proto::{Map, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
     state::{ScillaValue, State},
+    transaction::ZilAmount,
 };
 
 /// The interface to the Scilla interpreter.
@@ -167,7 +168,7 @@ impl Scilla {
         state: State,
         code: &str,
         gas_limit: u64,
-        value: u128,
+        value: ZilAmount,
         init: &[Value],
     ) -> Result<Result<(CreateOutput, H256), ErrorResponse>> {
         let args = vec![
@@ -238,7 +239,7 @@ impl Scilla {
         state: State,
         code: &str,
         gas_limit: u64,
-        value: u128,
+        value: ZilAmount,
         init: &[Value],
         msg: &Value,
     ) -> Result<Result<(InvokeOutput, H256), ErrorResponse>> {
@@ -653,7 +654,8 @@ impl ActiveCall {
         let account = self.state.get_account(addr)?;
         match name.as_str() {
             "_balance" => {
-                let val = scilla_val(format!("\"{}\"", account.balance).into_bytes());
+                let balance = ZilAmount::from_amount(account.balance);
+                let val = scilla_val(format!("\"{balance}\"").into_bytes());
                 Ok(Some((val, "Uint128".to_owned())))
             }
             "_nonce" => {
