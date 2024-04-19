@@ -1,12 +1,13 @@
 use std::env;
 
 use crate::otel;
-use eyre::Result;
+use anyhow::Result;
 
 /// Code for all the z2 commands, so you can invoke it from your own programs.
 use crate::setup;
 
 pub async fn run_local_net(
+    base_dir: &str,
     config_dir: &str,
     log_level: &str,
     debug_modules: &Vec<String>,
@@ -34,9 +35,13 @@ pub async fn run_local_net(
     println!("RUST_LOG = {log_spec}");
     println!("Setting up otel .. ");
     let otel = otel::Otel::new(config_dir)?;
+    println!("Write otel configuration .. ");
     otel.write_files().await?;
+    println!("Start otel .. ");
     otel.ensure_otel().await?;
-    let mut setup_obj = setup::Setup::new(4, config_dir, &log_spec)?;
+    println!("Generate zq2 configuration .. ");
+    let mut setup_obj = setup::Setup::new(4, config_dir, &log_spec, &base_dir)?;
+    println!("Start zq2 .. ");
     setup_obj.run().await?;
     Ok(())
 }

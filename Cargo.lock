@@ -6926,9 +6926,9 @@ dependencies = [
 name = "z2"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
  "colored",
- "eyre",
  "futures",
  "libp2p",
  "rand_core",

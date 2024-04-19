@@ -2,7 +2,7 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use eyre::{eyre, Result};
+use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use tokio::fs;
 use toml;
@@ -29,10 +29,12 @@ pub struct Setup {
     pub config_dir: String,
     /// Log spec
     pub log_spec: String,
+    /// Base dir - the one zq2 is in.
+    pub base_dir: String,
 }
 
 impl Setup {
-    pub fn new(how_many: usize, config_dir: &str, log_spec: &str) -> Result<Self> {
+    pub fn new(how_many: usize, config_dir: &str, log_spec: &str, base_dir: &str) -> Result<Self> {
         let mut secret_keys = Vec::new();
         let mut node_addresses = Vec::new();
         for i in 0..how_many {
@@ -49,19 +51,13 @@ impl Setup {
             collector: None,
             config_dir: config_dir.to_string(),
             log_spec: log_spec.to_string(),
+            base_dir: base_dir.to_string(),
         })
     }
 
     pub async fn generate_config(&self) -> Result<()> {
         // We don't care if this fails - it probably already exists.
         let _ = fs::create_dir(&self.config_dir).await;
-
-        // let first_key = self.secret_keys[0].node_public_key().to_string();
-        //let first_peer_id = self.secret_keys[0]
-        //    .to_libp2p_keypair()
-        //    .public()
-        //    .to_peer_id()
-        //    .to_string();
 
         let p2p_keypair = self.secret_keys[0].to_libp2p_keypair();
         let peer_id_node_0 = PeerId::from_public_key(&p2p_keypair.public());
@@ -123,19 +119,19 @@ impl Setup {
         let config_files = (0..self.how_many)
             .map(|x| format!("{0}/{1}{2}/config.yaml", self.config_dir, DATADIR_PREFIX, x))
             .collect::<Vec<String>>();
-
-        self.collector = Some(
-            collector::Collector::new(&self.secret_keys, &config_files, &self.log_spec).await?,
-        );
-        if let Some(mut c) = self.collector.take() {
-            c.complete().await?;
+        let mut collector = collector::Collector::new(&self.log_spec, &self.base_dir).await?;
+        for idx in 0..config_files.len() {
+            collector
+                .start_zq2_node(idx, &self.secret_keys[idx], &config_files[idx])
+                .await?;
         }
+        collector.complete().await?;
         Ok(())
     }
 }
 
 pub fn generate_secret_key() -> Result<SecretKey> {
-    SecretKey::new().map_err(|err| eyre!(Box::new(err)))
+    SecretKey::new().map_err(|err| anyhow!(Box::new(err)))
 }
 
 pub fn generate_secret_key_from_index(index: usize) -> Result<SecretKey> {
@@ -144,5 +140,5 @@ pub fn generate_secret_key_from_index(index: usize) -> Result<SecretKey> {
         "index must be non-zero when generating secret key"
     );
     let padded_key = format!("{:0>64}", index);
-    SecretKey::from_hex(&padded_key).map_err(|err| eyre!(Box::new(err)))
+    SecretKey::from_hex(&padded_key).map_err(|err| anyhow!(Box::new(err)))
 }

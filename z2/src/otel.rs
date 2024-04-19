@@ -1,4 +1,4 @@
-use eyre::{eyre, Result};
+use anyhow::{anyhow, Context as _, Result};
 use tokio::{fs, process::Command};
 
 /// Tracks otel - this is just a container we run with docker-compose up (because that's the only practical way)
@@ -21,19 +21,31 @@ impl Otel {
             format!("{0}/otel-compose.yaml", &self.config_dir),
             docker_compose,
         )
-        .await?;
+        .await
+        .context(format!(
+            "Cannot write {0}/otel-compose.yaml",
+            &self.config_dir
+        ))?;
         let otel_config = include_str!("../resources/otel-collector-config.yaml");
         fs::write(
             format!("{0}/otel-config.yaml", &self.config_dir),
             otel_config,
         )
-        .await?;
+        .await
+        .context(format!(
+            "Cannot write {0}/otel-config.yaml",
+            &self.config_dir
+        ))?;
         let mimir_config = include_str!("../resources/mimir-config.yaml");
         fs::write(
             format!("{0}/mimir-config.yaml", &self.config_dir),
             mimir_config,
         )
-        .await?;
+        .await
+        .context(format!(
+            "Cannot write {0}/minir-config.yaml",
+            &self.config_dir
+        ))?;
         Ok(())
     }
 
@@ -48,7 +60,7 @@ impl Otel {
         if result.success() {
             println!("OTEL metrics should be available at port 9009 (mimir), 9010 (grafana)");
         } else {
-            return Err(eyre!("Could not bring otel up"));
+            return Err(anyhow!("Could not bring otel up"));
         }
         Ok(())
     }

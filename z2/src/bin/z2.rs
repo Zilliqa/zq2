@@ -1,7 +1,8 @@
 use std::fmt;
 
+use anyhow::{anyhow, Result};
 use clap::{Args, Parser, Subcommand};
-use eyre::Result;
+use std::env;
 use z2lib::plumbing;
 
 #[derive(Parser, Debug)]
@@ -13,19 +14,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Internal debugging
-    Internal(InternalArg),
-}
-
-#[derive(Args, Debug)]
-struct InternalArg {
-    #[clap(subcommand)]
-    command: InternalCommand,
-}
-
-#[derive(Subcommand, Debug)]
-enum InternalCommand {
-    /// Just run a local network, to make sure we can.
+    /// Run a copy of zilliqa 2
     Run(RunStruct),
 }
 
@@ -70,18 +59,26 @@ impl fmt::Display for LogLevel {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Work out the base directory
+    let base_dir = match env::var("ZQ2_BASE") {
+        Ok(val) => val,
+        _ => {
+            return Err(anyhow!(
+                "Please define ZQ2_BASE or run bin/z2 from the checked out zq2 repository"
+            ))
+        }
+    };
     match &cli.command {
-        Commands::Internal(int_cmd) => match &int_cmd.command {
-            InternalCommand::Run(ref arg) => {
-                plumbing::run_local_net(
-                    &arg.config_dir,
-                    &arg.log_level.to_string(),
-                    &arg.debug_modules,
-                    &arg.trace_modules,
-                )
-                .await?;
-                Ok(())
-            }
-        },
+        Commands::Run(ref arg) => {
+            plumbing::run_local_net(
+                &base_dir,
+                &arg.config_dir,
+                &arg.log_level.to_string(),
+                &arg.debug_modules,
+                &arg.trace_modules,
+            )
+            .await?;
+            Ok(())
+        }
     }
 }

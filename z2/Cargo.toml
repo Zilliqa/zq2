@@ -21,9 +21,9 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0.82"
 clap = { version = "4.5.4", features = ["derive"] }
 colored = "2.1.0"
-eyre = "0.6.12"
 futures = "0.3.30"
 libp2p = { version = "0.53.2", features = [ "identify" ] }
 rand_core = "0.6.4"
