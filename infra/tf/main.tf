@@ -176,7 +176,7 @@ resource "google_project_service" "osconfig" {
 resource "google_compute_instance_group" "api" {
   name      = "${var.network_name}-nodes"
   zone      = "${var.region}-a"
-  instances = [module.bootstrap_node.self_link]
+  instances = concat([module.bootstrap_node.self_link], module.node[*].self_link)
 
 
   named_port {
