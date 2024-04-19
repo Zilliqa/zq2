@@ -18,13 +18,15 @@ impl collector::Runner for Runner {
 
 impl Runner {
     pub async fn spawn(
+        base_dir: &str,
         index: usize,
         key: &str,
         config_file: &str,
         debug_spec: &Option<String>,
         channel: &mpsc::Sender<collector::Message>,
     ) -> Result<Runner> {
-        let mut cmd = Command::new("target/debug/zilliqa");
+        let exe_name = format!("{base_dir}/zq2/target/debug/zilliqa");
+        let mut cmd = Command::new(&exe_name);
         cmd.arg(key);
         cmd.arg("--config-file");
         cmd.arg(config_file);
@@ -33,7 +35,7 @@ impl Runner {
         }
         let join_handles = collector::spawn(
             &mut cmd,
-            "zq2",
+            &exe_name,
             &collector::Legend::new(collector::Program::Zq2, index)?,
             channel.clone(),
         )

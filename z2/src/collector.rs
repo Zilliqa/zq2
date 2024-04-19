@@ -1,4 +1,4 @@
-use crate::zq2;
+use crate::{otterscan, zq2};
 use anyhow::{Context as _, Result};
 use colored::{self, Colorize as _};
 use futures::future::JoinAll;
@@ -19,12 +19,14 @@ const MSG_CHANNEL_BUFFER: usize = 64;
 #[derive(Clone, PartialEq)]
 pub enum Program {
     Zq2,
+    Otterscan,
 }
 
 impl fmt::Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Program::Zq2 => write!(f, "zq2"),
+            Program::Otterscan => write!(f, "otterscan"),
         }
     }
 }
@@ -132,12 +134,14 @@ impl Collector {
 
     pub async fn start_zq2_node(
         &mut self,
+        base_dir: &str,
         idx: usize,
         key: &SecretKey,
         config_file: &str,
     ) -> Result<()> {
         self.runners.push(Box::new(
             zq2::Runner::spawn(
+                base_dir,
                 idx,
                 &key.to_hex(),
                 config_file,
@@ -145,6 +149,13 @@ impl Collector {
                 &self.tx,
             )
             .await?,
+        ));
+        Ok(())
+    }
+
+    pub async fn start_otterscan(&mut self, base_dir: &str, chain_url: &str) -> Result<()> {
+        self.runners.push(Box::new(
+            otterscan::Runner::spawn_otter(base_dir, chain_url, &self.tx).await?,
         ));
         Ok(())
     }
@@ -164,13 +175,13 @@ impl Collector {
 
 pub async fn spawn(
     cmd: &mut Command,
-    _desc: &str,
+    desc: &str,
     legend: &Legend,
     channel: Tx,
 ) -> Result<JoinAll<JoinHandle<()>>> {
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
-    let mut child = cmd.spawn().context("Failed to spawn {desc}")?;
+    let mut child = cmd.spawn().context(format!("Failed to spawn {desc}"))?;
     let stdout = child.stdout.take().context("no handle to stdout")?;
     let stderr = child.stderr.take().context("no handle to stderr")?;
     let mut stdout_reader = BufReader::new(stdout).lines();

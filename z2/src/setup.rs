@@ -11,7 +11,7 @@ use toml;
 use zilliqa::crypto::SecretKey;
 use zilliqa::{cfg, crypto::NodePublicKey, state::Address};
 
-use crate::collector;
+use crate::collector::{self, Collector};
 
 const GENESIS_DEPOSIT: &str = "32000000000000000000";
 const DATADIR_PREFIX: &str = "z2_node_";
@@ -113,19 +113,29 @@ impl Setup {
         Ok(())
     }
 
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn run_zq2(&mut self, collector: &mut Collector) -> Result<()> {
         // Generate a collector
         self.generate_config().await?;
         let config_files = (0..self.how_many)
             .map(|x| format!("{0}/{1}{2}/config.yaml", self.config_dir, DATADIR_PREFIX, x))
             .collect::<Vec<String>>();
-        let mut collector = collector::Collector::new(&self.log_spec, &self.base_dir).await?;
         for idx in 0..config_files.len() {
             collector
-                .start_zq2_node(idx, &self.secret_keys[idx], &config_files[idx])
+                .start_zq2_node(
+                    &self.base_dir,
+                    idx,
+                    &self.secret_keys[idx],
+                    &config_files[idx],
+                )
                 .await?;
         }
-        collector.complete().await?;
+        Ok(())
+    }
+
+    pub async fn run_otterscan(&mut self, collector: &mut Collector) -> Result<()> {
+        collector
+            .start_otterscan(&self.base_dir, "http://localhost:4201")
+            .await?;
         Ok(())
     }
 }

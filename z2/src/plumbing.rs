@@ -1,6 +1,6 @@
 use std::env;
 
-use crate::otel;
+use crate::{collector, otel};
 use anyhow::Result;
 
 /// Code for all the z2 commands, so you can invoke it from your own programs.
@@ -40,8 +40,14 @@ pub async fn run_local_net(
     println!("Start otel .. ");
     otel.ensure_otel().await?;
     println!("Generate zq2 configuration .. ");
-    let mut setup_obj = setup::Setup::new(4, config_dir, &log_spec, &base_dir)?;
+    let mut setup_obj = setup::Setup::new(4, config_dir, &log_spec, base_dir)?;
+    println!("Set up collector");
+    let mut collector = collector::Collector::new(&log_spec, base_dir).await?;
     println!("Start zq2 .. ");
-    setup_obj.run().await?;
+
+    setup_obj.run_zq2(&mut collector).await?;
+    println!("Start otterscan .. ");
+    setup_obj.run_otterscan(&mut collector).await?;
+    collector.complete().await?;
     Ok(())
 }
