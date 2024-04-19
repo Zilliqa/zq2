@@ -3,12 +3,16 @@ use std::sync::{Arc, Mutex};
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
+use serde_json::{json, Value};
 
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},
     types::ots,
 };
-use crate::{crypto::Hash, message::BlockNumber, node::Node, state::Contract, time::SystemTime};
+use crate::{
+    api::to_hex::ToHex, crypto::Hash, inspector::CreatorInspector, message::BlockNumber,
+    node::Node, state::Contract, time::SystemTime,
+};
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
@@ -18,6 +22,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("ots_getBlockDetails", get_block_details),
             ("ots_getBlockDetailsByHash", get_block_details_by_hash),
             ("ots_getBlockTransactions", get_block_transactions),
+            ("ots_getContractCreator", get_contract_creator),
             ("ots_hasCode", has_code),
             ("ots_searchTransactionsAfter", search_transactions_after),
             ("ots_searchTransactionsBefore", search_transactions_before),
@@ -107,6 +112,32 @@ fn get_block_transactions(
         full_block,
         receipts,
     }))
+}
+
+fn get_contract_creator(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<Value>> {
+    let address: H160 = params.one()?;
+
+    let touched = node.lock().unwrap().get_touched_transactions(address)?;
+
+    // Perform a linear search over each transaction which touched this address. Replay each one to try and find the
+    // transaction which created it.
+    for txn_hash in touched {
+        // Replay the creation transaction to work out the creator. This is important for contracts which are created
+        // by other contracts, for which the creator is not the same as `txn.from_addr`.
+        let mut inspector = CreatorInspector::new(address);
+        node.lock()
+            .unwrap()
+            .replay_transaction(txn_hash, &mut inspector)?;
+
+        if let Some(creator) = inspector.creator() {
+            return Ok(Some(json!({
+                "hash": H256(txn_hash.0).to_hex(),
+                "creator": creator.to_hex(),
+            })));
+        }
+    }
+
+    Ok(None)
 }
 
 fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {

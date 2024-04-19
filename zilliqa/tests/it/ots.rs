@@ -164,3 +164,64 @@ async fn search_transactions_paging(mut network: Network) {
         .tuple_windows()
         .all(|(a, b)| a > b));
 }
+
+#[zilliqa_macros::test]
+async fn contract_creator(mut network: Network) {
+    async fn get_contract_creator(wallet: &Wallet, address: H160) -> Option<(H256, H160)> {
+        let response: Value = wallet
+            .provider()
+            .request("ots_getContractCreator", [address])
+            .await
+            .unwrap();
+
+        if response.is_null() {
+            None
+        } else {
+            Some((
+                response["hash"].as_str().unwrap().parse().unwrap(),
+                response["creator"].as_str().unwrap().parse().unwrap(),
+            ))
+        }
+    }
+
+    let wallet = network.genesis_wallet().await;
+
+    // EOAs have no creator
+    assert_eq!(get_contract_creator(&wallet, wallet.address()).await, None);
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/ContractCreatesAnotherContract.sol",
+        "Creator",
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let creator_address = receipt.contract_address.unwrap();
+
+    // The EOA is the creator of the `Creator` contract.
+    assert_eq!(
+        get_contract_creator(&wallet, creator_address).await,
+        Some((hash, wallet.address()))
+    );
+
+    let data = abi.function("create").unwrap().encode_input(&[]).unwrap();
+
+    let tx = TransactionRequest::new().to(creator_address).data(data);
+    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, hash, 50).await;
+    let log = abi
+        .event("Created")
+        .unwrap()
+        .parse_log_whole(receipt.logs[0].clone().into())
+        .unwrap();
+    let create_me_address = log.params[0].value.clone().into_address().unwrap();
+
+    // The `Creator` is the creator of the `CreateMe` contract.
+    assert_eq!(
+        get_contract_creator(&wallet, create_me_address).await,
+        Some((hash, creator_address))
+    );
+
+    // TODO: Test Scilla contract
+}

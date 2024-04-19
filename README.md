@@ -97,7 +97,7 @@ Please open an issue or PR for APIs that you think should be included.
 | `ots_getBlockDetails`                     | 🟢                                              |
 | `ots_getBlockDetailsByHash`               | 🟢                                              |
 | `ots_getBlockTransactions`                | 🟢                                              |
-| `ots_getContractCreator`                  | 🔴                                              |
+| `ots_getContractCreator`                  | 🟢                                              |
 | `ots_getInternalOperations`               | 🔴                                              |
 | `ots_getTransactionBySenderAndNonce`      | 🔴                                              |
 | `ots_getTransactionError`                 | 🔴                                              |
