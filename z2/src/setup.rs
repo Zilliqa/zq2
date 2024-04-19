@@ -1,17 +1,16 @@
 //use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::str::FromStr;
-
+use crate::collector::{self, Collector};
+use crate::utils;
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
+use std::path::PathBuf;
+use std::str::FromStr;
 use tokio::fs;
 use toml;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::SecretKey;
 use zilliqa::{cfg, crypto::NodePublicKey, state::Address};
-
-use crate::collector::{self, Collector};
 
 const GENESIS_DEPOSIT: &str = "32000000000000000000";
 const DATADIR_PREFIX: &str = "z2_node_";
@@ -31,10 +30,18 @@ pub struct Setup {
     pub log_spec: String,
     /// Base dir - the one zq2 is in.
     pub base_dir: String,
+    /// Base port
+    pub base_port: u16,
 }
 
 impl Setup {
-    pub fn new(how_many: usize, config_dir: &str, log_spec: &str, base_dir: &str) -> Result<Self> {
+    pub fn new(
+        how_many: usize,
+        config_dir: &str,
+        log_spec: &str,
+        base_dir: &str,
+        base_port: u16,
+    ) -> Result<Self> {
         let mut secret_keys = Vec::new();
         let mut node_addresses = Vec::new();
         for i in 0..how_many {
@@ -52,7 +59,56 @@ impl Setup {
             config_dir: config_dir.to_string(),
             log_spec: log_spec.to_string(),
             base_dir: base_dir.to_string(),
+            base_port,
         })
+    }
+
+    /// For historical reasons, this is 201.
+    pub fn get_json_rpc_port(&self, index: u16, proxied: bool) -> u16 {
+        index + 201 + self.base_port + if proxied { 1000 } else { 0 }
+    }
+
+    /// this used to be + 2000, but the default (base_port=4000) causes chrome to fail to browse, because it considers
+    /// 6000 unsafe. Sigh.
+    pub fn get_otterscan_port(&self) -> u16 {
+        self.base_port + 2003
+    }
+
+    pub fn get_spout_port(&self) -> u16 {
+        self.base_port + 2001
+    }
+
+    pub fn get_mitmproxy_port(&self) -> u16 {
+        self.base_port + 2002
+    }
+
+    pub fn get_explorer_url(&self) -> String {
+        format!("http://localhost:{0}", self.get_otterscan_port())
+    }
+
+    pub fn get_json_rpc_url(&self, proxied: bool) -> String {
+        format!("http://localhost:{0}", self.get_json_rpc_port(0, proxied))
+    }
+
+    pub fn get_port_map(&self) -> String {
+        let mut result = String::new();
+        result.push_str(&format!(
+            "🦏  JSON-RPC ports are at {0}+<node_index>\n",
+            self.get_json_rpc_port(0, false)
+        ));
+        result.push_str(&format!(
+            "🦏  Otterscan: http://localhost:{0}/\n",
+            self.get_otterscan_port()
+        ));
+        result.push_str(&format!(
+            "🦏  Spout is at http://localhost:{0}/\n",
+            self.get_spout_port()
+        ));
+        result.push_str(&format!(
+            "🦏  mitmproxy port at http://localhost:{0}/\n",
+            self.get_mitmproxy_port()
+        ));
+        result
     }
 
     pub async fn generate_config(&self) -> Result<()> {
@@ -75,6 +131,11 @@ impl Setup {
             Address::from_str("7E5F4552091A69125d5DfCb7b8C2659029395Bdf")?,
             "5000000000000000000000".to_string(),
         ));
+        // privkeys from Zilliqa
+        genesis_accounts.push((
+            Address::from_str("0xcb57ec3f064a16cadb36c7c712f4c9fa62b77415")?,
+            "5000000000000000000000".to_string(),
+        ));
 
         // Node vector
         println!("Writing config files to {0}", &self.config_dir);
@@ -84,7 +145,7 @@ impl Setup {
             // @todo should pass this in!
             cfg.otlp_collector_endpoint = Some("http://localhost:4317".to_string());
             let mut node_config = cfg::NodeConfig::default();
-            node_config.json_rpc_port = usize::try_into(4201 + i)?;
+            node_config.json_rpc_port = self.get_json_rpc_port(usize::try_into(i)?, false);
             println!("Node {i} has RPC port {0}", node_config.json_rpc_port);
             node_config.disable_rpc = false;
             node_config.eth_chain_id = 700 | 0x8000;
@@ -129,17 +190,58 @@ impl Setup {
         Ok(())
     }
 
-    pub async fn have_otterscan(&mut self) -> Result<bool> {
-        Ok(tokio::fs::metadata(&format!("{}/otterscan", self.base_dir))
-            .await
-            .is_ok())
-    }
-
     pub async fn run_otterscan(&mut self, collector: &mut Collector) -> Result<()> {
         collector
-            .start_otterscan(&self.base_dir, "http://localhost:4201")
+            .start_otterscan(
+                &self.base_dir,
+                &self.get_json_rpc_url(false),
+                self.get_otterscan_port(),
+            )
             .await?;
         Ok(())
+    }
+
+    pub async fn run_spout(&mut self, collector: &mut Collector) -> Result<()> {
+        collector
+            .start_spout(
+                &self.base_dir,
+                &self.get_json_rpc_url(true),
+                &self.get_explorer_url(),
+                // 0xcb...
+                "db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3",
+                self.get_spout_port(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn run_mitmweb(&mut self, collector: &mut Collector) -> Result<()> {
+        collector
+            .start_mitmweb(
+                &self.base_dir,
+                0,
+                self.get_json_rpc_port(0, true),
+                self.get_json_rpc_port(0, false),
+                self.get_mitmproxy_port(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn wait_for_chain(&mut self) -> Result<()> {
+        let rpc_url = self.get_json_rpc_url(true);
+        loop {
+            println!("Check chain liveness on {rpc_url} .. ");
+            match utils::get_chain_id(&rpc_url).await {
+                Ok(val) => {
+                    println!("Chain id is {val}");
+                    return Ok(());
+                }
+                _ => {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                }
+            }
+        }
     }
 }
 

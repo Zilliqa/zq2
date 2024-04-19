@@ -35,6 +35,9 @@ struct RunStruct {
     #[clap(long)]
     trace_modules: Vec<String>,
 
+    #[clap(long, default_value = "4000")]
+    base_port: u16,
+
     #[clap(long="no-otterscan", action= ArgAction::SetFalse)]
     otterscan: bool,
     #[clap(long = "otterscan", overrides_with = "otterscan")]
@@ -49,6 +52,16 @@ struct RunStruct {
     zq2: bool,
     #[clap(long = "zq2", overrides_with = "zq2")]
     _no_zq2: bool,
+
+    #[clap(long="no-spout", action= ArgAction::SetFalse)]
+    spout: bool,
+    #[clap(long = "spout", overrides_with = "spout")]
+    _no_spout: bool,
+
+    #[clap(long="no-mitmweb", action= ArgAction::SetFalse)]
+    mitmweb: bool,
+    #[clap(long = "mitmweb", overrides_with = "mitmweb")]
+    _no_mitmweb: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
@@ -99,9 +112,16 @@ async fn main() -> Result<()> {
             if arg.zq2 {
                 to_run.insert(plumbing::Components::ZQ2);
             }
+            if arg.spout {
+                to_run.insert(plumbing::Components::Spout);
+            }
+            if arg.mitmweb {
+                to_run.insert(plumbing::Components::Mitmweb);
+            }
 
             plumbing::run_local_net(
                 &base_dir,
+                arg.base_port,
                 &arg.config_dir,
                 &arg.log_level.to_string(),
                 &arg.debug_modules,

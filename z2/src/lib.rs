@@ -1,6 +1,9 @@
 pub mod collector;
+pub mod mitmweb;
 pub mod otel;
 pub mod otterscan;
 pub mod plumbing;
 pub mod setup;
+pub mod spout;
+pub mod utils;
 pub mod zq2;

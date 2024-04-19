@@ -1,4 +1,4 @@
-use crate::{otterscan, zq2};
+use crate::{mitmweb, otterscan, spout, zq2};
 use anyhow::{Context as _, Result};
 use colored::{self, Colorize as _};
 use futures::future::JoinAll;
@@ -20,6 +20,8 @@ const MSG_CHANNEL_BUFFER: usize = 64;
 pub enum Program {
     Zq2,
     Otterscan,
+    Spout,
+    Mitmweb,
 }
 
 impl fmt::Display for Program {
@@ -27,6 +29,8 @@ impl fmt::Display for Program {
         match self {
             Program::Zq2 => write!(f, "zq2"),
             Program::Otterscan => write!(f, "otterscan"),
+            Program::Spout => write!(f, "spout"),
+            Program::Mitmweb => write!(f, "mitmweb"),
         }
     }
 }
@@ -153,9 +157,46 @@ impl Collector {
         Ok(())
     }
 
-    pub async fn start_otterscan(&mut self, base_dir: &str, chain_url: &str) -> Result<()> {
+    pub async fn start_otterscan(
+        &mut self,
+        base_dir: &str,
+        chain_url: &str,
+        port: u16,
+    ) -> Result<()> {
         self.runners.push(Box::new(
-            otterscan::Runner::spawn_otter(base_dir, chain_url, &self.tx).await?,
+            otterscan::Runner::spawn_otter(base_dir, chain_url, port, &self.tx).await?,
+        ));
+        Ok(())
+    }
+
+    pub async fn start_spout(
+        &mut self,
+        base_dir: &str,
+        chain_url: &str,
+        explorer_url: &str,
+        priv_key: &str,
+        port: u16,
+    ) -> Result<()> {
+        self.runners.push(Box::new(
+            spout::Runner::spawn_spout(base_dir, chain_url, explorer_url, priv_key, port, &self.tx)
+                .await?,
+        ));
+        Ok(())
+    }
+
+    pub async fn start_mitmweb(
+        &mut self,
+        base_dir: &str,
+        index: usize,
+        from_port: u16,
+        to_port: u16,
+        mgmt_port: u16,
+    ) -> Result<()> {
+        self.runners.push(Box::new(
+            mitmweb::Runner::spawn_mitmproxy(
+                base_dir, index, from_port, to_port, mgmt_port, &self.tx,
+            )
+            .await?,
         ));
         Ok(())
     }

@@ -1,6 +1,6 @@
 use std::env;
 
-use crate::{collector, otel};
+use crate::{collector, otel, otterscan, spout};
 use anyhow::{anyhow, Result};
 use std::collections::HashSet;
 use tokio::fs;
@@ -13,16 +13,25 @@ pub enum Components {
     ZQ2,
     Otterscan,
     Otel,
+    Spout,
+    Mitmweb,
 }
 
 impl Components {
     pub fn all() -> HashSet<Components> {
-        HashSet::from([Components::ZQ2, Components::Otterscan, Components::Otel])
+        HashSet::from([
+            Components::ZQ2,
+            Components::Otterscan,
+            Components::Otel,
+            Components::Spout,
+            Components::Mitmweb,
+        ])
     }
 }
 
 pub async fn run_local_net(
     base_dir: &str,
+    base_port: u16,
     config_dir: &str,
     log_level: &str,
     debug_modules: &Vec<String>,
@@ -60,20 +69,42 @@ pub async fn run_local_net(
         otel.ensure_otel().await?;
     }
     println!("Generate zq2 configuration .. ");
-    let mut setup_obj = setup::Setup::new(4, config_dir, &log_spec, base_dir)?;
+    let mut setup_obj = setup::Setup::new(4, config_dir, &log_spec, base_dir, base_port)?;
+    println!("{0}", setup_obj.get_port_map());
     println!("Set up collector");
     let mut collector = collector::Collector::new(&log_spec, base_dir).await?;
     if components.contains(&Components::ZQ2) {
         println!("Start zq2 .. ");
         setup_obj.run_zq2(&mut collector).await?;
     }
+
+    if components.contains(&Components::Mitmweb) {
+        println!("Start mitmweb");
+        setup_obj.run_mitmweb(&mut collector).await?;
+    }
+
     if components.contains(&Components::Otterscan) {
         println!("Start otterscan .. ");
-        if setup_obj.have_otterscan().await? {
+        if otterscan::exists(base_dir).await? {
             setup_obj.run_otterscan(&mut collector).await?;
         } else {
             return Err(anyhow!(
                 "Otterscan was not detected as sibling checkout; cannot run otterscan"
+            ));
+        }
+    }
+
+    // Wait until the chain is up and running
+    setup_obj.wait_for_chain().await?;
+
+    if components.contains(&Components::Spout) {
+        println!("Start spout at localhost:5200 .. ");
+        if spout::exists(base_dir).await? {
+            setup_obj.run_spout(&mut collector).await?;
+        } else {
+            return Err(anyhow!(
+                "{} was not detected",
+                spout::get_spout_directory(base_dir)
             ));
         }
     }

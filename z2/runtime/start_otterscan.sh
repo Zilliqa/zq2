@@ -2,4 +2,4 @@
 
 npm install
 npm run assets-start
-exec npm start
+exec npx vite --port $PORT
