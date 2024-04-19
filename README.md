@@ -116,8 +116,8 @@ Please open an issue or PR for APIs that you think should be included.
 | `GetSoftConfirmedTransaction`             | 🔴                                              |
 | `GetDsBlock`                              | 🔴                                              |
 | `GetDsBlockVerbose`                       | 🔴                                              |
-| `GetTxBlock`                              | 🔴                                              |
-| `GetTxBlockVerbose`                       | 🔴                                              |
+| `GetTxBlock`                              | 🟠 (<https://github.com/Zilliqa/zq2/issues/79>) |
+| `GetTxBlockVerbose`                       | 🟠 (<https://github.com/Zilliqa/zq2/issues/79>) |
 | `GetLatestDsBlock`                        | 🔴                                              |
 | `GetLatestTxBlock`                        | 🟢                                              |
 | `GetBalance`                              | 🟢                                              |

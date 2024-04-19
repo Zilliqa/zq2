@@ -37,3 +37,14 @@ pub fn bool_as_int<S: Serializer>(b: &bool, serializer: S) -> Result<S::Ok, S::E
 pub fn hex_no_prefix<S: Serializer, T: ToHex>(data: T, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(&data.to_hex_no_prefix())
 }
+
+pub fn option_hex_no_prefix<S: Serializer, T: ToHex>(
+    data: &Option<T>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    if let Some(data) = data {
+        serializer.serialize_some(&data.to_hex_no_prefix())
+    } else {
+        serializer.serialize_none()
+    }
+}

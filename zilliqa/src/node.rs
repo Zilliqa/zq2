@@ -329,7 +329,6 @@ impl Node {
     }
 
     pub fn get_proposer_reward_address(&self, header: BlockHeader) -> Result<Option<Address>> {
-        // Return the zero address for the genesis block. There was no reward for it.
         if header.view == 0 {
             return Ok(None);
         }
@@ -341,6 +340,7 @@ impl Node {
             .consensus
             .leader(&parent.committee, header.view)
             .public_key;
+
         self.consensus.state().get_reward_address(proposer)
     }
 
