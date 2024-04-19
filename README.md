@@ -127,7 +127,7 @@ Please open an issue or PR for APIs that you think should be included.
 | `GetSmartContracts`                       | 🔴                                              |
 | `GetContractAddressFromTransactionID`     | 🟢                                              |
 | `GetNumPeers`                             | 🔴                                              |
-| `GetNumTxBlocks`                          | 🔴                                              |
+| `GetNumTxBlocks`                          | 🟢                                              |
 | `GetNumDSBlocks`                          | 🔴                                              |
 | `GetNumTransactions`                      | 🔴                                              |
 | `GetTransactionRate`                      | 🔴                                              |
