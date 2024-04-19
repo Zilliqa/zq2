@@ -11,7 +11,9 @@ use crate::{
     schnorr,
     serde_util::num_as_str,
     time::SystemTime,
-    transaction::{ScillaLog, SignedTransaction, TransactionReceipt, VerifiedTransaction},
+    transaction::{
+        ScillaLog, SignedTransaction, TransactionReceipt, VerifiedTransaction, ZilAmount,
+    },
 };
 
 #[derive(Clone, Serialize)]
@@ -108,11 +110,11 @@ pub struct GetTxResponse {
     to_addr: H160,
     sender_pub_key: schnorr::PublicKey,
     #[serde(with = "num_as_str")]
-    amount: u128,
+    amount: ZilAmount,
     signature: schnorr::Signature,
     receipt: GetTxResponseReceipt,
     #[serde(with = "num_as_str")]
-    gas_price: u128,
+    gas_price: ZilAmount,
     #[serde(with = "num_as_str")]
     gas_limit: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
