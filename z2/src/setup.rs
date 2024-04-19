@@ -56,9 +56,6 @@ impl Setup {
     }
 
     pub async fn generate_config(&self) -> Result<()> {
-        // We don't care if this fails - it probably already exists.
-        let _ = fs::create_dir(&self.config_dir).await;
-
         let p2p_keypair = self.secret_keys[0].to_libp2p_keypair();
         let peer_id_node_0 = PeerId::from_public_key(&p2p_keypair.public());
         let public_key_node_0 = self.secret_keys[0].node_public_key();
@@ -130,6 +127,12 @@ impl Setup {
                 .await?;
         }
         Ok(())
+    }
+
+    pub async fn have_otterscan(&mut self) -> Result<bool> {
+        Ok(tokio::fs::metadata(&format!("{}/otterscan", self.base_dir))
+            .await
+            .is_ok())
     }
 
     pub async fn run_otterscan(&mut self, collector: &mut Collector) -> Result<()> {
