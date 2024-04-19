@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::{anyhow, Result};
 use bytes::{BufMut, BytesMut};
 use k256::{
@@ -19,7 +21,9 @@ use sha3::{
 };
 
 use crate::{
-    crypto, schnorr,
+    crypto,
+    exec::{ScillaError, ScillaException},
+    schnorr,
     state::Address,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
@@ -645,6 +649,9 @@ pub struct TransactionReceipt {
     pub gas_used: u64,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
+    pub accepted: Option<bool>,
+    pub errors: BTreeMap<u64, Vec<ScillaError>>,
+    pub exceptions: Vec<ScillaException>,
 }
 
 fn strip_leading_zeroes(bytes: &[u8]) -> &[u8] {

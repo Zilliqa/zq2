@@ -1,6 +1,7 @@
 //! Manages execution of transactions on state.
 
 use std::{
+    collections::BTreeMap,
     error::Error,
     fmt::{self, Display, Formatter},
     num::NonZeroU128,
@@ -18,6 +19,7 @@ use revm::{
     },
     Database, Evm,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tracing::{info, trace, warn};
@@ -28,6 +30,7 @@ use crate::{
     eth_helpers::extract_revert_msg,
     message::BlockHeader,
     precompiles::get_custom_precompiles,
+    scilla,
     state::{contract_addr, Account, Address, Contract, ScillaValue, State},
     time::SystemTime,
     transaction::{Log, ScillaParam, Transaction, TxZilliqa, VerifiedTransaction},
@@ -43,6 +46,33 @@ pub struct TransactionApplyResult {
     pub logs: Vec<Log>,
     /// The gas paid by the transaction
     pub gas_used: u64,
+    /// If the transaction was a call to a Scilla contract, whether the called contract accepted the ZIL sent to it.
+    pub accepted: Option<bool>,
+    /// Errors from calls to Scilla contracts. Indexed by the call depth of erroring contract.
+    pub errors: BTreeMap<u64, Vec<ScillaError>>,
+    /// Exceptions from calls to Scilla contracts.
+    pub exceptions: Vec<ScillaException>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ScillaError {
+    CallFailed,
+    CreateFailed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScillaException {
+    pub line: u64,
+    pub message: String,
+}
+
+impl From<scilla::Error> for ScillaException {
+    fn from(e: scilla::Error) -> ScillaException {
+        ScillaException {
+            line: e.start_location.line,
+            message: e.error_message,
+        }
+    }
 }
 
 // We need to define a custom error type for our [Database], which implements [Error].
@@ -283,10 +313,25 @@ impl State {
             json!({"vname": "_this_address", "type": "ByStr20", "value": contract_address_hex}),
         );
 
-        let check_output = self
-            .scilla()
-            .check_contract(&txn.code, txn.gas_limit, &init_data)?
-            .map_err(|errors| anyhow!("invalid contract: {errors:?}"))?; // TODO: Check this earlier for better UX
+        let check_output =
+            match self
+                .scilla()
+                .check_contract(&txn.code, txn.gas_limit, &init_data)?
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    warn!(?e, "transaction failed");
+                    return Ok(TransactionApplyResult {
+                        success: false,
+                        contract_address: Some(contract_address),
+                        logs: vec![],
+                        gas_used: 0, // TODO
+                        accepted: Some(false),
+                        errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
+                        exceptions: e.into_iter().map(Into::into).collect(),
+                    });
+                }
+            };
 
         let storage = check_output
             .contract_info
@@ -332,9 +377,12 @@ impl State {
                 warn!(?e, "transaction failed");
                 return Ok(TransactionApplyResult {
                     success: false,
-                    contract_address: None,
+                    contract_address: Some(contract_address),
                     logs: vec![],
                     gas_used: 0, // TODO
+                    accepted: Some(false),
+                    errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
+                    exceptions: e.errors.into_iter().map(Into::into).collect(),
                 });
             }
         };
@@ -349,6 +397,9 @@ impl State {
             contract_address: Some(contract_address),
             logs: vec![],
             gas_used: 0, // TODO
+            accepted: None,
+            errors: BTreeMap::new(),
+            exceptions: vec![],
         })
     }
 
@@ -370,6 +421,9 @@ impl State {
             contract_address: None,
             logs: vec![],
             gas_used: 0, // TODO
+            accepted: None,
+            errors: BTreeMap::new(),
+            exceptions: vec![],
         })
     }
 
@@ -392,7 +446,7 @@ impl State {
         message["_origin"] = format!("{from_addr:#x}").into();
 
         let state = self.try_clone()?;
-        let (output, root_hash) = self.scilla().invoke_contract(
+        let (output, root_hash) = match self.scilla().invoke_contract(
             txn.to_addr,
             state,
             &code,
@@ -400,7 +454,21 @@ impl State {
             txn.amount,
             &init_data,
             &message,
-        )?;
+        )? {
+            Ok(o) => o,
+            Err(e) => {
+                warn!(?e, "transaction failed");
+                return Ok(TransactionApplyResult {
+                    success: false,
+                    contract_address: None,
+                    logs: vec![],
+                    gas_used: 0, // TODO
+                    accepted: Some(false),
+                    errors: [(0, vec![ScillaError::CallFailed])].into_iter().collect(),
+                    exceptions: e.errors.into_iter().map(Into::into).collect(),
+                });
+            }
+        };
         self.set_to_root(root_hash);
 
         info!(?output);
@@ -443,6 +511,9 @@ impl State {
             contract_address: None,
             logs,
             gas_used: 0, // TODO
+            accepted: Some(output.accepted),
+            errors: BTreeMap::new(),
+            exceptions: vec![],
         })
     }
 
@@ -498,6 +569,9 @@ impl State {
                     })
                     .collect(),
                 gas_used: result.gas_used(),
+                accepted: None,
+                errors: BTreeMap::new(),
+                exceptions: vec![],
             })
         }
     }
