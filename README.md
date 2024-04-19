@@ -146,7 +146,7 @@ Please open an issue or PR for APIs that you think should be included.
 | `GetSmartContractState`                   | 🟢                                              |
 | `GetSmartContractCode`                    | 🟢                                              |
 | `GetSmartContractInit`                    | 🟢                                              |
-| `GetTransactionsForTxBlock`               | 🔴                                              |
+| `GetTransactionsForTxBlock`               | 🟢                                              |
 | `GetTransactionsForTxBlockEx`             | 🔴                                              |
 | `GetTotalCoinSupply`                      | 🔴                                              |
 | `GetTotalCoinSupplyAsInt`                 | 🔴                                              |

@@ -42,6 +42,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetMinimumGasPrice", get_minimum_gas_price),
             ("GetNetworkId", get_network_id),
             ("GetVersion", get_version),
+            ("GetTransactionsForTxBlock", get_transactions_for_tx_block),
         ],
     )
 }
@@ -290,4 +291,26 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     } else {
         Err(anyhow!("not a scilla contract"))
     }
+}
+
+fn get_transactions_for_tx_block(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Vec<Vec<String>>> {
+    let block_number: String = params.one()?;
+    let block_number: u64 = block_number.parse()?;
+
+    let node = node.lock().unwrap();
+    let Some(block) = node.get_block_by_number(block_number)? else {
+        return Err(anyhow!("Tx Block does not exist"));
+    };
+    if block.transactions.is_empty() {
+        return Err(anyhow!("TxBlock has no transactions"));
+    }
+
+    Ok(vec![block
+        .transactions
+        .into_iter()
+        .map(|h| H256(h.0).to_hex_no_prefix())
+        .collect()])
 }
