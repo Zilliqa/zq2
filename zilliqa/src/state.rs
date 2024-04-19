@@ -16,6 +16,7 @@ use crate::{
     contracts, crypto,
     db::TrieStorage,
     exec::{BLOCK_GAS_LIMIT, GAS_PRICE},
+    inspector,
     message::BlockHeader,
     scilla::Scilla,
 };
@@ -115,6 +116,7 @@ impl State {
                 None,
                 0,
                 BlockHeader::default(),
+                inspector::noop(),
             )?;
             if !result.is_success() {
                 return Err(anyhow!("setting stake failed: {result:?}"));

@@ -344,6 +344,10 @@ impl Node {
         self.consensus.state().get_reward_address(proposer)
     }
 
+    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
+        self.consensus.get_touched_transactions(address)
+    }
+
     pub fn get_gas_price(&self) -> u128 {
         GAS_PRICE
     }
