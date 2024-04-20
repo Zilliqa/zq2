@@ -35,6 +35,9 @@ struct RunStruct {
     #[clap(long, default_value = "4000")]
     base_port: u16,
 
+    #[clap(long = "restart-network")]
+    restart_network: bool,
+
     #[clap(long="no-otterscan", action= ArgAction::SetFalse)]
     otterscan: bool,
     #[clap(long = "otterscan", overrides_with = "otterscan")]
@@ -116,6 +119,7 @@ async fn main() -> Result<()> {
                 to_run.insert(plumbing::Components::Mitmweb);
             }
 
+            let keep_old_network = !arg.restart_network;
             plumbing::run_local_net(
                 &base_dir,
                 arg.base_port,
@@ -124,6 +128,7 @@ async fn main() -> Result<()> {
                 &arg.debug_modules,
                 &arg.trace_modules,
                 &to_run,
+                keep_old_network,
             )
             .await?;
             Ok(())

@@ -36,6 +36,7 @@ pub async fn run_local_net(
     debug_modules: &Vec<String>,
     trace_modules: &Vec<String>,
     components: &HashSet<Components>,
+    keep_old_network: bool,
 ) -> Result<()> {
     // Now build the log string. If there already was one, use that ..
     let log_var = env::var("RUST_LOG");
@@ -68,7 +69,14 @@ pub async fn run_local_net(
         otel.ensure_otel().await?;
     }
     println!("Generate zq2 configuration .. ");
-    let mut setup_obj = setup::Setup::new(4, config_dir, &log_spec, base_dir, base_port)?;
+    let mut setup_obj = setup::Setup::new(
+        4,
+        config_dir,
+        &log_spec,
+        base_dir,
+        base_port,
+        keep_old_network,
+    )?;
     println!("{0}", setup_obj.get_port_map());
     println!("Set up collector");
     let mut collector = collector::Collector::new(&log_spec, base_dir).await?;
