@@ -272,7 +272,8 @@ impl SecretKey {
 pub struct Hash(pub [u8; 32]);
 
 impl Hash {
-    pub const ZERO: Hash = Hash([0; 32]);
+    pub const ZERO: Hash = Hash([0; Hash::LEN]);
+    pub const LEN: usize = 32;
 
     pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self> {
         let bytes = bytes.as_ref();

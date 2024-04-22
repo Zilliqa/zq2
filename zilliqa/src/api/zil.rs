@@ -20,7 +20,7 @@ use crate::{
     node::Node,
     schnorr,
     state::{Contract, ScillaValue},
-    transaction::{SignedTransaction, TxZilliqa, VerifiedTransaction},
+    transaction::{SignedTransaction, TxZilliqa, VerifiedTransaction, ZilAmount},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -32,6 +32,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 "GetContractAddressFromTransactionID",
                 get_contract_address_from_transaction_id
             ),
+            ("GetNumTxBlocks", get_num_tx_blocks),
             ("GetSmartContractState", get_smart_contract_state),
             ("GetSmartContractCode", get_smart_contract_code),
             ("GetSmartContractInit", get_smart_contract_init),
@@ -42,6 +43,9 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetMinimumGasPrice", get_minimum_gas_price),
             ("GetNetworkId", get_network_id),
             ("GetVersion", get_version),
+            ("GetTransactionsForTxBlock", get_transactions_for_tx_block),
+            ("GetTxBlock", |p, n| get_tx_block(p, n, false)),
+            ("GetTxBlockVerbose", |p, n| get_tx_block(p, n, true)),
         ],
     )
 }
@@ -53,10 +57,10 @@ struct TransactionParams {
     nonce: u64,
     to_addr: H160,
     #[serde(deserialize_with = "from_str")]
-    amount: u128,
+    amount: ZilAmount,
     pub_key: String,
     #[serde(deserialize_with = "from_str")]
-    gas_price: u128,
+    gas_price: ZilAmount,
     #[serde(deserialize_with = "from_str")]
     gas_limit: u64,
     #[serde(default)]
@@ -236,6 +240,12 @@ fn get_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<Value> {
     }))
 }
 
+fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+
+    Ok(node.get_chain_tip().to_string())
+}
+
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let smart_contract_address: H160 = params.one()?;
     let node = node.lock().unwrap();
@@ -244,7 +254,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
     let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
 
     let mut result = json!({
-        "_balance": account.balance.to_string(),
+        "_balance": ZilAmount::from_amount(account.balance).to_string(),
     });
 
     fn convert(value: ScillaValue) -> Result<Value> {
@@ -290,4 +300,55 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     } else {
         Err(anyhow!("not a scilla contract"))
     }
+}
+
+fn get_transactions_for_tx_block(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Vec<Vec<String>>> {
+    let block_number: String = params.one()?;
+    let block_number: u64 = block_number.parse()?;
+
+    let node = node.lock().unwrap();
+    let Some(block) = node.get_block_by_number(block_number)? else {
+        return Err(anyhow!("Tx Block does not exist"));
+    };
+    if block.transactions.is_empty() {
+        return Err(anyhow!("TxBlock has no transactions"));
+    }
+
+    Ok(vec![block
+        .transactions
+        .into_iter()
+        .map(|h| H256(h.0).to_hex_no_prefix())
+        .collect()])
+}
+
+pub const TRANSACTIONS_PER_PAGE: usize = 2500;
+pub const TX_BLOCKS_PER_DS_BLOCK: u64 = 100;
+
+fn get_tx_block(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+    verbose: bool,
+) -> Result<Option<zil::TxBlock>> {
+    let block_number: String = params.one()?;
+    let block_number: u64 = block_number.parse()?;
+
+    let node = node.lock().unwrap();
+    let Some(block) = node.get_block_by_number(block_number)? else {
+        return Ok(None);
+    };
+    let mut block: zil::TxBlock = (&block).into();
+
+    if verbose {
+        block.header.committee_hash = Some(H256::zero());
+        block.body.cosig_bitmap_1 = vec![true; 8];
+        block.body.cosig_bitmap_2 = vec![true; 8];
+        let mut scalar = [0; 32];
+        scalar[31] = 1;
+        block.body.cosig_1 = Some(schnorr::Signature::from_scalars(scalar, scalar).unwrap());
+    }
+
+    Ok(Some(block))
 }

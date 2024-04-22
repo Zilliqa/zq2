@@ -1,19 +1,25 @@
+use std::collections::BTreeMap;
+
 use primitive_types::{H160, H256, H512};
 use serde::Serialize;
 
-use super::{hex, hex_no_prefix};
+use super::{hex, hex_no_prefix, option_hex_no_prefix};
 use crate::{
+    api::zil::{TRANSACTIONS_PER_PAGE, TX_BLOCKS_PER_DS_BLOCK},
+    exec::{ScillaError, ScillaException, BLOCK_GAS_LIMIT},
     message::Block,
     schnorr,
     serde_util::num_as_str,
     time::SystemTime,
-    transaction::{ScillaLog, SignedTransaction, TransactionReceipt, VerifiedTransaction},
+    transaction::{
+        ScillaLog, SignedTransaction, TransactionReceipt, VerifiedTransaction, ZilAmount,
+    },
 };
 
 #[derive(Clone, Serialize)]
 pub struct TxBlock {
-    header: TxBlockHeader,
-    body: TxBlockBody,
+    pub header: TxBlockHeader,
+    pub body: TxBlockBody,
 }
 
 impl From<&Block> for TxBlock {
@@ -21,31 +27,39 @@ impl From<&Block> for TxBlock {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         TxBlock {
             header: TxBlockHeader {
-                block_num: block.number(),
-                ds_block_num: (block.number() / 100) + 1,
-                gas_limit: 1,
+                version: 0,
+                gas_limit: BLOCK_GAS_LIMIT,
                 gas_used: 0,
-                mb_info_hash: H256::zero(),
-                miner_pub_key: [0; 33],
-                num_micro_blocks: 0,
-                num_pages: 0,
-                num_txns: block.transactions.len() as u64,
-                prev_block_hash: H256(block.parent_hash().0),
                 rewards: 0,
-                state_delta_hash: H256::zero(),
-                state_root_hash: H256(block.state_root_hash().0),
+                txn_fees: 0,
+                prev_block_hash: H256(block.parent_hash().0),
+                block_num: block.number(),
                 timestamp: block
                     .timestamp()
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
-                    .as_secs(),
-                txn_fees: 0,
-                version: 0,
+                    .as_micros(),
+                mb_info_hash: H256::zero(),
+                state_root_hash: H256(block.state_root_hash().0),
+                state_delta_hash: H256::zero(),
+                num_txns: block.transactions.len() as u64,
+                num_pages: if block.transactions.is_empty() {
+                    0
+                } else {
+                    (block.transactions.len() / TRANSACTIONS_PER_PAGE) + 1
+                },
+                num_micro_blocks: 0,
+                miner_pub_key: [0; 33],
+                ds_block_num: (block.number() / TX_BLOCKS_PER_DS_BLOCK) + 1,
+                committee_hash: None,
             },
             body: TxBlockBody {
-                block_hash: H256(block.hash().0),
                 header_sign: H512::zero(),
+                block_hash: H256(block.hash().0),
                 micro_block_infos: vec![],
+                cosig_bitmap_1: vec![],
+                cosig_bitmap_2: vec![],
+                cosig_1: None,
             },
         }
     }
@@ -53,24 +67,35 @@ impl From<&Block> for TxBlock {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
-struct TxBlockHeader {
-    block_num: u64,
-    ds_block_num: u64,
-    gas_limit: u64,
-    gas_used: u64,
-    mb_info_hash: H256,
+pub struct TxBlockHeader {
+    pub version: u8,
+    pub gas_limit: u64,
+    pub gas_used: u64,
+    pub rewards: u128,
+    pub txn_fees: u128,
+    #[serde(serialize_with = "hex_no_prefix")]
+    pub prev_block_hash: H256,
+    #[serde(with = "num_as_str")]
+    pub block_num: u64,
+    #[serde(with = "num_as_str")]
+    pub timestamp: u128,
+    #[serde(serialize_with = "hex_no_prefix")]
+    pub mb_info_hash: H256,
+    #[serde(serialize_with = "hex_no_prefix")]
+    pub state_root_hash: H256,
+    #[serde(serialize_with = "hex_no_prefix")]
+    pub state_delta_hash: H256,
+    pub num_txns: u64,
+    pub num_pages: usize,
+    pub num_micro_blocks: u8,
     #[serde(serialize_with = "hex")]
-    miner_pub_key: [u8; 33],
-    num_micro_blocks: u8,
-    num_pages: u64,
-    num_txns: u64,
-    prev_block_hash: H256,
-    rewards: u64,
-    state_delta_hash: H256,
-    state_root_hash: H256,
-    timestamp: u64,
-    txn_fees: u64,
-    version: u32,
+    pub miner_pub_key: [u8; 33],
+    pub ds_block_num: u64,
+    #[serde(
+        serialize_with = "option_hex_no_prefix",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub committee_hash: Option<H256>,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -85,11 +110,11 @@ pub struct GetTxResponse {
     to_addr: H160,
     sender_pub_key: schnorr::PublicKey,
     #[serde(with = "num_as_str")]
-    amount: u128,
+    amount: ZilAmount,
     signature: schnorr::Signature,
     receipt: GetTxResponseReceipt,
     #[serde(with = "num_as_str")]
-    gas_price: u128,
+    gas_price: ZilAmount,
     #[serde(with = "num_as_str")]
     gas_limit: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,13 +135,19 @@ pub struct CreateTransactionResponse {
 
 #[derive(Clone, Serialize, Debug)]
 struct GetTxResponseReceipt {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accepted: Option<bool>,
     #[serde(with = "num_as_str")]
     cumulative_gas: u64,
     #[serde(with = "num_as_str")]
     epoch_num: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    event_logs: Vec<ScillaLog>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    errors: BTreeMap<u64, Vec<u64>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    exceptions: Vec<ScillaException>,
     success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    event_logs: Option<Vec<ScillaLog>>,
 }
 
 impl GetTxResponse {
@@ -138,14 +169,29 @@ impl GetTxResponse {
                 receipt: GetTxResponseReceipt {
                     cumulative_gas: receipt.gas_used,
                     epoch_num: block_number,
+                    event_logs: receipt
+                        .logs
+                        .into_iter()
+                        .filter_map(|log| log.into_scilla()) // TODO: Expose EVM logs in Scilla API.
+                        .collect(),
                     success: receipt.success,
-                    event_logs: (!receipt.logs.is_empty()).then(|| {
-                        receipt
-                            .logs
-                            .into_iter()
-                            .filter_map(|log| log.into_scilla()) // TODO: Expose EVM logs in Scilla API.
-                            .collect()
-                    }),
+                    accepted: receipt.accepted,
+                    errors: receipt
+                        .errors
+                        .into_iter()
+                        .map(|(k, v)| {
+                            (
+                                k,
+                                v.into_iter()
+                                    .map(|err| match err {
+                                        ScillaError::CallFailed => 7,
+                                        ScillaError::CreateFailed => 8,
+                                    })
+                                    .collect(),
+                            )
+                        })
+                        .collect(),
+                    exceptions: receipt.exceptions,
                 },
                 gas_price: tx.gas_price,
                 gas_limit: tx.gas_limit,
@@ -160,15 +206,23 @@ impl GetTxResponse {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
-struct TxBlockBody {
-    block_hash: H256,
-    header_sign: H512,
-    micro_block_infos: Vec<MicroBlockInfo>,
+pub struct TxBlockBody {
+    #[serde(serialize_with = "hex_no_prefix")]
+    pub header_sign: H512,
+    #[serde(serialize_with = "hex_no_prefix")]
+    pub block_hash: H256,
+    pub micro_block_infos: Vec<MicroBlockInfo>,
+    #[serde(rename = "B1", skip_serializing_if = "Vec::is_empty")]
+    pub cosig_bitmap_1: Vec<bool>,
+    #[serde(rename = "B2", skip_serializing_if = "Vec::is_empty")]
+    pub cosig_bitmap_2: Vec<bool>,
+    #[serde(rename = "CS1", skip_serializing_if = "Option::is_none")]
+    pub cosig_1: Option<schnorr::Signature>,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
-struct MicroBlockInfo {
+pub struct MicroBlockInfo {
     micro_block_hash: H256,
     micro_block_shard_id: u8,
     micro_block_txn_root_hash: H256,

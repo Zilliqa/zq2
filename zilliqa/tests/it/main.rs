@@ -6,6 +6,7 @@ use primitive_types::U256;
 use serde_json::{value::RawValue, Value};
 mod consensus;
 mod eth;
+mod ots;
 mod persistence;
 mod staking;
 mod unreliable;

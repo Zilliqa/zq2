@@ -97,7 +97,7 @@ Please open an issue or PR for APIs that you think should be included.
 | `ots_getBlockDetails`                     | 🟢                                              |
 | `ots_getBlockDetailsByHash`               | 🟢                                              |
 | `ots_getBlockTransactions`                | 🟢                                              |
-| `ots_getContractCreator`                  | 🔴                                              |
+| `ots_getContractCreator`                  | 🟢                                              |
 | `ots_getInternalOperations`               | 🔴                                              |
 | `ots_getTransactionBySenderAndNonce`      | 🔴                                              |
 | `ots_getTransactionError`                 | 🔴                                              |
@@ -116,8 +116,8 @@ Please open an issue or PR for APIs that you think should be included.
 | `GetSoftConfirmedTransaction`             | 🔴                                              |
 | `GetDsBlock`                              | 🔴                                              |
 | `GetDsBlockVerbose`                       | 🔴                                              |
-| `GetTxBlock`                              | 🔴                                              |
-| `GetTxBlockVerbose`                       | 🔴                                              |
+| `GetTxBlock`                              | 🟠 (<https://github.com/Zilliqa/zq2/issues/79>) |
+| `GetTxBlockVerbose`                       | 🟠 (<https://github.com/Zilliqa/zq2/issues/79>) |
 | `GetLatestDsBlock`                        | 🔴                                              |
 | `GetLatestTxBlock`                        | 🟢                                              |
 | `GetBalance`                              | 🟢                                              |
@@ -127,7 +127,7 @@ Please open an issue or PR for APIs that you think should be included.
 | `GetSmartContracts`                       | 🔴                                              |
 | `GetContractAddressFromTransactionID`     | 🟢                                              |
 | `GetNumPeers`                             | 🔴                                              |
-| `GetNumTxBlocks`                          | 🔴                                              |
+| `GetNumTxBlocks`                          | 🟢                                              |
 | `GetNumDSBlocks`                          | 🔴                                              |
 | `GetNumTransactions`                      | 🔴                                              |
 | `GetTransactionRate`                      | 🔴                                              |
@@ -146,7 +146,7 @@ Please open an issue or PR for APIs that you think should be included.
 | `GetSmartContractState`                   | 🟢                                              |
 | `GetSmartContractCode`                    | 🟢                                              |
 | `GetSmartContractInit`                    | 🟢                                              |
-| `GetTransactionsForTxBlock`               | 🔴                                              |
+| `GetTransactionsForTxBlock`               | 🟢                                              |
 | `GetTransactionsForTxBlockEx`             | 🔴                                              |
 | `GetTotalCoinSupply`                      | 🔴                                              |
 | `GetTotalCoinSupplyAsInt`                 | 🔴                                              |

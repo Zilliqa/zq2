@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Du
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
-use primitive_types::{H256, U256};
+use primitive_types::{H160, H256, U256};
 use rand::{
     distributions::{Distribution, WeightedIndex},
     prelude::IteratorRandom,
@@ -11,6 +11,7 @@ use rand::{
 };
 use rand_chacha::ChaCha8Rng;
 use rand_core::SeedableRng;
+use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
@@ -22,6 +23,7 @@ use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     db::Db,
     exec::TransactionApplyResult,
+    inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, Committee, ExternalMessage,
         InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
@@ -717,18 +719,22 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn apply_transaction(
+    pub fn apply_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
         &mut self,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
+        inspector: I,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
 
         self.db.insert_transaction(&hash, &txn.tx)?;
 
-        let result =
-            self.state
-                .apply_transaction(txn.clone(), self.config.eth_chain_id, current_block);
+        let result = self.state.apply_transaction(
+            txn.clone(),
+            self.config.eth_chain_id,
+            current_block,
+            inspector,
+        );
         let result = match result {
             Ok(r) => r,
             Err(error) => {
@@ -760,6 +766,10 @@ impl Consensus {
                     .unwrap_or(true)
             })
             .collect()
+    }
+
+    pub fn get_touched_transactions(&self, address: H160) -> Result<Vec<Hash>> {
+        self.db.get_touched_addresses(address)
     }
 
     /// Clear up anything in memory that is no longer required. This is to avoid memory leaks.
@@ -979,7 +989,7 @@ impl Consensus {
         let applied_transactions: Vec<_> = transactions
             .into_iter()
             .filter_map(|tx| {
-                self.apply_transaction(tx.clone(), parent_header)
+                self.apply_transaction(tx.clone(), parent_header, inspector::noop())
                     .transpose()
                     .map(|r| r.map(|_| tx))
             })
@@ -2039,11 +2049,15 @@ impl Consensus {
         for txn in transactions {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
+            let mut inspector = TouchedAddressInspector::default();
             let result = self
-                .apply_transaction(txn.clone(), parent.header)?
+                .apply_transaction(txn.clone(), parent.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
             self.db
                 .insert_block_hash_reverse_index(&tx_hash, &block.hash())?;
+            for address in inspector.touched {
+                self.db.add_touched_address(address, tx_hash)?;
+            }
             let receipt = TransactionReceipt {
                 block_hash: block.hash(),
                 tx_hash,
@@ -2051,6 +2065,9 @@ impl Consensus {
                 contract_address: result.contract_address,
                 logs: result.logs,
                 gas_used: result.gas_used,
+                accepted: result.accepted,
+                errors: result.errors,
+                exceptions: result.exceptions,
             };
             info!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push(receipt);
