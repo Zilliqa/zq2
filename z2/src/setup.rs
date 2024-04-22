@@ -1,16 +1,19 @@
 //use serde::{Deserialize, Serialize};
-use crate::collector::{self, Collector};
-use crate::utils;
+use std::{path::PathBuf, str::FromStr};
+
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
-use std::path::PathBuf;
-use std::str::FromStr;
 use tokio::fs;
 use toml;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::SecretKey;
 use zilliqa::{cfg, crypto::NodePublicKey, state::Address};
+
+use crate::{
+    collector::{self, Collector},
+    utils,
+};
 
 const GENESIS_DEPOSIT: &str = "32000000000000000000";
 const DATADIR_PREFIX: &str = "z2_node_";

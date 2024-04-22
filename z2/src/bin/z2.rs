@@ -1,10 +1,7 @@
-use std::fmt;
+use std::{collections::HashSet, env, fmt};
 
 use anyhow::{anyhow, Result};
-use clap::builder::ArgAction;
-use clap::{Args, Parser, Subcommand};
-use std::collections::HashSet;
-use std::env;
+use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use z2lib::plumbing;
 
 #[derive(Parser, Debug)]

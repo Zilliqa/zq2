@@ -1,15 +1,17 @@
-use crate::{mitmweb, otterscan, spout, zq2};
+use std::fmt;
+
 use anyhow::{Context as _, Result};
 use colored::{self, Colorize as _};
 use futures::future::JoinAll;
-use std::fmt;
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
+    sync::mpsc,
+    task::JoinHandle,
 };
 use zilliqa::crypto::SecretKey;
+
+use crate::{mitmweb, otterscan, spout, zq2};
 
 type Tx = mpsc::Sender<Message>;
 

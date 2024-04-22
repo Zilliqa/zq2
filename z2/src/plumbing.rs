@@ -1,12 +1,11 @@
-use std::env;
+use std::{collections::HashSet, env};
 
-use crate::{collector, otel, otterscan, spout};
 use anyhow::{anyhow, Result};
-use std::collections::HashSet;
 use tokio::fs;
 
 /// Code for all the z2 commands, so you can invoke it from your own programs.
 use crate::setup;
+use crate::{collector, otel, otterscan, spout};
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub enum Components {

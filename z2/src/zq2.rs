@@ -1,9 +1,8 @@
-use crate::collector;
 use anyhow::Result;
 use futures::future::JoinAll;
-use tokio::process::Command;
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::{process::Command, sync::mpsc, task::JoinHandle};
+
+use crate::collector;
 
 pub struct Runner {
     pub index: usize,

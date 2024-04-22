@@ -1,10 +1,8 @@
-use crate::collector;
-use crate::utils;
 use anyhow::Result;
 use futures::future::JoinAll;
-use tokio::process::Command;
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::{process::Command, sync::mpsc, task::JoinHandle};
+
+use crate::{collector, utils};
 
 pub struct Runner {
     pub join_handles: Option<JoinAll<JoinHandle<()>>>,

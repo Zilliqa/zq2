@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc};
 
-use anyhow::{anyhow, Result, Context as _};
+use anyhow::{anyhow, Context as _, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
 use primitive_types::{H160, H256, U256};
@@ -1740,7 +1740,12 @@ impl Consensus {
     pub fn leader(&self, committee: &Committee, view: u64) -> Validator {
         let mut rng = ChaCha8Rng::seed_from_u64(view);
         let dist = WeightedIndex::new(committee.iter().map(|v| {
-            let stake = self.state.get_stake(v.public_key).unwrap().context("Committee member has no stake").unwrap();
+            let stake = self
+                .state
+                .get_stake(v.public_key)
+                .unwrap()
+                .context("Committee member has no stake")
+                .unwrap();
             stake.get()
         }))
         .unwrap();
