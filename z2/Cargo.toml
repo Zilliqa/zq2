@@ -27,7 +27,7 @@ colored = "2.1.0"
 futures = "0.3.30"
 libp2p = { version = "0.53.2", features = [ "identify" ] }
 rand_core = "0.6.4"
-reqwest = { version = "0.12.3", features = [ "json" ]}
+reqwest = { version = "0.12.3", features = [ "json", "rustls-tls" ]}
 serde = { version = "1.0.196", features = ["derive"] }
 serde_json = "1.0.115"
 tempfile = "3.9.0"
