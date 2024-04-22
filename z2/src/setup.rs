@@ -126,33 +126,37 @@ impl Setup {
             ))
         }
 
-        let mut genesis_accounts: Vec<(Address, String)> = Vec::new();
-        genesis_accounts.push((
-            Address::from_str("7E5F4552091A69125d5DfCb7b8C2659029395Bdf")?,
-            "5000000000000000000000".to_string(),
-        ));
-        // privkeys from Zilliqa
-        genesis_accounts.push((
-            Address::from_str("0xcb57ec3f064a16cadb36c7c712f4c9fa62b77415")?,
-            "5000000000000000000000".to_string(),
-        ));
+        let genesis_accounts: Vec<(Address, String)> = vec![
+            (
+                Address::from_str("7E5F4552091A69125d5DfCb7b8C2659029395Bdf")?,
+                "5000000000000000000000".to_string(),
+            ),
+            // privkey db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3
+            (
+                Address::from_str("0xcb57ec3f064a16cadb36c7c712f4c9fa62b77415")?,
+                "5000000000000000000000".to_string(),
+            ),
+        ];
 
         // Node vector
         println!("Writing config files to {0}", &self.config_dir);
         for i in 0..self.how_many {
-            let mut cfg = zilliqa::cfg::Config::default();
-            // from the oltp module ..
+            let mut cfg = zilliqa::cfg::Config {
+                otlp_collector_endpoint: Some("http://localhost:4317".to_string()),
+                ..Default::default()
+            };
             // @todo should pass this in!
-            cfg.otlp_collector_endpoint = Some("http://localhost:4317".to_string());
-            let mut node_config = cfg::NodeConfig::default();
-            node_config.json_rpc_port = self.get_json_rpc_port(usize::try_into(i)?, false);
+            let mut node_config = cfg::NodeConfig {
+                json_rpc_port: self.get_json_rpc_port(usize::try_into(i)?, false),
+                ..Default::default()
+            };
             println!("Node {i} has RPC port {0}", node_config.json_rpc_port);
             node_config.disable_rpc = false;
             node_config.eth_chain_id = 700 | 0x8000;
             node_config
                 .consensus
                 .genesis_committee
-                .push((public_key_node_0.clone(), peer_id_node_0.clone()));
+                .push((public_key_node_0, peer_id_node_0));
             node_config.consensus.genesis_deposits = genesis_deposits.clone();
             node_config.consensus.genesis_accounts = genesis_accounts.clone();
             cfg.nodes = Vec::new();
@@ -177,7 +181,7 @@ impl Setup {
         let config_files = (0..self.how_many)
             .map(|x| format!("{0}/{1}{2}/config.yaml", self.config_dir, DATADIR_PREFIX, x))
             .collect::<Vec<String>>();
-        for idx in 0..config_files.len() {
+        for (idx, _) in config_files.iter().enumerate() {
             collector
                 .start_zq2_node(
                     &self.base_dir,
