@@ -100,7 +100,7 @@ Please open an issue or PR for APIs that you think should be included.
 | `ots_getContractCreator`                  | 🟢                                              |
 | `ots_getInternalOperations`               | 🔴                                              |
 | `ots_getTransactionBySenderAndNonce`      | 🔴                                              |
-| `ots_getTransactionError`                 | 🔴                                              |
+| `ots_getTransactionError`                 | 🟢                                              |
 | `ots_hasCode`                             | 🟢                                              |
 | `ots_searchTransactionsAfter`             | 🟢                                              |
 | `ots_searchTransactionsBefore`            | 🟢                                              |

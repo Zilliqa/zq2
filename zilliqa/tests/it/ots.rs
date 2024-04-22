@@ -2,6 +2,7 @@ use std::{ops::DerefMut, str::FromStr};
 
 use ethabi::Token;
 use ethers::{
+    contract::EthError,
     providers::Middleware,
     types::{TransactionRequest, U64},
     utils,
@@ -298,6 +299,44 @@ async fn trace_transaction(mut network: Network) {
         second["to"].as_str().unwrap().parse::<H160>().unwrap(),
         callee_address
     );
+
+    // TODO: Test Scilla contract
+}
+
+#[zilliqa_macros::test]
+async fn get_transaction_error(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/RevertMe.sol",
+        "RevertMe",
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let address = receipt.contract_address.unwrap();
+
+    let revertable = abi.function("revertable").unwrap();
+
+    let data = revertable.encode_input(&[Token::Bool(false)]).unwrap();
+    let tx = TransactionRequest::new()
+        .to(address)
+        .data(data)
+        .gas(1_000_000);
+    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    network.run_until_receipt(&wallet, hash, 50).await;
+
+    let error: String = wallet
+        .provider()
+        .request("ots_getTransactionError", [hash])
+        .await
+        .unwrap();
+    println!("{error}");
+    let error = error.strip_prefix("0x").unwrap();
+    let error = hex::decode(error).unwrap();
+    let error = String::decode_with_selector(&error).unwrap();
+    assert_eq!(error, "Reverting.");
 
     // TODO: Test Scilla contract
 }
