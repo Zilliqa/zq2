@@ -225,3 +225,79 @@ async fn contract_creator(mut network: Network) {
 
     // TODO: Test Scilla contract
 }
+
+#[zilliqa_macros::test]
+async fn trace_transaction(mut network: Network) {
+    async fn get_trace(wallet: &Wallet, hash: H256) -> Value {
+        wallet
+            .provider()
+            .request("ots_traceTransaction", [hash])
+            .await
+            .unwrap()
+    }
+
+    let wallet = network.genesis_wallet().await;
+
+    let (hash, caller_abi) = deploy_contract(
+        "tests/it/contracts/CallingContract.sol",
+        "Caller",
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let caller_address = receipt.contract_address.unwrap();
+
+    let trace = get_trace(&wallet, hash).await;
+    assert_eq!(trace.as_array().unwrap().len(), 1);
+    let entry = &trace[0];
+    assert_eq!(entry["type"], "CREATE");
+    assert_eq!(entry["depth"], 0);
+    assert_eq!(
+        entry["from"].as_str().unwrap().parse::<H160>().unwrap(),
+        wallet.address()
+    );
+    assert_eq!(
+        entry["to"].as_str().unwrap().parse::<H160>().unwrap(),
+        caller_address
+    );
+
+    let (hash, _) = deploy_contract(
+        "tests/it/contracts/CallingContract.sol",
+        "Callee",
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let callee_address = receipt.contract_address.unwrap();
+
+    let data = caller_abi
+        .function("setX")
+        .unwrap()
+        .encode_input(&[Token::Address(callee_address), Token::Uint(123.into())])
+        .unwrap();
+
+    let tx = TransactionRequest::new().to(caller_address).data(data);
+    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    network.run_until_receipt(&wallet, hash, 50).await;
+
+    let trace = get_trace(&wallet, hash).await;
+    assert_eq!(trace.as_array().unwrap().len(), 2);
+    let first = &trace[0];
+    let second = &trace[1];
+    assert_eq!(first["type"], "CALL");
+    assert_eq!(first["depth"], 0);
+    assert_eq!(
+        first["to"].as_str().unwrap().parse::<H160>().unwrap(),
+        caller_address
+    );
+    assert_eq!(second["type"], "CALL");
+    assert_eq!(second["depth"], 1);
+    assert_eq!(
+        second["to"].as_str().unwrap().parse::<H160>().unwrap(),
+        callee_address
+    );
+
+    // TODO: Test Scilla contract
+}

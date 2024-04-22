@@ -104,7 +104,7 @@ Please open an issue or PR for APIs that you think should be included.
 | `ots_hasCode`                             | 🟢                                              |
 | `ots_searchTransactionsAfter`             | 🟢                                              |
 | `ots_searchTransactionsBefore`            | 🟢                                              |
-| `ots_traceTransaction`                    | 🔴                                              |
+| `ots_traceTransaction`                    | 🟢                                              |
 | `web3_clientVersion`                      | 🟢                                              |
 | `web3_sha3`                               | 🟢                                              |
 | `GetCurrentMiniEpoch`                     | 🟢                                              |

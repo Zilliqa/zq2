@@ -3,38 +3,43 @@ use std::collections::HashSet;
 use primitive_types::H160;
 use revm::{
     inspectors::NoOpInspector,
-    interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome},
+    interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome},
+    primitives::CreateScheme,
     Database, EvmContext, Inspector,
 };
 
+use crate::api::types::ots::{TraceEntry, TraceEntryType};
+
 /// Provides callbacks from the Scilla interpreter.
 pub trait ScillaInspector {
-    fn create(&mut self, creator: H160, contract_address: H160) {
+    fn create(&mut self, creator: H160, contract_address: H160, amount: u128) {
         let _ = contract_address;
         let _ = creator;
+        let _ = amount;
     }
     fn transfer(&mut self, from: H160, to: H160, amount: u128) {
         let _ = amount;
         let _ = to;
         let _ = from;
     }
-    fn call(&mut self, from: H160, to: H160) {
+    fn call(&mut self, from: H160, to: H160, amount: u128) {
         let _ = to;
         let _ = from;
+        let _ = amount;
     }
 }
 
 impl<T: ScillaInspector> ScillaInspector for &mut T {
-    fn create(&mut self, creator: H160, contract_address: H160) {
-        (*self).create(creator, contract_address);
+    fn create(&mut self, creator: H160, contract_address: H160, amount: u128) {
+        (*self).create(creator, contract_address, amount);
     }
 
     fn transfer(&mut self, from: H160, to: H160, amount: u128) {
         (*self).transfer(from, to, amount)
     }
 
-    fn call(&mut self, from: H160, to: H160) {
-        (*self).call(from, to)
+    fn call(&mut self, from: H160, to: H160, amount: u128) {
+        (*self).call(from, to, amount)
     }
 }
 
@@ -82,7 +87,7 @@ impl<DB: Database> Inspector<DB> for TouchedAddressInspector {
 }
 
 impl ScillaInspector for TouchedAddressInspector {
-    fn create(&mut self, creator: H160, contract_address: H160) {
+    fn create(&mut self, creator: H160, contract_address: H160, _: u128) {
         self.touched.insert(creator);
         self.touched.insert(contract_address);
     }
@@ -92,7 +97,7 @@ impl ScillaInspector for TouchedAddressInspector {
         self.touched.insert(to);
     }
 
-    fn call(&mut self, from: H160, to: H160) {
+    fn call(&mut self, from: H160, to: H160, _: u128) {
         self.touched.insert(from);
         self.touched.insert(to);
     }
@@ -134,9 +139,121 @@ impl<DB: Database> Inspector<DB> for CreatorInspector {
 }
 
 impl ScillaInspector for CreatorInspector {
-    fn create(&mut self, creator: H160, contract_address: H160) {
+    fn create(&mut self, creator: H160, contract_address: H160, _: u128) {
         if contract_address == self.contract {
             self.creator = Some(creator);
         }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct OtterscanTraceInspector {
+    entries: Vec<TraceEntry>,
+}
+
+impl OtterscanTraceInspector {
+    pub fn entries(self) -> Vec<TraceEntry> {
+        self.entries
+    }
+}
+
+impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
+    fn call(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        inputs: &mut CallInputs,
+    ) -> Option<CallOutcome> {
+        let (ty, value) = match inputs.context.scheme {
+            CallScheme::Call => (TraceEntryType::Call, Some(inputs.transfer.value.to())),
+            CallScheme::CallCode => (TraceEntryType::CallCode, None),
+            CallScheme::DelegateCall => (TraceEntryType::DelegateCall, None),
+            CallScheme::StaticCall => {
+                (TraceEntryType::StaticCall, Some(inputs.transfer.value.to()))
+            }
+        };
+        self.entries.push(TraceEntry {
+            ty,
+            depth: context.journaled_state.depth(),
+            from: H160(inputs.context.caller.into_array()),
+            to: H160(inputs.contract.into_array()),
+            value,
+            input: inputs.input.to_vec(),
+        });
+
+        None
+    }
+
+    fn create(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        inputs: &mut CreateInputs,
+    ) -> Option<CreateOutcome> {
+        let ty = match inputs.scheme {
+            CreateScheme::Create => TraceEntryType::Create,
+            CreateScheme::Create2 { .. } => TraceEntryType::Create2,
+        };
+        let nonce = context.journaled_state.account(inputs.caller).info.nonce;
+        self.entries.push(TraceEntry {
+            ty,
+            depth: context.journaled_state.depth(),
+            from: H160(inputs.caller.into_array()),
+            to: H160(inputs.created_address(nonce).into_array()),
+            value: Some(inputs.value.to()),
+            input: inputs.init_code.to_vec(),
+        });
+
+        None
+    }
+
+    fn selfdestruct(
+        &mut self,
+        contract: revm::primitives::Address,
+        target: revm::primitives::Address,
+        value: ruint::aliases::U256,
+    ) {
+        let depth = self.entries.last().map(|t| t.depth).unwrap_or_default();
+        self.entries.push(TraceEntry {
+            ty: TraceEntryType::SelfDestruct,
+            depth,
+            from: H160(contract.into_array()),
+            to: H160(target.into_array()),
+            value: Some(value.to()),
+            input: vec![],
+        });
+    }
+}
+
+impl ScillaInspector for OtterscanTraceInspector {
+    fn call(&mut self, from: H160, to: H160, amount: u128) {
+        self.entries.push(TraceEntry {
+            ty: TraceEntryType::Call,
+            depth: 0, // TODO: Track Scilla depth
+            from,
+            to,
+            value: Some(amount),
+            input: vec![],
+        })
+    }
+
+    fn create(&mut self, creator: H160, contract_address: H160, amount: u128) {
+        self.entries.push(TraceEntry {
+            ty: TraceEntryType::Create,
+            depth: 0,
+            from: creator,
+            to: contract_address,
+            value: Some(amount),
+            input: vec![],
+        })
+    }
+
+    fn transfer(&mut self, from: H160, to: H160, amount: u128) {
+        self.entries.push(TraceEntry {
+            ty: TraceEntryType::Call,
+            depth: 0,
+            from,
+            to,
+            value: Some(amount),
+            input: vec![],
+        })
     }
 }

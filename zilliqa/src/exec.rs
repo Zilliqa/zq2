@@ -400,7 +400,7 @@ impl State {
             acc.nonce += 1;
         })?;
 
-        inspector.create(from_addr, contract_address);
+        inspector.create(from_addr, contract_address, txn.amount.get());
 
         Ok(TransactionApplyResult {
             success: true,
@@ -524,7 +524,7 @@ impl State {
             })
             .collect();
 
-        inspector.call(from_addr, txn.to_addr);
+        inspector.call(from_addr, txn.to_addr, txn.amount.get());
 
         Ok(TransactionApplyResult {
             success: true,
