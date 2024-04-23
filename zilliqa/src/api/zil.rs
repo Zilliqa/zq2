@@ -23,7 +23,10 @@ use crate::{
     node::Node,
     schnorr,
     state::{Contract, ScillaValue},
-    transaction::{SignedTransaction, TxZilliqa, VerifiedTransaction, ZilAmount},
+    transaction::{
+        ScillaGas, SignedTransaction, TxZilliqa, VerifiedTransaction, ZilAmount,
+        EVM_GAS_PER_SCILLA_GAS,
+    },
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -66,7 +69,7 @@ struct TransactionParams {
     #[serde(deserialize_with = "from_str")]
     gas_price: ZilAmount,
     #[serde(deserialize_with = "from_str")]
-    gas_limit: u64,
+    gas_limit: ScillaGas,
     #[serde(default)]
     code: Option<String>,
     #[serde(default)]
@@ -109,6 +112,8 @@ fn create_transaction(
 
     let key = schnorr::PublicKey::from_sec1_bytes(&key)?;
     let sig = schnorr::Signature::from_str(&transaction.signature)?;
+
+    // TODO: Perform some initial validation of the transaction
 
     let transaction = SignedTransaction::Zilliqa {
         tx: TxZilliqa {
@@ -216,12 +221,12 @@ fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBloc
     Ok((&block).into())
 }
 
-fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<ZilAmount> {
     let price = node.lock().unwrap().get_gas_price();
-    // We need to scale the balance from units of (10^-18) ZIL to (10^-12) ZIL. The value is truncated in this process.
-    let price = price / 10u128.pow(6);
+    // `price` is the cost per unit of [EvmGas]. This API should return the cost per unit of [ScillaGas].
+    let price = price * (EVM_GAS_PER_SCILLA_GAS as u128);
 
-    Ok(price.to_string())
+    Ok(ZilAmount::from_amount(price))
 }
 
 fn network_id(eth_chain_id: u64) -> u64 {
@@ -312,7 +317,7 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     if let Contract::Scilla { code, .. } = account.contract {
         Ok(json!({ "code": code }))
     } else {
-        Err(anyhow!("not a scilla contract"))
+        Err(anyhow!("Address not contract address"))
     }
 }
 
@@ -324,7 +329,7 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     if let Contract::Scilla { init_data, .. } = account.contract {
         Ok(serde_json::from_str(&init_data)?)
     } else {
-        Err(anyhow!("not a scilla contract"))
+        Err(anyhow!("Address not contract address"))
     }
 }
 

@@ -185,15 +185,15 @@ impl State {
         })
     }
 
-    pub fn mutate_account<F: FnOnce(&mut Account)>(
+    pub fn mutate_account<F: FnOnce(&mut Account) -> R, R>(
         &mut self,
         address: Address,
         mutation: F,
-    ) -> Result<()> {
+    ) -> Result<R> {
         let mut account = self.get_account(address)?;
-        mutation(&mut account);
+        let result = mutation(&mut account);
         self.save_account(address, account)?;
-        Ok(())
+        Ok(result)
     }
 
     /// If using this to modify the account, ensure save_account gets called

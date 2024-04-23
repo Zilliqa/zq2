@@ -34,7 +34,7 @@ use crate::{
     scilla_proto::{Map, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
     state::{ScillaValue, State},
-    transaction::ZilAmount,
+    transaction::{ScillaGas, ZilAmount},
 };
 
 /// The interface to the Scilla interpreter.
@@ -126,9 +126,9 @@ impl Scilla {
     pub fn check_contract(
         &mut self,
         code: &str,
-        gas_limit: u64,
+        gas_limit: ScillaGas,
         init: &[Value],
-    ) -> Result<Result<CheckOutput, Vec<Error>>> {
+    ) -> Result<Result<CheckOutput, ErrorResponse>> {
         let args = vec![
             "-init".to_owned(),
             serde_json::to_string(&init)?,
@@ -149,16 +149,31 @@ impl Scilla {
 
         trace!(?response, "check response");
 
-        match response {
-            Ok(r) => Ok(Ok(serde_json::from_str(
-                r.as_str()
-                    .ok_or_else(|| anyhow!("response was not a string"))?,
-            )?)),
-            Err(ClientError::Call(e)) => {
-                let error: CheckError = serde_json::from_str(e.message())?;
-                Ok(Err(error.errors))
+        let response: Value = match response {
+            Ok(r) => r,
+            Err(ClientError::Call(e)) => serde_json::from_str(e.message())?,
+            Err(e) => {
+                return Err(anyhow!("{e:?}"));
             }
-            Err(e) => Err(anyhow!("{e:?}")),
+        };
+
+        // Sometimes Scilla returns a JSON object within a JSON string. Sometimes it doesn't...
+        let response = if let Some(response) = response.as_str() {
+            serde_json::from_str(response)?
+        } else {
+            response
+        };
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum OutputOrError {
+            Err(ErrorResponse),
+            Output(CheckOutput),
+        }
+
+        match serde_json::from_value(response)? {
+            OutputOrError::Err(e) => Ok(Err(e)),
+            OutputOrError::Output(response) => Ok(Ok(response)),
         }
     }
 
@@ -167,7 +182,7 @@ impl Scilla {
         sender: H160,
         state: State,
         code: &str,
-        gas_limit: u64,
+        gas_limit: ScillaGas,
         value: ZilAmount,
         init: &[Value],
     ) -> Result<Result<(CreateOutput, H256), ErrorResponse>> {
@@ -238,7 +253,7 @@ impl Scilla {
         contract: H160,
         state: State,
         code: &str,
-        gas_limit: u64,
+        gas_limit: ScillaGas,
         value: ZilAmount,
         init: &[Value],
         msg: &Value,
@@ -255,7 +270,7 @@ impl Scilla {
             "-gaslimit".to_owned(),
             gas_limit.to_string(),
             "-balance".to_owned(),
-            value.to_string(), // TODO: Should this be the sender's balance instead?
+            value.to_string(),
             "-libdir".to_owned(),
             "/scilla/0/_build/default/src/stdlib/".to_owned(),
             "-jsonerrors".to_owned(),
@@ -311,12 +326,9 @@ impl Scilla {
 
 #[derive(Debug, Deserialize)]
 pub struct CheckOutput {
+    #[serde(with = "num_as_str")]
+    pub gas_remaining: ScillaGas,
     pub contract_info: ContractInfo,
-}
-
-#[derive(Debug, Deserialize)]
-struct CheckError {
-    errors: Vec<Error>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -348,14 +360,14 @@ pub struct Param {
 #[derive(Debug, Deserialize)]
 pub struct CreateOutput {
     #[serde(with = "num_as_str")]
-    pub gas_remaining: u64,
+    pub gas_remaining: ScillaGas,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ErrorResponse {
     pub errors: Vec<Error>,
     #[serde(with = "num_as_str")]
-    pub gas_remaining: u64,
+    pub gas_remaining: ScillaGas,
 }
 
 #[derive(Debug, Deserialize)]
@@ -366,6 +378,8 @@ pub struct InvokeOutput {
     pub messages: Vec<Message>,
     #[serde(default)]
     pub events: Vec<ScillaEvent>,
+    #[serde(with = "num_as_str")]
+    pub gas_remaining: ScillaGas,
 }
 
 #[derive(Debug, Deserialize)]

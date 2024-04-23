@@ -1,5 +1,7 @@
 use primitive_types::{H128, H160, H256, H384, H512, H768, U128, U256, U512};
 
+use crate::transaction::{EvmGas, ScillaGas};
+
 /// A version of [hex::ToHex] which is also implemented for integer types. This version also prefixes the produced
 /// string with `"0x"` and omits leading zeroes for quantities (types with fixed lengths).
 pub trait ToHex {
@@ -53,6 +55,18 @@ impl<T: ToHex> ToHex for &T {
 impl<const N: usize> ToHex for [u8; N] {
     fn to_hex_inner(&self, prefix: bool) -> String {
         self.as_ref().to_hex_inner(prefix)
+    }
+}
+
+impl ToHex for EvmGas {
+    fn to_hex_inner(&self, prefix: bool) -> String {
+        self.0.to_hex_inner(prefix)
+    }
+}
+
+impl ToHex for ScillaGas {
+    fn to_hex_inner(&self, prefix: bool) -> String {
+        self.0.to_hex_inner(prefix)
     }
 }
 
