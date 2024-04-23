@@ -145,7 +145,7 @@ pub struct Consensus {
     /// The persistence database
     db: Arc<Db>,
     /// Actions that act on newly created blocks
-    transaction_pool: TransactionPool,
+    pub transaction_pool: TransactionPool,
     // PRNG - non-cryptographically secure, but we don't need that here
     rng: SmallRng,
     /// Flag indicating that block creation should be postponed due to empty mempool

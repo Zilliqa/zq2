@@ -463,6 +463,25 @@ impl Node {
             .get_account(address)
     }
 
+    /// Return the `nonce` of an account. If the `block_number` is [BlockNumber::Pending], any pending transactions in
+    /// our pool are also added to the nonce.
+    pub fn get_transaction_count(
+        &self,
+        address: Address,
+        block_number: BlockNumber,
+    ) -> Result<u64> {
+        let nonce = self.get_account(address, block_number)?.nonce;
+
+        if matches!(block_number, BlockNumber::Pending) {
+            Ok(self
+                .consensus
+                .transaction_pool
+                .pending_nonce(address, nonce))
+        } else {
+            Ok(nonce)
+        }
+    }
+
     pub fn get_account_storage(
         &self,
         address: Address,

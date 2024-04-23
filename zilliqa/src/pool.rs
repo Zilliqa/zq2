@@ -192,6 +192,21 @@ impl TransactionPool {
         std::mem::take(&mut self.transactions).into_values()
     }
 
+    /// Calculate the effective nonce of the sender, if all the currently pending transactions in the pool were mined
+    /// in order. Effectively, this calculates the current nonce plus the number of transactions with sequential nonces
+    /// in the pool.
+    pub fn pending_nonce(&self, sender: Address, mut current_nonce: u64) -> u64 {
+        loop {
+            let index = TxIndex::Nonced(sender, current_nonce);
+            if self.transactions.get(&index).is_none() {
+                break;
+            }
+            current_nonce += 1;
+        }
+
+        current_nonce
+    }
+
     pub fn size(&self) -> usize {
         self.transactions.len()
     }
