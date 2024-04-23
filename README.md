@@ -171,7 +171,7 @@ Please open an issue or PR for APIs that you think should be included.
 | `GetCurrentDSComm`                        | 🔴                                              |
 | `DSBlockListing`                          | 🔴                                              |
 | `TxBlockListing`                          | 🔴                                              |
-| `GetBlockchainInfo`                       | 🔴                                              |
+| `GetBlockchainInfo`                       | 🟢                                              |
 | `GetRecentTransactions`                   | 🔴                                              |
 | `GetShardingStructure`                    | 🔴                                              |
 | `GetNumTxnsTxEpoch`                       | 🔴                                              |

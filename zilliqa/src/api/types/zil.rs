@@ -227,3 +227,33 @@ pub struct MicroBlockInfo {
     micro_block_shard_id: u8,
     micro_block_txn_root_hash: H256,
 }
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct BlockchainInfo {
+    pub num_peers: u16,
+    #[serde(with = "num_as_str")]
+    pub num_tx_blocks: u64,
+    #[serde(with = "num_as_str")]
+    pub num_ds_blocks: u64,
+    #[serde(with = "num_as_str")]
+    pub num_transactions: u64,
+    pub transaction_rate: f64,
+    pub tx_block_rate: f64,
+    pub ds_block_rate: f64,
+    #[serde(with = "num_as_str")]
+    pub current_mini_epoch: u64,
+    #[serde(with = "num_as_str")]
+    pub current_ds_epoch: u64,
+    #[serde(with = "num_as_str")]
+    pub num_txns_ds_epoch: u64,
+    #[serde(with = "num_as_str")]
+    pub num_txns_tx_epoch: u64,
+    pub sharding_structure: ShardingStructure,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ShardingStructure {
+    pub num_peers: Vec<u16>,
+}
