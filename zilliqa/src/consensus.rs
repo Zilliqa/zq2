@@ -492,9 +492,9 @@ impl Consensus {
             return Ok(None);
         }
 
-        trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", self.view.get_view(), time_since_last_view_change, exponential_backoff_timeout, head_block_view, head_block.hash());
+        trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", self.view.get_view(), time_since_last_view_change, exponential_backoff_timeout, self.high_qc.view, head_block.hash());
 
-        let view_difference = self.view.get_view().saturating_sub(head_block_view);
+        let view_difference = self.view.get_view().saturating_sub(self.high_qc.view);
         let consensus_timeout_ms = self.config.consensus.consensus_timeout.as_millis() as u64;
         let next_exponential_backoff_timeout =
             consensus_timeout_ms * 2u64.pow((view_difference + 1) as u32);
