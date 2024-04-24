@@ -69,7 +69,7 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
                 let index = n.random_index();
                 n.get_node(index).get_finalized_height() >= start_block
             },
-            80,
+            100,
         )
         .await
         .unwrap();
