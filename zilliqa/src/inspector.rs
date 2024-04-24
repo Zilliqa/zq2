@@ -8,7 +8,7 @@ use revm::{
     Database, EvmContext, Inspector,
 };
 
-use crate::api::types::ots::{TraceEntry, TraceEntryType};
+use crate::api::types::ots::{Operation, OperationType, TraceEntry, TraceEntryType};
 
 /// Provides callbacks from the Scilla interpreter.
 pub trait ScillaInspector {
@@ -255,5 +255,107 @@ impl ScillaInspector for OtterscanTraceInspector {
             value: Some(amount),
             input: vec![],
         })
+    }
+}
+
+/// Traces internal transfers within a transaction for Otterscan. Transfers at the top-level are deliberately filtered
+/// out.
+#[derive(Debug, Default)]
+pub struct OtterscanOperationInspector {
+    entries: Vec<Operation>,
+}
+
+impl OtterscanOperationInspector {
+    pub fn entries(self) -> Vec<Operation> {
+        self.entries
+    }
+}
+
+impl<DB: Database> Inspector<DB> for OtterscanOperationInspector {
+    fn call(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        inputs: &mut CallInputs,
+    ) -> Option<CallOutcome> {
+        if context.journaled_state.depth() != 0 && !inputs.transfer.value.is_zero() {
+            self.entries.push(Operation {
+                ty: OperationType::Transfer,
+                from: H160(inputs.context.caller.into_array()),
+                to: H160(inputs.contract.into_array()),
+                value: inputs.transfer.value.to(),
+            });
+        }
+
+        None
+    }
+
+    fn create(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        inputs: &mut CreateInputs,
+    ) -> Option<CreateOutcome> {
+        if context.journaled_state.depth() != 0 {
+            let ty = match inputs.scheme {
+                CreateScheme::Create => OperationType::Create,
+                CreateScheme::Create2 { .. } => OperationType::Create2,
+            };
+            let nonce = context.journaled_state.account(inputs.caller).info.nonce;
+            self.entries.push(Operation {
+                ty,
+                from: H160(inputs.caller.into_array()),
+                to: H160(inputs.created_address(nonce).into_array()),
+                value: inputs.value.to(),
+            });
+        }
+
+        None
+    }
+
+    fn selfdestruct(
+        &mut self,
+        contract: revm::primitives::Address,
+        target: revm::primitives::Address,
+        value: ruint::aliases::U256,
+    ) {
+        self.entries.push(Operation {
+            ty: OperationType::SelfDestruct,
+            from: H160(contract.into_array()),
+            to: H160(target.into_array()),
+            value: value.to(),
+        });
+    }
+}
+
+// TODO: Filter depth=0 Scilla calls once we can track the depth.
+impl ScillaInspector for OtterscanOperationInspector {
+    fn call(&mut self, from: H160, to: H160, amount: u128) {
+        if amount != 0 {
+            self.entries.push(Operation {
+                ty: OperationType::Transfer,
+                from,
+                to,
+                value: amount,
+            });
+        }
+    }
+
+    fn create(&mut self, creator: H160, contract_address: H160, amount: u128) {
+        self.entries.push(Operation {
+            ty: OperationType::Create,
+            from: creator,
+            to: contract_address,
+            value: amount,
+        });
+    }
+
+    fn transfer(&mut self, from: H160, to: H160, amount: u128) {
+        if amount != 0 {
+            self.entries.push(Operation {
+                ty: OperationType::Transfer,
+                from,
+                to,
+                value: amount,
+            });
+        }
     }
 }
