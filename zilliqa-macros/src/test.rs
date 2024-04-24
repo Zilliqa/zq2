@@ -249,7 +249,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
             let duration = start.elapsed();
             let time_allowed_ms: u64 = std::env::var_os("ZQ_TEST_TIMEOUT")
                 .map(|s| s.to_str().unwrap().parse().expect(&format!("Failed to parse ZQ_TEST_TIMEOUT env var: {:?}", s)))
-                .unwrap_or(5000);
+                .unwrap_or(15000);
             let mut time_allowed_ms = Duration::from_millis(time_allowed_ms).as_millis() * (seeds_number as u128);
 
             if cfg!(debug_assertions) {

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
@@ -97,9 +97,11 @@ pub struct Node {
     pub db: Arc<Db>,
     peer_id: PeerId,
     message_sender: MessageSender,
-    reset_timeout: UnboundedSender<()>,
+    reset_timeout: UnboundedSender<Duration>,
     consensus: Consensus,
 }
+
+const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
 
 impl Node {
     pub fn new(
@@ -107,7 +109,7 @@ impl Node {
         secret_key: SecretKey,
         message_sender_channel: UnboundedSender<OutboundMessageTuple>,
         local_sender_channel: UnboundedSender<LocalMessageTuple>,
-        reset_timeout: UnboundedSender<()>,
+        reset_timeout: UnboundedSender<Duration>,
     ) -> Result<Node> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let message_sender = MessageSender {
@@ -121,9 +123,9 @@ impl Node {
             config: config.clone(),
             peer_id,
             message_sender: message_sender.clone(),
-            reset_timeout,
+            reset_timeout: reset_timeout.clone(),
             db: db.clone(),
-            consensus: Consensus::new(secret_key, config, message_sender, db)?,
+            consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
         };
         Ok(node)
     }
@@ -139,7 +141,7 @@ impl Node {
                 let m_view = m.header.view;
 
                 if let Some((to, message)) = self.consensus.proposal(m, false)? {
-                    self.reset_timeout.send(())?;
+                    self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
                     if let Some(to) = to {
                         self.message_sender.send_external_message(to, message)?;
                     } else {
@@ -199,7 +201,12 @@ impl Node {
             }
             ExternalMessage::RequestResponse => {}
             ExternalMessage::NewTransaction(t) => {
-                self.consensus.new_transaction(t.verify()?)?;
+                let inserted = self.consensus.new_transaction(t.verify()?)?;
+                if inserted {
+                    if let Some((_, message)) = self.consensus.try_to_propose_new_block()? {
+                        self.message_sender.broadcast_external_message(message)?;
+                    }
+                }
             }
             ExternalMessage::JoinCommittee(public_key) => {
                 self.add_peer(from, public_key)?;
@@ -250,9 +257,13 @@ impl Node {
     // handle timeout - true if something happened
     pub fn handle_timeout(&mut self) -> Result<bool> {
         if let Some((leader, response)) = self.consensus.timeout()? {
-            self.message_sender
-                .send_external_message(leader, response)
-                .unwrap();
+            if let Some(leader) = leader {
+                self.message_sender
+                    .send_external_message(leader, response)
+                    .unwrap();
+            } else {
+                self.message_sender.broadcast_external_message(response)?;
+            }
             return Ok(true);
         }
         Ok(false)
@@ -260,7 +271,7 @@ impl Node {
 
     pub fn add_peer(&mut self, peer: PeerId, public_key: NodePublicKey) -> Result<()> {
         if let Some((dest, message)) = self.consensus.add_peer(peer, public_key)? {
-            self.reset_timeout.send(())?;
+            self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
             if let Some(leader) = dest {
                 self.message_sender.send_external_message(leader, message)?;
             } else {

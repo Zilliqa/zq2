@@ -242,6 +242,7 @@ impl Network {
                 consensus_timeout: Duration::from_secs(1),
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
+                empty_block_timeout: Duration::from_millis(25),
                 scilla_address: scilla_address.clone(),
                 local_address: "host.docker.internal".to_owned(),
                 ..Default::default()
@@ -337,6 +338,7 @@ impl Network {
                 is_main: self.is_main(),
                 consensus_timeout: Duration::from_secs(1),
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
+                empty_block_timeout: Duration::from_millis(25),
                 ..Default::default()
             },
             ..Default::default()
@@ -427,6 +429,7 @@ impl Network {
                         consensus_timeout: Duration::from_secs(1),
                         // Give a genesis account 1 billion ZIL.
                         genesis_accounts: Self::genesis_accounts(&self.genesis_key),
+                        empty_block_timeout: Duration::from_millis(25),
                         ..Default::default()
                     },
                     ..Default::default()
