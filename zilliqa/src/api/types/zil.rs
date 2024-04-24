@@ -12,7 +12,7 @@ use crate::{
     serde_util::num_as_str,
     time::SystemTime,
     transaction::{
-        ScillaLog, SignedTransaction, TransactionReceipt, VerifiedTransaction, ZilAmount,
+        ScillaGas, ScillaLog, SignedTransaction, TransactionReceipt, VerifiedTransaction, ZilAmount,
     },
 };
 
@@ -28,7 +28,7 @@ impl From<&Block> for TxBlock {
         TxBlock {
             header: TxBlockHeader {
                 version: 0,
-                gas_limit: BLOCK_GAS_LIMIT,
+                gas_limit: BLOCK_GAS_LIMIT.into(),
                 gas_used: 0,
                 rewards: 0,
                 txn_fees: 0,
@@ -69,7 +69,7 @@ impl From<&Block> for TxBlock {
 #[serde(rename_all = "PascalCase")]
 pub struct TxBlockHeader {
     pub version: u8,
-    pub gas_limit: u64,
+    pub gas_limit: ScillaGas,
     pub gas_used: u64,
     pub rewards: u128,
     pub txn_fees: u128,
@@ -116,7 +116,7 @@ pub struct GetTxResponse {
     #[serde(with = "num_as_str")]
     gas_price: ZilAmount,
     #[serde(with = "num_as_str")]
-    gas_limit: u64,
+    gas_limit: ScillaGas,
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -138,7 +138,7 @@ struct GetTxResponseReceipt {
     #[serde(skip_serializing_if = "Option::is_none")]
     accepted: Option<bool>,
     #[serde(with = "num_as_str")]
-    cumulative_gas: u64,
+    cumulative_gas: ScillaGas,
     #[serde(with = "num_as_str")]
     epoch_num: u64,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -167,7 +167,7 @@ impl GetTxResponse {
                 amount: tx.amount,
                 signature: sig,
                 receipt: GetTxResponseReceipt {
-                    cumulative_gas: receipt.gas_used,
+                    cumulative_gas: receipt.gas_used.into(),
                     epoch_num: block_number,
                     event_logs: receipt
                         .logs
@@ -186,6 +186,8 @@ impl GetTxResponse {
                                     .map(|err| match err {
                                         ScillaError::CallFailed => 7,
                                         ScillaError::CreateFailed => 8,
+                                        ScillaError::OutOfGas => 21,
+                                        ScillaError::InsufficientBalance => 22,
                                     })
                                     .collect(),
                             )

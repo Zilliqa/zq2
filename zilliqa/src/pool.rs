@@ -206,7 +206,7 @@ mod tests {
         crypto::Hash,
         state::Address,
         transaction::{
-            EthSignature, SignedTransaction, TxIntershard, TxLegacy, VerifiedTransaction,
+            EthSignature, EvmGas, SignedTransaction, TxIntershard, TxLegacy, VerifiedTransaction,
         },
     };
 
@@ -217,7 +217,7 @@ mod tests {
                     chain_id: Some(0),
                     nonce: nonce as u64,
                     gas_price,
-                    gas_limit: 0,
+                    gas_limit: EvmGas(0),
                     to_addr: None,
                     amount: 0,
                     payload: vec![],
@@ -245,7 +245,7 @@ mod tests {
                     bridge_nonce: shard_nonce as u64,
                     source_chain: from_shard as u64,
                     gas_price,
-                    gas_limit: 0,
+                    gas_limit: EvmGas(0),
                     to_addr: None,
                     payload: vec![],
                 },

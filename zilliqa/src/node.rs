@@ -20,7 +20,9 @@ use crate::{
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     state::{Account, Address, State},
-    transaction::{SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction},
+    transaction::{
+        EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -417,7 +419,7 @@ impl Node {
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
-        gas: Option<u64>,
+        gas: Option<EvmGas>,
         gas_price: Option<u128>,
         value: u128,
     ) -> Result<u64> {

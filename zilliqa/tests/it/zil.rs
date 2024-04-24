@@ -65,10 +65,15 @@ async fn send_transaction(
     let wallet = network.random_wallet().await;
     let public_key = secret_key.public_key();
 
+    // Get the gas price via the Zilliqa API.
+    let gas_price: u128 = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+
     let chain_id = wallet.get_chainid().await.unwrap().as_u32() - 0x8000;
     let version = (chain_id << 16) | 1u32;
-    // FIXME: This is funky because it gets the price in 10^18 units, rather than 10^12.
-    let gas_price = wallet.get_gas_price().await.unwrap().as_u128();
     let proto = ProtoTransactionCoreInfo {
         version,
         toaddr: to_addr.as_bytes().to_vec(),
