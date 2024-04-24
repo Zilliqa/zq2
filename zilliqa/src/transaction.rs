@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
+    ops::{Add, Sub},
     str::FromStr,
 };
 
@@ -139,7 +140,9 @@ impl SignedTransaction {
             SignedTransaction::Eip2930 { tx, .. } => tx.gas_price,
             // We ignore the priority fee and just use the maximum fee.
             SignedTransaction::Eip1559 { tx, .. } => tx.max_fee_per_gas,
-            SignedTransaction::Zilliqa { tx, .. } => tx.gas_price.get(),
+            SignedTransaction::Zilliqa { tx, .. } => {
+                tx.gas_price.get() / (EVM_GAS_PER_SCILLA_GAS as u128)
+            }
             SignedTransaction::Intershard { tx, .. } => tx.gas_price,
         }
     }
@@ -316,17 +319,17 @@ impl Transaction {
             Transaction::Eip1559(TxEip1559 {
                 max_fee_per_gas, ..
             }) => *max_fee_per_gas,
-            Transaction::Zilliqa(t) => t.gas_price.get(),
+            Transaction::Zilliqa(t) => t.gas_price.get() / (EVM_GAS_PER_SCILLA_GAS as u128),
             Transaction::Intershard(TxIntershard { gas_price, .. }) => *gas_price,
         }
     }
 
-    pub fn gas_limit(&self) -> u64 {
+    pub fn gas_limit(&self) -> EvmGas {
         match self {
             Transaction::Legacy(TxLegacy { gas_limit, .. }) => *gas_limit,
             Transaction::Eip2930(TxEip2930 { gas_limit, .. }) => *gas_limit,
             Transaction::Eip1559(TxEip1559 { gas_limit, .. }) => *gas_limit,
-            Transaction::Zilliqa(TxZilliqa { gas_limit, .. }) => *gas_limit,
+            Transaction::Zilliqa(TxZilliqa { gas_limit, .. }) => (*gas_limit).into(),
             Transaction::Intershard(TxIntershard { gas_limit, .. }) => *gas_limit,
         }
     }
@@ -422,7 +425,7 @@ pub struct TxLegacy {
     pub chain_id: Option<u64>,
     pub nonce: u64,
     pub gas_price: u128,
-    pub gas_limit: u64,
+    pub gas_limit: EvmGas,
     pub to_addr: Option<Address>,
     pub amount: u128,
     pub payload: Vec<u8>,
@@ -457,7 +460,7 @@ pub struct TxIntershard {
     pub bridge_nonce: u64,
     pub source_chain: u64,
     pub gas_price: u128,
-    pub gas_limit: u64,
+    pub gas_limit: EvmGas,
     pub to_addr: Option<Address>,
     // Amount intentionally missing: cannot send native amount cross-shard
     pub payload: Vec<u8>,
@@ -480,7 +483,7 @@ pub struct TxEip2930 {
     pub chain_id: u64,
     pub nonce: u64,
     pub gas_price: u128,
-    pub gas_limit: u64,
+    pub gas_limit: EvmGas,
     pub to_addr: Option<Address>,
     pub amount: u128,
     pub payload: Vec<u8>,
@@ -516,7 +519,7 @@ pub struct TxEip1559 {
     pub nonce: u64,
     pub max_priority_fee_per_gas: u128,
     pub max_fee_per_gas: u128,
-    pub gas_limit: u64,
+    pub gas_limit: EvmGas,
     pub to_addr: Option<Address>,
     pub amount: u128,
     pub payload: Vec<u8>,
@@ -552,7 +555,7 @@ pub struct TxZilliqa {
     pub chain_id: u16,
     pub nonce: u64,
     pub gas_price: ZilAmount,
-    pub gas_limit: u64,
+    pub gas_limit: ScillaGas,
     pub to_addr: Address,
     pub amount: ZilAmount,
     pub code: String,
@@ -583,6 +586,14 @@ impl ZilAmount {
     }
 }
 
+impl Add for ZilAmount {
+    type Output = ZilAmount;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        ZilAmount(self.0.checked_add(rhs.0).expect("amount overflow"))
+    }
+}
+
 impl Display for ZilAmount {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
@@ -594,6 +605,95 @@ impl FromStr for ZilAmount {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self(u128::from_str(s)?))
+    }
+}
+
+/// Calculate the total price of a given `quantity` of [ScillaGas] at the specified `price`.
+/// Note that the units of the `price` should really be ([ZilAmount] / [ScillaGas])
+pub fn total_scilla_gas_price(quantity: ScillaGas, price: ZilAmount) -> ZilAmount {
+    ZilAmount(
+        (quantity.0 as u128)
+            .checked_mul(price.0)
+            .expect("amount overflow"),
+    )
+}
+
+pub const EVM_GAS_PER_SCILLA_GAS: u64 = 420;
+
+/// A quantity of Scilla gas. This is the currency used to pay for [TxZilliqa] transactions. When EVM gas is converted
+/// to Scilla gas, the quantity is rounded down.
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(transparent)]
+pub struct ScillaGas(pub u64);
+
+impl ScillaGas {
+    pub fn checked_sub(self, rhs: ScillaGas) -> Option<ScillaGas> {
+        Some(ScillaGas(self.0.checked_sub(rhs.0)?))
+    }
+}
+
+impl Sub for ScillaGas {
+    type Output = ScillaGas;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.checked_sub(rhs).expect("scilla gas underflow")
+    }
+}
+
+impl From<EvmGas> for ScillaGas {
+    fn from(gas: EvmGas) -> Self {
+        ScillaGas(gas.0 / EVM_GAS_PER_SCILLA_GAS)
+    }
+}
+
+impl Display for ScillaGas {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for ScillaGas {
+    type Err = <u64 as FromStr>::Err;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(u64::from_str(s)?))
+    }
+}
+
+/// A quantity of EVM gas. This is the currency used to pay for EVM transactions.
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(transparent)]
+pub struct EvmGas(pub u64);
+
+impl From<ScillaGas> for EvmGas {
+    fn from(gas: ScillaGas) -> Self {
+        EvmGas(gas.0 * EVM_GAS_PER_SCILLA_GAS)
+    }
+}
+
+impl Display for EvmGas {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for EvmGas {
+    type Err = <u64 as FromStr>::Err;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(u64::from_str(s)?))
+    }
+}
+
+impl rlp::Decodable for EvmGas {
+    fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
+        Ok(EvmGas(<u64 as rlp::Decodable>::decode(rlp)?))
+    }
+}
+
+impl rlp::Encodable for EvmGas {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        self.0.rlp_append(s)
     }
 }
 
@@ -672,7 +772,7 @@ pub struct TransactionReceipt {
     pub block_hash: crypto::Hash,
     pub tx_hash: crypto::Hash,
     pub success: bool,
-    pub gas_used: u64,
+    pub gas_used: EvmGas,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
     pub accepted: Option<bool>,
@@ -722,7 +822,7 @@ fn encode_zilliqa_transaction(txn: &TxZilliqa, pub_key: schnorr::PublicKey) -> V
         senderpubkey: Some(pub_key.to_sec1_bytes().into()),
         amount: Some((txn.amount).to_be_bytes().to_vec().into()),
         gasprice: Some((txn.gas_price).to_be_bytes().to_vec().into()),
-        gaslimit: txn.gas_limit,
+        gaslimit: txn.gas_limit.0,
         oneof2: Some(Nonce::Nonce(txn.nonce)),
         oneof8,
         oneof9,

@@ -7,8 +7,12 @@ use sha3::{Digest, Keccak256};
 
 use super::{bool_as_int, hex, option_hex, vec_hex};
 use crate::{
-    crypto::Hash, exec::BLOCK_GAS_LIMIT, message, state::Address, time::SystemTime,
-    transaction::EvmLog,
+    crypto::Hash,
+    exec::BLOCK_GAS_LIMIT,
+    message,
+    state::Address,
+    time::SystemTime,
+    transaction::{EvmGas, EvmLog},
 };
 
 #[derive(Clone, Serialize)]
@@ -76,9 +80,9 @@ pub struct Header {
     #[serde(serialize_with = "hex")]
     pub extra_data: Vec<u8>,
     #[serde(serialize_with = "hex")]
-    pub gas_limit: u64,
+    pub gas_limit: EvmGas,
     #[serde(serialize_with = "hex")]
-    pub gas_used: u64,
+    pub gas_used: EvmGas,
     #[serde(serialize_with = "hex")]
     pub timestamp: u64,
 }
@@ -101,7 +105,7 @@ impl Header {
             total_difficulty: 0,
             extra_data: vec![],
             gas_limit: BLOCK_GAS_LIMIT,
-            gas_used: 0,
+            gas_used: EvmGas(0),
             timestamp: header
                 .timestamp
                 .duration_since(SystemTime::UNIX_EPOCH)
@@ -122,7 +126,7 @@ pub struct Transaction {
     #[serde(serialize_with = "hex")]
     pub from: H160,
     #[serde(serialize_with = "hex")]
-    pub gas: u64,
+    pub gas: EvmGas,
     #[serde(serialize_with = "hex")]
     pub gas_price: u128,
     #[serde(serialize_with = "option_hex")]
@@ -171,11 +175,11 @@ pub struct TransactionReceipt {
     #[serde(serialize_with = "option_hex")]
     pub to: Option<H160>,
     #[serde(serialize_with = "hex")]
-    pub cumulative_gas_used: u64,
+    pub cumulative_gas_used: EvmGas,
     #[serde(serialize_with = "hex")]
-    pub effective_gas_price: u64,
+    pub effective_gas_price: u128,
     #[serde(serialize_with = "hex")]
-    pub gas_used: u64,
+    pub gas_used: EvmGas,
     #[serde(serialize_with = "option_hex")]
     pub contract_address: Option<H160>,
     pub logs: Vec<Log>,
