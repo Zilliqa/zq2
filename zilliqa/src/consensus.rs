@@ -440,6 +440,12 @@ impl Consensus {
         let head_block = self.head_block();
         let head_block_view = head_block.view();
 
+        let (
+            time_since_last_view_change,
+            exponential_backoff_timeout,
+            minimum_time_left_for_empty_block,
+        ) = self.get_consensus_timeout_params();
+
         if head_block_view + 1 == self.view.get_view() && self.create_next_block_on_timeout {
             let time_since_last_block = SystemTime::now()
                 .duration_since(self.view.last_timeout())
@@ -450,7 +456,14 @@ impl Consensus {
                 self.config.consensus.empty_block_timeout.as_millis() as u64;
 
             let transactions_count = self.transaction_pool.size();
-            if time_since_last_block > empty_block_timeout_ms || transactions_count > 0 {
+
+            // Check if enough time elapsed or there's something in mempool or we don't have enough
+            // time but let's try at least until new view can happen
+            if time_since_last_block > empty_block_timeout_ms
+                || transactions_count > 0
+                || (time_since_last_view_change + minimum_time_left_for_empty_block
+                    >= exponential_backoff_timeout)
+            {
                 if let Ok(Some((block, transactions))) = self.propose_new_block() {
                     self.create_next_block_on_timeout = false;
                     return Ok(Some((
@@ -468,8 +481,6 @@ impl Consensus {
 
         // Now consider whether we want to timeout - the timeout duration doubles every time, so it
         // Should eventually have all nodes on the same view
-        let (time_since_last_view_change, exponential_backoff_timeout) =
-            self.get_consensus_timeout_params();
 
         if time_since_last_view_change < exponential_backoff_timeout {
             trace!(
@@ -519,18 +530,26 @@ impl Consensus {
         )))
     }
 
-    fn get_consensus_timeout_params(&self) -> (u64, u64) {
-        let head_block = self.head_block();
-        let head_block_view = head_block.view();
+    fn get_consensus_timeout_params(&self) -> (u64, u64, u64) {
         let consensus_timeout_ms = self.config.consensus.consensus_timeout.as_millis() as u64;
         let time_since_last_view_change = SystemTime::now()
             .duration_since(self.view.last_timeout())
             .expect("last timeout seems to be in the future...")
             .as_millis() as u64;
-        let view_difference = self.view.get_view().saturating_sub(head_block_view);
+        let view_difference = self.view.get_view().saturating_sub(self.high_qc.view);
         let exponential_backoff_timeout = consensus_timeout_ms * 2u64.pow(view_difference as u32);
 
-        (time_since_last_view_change, exponential_backoff_timeout)
+        let minimum_time_left_for_empty_block = self
+            .config
+            .consensus
+            .minimum_time_left_for_empty_block
+            .as_millis() as u64;
+
+        (
+            time_since_last_view_change,
+            exponential_backoff_timeout,
+            minimum_time_left_for_empty_block,
+        )
     }
 
     pub fn peer_id(&self) -> PeerId {
@@ -904,13 +923,11 @@ impl Consensus {
                         return self.propose_new_block();
                     } else {
                         // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
-                        let (time_since_last_view_change, exponential_backoff_timeout) =
-                            self.get_consensus_timeout_params();
-                        let minimum_time_left_for_empty_block =
-                            self.config
-                                .consensus
-                                .minimum_time_left_for_empty_block
-                                .as_millis() as u64;
+                        let (
+                            time_since_last_view_change,
+                            exponential_backoff_timeout,
+                            minimum_time_left_for_empty_block,
+                        ) = self.get_consensus_timeout_params();
 
                         if time_since_last_view_change + minimum_time_left_for_empty_block
                             >= exponential_backoff_timeout
