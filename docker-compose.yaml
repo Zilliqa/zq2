@@ -53,6 +53,7 @@ services:
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./infra/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+
   mimir:
     image: grafana/mimir:latest
     volumes:

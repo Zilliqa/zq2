@@ -1,17 +1,27 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    borrow::Cow,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::{anyhow, Result};
+use ethabi::Token;
 use jsonrpsee::{types::Params, RpcModule};
 use primitive_types::{H160, H256};
 use serde_json::{json, Value};
 
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},
-    types::ots,
+    types::ots::{self, TraceEntry},
 };
 use crate::{
-    api::to_hex::ToHex, crypto::Hash, inspector::CreatorInspector, message::BlockNumber,
-    node::Node, state::Contract, time::SystemTime,
+    api::to_hex::ToHex,
+    crypto::Hash,
+    exec::TransactionOutput,
+    inspector::{self, CreatorInspector, OtterscanTraceInspector},
+    message::BlockNumber,
+    node::Node,
+    state::Contract,
+    time::SystemTime,
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -23,9 +33,11 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("ots_getBlockDetailsByHash", get_block_details_by_hash),
             ("ots_getBlockTransactions", get_block_transactions),
             ("ots_getContractCreator", get_contract_creator),
+            ("ots_getTransactionError", get_transaction_error),
             ("ots_hasCode", has_code),
             ("ots_searchTransactionsAfter", search_transactions_after),
             ("ots_searchTransactionsBefore", search_transactions_before),
+            ("ots_traceTransaction", trace_transaction),
         ],
     )
 }
@@ -138,6 +150,35 @@ fn get_contract_creator(params: Params, node: &Arc<Mutex<Node>>) -> Result<Optio
     }
 
     Ok(None)
+}
+
+fn get_transaction_error(params: Params, node: &Arc<Mutex<Node>>) -> Result<Cow<'static, str>> {
+    let txn_hash: H256 = params.one()?;
+    let txn_hash = Hash(txn_hash.0);
+
+    let result = node
+        .lock()
+        .unwrap()
+        .replay_transaction(txn_hash, inspector::noop())?;
+
+    if !result.exceptions.is_empty() {
+        // If the transaction resulted in Scilla exceptions, concatenate them into a single string and ABI encode it.
+        let error: String =
+            itertools::intersperse_with(result.exceptions.into_iter().map(|e| e.message), || {
+                ", ".to_owned()
+            })
+            .collect();
+        let error = ethabi::encode(&[Token::String(error)]);
+        // Prefix the error with the function selector for 'Error'. This is how raw reverts are encoded in Solidity.
+        let mut encoded = vec![0x08, 0xc3, 0x79, 0xa0];
+        encoded.extend_from_slice(&error);
+        Ok(encoded.to_hex().into())
+    } else {
+        match result.output {
+            TransactionOutput::Revert(output) => Ok(output.to_hex().into()),
+            _ => Ok("0x".into()),
+        }
+    }
 }
 
 fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
@@ -275,4 +316,16 @@ fn search_transactions_before(
     }
 
     search_transactions_inner(node, address, block_number, page_size, true)
+}
+
+fn trace_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TraceEntry>> {
+    let txn_hash: H256 = params.one()?;
+    let txn_hash = Hash(txn_hash.0);
+
+    let mut inspector = OtterscanTraceInspector::default();
+    node.lock()
+        .unwrap()
+        .replay_transaction(txn_hash, &mut inspector)?;
+
+    Ok(inspector.entries())
 }
