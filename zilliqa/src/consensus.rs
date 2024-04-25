@@ -448,7 +448,7 @@ impl Consensus {
                 info!("timeout in view 1, we will vote for genesis block rather than incrementing view, genesis hash: {}", genesis.hash());
                 let leader = self.leader(self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
-                return Ok(Some((leader.peer_id.unwrap(), ExternalMessage::Vote(vote))));
+                return Ok(Some((leader.peer_id, ExternalMessage::Vote(vote))));
             } else {
                 info!("We are on view 1 but we are not a validator, so we are waiting.");
                 let _ = self.download_blocks_up_to_head();
@@ -546,7 +546,7 @@ impl Consensus {
         );
 
         Ok(Some((
-            leader.peer_id.unwrap(),
+            leader.peer_id,
             ExternalMessage::NewView(Box::new(new_view)),
         )))
     }
@@ -898,10 +898,10 @@ impl Consensus {
             .iter()
             .enumerate()
             .find(|(_, &v)| v == vote.public_key)
-            else {
-                warn!("Skipping vote outside of committee");
-                return Ok(None);
-            };
+        else {
+            warn!("Skipping vote outside of committee");
+            return Ok(None);
+        };
 
         let (mut signatures, mut cosigned, mut cosigned_weight, mut supermajority_reached) =
             self.votes.get(&block_hash).cloned().unwrap_or_else(|| {
@@ -1012,7 +1012,13 @@ impl Consensus {
 
         let block_hash = block.hash();
         let block_view = block.view();
-        let committee_size = block.committee.len();
+
+        let Ok(committee) = self.state.get_stakers_at_block(&block) else {
+            warn!("Can't get committee from block view: {}", block_view);
+            return Ok(None);
+        };
+
+        let committee_size = committee.len();
 
         let (signatures, cosigned, cosigned_weight, supermajority_reached) =
             self.votes.get(&block_hash).cloned().unwrap_or_else(|| {
@@ -1055,19 +1061,19 @@ impl Consensus {
         let applied_transaction_hashes: Vec<_> =
             applied_transactions.iter().map(|tx| tx.hash).collect();
 
-                    self.apply_rewards(&committee, block_view + 1, &qc.cosigned)?;
+        self.apply_rewards(&committee, block_view + 1, &qc.cosigned)?;
 
-                    let proposal = Block::from_qc(
-                        self.secret_key,
-                        self.view.get_view(),
-                        parent.header.number + 1,
-                        qc,
-                        parent_hash,
-                        self.state.root_hash()?,
-                        applied_transaction_hashes.clone(),
-                        SystemTime::max(SystemTime::now(), parent_header.timestamp),
-                        &committee,
-                    );
+        let proposal = Block::from_qc(
+            self.secret_key,
+            self.view.get_view(),
+            parent.header.number + 1,
+            qc,
+            parent_hash,
+            self.state.root_hash()?,
+            applied_transaction_hashes.clone(),
+            SystemTime::max(SystemTime::now(), parent_header.timestamp),
+            &committee,
+        );
 
         self.state.set_to_root(H256(previous_state_root_hash.0));
 
@@ -1922,7 +1928,12 @@ impl Consensus {
 
         let mut rng = ChaCha8Rng::seed_from_u64(view);
         let dist = WeightedIndex::new(committee.iter().map(|pub_key| {
-            let stake = self.state.get_stake(*pub_key).unwrap().context("Committee member has no stake").unwrap();
+            let stake = self
+                .state
+                .get_stake(*pub_key)
+                .unwrap()
+                .context("Committee member has no stake")
+                .unwrap();
             stake.get()
         }))
         .unwrap();
