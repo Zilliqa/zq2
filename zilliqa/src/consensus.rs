@@ -891,7 +891,7 @@ impl Consensus {
             info!("Skipping vote outside of committee");
             return Ok(None);
         };
-        
+
         // verify the sender's signature on block_hash
         let Some((index, _)) = committee
             .iter()
