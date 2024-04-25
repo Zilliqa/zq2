@@ -370,11 +370,9 @@ impl State {
             return Ok(result);
         }
 
-        let mut hasher = Sha256::new();
-        hasher.update(from_addr.as_bytes());
-        hasher.update((txn.nonce - 1).to_be_bytes());
-        let hashed = hasher.finalize();
-        let contract_address = H160::from_slice(&hashed[12..]);
+        // The contract address is created with the account's current nonce. The transaction's nonce is one greater
+        // than this.
+        let contract_address = zil_contract_address(from_addr, txn.nonce - 1);
 
         let mut init_data: Vec<Value> = serde_json::from_str(&txn.data)?;
         init_data.push(json!({"vname": "_creation_block", "type": "BNum", "value": current_block.number.to_string()}));
@@ -965,4 +963,13 @@ impl TransactionOutput {
             TransactionOutput::Error => vec![],
         }
     }
+}
+
+/// Gets the contract address if a contract creation [TxZilliqa] is sent by `sender` with `nonce`.
+pub fn zil_contract_address(sender: H160, nonce: u64) -> H160 {
+    let mut hasher = Sha256::new();
+    hasher.update(sender.as_bytes());
+    hasher.update(nonce.to_be_bytes());
+    let hashed = hasher.finalize();
+    H160::from_slice(&hashed[12..])
 }

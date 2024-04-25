@@ -259,3 +259,9 @@ pub struct BlockchainInfo {
 pub struct ShardingStructure {
     pub num_peers: Vec<u16>,
 }
+
+#[derive(Clone, Serialize)]
+pub struct SmartContract {
+    #[serde(serialize_with = "hex_no_prefix")]
+    pub address: H160,
+}
