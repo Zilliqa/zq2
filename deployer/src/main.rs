@@ -78,6 +78,13 @@ enum Command {
         block_number: u64,
         txn_hash: H256,
     },
+    FindFullStates {
+        zq1_persistence_directory: PathBuf,
+        #[clap(long)]
+        from: Option<u64>,
+        #[clap(long)]
+        to: Option<u64>,
+    },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -369,6 +376,23 @@ async fn main() -> Result<()> {
             let tx = zq1::Transaction::from_proto(block_number, tx)?;
 
             println!("{tx:?}");
+        }
+        Command::FindFullStates {
+            zq1_persistence_directory,
+            from,
+            to,
+        } => {
+            let db = zq1::Db::new(zq1_persistence_directory)?;
+
+            let from = from.unwrap_or(0);
+            let to = to.unwrap_or_else(|| db.get_tx_blocks_aux("MaxTxBlockNumber").unwrap().unwrap());
+        
+            for block_number in from..=to {
+                let block = db.get_tx_block(block_number)?.unwrap();
+                let block = zq1::TxBlock::from_proto(block)?;
+                let trie = db.accounts_at(block.state_root_hash);
+                println!("{}", trie.iter().count());
+            }
         }
     }
 
