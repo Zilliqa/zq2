@@ -15,6 +15,15 @@ struct Cli {
 enum Commands {
     /// Run a copy of zilliqa 2
     Run(RunStruct),
+    /// Test
+    Perf(PerfStruct),
+}
+
+#[derive(Args, Debug)]
+struct PerfStruct {
+    config_dir: String,
+
+    perf_file: String,
 }
 
 // See https://jwodder.github.io/kbits/posts/clap-bool-negate/
@@ -131,6 +140,10 @@ async fn main() -> Result<()> {
                 keep_old_network,
             )
             .await?;
+            Ok(())
+        }
+        Commands::Perf(ref arg) => {
+            plumbing::run_perf_file(&arg.config_dir, &arg.perf_file).await?;
             Ok(())
         }
     }

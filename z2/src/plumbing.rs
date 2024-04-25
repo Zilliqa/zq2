@@ -1,11 +1,11 @@
 use std::{collections::HashSet, env};
 
+use crate::{collector, otel, otterscan, perf, spout};
 use anyhow::{anyhow, Result};
 use tokio::fs;
 
 /// Code for all the z2 commands, so you can invoke it from your own programs.
 use crate::setup;
-use crate::{collector, otel, otterscan, spout};
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub enum Components {
@@ -116,5 +116,13 @@ pub async fn run_local_net(
         }
     }
     collector.complete().await?;
+    Ok(())
+}
+
+pub async fn run_perf_file(_base_dir: &str, config_file: &str) -> Result<()> {
+    let perf = perf::Perf::from_file(config_file)?;
+    let mut rng = perf.make_rng()?;
+    println!("🦆 Running {config_file} .. ");
+    perf.run(&mut rng).await?;
     Ok(())
 }

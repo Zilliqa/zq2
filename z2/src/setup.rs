@@ -112,6 +112,10 @@ impl Setup {
             self.get_spout_port()
         ));
         result.push_str(&format!(
+            "🦏  mitmproxy API at http://localhost:{0}/\n",
+            self.get_json_rpc_port(0, true)
+        ));
+        result.push_str(&format!(
             "🦏  mitmproxy port at http://localhost:{0}/\n",
             self.get_mitmproxy_port()
         ));
