@@ -14,11 +14,12 @@ use serde_json::{json, Value};
 
 use super::{
     to_hex::ToHex,
-    types::zil::{self, BlockchainInfo, ShardingStructure},
+    types::zil::{self, BlockchainInfo, ShardingStructure, SmartContract},
 };
 use crate::{
     api::types::zil::{CreateTransactionResponse, GetTxResponse},
     crypto::Hash,
+    exec::zil_contract_address,
     message::BlockNumber,
     node::Node,
     schnorr,
@@ -53,6 +54,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetTransactionsForTxBlock", get_transactions_for_tx_block),
             ("GetTxBlock", |p, n| get_tx_block(p, n, false)),
             ("GetTxBlockVerbose", |p, n| get_tx_block(p, n, true)),
+            ("GetSmartContracts", get_smart_contracts),
         ],
     )
 }
@@ -382,4 +384,35 @@ fn get_tx_block(
     }
 
     Ok(Some(block))
+}
+
+fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<SmartContract>> {
+    let address: H160 = params.one()?;
+
+    let nonce = node
+        .lock()
+        .unwrap()
+        .get_account(address, BlockNumber::Latest)?
+        .nonce;
+
+    let mut contracts = vec![];
+
+    for i in 0..nonce {
+        let contract_address = zil_contract_address(address, i);
+
+        let contract = node
+            .lock()
+            .unwrap()
+            .get_account(contract_address, BlockNumber::Latest)?
+            .contract;
+
+        // Note that we only expose created Scilla contracts in this API.
+        if matches!(contract, Contract::Scilla { .. }) {
+            contracts.push(SmartContract {
+                address: contract_address,
+            });
+        }
+    }
+
+    Ok(contracts)
 }
