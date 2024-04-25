@@ -98,7 +98,7 @@ fn get_block_transactions(
     let page_number: usize = params.next()?;
     let page_size: usize = params.next()?;
 
-    let mut node = node.lock().unwrap();
+    let node = node.lock().unwrap();
 
     let Some(block) = node.get_block_by_number(block_num)? else {
         return Ok(None);

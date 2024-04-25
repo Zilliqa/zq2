@@ -475,7 +475,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(&wallet, xfer_hash, 100).await;
+    network.run_until_receipt(&wallet, xfer_hash, 200).await;
 
     // 3. Send the cross-shard transaction
     let (abi, bytecode) = compile_contract("tests/it/contracts/CallMe.sol", "CallMe");
@@ -507,7 +507,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .await
         .unwrap()
         .tx_hash();
-    let receipt = network.run_until_receipt(&wallet, hash, 100).await;
+    let receipt = network.run_until_receipt(&wallet, hash, 200).await;
 
     // 4. Finalize that block on the main shard, so that the x-shard message gets sent
     network

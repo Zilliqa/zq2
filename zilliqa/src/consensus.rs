@@ -446,7 +446,7 @@ impl Consensus {
             let stakers = self.state.get_stakers()?;
             if stakers.iter().any(|v| *v == self.public_key()) {
                 info!("timeout in view 1, we will vote for genesis block rather than incrementing view, genesis hash: {}", genesis.hash());
-                let leader = self.leader(self.view.get_view());
+                let leader = self.leader_at_block(&genesis, self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
                 return Ok(Some((leader.peer_id, ExternalMessage::Vote(vote))));
             } else {
@@ -705,12 +705,11 @@ impl Consensus {
                 let next_leader = self.leader_at_block(&block, self.view.get_view());
                 self.create_next_block_on_timeout = false;
 
-                if next_leader.peer_id.is_none() {
+                let Some(next_leader) = next_leader.peer_id else {
                     warn!("Next leader is currently not reachable, has it joined committee yet?");
                     return Ok(None);
                 };
 
-                let next_leader = next_leader.peer_id.unwrap();
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
                     return Ok(Some((Some(next_leader), ExternalMessage::Vote(vote))));
@@ -737,6 +736,7 @@ impl Consensus {
 
         let rewards_per_block = rewards_per_hour / blocks_per_hour;
         let block = self.head_block();
+        // Genesis is the earliest therefore let's not overflow with subtraction
         let parent_block = self
             .get_block_by_number(block.number().saturating_sub(1))?
             .unwrap();
@@ -1118,7 +1118,8 @@ impl Consensus {
                 );
                 return None;
             }
-            let leader = self.leader(view);
+            let head_block = self.head_block();
+            let leader = self.leader_at_block(&head_block, view);
             Some(leader.public_key)
         }
     }
@@ -1913,23 +1914,18 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn leader_at_block(&mut self, block: &Block, view: u64) -> Validator {
-        let curr_root_hash = self.state.root_hash().unwrap();
+    pub fn leader_at_block(&self, block: &Block, view: u64) -> Validator {
         let block_root_hash = block.state_root_hash();
-
-        self.state.set_to_root(H256(block_root_hash.0));
-        let leader = self.leader(view);
-        self.state.set_to_root(H256(curr_root_hash.0));
-        leader
+        let state_at = self.state.at_root(H256(block_root_hash.0));
+        self.leader(&state_at, view)
     }
 
-    pub fn leader(&mut self, view: u64) -> Validator {
-        let committee = self.state.get_stakers().unwrap();
+    pub fn leader(&self, state: &State, view: u64) -> Validator {
+        let committee = state.get_stakers().unwrap();
 
         let mut rng = ChaCha8Rng::seed_from_u64(view);
         let dist = WeightedIndex::new(committee.iter().map(|pub_key| {
-            let stake = self
-                .state
+            let stake = state
                 .get_stake(*pub_key)
                 .unwrap()
                 .context("Committee member has no stake")
