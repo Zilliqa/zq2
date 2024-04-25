@@ -891,8 +891,7 @@ impl Consensus {
             info!("Skipping vote outside of committee");
             return Ok(None);
         };
-
-        //info!("VOTE PUB KEY: {}", hex::encode(vote.public_key.as_bytes()));
+        
         // verify the sender's signature on block_hash
         let Some((index, _)) = committee
             .iter()
