@@ -119,6 +119,7 @@ module "bootstrap_node" {
   subnetwork_name       = data.google_compute_subnetwork.default.name
   binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
   binary_md5            = google_storage_bucket_object.binary.md5hash
+  persistence_url       = var.persistence_url
   config                = <<-EOT
   p2p_port = 3333
   [[nodes]]
@@ -148,6 +149,7 @@ module "node" {
   subnetwork_name       = data.google_compute_subnetwork.default.name
   binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
   binary_md5            = google_storage_bucket_object.binary.md5hash
+  persistence_url       = var.persistence_url
 
   config          = <<-EOT
   p2p_port = 3333
@@ -174,7 +176,7 @@ resource "google_project_service" "osconfig" {
 resource "google_compute_instance_group" "api" {
   name      = "${var.network_name}-nodes"
   zone      = "${var.region}-a"
-  instances = [module.bootstrap_node.self_link]
+  instances = concat([module.bootstrap_node.self_link], module.node[*].self_link)
 
 
   named_port {
@@ -189,7 +191,7 @@ resource "google_compute_backend_service" "api" {
   port_name             = "jsonrpc"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   enable_cdn            = false
-
+  session_affinity      = "CLIENT_IP"
   backend {
     group           = google_compute_instance_group.api.self_link
     balancing_mode  = "UTILIZATION"

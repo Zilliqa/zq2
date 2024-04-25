@@ -1,7 +1,7 @@
 use primitive_types::{H160, H256};
 use serde::Serialize;
 
-use super::{eth, hex};
+use super::{eth, hex, option_hex};
 use crate::{message, time::SystemTime};
 
 #[derive(Clone, Serialize)]
@@ -142,4 +142,66 @@ pub struct TransactionReceiptWithTimestamp {
     pub receipt: eth::TransactionReceipt,
     #[serde(serialize_with = "hex")]
     pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TraceEntry {
+    #[serde(rename = "type")]
+    pub ty: TraceEntryType,
+    pub depth: u64,
+    #[serde(serialize_with = "hex")]
+    pub from: H160,
+    #[serde(serialize_with = "hex")]
+    pub to: H160,
+    #[serde(serialize_with = "option_hex")]
+    pub value: Option<u128>,
+    #[serde(serialize_with = "hex")]
+    pub input: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum TraceEntryType {
+    Call,
+    StaticCall,
+    DelegateCall,
+    CallCode,
+    Create,
+    Create2,
+    SelfDestruct,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Operation {
+    #[serde(rename = "type")]
+    pub ty: OperationType,
+    #[serde(serialize_with = "hex")]
+    pub from: H160,
+    #[serde(serialize_with = "hex")]
+    pub to: H160,
+    #[serde(serialize_with = "hex")]
+    pub value: u128,
+}
+
+#[derive(Debug, Clone)]
+pub enum OperationType {
+    Transfer,
+    SelfDestruct,
+    Create,
+    Create2,
+}
+
+impl Serialize for OperationType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let ty: u8 = match self {
+            OperationType::Transfer => 0,
+            OperationType::SelfDestruct => 1,
+            OperationType::Create => 2,
+            OperationType::Create2 => 3,
+        };
+        ty.serialize(serializer)
+    }
 }

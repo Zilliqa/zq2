@@ -77,3 +77,11 @@ variable "secret_keys" {
   type        = list(string)
   nullable    = false
 }
+
+
+variable "persistence_url" {
+  description = "(Optional) ZQ2 Recovery persistence URL"
+  type        = string
+  nullable    = true
+  default     = ""
+}

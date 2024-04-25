@@ -1,10 +1,112 @@
-use eyre::Result;
+use std::{collections::HashSet, env};
+
+use anyhow::{anyhow, Result};
+use tokio::fs;
 
 /// Code for all the z2 commands, so you can invoke it from your own programs.
 use crate::setup;
+use crate::{collector, otel, otterscan, spout};
 
-pub async fn run_local_net() -> Result<()> {
-    let mut setup_obj = setup::Setup::new(4)?;
-    setup_obj.run().await?;
+#[derive(PartialEq, Eq, Hash, Clone)]
+pub enum Components {
+    ZQ2,
+    Otterscan,
+    Otel,
+    Spout,
+    Mitmweb,
+}
+
+impl Components {
+    pub fn all() -> HashSet<Components> {
+        HashSet::from([
+            Components::ZQ2,
+            Components::Otterscan,
+            Components::Otel,
+            Components::Spout,
+            Components::Mitmweb,
+        ])
+    }
+}
+
+pub async fn run_local_net(
+    base_dir: &str,
+    base_port: u16,
+    config_dir: &str,
+    log_level: &str,
+    debug_modules: &Vec<String>,
+    trace_modules: &Vec<String>,
+    components: &HashSet<Components>,
+) -> Result<()> {
+    // Now build the log string. If there already was one, use that ..
+    let log_var = env::var("RUST_LOG");
+    let log_spec = match log_var {
+        Ok(val) => {
+            println!("Using RUST_LOG from environment");
+            val
+        }
+        _ => {
+            let mut val = log_level.to_string();
+            for i in debug_modules {
+                val.push_str(&format!(",{i}=debug"));
+            }
+            for i in trace_modules {
+                val.push_str(&format!(",{i}=trace"));
+            }
+            val.push_str(",opentelemetry=trace,opentelemetry_otlp=trace");
+            val
+        }
+    };
+    println!("RUST_LOG = {log_spec}");
+    println!("Create config directory .. ");
+    let _ = fs::create_dir(&config_dir).await;
+    if components.contains(&Components::Otel) {
+        println!("Setting up otel .. ");
+        let otel = otel::Otel::new(config_dir)?;
+        println!("Write otel configuration .. ");
+        otel.write_files().await?;
+        println!("Start otel .. ");
+        otel.ensure_otel().await?;
+    }
+    println!("Generate zq2 configuration .. ");
+    let mut setup_obj = setup::Setup::new(4, config_dir, &log_spec, base_dir, base_port)?;
+    println!("{0}", setup_obj.get_port_map());
+    println!("Set up collector");
+    let mut collector = collector::Collector::new(&log_spec, base_dir).await?;
+    if components.contains(&Components::ZQ2) {
+        println!("Start zq2 .. ");
+        setup_obj.run_zq2(&mut collector).await?;
+    }
+
+    if components.contains(&Components::Mitmweb) {
+        println!("Start mitmweb");
+        setup_obj.run_mitmweb(&mut collector).await?;
+    }
+
+    if components.contains(&Components::Otterscan) {
+        println!("Start otterscan .. ");
+        if otterscan::exists(base_dir).await? {
+            setup_obj.run_otterscan(&mut collector).await?;
+        } else {
+            return Err(anyhow!(
+                "Otterscan was not detected as sibling checkout; cannot run otterscan"
+            ));
+        }
+    }
+
+    // Wait until the chain is up and running
+    setup_obj.wait_for_chain().await?;
+
+    if components.contains(&Components::Spout) {
+        println!("Start spout at localhost:5200 .. ");
+        if spout::exists(base_dir).await? {
+            setup_obj.run_spout(&mut collector).await?;
+        } else {
+            return Err(anyhow!(
+                "{} was not detected",
+                spout::get_spout_directory(base_dir)
+            ));
+        }
+    }
+    collector.complete().await?;
     Ok(())
 }

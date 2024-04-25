@@ -1,10 +1,10 @@
 mod erigon;
 pub mod eth;
 mod net;
-mod ots;
+pub mod ots;
 pub mod subscription_id_provider;
 mod to_hex;
-mod types;
+pub mod types;
 mod web3;
 pub mod zil;
 
@@ -61,6 +61,7 @@ macro_rules! declare_module {
 
                     let start = std::time::SystemTime::now();
 
+                    #[allow(clippy::redundant_closure_call)]
                     let result = std::panic::catch_unwind(|| $method(params, context)).unwrap_or_else(|_| {
                         Err(anyhow::anyhow!("Unhandled panic in RPC handler {}", $name))
                     });

@@ -15,7 +15,7 @@ use time::{macros::format_description, OffsetDateTime};
 use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     time::SystemTime,
-    transaction::{SignedTransaction, VerifiedTransaction},
+    transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
 };
 
 pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
@@ -198,7 +198,7 @@ pub struct BlockBatchResponse {
     pub proposals: Vec<Proposal>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntershardCall {
     pub source_address: H160,
     pub target_address: Option<H160>,
@@ -206,7 +206,7 @@ pub struct IntershardCall {
     pub bridge_nonce: u64,
     pub calldata: Vec<u8>,
     pub gas_price: u128,
-    pub gas_limit: u64,
+    pub gas_limit: EvmGas,
 }
 
 /// A message intended to be sent over the network as part of p2p communication.
@@ -223,6 +223,15 @@ pub enum ExternalMessage {
     RequestResponse,
     JoinCommittee(NodePublicKey),
     CommitteeJoined(NodePublicKey),
+}
+
+impl ExternalMessage {
+    pub fn into_proposal(self) -> Option<Proposal> {
+        match self {
+            ExternalMessage::Proposal(p) => Some(p),
+            _ => None,
+        }
+    }
 }
 
 /// A message intended only for local communication between shard nodes and/or the parent p2p node,

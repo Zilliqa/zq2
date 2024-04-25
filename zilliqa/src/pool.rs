@@ -35,15 +35,9 @@ impl MempoolIndex for VerifiedTransaction {
             SignedTransaction::Intershard { tx, .. } => {
                 TxIndex::Intershard(tx.source_chain, tx.bridge_nonce)
             }
-            nonced_tx => {
-                let nonce = match nonced_tx {
-                    SignedTransaction::Legacy { tx, .. } => tx.nonce,
-                    SignedTransaction::Eip2930 { tx, .. } => tx.nonce,
-                    SignedTransaction::Eip1559 { tx, .. } => tx.nonce,
-                    SignedTransaction::Zilliqa { tx, .. } => tx.nonce,
-                    SignedTransaction::Intershard { .. } => {
-                        unreachable!("Will have been matched in outer match statement.")
-                    }
+            tx => {
+                let Some(nonce) = tx.nonce() else {
+                    unreachable!("intershard matched by outer expression")
                 };
                 TxIndex::Nonced(self.signer, nonce)
             }
@@ -198,7 +192,6 @@ impl TransactionPool {
         std::mem::take(&mut self.transactions).into_values()
     }
 
-    #[cfg(test)]
     pub fn size(&self) -> usize {
         self.transactions.len()
     }
@@ -213,7 +206,7 @@ mod tests {
         crypto::Hash,
         state::Address,
         transaction::{
-            EthSignature, SignedTransaction, TxIntershard, TxLegacy, VerifiedTransaction,
+            EthSignature, EvmGas, SignedTransaction, TxIntershard, TxLegacy, VerifiedTransaction,
         },
     };
 
@@ -224,7 +217,7 @@ mod tests {
                     chain_id: Some(0),
                     nonce: nonce as u64,
                     gas_price,
-                    gas_limit: 0,
+                    gas_limit: EvmGas(0),
                     to_addr: None,
                     amount: 0,
                     payload: vec![],
@@ -252,7 +245,7 @@ mod tests {
                     bridge_nonce: shard_nonce as u64,
                     source_chain: from_shard as u64,
                     gas_price,
-                    gas_limit: 0,
+                    gas_limit: EvmGas(0),
                     to_addr: None,
                     payload: vec![],
                 },

@@ -1,60 +1,278 @@
-use eyre::Result;
+use std::fmt;
+
+use anyhow::{Context as _, Result};
+use colored::{self, Colorize as _};
 use futures::future::JoinAll;
-use tempfile::NamedTempFile;
-use tokio::sync::mpsc;
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    process::Command,
+    sync::mpsc,
+    task::JoinHandle,
+};
 use zilliqa::crypto::SecretKey;
 
-use crate::runner;
+use crate::{mitmweb, otterscan, spout, zq2};
+
+type Tx = mpsc::Sender<Message>;
+
+// Not too many or we will end up with buffer bloat.
+const MSG_CHANNEL_BUFFER: usize = 64;
+
+#[derive(Clone, PartialEq)]
+pub enum Program {
+    Zq2,
+    Otterscan,
+    Spout,
+    Mitmweb,
+}
+
+impl fmt::Display for Program {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Program::Zq2 => write!(f, "zq2"),
+            Program::Otterscan => write!(f, "otterscan"),
+            Program::Spout => write!(f, "spout"),
+            Program::Mitmweb => write!(f, "mitmweb"),
+        }
+    }
+}
+
+#[derive(PartialEq, Clone)]
+pub struct Legend {
+    pub program: Program,
+    pub index: usize,
+}
+
+impl fmt::Display for Legend {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{0}{1}", self.program, self.index)
+    }
+}
+
+impl Legend {
+    pub fn new(program: Program, index: usize) -> Result<Self> {
+        Ok(Self { program, index })
+    }
+
+    pub fn get_color(&self) -> colored::Color {
+        match self.index % 5 {
+            0 => colored::Color::Green,
+            1 => colored::Color::Yellow,
+            2 => colored::Color::Blue,
+            3 => colored::Color::Magenta,
+            4 => colored::Color::Cyan,
+            // Will never happen, but rust doesn't know this.
+            _ => colored::Color::White,
+        }
+    }
+}
+
+pub trait Runner {
+    fn take_join_handles(&mut self) -> Result<Option<JoinAll<tokio::task::JoinHandle<()>>>>;
+}
+
+pub struct ExitValue {
+    pub legend: Legend,
+    pub status: std::process::ExitStatus,
+}
+
+pub struct OutputData {
+    pub legend: Legend,
+    pub line: String,
+}
+
+pub enum Message {
+    Exited(ExitValue),
+    OutputData(OutputData),
+    ErrorData(OutputData),
+}
 
 pub struct Collector {
-    pub runners: Vec<runner::Process>,
+    pub runners: Vec<Box<dyn Runner>>,
     pub reader: Option<tokio::task::JoinHandle<()>>,
     pub nr_nodes: usize,
+    pub tx: Tx,
+    pub log_spec: String,
+    pub base_dir: String,
 }
 
 impl Collector {
-    pub async fn new(keys: &[SecretKey], config_files: &[NamedTempFile]) -> Result<Collector> {
-        let mut runners = Vec::new();
-        let (tx, mut rx) = mpsc::channel(32);
-        let nr = keys.len();
-        // Fire everything up.
-        for (i, (key, config_file)) in keys.iter().zip(config_files).enumerate() {
-            runners.push(runner::Process::spawn(i, &key.to_hex(), config_file.path(), &tx).await?);
-        }
-        let reader = tokio::spawn(async move {
+    pub fn color_log(legend: &Legend, kind: &str, rest: &str) -> String {
+        let colored = format!("{kind}#{legend}: ").color(legend.get_color());
+        format!("{colored} {rest}")
+    }
+
+    pub async fn new(log_spec: &str, base_dir: &str) -> Result<Self> {
+        let (tx, mut rx) = mpsc::channel(MSG_CHANNEL_BUFFER);
+        let reader = Some(tokio::spawn(async move {
+            // Now, output here is already colored, so just color the legends.
             while let Some(msg) = rx.recv().await {
                 match msg {
-                    runner::Message::Exited(st) => {
-                        let index = st.index;
-                        println!("Exited#{index}");
+                    Message::Exited(st) => {
+                        println!(
+                            "{}",
+                            Self::color_log(
+                                &st.legend,
+                                "Exited",
+                                &format!("return code {:?}", st.status.code())
+                            )
+                        );
                     }
-                    runner::Message::OutputData(od) => {
-                        let data = od.line;
-                        let index = od.index;
-                        println!("Rx#{index}: {data}");
+                    Message::OutputData(od) => {
+                        println!("{}", Self::color_log(&od.legend, "Rx", &od.line));
+                    }
+                    Message::ErrorData(od) => {
+                        println!("{}", Self::color_log(&od.legend, "Rx!", &od.line));
                     }
                 }
             }
             println!("Printing done!");
-        });
+        }));
         Ok(Collector {
-            runners,
-            reader: Some(reader),
-            nr_nodes: nr,
+            runners: Vec::new(),
+            reader,
+            nr_nodes: 0,
+            tx,
+            log_spec: log_spec.to_string(),
+            base_dir: base_dir.to_string(),
         })
+    }
+
+    pub async fn start_zq2_node(
+        &mut self,
+        base_dir: &str,
+        idx: usize,
+        key: &SecretKey,
+        config_file: &str,
+    ) -> Result<()> {
+        self.runners.push(Box::new(
+            zq2::Runner::spawn(
+                base_dir,
+                idx,
+                &key.to_hex(),
+                config_file,
+                &Some(self.log_spec.clone()),
+                &self.tx,
+            )
+            .await?,
+        ));
+        Ok(())
+    }
+
+    pub async fn start_otterscan(
+        &mut self,
+        base_dir: &str,
+        chain_url: &str,
+        port: u16,
+    ) -> Result<()> {
+        self.runners.push(Box::new(
+            otterscan::Runner::spawn_otter(base_dir, chain_url, port, &self.tx).await?,
+        ));
+        Ok(())
+    }
+
+    pub async fn start_spout(
+        &mut self,
+        base_dir: &str,
+        chain_url: &str,
+        explorer_url: &str,
+        priv_key: &str,
+        port: u16,
+    ) -> Result<()> {
+        self.runners.push(Box::new(
+            spout::Runner::spawn_spout(base_dir, chain_url, explorer_url, priv_key, port, &self.tx)
+                .await?,
+        ));
+        Ok(())
+    }
+
+    pub async fn start_mitmweb(
+        &mut self,
+        base_dir: &str,
+        index: usize,
+        from_port: u16,
+        to_port: u16,
+        mgmt_port: u16,
+    ) -> Result<()> {
+        self.runners.push(Box::new(
+            mitmweb::Runner::spawn_mitmproxy(
+                base_dir, index, from_port, to_port, mgmt_port, &self.tx,
+            )
+            .await?,
+        ));
+        Ok(())
     }
 
     pub async fn complete(&mut self) -> Result<()> {
         futures::future::join_all(
             self.runners
                 .iter_mut()
-                .filter_map(|x| x.join_handle.take())
+                .filter_map(|x| x.take_join_handles().unwrap())
                 .collect::<Vec<JoinAll<tokio::task::JoinHandle<()>>>>(),
         )
         .await;
-        if let Some(val) = self.reader.take() {
-            val.await?;
-        }
+        self.reader.as_mut().unwrap().await?;
         Ok(())
     }
+}
+
+pub async fn spawn(
+    cmd: &mut Command,
+    desc: &str,
+    legend: &Legend,
+    channel: Tx,
+) -> Result<JoinAll<JoinHandle<()>>> {
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().context(format!("Failed to spawn {desc}"))?;
+    let stdout = child.stdout.take().context("no handle to stdout")?;
+    let stderr = child.stderr.take().context("no handle to stderr")?;
+    let mut stdout_reader = BufReader::new(stdout).lines();
+    let mut stderr_reader = BufReader::new(stderr).lines();
+    let tx_1 = channel.clone();
+    let legend_1 = legend.clone();
+    let join_handle_1 = tokio::spawn(async move {
+        let status = child.wait().await.expect("Child returned with an error");
+        let _ = tx_1
+            .send(Message::Exited(ExitValue {
+                legend: legend_1,
+                status,
+            }))
+            .await;
+        println!("Child status {status}");
+    });
+    let tx_2 = channel.clone();
+    let legend_2 = legend.clone();
+    let join_handle_2 = tokio::spawn(async move {
+        while let Some(line) = stdout_reader
+            .next_line()
+            .await
+            .expect("Failed to read from stdout")
+        {
+            let _ = tx_2
+                .send(Message::OutputData(OutputData {
+                    legend: legend_2.clone(),
+                    line: line.to_string(),
+                }))
+                .await;
+        }
+    });
+    let tx_3 = channel.clone();
+    let legend_3 = legend.clone();
+    let join_handle_3 = tokio::spawn(async move {
+        while let Some(line) = stderr_reader
+            .next_line()
+            .await
+            .expect("Failed to read from stdout")
+        {
+            let _ = tx_3
+                .send(Message::ErrorData(OutputData {
+                    legend: legend_3.clone(),
+                    line: line.to_string(),
+                }))
+                .await;
+        }
+    });
+    let joiner = futures::future::join_all(vec![join_handle_1, join_handle_2, join_handle_3]);
+    Ok(joiner)
 }

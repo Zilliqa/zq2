@@ -1,4 +1,7 @@
-use std::{hash::Hash, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex, MutexGuard, OnceLock},
+};
 
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
@@ -13,7 +16,9 @@ use crate::{
     contracts, crypto,
     db::TrieStorage,
     exec::{BLOCK_GAS_LIMIT, GAS_PRICE},
+    inspector,
     message::BlockHeader,
+    scilla::Scilla,
 };
 
 #[derive(Debug)]
@@ -27,38 +32,54 @@ use crate::{
 pub struct State {
     db: Arc<TrieStorage>,
     accounts: PatriciaTrie<TrieStorage>,
+    /// The Scilla interpreter interface. Note that it is lazily initialized - This is a bit of a hack to ensure that
+    /// tests which don't invoke Scilla, don't spawn the Scilla communication threads or TCP listeners.
+    scilla: Arc<OnceLock<Mutex<Scilla>>>,
+    scilla_address: String,
+    local_address: String,
 }
 
 impl State {
-    pub fn new(trie: TrieStorage) -> State {
+    pub fn new(trie: TrieStorage, config: &ConsensusConfig) -> State {
         let db = Arc::new(trie);
         Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
+            scilla: Arc::new(OnceLock::new()),
+            scilla_address: config.scilla_address.clone(),
+            local_address: config.local_address.clone(),
         }
     }
 
-    pub fn new_at_root(trie: TrieStorage, root_hash: H256) -> Self {
-        Self::new(trie).at_root(root_hash)
+    pub fn scilla(&self) -> MutexGuard<'_, Scilla> {
+        self.scilla
+            .get_or_init(|| {
+                Mutex::new(Scilla::new(
+                    self.scilla_address.clone(),
+                    self.local_address.clone(),
+                ))
+            })
+            .lock()
+            .unwrap()
+    }
+
+    pub fn new_at_root(trie: TrieStorage, root_hash: H256, config: ConsensusConfig) -> Self {
+        Self::new(trie, &config).at_root(root_hash)
     }
 
     pub fn new_with_genesis(trie: TrieStorage, config: ConsensusConfig) -> Result<State> {
-        let db = Arc::new(trie);
-        let mut state = Self {
-            db: db.clone(),
-            accounts: PatriciaTrie::new(db),
-        };
+        let mut state = State::new(trie, &config);
 
         if config.is_main {
             let shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
                 contracts::shard_registry::BYTECODE.to_vec(),
                 &[Token::Uint(config.consensus_timeout.as_millis().into())],
             )?;
-            state.force_deploy_contract(shard_data, Some(contract_addr::SHARD_REGISTRY))?;
+            state.force_deploy_contract_evm(shard_data, Some(contract_addr::SHARD_REGISTRY))?;
         };
 
         let intershard_bridge_data = contracts::intershard_bridge::BYTECODE.to_vec();
-        state.force_deploy_contract(
+        state.force_deploy_contract_evm(
             intershard_bridge_data,
             Some(contract_addr::INTERSHARD_BRIDGE),
         )?;
@@ -74,7 +95,7 @@ impl State {
 
         let deposit_data = Constructor { inputs: vec![] }
             .encode_input(contracts::deposit::BYTECODE.to_vec(), &[])?;
-        state.force_deploy_contract(deposit_data, Some(contract_addr::DEPOSIT))?;
+        state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
 
         for (pub_key, stake, reward_address) in config.genesis_deposits {
             let data = contracts::deposit::SET_STAKE.encode_input(&[
@@ -85,7 +106,7 @@ impl State {
             let ResultAndState {
                 result,
                 state: result_state,
-            } = state.apply_transaction_inner(
+            } = state.apply_transaction_evm(
                 Address::zero(),
                 Some(contract_addr::DEPOSIT),
                 GAS_PRICE,
@@ -95,21 +116,24 @@ impl State {
                 None,
                 0,
                 BlockHeader::default(),
+                inspector::noop(),
             )?;
             if !result.is_success() {
                 return Err(anyhow!("setting stake failed: {result:?}"));
             }
-            state.apply_delta(result_state)?;
+            state.apply_delta_evm(result_state)?;
         }
 
         Ok(state)
     }
 
     pub fn at_root(&self, root_hash: H256) -> Self {
-        let db = self.db.clone();
         Self {
-            db,
+            db: self.db.clone(),
             accounts: self.accounts.at_root(root_hash),
+            scilla: self.scilla.clone(),
+            scilla_address: self.scilla_address.clone(),
+            local_address: self.local_address.clone(),
         }
     }
 
@@ -161,20 +185,24 @@ impl State {
         })
     }
 
-    pub fn mutate_account<F: FnOnce(&mut Account)>(
+    pub fn mutate_account<F: FnOnce(&mut Account) -> R, R>(
         &mut self,
         address: Address,
         mutation: F,
-    ) -> Result<()> {
+    ) -> Result<R> {
         let mut account = self.get_account(address)?;
-        mutation(&mut account);
+        let result = mutation(&mut account);
         self.save_account(address, account)?;
-        Ok(())
+        Ok(result)
     }
 
     /// If using this to modify the account, ensure save_account gets called
     pub fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
-        Ok(match self.get_account(address)?.storage_root {
+        let account = self.get_account(address)?;
+        let Contract::Evm { storage_root, .. } = account.contract else {
+            return Err(anyhow!("not an EVM contract"));
+        };
+        Ok(match storage_root {
             Some(root) => PatriciaTrie::new(self.db.clone()).at_root(root),
             None => PatriciaTrie::new(self.db.clone()),
         })
@@ -198,59 +226,15 @@ impl State {
         }
     }
 
-    /// Panics if account or storage cannot be read.
-    pub fn must_get_account_storage(&self, address: Address, index: H256) -> H256 {
-        self.get_account_storage(address, index).expect(
-            "Failed to read storage index {index} for account {address:?} from state storage",
-        )
-    }
-
-    pub fn set_account_storage(
-        &mut self,
-        address: Address,
-        index: H256,
-        value: H256,
-    ) -> Result<()> {
-        let mut trie = self.get_account_trie(address)?;
-        trie.insert(&Self::account_storage_key(address, index), value.as_bytes())?;
-        let root = trie.root_hash()?;
-        self.mutate_account(address, |a| a.storage_root = Some(root))?;
-
-        Ok(())
-    }
-
-    pub fn remove_account_storage(&mut self, address: Address, index: H256) -> Result<bool> {
-        let mut trie = self.get_account_trie(address)?;
-        let ret = trie.remove(&Self::account_storage_key(address, index))?;
-        let root = trie.root_hash()?;
-        self.mutate_account(address, |a| a.storage_root = Some(root))?;
-
-        Ok(ret)
-    }
-
-    pub fn clear_account_storage(&mut self, address: Address) -> Result<()> {
-        self.mutate_account(address, |a| a.storage_root = None)?;
-        Ok(())
-    }
-
     /// Returns an error if there are any issues accessing the storage trie
-    pub fn try_has_account(&self, address: Address) -> Result<bool> {
+    pub fn has_account(&self, address: Address) -> Result<bool> {
         Ok(self.accounts.contains(&Self::account_key(address))?)
-    }
-
-    /// Returns false if the account cannot be accessed in the storage trie
-    pub fn has_account(&self, address: Address) -> bool {
-        self.try_has_account(address).unwrap_or(false)
     }
 
     pub fn save_account(&mut self, address: Address, account: Account) -> Result<()> {
         Ok(self
             .accounts
             .insert(&Self::account_key(address), &bincode::serialize(&account)?)?)
-    }
-
-    pub fn delete_account(&mut self, address: Address) -> Result<bool> {
-        Ok(self.accounts.remove(&Self::account_key(address))?)
     }
 }
 
@@ -268,11 +252,106 @@ pub mod contract_addr {
     pub const DEPOSIT: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0ZILDEPOSIT");
 }
 
-#[derive(Debug, Clone, Default, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub nonce: u64,
     pub balance: u128,
-    #[serde(with = "serde_bytes")]
-    pub code: Vec<u8>,
-    pub storage_root: Option<H256>,
+    pub contract: Contract,
+}
+
+impl Default for Account {
+    fn default() -> Self {
+        Self {
+            nonce: 0,
+            balance: 0,
+            contract: Contract::Evm {
+                code: vec![],
+                storage_root: None,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Contract {
+    Evm {
+        #[serde(with = "serde_bytes")]
+        code: Vec<u8>,
+        storage_root: Option<H256>,
+    },
+    Scilla {
+        code: String,
+        init_data: String,
+        storage: BTreeMap<String, (ScillaValue, String)>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ScillaValue {
+    Bytes(Vec<u8>),
+    Map(BTreeMap<String, ScillaValue>),
+}
+
+impl ScillaValue {
+    pub fn map() -> Self {
+        ScillaValue::Map(BTreeMap::new())
+    }
+
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        match self {
+            ScillaValue::Bytes(b) => Some(b),
+            ScillaValue::Map(_) => None,
+        }
+    }
+
+    pub fn as_map(&self) -> Option<&BTreeMap<String, ScillaValue>> {
+        match self {
+            ScillaValue::Map(m) => Some(m),
+            ScillaValue::Bytes(_) => None,
+        }
+    }
+
+    pub fn as_map_mut(&mut self) -> Option<&mut BTreeMap<String, ScillaValue>> {
+        match self {
+            ScillaValue::Map(m) => Some(m),
+            ScillaValue::Bytes(_) => None,
+        }
+    }
+}
+
+impl Contract {
+    pub fn evm_code_ref(&self) -> Option<&[u8]> {
+        match self {
+            Contract::Evm { code, .. } => Some(code.as_slice()),
+            Contract::Scilla { .. } => None,
+        }
+    }
+
+    pub fn evm_code(self) -> Option<Vec<u8>> {
+        match self {
+            Contract::Evm { code, .. } => Some(code),
+            Contract::Scilla { .. } => None,
+        }
+    }
+
+    pub fn scilla_code(self) -> Option<String> {
+        match self {
+            Contract::Scilla { code, .. } => Some(code),
+            Contract::Evm { .. } => None,
+        }
+    }
+
+    pub fn scilla_storage(&self) -> Option<&BTreeMap<String, (ScillaValue, String)>> {
+        match self {
+            Contract::Scilla { storage, .. } => Some(storage),
+            Contract::Evm { .. } => None,
+        }
+    }
+
+    pub fn scilla_storage_mut(&mut self) -> Option<&mut BTreeMap<String, (ScillaValue, String)>> {
+        match self {
+            Contract::Scilla { storage, .. } => Some(storage),
+            Contract::Evm { .. } => None,
+        }
+    }
 }

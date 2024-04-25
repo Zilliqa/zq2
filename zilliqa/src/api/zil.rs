@@ -12,14 +12,21 @@ use primitive_types::{H160, H256};
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 
-use super::types::zil;
+use super::{
+    to_hex::ToHex,
+    types::zil::{self, BlockchainInfo, ShardingStructure},
+};
 use crate::{
     api::types::zil::{CreateTransactionResponse, GetTxResponse},
     crypto::Hash,
     message::BlockNumber,
     node::Node,
     schnorr,
-    transaction::{SignedTransaction, TxZilliqa, VerifiedTransaction},
+    state::{Contract, ScillaValue},
+    transaction::{
+        ScillaGas, SignedTransaction, TxZilliqa, VerifiedTransaction, ZilAmount,
+        EVM_GAS_PER_SCILLA_GAS,
+    },
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -27,7 +34,15 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
         node,
         [
             ("CreateTransaction", create_transaction),
+            (
+                "GetContractAddressFromTransactionID",
+                get_contract_address_from_transaction_id
+            ),
+            ("GetBlockchainInfo", get_blockchain_info),
+            ("GetNumTxBlocks", get_num_tx_blocks),
             ("GetSmartContractState", get_smart_contract_state),
+            ("GetSmartContractCode", get_smart_contract_code),
+            ("GetSmartContractInit", get_smart_contract_init),
             ("GetTransaction", get_transaction),
             ("GetBalance", get_balance),
             ("GetCurrentMiniEpoch", get_current_mini_epoch),
@@ -35,6 +50,9 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetMinimumGasPrice", get_minimum_gas_price),
             ("GetNetworkId", get_network_id),
             ("GetVersion", get_version),
+            ("GetTransactionsForTxBlock", get_transactions_for_tx_block),
+            ("GetTxBlock", |p, n| get_tx_block(p, n, false)),
+            ("GetTxBlockVerbose", |p, n| get_tx_block(p, n, true)),
         ],
     )
 }
@@ -46,12 +64,12 @@ struct TransactionParams {
     nonce: u64,
     to_addr: H160,
     #[serde(deserialize_with = "from_str")]
-    amount: u128,
+    amount: ZilAmount,
     pub_key: String,
     #[serde(deserialize_with = "from_str")]
-    gas_price: u128,
+    gas_price: ZilAmount,
     #[serde(deserialize_with = "from_str")]
-    gas_limit: u64,
+    gas_limit: ScillaGas,
     #[serde(default)]
     code: Option<String>,
     #[serde(default)]
@@ -95,6 +113,8 @@ fn create_transaction(
     let key = schnorr::PublicKey::from_sec1_bytes(&key)?;
     let sig = schnorr::Signature::from_str(&transaction.signature)?;
 
+    // TODO: Perform some initial validation of the transaction
+
     let transaction = SignedTransaction::Zilliqa {
         tx: TxZilliqa {
             chain_id: chain_id as u16,
@@ -121,24 +141,43 @@ fn create_transaction(
     Ok(response)
 }
 
+fn get_contract_address_from_transaction_id(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<String> {
+    let hash: H256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+    let receipt = node
+        .lock()
+        .unwrap()
+        .get_transaction_receipt(hash)?
+        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+
+    let contract_address = receipt
+        .contract_address
+        .ok_or_else(|| anyhow!("ID is not a contract txn"))?;
+
+    Ok(contract_address.to_hex_no_prefix())
+}
+
 fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<GetTxResponse>> {
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
 
-    let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?;
-    let receipt = node.lock().unwrap().get_transaction_receipt(hash)?;
+    let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?
+        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+    let receipt = node
+        .lock()
+        .unwrap()
+        .get_transaction_receipt(hash)?
+        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+    let block = node
+        .lock()
+        .unwrap()
+        .get_block_by_hash(receipt.block_hash)?
+        .ok_or_else(|| anyhow!("block does not exist"))?;
 
-    // Note: the scilla api expects an err json rpc response if the transaction is not found
-    // Canonical example:
-    //     "error": {
-    //     "code": -20,
-    //     "data": null,
-    //     "message": "Txn Hash not Present"
-    // },
-    let receipt = receipt.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
-    let tx = tx.ok_or_else(|| anyhow!("Txn Hash not Present"))?;
-
-    Ok(GetTxResponse::new(tx, receipt))
+    Ok(GetTxResponse::new(tx, receipt, block.number()))
 }
 
 pub(super) fn get_scilla_transaction_inner(
@@ -155,7 +194,7 @@ pub(super) fn get_scilla_transaction_inner(
     }
 }
 
-fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let address: H160 = params.one()?;
 
     let node = node.lock().unwrap();
@@ -182,12 +221,12 @@ fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBloc
     Ok((&block).into())
 }
 
-fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<ZilAmount> {
     let price = node.lock().unwrap().get_gas_price();
-    // We need to scale the balance from units of (10^-18) ZIL to (10^-12) ZIL. The value is truncated in this process.
-    let price = price / 10u128.pow(6);
+    // `price` is the cost per unit of [EvmGas]. This API should return the cost per unit of [ScillaGas].
+    let price = price * (EVM_GAS_PER_SCILLA_GAS as u128);
 
-    Ok(price.to_string())
+    Ok(ZilAmount::from_amount(price))
 }
 
 fn network_id(eth_chain_id: u64) -> u64 {
@@ -210,16 +249,137 @@ fn get_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<Value> {
     }))
 }
 
-fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+fn get_blockchain_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<BlockchainInfo> {
+    let node = node.lock().unwrap();
+
+    let num_tx_blocks = node.get_chain_tip();
+    let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
+
+    Ok(BlockchainInfo {
+        num_peers: 0,
+        num_tx_blocks,
+        num_ds_blocks,
+        num_transactions: 0,
+        transaction_rate: 0.0,
+        tx_block_rate: 0.0,
+        ds_block_rate: 0.0,
+        current_mini_epoch: num_tx_blocks,
+        current_ds_epoch: num_ds_blocks,
+        num_txns_ds_epoch: 0,
+        num_txns_tx_epoch: 0,
+        sharding_structure: ShardingStructure { num_peers: vec![0] },
+    })
+}
+
+fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+
+    Ok(node.get_chain_tip().to_string())
+}
+
+fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let smart_contract_address: H160 = params.one()?;
     let node = node.lock().unwrap();
 
     // First get the account and check that its a scilla account
-    let _account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
-    let balance = node.get_native_balance(smart_contract_address, BlockNumber::Latest)?;
+    let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
 
-    let mut return_json = serde_json::Value::Object(Default::default());
-    return_json["_balance"] = serde_json::Value::String(balance.to_string());
+    let mut result = json!({
+        "_balance": ZilAmount::from_amount(account.balance).to_string(),
+    });
 
-    Ok(return_json)
+    fn convert(value: ScillaValue) -> Result<Value> {
+        let value = match value {
+            ScillaValue::Bytes(b) => serde_json::from_slice(&b)?,
+            ScillaValue::Map(m) => Value::Object(
+                m.into_iter()
+                    .map(|(k, v)| Ok((serde_json::from_str(&k)?, convert(v)?)))
+                    .collect::<Result<_>>()?,
+            ),
+        };
+        Ok(value)
+    }
+
+    if let Contract::Scilla { storage, .. } = account.contract {
+        for (k, (v, _)) in storage {
+            result[k] = convert(v)?;
+        }
+    }
+
+    Ok(result)
+}
+
+fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
+    let smart_contract_address: H160 = params.one()?;
+    let node = node.lock().unwrap();
+    let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
+
+    if let Contract::Scilla { code, .. } = account.contract {
+        Ok(json!({ "code": code }))
+    } else {
+        Err(anyhow!("Address not contract address"))
+    }
+}
+
+fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
+    let smart_contract_address: H160 = params.one()?;
+    let node = node.lock().unwrap();
+    let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
+
+    if let Contract::Scilla { init_data, .. } = account.contract {
+        Ok(serde_json::from_str(&init_data)?)
+    } else {
+        Err(anyhow!("Address not contract address"))
+    }
+}
+
+fn get_transactions_for_tx_block(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Vec<Vec<String>>> {
+    let block_number: String = params.one()?;
+    let block_number: u64 = block_number.parse()?;
+
+    let node = node.lock().unwrap();
+    let Some(block) = node.get_block_by_number(block_number)? else {
+        return Err(anyhow!("Tx Block does not exist"));
+    };
+    if block.transactions.is_empty() {
+        return Err(anyhow!("TxBlock has no transactions"));
+    }
+
+    Ok(vec![block
+        .transactions
+        .into_iter()
+        .map(|h| H256(h.0).to_hex_no_prefix())
+        .collect()])
+}
+
+pub const TRANSACTIONS_PER_PAGE: usize = 2500;
+pub const TX_BLOCKS_PER_DS_BLOCK: u64 = 100;
+
+fn get_tx_block(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+    verbose: bool,
+) -> Result<Option<zil::TxBlock>> {
+    let block_number: String = params.one()?;
+    let block_number: u64 = block_number.parse()?;
+
+    let node = node.lock().unwrap();
+    let Some(block) = node.get_block_by_number(block_number)? else {
+        return Ok(None);
+    };
+    let mut block: zil::TxBlock = (&block).into();
+
+    if verbose {
+        block.header.committee_hash = Some(H256::zero());
+        block.body.cosig_bitmap_1 = vec![true; 8];
+        block.body.cosig_bitmap_2 = vec![true; 8];
+        let mut scalar = [0; 32];
+        scalar[31] = 1;
+        block.body.cosig_1 = Some(schnorr::Signature::from_scalars(scalar, scalar).unwrap());
+    }
+
+    Ok(Some(block))
 }

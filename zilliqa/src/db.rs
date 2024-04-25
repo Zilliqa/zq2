@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
+use primitive_types::H160;
 use sled::Tree;
 
 use crate::{
@@ -21,6 +22,7 @@ pub struct Db {
     transaction_receipts: Tree,
     /// Lookup of block hashes for transaction hashes.
     block_hash_reverse_index: Tree,
+    touched_address: Tree,
 }
 
 macro_rules! get_and_insert_methods {
@@ -74,6 +76,8 @@ const CANONICAL_BLOCK_NUMBERS_TREE: &[u8] = b"canonical_block_numbers_tree";
 const CANONICAL_BLOCK_VIEWS_TREE: &[u8] = b"canonical_block_views_tree";
 /// Key: block hash; value: entire block (with hashes for transactions)
 const BLOCKS_TREE: &[u8] = b"blocks_tree";
+/// Key: address; value: list of transactions which touched this address, in order of execution.
+const TOUCHED_ADDRESS_TREE: &[u8] = b"touched_address_tree";
 
 // single keys stored in default tree in DB
 /// value: u64
@@ -102,6 +106,13 @@ impl Db {
         let transaction = db.open_tree(TXS_TREE)?;
         let transaction_receipt = db.open_tree(RECEIPTS_TREE)?;
         let block_hash_reverse_index = db.open_tree(TX_BLOCK_INDEX)?;
+        let touched_address = db.open_tree(TOUCHED_ADDRESS_TREE)?;
+
+        touched_address.set_merge_operator(|_, old, new| {
+            let mut old = old.map(|o| o.to_vec()).unwrap_or_default();
+            old.extend_from_slice(new);
+            Some(old)
+        });
 
         Ok(Db {
             root: db,
@@ -112,6 +123,7 @@ impl Db {
             transaction,
             transaction_receipts: transaction_receipt,
             block_hash_reverse_index,
+            touched_address,
         })
     }
 
@@ -186,6 +198,21 @@ impl Db {
             .get(HIGH_QC)?
             .map(|qc| Ok(bincode::deserialize(&qc)?))
             .transpose()
+    }
+
+    pub fn add_touched_address(&self, address: H160, txn_hash: Hash) -> Result<()> {
+        self.touched_address
+            .merge(address.as_bytes(), txn_hash.as_bytes())?;
+        Ok(())
+    }
+
+    pub fn get_touched_addresses(&self, address: H160) -> Result<Vec<Hash>> {
+        Ok(self
+            .touched_address
+            .get(address.as_bytes())?
+            .map(|b| b.chunks_exact(Hash::LEN).map(Hash::from_bytes).collect())
+            .transpose()?
+            .unwrap_or_default())
     }
 
     get_and_insert_methods!(block_header, Hash, BlockHeader);

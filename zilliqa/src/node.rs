@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use primitive_types::H256;
+use revm::Inspector;
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
@@ -11,14 +12,17 @@ use crate::{
     consensus::Consensus,
     crypto::{Hash, NodePublicKey, SecretKey},
     db::Db,
-    exec::GAS_PRICE,
+    exec::{TransactionApplyResult, GAS_PRICE},
+    inspector::{self, ScillaInspector},
     message::{
         Block, BlockBatchRequest, BlockBatchResponse, BlockHeader, BlockNumber, BlockRequest,
         BlockResponse, ExternalMessage, InternalMessage, IntershardCall, Proposal,
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
-    state::{Account, Address},
-    transaction::{SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction},
+    state::{Account, Address, State},
+    transaction::{
+        EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -69,6 +73,10 @@ impl MessageSender {
     }
 }
 
+/// Messages sent by [Consensus].
+/// Tuple of (destination, message).
+pub type NetworkMessage = (Option<PeerId>, ExternalMessage);
+
 /// The central data structure for a blockchain node.
 ///
 /// # Transaction Lifecycle
@@ -89,9 +97,11 @@ pub struct Node {
     pub db: Arc<Db>,
     peer_id: PeerId,
     message_sender: MessageSender,
-    reset_timeout: UnboundedSender<()>,
+    reset_timeout: UnboundedSender<Duration>,
     consensus: Consensus,
 }
+
+const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
 
 impl Node {
     pub fn new(
@@ -99,7 +109,7 @@ impl Node {
         secret_key: SecretKey,
         message_sender_channel: UnboundedSender<OutboundMessageTuple>,
         local_sender_channel: UnboundedSender<LocalMessageTuple>,
-        reset_timeout: UnboundedSender<()>,
+        reset_timeout: UnboundedSender<Duration>,
     ) -> Result<Node> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let message_sender = MessageSender {
@@ -113,9 +123,9 @@ impl Node {
             config: config.clone(),
             peer_id,
             message_sender: message_sender.clone(),
-            reset_timeout,
+            reset_timeout: reset_timeout.clone(),
             db: db.clone(),
-            consensus: Consensus::new(secret_key, config, message_sender, db)?,
+            consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
         };
         Ok(node)
     }
@@ -130,10 +140,13 @@ impl Node {
             ExternalMessage::Proposal(m) => {
                 let m_view = m.header.view;
 
-                if let Some((leader, vote)) = self.consensus.proposal(m, false)? {
-                    self.reset_timeout.send(())?;
-                    self.message_sender
-                        .send_external_message(leader, ExternalMessage::Vote(vote))?;
+                if let Some((to, message)) = self.consensus.proposal(m, false)? {
+                    self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
+                    if let Some(to) = to {
+                        self.message_sender.send_external_message(to, message)?;
+                    } else {
+                        self.message_sender.broadcast_external_message(message)?;
+                    }
                 } else {
                     info!("We had nothing to respond to proposal, lets try to join committee for view {m_view:}");
                     self.message_sender.broadcast_external_message(
@@ -187,7 +200,12 @@ impl Node {
             }
             ExternalMessage::RequestResponse => {}
             ExternalMessage::NewTransaction(t) => {
-                self.consensus.new_transaction(t.verify()?)?;
+                let inserted = self.consensus.new_transaction(t.verify()?)?;
+                if inserted {
+                    if let Some((_, message)) = self.consensus.try_to_propose_new_block()? {
+                        self.message_sender.broadcast_external_message(message)?;
+                    }
+                }
             }
             ExternalMessage::JoinCommittee(public_key) => {
                 self.add_peer(from, public_key)?;
@@ -241,9 +259,13 @@ impl Node {
     // handle timeout - true if something happened
     pub fn handle_timeout(&mut self) -> Result<bool> {
         if let Some((leader, response)) = self.consensus.timeout()? {
-            self.message_sender
-                .send_external_message(leader, response)
-                .unwrap();
+            if let Some(leader) = leader {
+                self.message_sender
+                    .send_external_message(leader, response)
+                    .unwrap();
+            } else {
+                self.message_sender.broadcast_external_message(response)?;
+            }
             return Ok(true);
         }
         Ok(false)
@@ -251,7 +273,7 @@ impl Node {
 
     pub fn add_peer(&mut self, peer: PeerId, public_key: NodePublicKey) -> Result<()> {
         if let Some((dest, message)) = self.consensus.add_peer(peer, public_key)? {
-            self.reset_timeout.send(())?;
+            self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
             if let Some(leader) = dest {
                 self.message_sender.send_external_message(leader, message)?;
             } else {
@@ -305,6 +327,51 @@ impl Node {
         self.peer_id
     }
 
+    pub fn replay_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
+        &self,
+        txn_hash: Hash,
+        inspector: I,
+    ) -> Result<TransactionApplyResult> {
+        let txn = self
+            .get_transaction_by_hash(txn_hash)?
+            .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
+        let receipt = self
+            .get_transaction_receipt(txn_hash)?
+            .ok_or_else(|| anyhow!("transaction not mined: {txn_hash}"))?;
+
+        let block = self
+            .get_block_by_hash(receipt.block_hash)?
+            .ok_or_else(|| anyhow!("missing block: {}", receipt.block_hash))?;
+        let parent = self
+            .get_block_by_hash(block.parent_hash())?
+            .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
+        let mut state = self
+            .consensus
+            .state()
+            .at_root(H256(parent.state_root_hash().0));
+
+        for other_txn_hash in block.transactions {
+            if txn_hash != other_txn_hash {
+                let other_txn = self
+                    .get_transaction_by_hash(other_txn_hash)?
+                    .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
+                state.apply_transaction(
+                    other_txn,
+                    self.get_chain_id(),
+                    parent.header,
+                    inspector::noop(),
+                )?;
+            } else {
+                let result =
+                    state.apply_transaction(txn, self.get_chain_id(), parent.header, inspector)?;
+
+                return Ok(result);
+            }
+        }
+
+        Err(anyhow!("transaction not found in block: {txn_hash}"))
+    }
+
     pub fn call_contract(
         &mut self,
         block_number: BlockNumber,
@@ -347,7 +414,12 @@ impl Node {
             .consensus
             .leader_at_block(&parent, header.view)
             .public_key;
+
         self.consensus.state().get_reward_address(proposer)
+    }
+
+    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
+        self.consensus.get_touched_transactions(address)
     }
 
     pub fn get_gas_price(&self) -> u128 {
@@ -361,7 +433,7 @@ impl Node {
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
-        gas: Option<u64>,
+        gas: Option<EvmGas>,
         gas_price: Option<u128>,
         value: u128,
     ) -> Result<u64> {
@@ -578,7 +650,12 @@ impl Node {
         let length_recvd = response.proposals.len();
 
         for block in response.proposals {
-            was_new = self.consensus.receive_block(block)?;
+            let (new, proposal) = self.consensus.receive_block(block)?;
+            was_new = new;
+            if let Some(proposal) = proposal {
+                self.message_sender
+                    .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
+            }
         }
 
         if was_new && length_recvd > 1 {

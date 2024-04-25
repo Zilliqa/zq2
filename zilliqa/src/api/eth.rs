@@ -21,7 +21,9 @@ use crate::{
     message::{Block, BlockNumber},
     node::Node,
     state::Address,
-    transaction::{EthSignature, SignedTransaction, Transaction, TxEip1559, TxEip2930, TxLegacy},
+    transaction::{
+        EthSignature, EvmGas, SignedTransaction, Transaction, TxEip1559, TxEip2930, TxLegacy,
+    },
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -133,7 +135,7 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.from,
         call_params.to,
         call_params.data.clone(),
-        call_params.gas.map(|g| g.to()),
+        call_params.gas.map(|g| EvmGas(g.to())),
         call_params.gas_price.map(|g| g.to()),
         call_params.value.to(),
     )?;
@@ -163,7 +165,9 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         .lock()
         .unwrap()
         .get_account(address, block_number)?
-        .code
+        .contract
+        .evm_code()
+        .unwrap_or_default()
         .to_hex())
 }
 
@@ -366,6 +370,7 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             Ok(receipt
                 .logs
                 .into_iter()
+                .filter_map(|l| l.into_evm())
                 .enumerate()
                 .map(move |(i, l)| (l, i, txn_index, txn_hash, block_number, block_hash)))
         })
@@ -561,6 +566,8 @@ pub(super) fn get_transaction_receipt_inner(
     let logs = receipt
         .logs
         .into_iter()
+        // Filter non-EVM logs out. TODO: Encode Scilla logs and don't filter them.
+        .filter_map(|log| log.into_evm())
         .enumerate()
         .map(|(log_index, log)| {
             let log = eth::Log::new(
@@ -587,7 +594,7 @@ pub(super) fn get_transaction_receipt_inner(
         block_number: block.number(),
         from,
         to: transaction.to_addr(),
-        cumulative_gas_used: 0,
+        cumulative_gas_used: EvmGas(0),
         effective_gas_price: 0,
         gas_used: receipt.gas_used,
         contract_address: receipt.contract_address,
@@ -840,7 +847,7 @@ mod tests {
     use crate::{
         api::eth::{left_pad_arr, parse_transaction},
         crypto::Hash,
-        transaction::{EthSignature, SignedTransaction, TxLegacy, VerifiedTransaction},
+        transaction::{EthSignature, EvmGas, SignedTransaction, TxLegacy, VerifiedTransaction},
     };
 
     #[test]
@@ -855,7 +862,7 @@ mod tests {
                     chain_id: Some(1),
                     nonce: 9,
                     gas_price: 20 * 10_u128.pow(9),
-                    gas_limit: 21000u64,
+                    gas_limit: EvmGas(21000),
                     to_addr: Some("0x3535353535353535353535353535353535353535".parse().unwrap()),
                     amount: 10u128.pow(18),
                     payload: Vec::new(),

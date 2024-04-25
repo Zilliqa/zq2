@@ -1,0 +1,10 @@
+#! /bin/bash
+HERE=`pwd`
+SCRIPTDIR=$(dirname "$BASH_SOURCE")
+ZQ2_BASE=$SCRIPTDIR/../..
+export ZQ2_BASE
+
+if [[ -d $ZQ2_BASE ]]; then
+  cd $ZQ2_BASE/zq2
+  cargo run -q --bin z2 -- $*
+fi

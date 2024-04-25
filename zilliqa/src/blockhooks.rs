@@ -6,7 +6,7 @@ use crate::{
     contracts,
     message::IntershardCall,
     state::{contract_addr, Address},
-    transaction::TransactionReceipt,
+    transaction::{EvmGas, TransactionReceipt},
 };
 
 fn filter_receipts(
@@ -17,6 +17,7 @@ fn filter_receipts(
     let logs: Result<Vec<_>, _> = receipts
         .iter()
         .flat_map(|receipt| &receipt.logs)
+        .filter_map(|log| log.as_evm()) // Only consider EVM logs
         .filter(|log| log.address == emitter && log.topics[0] == event.signature())
         .map(|log| {
             event
@@ -136,7 +137,7 @@ pub fn get_cross_shard_messages(
                     source_chain_id: values.next().unwrap().into_uint().unwrap().as_u64(),
                     bridge_nonce: values.next().unwrap().into_uint().unwrap().as_u64(),
                     calldata: values.next().unwrap().into_bytes().unwrap(),
-                    gas_limit: values.next().unwrap().into_uint().unwrap().as_u64(),
+                    gas_limit: EvmGas(values.next().unwrap().into_uint().unwrap().as_u64()),
                     gas_price: values.next().unwrap().into_uint().unwrap().as_u128(),
                 },
             ))

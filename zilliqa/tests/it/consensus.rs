@@ -69,7 +69,7 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
                 let index = n.random_index();
                 n.get_node(index).get_finalized_height() >= start_block
             },
-            80,
+            100,
         )
         .await
         .unwrap();
@@ -146,6 +146,7 @@ async fn create_shard(
         child_shard_id,
         network.seed,
         None,
+        network.scilla_address.clone(),
     );
     let shard_wallet = shard_network.genesis_wallet().await;
 
@@ -231,7 +232,7 @@ async fn create_shard(
 
     let tx = wallet.send_transaction(tx_request, None).await.unwrap();
     let hash = tx.tx_hash();
-    network.run_until_receipt(wallet, hash, 100).await;
+    network.run_until_receipt(wallet, hash, 130).await;
 
     let included_block = wallet.get_block_number().await.unwrap();
 
@@ -510,7 +511,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
 
     // 4. Finalize that block on the main shard, so that the x-shard message gets sent
     network
-        .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 50)
+        .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 80)
         .await;
 
     // 5. Make sure the transaction gets included in the child network

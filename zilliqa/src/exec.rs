@@ -1,9 +1,11 @@
 //! Manages execution of transactions on state.
 
 use std::{
+    collections::BTreeMap,
     error::Error,
     fmt::{self, Display, Formatter},
     num::NonZeroU128,
+    sync::Arc,
 };
 
 use anyhow::{anyhow, Result};
@@ -11,22 +13,32 @@ use eth_trie::Trie;
 use ethabi::Token;
 use primitive_types::{H160, H256, U256};
 use revm::{
+    inspector_handle_register,
     primitives::{
         AccountInfo, BlockEnv, Bytecode, BytecodeState, ExecutionResult, HandlerCfg, Output,
         ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
     },
-    Database, Evm,
+    Database, Evm, Inspector,
 };
-use tracing::*;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use tracing::{info, trace, warn};
 
 use crate::{
     contracts,
     crypto::{Hash, NodePublicKey},
     eth_helpers::extract_revert_msg,
+    inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
-    state::{contract_addr, Account, Address, State},
+    precompiles::get_custom_precompiles,
+    scilla,
+    state::{contract_addr, Account, Address, Contract, ScillaValue, State},
     time::SystemTime,
-    transaction::{Log, VerifiedTransaction},
+    transaction::{
+        total_scilla_gas_price, EvmGas, Log, ScillaGas, ScillaParam, Transaction, TxZilliqa,
+        VerifiedTransaction, ZilAmount,
+    },
 };
 
 /// Data returned after applying a [Transaction] to [State].
@@ -38,7 +50,39 @@ pub struct TransactionApplyResult {
     /// The logs emitted by the transaction execution.
     pub logs: Vec<Log>,
     /// The gas paid by the transaction
-    pub gas_used: u64,
+    pub gas_used: EvmGas,
+    /// The output of the transaction execution. Note that Scilla calls cannot return data, so the output will always
+    /// be empty.
+    pub output: TransactionOutput,
+    /// If the transaction was a call to a Scilla contract, whether the called contract accepted the ZIL sent to it.
+    pub accepted: Option<bool>,
+    /// Errors from calls to Scilla contracts. Indexed by the call depth of erroring contract.
+    pub errors: BTreeMap<u64, Vec<ScillaError>>,
+    /// Exceptions from calls to Scilla contracts.
+    pub exceptions: Vec<ScillaException>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ScillaError {
+    CallFailed,
+    CreateFailed,
+    OutOfGas,
+    InsufficientBalance,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScillaException {
+    pub line: u64,
+    pub message: String,
+}
+
+impl From<scilla::Error> for ScillaException {
+    fn from(e: scilla::Error) -> ScillaException {
+        ScillaException {
+            line: e.start_location.line,
+            message: e.error_message,
+        }
+    }
 }
 
 // We need to define a custom error type for our [Database], which implements [Error].
@@ -72,7 +116,7 @@ impl Database for &State {
     ) -> Result<Option<AccountInfo>, Self::Error> {
         let address = H160(address.into_array());
 
-        if !self.try_has_account(address)? {
+        if !self.has_account(address)? {
             return Ok(None);
         }
 
@@ -82,7 +126,7 @@ impl Database for &State {
             nonce: account.nonce,
             code_hash: KECCAK_EMPTY,
             code: Some(Bytecode {
-                bytecode: account.code.into(),
+                bytecode: account.contract.evm_code().unwrap_or_default().into(),
                 state: BytecodeState::Raw,
             }),
         };
@@ -113,20 +157,25 @@ impl Database for &State {
     }
 }
 
-pub const BLOCK_GAS_LIMIT: u64 = 84_000_000;
+pub const BLOCK_GAS_LIMIT: EvmGas = EvmGas(84_000_000);
+/// The price per unit of [EvmGas].
 pub const GAS_PRICE: u128 = 4761904800000;
+
+const SCILLA_TRANSFER: ScillaGas = ScillaGas(50);
+const SCILLA_INVOKE_CHECKER: ScillaGas = ScillaGas(100);
+const SCILLA_INVOKE_RUNNER: ScillaGas = ScillaGas(300);
 
 const SPEC_ID: SpecId = SpecId::SHANGHAI;
 
 impl State {
     /// Used primarily during genesis to set up contracts for chain functionality.
     /// If override_address address is set, forces contract deployment to that addess.
-    pub(crate) fn force_deploy_contract(
+    pub(crate) fn force_deploy_contract_evm(
         &mut self,
         creation_bytecode: Vec<u8>,
         override_address: Option<Address>,
     ) -> Result<Address> {
-        let ResultAndState { result, mut state } = self.apply_transaction_inner(
+        let ResultAndState { result, mut state } = self.apply_transaction_evm(
             H160::zero(),
             None,
             GAS_PRICE,
@@ -136,6 +185,7 @@ impl State {
             None,
             0,
             BlockHeader::genesis(Hash::ZERO),
+            inspector::noop(),
         )?;
 
         match result {
@@ -154,7 +204,7 @@ impl State {
                     addr
                 };
 
-                self.apply_delta(state)?;
+                self.apply_delta_evm(state)?;
                 Ok(H160(addr.into_array()))
             }
             ExecutionResult::Success { .. } => {
@@ -166,17 +216,18 @@ impl State {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn apply_transaction_inner(
+    pub fn apply_transaction_evm<I: for<'s> Inspector<&'s State>>(
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
         gas_price: u128,
-        gas_limit: u64,
+        gas_limit: EvmGas,
         amount: u128,
         payload: Vec<u8>,
         nonce: Option<u64>,
         chain_id: u64,
         current_block: BlockHeader,
+        inspector: I,
     ) -> Result<ResultAndState> {
         let mut evm = Evm::builder()
             .with_db(self)
@@ -190,13 +241,15 @@ impl State {
                         .unwrap_or_default()
                         .as_secs(),
                 ),
-                gas_limit: revm::primitives::U256::from(BLOCK_GAS_LIMIT),
+                gas_limit: revm::primitives::U256::from(BLOCK_GAS_LIMIT.0),
                 basefee: revm::primitives::U256::from(GAS_PRICE),
                 difficulty: revm::primitives::U256::from(1),
                 prevrandao: Some(B256::ZERO),
                 blob_excess_gas_and_price: None,
             })
+            .with_external_context(inspector)
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
+            .append_handler_register(inspector_handle_register)
             .modify_cfg_env(|c| {
                 c.chain_id = chain_id;
                 // We disable the balance check (which ensures the from account's balance is greater than the
@@ -207,7 +260,7 @@ impl State {
             })
             .with_tx_env(TxEnv {
                 caller: from_addr.0.into(),
-                gas_limit,
+                gas_limit: gas_limit.0,
                 gas_price: revm::primitives::U256::from(gas_price),
                 transact_to: to_addr
                     .map(|a| TransactTo::call(a.0.into()))
@@ -221,64 +274,473 @@ impl State {
                 blob_hashes: vec![],
                 max_fee_per_blob_gas: None,
             })
+            .append_handler_register(|handler| {
+                let precompiles = handler.pre_execution.load_precompiles();
+                handler.pre_execution.load_precompiles = Arc::new(move || {
+                    let mut precompiles = precompiles.clone();
+                    precompiles.extend(get_custom_precompiles());
+                    precompiles
+                });
+            })
             .build();
 
         let e = evm.transact()?;
         Ok(e)
     }
 
+    fn apply_transaction_scilla(
+        &mut self,
+        from_addr: H160,
+        current_block: BlockHeader,
+        txn: TxZilliqa,
+        inspector: impl ScillaInspector,
+    ) -> Result<TransactionApplyResult> {
+        let code = self
+            .get_account(txn.to_addr)?
+            .contract
+            .scilla_code()
+            .unwrap_or_default();
+
+        let deposit = total_scilla_gas_price(txn.gas_limit, txn.gas_price);
+        if let Some(result) = self.deduct_from_account(from_addr, deposit)? {
+            return Ok(result);
+        }
+
+        let gas_limit = txn.gas_limit;
+        let gas_price = txn.gas_price;
+
+        let result = if txn.to_addr.is_zero() {
+            self.scilla_create(from_addr, txn, current_block, inspector)
+        } else if code.is_empty() {
+            self.scilla_transfer_to_eoa(from_addr, txn, inspector)
+        } else {
+            self.scilla_call(from_addr, txn, inspector)
+        }?;
+
+        self.mutate_account(from_addr, |from| {
+            let refund =
+                total_scilla_gas_price(gas_limit - ScillaGas::from(result.gas_used), gas_price);
+            from.balance += refund.get();
+            from.nonce += 1;
+        })?;
+
+        Ok(result)
+    }
+
+    #[track_caller]
+    fn deduct_from_account(
+        &mut self,
+        addr: H160,
+        amount: ZilAmount,
+    ) -> Result<Option<TransactionApplyResult>> {
+        let caller = std::panic::Location::caller();
+        self.mutate_account(addr, |acc| {
+            let Some(balance) = acc.balance.checked_sub(amount.get()) else {
+                info!("insufficient balance: {caller}");
+                return Some(TransactionApplyResult {
+                    success: false,
+                    contract_address: None,
+                    logs: vec![],
+                    gas_used: ScillaGas(0).into(),
+                    output: TransactionOutput::Error,
+                    accepted: None,
+                    errors: [(0, vec![ScillaError::InsufficientBalance])]
+                        .into_iter()
+                        .collect(),
+                    exceptions: vec![],
+                });
+            };
+            acc.balance = balance;
+            None
+        })
+    }
+
+    fn scilla_create(
+        &mut self,
+        from_addr: H160,
+        txn: TxZilliqa,
+        current_block: BlockHeader,
+        mut inspector: impl ScillaInspector,
+    ) -> Result<TransactionApplyResult> {
+        if txn.data.is_empty() {
+            return Err(anyhow!("contract creation without init data"));
+        }
+
+        if let Some(result) = self.deduct_from_account(from_addr, txn.amount)? {
+            return Ok(result);
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(from_addr.as_bytes());
+        hasher.update((txn.nonce - 1).to_be_bytes());
+        let hashed = hasher.finalize();
+        let contract_address = H160::from_slice(&hashed[12..]);
+
+        let mut init_data: Vec<Value> = serde_json::from_str(&txn.data)?;
+        init_data.push(json!({"vname": "_creation_block", "type": "BNum", "value": current_block.number.to_string()}));
+        let contract_address_hex = format!("{contract_address:#x}");
+        init_data.push(
+            json!({"vname": "_this_address", "type": "ByStr20", "value": contract_address_hex}),
+        );
+
+        let gas = txn.gas_limit;
+
+        let Some(gas) = gas.checked_sub(SCILLA_INVOKE_CHECKER) else {
+            warn!("not enough gas to invoke scilla checker");
+            return Ok(TransactionApplyResult {
+                success: false,
+                contract_address: Some(contract_address),
+                logs: vec![],
+                gas_used: (txn.gas_limit - gas).into(),
+                output: TransactionOutput::Error,
+                accepted: Some(false),
+                errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                exceptions: vec![],
+            });
+        };
+
+        let check_output = match self.scilla().check_contract(&txn.code, gas, &init_data)? {
+            Ok(o) => o,
+            Err(e) => {
+                warn!(?e, "transaction failed");
+                let gas = gas.min(e.gas_remaining);
+                return Ok(TransactionApplyResult {
+                    success: false,
+                    contract_address: Some(contract_address),
+                    logs: vec![],
+                    gas_used: (txn.gas_limit - gas).into(),
+                    output: TransactionOutput::Error,
+                    accepted: Some(false),
+                    errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
+                    exceptions: e.errors.into_iter().map(Into::into).collect(),
+                });
+            }
+        };
+
+        info!(?check_output);
+
+        let gas = gas.min(check_output.gas_remaining);
+
+        let storage = check_output
+            .contract_info
+            .fields
+            .into_iter()
+            .map(|p| {
+                (
+                    p.name,
+                    (
+                        if p.depth == 0 {
+                            ScillaValue::Bytes(Vec::new())
+                        } else {
+                            ScillaValue::map()
+                        },
+                        p.ty,
+                    ),
+                )
+            })
+            .collect();
+
+        let account = Account {
+            nonce: 0,
+            balance: txn.amount.get(),
+            contract: Contract::Scilla {
+                code: txn.code.clone(),
+                init_data: serde_json::to_string(&init_data)?,
+                storage,
+            },
+        };
+        self.save_account(contract_address, account)?;
+
+        let Some(gas) = gas.checked_sub(SCILLA_INVOKE_RUNNER) else {
+            warn!("not enough gas to invoke scilla runner");
+            return Ok(TransactionApplyResult {
+                success: false,
+                contract_address: Some(contract_address),
+                logs: vec![],
+                gas_used: (txn.gas_limit - gas).into(),
+                output: TransactionOutput::Error,
+                accepted: Some(false),
+                errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                exceptions: vec![],
+            });
+        };
+
+        let state = self.try_clone()?;
+        let (create_output, root_hash) = match self.scilla().create_contract(
+            contract_address,
+            state,
+            &txn.code,
+            gas,
+            txn.amount,
+            &init_data,
+        )? {
+            Ok(o) => o,
+            Err(e) => {
+                warn!(?e, "transaction failed");
+                let gas = gas.min(e.gas_remaining);
+                return Ok(TransactionApplyResult {
+                    success: false,
+                    contract_address: Some(contract_address),
+                    logs: vec![],
+                    gas_used: (txn.gas_limit - gas).into(),
+                    output: TransactionOutput::Error,
+                    accepted: Some(false),
+                    errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
+                    exceptions: e.errors.into_iter().map(Into::into).collect(),
+                });
+            }
+        };
+        self.set_to_root(root_hash);
+
+        info!(?create_output);
+
+        let gas = gas.min(create_output.gas_remaining);
+
+        inspector.create(from_addr, contract_address, txn.amount.get());
+
+        Ok(TransactionApplyResult {
+            success: true,
+            contract_address: Some(contract_address),
+            logs: vec![],
+            gas_used: (txn.gas_limit - gas).into(),
+            output: TransactionOutput::Success(vec![]),
+            accepted: None,
+            errors: BTreeMap::new(),
+            exceptions: vec![],
+        })
+    }
+
+    fn scilla_transfer_to_eoa(
+        &mut self,
+        from_addr: H160,
+        txn: TxZilliqa,
+        mut inspector: impl ScillaInspector,
+    ) -> Result<TransactionApplyResult> {
+        let gas = txn.gas_limit;
+
+        let Some(gas) = gas.checked_sub(SCILLA_TRANSFER) else {
+            warn!("not enough gas to make transfer");
+            return Ok(TransactionApplyResult {
+                success: false,
+                contract_address: None,
+                logs: vec![],
+                gas_used: (txn.gas_limit - gas).into(),
+                output: TransactionOutput::Error,
+                accepted: Some(false),
+                errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                exceptions: vec![],
+            });
+        };
+
+        if let Some(result) = self.deduct_from_account(from_addr, txn.amount)? {
+            return Ok(result);
+        }
+
+        self.mutate_account(txn.to_addr, |to| {
+            to.balance += txn.amount.get();
+        })?;
+
+        inspector.transfer(from_addr, txn.to_addr, txn.amount.get());
+
+        Ok(TransactionApplyResult {
+            success: true,
+            contract_address: None,
+            logs: vec![],
+            gas_used: (txn.gas_limit - gas).into(),
+            output: TransactionOutput::Success(vec![]),
+            accepted: None,
+            errors: BTreeMap::new(),
+            exceptions: vec![],
+        })
+    }
+
+    fn scilla_call(
+        &mut self,
+        from_addr: H160,
+        txn: TxZilliqa,
+        mut inspector: impl ScillaInspector,
+    ) -> Result<TransactionApplyResult> {
+        // TODO: Interop
+        let Contract::Scilla {
+            code,
+            init_data,
+            storage: _,
+        } = self.get_account(txn.to_addr)?.contract
+        else {
+            return Err(anyhow!("Scilla call to a non-Scilla contract"));
+        };
+        let init_data: Vec<Value> = serde_json::from_str(&init_data)?;
+
+        // TODO: Better parsing here
+        let mut message: Value = serde_json::from_str(&txn.data)?;
+        message["_amount"] = txn.amount.to_string().into();
+        message["_sender"] = format!("{from_addr:#x}").into();
+        message["_origin"] = format!("{from_addr:#x}").into();
+
+        let gas = txn.gas_limit;
+        let Some(gas) = gas.checked_sub(SCILLA_INVOKE_RUNNER) else {
+            warn!("not enough gas to invoke scilla runner");
+            return Ok(TransactionApplyResult {
+                success: false,
+                contract_address: None,
+                logs: vec![],
+                gas_used: (txn.gas_limit - gas).into(),
+                output: TransactionOutput::Error,
+                accepted: Some(false),
+                errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                exceptions: vec![],
+            });
+        };
+
+        let state = self.try_clone()?;
+        let (output, root_hash) = match self.scilla().invoke_contract(
+            txn.to_addr,
+            state,
+            &code,
+            txn.gas_limit,
+            txn.amount,
+            &init_data,
+            &message,
+        )? {
+            Ok(o) => o,
+            Err(e) => {
+                warn!(?e, "transaction failed");
+                let gas = gas.min(e.gas_remaining);
+                return Ok(TransactionApplyResult {
+                    success: false,
+                    contract_address: None,
+                    logs: vec![],
+                    gas_used: (txn.gas_limit - gas).into(),
+                    output: TransactionOutput::Error,
+                    accepted: Some(false),
+                    errors: [(0, vec![ScillaError::CallFailed])].into_iter().collect(),
+                    exceptions: e.errors.into_iter().map(Into::into).collect(),
+                });
+            }
+        };
+        self.set_to_root(root_hash);
+
+        info!(?output);
+
+        let gas = gas.min(output.gas_remaining);
+
+        if output.accepted {
+            if let Some(result) = self.deduct_from_account(from_addr, txn.amount)? {
+                return Ok(result);
+            }
+
+            self.mutate_account(txn.to_addr, |to| {
+                to.balance += txn.amount.get();
+            })?;
+        }
+
+        // TODO: Handle `output.messages` for multi-contract calls.
+
+        let logs = output
+            .events
+            .into_iter()
+            .map(|e| {
+                Log::scilla(
+                    txn.to_addr,
+                    e.event_name,
+                    e.params
+                        .into_iter()
+                        .map(|p| ScillaParam {
+                            ty: p.ty,
+                            value: p.value,
+                            name: p.name,
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+
+        inspector.call(from_addr, txn.to_addr, txn.amount.get());
+
+        Ok(TransactionApplyResult {
+            success: true,
+            contract_address: None,
+            logs,
+            gas_used: (txn.gas_limit - gas).into(),
+            output: TransactionOutput::Success(vec![]),
+            accepted: Some(output.accepted),
+            errors: BTreeMap::new(),
+            exceptions: vec![],
+        })
+    }
+
     /// Apply a transaction to the account state.
-    pub fn apply_transaction(
+    pub fn apply_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
         &mut self,
         txn: VerifiedTransaction,
         chain_id: u64,
         current_block: BlockHeader,
+        inspector: I,
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash;
         let from_addr = txn.signer;
         info!(?hash, ?txn, "executing txn");
 
         let txn = txn.tx.into_transaction();
+        if let Transaction::Zilliqa(txn) = txn {
+            self.apply_transaction_scilla(from_addr, current_block, txn, inspector)
+        } else {
+            let ResultAndState { result, state } = self.apply_transaction_evm(
+                from_addr,
+                txn.to_addr(),
+                txn.max_fee_per_gas(),
+                txn.gas_limit(),
+                txn.amount(),
+                txn.payload().to_vec(),
+                txn.nonce(),
+                chain_id,
+                current_block,
+                inspector,
+            )?;
 
-        let ResultAndState { result, state } = self.apply_transaction_inner(
-            from_addr,
-            txn.to_addr(),
-            txn.max_fee_per_gas(),
-            txn.gas_limit(),
-            txn.amount(),
-            txn.payload().to_vec(),
-            txn.nonce(),
-            chain_id,
-            current_block,
-        )?;
+            self.apply_delta_evm(state)?;
 
-        self.apply_delta(state)?;
-
-        Ok(TransactionApplyResult {
-            success: result.is_success(),
-            contract_address: if let ExecutionResult::Success {
-                output: Output::Create(_, c),
-                ..
-            } = result
-            {
-                c.map(|a| H160(a.into_array()))
-            } else {
-                None
-            },
-            logs: result
-                .logs()
-                .iter()
-                .map(|l| Log {
-                    address: H160(l.address.into_array()),
-                    topics: l.topics().iter().map(|t| H256(t.0)).collect(),
-                    data: l.data.data.to_vec(),
-                })
-                .collect(),
-            gas_used: result.gas_used(),
-        })
+            Ok(TransactionApplyResult {
+                success: result.is_success(),
+                contract_address: if let ExecutionResult::Success {
+                    output: Output::Create(_, c),
+                    ..
+                } = result
+                {
+                    c.map(|a| H160(a.into_array()))
+                } else {
+                    None
+                },
+                logs: result
+                    .logs()
+                    .iter()
+                    .map(|l| {
+                        Log::evm(
+                            H160(l.address.into_array()),
+                            l.topics().iter().map(|t| H256(t.0)).collect(),
+                            l.data.data.to_vec(),
+                        )
+                    })
+                    .collect(),
+                gas_used: EvmGas(result.gas_used()),
+                output: match result {
+                    ExecutionResult::Success { output, .. } => {
+                        TransactionOutput::Success(output.into_data().to_vec())
+                    }
+                    ExecutionResult::Revert { output, .. } => {
+                        TransactionOutput::Revert(output.to_vec())
+                    }
+                    ExecutionResult::Halt { .. } => TransactionOutput::Error,
+                },
+                accepted: None,
+                errors: BTreeMap::new(),
+                exceptions: vec![],
+            })
+        }
     }
 
-    pub(crate) fn apply_delta(
+    /// Applies a state delta from an EVM execution to the state.
+    pub(crate) fn apply_delta_evm(
         &mut self,
         state: revm::primitives::HashMap<revm::primitives::Address, revm::primitives::Account>,
     ) -> Result<()> {
@@ -298,15 +760,17 @@ impl State {
             let account = Account {
                 nonce: account.info.nonce,
                 balance: account.info.balance.try_into()?,
-                code: account
-                    .info
-                    .code
-                    .map(|c| c.original_bytes().to_vec())
-                    .unwrap_or_default(),
-                storage_root: if storage.iter().count() != 0 {
-                    Some(storage.root_hash()?)
-                } else {
-                    None
+                contract: Contract::Evm {
+                    code: account
+                        .info
+                        .code
+                        .map(|c| c.original_bytes().to_vec())
+                        .unwrap_or_default(),
+                    storage_root: if storage.iter().count() != 0 {
+                        Some(storage.root_hash()?)
+                    } else {
+                        None
+                    },
                 },
             };
             trace!(?address, ?account, "update account");
@@ -426,14 +890,14 @@ impl State {
         data: Vec<u8>,
         chain_id: u64,
         current_block: BlockHeader,
-        gas: Option<u64>,
+        gas: Option<EvmGas>,
         gas_price: Option<u128>,
         value: u128,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(GAS_PRICE);
         let gas = gas.unwrap_or(BLOCK_GAS_LIMIT);
 
-        let ResultAndState { result, .. } = self.apply_transaction_inner(
+        let ResultAndState { result, .. } = self.apply_transaction_evm(
             from_addr,
             to_addr,
             gas_price,
@@ -443,6 +907,7 @@ impl State {
             None,
             chain_id,
             current_block,
+            inspector::noop(),
         )?;
 
         match result {
@@ -477,7 +942,7 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<Vec<u8>> {
-        let ResultAndState { result, .. } = self.apply_transaction_inner(
+        let ResultAndState { result, .. } = self.apply_transaction_evm(
             from_addr,
             to_addr,
             GAS_PRICE,
@@ -487,12 +952,29 @@ impl State {
             None,
             chain_id,
             current_block,
+            inspector::noop(),
         )?;
 
         match result {
             ExecutionResult::Success { output, .. } => Ok(output.into_data().to_vec()),
             ExecutionResult::Revert { output, .. } => Ok(output.to_vec()),
             ExecutionResult::Halt { reason, .. } => Err(anyhow!("halted due to: {reason:?}")),
+        }
+    }
+}
+
+pub enum TransactionOutput {
+    Success(Vec<u8>),
+    Revert(Vec<u8>),
+    Error,
+}
+
+impl TransactionOutput {
+    pub fn into_vec(self) -> Vec<u8> {
+        match self {
+            TransactionOutput::Success(v) => v,
+            TransactionOutput::Revert(v) => v,
+            TransactionOutput::Error => vec![],
         }
     }
 }

@@ -8,7 +8,7 @@ use crate::{
     state::Address,
 };
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// Individual configuration for every node to run.
@@ -69,6 +69,16 @@ pub struct ConsensusConfig {
     pub genesis_hash: Option<Hash>,
     /// Accounts that will be pre-funded at genesis.
     pub genesis_accounts: Vec<(Address, String)>,
+    /// Minimum time to wait for consensus to propose new block if there are no transactions.
+    pub empty_block_timeout: Duration,
+    /// Minimum remaining time allowing to wait for empty block proposal
+    pub minimum_time_left_for_empty_block: Duration,
+    /// Address of the Scilla server. Defaults to "http://localhost:3000".
+    pub scilla_address: String,
+    /// Hostname at which this process is accessible by the Scilla process. Defaults to "localhost". If running the
+    /// Scilla process in Docker and this process on the host, you probably want to pass
+    /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
+    pub local_address: String,
 }
 
 impl Default for ConsensusConfig {
@@ -81,6 +91,10 @@ impl Default for ConsensusConfig {
             genesis_deposits: vec![],
             genesis_hash: None,
             genesis_accounts: Vec::new(),
+            empty_block_timeout: Duration::from_millis(1000),
+            minimum_time_left_for_empty_block: Duration::from_millis(3000),
+            scilla_address: "http://localhost:3000".to_owned(),
+            local_address: "localhost".to_owned(),
         }
     }
 }
