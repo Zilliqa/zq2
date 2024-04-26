@@ -41,7 +41,5 @@ tokio-stream = "0.1.15"
 toml = "0.8.12"
 url = "2.5.0"
 zilliqa = { path = "../zilliqa" }
-zilliqa-rs = {path = "/home/rrw/work/zilliqa/src/zilliqa-rs" }
-#zilliqa-rs = "0.2.0"
-zutils = { path = "/home/rrw/work/zilliqa/src/zq-base/zutils" }
-# zutils = { git = "ssh://git@github.com/zilliqa/zq-base" }
+zilliqa-rs = { git= "https://github.com/zilliqa/zilliqa-rs" }
+zutils = { git = "https://github.com/zilliqa/zq-base" }

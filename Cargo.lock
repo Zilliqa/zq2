@@ -8238,6 +8238,7 @@ dependencies = [
 [[package]]
 name = "zilliqa-rs"
 version = "0.2.0"
+source = "git+https://github.com/zilliqa/zilliqa-rs#ff8137b8d01ef71e75659ac6100d75d3aabe3a56"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8315,6 +8316,7 @@ dependencies = [
 [[package]]
 name = "zutils"
 version = "0.1.0"
+source = "git+https://github.com/zilliqa/zq-base#3715b607a94199e60e1886b80d21fa3a34e0fe0a"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
