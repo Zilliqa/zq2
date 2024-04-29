@@ -178,7 +178,7 @@ impl Setup {
             full_node_data_path.push(&data_dir_name);
             full_node_data_path.push("data");
             // Create if doesn't exist
-            let _ = tokio::fs::create_dir(&full_node_data_path).await?;
+            tokio::fs::create_dir(&full_node_data_path).await?;
             node_config.disable_rpc = false;
             node_config.eth_chain_id = 700 | 0x8000;
             node_config.data_dir = Some(utils::string_from_path(&full_node_data_path)?);

@@ -12,7 +12,7 @@ use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Write};
 use std::str::FromStr;
-use std::{cell::RefCell, cell::RefMut, fs, iter, path::Path, sync::RwLock};
+use std::{cell::RefCell, cell::RefMut, fmt, fs, iter, path::Path, sync::RwLock};
 use tempfile;
 use tokio::time::{sleep, Duration};
 use url::Url;
@@ -35,6 +35,7 @@ pub struct PhaseResult {
 }
 
 #[async_trait]
+#[allow(clippy::ptr_arg)]
 pub trait PerfMod {
     async fn gen_phase(
         &mut self,
@@ -148,6 +149,12 @@ pub struct Balance {
     pub balance: u128,
 }
 
+impl Default for Balance {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Balance {
     // The balance for a new account.
     pub fn new() -> Self {
@@ -172,17 +179,23 @@ pub enum TransactionResult {
     },
 }
 
-impl TransactionResult {
-    pub fn to_string(&self) -> String {
-        match self {
-            TransactionResult::Pending => "p".to_string(),
-            TransactionResult::TimedOut => "T".to_string(),
-            TransactionResult::Success { .. } => "S".to_string(),
-            TransactionResult::Failure { .. } => "F".to_string(),
-        }
+impl fmt::Display for TransactionResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                TransactionResult::Pending => "p",
+                TransactionResult::TimedOut => "T",
+                TransactionResult::Success { .. } => "S",
+                TransactionResult::Failure { .. } => "F",
+            }
+        )
     }
+}
 
-    pub fn assert_all_successful(txns: &Vec<TransactionResult>) -> Result<()> {
+impl TransactionResult {
+    pub fn assert_all_successful(txns: &[TransactionResult]) -> Result<()> {
         if txns
             .iter()
             .map(|x| matches!(x, TransactionResult::Success { .. }))
@@ -270,7 +283,7 @@ impl Perf {
         for i in 0..self.config.steps.len() {
             let step = &self.config.steps[i];
             println!("🎄 running step {i}: {0} .. ", &step.name);
-            self.step(rng, &step).await?;
+            self.step(rng, step).await?;
         }
         Ok(())
     }
@@ -286,8 +299,8 @@ impl Perf {
                         let this_mod = perf_mod::async_transfer::AsyncTransfer::new(
                             self,
                             rng,
-                            &funds,
-                            &async_transfer,
+                            funds,
+                            async_transfer,
                         )
                         .await?;
                         modules.push(ModuleRecord {
@@ -305,8 +318,7 @@ impl Perf {
                 ConfigModule::Conformance(conf_config) => {
                     if let Some(funds) = &self.source_of_funds {
                         let this_mod =
-                            perf_mod::conform::Conform::new(self, rng, &funds, &conf_config)
-                                .await?;
+                            perf_mod::conform::Conform::new(self, rng, funds, conf_config).await?;
                         modules.push(ModuleRecord {
                             module: Box::new(this_mod),
                             results: Vec::new(),
@@ -349,7 +361,7 @@ impl Perf {
                 this_mod.results = Vec::new();
             }
             // We're done if we have asked everyone and there is nothing to wait for anymore.
-            if monitor.len() == 0 {
+            if monitor.is_empty() {
                 if continue_anyway {
                     // Sleep for a bit ..
                     //println!(
@@ -370,6 +382,9 @@ impl Perf {
                 let result = self.monitor(&monitor).await?;
                 // Now slice it all up again.
                 for this_mod in modules.iter_mut() {
+                    // This is much more self-explanatory (to me, at least), than faffing
+                    // with iterators.
+                    #[allow(clippy::needless_range_loop)]
                     for val in this_mod.offset..this_mod.offset + this_mod.txns.len() {
                         this_mod.results.push(result[val].clone())
                     }
@@ -482,8 +497,8 @@ impl Perf {
     pub async fn monitor(&self, txns: &Vec<String>) -> Result<Vec<TransactionResult>> {
         let mut results: Vec<TransactionResult> = Vec::new();
         println!(" --- 👓 --- ");
-        for idx in 0..txns.len() {
-            println!("{idx:<02}   {0}", txns[idx])
+        for (idx, item) in txns.iter().enumerate() {
+            println!("{idx:<02}   {0}", item)
         }
         results.resize(txns.len(), TransactionResult::Pending);
         for attempt in 0..self.config.attempts {
@@ -496,6 +511,8 @@ impl Perf {
             }
             for txn in 0..txns.len() {
                 let txn_hash = &txns[txn];
+                // One day, there may be many of these.
+                #[allow(clippy::single_match)]
                 match results[txn] {
                     TransactionResult::Pending => {
                         let status = self
@@ -536,7 +553,7 @@ impl Perf {
                 results
                     .iter()
                     .enumerate()
-                    .map(|(x, y)| format!("{x:<02}:{0}", y.to_string()))
+                    .map(|(x, y)| format!("{x:<02}:{0}", y))
                     .collect::<Vec<_>>()
                     .join(" "),
                 results.len(),
@@ -548,7 +565,11 @@ impl Perf {
     }
 
     pub fn get_server_error(err: &zilliqa_rs::Error) -> Option<i32> {
+        #[allow(clippy::collapsible_match)]
         if let zilliqa_rs::Error::JsonRpcError(val2) = err {
+            // This will probably expand later, and I'm not convinced collapsing
+            // them will make life any clearer.
+            #[allow(clippy::collapsible_match)]
             if let jsonrpsee::core::ClientError::Call(callerr) = val2 {
                 return Some(callerr.code());
             }

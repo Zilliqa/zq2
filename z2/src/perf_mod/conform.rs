@@ -127,7 +127,7 @@ impl perf::PerfMod for Conform {
                 let mut npm_i = CommandBuilder::new();
                 npm_i
                     .cwd(&self.test_source)
-                    .cmd("npm", &vec!["i"])
+                    .cmd("npm", &["i"])
                     .run()
                     .await?;
                 // Start the feeder.
@@ -141,7 +141,7 @@ impl perf::PerfMod for Conform {
                         .cwd(&self.test_source)
                         .cmd(
                             "npx",
-                            &vec![
+                            &[
                                 "hardhat",
                                 "init-signers",
                                 "--from",
@@ -189,7 +189,7 @@ impl perf::PerfMod for Conform {
                         self.current_command = Some(reap_on_termination(
                             CommandBuilder::new()
                                 .cwd(&self.test_source)
-                                .cmd("npx", &vec!["hardhat", "test", "--network", "from_env"])
+                                .cmd("npx", &["hardhat", "test", "--network", "from_env"])
                                 .env(&self.get_chain_env(perf)?)
                                 .spawn_logged()
                                 .await?,

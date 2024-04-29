@@ -28,6 +28,7 @@ impl Components {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_local_net(
     base_dir: &str,
     base_port: u16,
