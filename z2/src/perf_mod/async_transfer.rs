@@ -1,9 +1,11 @@
-use crate::perf;
-use crate::perf::{AccountKind, PhaseResult, TransactionResult};
 use anyhow::Result;
 use async_trait::async_trait;
-use rand;
-use rand::prelude::*;
+use rand::{self, prelude::*};
+
+use crate::{
+    perf,
+    perf::{AccountKind, PhaseResult, TransactionResult},
+};
 
 pub struct AsyncTransfer {
     source_of_funds: perf::Account,

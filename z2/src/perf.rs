@@ -1,23 +1,31 @@
 #![allow(unused_imports)]
 
-/// Stolen from z blockchain perf, partly so external contributors can also run it.
-use crate::{perf_mod, utils};
+use std::{
+    cell::{RefCell, RefMut},
+    fmt, fs,
+    io::{Cursor, Write},
+    iter,
+    path::Path,
+    str::FromStr,
+    sync::RwLock,
+};
+
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use clap::ValueEnum;
 use lazy_static::lazy_static;
-use rand;
-use rand::distributions::DistString as _;
-use rand::prelude::*;
+use rand::{self, distributions::DistString as _, prelude::*};
 use serde::{Deserialize, Serialize};
-use std::io::{Cursor, Write};
-use std::str::FromStr;
-use std::{cell::RefCell, cell::RefMut, fmt, fs, iter, path::Path, sync::RwLock};
 use tempfile;
 use tokio::time::{sleep, Duration};
 use url::Url;
-use zilliqa_rs::middlewares::Middleware;
-use zilliqa_rs::providers::{Http, Provider};
+use zilliqa_rs::{
+    middlewares::Middleware,
+    providers::{Http, Provider},
+};
+
+/// Stolen from z blockchain perf, partly so external contributors can also run it.
+use crate::{perf_mod, utils};
 
 pub struct Perf {
     pub config: Config,

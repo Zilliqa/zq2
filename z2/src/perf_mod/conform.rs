@@ -1,25 +1,35 @@
 #![allow(unused_imports)]
 
-use crate::perf::{AccountKind, PhaseResult, TransactionResult};
-use crate::{perf, utils};
+use std::{
+    cell::{RefCell, RefMut},
+    collections::HashMap,
+    fs,
+    io::{Cursor, Write},
+    iter,
+    path::PathBuf,
+};
+
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use clap::ValueEnum;
 use futures::task::Poll;
 use lazy_static::lazy_static;
-use rand;
-use rand::distributions::DistString as _;
-use rand::prelude::*;
+use rand::{self, distributions::DistString as _, prelude::*};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::io::{Cursor, Write};
-use std::{cell::RefCell, cell::RefMut, fs, iter, path::PathBuf};
 use tempfile;
 use tokio::time::{sleep, Duration};
 use url::Url;
-use zilliqa_rs::middlewares::Middleware;
-use zilliqa_rs::providers::{Http, Provider};
+use zilliqa_rs::{
+    middlewares::Middleware,
+    providers::{Http, Provider},
+};
 use zutils::commands::{reap_on_termination, CommandBuilder};
+
+use crate::{
+    perf,
+    perf::{AccountKind, PhaseResult, TransactionResult},
+    utils,
+};
 
 pub enum MachineState {
     Feeding,
