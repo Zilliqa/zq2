@@ -2,7 +2,6 @@
 resolver = "2"
 
 members = [
-    "deployer",
     "eth-trie.rs",
     "zilliqa",
     "zilliqa-macros",
