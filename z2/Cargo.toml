@@ -41,5 +41,5 @@ tokio-stream = "0.1.15"
 toml = "0.8.12"
 url = "2.5.0"
 zilliqa = { path = "../zilliqa" }
-zilliqa-rs = { git= "https://github.com/zilliqa/zilliqa-rs" }
-zutils = { git = "https://github.com/zilliqa/zq-base" }
+zilliqa-rs = { version = "0.3.0" }
+zqutils = { git = "https://github.com/zilliqa/zq-base" } 

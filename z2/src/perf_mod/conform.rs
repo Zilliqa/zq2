@@ -23,7 +23,7 @@ use zilliqa_rs::{
     middlewares::Middleware,
     providers::{Http, Provider},
 };
-use zutils::commands::{reap_on_termination, CommandBuilder};
+use zqutils::commands::{reap_on_termination, CommandBuilder};
 
 use crate::{
     perf,
@@ -65,13 +65,13 @@ impl Conform {
             }
             _ => return Err(anyhow!("Unsupported network name: {}", network_name)),
         }
-        let test_source = zutils::utils::string_from_path(&test_path)?;
+        let test_source = zqutils::utils::string_from_path(&test_path)?;
         if !test_path.is_dir() {
             return Err(anyhow!("{test_source} is not a directory"));
         }
         // Chain name is random
 
-        let chain_name = zutils::security::generate_id(rng, 16)?;
+        let chain_name = zqutils::security::generate_id(rng, 16)?;
         Ok(Self {
             source_of_funds: source_of_funds.clone(),
             config: config.clone(),
@@ -180,7 +180,7 @@ impl perf::PerfMod for Conform {
             _ => {
                 // Has my process finished yet?
                 if let Some(pid) = &self.current_command {
-                    if zutils::process::is_running(pid)? {
+                    if zqutils::process::is_running(pid)? {
                         // no. Wait..
                         return Ok(PhaseResult {
                             monitor: Vec::new(),
