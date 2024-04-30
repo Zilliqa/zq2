@@ -35,6 +35,8 @@ pub struct Setup {
     pub base_dir: String,
     /// Base port
     pub base_port: u16,
+    /// Restart an old network
+    pub keep_old_network: bool,
 }
 
 impl Setup {
@@ -44,6 +46,7 @@ impl Setup {
         log_spec: &str,
         base_dir: &str,
         base_port: u16,
+        keep_old_network: bool,
     ) -> Result<Self> {
         let mut secret_keys = Vec::new();
         let mut node_addresses = Vec::new();
@@ -63,6 +66,7 @@ impl Setup {
             log_spec: log_spec.to_string(),
             base_dir: base_dir.to_string(),
             base_port,
+            keep_old_network,
         })
     }
 
@@ -106,6 +110,10 @@ impl Setup {
         result.push_str(&format!(
             "🦏  Spout is at http://localhost:{0}/\n",
             self.get_spout_port()
+        ));
+        result.push_str(&format!(
+            "🦏  mitmproxy API at http://localhost:{0}/\n",
+            self.get_json_rpc_port(0, true)
         ));
         result.push_str(&format!(
             "🦏  mitmproxy port at http://localhost:{0}/\n",
@@ -154,8 +162,26 @@ impl Setup {
                 ..Default::default()
             };
             println!("Node {i} has RPC port {0}", node_config.json_rpc_port);
+            let data_dir_name = format!("{0}{1}", DATADIR_PREFIX, i);
+            let mut path = PathBuf::from(&self.config_dir);
+            path.push(&data_dir_name);
+            if utils::file_exists(&path).await? {
+                if self.keep_old_network {
+                    continue;
+                } else {
+                    // Kill it.
+                    tokio::fs::remove_dir_all(&path).await?;
+                }
+            }
+            let _ = fs::create_dir(&path).await;
+            let mut full_node_data_path = PathBuf::from(&self.config_dir);
+            full_node_data_path.push(&data_dir_name);
+            full_node_data_path.push("data");
+            // Create if doesn't exist
+            tokio::fs::create_dir(&full_node_data_path).await?;
             node_config.disable_rpc = false;
             node_config.eth_chain_id = 700 | 0x8000;
+            node_config.data_dir = Some(utils::string_from_path(&full_node_data_path)?);
             node_config
                 .consensus
                 .genesis_committee
@@ -167,9 +193,7 @@ impl Setup {
             cfg.p2p_port = 0;
             // Now write the config.
             let mut path = PathBuf::from(&self.config_dir);
-            let data_dir_name = format!("{0}{1}", DATADIR_PREFIX, i);
             path.push(&data_dir_name);
-            let _ = fs::create_dir(&path).await;
             path.push("config.yaml");
             println!("Writing node {0} .. ", i);
             let config_str = toml::to_string(&cfg)?;

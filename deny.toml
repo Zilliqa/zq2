@@ -1,3 +1,4 @@
+[graph]
 targets = [
     { triple = "x86_64-unknown-linux-gnu" },
     { triple = "aarch64-unknown-linux-gnu" },
@@ -25,8 +26,6 @@ allow = [
     "Unicode-DFS-2016",
     "Unlicense",
 ]
-# We have an explicit allowlist for licenses, so the extra warning for copyleft licenses is unnecessary.
-copyleft = "allow"
 
 # See https://github.com/briansmith/ring/issues/1487#issuecomment-1102733762.
 [[licenses.clarify]]
@@ -35,3 +34,6 @@ expression = "MIT AND ISC AND OpenSSL"
 license-files = [
     { path = "LICENSE", hash = 0xbd0eed23 }
 ]
+
+[sources.allow-org]
+github = [ "zilliqa" ]
