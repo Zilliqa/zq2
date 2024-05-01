@@ -299,6 +299,18 @@ impl From<H256> for Hash {
     }
 }
 
+impl From<Hash> for [u8; 32] {
+    fn from(value: Hash) -> Self {
+        value.0
+    }
+}
+
+impl From<Hash> for H256 {
+    fn from(value: Hash) -> Self {
+        Self(value.into())
+    }
+}
+
 impl TryFrom<&[u8]> for Hash {
     type Error = anyhow::Error;
     fn try_from(value: &[u8]) -> std::result::Result<Self, Self::Error> {

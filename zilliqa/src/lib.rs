@@ -5,7 +5,7 @@ pub mod cfg;
 pub mod consensus;
 pub mod contracts;
 pub mod crypto;
-mod db;
+pub mod db;
 mod eth_helpers;
 mod exec;
 mod health;

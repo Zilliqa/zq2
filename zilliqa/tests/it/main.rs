@@ -50,7 +50,7 @@ use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
@@ -64,7 +64,7 @@ use zilliqa::{
 };
 
 /// (source, destination, message) for both
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 enum AnyMessage {
     External(ExternalMessage),
     Internal(u64, u64, InternalMessage),
@@ -717,6 +717,9 @@ impl Network {
                                 ),
                             );
                         }
+                    }
+                    InternalMessage::ExportCheckpoint(_) => {
+                        todo!();
                     }
                     InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                         if *destination_shard == self.shard_id {

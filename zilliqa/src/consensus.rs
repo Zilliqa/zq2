@@ -326,7 +326,7 @@ impl Consensus {
                 latest_block_number,
             )?;
             // treat genesis as finalized
-            consensus.finalize(latest_block_hash, latest_block_view)?;
+            consensus.finalize_view(latest_block_view)?;
         }
 
         Ok(consensus)
@@ -1456,7 +1456,7 @@ impl Consensus {
         };
 
         if qc_parent.view() + 1 == qc_child.view() && qc_parent.view() + 2 == proposal.view() {
-            self.finalize(qc_parent.hash(), qc_parent.view())?;
+            self.finalize(qc_parent)?;
         } else {
             warn!(
                 "Failed to finalize block! Not finalizing QC block {} with view {} and number {}",
@@ -1469,14 +1469,22 @@ impl Consensus {
         Ok(())
     }
 
-    /// Intended to be used with the oldest pending block, to move the
-    /// finalized tip forward by one. Does not update view/height.
-    pub fn finalize(&mut self, hash: Hash, view: u64) -> Result<()> {
-        trace!("Finalizing block {hash}");
+    fn finalize_view(&mut self, view: u64) -> Result<()> {
         self.finalized_view = view;
         self.db.put_latest_finalized_view(view)?;
+        Ok(())
+    }
 
-        let receipts = self.db.get_transaction_receipts(&hash)?.unwrap_or_default();
+    /// Intended to be used with the oldest pending block, to move the
+    /// finalized tip forward by one. Does not update view/height.
+    pub fn finalize(&mut self, block: Block) -> Result<()> {
+        trace!("Finalizing block {} at view {}", block.hash(), block.view());
+        self.finalize_view(block.view())?;
+
+        let receipts = self
+            .db
+            .get_transaction_receipts(&block.hash())?
+            .unwrap_or_default();
 
         for (destination_shard, intershard_call) in blockhooks::get_cross_shard_messages(&receipts)?
         {
@@ -1499,6 +1507,16 @@ impl Consensus {
                 self.message_sender
                     .send_message_to_shard(to, InternalMessage::LaunchLink(from))?;
             }
+        }
+
+        if block.number()
+            % (self.config.consensus.blocks_per_epoch * self.config.consensus.checkpoint_period)
+            == 0
+        {
+            // create a new checkpoint
+            let checkpoint_state = self.state.at_root(block.header.state_root_hash.into());
+            self.message_sender
+                .send_message_to_coordinator(InternalMessage::ExportCheckpoint(checkpoint_state))?;
         }
 
         Ok(())

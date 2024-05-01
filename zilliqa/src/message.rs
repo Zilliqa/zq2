@@ -16,6 +16,7 @@ use time::{macros::format_description, OffsetDateTime};
 use crate::{
     consensus::Validator,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
+    state::State,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
 };
@@ -240,7 +241,7 @@ impl ExternalMessage {
 
 /// A message intended only for local communication between shard nodes and/or the parent p2p node,
 /// but not sent over the network.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum InternalMessage {
     /// Notifies the coordinator process to spawn a node of the given shard
     LaunchShard(u64),
@@ -248,6 +249,9 @@ pub enum InternalMessage {
     LaunchLink(u64),
     /// Routes intershard call information between two locally running, bridged, shard processes
     IntershardCall(IntershardCall),
+    /// Notifies the coordinator process to launch a thread copying the database of the current
+    /// state
+    ExportCheckpoint(State),
 }
 
 impl ExternalMessage {
@@ -273,6 +277,7 @@ impl InternalMessage {
             InternalMessage::LaunchShard(_) => "LaunchShard",
             InternalMessage::LaunchLink(_) => "LaunchLink",
             InternalMessage::IntershardCall(_) => "IntershardCall",
+            InternalMessage::ExportCheckpoint(_) => "ExportCheckpoint",
         }
     }
 }

@@ -250,6 +250,15 @@ where
     }
 }
 
+impl<D> Clone for EthTrie<D>
+where
+    D: DB + Clone,
+{
+    fn clone(&self) -> Self {
+        Self::new(self.db.clone())
+    }
+}
+
 impl<D> Trie<D> for EthTrie<D>
 where
     D: DB,

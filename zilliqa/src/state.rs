@@ -21,7 +21,7 @@ use crate::{
     scilla::Scilla,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// The state of the blockchain, consisting of:
 /// -  state - a database of Map<Address, Map<key,value>>
 /// -  accounts, Map<Address, Account>
@@ -38,6 +38,18 @@ pub struct State {
     scilla_address: String,
     local_address: String,
 }
+
+// impl Clone for State {
+//     fn clone(&self) -> Self {
+//         Self {
+//             db: self.db.clone(),
+//             accounts: PatriciaTrie::new(self.db.clone()),
+//             scilla: self.scilla.clone(),
+//             scilla_address: self.scilla_address.clone(),
+//             local_address: self.local_address.clone(),
+//         }
+//     }
+// }
 
 impl State {
     pub fn new(trie: TrieStorage, config: &ConsensusConfig) -> State {

@@ -231,6 +231,9 @@ impl Node {
             InternalMessage::LaunchShard(_) => {
                 warn!("LaunchShard messages should be handled by the coordinator, not forwarded to a node.");
             }
+            InternalMessage::ExportCheckpoint(_) => {
+                todo!();
+            }
         }
         Ok(())
     }

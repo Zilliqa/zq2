@@ -342,6 +342,9 @@ impl P2pNode {
                         InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                             self.forward_local_message_to_shard(&Self::shard_id_to_topic(destination).hash(), source, message)?;
                         }
+                        InternalMessage::ExportCheckpoint(_) => {
+                            todo!();
+                        }
                     }
                 },
                 message = self.outbound_message_receiver.next() => {

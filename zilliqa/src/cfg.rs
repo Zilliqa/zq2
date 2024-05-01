@@ -59,6 +59,10 @@ pub struct ConsensusConfig {
     pub main_shard_id: Option<u64>,
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     pub consensus_timeout: Duration,
+    /// Length of an epoch in blocks.
+    pub blocks_per_epoch: u64,
+    /// Duration between weak subjectivity checkpoints, in epochs.
+    pub checkpoint_period: u64,
     /// The genesis committee (public key, peer id) pairs. Only allowed to have one member at the moment
     /// Genesis data. Specifying a committee node is necessary for nodes participating in the consensus at
     /// genesis. Only the hash can be specified for nodes joining afterwards.
@@ -87,6 +91,8 @@ impl Default for ConsensusConfig {
             is_main: true,
             main_shard_id: None,
             consensus_timeout: Duration::from_secs(5),
+            blocks_per_epoch: 2000,
+            checkpoint_period: 24,
             genesis_committee: vec![],
             genesis_deposits: vec![],
             genesis_hash: None,
