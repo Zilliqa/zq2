@@ -242,6 +242,7 @@ pub struct BlockchainInfo {
     pub num_transactions: u64,
     pub transaction_rate: f64,
     pub tx_block_rate: f64,
+    #[serde(rename = "DSBlockRate")]
     pub ds_block_rate: f64,
     #[serde(with = "num_as_str")]
     pub current_mini_epoch: u64,
