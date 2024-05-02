@@ -1,34 +1,8 @@
 echo "The CI is running this script."
 
-echo "Starting scilla server"
-docker run --rm -p 12345-12347:12345-12347 nhutton/scilla_tcp:1.0 /scilla/0/run_scilla_tcp.sh > scilla_log.txt 2>&1 &
-
 sudo add-apt-repository ppa:ethereum/ethereum > /dev/null 2>&1
 sudo apt-get update > /dev/null 2>&1
-sudo apt-get install solc libsecp256k1-dev netcat > /dev/null 2>&1
-
-# Block here until we know the scilla server has come online (to avoid network breaking when looking for it)
-PORT=12345
-# Timeout for each netcat attempt in seconds
-TIMEOUT=1
-# Interval between checks in seconds
-INTERVAL=5
-
-while true; do
-    # Check if the port is open using netcat
-    nc -z 127.0.0.1 $PORT
-
-    # Check exit status of netcat; 0 if success (port is open)
-    if [ $? -eq 0 ]; then
-        echo "Scilla port $PORT is open!"
-        break
-    else
-        echo "Scilla port $PORT is not open yet. Checking again in $INTERVAL seconds..."
-    fi
-
-    # Wait for a bit before checking again
-    sleep $INTERVAL
-done
+sudo apt-get install solc libsecp256k1-dev > /dev/null 2>&1
 
 # Start network early.
 pwd
@@ -66,6 +40,7 @@ npx hardhat run scripts/FundAccountsFromEth.ts
 echo "Running tests"
 
 # Run tests
+# TODO: Remove `./test/scilla/HelloWorld.ts` to run more tests.
 npx hardhat test ./test/scilla/HelloWorld.ts
 
 retVal=$?
