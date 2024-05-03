@@ -129,9 +129,9 @@ pub struct Transaction {
     pub gas: EvmGas,
     #[serde(serialize_with = "hex")]
     pub gas_price: u128,
-    #[serde(serialize_with = "option_hex")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "option_hex")]
     pub max_fee_per_gas: Option<u128>,
-    #[serde(serialize_with = "option_hex")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "option_hex")]
     pub max_priority_fee_per_gas: Option<u128>,
     #[serde(serialize_with = "hex")]
     pub hash: H256,
@@ -151,8 +151,9 @@ pub struct Transaction {
     pub r: [u8; 32],
     #[serde(serialize_with = "hex")]
     pub s: [u8; 32],
-    #[serde(serialize_with = "option_hex")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "option_hex")]
     pub chain_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub access_list: Option<Vec<(H160, Vec<H256>)>>,
     #[serde(rename = "type", serialize_with = "hex")]
     pub transaction_type: u64,
