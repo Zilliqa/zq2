@@ -5,7 +5,7 @@ use tokio::fs;
 
 /// Code for all the z2 commands, so you can invoke it from your own programs.
 use crate::setup;
-use crate::{collector, otel, otterscan, perf, spout};
+use crate::{collector, deployer, otel, otterscan, perf, spout};
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub enum Components {
@@ -125,5 +125,21 @@ pub async fn run_perf_file(_base_dir: &str, config_file: &str) -> Result<()> {
     let mut rng = perf.make_rng()?;
     println!("🦆 Running {config_file} .. ");
     perf.run(&mut rng).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_new(
+    network_name: &str,
+    binary_bucket: &str,
+    gcp_project: &str,
+) -> Result<()> {
+    println!("🦆 Generating the deployer configuration file {network_name}.toml .. ");
+    deployer::new(network_name, gcp_project, binary_bucket).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_upgrade(config_file: &str) -> Result<()> {
+    println!("🦆 Upgrading {config_file} .. ");
+    deployer::upgrade(config_file).await?;
     Ok(())
 }

@@ -26,6 +26,7 @@ async-trait = "0.1.80"
 clap = { version = "4.5.4", features = ["derive"] }
 colored = "2.1.0"
 futures = "0.3.30"
+git2 = "0.18.3"
 jsonrpsee = { version ="0.22.4", features= [ "client" ] }
 lazy_static = "1.4.0"
 libp2p = { version = "0.53.2", features = [ "identify" ] }

@@ -1,4 +1,5 @@
 pub mod collector;
+pub mod deployer;
 pub mod mitmweb;
 pub mod otel;
 pub mod otterscan;

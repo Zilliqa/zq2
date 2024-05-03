@@ -17,6 +17,26 @@ enum Commands {
     Run(RunStruct),
     /// Test
     Perf(PerfStruct),
+    #[clap(subcommand)]
+    /// Deploy
+    Deployer(DeployerCommands),
+}
+
+#[derive(Subcommand, Debug)]
+enum DeployerCommands {
+    /// Generate the deployer config file
+    New(DeployerConfigStruct),
+    /// Perfom the network upgrade
+    Upgrade(DeployerConfigStruct),
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerConfigStruct {
+    network_name: Option<String>,
+    gcp_project: Option<String>,
+    binary_bucket: Option<String>,
+    bootstrap_pk: Option<String>,
+    config_file: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -146,5 +166,40 @@ async fn main() -> Result<()> {
             plumbing::run_perf_file(&arg.config_dir, &arg.perf_file).await?;
             Ok(())
         }
+        Commands::Deployer(deployer_command) => match &deployer_command {
+            DeployerCommands::New(ref arg) => {
+                let network_name = arg
+                    .network_name
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("network_name is a mandatory argument"))?;
+                let binary_bucket = arg
+                    .binary_bucket
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("binary_bucket is a mandatory argument"))?;
+                let gcp_project = arg
+                    .gcp_project
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("gcp_project is a mandatory argument"))?;
+
+                plumbing::run_deployer_new(&network_name, &binary_bucket, &gcp_project)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer new command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Upgrade(ref arg) => {
+                let config_file = arg
+                    .config_file
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("config_file is a mandatory argument"))?;
+                plumbing::run_deployer_upgrade(&config_file)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
+                    })?;
+                Ok(())
+            }
+        },
     }
 }
