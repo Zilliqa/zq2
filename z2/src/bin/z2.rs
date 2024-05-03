@@ -20,6 +20,8 @@ enum Commands {
     #[clap(subcommand)]
     /// Deploy
     Deployer(DeployerCommands),
+    /// Generate documentation
+    DocGen(DocStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -44,6 +46,12 @@ struct PerfStruct {
     config_dir: String,
 
     perf_file: String,
+}
+
+#[derive(Args, Debug)]
+struct DocStruct {
+    /// Where should we write the resulting documentation?
+    target_dir: String,
 }
 
 // See https://jwodder.github.io/kbits/posts/clap-bool-negate/
@@ -202,5 +210,9 @@ async fn main() -> Result<()> {
                 Ok(())
             }
         },
+        Commands::DocGen(ref arg) => {
+            plumbing::generate_docs(&base_dir, &arg.target_dir).await?;
+            Ok(())
+        }
     }
 }

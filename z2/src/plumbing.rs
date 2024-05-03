@@ -4,8 +4,8 @@ use anyhow::{anyhow, Result};
 use tokio::fs;
 
 /// Code for all the z2 commands, so you can invoke it from your own programs.
-use crate::setup;
 use crate::{collector, deployer, otel, otterscan, perf, spout};
+use crate::{docgen, setup};
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub enum Components {
@@ -141,5 +141,13 @@ pub async fn run_deployer_new(
 pub async fn run_deployer_upgrade(config_file: &str) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
     deployer::upgrade(config_file).await?;
+    Ok(())
+}
+
+pub async fn generate_docs(base_dir: &str, target_dir: &str) -> Result<()> {
+    // Grotty, but easier than lots of silly Path conversions.
+    let scan_dir = format!("{}/zq2/zilliqa", base_dir);
+    let docs = docgen::Docs::new(&scan_dir, target_dir)?;
+    docs.generate_all().await?;
     Ok(())
 }
