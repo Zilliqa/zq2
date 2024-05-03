@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use keccak_hash::H256;
+use alloy_primitives::B256;
 
 use crate::nibbles::Nibbles;
 
@@ -29,7 +29,7 @@ impl Node {
         Node::Extension(ext)
     }
 
-    pub fn from_hash(hash: H256) -> Self {
+    pub fn from_hash(hash: B256) -> Self {
         let hash_node = Arc::new(HashNode { hash });
         Node::Hash(hash_node)
     }
@@ -70,7 +70,7 @@ pub struct ExtensionNode {
 
 #[derive(Debug)]
 pub struct HashNode {
-    pub hash: H256,
+    pub hash: B256,
 }
 
 pub fn empty_children() -> [Node; 16] {

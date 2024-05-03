@@ -1,4 +1,4 @@
-use primitive_types::{H128, H160, H256, H384, H512, H768, U128, U256, U512};
+use alloy_primitives::{Address, B128, B256, B512, U128, U256, U512};
 
 use crate::transaction::{EvmGas, ScillaGas};
 
@@ -74,12 +74,10 @@ as_ref_impl!(str);
 as_ref_impl!(String);
 as_ref_impl!([u8]);
 as_ref_impl!(Vec<u8>);
-as_ref_impl!(H128);
-as_ref_impl!(H160);
-as_ref_impl!(H256);
-as_ref_impl!(H384);
-as_ref_impl!(H512);
-as_ref_impl!(H768);
+as_ref_impl!(B128);
+as_ref_impl!(Address);
+as_ref_impl!(B256);
+as_ref_impl!(B512);
 
 int_impl!(i8);
 int_impl!(i16);
@@ -101,7 +99,7 @@ int_impl!(U512);
 mod tests {
     use std::assert_eq;
 
-    use primitive_types::U128;
+    use alloy_primitives::U128;
 
     use super::ToHex;
 
@@ -133,8 +131,8 @@ mod tests {
     #[test]
     fn test_big_int_to_hex() {
         let cases = [
-            (U128::zero(), "0x0"),
-            (256.into(), "0x100"),
+            (U128::ZERO, "0x0"),
+            (256u64.try_into().unwrap(), "0x100"),
             (U128::MAX, "0xffffffffffffffffffffffffffffffff"),
         ];
 

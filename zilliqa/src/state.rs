@@ -3,10 +3,10 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
+use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::{Constructor, Token};
-use primitive_types::{H160, H256, U256};
 use revm::primitives::ResultAndState;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
@@ -63,7 +63,7 @@ impl State {
             .unwrap()
     }
 
-    pub fn new_at_root(trie: TrieStorage, root_hash: H256, config: ConsensusConfig) -> Self {
+    pub fn new_at_root(trie: TrieStorage, root_hash: B256, config: ConsensusConfig) -> Self {
         Self::new(trie, &config).at_root(root_hash)
     }
 
@@ -100,14 +100,14 @@ impl State {
         for (pub_key, stake, reward_address) in config.genesis_deposits {
             let data = contracts::deposit::SET_STAKE.encode_input(&[
                 Token::Bytes(pub_key.as_bytes()),
-                Token::Address(reward_address),
-                Token::Uint(U256::from_dec_str(&stake)?),
+                Token::Address(ethabi::Address::from(reward_address.into_array())),
+                Token::Uint(ethabi::Uint::from_dec_str(&stake)?),
             ])?;
             let ResultAndState {
                 result,
                 state: result_state,
             } = state.apply_transaction_evm(
-                Address::zero(),
+                Address::ZERO,
                 Some(contract_addr::DEPOSIT),
                 GAS_PRICE,
                 BLOCK_GAS_LIMIT,
@@ -127,7 +127,7 @@ impl State {
         Ok(state)
     }
 
-    pub fn at_root(&self, root_hash: H256) -> Self {
+    pub fn at_root(&self, root_hash: B256) -> Self {
         Self {
             db: self.db.clone(),
             accounts: self.accounts.at_root(root_hash),
@@ -137,7 +137,7 @@ impl State {
         }
     }
 
-    pub fn set_to_root(&mut self, root_hash: H256) {
+    pub fn set_to_root(&mut self, root_hash: B256) {
         self.accounts = self.accounts.at_root(root_hash);
     }
 
@@ -147,21 +147,19 @@ impl State {
     }
 
     pub fn root_hash(&mut self) -> Result<crypto::Hash> {
-        Ok(crypto::Hash(
-            self.accounts.root_hash()?.as_bytes().try_into()?,
-        ))
+        Ok(crypto::Hash(self.accounts.root_hash()?.into()))
     }
 
     /// Canonical method to obtain trie key for an account node
     fn account_key(address: Address) -> Vec<u8> {
-        Keccak256::digest(address.as_bytes()).to_vec()
+        Keccak256::digest(address).to_vec()
     }
 
     /// Canonical method to obtain trie key for an account's storage trie's storage node
-    pub fn account_storage_key(address: Address, index: H256) -> Vec<u8> {
+    pub fn account_storage_key(address: Address, index: B256) -> Vec<u8> {
         let mut h = Keccak256::new();
-        h.update(address.as_bytes());
-        h.update(index.as_bytes());
+        h.update(address);
+        h.update(index);
         h.finalize().to_vec()
     }
 
@@ -209,12 +207,12 @@ impl State {
     }
 
     /// Returns an error if there are any issues fetching the account from the state trie
-    pub fn get_account_storage(&self, address: Address, index: H256) -> Result<H256> {
+    pub fn get_account_storage(&self, address: Address, index: B256) -> Result<B256> {
         match self.get_account_trie(address)?.get(&Self::account_storage_key(address, index)) {
-            // from_slice will only panic if vec.len != H256::len_bytes, i.e. 32
-            Ok(Some(vec)) if vec.len() == 32 => Ok(H256::from_slice(&vec)),
+            // from_slice will only panic if vec.len != B256::len_bytes, i.e. 32
+            Ok(Some(vec)) if vec.len() == 32 => Ok(B256::from_slice(&vec)),
             // empty storage location
-            Ok(None) => Ok(H256::zero()),
+            Ok(None) => Ok(B256::ZERO),
             // invalid value in storage
             Ok(Some(vec)) => Err(anyhow!(
                 "Invalid storage for account {address:?} at index {index}: expected 32 bytes, got value {vec:?}"
@@ -238,18 +236,14 @@ impl State {
     }
 }
 
-pub type Address = H160;
-
 pub mod contract_addr {
-    use primitive_types::H160;
-
-    use super::Address;
+    use alloy_primitives::Address;
 
     /// For intershard transactions, call this address
-    pub const INTERSHARD_BRIDGE: Address = H160(*b"\0\0\0\0\0\0\0\0ZQINTERSHARD");
+    pub const INTERSHARD_BRIDGE: Address = Address::new(*b"\0\0\0\0\0\0\0\0ZQINTERSHARD");
     /// Address of the shard registry - only present on the root shard.
-    pub const SHARD_REGISTRY: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD");
-    pub const DEPOSIT: Address = H160(*b"\0\0\0\0\0\0\0\0\0\0ZILDEPOSIT");
+    pub const SHARD_REGISTRY: Address = Address::new(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD");
+    pub const DEPOSIT: Address = Address::new(*b"\0\0\0\0\0\0\0\0\0\0ZILDEPOSIT");
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,7 +271,7 @@ pub enum Contract {
     Evm {
         #[serde(with = "serde_bytes")]
         code: Vec<u8>,
-        storage_root: Option<H256>,
+        storage_root: Option<B256>,
     },
     Scilla {
         code: String,

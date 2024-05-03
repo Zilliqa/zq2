@@ -1,9 +1,9 @@
 use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration};
 
+use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Context as _, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
-use primitive_types::{H160, H256, U256};
 use rand::{
     distributions::{Distribution, WeightedIndex},
     prelude::IteratorRandom,
@@ -225,7 +225,7 @@ impl Consensus {
             trace!("Loading state from latest block");
             State::new_at_root(
                 db.state_trie()?,
-                H256(latest_block.state_root_hash().0),
+                latest_block.state_root_hash().into(),
                 config.consensus.clone(),
             )
         } else {
@@ -373,7 +373,10 @@ impl Consensus {
                 trace!("voting for genesis block");
                 let leader = self.leader(&genesis.committee, self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
-                return Ok(Some((Some(leader.peer_id), ExternalMessage::Vote(vote))));
+                return Ok(Some((
+                    Some(leader.peer_id),
+                    ExternalMessage::Vote(Box::new(vote)),
+                )));
             }
         }
 
@@ -428,7 +431,10 @@ impl Consensus {
                 info!("timeout in view 1, we will vote for genesis block rather than incrementing view");
                 let leader = self.leader(&genesis.committee, self.view.get_view());
                 let vote = self.vote_from_block(&genesis);
-                return Ok(Some((Some(leader.peer_id), ExternalMessage::Vote(vote))));
+                return Ok(Some((
+                    Some(leader.peer_id),
+                    ExternalMessage::Vote(Box::new(vote)),
+                )));
             } else {
                 info!("We are on view 1 but we are not a validator, so we are waiting.");
                 let _ = self.download_blocks_up_to_head();
@@ -682,7 +688,10 @@ impl Consensus {
 
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
-                    return Ok(Some((Some(next_leader), ExternalMessage::Vote(vote))));
+                    return Ok(Some((
+                        Some(next_leader),
+                        ExternalMessage::Vote(Box::new(vote)),
+                    )));
                 }
             }
         } else {
@@ -728,10 +737,10 @@ impl Consensus {
 
         for (reward_address, stake) in cosigner_stake {
             if let Some(cosigner) = reward_address {
-                let reward =
-                    U256::from(rewards_per_block / 2) * U256::from(stake) / total_cosigner_stake;
+                let reward = U256::from(rewards_per_block / 2) * U256::from(stake)
+                    / U256::from(total_cosigner_stake);
                 self.state
-                    .mutate_account(cosigner, |a| a.balance += reward.as_u128())?;
+                    .mutate_account(cosigner, |a| a.balance += reward.to::<u128>())?;
             }
         }
 
@@ -787,7 +796,7 @@ impl Consensus {
             .collect()
     }
 
-    pub fn get_touched_transactions(&self, address: H160) -> Result<Vec<Hash>> {
+    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
         self.db.get_touched_addresses(address)
     }
 
@@ -998,7 +1007,7 @@ impl Consensus {
                 parent.state_root_hash(),
                 previous_state_root_hash
             );
-            self.state.set_to_root(H256(parent.state_root_hash().0));
+            self.state.set_to_root(parent.state_root_hash().into());
         }
 
         let transactions = self.get_txns_to_execute();
@@ -1028,7 +1037,7 @@ impl Consensus {
             self.get_next_committee(parent.committee.clone()),
         );
 
-        self.state.set_to_root(H256(previous_state_root_hash.0));
+        self.state.set_to_root(previous_state_root_hash.into());
 
         self.votes.insert(
             block_hash,
@@ -1207,7 +1216,7 @@ impl Consensus {
 
                     if previous_state_root_hash != parent.state_root_hash() {
                         warn!("when proposing, state root hash mismatch, expected: {:?}, actual: {:?}", parent.state_root_hash(), previous_state_root_hash);
-                        self.state.set_to_root(H256(parent.state_root_hash().0));
+                        self.state.set_to_root(parent.state_root_hash().into());
                     }
 
                     self.apply_rewards(&committee, new_view.view, &high_qc.cosigned)?;
@@ -1225,7 +1234,7 @@ impl Consensus {
                         self.get_next_committee(parent.committee),
                     );
 
-                    self.state.set_to_root(H256(previous_state_root_hash.0));
+                    self.state.set_to_root(previous_state_root_hash.into());
 
                     trace!("Our high QC is {:?}", self.high_qc);
 
@@ -1265,12 +1274,10 @@ impl Consensus {
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
-        Ok(self
-            .db
-            .get_transaction(&hash)?
-            .map(|tx| tx.verify())
-            .transpose()?
-            .or_else(|| self.transaction_pool.get_transaction(hash).cloned()))
+        Ok(dbg!(dbg!(self.db.get_transaction(&dbg!(hash)))?
+            .map(|tx| dbg!(tx.verify()))
+            .transpose())?
+        .or_else(|| self.transaction_pool.get_transaction(hash).cloned()))
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
@@ -1766,7 +1773,7 @@ impl Consensus {
         Ok(self
             .block_store
             .get_block_by_number(number)?
-            .map(|block| self.state.at_root(H256(block.state_root_hash().0))))
+            .map(|block| self.state.at_root(block.state_root_hash().into())))
     }
 
     pub fn try_get_state_at(&self, number: u64) -> Result<State> {
@@ -1971,7 +1978,7 @@ impl Consensus {
                 parent_block
             );
             self.state
-                .set_to_root(H256(parent_block.state_root_hash().0));
+                .set_to_root(parent_block.state_root_hash().into());
 
             // Ensure the transaction pool is consistent by recreating it. This is moderately costly, but forks are
             // rare.
