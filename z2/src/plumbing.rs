@@ -139,7 +139,7 @@ pub async fn run_deployer_new(
     Ok(())
 }
 
-pub async fn run_deployer_upgrade(config_file: String) -> Result<()> {
+pub async fn run_deployer_upgrade(config_file: &str) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
     deployer::upgrade(config_file).await?;
     Ok(())

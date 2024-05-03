@@ -193,7 +193,7 @@ async fn main() -> Result<()> {
                     .config_file
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("config_file is a mandatory argument"))?;
-                plumbing::run_deployer_upgrade(config_file)
+                plumbing::run_deployer_upgrade(&config_file)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
