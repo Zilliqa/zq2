@@ -4,6 +4,7 @@ services:
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info,opentelemetry=trace,opentelemetry_otlp=trace
+    image: zq2-node0
     build:
       context: .
       dockerfile: Dockerfile
