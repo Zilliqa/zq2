@@ -10,7 +10,6 @@ use git2::Repository;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::TempDir;
-
 use tokio::fs;
 
 #[derive(Deserialize, Serialize)]
