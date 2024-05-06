@@ -103,6 +103,7 @@ pub struct TxBlockHeader {
 pub struct GetTxResponse {
     #[serde(rename = "ID", serialize_with = "hex_no_prefix")]
     id: H256,
+    #[serde(with = "num_as_str")]
     version: u32,
     #[serde(with = "num_as_str")]
     nonce: u64,
