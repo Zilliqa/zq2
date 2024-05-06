@@ -3,12 +3,12 @@ otlp_collector_endpoint = "http://otel-collector:4317"
 [[nodes]]
 # This is the public key and peer ID corresponding to the first private key in `docker-compose.yaml`.
 consensus.genesis_committee = [ ["b27aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a3", "12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU", "5000000000000000000000", "7E5F4552091A69125d5DfCb7b8C2659029395Bdf"] ]
-# These public keys correspond to the private keys of all four nodes in `docker-compose.yaml`.
+# These (public key, peerId, stake, rewardAddress) tuples correspond to the private keys of all four nodes in `docker-compose.yaml`.
 consensus.genesis_deposits = [
-    ["b27aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a3", "32000000000000000000", "7E5F4552091A69125d5DfCb7b8C2659029395Bdf"],
-    ["b37fd66aef29ca78a82d519a284789d59c2bb3880698b461c6c732d094534707d50e345128db372a1e0a4c5d5c42f49c", "32000000000000000000", "2B5AD5c4795c026514f8317c7a215E218DcCD6cF"],
-    ["ab035d6cd3321c3b57d14ea09a4f3860899542d2187b5ec87649b1f40980418a096717a671cf62b73880afac252fc5dc", "32000000000000000000", "6813Eb9362372EEF6200f3b1dbC3f819671cBA69"],
-    ["985e3a4d367cbfc966d48710806612cc00f6bfd06aa759340cfe13c3990d26a7ddde63f64468cdba5b2ff132a4639a7f", "32000000000000000000", "1efF47bc3a10a45D4B230B5d10E37751FE6AA718"],
+    ["b27aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a3", "12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU", "32000000000000000000", "7E5F4552091A69125d5DfCb7b8C2659029395Bdf"],
+    ["b37fd66aef29ca78a82d519a284789d59c2bb3880698b461c6c732d094534707d50e345128db372a1e0a4c5d5c42f49c", "12D3KooWJc2nBgNiSi14GcYaGmU8FoQsRkmhfMnaB1mHmPiBPZHd", "32000000000000000000", "2B5AD5c4795c026514f8317c7a215E218DcCD6cF"],
+    ["ab035d6cd3321c3b57d14ea09a4f3860899542d2187b5ec87649b1f40980418a096717a671cf62b73880afac252fc5dc", "12D3KooWLA4xVjiGszqmYJmt8E1NTurVeCujDi17FoSzSDDDKUjT", "32000000000000000000", "6813Eb9362372EEF6200f3b1dbC3f819671cBA69"],
+    ["985e3a4d367cbfc966d48710806612cc00f6bfd06aa759340cfe13c3990d26a7ddde63f64468cdba5b2ff132a4639a7f", "12D3KooWPXw2dXBRH1bT4vcNos9f6W2KoFTiarqptBuTzxaXg7zu", "32000000000000000000", "1efF47bc3a10a45D4B230B5d10E37751FE6AA718"],
 ]
 consensus.genesis_accounts = [
     # Accounts with private key 0x1, 0x2, 0x3, 0x4.

@@ -11,6 +11,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use eth_trie::Trie;
 use ethabi::Token;
+use libp2p::PeerId;
 use primitive_types::{H160, H256, U256};
 use revm::{
     inspector_handle_register,
@@ -856,6 +857,29 @@ impl State {
             .unwrap();
 
         Ok((!addr.is_zero()).then_some(addr))
+    }
+
+    pub fn get_peer_id(&self, public_key: NodePublicKey) -> Result<Option<PeerId>> {
+        let data =
+            contracts::deposit::GET_PEER_ID.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
+
+        let return_value = self.call_contract(
+            Address::zero(),
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // dummy values.
+            0,
+            BlockHeader::default(),
+        )?;
+
+        let data = contracts::deposit::GET_PEER_ID.decode_output(&return_value)?[0]
+            .clone()
+            .into_bytes()
+            .unwrap();
+
+        Ok(Some(PeerId::from_bytes(&data)?))
     }
 
     pub fn get_total_stake(&self) -> Result<u128> {

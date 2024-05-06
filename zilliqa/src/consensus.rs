@@ -138,8 +138,6 @@ pub struct Consensus {
     high_qc: QuorumCertificate,
     view: View,
     finalized_view: u64,
-    /// Peers that have joined committee
-    peers: Vec<Validator>,
     /// The account store.
     state: State,
     /// The persistence database
@@ -245,8 +243,7 @@ impl Consensus {
                         (None, 0, 0, hash)
                     }
                     (1, hash) => {
-                        let (public_key, _) = &config.consensus.genesis_committee[0];
-                        let genesis = Block::genesis(&[*public_key], state.root_hash()?);
+                        let genesis = Block::genesis(state.root_hash()?);
                         if let Some(hash) = hash {
                             if genesis.hash() != hash {
                                 return Err(anyhow!("Both genesis committee and genesis hash were specified, but the hashes do not match"));
@@ -317,7 +314,6 @@ impl Consensus {
             high_qc,
             view: View::new(start_view),
             finalized_view: start_view.saturating_sub(1),
-            peers,
             state,
             db,
             transaction_pool: Default::default(),
@@ -352,58 +348,6 @@ impl Consensus {
         self.secret_key.node_public_key()
     }
 
-    pub fn add_peer(
-        &mut self,
-        peer_id: PeerId,
-        public_key: NodePublicKey,
-    ) -> Result<Option<NetworkMessage>> {
-        if self.state.get_stake(public_key)?.is_none() {
-            info!(%peer_id, "peer does not have sufficient stake");
-            return Ok(None);
-        }
-        if let Some(existing) = self.peers.iter_mut().find(|v| v.public_key == public_key) {
-            existing.peer_id = Some(peer_id);
-            info!(%peer_id, "peer already exists");
-            return Ok(Some((
-                Some(peer_id),
-                ExternalMessage::CommitteeJoined(self.public_key()),
-            )));
-        }
-        info!(%peer_id, "adding peer to consensus");
-
-        self.peers.push(Validator {
-            peer_id: Some(peer_id),
-            public_key,
-        });
-
-        Ok(Some((
-            Some(peer_id),
-            ExternalMessage::CommitteeJoined(self.public_key()),
-        )))
-    }
-
-    // This is a callback method that is called by a 'joining' node
-    // It happens in reply to JoinCommittee message (triggered via CommitteeJoined)
-    // It works as follows: Peer wants to join, it broadcasts JoinCommittee. Each committee member
-    // that receives this message replies with its own peer_id and pub_key by sending CommiteeJoined
-    pub fn peer_joined(&mut self, replied_peer_id: PeerId, replied_public_key: NodePublicKey) {
-        if let Some(existing) = self
-            .peers
-            .iter_mut()
-            .find(|v| v.public_key == replied_public_key)
-        {
-            existing.peer_id = Some(replied_peer_id);
-            info!(%replied_peer_id, "Replied peer already exists in my active peers list");
-            return;
-        }
-        info!(%replied_peer_id, "adding replied peer to active peers list");
-
-        self.peers.push(Validator {
-            peer_id: Some(replied_peer_id),
-            public_key: replied_public_key,
-        });
-    }
-
     pub fn head_block(&self) -> Block {
         let highest_block_number = self.db.get_highest_block_number().unwrap().unwrap();
 
@@ -427,12 +371,18 @@ impl Consensus {
     }
 
     pub fn get_random_other_peer(&mut self) -> Option<PeerId> {
-        let our_id = self.peer_id();
-        self.peers
-            .iter()
-            .filter(|v| v.peer_id.is_some() && v.peer_id.unwrap() != our_id)
+        let stakers = self.state.get_stakers().unwrap();
+        let my_public_key = self.public_key();
+        let chosen = stakers
+            .into_iter()
+            .filter(|&v| v != my_public_key)
             .choose(&mut self.rng)
-            .map(|v| v.peer_id.unwrap())
+            .unwrap();
+
+        let Ok(peer_id) = self.state.get_peer_id(chosen) else {
+            return None;
+        };
+        peer_id
     }
 
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
@@ -694,6 +644,7 @@ impl Consensus {
             let Ok(stakers) = self.state.get_stakers_at_block(&block) else {
                 return Ok(None);
             };
+
             if !stakers.iter().any(|v| *v == self.public_key()) {
                 info!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
@@ -887,10 +838,7 @@ impl Consensus {
             );
             return Ok(None);
         }
-        let Ok(committee) = self.state.get_stakers_at_block(&block) else {
-            info!("Skipping vote outside of committee");
-            return Ok(None);
-        };
+        let committee = self.state.get_stakers_at_block(&block)?;
 
         // verify the sender's signature on block_hash
         let Some((index, _)) = committee
@@ -1012,10 +960,7 @@ impl Consensus {
         let block_hash = block.hash();
         let block_view = block.view();
 
-        let Ok(committee) = self.state.get_stakers_at_block(&block) else {
-            warn!("Can't get committee from block view: {}", block_view);
-            return Ok(None);
-        };
+        let committee = self.state.get_stakers_at_block(&block)?;
 
         let committee_size = committee.len();
 
@@ -1071,7 +1016,6 @@ impl Consensus {
             self.state.root_hash()?,
             applied_transaction_hashes.clone(),
             SystemTime::max(SystemTime::now(), parent_header.timestamp),
-            &committee,
         );
 
         self.state.set_to_root(H256(previous_state_root_hash.0));
@@ -1255,7 +1199,6 @@ impl Consensus {
                         parent_hash,
                         self.state.root_hash()?,
                         SystemTime::max(SystemTime::now(), parent.timestamp()),
-                        &self.state.get_stakers()?,
                     );
 
                     self.state.set_to_root(H256(previous_state_root_hash.0));
@@ -1547,9 +1490,7 @@ impl Consensus {
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 
-        let committee = self.state.get_stakers_at_block(&parent)?;
-
-        block.verify_hash(&committee)?;
+        block.verify_hash()?;
 
         // This should be checked against genesis
         if block.view() == 0 {
@@ -1574,6 +1515,8 @@ impl Consensus {
         let verified = proposer
             .public_key
             .verify(block.hash().as_bytes(), block.signature());
+
+        let committee = self.state.get_stakers_at_block(&parent)?;
 
         if verified.is_err() {
             info!(?block, "Unable to verify block = ");
@@ -1935,8 +1878,11 @@ impl Consensus {
         let index = dist.sample(&mut rng);
         let public_key = *committee.get(index).unwrap();
 
-        if let Some(leader) = self.peers.iter().find(|&v| v.public_key == public_key) {
-            return *leader;
+        if let Ok(Some(peer_id)) = self.state.get_peer_id(public_key) {
+            return Validator {
+                public_key,
+                peer_id: Some(peer_id),
+            };
         };
 
         Validator {

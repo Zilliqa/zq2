@@ -153,7 +153,7 @@ struct TestNode {
 
 struct Network {
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
-    pub genesis_deposits: Vec<(NodePublicKey, String, Address)>,
+    pub genesis_deposits: Vec<(NodePublicKey, PeerId, String, Address)>,
     /// Child shards.
     pub children: HashMap<u64, Network>,
     pub shard_id: u64,
@@ -227,6 +227,7 @@ impl Network {
             .map(|k| {
                 (
                     k.node_public_key(),
+                    k.to_libp2p_keypair().public().to_peer_id(),
                     stake.to_string(),
                     Address::random_using(rng.lock().unwrap().deref_mut()),
                 )
@@ -275,7 +276,6 @@ impl Network {
                 node.peer_id,
                 node.dir.as_ref().unwrap().path().to_string_lossy(),
             );
-            node.inner.lock().unwrap().join_peer_committee();
         }
 
         Network {
@@ -351,7 +351,6 @@ impl Network {
         trace!("Node {}: {}", node.index, node.peer_id);
 
         let index = node.index;
-        node.inner.lock().unwrap().join_peer_committee();
 
         self.nodes.push(node);
         self.receivers.push(receiver);
@@ -384,6 +383,7 @@ impl Network {
             .map(|k| {
                 (
                     k.node_public_key(),
+                    k.to_libp2p_keypair().public().to_peer_id(),
                     stake.to_string(),
                     Address::random_using(self.rng.lock().unwrap().deref_mut()),
                 )
@@ -444,8 +444,6 @@ impl Network {
                 node.peer_id,
                 node.dir.as_ref().unwrap().path().to_string_lossy(),
             );
-
-            node.inner.lock().unwrap().join_peer_committee();
         }
 
         let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();

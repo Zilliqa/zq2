@@ -221,8 +221,6 @@ pub enum ExternalMessage {
     BlockBatchResponse(BlockBatchResponse),
     NewTransaction(SignedTransaction),
     RequestResponse,
-    JoinCommittee(NodePublicKey),
-    CommitteeJoined(NodePublicKey),
 }
 
 impl ExternalMessage {
@@ -258,8 +256,6 @@ impl ExternalMessage {
             ExternalMessage::BlockBatchResponse(_) => "BlockBatchResponse",
             ExternalMessage::NewTransaction(_) => "NewTransaction",
             ExternalMessage::RequestResponse => "RequestResponse",
-            ExternalMessage::JoinCommittee(_) => "JoinCommittee",
-            ExternalMessage::CommitteeJoined(_) => "CommitteeJoined",
         }
     }
 }
@@ -574,7 +570,7 @@ impl Display for Block {
 }
 
 impl Block {
-    pub fn genesis(committee: &[NodePublicKey], state_root_hash: Hash) -> Block {
+    pub fn genesis(state_root_hash: Hash) -> Block {
         let view = 0u64;
         let number = 0u64;
         let qc = QuorumCertificate {
@@ -586,12 +582,6 @@ impl Block {
         let parent_hash = Hash::ZERO;
         let timestamp = SystemTime::UNIX_EPOCH;
 
-        // FIXME: Just concatenating the keys is dumb.
-        let committee_keys: Vec<_> = committee
-            .iter()
-            .flat_map(|public_key| public_key.as_bytes())
-            .collect();
-
         // Could the hash be all zeroes for genesis perhaps?
         let digest = Hash::compute([
             &view.to_be_bytes(),
@@ -600,7 +590,6 @@ impl Block {
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
             state_root_hash.as_bytes(),
-            &committee_keys,
         ]);
 
         Block {
@@ -624,13 +613,7 @@ impl Block {
         }
     }
 
-    pub fn verify_hash(&self, committee: &[NodePublicKey]) -> Result<()> {
-        // FIXME: Just concatenating the keys is dumb.
-        let committee_keys: Vec<_> = committee
-            .iter()
-            .flat_map(|&public_key| public_key.as_bytes())
-            .collect();
-
+    pub fn verify_hash(&self) -> Result<()> {
         let computed_hash = if let Some(agg) = &self.agg {
             Hash::compute([
                 &self.view().to_be_bytes(),
@@ -639,7 +622,6 @@ impl Block {
                 agg.compute_hash().as_bytes(),
                 self.parent_hash().as_bytes(),
                 self.state_root_hash().as_bytes(),
-                &committee_keys,
             ])
         } else {
             Hash::compute([
@@ -648,7 +630,6 @@ impl Block {
                 self.qc.compute_hash().as_bytes(),
                 self.parent_hash().as_bytes(),
                 self.state_root_hash().as_bytes(),
-                &committee_keys,
             ])
         };
 
@@ -669,11 +650,7 @@ impl Block {
         state_root_hash: Hash,
         transactions: Vec<Hash>,
         timestamp: SystemTime,
-        committee: &[NodePublicKey],
     ) -> Block {
-        // FIXME: Just concatenating the keys is dumb.
-        let committee_keys: Vec<_> = committee.iter().flat_map(|v| v.as_bytes()).collect();
-
         let digest = Hash::compute([
             &view.to_be_bytes(),
             &number.to_be_bytes(),
@@ -681,7 +658,6 @@ impl Block {
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
             state_root_hash.as_bytes(),
-            &committee_keys,
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {
@@ -710,14 +686,7 @@ impl Block {
         parent_hash: Hash,
         state_root_hash: Hash,
         timestamp: SystemTime,
-        committee: &[NodePublicKey],
     ) -> Block {
-        // FIXME: Just concatenating the keys is dumb.
-        let committee_keys: Vec<_> = committee
-            .iter()
-            .flat_map(|&public_key| public_key.as_bytes())
-            .collect();
-
         let digest = Hash::compute([
             &view.to_be_bytes(),
             &number.to_be_bytes(),
@@ -725,7 +694,6 @@ impl Block {
             agg.compute_hash().as_bytes(),
             parent_hash.as_bytes(),
             state_root_hash.as_bytes(),
-            &committee_keys,
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {

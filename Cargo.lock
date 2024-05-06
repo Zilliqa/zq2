@@ -8173,6 +8173,7 @@ dependencies = [
  "jsonrpsee",
  "k256",
  "libp2p",
+ "log",
  "lru",
  "once_cell",
  "opentelemetry",

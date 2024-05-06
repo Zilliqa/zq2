@@ -3,6 +3,8 @@ use std::{
     collections::{BTreeMap, BinaryHeap},
 };
 
+use tracing::info;
+
 use crate::{
     crypto::Hash,
     state::Address,
@@ -156,8 +158,8 @@ impl TransactionPool {
 
         // Finally we insert it into the tx store and the hash reverse-index
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
-        self.transactions.insert(txn.mempool_index(), txn);
-
+        self.transactions.insert(txn.mempool_index(), txn.clone());
+        info!("Insertin txn with hash: {:?}", txn.hash);
         true
     }
 

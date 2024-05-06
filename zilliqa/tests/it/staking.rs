@@ -7,6 +7,7 @@ use ethers::{
     signers::LocalWallet,
     types::{BlockId, BlockNumber, TransactionRequest},
 };
+use libp2p::PeerId;
 use primitive_types::H160;
 use tracing::{info, trace};
 use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
@@ -35,6 +36,7 @@ async fn deposit_stake(
     network: &mut Network,
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
     key: NodePublicKey,
+    peer_id: PeerId,
     stake: u128,
     reward_address: H160,
 ) {
@@ -51,6 +53,7 @@ async fn deposit_stake(
             contracts::deposit::DEPOSIT
                 .encode_input(&[
                     Token::Bytes(key.as_bytes()),
+                    Token::Bytes(peer_id.to_bytes()),
                     Token::Bytes(vec![]),
                     Token::Address(reward_address),
                 ])
@@ -108,6 +111,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         &mut network,
         &wallet,
         new_validator_key.node_public_key(),
+        new_validator_key.to_libp2p_keypair().public().to_peer_id(),
         32 * 10u128.pow(18),
         reward_address,
     )
@@ -152,6 +156,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
         &mut network,
         &wallet,
         new_validator_key.node_public_key(),
+        new_validator_key.to_libp2p_keypair().public().to_peer_id(),
         1024 * 10u128.pow(18),
         reward_address,
     )

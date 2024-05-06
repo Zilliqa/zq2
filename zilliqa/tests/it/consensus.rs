@@ -508,7 +508,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .unwrap()
         .tx_hash();
     let receipt = network.run_until_receipt(&wallet, hash, 200).await;
-
+    warn!("Receipt of shard txn: {:?}", hash);
     // 4. Finalize that block on the main shard, so that the x-shard message gets sent
     network
         .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 80)

@@ -64,8 +64,8 @@ pub struct ConsensusConfig {
     /// genesis. Only the hash can be specified for nodes joining afterwards.
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
     /// The initially staked deposits in the deposit contract at genesis, composed of
-    /// (public key, amount, reward address) tuples.
-    pub genesis_deposits: Vec<(NodePublicKey, String, Address)>,
+    /// (public key, peerId, amount, reward address) tuples.
+    pub genesis_deposits: Vec<(NodePublicKey, PeerId, String, Address)>,
     pub genesis_hash: Option<Hash>,
     /// Accounts that will be pre-funded at genesis.
     pub genesis_accounts: Vec<(Address, String)>,
