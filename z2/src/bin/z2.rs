@@ -15,6 +15,35 @@ struct Cli {
 enum Commands {
     /// Run a copy of zilliqa 2
     Run(RunStruct),
+    /// Test
+    Perf(PerfStruct),
+    #[clap(subcommand)]
+    /// Deploy
+    Deployer(DeployerCommands),
+}
+
+#[derive(Subcommand, Debug)]
+enum DeployerCommands {
+    /// Generate the deployer config file
+    New(DeployerConfigStruct),
+    /// Perfom the network upgrade
+    Upgrade(DeployerConfigStruct),
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerConfigStruct {
+    network_name: Option<String>,
+    gcp_project: Option<String>,
+    binary_bucket: Option<String>,
+    bootstrap_pk: Option<String>,
+    config_file: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct PerfStruct {
+    config_dir: String,
+
+    perf_file: String,
 }
 
 // See https://jwodder.github.io/kbits/posts/clap-bool-negate/
@@ -34,6 +63,9 @@ struct RunStruct {
 
     #[clap(long, default_value = "4000")]
     base_port: u16,
+
+    #[clap(long = "restart-network")]
+    restart_network: bool,
 
     #[clap(long="no-otterscan", action= ArgAction::SetFalse)]
     otterscan: bool,
@@ -116,6 +148,7 @@ async fn main() -> Result<()> {
                 to_run.insert(plumbing::Components::Mitmweb);
             }
 
+            let keep_old_network = !arg.restart_network;
             plumbing::run_local_net(
                 &base_dir,
                 arg.base_port,
@@ -124,9 +157,49 @@ async fn main() -> Result<()> {
                 &arg.debug_modules,
                 &arg.trace_modules,
                 &to_run,
+                keep_old_network,
             )
             .await?;
             Ok(())
         }
+        Commands::Perf(ref arg) => {
+            plumbing::run_perf_file(&arg.config_dir, &arg.perf_file).await?;
+            Ok(())
+        }
+        Commands::Deployer(deployer_command) => match &deployer_command {
+            DeployerCommands::New(ref arg) => {
+                let network_name = arg
+                    .network_name
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("network_name is a mandatory argument"))?;
+                let binary_bucket = arg
+                    .binary_bucket
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("binary_bucket is a mandatory argument"))?;
+                let gcp_project = arg
+                    .gcp_project
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("gcp_project is a mandatory argument"))?;
+
+                plumbing::run_deployer_new(&network_name, &binary_bucket, &gcp_project)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer new command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Upgrade(ref arg) => {
+                let config_file = arg
+                    .config_file
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("config_file is a mandatory argument"))?;
+                plumbing::run_deployer_upgrade(&config_file)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
+                    })?;
+                Ok(())
+            }
+        },
     }
 }

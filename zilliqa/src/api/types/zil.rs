@@ -233,30 +233,36 @@ pub struct MicroBlockInfo {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct BlockchainInfo {
+    #[serde(rename = "NumPeers")]
     pub num_peers: u16,
-    #[serde(with = "num_as_str")]
+    #[serde(with = "num_as_str", rename = "NumTxBlocks")]
     pub num_tx_blocks: u64,
-    #[serde(with = "num_as_str")]
+    #[serde(with = "num_as_str", rename = "NumDSBlocks")]
     pub num_ds_blocks: u64,
-    #[serde(with = "num_as_str")]
+    #[serde(with = "num_as_str", rename = "NumTransactions")]
     pub num_transactions: u64,
+    #[serde(rename = "TransactionRate")]
     pub transaction_rate: f64,
+    #[serde(rename = "TxBlockRate")]
     pub tx_block_rate: f64,
+    #[serde(rename = "DSBlockRate")]
     pub ds_block_rate: f64,
-    #[serde(with = "num_as_str")]
+    #[serde(with = "num_as_str", rename = "CurrentMiniEpoch")]
     pub current_mini_epoch: u64,
-    #[serde(with = "num_as_str")]
+    #[serde(with = "num_as_str", rename = "CurrentDSEpoch")]
     pub current_ds_epoch: u64,
-    #[serde(with = "num_as_str")]
+    #[serde(with = "num_as_str", rename = "NumTxnsDSEpoch")]
     pub num_txns_ds_epoch: u64,
-    #[serde(with = "num_as_str")]
+    #[serde(with = "num_as_str", rename = "NumTxnsTxEpoch")]
     pub num_txns_tx_epoch: u64,
+    #[serde(rename = "ShardingStructure")]
     pub sharding_structure: ShardingStructure,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ShardingStructure {
+    #[serde(rename = "NumPeers")]
     pub num_peers: Vec<u16>,
 }
 

@@ -1,7 +1,10 @@
 pub mod collector;
+pub mod deployer;
 pub mod mitmweb;
 pub mod otel;
 pub mod otterscan;
+pub mod perf;
+pub mod perf_mod;
 pub mod plumbing;
 pub mod setup;
 pub mod spout;

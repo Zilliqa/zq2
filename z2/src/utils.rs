@@ -1,9 +1,12 @@
-use anyhow::Result;
+use core::convert::AsRef;
+use std::path::Path;
+
+use anyhow::{anyhow, Result};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-pub async fn file_exists(file_name: &str) -> Result<bool> {
+pub async fn file_exists(file_name: impl AsRef<Path>) -> Result<bool> {
     Ok(tokio::fs::metadata(file_name).await.is_ok())
 }
 
@@ -31,4 +34,13 @@ pub async fn get_chain_id(url: &str) -> Result<u64> {
     println!("Parsed {json:?}");
     let without_prefix = json.result.trim_start_matches("0x");
     Ok(u64::from_str_radix(without_prefix, 16)?)
+}
+
+/// Get string from path
+pub fn string_from_path(in_path: &Path) -> Result<String> {
+    Ok(in_path
+        .as_os_str()
+        .to_str()
+        .ok_or(anyhow!("Cannot convert path to string"))?
+        .to_string())
 }

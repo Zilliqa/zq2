@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use primitive_types::H160;
-use sled::Tree;
+use sled::{Batch, Tree};
 
 use crate::{
     crypto::Hash,
@@ -246,7 +246,22 @@ impl eth_trie::DB for TrieStorage {
         Ok(())
     }
 
+    fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
+        let mut batch = Batch::default();
+        assert_eq!(keys.len(), values.len());
+        for (key, value) in keys.into_iter().zip(values) {
+            batch.insert(key, value);
+        }
+        self.db.apply_batch(batch)?;
+        Ok(())
+    }
+
     fn remove(&self, _key: &[u8]) -> Result<(), Self::Error> {
+        // we keep old state to function as an archive node, therefore no-op
+        Ok(())
+    }
+
+    fn remove_batch(&self, _: &[Vec<u8>]) -> Result<(), Self::Error> {
         // we keep old state to function as an archive node, therefore no-op
         Ok(())
     }

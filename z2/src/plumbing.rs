@@ -5,7 +5,7 @@ use tokio::fs;
 
 /// Code for all the z2 commands, so you can invoke it from your own programs.
 use crate::setup;
-use crate::{collector, otel, otterscan, spout};
+use crate::{collector, deployer, otel, otterscan, perf, spout};
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub enum Components {
@@ -28,6 +28,7 @@ impl Components {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_local_net(
     base_dir: &str,
     base_port: u16,
@@ -36,6 +37,7 @@ pub async fn run_local_net(
     debug_modules: &Vec<String>,
     trace_modules: &Vec<String>,
     components: &HashSet<Components>,
+    keep_old_network: bool,
 ) -> Result<()> {
     // Now build the log string. If there already was one, use that ..
     let log_var = env::var("RUST_LOG");
@@ -68,7 +70,14 @@ pub async fn run_local_net(
         otel.ensure_otel().await?;
     }
     println!("Generate zq2 configuration .. ");
-    let mut setup_obj = setup::Setup::new(4, config_dir, &log_spec, base_dir, base_port)?;
+    let mut setup_obj = setup::Setup::new(
+        4,
+        config_dir,
+        &log_spec,
+        base_dir,
+        base_port,
+        keep_old_network,
+    )?;
     println!("{0}", setup_obj.get_port_map());
     println!("Set up collector");
     let mut collector = collector::Collector::new(&log_spec, base_dir).await?;
@@ -108,5 +117,29 @@ pub async fn run_local_net(
         }
     }
     collector.complete().await?;
+    Ok(())
+}
+
+pub async fn run_perf_file(_base_dir: &str, config_file: &str) -> Result<()> {
+    let perf = perf::Perf::from_file(config_file)?;
+    let mut rng = perf.make_rng()?;
+    println!("🦆 Running {config_file} .. ");
+    perf.run(&mut rng).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_new(
+    network_name: &str,
+    binary_bucket: &str,
+    gcp_project: &str,
+) -> Result<()> {
+    println!("🦆 Generating the deployer configuration file {network_name}.toml .. ");
+    deployer::new(network_name, gcp_project, binary_bucket).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_upgrade(config_file: &str) -> Result<()> {
+    println!("🦆 Upgrading {config_file} .. ");
+    deployer::upgrade(config_file).await?;
     Ok(())
 }
