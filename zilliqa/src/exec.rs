@@ -779,16 +779,11 @@ impl State {
         Ok(())
     }
 
-    pub fn get_stakers_at_block(&mut self, block: &Block) -> Result<Vec<NodePublicKey>> {
-        let curr_root_hash = self.root_hash()?;
+    pub fn get_stakers_at_block(&self, block: &Block) -> Result<Vec<NodePublicKey>> {
         let block_root_hash = block.state_root_hash();
-        self.set_to_root(H256(block_root_hash.0));
 
-        let committee = self.get_stakers();
-
-        self.set_to_root(H256(curr_root_hash.0));
-
-        committee
+        let state = self.at_root(H256(block_root_hash.0));
+        state.get_stakers()
     }
 
     pub fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {

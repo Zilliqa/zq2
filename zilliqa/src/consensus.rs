@@ -482,11 +482,9 @@ impl Consensus {
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
             anyhow!("missing block corresponding to our high qc - this should never happen")
         })?;
-        let leader = self.leader_at_block(&block, self.view.get_view());
-
-        if leader.peer_id.is_none() {
+        let Some(leader) = self.leader_at_block(&block, self.view.get_view()).peer_id else {
             return Ok(None);
-        }
+        };
 
         let new_view = NewView::new(
             self.secret_key,
@@ -496,7 +494,7 @@ impl Consensus {
         );
 
         Ok(Some((
-            leader.peer_id,
+            Some(leader),
             ExternalMessage::NewView(Box::new(new_view)),
         )))
     }
@@ -641,9 +639,7 @@ impl Consensus {
             }
 
             // Get possibly updated list of stakers
-            let Ok(stakers) = self.state.get_stakers_at_block(&block) else {
-                return Ok(None);
-            };
+            let stakers = self.state.get_stakers()?;
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
                 info!(
@@ -1069,18 +1065,16 @@ impl Consensus {
         }
     }
 
-    fn committee_for_hash(&mut self, parent_hash: Hash) -> Result<Vec<NodePublicKey>> {
+    fn committee_for_hash(&self, parent_hash: Hash) -> Result<Vec<NodePublicKey>> {
         let Ok(Some(parent)) = self.get_block(&parent_hash) else {
             return Err(anyhow!("parent block not found: {:?}", parent_hash));
         };
 
-        let curr_root_hash = self.state.root_hash()?;
+        let parent_root_hash = H256(parent.state_root_hash().0);
 
-        self.state.set_to_root(H256(parent.state_root_hash().0));
+        let state = self.state.at_root(parent_root_hash);
 
-        let committee = self.state.get_stakers()?;
-
-        self.state.set_to_root(H256(curr_root_hash.0));
+        let committee = state.get_stakers()?;
 
         Ok(committee)
     }
@@ -1484,6 +1478,8 @@ impl Consensus {
 
     /// Check the validity of a block
     fn check_block(&mut self, block: &Block) -> Result<()> {
+        block.verify_hash()?;
+
         let Some(parent) = self.get_block(&block.parent_hash())? else {
             warn!(
                 "Missing parent block while trying to check validity of block {}",
@@ -1491,8 +1487,6 @@ impl Consensus {
             );
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
-
-        block.verify_hash()?;
 
         // This should be checked against genesis
         if block.view() == 0 {
