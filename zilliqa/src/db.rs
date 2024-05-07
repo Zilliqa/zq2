@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 use primitive_types::H160;
 use sled::{Batch, Tree};
+use tracing::{debug, info};
 
 use crate::{
     crypto::Hash,
@@ -238,7 +239,10 @@ impl eth_trie::DB for TrieStorage {
     type Error = sled::Error;
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
-        Ok(self.db.get(key)?.map(|ivec| ivec.to_vec()))
+        info!(?key, "get");
+        let got = self.db.get(key)?.map(|ivec| ivec.to_vec());
+        debug!(?got, "got");
+        Ok(got)
     }
 
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
