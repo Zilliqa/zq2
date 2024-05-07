@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use primitive_types::{H160, H256, H512};
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 use super::{hex, hex_no_prefix, option_hex_no_prefix};
 use crate::{
@@ -109,9 +110,11 @@ pub struct GetTxResponse {
     nonce: u64,
     #[serde(serialize_with = "hex_no_prefix")]
     to_addr: H160,
+    #[serde(serialize_with = "schnorr_key")]
     sender_pub_key: schnorr::PublicKey,
     #[serde(with = "num_as_str")]
     amount: ZilAmount,
+    #[serde(serialize_with = "schnorr_sig")]
     signature: schnorr::Signature,
     receipt: GetTxResponseReceipt,
     #[serde(with = "num_as_str")]
@@ -122,6 +125,15 @@ pub struct GetTxResponse {
     code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<String>,
+}
+
+fn schnorr_key<S: Serializer>(key: &schnorr::PublicKey, serializer: S) -> Result<S::Ok, S::Error> {
+    let key = key.to_encoded_point(true);
+    hex(key.as_bytes(), serializer)
+}
+
+fn schnorr_sig<S: Serializer>(sig: &schnorr::Signature, serializer: S) -> Result<S::Ok, S::Error> {
+    hex(<[u8; 64]>::from(sig.to_bytes()), serializer)
 }
 
 #[derive(Clone, Serialize, Debug)]

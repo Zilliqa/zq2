@@ -46,7 +46,7 @@ macro_rules! int_impl {
     };
 }
 
-impl<T: ToHex> ToHex for &T {
+impl<T: ToHex + ?Sized> ToHex for &T {
     fn to_hex_inner(&self, prefix: bool) -> String {
         (*self).to_hex_inner(prefix)
     }
