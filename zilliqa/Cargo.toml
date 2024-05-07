@@ -59,7 +59,7 @@ rand_core = "0.6.4"
 revm = { version = "8.0.0", features = ["optional_balance_check"] }
 rlp = "0.5.2"
 ruint = { version = "1.12.1", features = ["serde"] }
-serde = { version = "1.0.199", features = ["derive", "rc"] }
+serde = { version = "1.0.200", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"
 serde_json = { version = "1.0.115", features = ["raw_value"] }
 sha2 = "0.10.8"
