@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use primitive_types::{H160, H256, H512};
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 use super::{hex, hex_no_prefix, option_hex_no_prefix};
 use crate::{
@@ -103,14 +104,17 @@ pub struct TxBlockHeader {
 pub struct GetTxResponse {
     #[serde(rename = "ID", serialize_with = "hex_no_prefix")]
     id: H256,
+    #[serde(with = "num_as_str")]
     version: u32,
     #[serde(with = "num_as_str")]
     nonce: u64,
     #[serde(serialize_with = "hex_no_prefix")]
     to_addr: H160,
+    #[serde(serialize_with = "schnorr_key")]
     sender_pub_key: schnorr::PublicKey,
     #[serde(with = "num_as_str")]
     amount: ZilAmount,
+    #[serde(serialize_with = "schnorr_sig")]
     signature: schnorr::Signature,
     receipt: GetTxResponseReceipt,
     #[serde(with = "num_as_str")]
@@ -121,6 +125,15 @@ pub struct GetTxResponse {
     code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<String>,
+}
+
+fn schnorr_key<S: Serializer>(key: &schnorr::PublicKey, serializer: S) -> Result<S::Ok, S::Error> {
+    let key = key.to_encoded_point(true);
+    hex(key.as_bytes(), serializer)
+}
+
+fn schnorr_sig<S: Serializer>(sig: &schnorr::Signature, serializer: S) -> Result<S::Ok, S::Error> {
+    hex(<[u8; 64]>::from(sig.to_bytes()), serializer)
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -270,4 +283,32 @@ pub struct ShardingStructure {
 pub struct SmartContract {
     #[serde(serialize_with = "hex_no_prefix")]
     pub address: H160,
+}
+
+#[derive(Clone, Debug)]
+pub enum RPCErrorCode {
+    // Standard JSON-RPC 2.0 errors
+    // RPC_INVALID_REQUEST is internally mapped to HTTP_BAD_REQUEST (400).
+    // It should not be used for application-layer errors.
+    RpcInvalidRequest = -32600,
+    // RPC_METHOD_NOT_FOUND is internally mapped to HTTP_NOT_FOUND (404).
+    // It should not be used for application-layer errors.
+    RpcMethodNotFound = -32601,
+    RpcInvalidParams = -32602,
+    // RPC_INTERNAL_ERROR should only be used for genuine errors in bitcoind
+    // (for example datadir corruption).
+    RpcInternalError = -32603,
+    RpcParseError = -32700,
+
+    // General application defined errors
+    RpcMiscError = -1,             // std::exception thrown in command handling
+    RpcTypeError = -3,             // Unexpected type was passed as parameter
+    RpcInvalidAddressOrKey = -5,   // Invalid address or key
+    RpcInvalidParameter = -8,      // Invalid, missing or duplicate parameter
+    RpcDatabaseError = -20,        // Database error
+    RpcDeserializationError = -22, // Error parsing or validating structure in raw format
+    RpcVerifyError = -25,          // General error during transaction or block submission
+    RpcVerifyRejected = -26,       // Transaction or block was rejected by network rules
+    RpcInWarmup = -28,             // Client still warming up
+    RpcMethodDeprecated = -32,     // RPC method is deprecated
 }

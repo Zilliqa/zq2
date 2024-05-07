@@ -17,7 +17,7 @@ use super::{
     types::zil::{self, BlockchainInfo, ShardingStructure, SmartContract},
 };
 use crate::{
-    api::types::zil::{CreateTransactionResponse, GetTxResponse},
+    api::types::zil::{CreateTransactionResponse, GetTxResponse, RPCErrorCode},
     crypto::Hash,
     exec::zil_contract_address,
     message::BlockNumber,
@@ -163,16 +163,28 @@ fn get_contract_address_from_transaction_id(
 }
 
 fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<GetTxResponse>> {
+    let jsonrpc_error_data: Option<String> = None;
     let hash: H256 = params.one()?;
     let hash: Hash = Hash(hash.0);
 
-    let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?
-        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+    let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?.ok_or_else(|| {
+        jsonrpsee::types::ErrorObject::owned(
+            RPCErrorCode::RpcDatabaseError as i32,
+            "Txn Hash not Present".to_string(),
+            jsonrpc_error_data.clone(),
+        )
+    })?;
     let receipt = node
         .lock()
         .unwrap()
         .get_transaction_receipt(hash)?
-        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+        .ok_or_else(|| {
+            jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcDatabaseError as i32,
+                "Txn Hash not Present".to_string(),
+                jsonrpc_error_data.clone(),
+            )
+        })?;
     let block = node
         .lock()
         .unwrap()

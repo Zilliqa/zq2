@@ -35,13 +35,7 @@ for details.
 
 Automated bootstrap of a 4 nodes Zilliqa 2.0 aka zq2 network.
 
-Build the images first:
-
-```bash
-docker build . -t zq2-node0
-```
-
-Then run:
+Run:
 
 ```bash
 docker-compose up
@@ -50,11 +44,22 @@ docker-compose up
 ## Testing
 
 The tests can be run with `cargo test`.
-Most tests create an in-memory network of nodes, with the libp2p networking layer stubbed out and send API requests to
-the network.
+Most tests create an in-memory network of nodes, with the libp2p networking layer stubbed out and send API requests to the network.
 
 Some tests involve compiling Solidity code.
 `svm-rs` will automatically download and use a suitable version for your platform when you run these tests.
+
+To install `svm-rs` run:
+
+```
+cargo install svm-rs
+```
+
+Then you can install a suitable Solc version by executing:
+
+```
+svm install <solc version>
+```
 
 ## Logging
 
