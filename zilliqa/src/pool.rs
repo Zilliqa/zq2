@@ -198,7 +198,7 @@ impl TransactionPool {
     pub fn pending_nonce(&self, sender: Address, mut current_nonce: u64) -> u64 {
         loop {
             let index = TxIndex::Nonced(sender, current_nonce);
-            if self.transactions.get(&index).is_none() {
+            if !self.transactions.contains_key(&index) {
                 break;
             }
             current_nonce += 1;
