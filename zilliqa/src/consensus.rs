@@ -1480,6 +1480,11 @@ impl Consensus {
     fn check_block(&mut self, block: &Block) -> Result<()> {
         block.verify_hash()?;
 
+        // This should be checked against genesis
+        if block.view() == 0 {
+            return Ok(());
+        }
+
         let Some(parent) = self.get_block(&block.parent_hash())? else {
             warn!(
                 "Missing parent block while trying to check validity of block {}",
@@ -1487,11 +1492,6 @@ impl Consensus {
             );
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
-
-        // This should be checked against genesis
-        if block.view() == 0 {
-            return Ok(());
-        }
 
         let Some(finalized_block) = self.get_block_by_view(self.finalized_view)? else {
             return Err(MissingBlockError::from(self.finalized_view).into());
