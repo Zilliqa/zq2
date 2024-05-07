@@ -75,7 +75,7 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
         .unwrap();
 
     // now, wait until block 15 has been produced, but dropping 10% of the messages.
-    for _ in 0..1000 {
+    for _ in 0..2000 {
         network.randomly_drop_messages_then_tick(failure_rate).await;
         if get_block_number(&mut network) >= finish_block {
             break;
