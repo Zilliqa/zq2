@@ -4,6 +4,7 @@ mod net;
 pub mod ots;
 pub mod subscription_id_provider;
 mod to_hex;
+mod trace;
 pub mod types;
 mod web3;
 pub mod zil;
@@ -15,6 +16,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     module.merge(eth::rpc_module(node.clone())).unwrap();
     module.merge(net::rpc_module(node.clone())).unwrap();
     module.merge(ots::rpc_module(node.clone())).unwrap();
+    module.merge(trace::rpc_module(node.clone())).unwrap();
     module.merge(web3::rpc_module(node.clone())).unwrap();
     module.merge(zil::rpc_module(node)).unwrap();
 
