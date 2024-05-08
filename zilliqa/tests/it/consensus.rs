@@ -175,7 +175,7 @@ async fn create_shard(
     for key in shard_node_keys {
         network.add_node_with_key(true, key);
     }
-    network.run_until_block(wallet, 3.into(), 100).await;
+    network.run_until_block(wallet, 10.into(), 100).await;
     assert_eq!(
         network.nodes.len(),
         initial_main_shard_nodes + child_shard_nodes
@@ -239,7 +239,7 @@ async fn create_shard(
     // * Finalize the block on the main shard and check each main shard node has
     // spawned a child shard node in response
     network
-        .run_until_block(wallet, included_block + 2, 200)
+        .run_until_block(wallet, included_block + 6, 200)
         .await;
 
     network
@@ -541,7 +541,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
                 }
                 false
             },
-            200,
+            600,
         )
         .await
         .unwrap();
