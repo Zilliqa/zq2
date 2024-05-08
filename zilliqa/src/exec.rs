@@ -115,12 +115,17 @@ impl Database for &State {
         address: revm::primitives::Address,
     ) -> Result<Option<AccountInfo>, Self::Error> {
         let address = H160(address.into_array());
+        info!(?address, "exec basic address");
 
         if !self.has_account(address)? {
+            info!(?address, "basic doesn't have account");
+
             return Ok(None);
         }
 
         let account = self.get_account(address)?;
+        info!(?account, ?address, "basic account");
+
         let account_info = AccountInfo {
             balance: revm::primitives::U256::from(account.balance),
             nonce: account.nonce,
@@ -130,6 +135,7 @@ impl Database for &State {
                 state: BytecodeState::Raw,
             }),
         };
+        tracing::debug!(?account_info, "basic account info");
 
         Ok(Some(account_info))
     }
@@ -144,11 +150,15 @@ impl Database for &State {
         index: revm::primitives::U256,
     ) -> Result<revm::primitives::U256, Self::Error> {
         let address = H160(address.into_array());
+        info!(?address, "storage address");
         let index = H256(index.to_be_bytes());
+        info!(?index, "storage index");
 
         let result = self.get_account_storage(address, index)?;
-
-        Ok(revm::primitives::U256::from_be_bytes(result.0))
+        tracing::debug!(?result, "storage result");
+        let res0 = revm::primitives::U256::from_be_bytes(result.0);
+        tracing::debug!(?res0, "res0");
+        Ok(res0)
     }
 
     fn block_hash(&mut self, _number: revm::primitives::U256) -> Result<B256, Self::Error> {
