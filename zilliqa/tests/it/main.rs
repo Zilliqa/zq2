@@ -768,14 +768,23 @@ impl Network {
                         .filter(|(index, _)| !self.disconnected.contains(index))
                         .collect()
                 };
+                let sender_node = self
+                    .nodes
+                    .iter()
+                    .find(|&node| node.peer_id == source)
+                    .expect("Sender should be on the nodes list");
+                let sender_chain_id = sender_node.inner.lock().unwrap().config.eth_chain_id;
+
                 for (index, node) in nodes.iter() {
                     let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                     span.in_scope(|| {
-                        node.inner
-                            .lock()
-                            .unwrap()
-                            .handle_network_message(source, external_message.clone())
-                            .unwrap();
+                        let mut inner = node.inner.lock().unwrap();
+                        // Send broadcast to nodes only in the same shard (having same chain_id)
+                        if inner.config.eth_chain_id == sender_chain_id {
+                            inner
+                                .handle_network_message(source, external_message.clone())
+                                .unwrap();
+                        }
                     });
                 }
             }
