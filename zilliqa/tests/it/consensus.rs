@@ -156,6 +156,8 @@ async fn create_shard(
         .map(|node| node.secret_key)
         .collect();
 
+    shard_network.run_until_block(&shard_wallet, 3.into(), 50).await;
+
     network.children.insert(child_shard_id, shard_network);
 
     // * Run a block or so to stabilise past genesis
@@ -175,11 +177,14 @@ async fn create_shard(
     for key in shard_node_keys {
         network.add_node_with_key(true, key);
     }
+
     network.run_until_block(wallet, 10.into(), 100).await;
     assert_eq!(
         network.nodes.len(),
         initial_main_shard_nodes + child_shard_nodes
     ); // sanity check
+
+
 
     // * Fetch shard's genesis hash
     let shard_genesis = shard_wallet
