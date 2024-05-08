@@ -312,7 +312,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
     let link_receipt = network.run_until_receipt(&main_wallet, hash, 200).await;
     assert!(link_receipt.status.unwrap() == 1.into());
     network
-        .run_until_block(&main_wallet, link_receipt.block_number.unwrap() + 5, 100)
+        .run_until_block(&main_wallet, link_receipt.block_number.unwrap() + 6, 300)
         .await; // Finalize
     network.children.get_mut(&shard_2_id).unwrap().tick().await; // handle all the LaunchLink messages
     network.children.get_mut(&shard_2_id).unwrap().tick().await; // ...and forward them back to parent
@@ -397,7 +397,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .children
         .get_mut(&shard_1_id)
         .unwrap()
-        .run_until_block(&shard_1_wallet, receipt.block_number.unwrap() + 4, 200)
+        .run_until_block(&shard_1_wallet, receipt.block_number.unwrap() + 6, 300)
         .await;
 
     let getter = contract.function("getUint256").unwrap();
@@ -511,7 +511,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
 
     // 4. Finalize that block on the main shard, so that the x-shard message gets sent
     network
-        .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 80)
+        .run_until_block(&wallet, receipt.block_number.unwrap() + 6, 80)
         .await;
 
     // 5. Make sure the transaction gets included in the child network
