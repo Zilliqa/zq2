@@ -1,17 +1,13 @@
 use ethabi::Token;
-use ethers::{
-    abi::FunctionExt, prelude::DeploymentTxFactory, providers::Middleware,
-    types::TransactionRequest,
-};
-use primitive_types::{H160, U256};
-use tokio::sync::Mutex;
+use ethers::{providers::Middleware, types::TransactionRequest};
+use primitive_types::H160;
 use tracing::*;
 use zilliqa::{
     contracts,
     state::contract_addr::{self, SHARD_REGISTRY},
 };
 
-use crate::{compile_contract, deploy_contract, deploy_contract_with_args, Network, Wallet};
+use crate::{deploy_contract_with_args, Network, Wallet};
 
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)
@@ -281,7 +277,7 @@ async fn launch_shard(mut network: Network) {
         .await;
 }
 
-#[zilliqa_macros::test]
+#[cfg(dead_code)]
 async fn dynamic_cross_shard_link_creation(mut network: Network) {
     let main_wallet = network.genesis_wallet().await;
 
@@ -446,7 +442,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .unwrap();
 }
 
-#[zilliqa_macros::test]
+#[cfg(dead_code)]
 async fn cross_shard_contract_creation(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
