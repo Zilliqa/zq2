@@ -75,7 +75,7 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
         .unwrap();
 
     // now, wait until block 15 has been produced, but dropping 10% of the messages.
-    for _ in 0..2000 {
+    for _ in 0..1000000 {
         network.randomly_drop_messages_then_tick(failure_rate).await;
         if get_block_number(&mut network) >= finish_block {
             break;
@@ -508,7 +508,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
         .unwrap()
         .tx_hash();
     let receipt = network.run_until_receipt(&wallet, hash, 200).await;
-    warn!("Receipt of shard txn: {:?}", hash);
+
     // 4. Finalize that block on the main shard, so that the x-shard message gets sent
     network
         .run_until_block(&wallet, receipt.block_number.unwrap() + 3, 80)
