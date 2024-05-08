@@ -47,7 +47,7 @@ struct NewViewVote {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Validator {
     pub public_key: NodePublicKey,
-    pub peer_id: Option<PeerId>,
+    pub peer_id: PeerId,
 }
 
 impl PartialEq for Validator {
@@ -375,9 +375,11 @@ impl Consensus {
             let stakers = self.state.get_stakers()?;
             if stakers.iter().any(|v| *v == self.public_key()) {
                 info!("timeout in view 1, we will vote for genesis block rather than incrementing view, genesis hash: {}", genesis.hash());
-                let leader = self.leader_at_block(&genesis, self.view.get_view());
+                let leader = self
+                    .leader_at_block(&genesis, self.view.get_view())
+                    .unwrap();
                 let vote = self.vote_from_block(&genesis);
-                return Ok(Some((leader.peer_id, ExternalMessage::Vote(vote))));
+                return Ok(Some((Some(leader.peer_id), ExternalMessage::Vote(vote))));
             } else {
                 info!("We are on view 1 but we are not a validator, so we are waiting.");
                 let _ = self.download_blocks_up_to_head();
@@ -461,7 +463,7 @@ impl Consensus {
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
             anyhow!("missing block corresponding to our high qc - this should never happen")
         })?;
-        let Some(leader) = self.leader_at_block(&block, self.view.get_view()).peer_id else {
+        let Some(leader) = self.leader_at_block(&block, self.view.get_view()) else {
             return Ok(None);
         };
 
@@ -473,7 +475,7 @@ impl Consensus {
         );
 
         Ok(Some((
-            Some(leader),
+            Some(leader.peer_id),
             ExternalMessage::NewView(Box::new(new_view)),
         )))
     }
@@ -631,14 +633,17 @@ impl Consensus {
                 let next_leader = self.leader_at_block(&block, self.view.get_view());
                 self.create_next_block_on_timeout = false;
 
-                let Some(next_leader) = next_leader.peer_id else {
+                let Some(next_leader) = next_leader else {
                     warn!("Next leader is currently not reachable, has it joined committee yet?");
                     return Ok(None);
                 };
 
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
-                    return Ok(Some((Some(next_leader), ExternalMessage::Vote(vote))));
+                    return Ok(Some((
+                        Some(next_leader.peer_id),
+                        ExternalMessage::Vote(vote),
+                    )));
                 }
             }
         } else {
@@ -667,7 +672,10 @@ impl Consensus {
             .get_block_by_number(block.number().saturating_sub(1))?
             .unwrap();
 
-        let proposer = self.leader_at_block(&parent_block, view).public_key;
+        let proposer = self
+            .leader_at_block(&parent_block, view)
+            .unwrap()
+            .public_key;
         if let Some(proposer_address) = self.state.get_reward_address(proposer)? {
             let reward = rewards_per_block / 2;
             self.state
@@ -1028,7 +1036,7 @@ impl Consensus {
 
     fn leader_for_view(&mut self, parent_hash: Hash, view: u64) -> Option<NodePublicKey> {
         if let Ok(Some(parent)) = self.get_block(&parent_hash) {
-            let leader = self.leader_at_block(&parent, view);
+            let leader = self.leader_at_block(&parent, view).unwrap();
             Some(leader.public_key)
         } else {
             if view > 1 {
@@ -1039,7 +1047,7 @@ impl Consensus {
                 return None;
             }
             let head_block = self.head_block();
-            let leader = self.leader_at_block(&head_block, view);
+            let leader = self.leader_at_block(&head_block, view).unwrap();
             Some(leader.public_key)
         }
     }
@@ -1484,7 +1492,7 @@ impl Consensus {
         }
 
         // Derive the proposer from the block's view
-        let proposer = self.leader_at_block(&parent, block.view());
+        let proposer = self.leader_at_block(&parent, block.view()).unwrap();
 
         // Verify the proposer's signature on the block
         let verified = proposer
@@ -1831,10 +1839,11 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn leader_at_block(&self, block: &Block, view: u64) -> Validator {
-        let block_root_hash = block.state_root_hash();
-        let state_at = self.state.at_root(H256(block_root_hash.0));
-        self.leader(&state_at, view)
+    pub fn leader_at_block(&self, block: &Block, view: u64) -> Option<Validator> {
+        let Ok(state_at) = self.try_get_state_at(block.number()) else {
+            return None;
+        };
+        Some(self.leader(&state_at, view))
     }
 
     pub fn leader(&self, state: &State, view: u64) -> Validator {
@@ -1853,16 +1862,16 @@ impl Consensus {
         let index = dist.sample(&mut rng);
         let public_key = *committee.get(index).unwrap();
 
-        if let Ok(Some(peer_id)) = self.state.get_peer_id(public_key) {
-            return Validator {
-                public_key,
-                peer_id: Some(peer_id),
-            };
-        };
+        let peer_id = self
+            .state
+            .get_peer_id(public_key)
+            .unwrap()
+            .context("Unable to get peer_id from staking contract!")
+            .unwrap();
 
         Validator {
             public_key,
-            peer_id: None,
+            peer_id,
         }
     }
 

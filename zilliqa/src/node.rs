@@ -377,6 +377,7 @@ impl Node {
         let proposer = self
             .consensus
             .leader_at_block(&parent, header.view)
+            .unwrap()
             .public_key;
 
         self.consensus.state().get_reward_address(proposer)
