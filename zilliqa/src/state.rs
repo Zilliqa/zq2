@@ -171,11 +171,13 @@ impl State {
     /// Returns an error on failures to access the state tree, or decode the account; or an empty
     /// account if one didn't exist yet
     pub fn get_account(&self, address: Address) -> Result<Account> {
-        Ok(self
-            .accounts
-            .get(&Self::account_key(address))?
-            .map(|bytes| bincode::deserialize::<Account>(&bytes))
-            .unwrap_or(Ok(Account::default()))?)
+        let acc = self
+        .accounts
+        .get(&Self::account_key(address))?
+        .map(|bytes| bincode::deserialize::<Account>(&bytes))
+        .unwrap_or(Ok(Account::default()))?;
+        tracing::debug!(?acc, "state get_account");
+        Ok(acc)
     }
 
     /// As get_account, but panics if account cannot be read.
