@@ -281,27 +281,6 @@ impl Consensus {
             }
         };
 
-        let mut peers: Vec<_> = config
-            .consensus
-            .genesis_committee
-            .iter()
-            .map(|(public_key, peer_id)| Validator {
-                public_key: *public_key,
-                peer_id: Some(*peer_id),
-            })
-            .collect();
-
-        let public_key = secret_key.node_public_key();
-        let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
-
-        // Add myself to peer list if I'm not in genesis committee
-        if !peers.iter().any(|member| member.public_key == public_key) {
-            peers.push(Validator {
-                peer_id: Some(peer_id),
-                public_key,
-            });
-        }
-
         let mut consensus = Consensus {
             secret_key,
             config,
