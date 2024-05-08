@@ -1,4 +1,5 @@
 pub mod collector;
+pub mod converter;
 pub mod deployer;
 pub mod mitmweb;
 pub mod otel;
@@ -9,4 +10,5 @@ pub mod plumbing;
 pub mod setup;
 pub mod spout;
 pub mod utils;
+pub mod zq1;
 pub mod zq2;

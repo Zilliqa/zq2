@@ -21,7 +21,7 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.82"
+anyhow = { version = "1.0.82", features = ["backtrace"] }
 async-trait = "0.1.80"
 clap = { version = "4.5.4", features = ["derive"] }
 colored = "2.1.0"
@@ -44,3 +44,29 @@ url = "2.5.0"
 zilliqa = { path = "../zilliqa" }
 zilliqa-rs = { version = "0.3.0" }
 zqutils = { git = "https://github.com/zilliqa/zq-base" } 
+base64 = "0.22.0"
+bitvec = "1.0.1"
+eth_trie = { version = "0.1.0", path = "../eth-trie.rs" }
+ethabi = "18.0.0"
+ethereum = "0.15.0"
+hex = "0.4.3"
+home = "0.5.9"
+indicatif = "0.17.8"
+itertools = "0.12.1"
+k256 = "0.13.3"
+libc = "0.2.153"
+log = "0.4.21"
+primitive-types = "0.12.2"
+prost = "0.12.3"
+revm = "8.0.0"
+rlp = "0.5.2"
+rs-leveldb = "0.1.5"
+rustc-hex = "2.1.0"
+sha2 = "0.10.8"
+sha3 = "0.10.8"
+thiserror = "1.0.57"
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+
+[build-dependencies]
+prost-build = "0.12.3"
