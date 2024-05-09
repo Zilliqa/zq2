@@ -145,7 +145,7 @@ pub struct Consensus {
     /// The persistence database
     db: Arc<Db>,
     /// Actions that act on newly created blocks
-    pub transaction_pool: TransactionPool,
+    transaction_pool: TransactionPool,
     // PRNG - non-cryptographically secure, but we don't need that here
     rng: SmallRng,
     /// Flag indicating that block creation should be postponed due to empty mempool
@@ -773,7 +773,7 @@ impl Consensus {
     }
 
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
-        let txns: Vec<_> = std::iter::from_fn(|| self.transaction_pool.best_transaction())
+        std::iter::from_fn(|| self.transaction_pool.best_transaction())
             .filter(|txn| {
                 let account_nonce = self.state.must_get_account(txn.signer).nonce;
                 // Ignore this transaction if it is no longer valid.
@@ -784,17 +784,7 @@ impl Consensus {
                     .map(|tx_nonce| tx_nonce >= account_nonce)
                     .unwrap_or(true)
             })
-            .collect();
-
-        // Reinsert these transactions into the pool. In case this proposal doesn't get mined, we want to retain the
-        // pending transactions for another try later.
-        for txn in txns.clone() {
-            let account_nonce = self.state.must_get_account(txn.signer).nonce;
-            // This insertion should always succeed, because we just took this transaction out of the pool.
-            assert!(self.transaction_pool.insert_transaction(txn, account_nonce));
-        }
-
-        txns
+            .collect()
     }
 
     pub fn get_touched_transactions(&self, address: H160) -> Result<Vec<Hash>> {
@@ -1046,11 +1036,19 @@ impl Consensus {
         );
         // as a future improvement, process the proposal before broadcasting it
         trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
-        let broadcasted_transactions = applied_transactions
-            .into_iter()
-            // intershard transactions are not meant to be broadcast
-            .filter(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }))
-            .collect();
+        // intershard transactions are not meant to be broadcast
+        let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
+            applied_transactions
+                .into_iter()
+                .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
+        // however, for the transactions that we are NOT broadcasting, we re-insert
+        // them into the pool - this is because upon broadcasting the proposal, we will
+        // have to re-execute it ourselves (in order to vote on it) and thus will
+        // need those transactions again
+        for tx in opaque_transactions {
+            let account_nonce = self.state.get_account(tx.signer)?.nonce;
+            self.transaction_pool.insert_transaction(tx, account_nonce);
+        }
         Ok(Some((proposal, broadcasted_transactions)))
     }
 
