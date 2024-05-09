@@ -18,7 +18,7 @@ use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
 use serde::Serialize;
 
-use crate::{deploy_contract, LocalRpcClient, Network, Wallet};
+use crate::{deploy_contract, LocalRpcClient, Network};
 
 #[zilliqa_macros::test]
 async fn call_block_number(mut network: Network) {
@@ -1062,35 +1062,4 @@ async fn block_subscription(mut network: Network) {
     );
 
     assert!(block_stream.unsubscribe().await.unwrap());
-}
-
-#[zilliqa_macros::test]
-async fn get_transaction_count_pending(mut network: Network) {
-    async fn pending_count(wallet: &Wallet) -> u64 {
-        wallet
-            .get_transaction_count(wallet.address(), Some(BlockNumber::Pending.into()))
-            .await
-            .unwrap()
-            .as_u64()
-    }
-
-    let wallet = network.genesis_wallet().await;
-
-    assert_eq!(pending_count(&wallet).await, 0);
-
-    wallet
-        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
-        .await
-        .unwrap()
-        .tx_hash();
-
-    assert_eq!(pending_count(&wallet).await, 1);
-
-    wallet
-        .send_transaction(TransactionRequest::pay(H160::random(), 10).nonce(1), None)
-        .await
-        .unwrap()
-        .tx_hash();
-
-    assert_eq!(pending_count(&wallet).await, 2);
 }

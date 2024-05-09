@@ -191,14 +191,25 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    trace!("get_transaction_count: params: {:?}", params);
     let mut params = params.sequence();
     let address: H160 = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
+    trace!(
+        "get_transaction_count resp: {:?}",
+        node.lock()
+            .unwrap()
+            .get_account(address, block_number)?
+            .nonce
+            .to_hex()
+    );
+
     Ok(node
         .lock()
         .unwrap()
-        .get_transaction_count(address, block_number)?
+        .get_account(address, block_number)?
+        .nonce
         .to_hex())
 }
 
