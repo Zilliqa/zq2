@@ -16,6 +16,8 @@ pub struct Docs {
     pub source_dir: String,
     // What should we prefix the id with, if anything?
     pub id_prefix: Option<String>,
+    // Where should we write the index file?
+    pub index_file: Option<String>,
 }
 
 #[derive(Debug)]
@@ -25,11 +27,17 @@ struct ParsedInput {
 }
 
 impl Docs {
-    pub fn new(source_dir: &str, target_dir: &str, id_prefix: &Option<String>) -> Result<Self> {
+    pub fn new(
+        source_dir: &str,
+        target_dir: &str,
+        id_prefix: &Option<String>,
+        index_file: &Option<String>,
+    ) -> Result<Self> {
         Ok(Self {
             target_dir: target_dir.to_string(),
             source_dir: source_dir.to_string(),
             id_prefix: id_prefix.clone(),
+            index_file: index_file.clone(),
         })
     }
 
@@ -50,6 +58,8 @@ impl Docs {
             abs: PathBuf::from(dir),
             rel: PathBuf::from(""),
         });
+        let mut contents_map: serde_yaml::Value =
+            serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
         while let Some(ref path_entry) = stack.pop() {
             let md = fs::metadata(&path_entry.abs).await?;
             if md.is_dir() {
@@ -74,10 +84,41 @@ impl Docs {
                         == "md"
                     {
                         println!("File: {:?} rel {:?}", &path_entry.abs, &path_entry.rel);
-                        self.generate_file(&path_entry.abs, &path_entry.rel).await?;
+                        let (desc_path, prefixed_id) =
+                            self.generate_file(&path_entry.abs, &path_entry.rel).await?;
+                        let mut the_iter = desc_path.iter();
+                        let key = the_iter.next_back().ok_or(anyhow!(
+                            "API file {0:?} has empty description path!",
+                            &path_entry.abs
+                        ))?;
+                        let mut insert_at: &mut serde_yaml::Value = &mut contents_map;
+                        for component in the_iter {
+                            let serde_yaml::Value::Mapping(ref mut map) = insert_at else {
+                                return Err(anyhow!("Internal error!"));
+                            };
+                            if !map.contains_key(component) {
+                                map.insert(
+                                    serde_yaml::Value::String(component.to_string()),
+                                    serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+                                );
+                            }
+                            insert_at =
+                                map.get_mut(component).ok_or(anyhow!("Internal error 3"))?;
+                        }
+                        let serde_yaml::Value::Mapping(ref mut map) = insert_at else {
+                            return Err(anyhow!("Internal error 2"));
+                        };
+                        map.insert(
+                            serde_yaml::Value::String(key.to_string()),
+                            serde_yaml::Value::String(prefixed_id),
+                        );
                     }
                 }
             }
+        }
+        let index = serde_yaml::to_string(&contents_map)?;
+        if let Some(val) = &self.index_file {
+            fs::write(val, index).await?;
         }
         Ok(())
     }
@@ -137,7 +178,8 @@ impl Docs {
     // Then we make those sections the elements of a Tera dictionary and substitute a template
     // which tells us how to generate the documentation - this is a resource for now, but
     // one day it might be programmable.
-    pub async fn generate_file(&self, src: &Path, rel: &Path) -> Result<()> {
+    // @return A vector of the components we will use to index this page in mkdocs.yaml
+    pub async fn generate_file(&self, src: &Path, rel: &Path) -> Result<(Vec<String>, String)> {
         // First, let's read the input
         let src_contents = fs::read_to_string(src).await?;
         let src_file = zqutils::utils::string_from_path(src)?;
@@ -171,11 +213,20 @@ impl Docs {
         // OK. Grab the template
         let mut page_tera: Tera = Default::default();
         page_tera.add_raw_template("api", include_str!("../resources/api.tera.md"))?;
+        let mut desc_path: Vec<String> = Vec::new();
         let prefixed_id = if let Some(ref v) = self.id_prefix {
+            desc_path.push(v.to_string());
             format!("{0}{1}", v, &rel_file)
         } else {
             rel_file.to_string()
         };
+        desc_path.append(
+            &mut id
+                .clone()
+                .iter()
+                .map(|x| x.to_str().map_or(String::new(), |x| x.to_string()))
+                .collect::<Vec<String>>(),
+        );
         final_context.insert("_id", &prefixed_id);
         let final_page = page_tera
             .render("api", &final_context)
@@ -184,6 +235,20 @@ impl Docs {
         // OK. Now we have some data, let's write it.
         self.write_file(&final_page, &id).await?;
 
-        Ok(())
+        // Now, desc_path's last component should be the page title.
+        let Some(page_title) = parsed.sections.get("title") else {
+            return Err(anyhow!(
+                "Page {0} does not contain a title section - needed to build the mkdocs index",
+                src_file
+            ));
+        };
+        let out_path = desc_path
+            .iter()
+            .take(desc_path.len() - 1)
+            .chain(std::iter::once(page_title))
+            .map(|x| x.to_string())
+            .collect::<Vec<_>>();
+
+        Ok((out_path, prefixed_id))
     }
 }

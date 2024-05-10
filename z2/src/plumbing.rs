@@ -148,10 +148,11 @@ pub async fn generate_docs(
     base_dir: &str,
     target_dir: &str,
     id_prefix: &Option<String>,
+    index_file: &Option<String>
 ) -> Result<()> {
     // Grotty, but easier than lots of silly Path conversions.
     let scan_dir = format!("{}/zq2/zilliqa", base_dir);
-    let docs = docgen::Docs::new(&scan_dir, target_dir, id_prefix)?;
+    let docs = docgen::Docs::new(&scan_dir, target_dir, id_prefix, index_file)?;
     docs.generate_all().await?;
     Ok(())
 }
