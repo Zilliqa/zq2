@@ -52,6 +52,10 @@ struct PerfStruct {
 struct DocStruct {
     /// Where should we write the resulting documentation?
     target_dir: String,
+
+    /// id prefix, if there is one.
+    #[clap(long)]
+    id_prefix: Option<String>,
 }
 
 // See https://jwodder.github.io/kbits/posts/clap-bool-negate/
@@ -211,7 +215,7 @@ async fn main() -> Result<()> {
             }
         },
         Commands::DocGen(ref arg) => {
-            plumbing::generate_docs(&base_dir, &arg.target_dir).await?;
+            plumbing::generate_docs(&base_dir, &arg.target_dir, &arg.id_prefix).await?;
             Ok(())
         }
     }

@@ -1,14 +1,16 @@
----
-id: api/ots/ots_getApiLevel
-title: ots_getApiLevel
----
+# Title
 
----
-{% api_header %}
+ots_getApiLevel
 
-{% api_example_request %}
+# Keywords
 
-{% api_curl %}
+ots
+
+# Description
+
+Returns the Otterscan API level
+
+# Curl
 
 ```shell
     curl -d '{
@@ -19,7 +21,7 @@ title: ots_getApiLevel
     }' -H "Content-Type: application/json" -X POST "https://api.zq2-devnet.zilliqa.com/"
 ```
 
-{% api_example_response %}
+# Response
 
 ```json
 {
@@ -29,8 +31,5 @@ title: ots_getApiLevel
 }
 ```
 
-{% api_arguments %}
+# Arguments
 
-{% api_none %}
-
----
