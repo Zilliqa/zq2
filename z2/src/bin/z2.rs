@@ -57,9 +57,13 @@ struct DocStruct {
     #[clap(long)]
     id_prefix: Option<String>,
 
-    /// Write an index to this file
+    /// Modify this index file
     #[clap(long)]
     index_file: Option<String>,
+
+    /// Key prefix in the index file.
+    #[clap(long)]
+    key_prefix: Option<String>,
 }
 
 // See https://jwodder.github.io/kbits/posts/clap-bool-negate/
@@ -219,8 +223,14 @@ async fn main() -> Result<()> {
             }
         },
         Commands::DocGen(ref arg) => {
-            plumbing::generate_docs(&base_dir, &arg.target_dir, &arg.id_prefix, &arg.index_file)
-                .await?;
+            plumbing::generate_docs(
+                &base_dir,
+                &arg.target_dir,
+                &arg.id_prefix,
+                &arg.index_file,
+                &arg.key_prefix,
+            )
+            .await?;
             Ok(())
         }
     }
