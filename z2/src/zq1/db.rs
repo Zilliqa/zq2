@@ -5,14 +5,15 @@ use std::{
     string::FromUtf8Error, sync::Arc,
 };
 
+use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie, Trie, DB};
+use hex::FromHex;
 use leveldb::{
     db::Database,
     iterator::{Iterable, LevelDBIterator},
     options::{Options, ReadOptions, WriteOptions},
 };
-use primitive_types::{H160, H256};
 use prost::Message;
 use sha2::Digest;
 use sha3::Keccak256;
@@ -75,7 +76,7 @@ impl StateDatabase {
     pub fn new(db: Database, delete: bool) -> Result<StateDatabase> {
         let db = StateDatabase { db, delete };
 
-        let value = rlp::NULL_RLP;
+        let value = [0x80; 1];
         let key = Keccak256::digest(value);
         db.insert(&key, value.to_vec())?;
 
@@ -152,7 +153,7 @@ impl Db {
         let state_root = Database::open(&dir.join("stateRoot"), &options)?;
         let trie_root = state_root
             .get_u8(&ReadOptions::new(), 0.to_string().as_bytes())?
-            .map(|r| H256::from_slice(&r));
+            .map(|r| B256::from_slice(&r));
 
         let state = EthTrie::new(Arc::new(StateDatabase::new(
             Database::open(&dir.join("state"), &options)?,
@@ -204,13 +205,13 @@ impl Db {
         })
     }
 
-    pub fn get_contract_code(&self, address: H160) -> Result<Option<Vec<u8>>> {
+    pub fn get_contract_code(&self, address: Address) -> Result<Option<Vec<u8>>> {
         Ok(self
             .contract_code
             .get_u8(&ReadOptions::new(), format!("{:02x}", address).as_bytes())?)
     }
 
-    pub fn put_contract_code(&self, address: H160, code: &[u8]) -> Result<()> {
+    pub fn put_contract_code(&self, address: Address, code: &[u8]) -> Result<()> {
         Ok(self.contract_code.put_u8(
             &WriteOptions::new(),
             format!("{:02x}", address).as_bytes(),
@@ -218,17 +219,17 @@ impl Db {
         )?)
     }
 
-    pub fn contract_code(&self) -> Result<impl Iterator<Item = Result<(H160, Vec<u8>)>> + '_> {
-        kv_iter(&self.contract_code, h160_from_hex, Ok::<_, Infallible>)
+    pub fn contract_code(&self) -> Result<impl Iterator<Item = Result<(Address, Vec<u8>)>> + '_> {
+        kv_iter(&self.contract_code, address_from_hex, Ok::<_, Infallible>)
     }
 
-    pub fn get_contract_init_state_2(&self, account: H160) -> Result<Option<Vec<u8>>> {
+    pub fn get_contract_init_state_2(&self, account: Address) -> Result<Option<Vec<u8>>> {
         Ok(self
             .contract_init_state_2
             .get_u8(&ReadOptions::new(), format!("{:02x}", account).as_bytes())?)
     }
 
-    pub(crate) fn put_init_state_2(&self, address: H160, init_data: &[u8]) -> Result<()> {
+    pub(crate) fn put_init_state_2(&self, address: Address, init_data: &[u8]) -> Result<()> {
         Ok(self.contract_init_state_2.put_u8(
             &WriteOptions::new(),
             format!("{:02x}", address).as_bytes(),
@@ -238,10 +239,10 @@ impl Db {
 
     pub fn contract_init_state_2(
         &self,
-    ) -> Result<impl Iterator<Item = Result<(H160, Vec<u8>)>> + '_> {
+    ) -> Result<impl Iterator<Item = Result<(Address, Vec<u8>)>> + '_> {
         kv_iter(
             &self.contract_init_state_2,
-            h160_from_hex,
+            address_from_hex,
             Ok::<_, Infallible>,
         )
     }
@@ -288,18 +289,17 @@ impl Db {
 
     pub fn contract_state_index(
         &self,
-    ) -> Result<impl Iterator<Item = Result<(H160, ProtoStateIndex)>> + '_> {
-        kv_iter(&self.contract_state_index, h160_from_hex, |v| {
+    ) -> Result<impl Iterator<Item = Result<(Address, ProtoStateIndex)>> + '_> {
+        kv_iter(&self.contract_state_index, address_from_hex, |v| {
             ProtoStateIndex::decode(v.as_slice())
         })
     }
 
     pub fn new_contract_trie(&self) -> EthTrie<StateDatabase> {
-        self.contract_trie
-            .at_root(H256::from_slice(&Keccak256::digest(rlp::NULL_RLP)))
+        EthTrie::new(self.contract_trie.db.clone())
     }
 
-    pub fn contract_trie_at(&self, root: H256) -> EthTrie<StateDatabase> {
+    pub fn contract_trie_at(&self, root: B256) -> EthTrie<StateDatabase> {
         self.contract_trie.at_root(root)
     }
 
@@ -335,7 +335,7 @@ impl Db {
         kv_iter(&self.metadata, key_to_id, Ok::<_, Infallible>)
     }
 
-    pub fn get_micro_block_key(&self, hash: H256) -> Result<Option<ProtoMicroBlockKey>> {
+    pub fn get_micro_block_key(&self, hash: B256) -> Result<Option<ProtoMicroBlockKey>> {
         let key = format!("{hash:x}");
         Ok(self
             .micro_block_keys
@@ -346,8 +346,8 @@ impl Db {
 
     pub fn micro_block_keys(
         &self,
-    ) -> Result<impl Iterator<Item = Result<(H256, ProtoMicroBlockKey)>> + '_> {
-        kv_iter(&self.micro_block_keys, h256_from_hex, |v| {
+    ) -> Result<impl Iterator<Item = Result<(B256, ProtoMicroBlockKey)>> + '_> {
+        kv_iter(&self.micro_block_keys, b256_from_hex, |v| {
             ProtoMicroBlockKey::decode(v.as_slice())
         })
     }
@@ -415,13 +415,13 @@ impl Db {
 
     pub fn processed_txn_tmp(
         &self,
-    ) -> Result<impl Iterator<Item = Result<(H256, ProtoTransactionReceipt)>> + '_> {
-        kv_iter(&self.processed_txn_tmp, h256_from_hex, |v| {
+    ) -> Result<impl Iterator<Item = Result<(B256, ProtoTransactionReceipt)>> + '_> {
+        kv_iter(&self.processed_txn_tmp, b256_from_hex, |v| {
             ProtoTransactionReceipt::decode(v.as_slice())
         })
     }
 
-    pub fn save_account(&mut self, address: H160, account: ProtoAccountBase) -> Result<()> {
+    pub fn save_account(&mut self, address: Address, account: ProtoAccountBase) -> Result<()> {
         self.state.insert(
             format!("{:02x}", address).as_bytes(),
             &account.encode_to_vec(),
@@ -430,24 +430,24 @@ impl Db {
         Ok(())
     }
 
-    pub fn state_root_hash(&mut self) -> Result<H256> {
+    pub fn state_root_hash(&mut self) -> Result<B256> {
         Ok(self.state.root_hash()?)
     }
 
-    pub fn accounts(&self) -> impl Iterator<Item = (H160, ProtoAccountBase)> + '_ {
+    pub fn accounts(&self) -> impl Iterator<Item = (Address, ProtoAccountBase)> + '_ {
         self.state.iter().map(|(k, v)| {
             (
-                H160::from_slice(&hex::decode(String::from_utf8(k).unwrap()).unwrap()),
+                Address::from_slice(&hex::decode(String::from_utf8(k).unwrap()).unwrap()),
                 ProtoAccountBase::decode(v.as_slice()).unwrap(),
             )
         })
     }
 
-    pub fn accounts_at(&self, root_hash: H256) -> EthTrie<StateDatabase> {
+    pub fn accounts_at(&self, root_hash: B256) -> EthTrie<StateDatabase> {
         self.state.at_root(root_hash)
     }
 
-    pub fn get_account(&self, address: H160) -> Result<Option<ProtoAccountBase>> {
+    pub fn get_account(&self, address: Address) -> Result<Option<ProtoAccountBase>> {
         let Some(account) = self.state.get(format!("{:02x}", address).as_bytes())? else {
             return Ok(None);
         };
@@ -455,19 +455,19 @@ impl Db {
         Ok(Some(ProtoAccountBase::decode(account.as_slice())?))
     }
 
-    pub fn state_root(&self) -> Result<H256> {
+    pub fn state_root(&self) -> Result<B256> {
         let trie_root = self
             .state_root
             .get_u8(&ReadOptions::new(), 0.to_string().as_bytes())?
             .ok_or_else(|| anyhow!("no state root"))?;
-        Ok(H256::from_slice(&trie_root))
+        Ok(B256::from_slice(&trie_root))
     }
 
-    pub fn put_state_root(&self, state_root: H256) -> Result<()> {
+    pub fn put_state_root(&self, state_root: B256) -> Result<()> {
         Ok(self.state_root.put_u8(
             &WriteOptions::new(),
             0.to_string().as_bytes(),
-            state_root.as_bytes(),
+            state_root.as_slice(),
         )?)
     }
 
@@ -516,14 +516,14 @@ impl Db {
 
     pub fn temp_state(
         &self,
-    ) -> Result<impl Iterator<Item = Result<(H160, ProtoAccountBase)>> + '_> {
-        kv_iter(&self.temp_state, h160_from_hex, |v| {
+    ) -> Result<impl Iterator<Item = Result<(Address, ProtoAccountBase)>> + '_> {
+        kv_iter(&self.temp_state, address_from_hex, |v| {
             ProtoAccountBase::decode(v.as_slice())
         })
     }
 
-    pub fn tx_block_hash_to_num(&self) -> Result<impl Iterator<Item = Result<(H256, u64)>> + '_> {
-        kv_iter(&self.tx_block_hash_to_num, h256_from_be, key_to_id)
+    pub fn tx_block_hash_to_num(&self) -> Result<impl Iterator<Item = Result<(B256, u64)>> + '_> {
+        kv_iter(&self.tx_block_hash_to_num, b256_from_be, key_to_id)
     }
 
     pub fn tx_blocks(&self) -> Result<impl Iterator<Item = Result<(u64, ProtoTxBlock)>> + '_> {
@@ -563,14 +563,14 @@ impl Db {
     pub fn get_tx_body(
         &self,
         epoch: u64,
-        hash: H256,
+        hash: B256,
     ) -> Result<Option<ProtoTransactionWithReceipt>> {
         let db_index = epoch / 250000;
 
         Ok(self
             .tx_bodies
             .db_at(db_index as usize)
-            .get_u8(&ReadOptions::new(), hash.as_bytes())?
+            .get_u8(&ReadOptions::new(), hash.as_slice())?
             .map(|tx| ProtoTransactionWithReceipt::decode(tx.as_slice()))
             .transpose()?)
     }
@@ -578,23 +578,23 @@ impl Db {
     pub fn put_tx_body(
         &self,
         epoch: u64,
-        hash: H256,
+        hash: B256,
         tx_body: ProtoTransactionWithReceipt,
     ) -> Result<()> {
         let db_index = epoch / 250000;
 
         Ok(self.tx_bodies.db_at(db_index as usize).put_u8(
             &WriteOptions::new(),
-            hash.as_bytes(),
+            hash.as_slice(),
             &tx_body.encode_to_vec(),
         )?)
     }
 
     pub fn tx_bodies(
         &self,
-    ) -> Result<impl Iterator<Item = Result<(H256, ProtoTransactionWithReceipt)>> + '_ + '_> {
+    ) -> Result<impl Iterator<Item = Result<(B256, ProtoTransactionWithReceipt)>> + '_ + '_> {
         Ok(self.tx_bodies.iter().map(|(k, v)| {
-            h256_from_be(k).map_err(Into::into).and_then(|k| {
+            b256_from_be(k).map_err(Into::into).and_then(|k| {
                 ProtoTransactionWithReceipt::decode(v.as_slice())
                     .map(|v| (k, v))
                     .map_err(Into::into)
@@ -602,22 +602,22 @@ impl Db {
         }))
     }
 
-    pub fn tx_epochs(&self) -> Result<impl Iterator<Item = Result<(H256, ProtoTxEpoch)>> + '_> {
-        kv_iter(&self.tx_epochs, h256_from_be, |v| {
+    pub fn tx_epochs(&self) -> Result<impl Iterator<Item = Result<(B256, ProtoTxEpoch)>> + '_> {
+        kv_iter(&self.tx_epochs, b256_from_be, |v| {
             ProtoTxEpoch::decode(v.as_slice())
         })
     }
 
-    pub fn put_tx_epoch(&self, tx_hash: H256, epoch: ProtoTxEpoch) -> Result<()> {
+    pub fn put_tx_epoch(&self, tx_hash: B256, epoch: ProtoTxEpoch) -> Result<()> {
         Ok(self.tx_epochs.put_u8(
             &WriteOptions::new(),
-            tx_hash.as_bytes(),
+            tx_hash.as_slice(),
             &epoch.encode_to_vec(),
         )?)
     }
 
-    pub fn vc_blocks(&self) -> Result<impl Iterator<Item = Result<(H256, ProtoVcBlock)>> + '_> {
-        kv_iter(&self.vc_blocks, h256_from_hex, |v| {
+    pub fn vc_blocks(&self) -> Result<impl Iterator<Item = Result<(B256, ProtoVcBlock)>> + '_> {
+        kv_iter(&self.vc_blocks, b256_from_hex, |v| {
             ProtoVcBlock::decode(v.as_slice())
         })
     }
@@ -640,19 +640,19 @@ enum FromHexError {
     #[error("invalid utf-8")]
     Utf8(#[from] FromUtf8Error),
     #[error("invalid hex encoding")]
-    Hex(#[from] rustc_hex::FromHexError),
+    Hex(#[from] alloy_primitives::hex::FromHexError),
 }
 
-fn h160_from_hex(hex: Vec<u8>) -> Result<H160, FromHexError> {
-    Ok(String::from_utf8(hex)?.parse()?)
+fn address_from_hex(hex: Vec<u8>) -> Result<Address, FromHexError> {
+    Ok(Address::from_hex(String::from_utf8(hex)?)?)
 }
 
-fn h256_from_hex(hex: Vec<u8>) -> Result<H256, FromHexError> {
-    Ok(String::from_utf8(hex)?.parse()?)
+fn b256_from_hex(hex: Vec<u8>) -> Result<B256, FromHexError> {
+    Ok(B256::from_hex(String::from_utf8(hex)?)?)
 }
 
-fn h256_from_be(bytes: Vec<u8>) -> Result<H256, Infallible> {
-    Ok(H256::from_slice(&bytes))
+fn b256_from_be(bytes: Vec<u8>) -> Result<B256, Infallible> {
+    Ok(B256::from_slice(&bytes))
 }
 
 fn kv_iter<K, KM, KE, V, VM, VE>(
@@ -675,7 +675,7 @@ where
 
 #[derive(Debug)]
 pub struct ContractStateKey {
-    pub addr: H160,
+    pub addr: Address,
     pub parts: Vec<String>,
 }
 

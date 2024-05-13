@@ -1,7 +1,8 @@
+use alloy_eips::eip2930::{AccessList, AccessListItem};
+use alloy_primitives::{Address, B256, B512};
 use anyhow::{anyhow, Result};
 use ethabi::Token;
 use k256::ecdsa::VerifyingKey;
-use primitive_types::{H160, H256, H512};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use sha2::Sha256;
@@ -30,8 +31,8 @@ pub struct Account {
 
 #[derive(Debug)]
 pub struct Contract {
-    pub code_hash: H256,
-    pub state_root: H256,
+    pub code_hash: B256,
+    pub state_root: B256,
 }
 
 impl Account {
@@ -40,8 +41,8 @@ impl Account {
             proto.oneof3.ok_or_else(|| anyhow!("no nonce"))?;
         let contract = if !proto.codehash.is_empty() {
             Some(Contract {
-                code_hash: H256::from_slice(&proto.codehash),
-                state_root: H256::from_slice(&proto.storageroot),
+                code_hash: B256::from_slice(&proto.codehash),
+                state_root: B256::from_slice(&proto.storageroot),
             })
         } else {
             None
@@ -66,24 +67,24 @@ impl Account {
 pub struct PubKey([u8; 33]);
 
 impl PubKey {
-    pub fn eth_addr(&self) -> H160 {
+    pub fn eth_addr(&self) -> Address {
         let verifying_key = VerifyingKey::from_sec1_bytes(&self.0).unwrap();
 
         // Remove the first byte before hashing - The first byte specifies the encoding tag.
         let hashed = Keccak256::digest(&verifying_key.to_encoded_point(false).as_bytes()[1..]);
         let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
 
-        H160(bytes.into())
+        Address::new(bytes.into())
     }
 
-    pub fn zil_addr(&self) -> H160 {
+    pub fn zil_addr(&self) -> Address {
         let verifying_key = VerifyingKey::from_sec1_bytes(&self.0).unwrap();
 
         // Remove the first byte before hashing - The first byte specifies the encoding tag.
         let hashed = Sha256::digest(&verifying_key.to_encoded_point(false).as_bytes()[1..]);
         let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
 
-        H160(bytes.into())
+        Address::new(bytes.into())
     }
 }
 
@@ -111,8 +112,8 @@ impl AsRef<[u8]> for PubKey {
 
 #[derive(Clone, Debug)]
 pub struct MicroBlockInfo {
-    pub hash: H256,
-    pub tx_root: H256,
+    pub hash: B256,
+    pub tx_root: B256,
     pub shard_id: u32,
 }
 
@@ -121,8 +122,8 @@ impl MicroBlockInfo {
         let proto_mb_info::Oneof3::Shardid(shard_id) =
             proto.oneof3.ok_or_else(|| anyhow!("no shardid"))?;
         Ok(MicroBlockInfo {
-            hash: H256::from_slice(&proto.mbhash),
-            tx_root: H256::from_slice(&proto.txroot),
+            hash: B256::from_slice(&proto.mbhash),
+            tx_root: B256::from_slice(&proto.txroot),
             shard_id,
         })
     }
@@ -131,23 +132,23 @@ impl MicroBlockInfo {
 #[derive(Clone, Debug)]
 pub struct TxBlock {
     pub version: u32,
-    pub committee_hash: H256,
-    pub prev_hash: H256,
+    pub committee_hash: B256,
+    pub prev_hash: B256,
     pub gas_limit: u64,
     pub gas_used: u64,
     pub rewards: u128,
     pub block_num: u64,
-    pub mb_info_hash: H256,
+    pub mb_info_hash: B256,
     pub miner_pub_key: PubKey,
     pub ds_block_num: u64,
     pub mb_infos: Vec<MicroBlockInfo>,
-    pub block_hash: H256, // TODO: Remove?
-    pub co_signature_1: H512,
+    pub block_hash: B256, // TODO: Remove?
+    pub co_signature_1: B512,
     pub co_signature_bitmap_1: Vec<bool>,
-    pub co_signature_2: H512,
+    pub co_signature_2: B512,
     pub co_signature_bitmap_2: Vec<bool>,
     pub timestamp: u64,
-    pub state_root_hash: H256,
+    pub state_root_hash: B256,
 }
 
 impl TxBlock {
@@ -177,8 +178,8 @@ impl TxBlock {
 
         Ok(TxBlock {
             version: header_base.version,
-            committee_hash: H256::from_slice(&header_base.committeehash),
-            prev_hash: H256::from_slice(&header_base.prevhash),
+            committee_hash: B256::from_slice(&header_base.committeehash),
+            prev_hash: B256::from_slice(&header_base.prevhash),
             gas_limit: header.gaslimit,
             gas_used,
             rewards: u128::from_be_bytes(
@@ -190,7 +191,7 @@ impl TxBlock {
                     .map_err(|v: Vec<_>| anyhow!("invalid length: {}", v.len()))?,
             ),
             block_num,
-            mb_info_hash: H256::from_slice(&hash_set.mbinfohash),
+            mb_info_hash: B256::from_slice(&hash_set.mbinfohash),
             miner_pub_key: header
                 .minerpubkey
                 .ok_or_else(|| anyhow!("no minerpubkey"))?
@@ -202,13 +203,13 @@ impl TxBlock {
                 .into_iter()
                 .map(MicroBlockInfo::from_proto)
                 .collect::<Result<_>>()?,
-            block_hash: H256::from_slice(&block_base.blockhash),
-            co_signature_1: H512::from_slice(&co_sigs.cs1.ok_or_else(|| anyhow!("no cs1"))?.data),
+            block_hash: B256::from_slice(&block_base.blockhash),
+            co_signature_1: B512::from_slice(&co_sigs.cs1.ok_or_else(|| anyhow!("no cs1"))?.data),
             co_signature_bitmap_1: co_sigs.b1,
-            co_signature_2: H512::from_slice(&co_sigs.cs2.ok_or_else(|| anyhow!("no cs2"))?.data),
+            co_signature_2: B512::from_slice(&co_sigs.cs2.ok_or_else(|| anyhow!("no cs2"))?.data),
             co_signature_bitmap_2: co_sigs.b2,
             timestamp: block_base.timestamp,
-            state_root_hash: H256::from_slice(&hash_set.stateroothash),
+            state_root_hash: B256::from_slice(&hash_set.stateroothash),
         })
     }
 }
@@ -216,9 +217,9 @@ impl TxBlock {
 #[derive(Debug, Clone)]
 pub struct Transaction {
     pub block: u64,
-    pub id: H256,
+    pub id: B256,
     pub version: u32,
-    pub to_addr: H160,
+    pub to_addr: Address,
     pub sender_pub_key: PubKey,
     pub amount: u128,
     pub gas_price: u128,
@@ -226,10 +227,10 @@ pub struct Transaction {
     pub nonce: u64,
     pub code: Option<Vec<u8>>,
     pub data: Option<Vec<u8>>,
-    pub signature: H512,
+    pub signature: B512,
     pub receipt: TransactionReceipt,
     pub cumulative_gas: u64,
-    pub access_list: Vec<(H160, Vec<H256>)>,
+    pub access_list: AccessList,
     pub max_priority_fee_per_gas: Option<u128>,
     pub max_fee_per_gas: Option<u128>,
 }
@@ -253,9 +254,9 @@ impl Transaction {
             receipt.oneof2.ok_or_else(|| anyhow!("no cumgas"))?;
         Ok(Transaction {
             block,
-            id: H256::from_slice(&transaction.tranid),
+            id: B256::from_slice(&transaction.tranid),
             version: info.version,
-            to_addr: H160::from_slice(&info.toaddr),
+            to_addr: Address::from_slice(&info.toaddr),
             sender_pub_key: info
                 .senderpubkey
                 .ok_or_else(|| anyhow!("no senderpubkey"))?
@@ -279,7 +280,7 @@ impl Transaction {
             nonce,
             code,
             data,
-            signature: H512::from_slice(
+            signature: B512::from_slice(
                 &transaction
                     .signature
                     .ok_or_else(|| anyhow!("no signature"))?
@@ -290,13 +291,12 @@ impl Transaction {
             access_list: info
                 .access_list
                 .iter()
-                .map(|a| {
-                    (
-                        H160::from_slice(&a.address),
-                        a.storagekeys.iter().map(|k| H256::from_slice(k)).collect(),
-                    )
+                .map(|a| AccessListItem {
+                    address: Address::from_slice(&a.address),
+                    storage_keys: a.storagekeys.iter().map(|k| B256::from_slice(k)).collect(),
                 })
-                .collect(),
+                .collect::<Vec<_>>()
+                .into(),
             max_priority_fee_per_gas: info
                 .maxpriorityfeepergas
                 .map(|f| {
@@ -350,7 +350,7 @@ impl Log {
                     .ok_or_else(|| anyhow!("no `_eventname` in log"))?
                     .as_str()
                     .ok_or_else(|| anyhow!("`_eventname` is not a string"))?;
-                let topic0 = H256(Keccak256::digest(event_name.as_bytes()).into());
+                let topic0 = B256::new(Keccak256::digest(event_name.as_bytes()).into());
                 let address = log
                     .get("address")
                     .ok_or_else(|| anyhow!("no `address` in log"))?
@@ -371,8 +371,8 @@ impl Log {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct EthLog {
-    pub address: H160,
-    pub topics: Vec<H256>,
+    pub address: Address,
+    pub topics: Vec<B256>,
     #[serde(deserialize_with = "hex")]
     pub data: Vec<u8>,
 }
@@ -391,7 +391,7 @@ fn hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Transition {
     #[serde(rename = "addr")]
-    address: H160,
+    address: Address,
     depth: u64,
     #[serde(rename = "msg")]
     message: Message,
@@ -403,7 +403,7 @@ pub struct Message {
     #[serde(rename = "_amount", deserialize_with = "str_to_int")]
     amount: u64,
     #[serde(rename = "_recipient")]
-    recipient: H160,
+    recipient: Address,
     #[serde(rename = "_tag")]
     tag: String,
     #[serde(default)]

@@ -1,7 +1,7 @@
 use std::{collections::HashSet, env, path::PathBuf, str::FromStr};
 
+use alloy_primitives::B256;
 use anyhow::{anyhow, Result};
-use primitive_types::H256;
 use tokio::fs;
 use zilliqa::crypto::SecretKey;
 
@@ -179,7 +179,7 @@ pub async fn run_print_txs_in_block(zq1_pers_dir: &str, block_num: u64) -> Resul
 pub async fn run_print_txs_by_hash(
     zq1_pers_dir: &str,
     block_num: u64,
-    tx_hash: H256,
+    tx_hash: B256,
 ) -> Result<()> {
     println!("🐼 Printing txn with hash {tx_hash} .. ");
     converter::print_tx_by_hash(zq1_pers_dir, block_num, tx_hash).await?;

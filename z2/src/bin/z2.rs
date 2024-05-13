@@ -1,8 +1,8 @@
 use std::{collections::HashSet, env, fmt};
 
+use alloy_primitives::B256;
 use anyhow::{anyhow, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
-use primitive_types::H256;
 use z2lib::plumbing;
 use zilliqa::crypto::SecretKey;
 
@@ -69,7 +69,7 @@ struct ConvertConfigStruct {
 struct ConverterPrintTransactionConfigStruct {
     zq1_persistence_directory: String,
     block_number: u64,
-    txn_hash: Option<H256>,
+    txn_hash: Option<B256>,
 }
 
 #[derive(Args, Debug)]

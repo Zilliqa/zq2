@@ -8,6 +8,8 @@ use std::{
     time::Duration,
 };
 
+use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy};
+use alloy_primitives::{Address, Parity, Signature, TxKind, B256, U256};
 use anyhow::{anyhow, Context, Result};
 use bitvec::bitvec;
 use clap::{Parser, Subcommand};
@@ -15,9 +17,7 @@ use ethabi::Token;
 use git2::Repository;
 use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
 use itertools::Itertools;
-use primitive_types::{H160, H256};
 use revm::primitives::ResultAndState;
-use rlp::RlpStream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -37,8 +37,7 @@ use zilliqa::{
     state::{contract_addr, Account, Contract, State},
     time::SystemTime,
     transaction::{
-        EthSignature, EvmGas, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxEip1559,
-        TxEip2930, TxLegacy, TxZilliqa, ZilAmount,
+        EvmGas, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
     },
 };
 
@@ -69,8 +68,8 @@ pub async fn convert_persistence(
             .tuple_windows()
             .map(|(a, b)| {
                 // Downsample the addresses to 8 bytes, treating them as `u64`s, for ease of computation.
-                let a = u64::from_be_bytes(a.as_bytes()[..8].try_into().unwrap());
-                let b = u64::from_be_bytes(b.as_bytes()[..8].try_into().unwrap());
+                let a = u64::from_be_bytes(a.as_slice()[..8].try_into().unwrap());
+                let b = u64::from_be_bytes(b.as_slice()[..8].try_into().unwrap());
 
                 b - a
             })
@@ -122,14 +121,14 @@ pub async fn convert_persistence(
     // out of thin air (like we do below).
     let data = contracts::deposit::SET_STAKE.encode_input(&[
         Token::Bytes(secret_key.node_public_key().as_bytes()),
-        Token::Address(H160::from_low_u64_be(1)),
+        Token::Address(ethabi::Address::from_low_u64_be(1)),
         Token::Uint((64 * 10u128.pow(18)).into()),
     ])?;
     let ResultAndState {
         result,
         state: result_state,
     } = state.apply_transaction_evm(
-        H160::zero(),
+        Address::ZERO,
         Some(contract_addr::DEPOSIT),
         GAS_PRICE,
         BLOCK_GAS_LIMIT,
@@ -192,7 +191,7 @@ pub async fn convert_persistence(
                     micro_block
                         .tranhashes
                         .into_iter()
-                        .map(|txn| H256::from_slice(&txn))
+                        .map(|txn| B256::from_slice(&txn))
                 })
                 .collect();
 
@@ -223,7 +222,7 @@ pub async fn convert_persistence(
             let mut block_receipts = Vec::new();
 
             for txn_hash in &txn_hashes {
-                let Some(transaction) = zq1_db.get_tx_body(block_number, H256(txn_hash.0))? else {
+                let Some(transaction) = zq1_db.get_tx_body(block_number, *txn_hash)? else {
                     warn!(?txn_hash, %block_number, "missing transaction");
                     continue;
                 };
@@ -246,10 +245,10 @@ pub async fn convert_persistence(
 
                         let contract_address = transaction.to_addr.is_zero().then(|| {
                             let mut hasher = Sha256::new();
-                            hasher.update(from_addr.as_bytes());
+                            hasher.update(from_addr.as_slice());
                             hasher.update(transaction.nonce.to_be_bytes());
                             let hashed = hasher.finalize();
-                            H160::from_slice(&hashed[12..])
+                            Address::from_slice(&hashed[12..])
                         });
 
                         let receipt = TransactionReceipt {
@@ -295,7 +294,7 @@ pub async fn convert_persistence(
                             key: schnorr::PublicKey::from_sec1_bytes(
                                 transaction.sender_pub_key.as_ref(),
                             )?,
-                            sig: schnorr::Signature::from_slice(transaction.signature.as_bytes())?,
+                            sig: schnorr::Signature::from_slice(transaction.signature.as_slice())?,
                         };
 
                         (transaction, receipt)
@@ -303,13 +302,10 @@ pub async fn convert_persistence(
                     (false, 2..=4) => {
                         let from_addr = transaction.sender_pub_key.eth_addr();
 
-                        let contract_address = transaction.to_addr.is_zero().then(|| {
-                            let mut rlp = RlpStream::new_list(2);
-                            rlp.append(&from_addr);
-                            rlp.append(&(transaction.nonce - 1));
-                            let hashed = Keccak256::digest(&rlp.out());
-                            H160::from_slice(&hashed[12..])
-                        });
+                        let contract_address = transaction
+                            .to_addr
+                            .is_zero()
+                            .then(|| from_addr.create(transaction.nonce - 1));
 
                         let receipt = TransactionReceipt {
                             block_hash: block.hash(),
@@ -386,16 +382,16 @@ pub async fn convert_persistence(
 }
 
 fn infer_eth_signature(
-    txn_hash: H256,
+    txn_hash: B256,
     version: u16,
     chain_id: u16,
     transaction: zq1::Transaction,
 ) -> Result<SignedTransaction> {
-    let r = transaction.signature.0[..32].try_into().unwrap();
-    let s = transaction.signature.0[32..].try_into().unwrap();
+    let r = U256::try_from_be_slice(&transaction.signature.0[..32]).unwrap();
+    let s = U256::try_from_be_slice(&transaction.signature.0[32..]).unwrap();
 
     for y_is_odd in [false, true] {
-        let sig = EthSignature { r, s, y_is_odd };
+        let sig = Signature::from_rs_and_parity(r, s, Parity::Parity(y_is_odd))?;
         let payload = transaction
             .code
             .as_ref()
@@ -415,10 +411,14 @@ fn infer_eth_signature(
                     chain_id: Some(chain_id.into()),
                     nonce: transaction.nonce - 1,
                     gas_price: transaction.gas_price,
-                    gas_limit: EvmGas(transaction.gas_limit),
-                    to_addr: (!transaction.to_addr.is_zero()).then_some(transaction.to_addr),
-                    amount: transaction.amount,
-                    payload,
+                    gas_limit: transaction.gas_limit as u128,
+                    to: if transaction.to_addr.is_zero() {
+                        TxKind::Create
+                    } else {
+                        TxKind::Call(transaction.to_addr)
+                    },
+                    value: transaction.amount.try_into()?,
+                    input: payload.into(),
                 },
                 sig,
             },
@@ -427,15 +427,15 @@ fn infer_eth_signature(
                     chain_id: chain_id.into(),
                     nonce: transaction.nonce - 1,
                     gas_price: transaction.gas_price,
-                    gas_limit: EvmGas(transaction.gas_limit),
-                    to_addr: (!transaction.to_addr.is_zero()).then_some(transaction.to_addr),
-                    amount: transaction.amount,
-                    payload,
-                    access_list: transaction
-                        .access_list
-                        .iter()
-                        .map(|(a, k)| (*a, k.clone()))
-                        .collect(),
+                    gas_limit: transaction.gas_limit as u128,
+                    to: if transaction.to_addr.is_zero() {
+                        TxKind::Create
+                    } else {
+                        TxKind::Call(transaction.to_addr)
+                    },
+                    value: transaction.amount.try_into()?,
+                    input: payload.into(),
+                    access_list: transaction.access_list.clone(),
                 },
                 sig,
             },
@@ -443,15 +443,15 @@ fn infer_eth_signature(
                 tx: TxEip1559 {
                     chain_id: chain_id.into(),
                     nonce: transaction.nonce - 1,
-                    gas_limit: EvmGas(transaction.gas_limit),
-                    to_addr: (!transaction.to_addr.is_zero()).then_some(transaction.to_addr),
-                    amount: transaction.amount,
-                    payload,
-                    access_list: transaction
-                        .access_list
-                        .iter()
-                        .map(|(a, k)| (*a, k.clone()))
-                        .collect(),
+                    gas_limit: transaction.gas_limit as u128,
+                    to: if transaction.to_addr.is_zero() {
+                        TxKind::Create
+                    } else {
+                        TxKind::Call(transaction.to_addr)
+                    },
+                    value: transaction.amount.try_into()?,
+                    input: payload.into(),
+                    access_list: transaction.access_list.clone(),
                     max_priority_fee_per_gas: transaction
                         .max_priority_fee_per_gas
                         .ok_or_else(|| anyhow!("no max_priority_fee_per_gas"))?,
@@ -492,7 +492,7 @@ pub async fn print_tx_in_block(zq1_persistence_dir: &str, block_number: u64) -> 
             micro_block
                 .tranhashes
                 .into_iter()
-                .map(|txn| H256::from_slice(&txn))
+                .map(|txn| B256::from_slice(&txn))
         })
         .collect();
 
@@ -503,7 +503,7 @@ pub async fn print_tx_in_block(zq1_persistence_dir: &str, block_number: u64) -> 
 pub async fn print_tx_by_hash(
     zq1_persistence_dir: &str,
     block_number: u64,
-    txn_hash: H256,
+    txn_hash: B256,
 ) -> Result<()> {
     let db = zq1::Db::new(zq1_persistence_dir)?;
     let tx = db
