@@ -308,9 +308,6 @@ impl Docs {
         // First, let's read the input
         let src_contents = fs::read_to_string(src).await?;
         let src_file = zqutils::utils::string_from_path(src)?;
-        // By convention, for ids, we drop the "src" from the start of rel.
-        let id: PathBuf = PathBuf::from(rel).iter().skip(1).collect();
-        let rel_file = zqutils::utils::string_from_path(&id)?;
         let parsed = self.parse_input_sections(&src_contents).await?;
         // If there is "rest" text, complain.
         if !parsed.rest.is_empty() {
@@ -339,20 +336,50 @@ impl Docs {
         let mut page_tera: Tera = Default::default();
         page_tera.add_raw_template("api", include_str!("../resources/api.tera.md"))?;
 
+        let Some(page_title) = parsed.sections.get("title") else {
+            return Err(anyhow!(
+                "Page {0} does not contain a title section - needed to build the mkdocs index",
+                src_file
+            ));
+        };
+        // By convention, for ids, we drop the "src" from the start of rel.
+        let mut nearly_id: Vec<String> = PathBuf::from(rel)
+            .iter()
+            .skip(1)
+            .map(|x| x.to_str().unwrap_or("").to_string())
+            .collect();
+        nearly_id.pop();
+
         // Where should we write the output?
         let mut desc_path: PathBuf = PathBuf::new();
         desc_path.push(&self.target_dir);
-        desc_path.push(&id);
+        for p in &nearly_id {
+            desc_path.push(&p);
+        }
+        desc_path.push(format!("{page_title}.md"));
 
-        // Where should we tell mkdocs the file is?
+        // Where do we tell mkdocs the file is?
         let mut mkdocs_path = PathBuf::new();
         if let Some(ref v) = self.id_prefix {
             mkdocs_path.push(v);
         }
-        mkdocs_path.push(&id);
+        for p in &nearly_id {
+            mkdocs_path.push(&p);
+        }
+        mkdocs_path.push(format!("{page_title}.md"));
+
+        // What is the id?
+        let mut id_path = PathBuf::new();
+        if let Some(ref v) = self.id_prefix {
+            id_path.push(v);
+        }
+        for p in &nearly_id {
+            id_path.push(&p);
+        }
+        id_path.push(format!("{page_title}"));
 
         // That is also the mkdocs id of this file.
-        let prefixed_id = zqutils::utils::string_from_path(&mkdocs_path)?;
+        let prefixed_id = zqutils::utils::string_from_path(&id_path)?;
         final_context.insert("_id", &prefixed_id);
         let final_page = page_tera
             .render("api", &final_context)
@@ -366,18 +393,11 @@ impl Docs {
         println!("prefixed_id is {prefixed_id}");
         println!("mkdocs_filename is {mkdocs_filename}");
 
-        let id_components = mkdocs_path
+        let id_components = id_path
             .iter()
             .map(|x| x.to_str().unwrap_or("").to_string())
             .collect();
 
-        // Now, desc_path's last component should be the page title.
-        //let Some(page_title) = parsed.sections.get("title") else {
-        //     return Err(anyhow!(
-        //         "Page {0} does not contain a title section - needed to build the mkdocs index",
-        //         src_file
-        //     ));
-        //};
         Ok((mkdocs_filename, id_components))
     }
 }
