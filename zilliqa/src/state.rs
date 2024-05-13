@@ -281,7 +281,7 @@ pub enum Contract {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScillaValue {
     Bytes(Vec<u8>),
     Map(BTreeMap<String, ScillaValue>),

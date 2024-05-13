@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use jsonrpsee::{
@@ -31,9 +31,10 @@ use tokio::runtime;
 use tracing::trace;
 
 use crate::{
+    exec::PendingState,
     scilla_proto::{Map, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
-    state::{ScillaValue, State},
+    state::ScillaValue,
     transaction::{ScillaGas, ZilAmount},
 };
 
@@ -124,7 +125,7 @@ impl Scilla {
     }
 
     pub fn check_contract(
-        &mut self,
+        &self,
         code: &str,
         gas_limit: ScillaGas,
         init: &[Value],
@@ -178,14 +179,14 @@ impl Scilla {
     }
 
     pub fn create_contract(
-        &mut self,
+        &self,
+        state: PendingState,
         sender: Address,
-        state: State,
         code: &str,
         gas_limit: ScillaGas,
         value: ZilAmount,
         init: &[Value],
-    ) -> Result<Result<(CreateOutput, B256), ErrorResponse>> {
+    ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
         let args = vec![
             "-i".to_owned(),
             code.to_owned(),
@@ -205,7 +206,7 @@ impl Scilla {
         let mut params = ObjectParams::new();
         params.insert("argv", args)?;
 
-        let (response, mut state) =
+        let (response, state) =
             self.state_server
                 .lock()
                 .unwrap()
@@ -239,25 +240,22 @@ impl Scilla {
         }
 
         match serde_json::from_value(response)? {
-            OutputOrError::Err(e) => Ok(Err(e)),
-            OutputOrError::Output(response) => {
-                let root_hash = state.root_hash()?.into();
-                Ok(Ok((response, root_hash)))
-            }
+            OutputOrError::Err(e) => Ok((Err(e), state)),
+            OutputOrError::Output(response) => Ok((Ok(response), state)),
         }
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn invoke_contract(
-        &mut self,
+        &self,
+        state: PendingState,
         contract: Address,
-        state: State,
         code: &str,
         gas_limit: ScillaGas,
         value: ZilAmount,
         init: &[Value],
         msg: &Value,
-    ) -> Result<Result<(InvokeOutput, B256), ErrorResponse>> {
+    ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
         let args = vec![
             "-init".to_owned(),
             serde_json::to_string(&init)?,
@@ -281,7 +279,7 @@ impl Scilla {
         let mut params = ObjectParams::new();
         params.insert("argv", args)?;
 
-        let (response, mut state) =
+        let (response, state) =
             self.state_server
                 .lock()
                 .unwrap()
@@ -315,11 +313,8 @@ impl Scilla {
         }
 
         match serde_json::from_value(response)? {
-            OutputOrError::Err(e) => Ok(Err(e)),
-            OutputOrError::Output(response) => {
-                let root_hash = state.root_hash()?.into();
-                Ok(Ok((response, root_hash)))
-            }
+            OutputOrError::Err(e) => Ok((Err(e), state)),
+            OutputOrError::Output(response) => Ok((Ok(response), state)),
         }
     }
 }
@@ -572,9 +567,9 @@ impl StateServer {
     fn active_call<R>(
         &mut self,
         sender: Address, // TODO: rename
-        state: State,
+        state: PendingState,
         f: impl FnOnce() -> Result<R>,
-    ) -> Result<(R, State)> {
+    ) -> Result<(R, PendingState)> {
         {
             let mut active_call = self.active_call.lock().unwrap();
             *active_call = Some(ActiveCall { sender, state });
@@ -608,17 +603,17 @@ fn convert_scilla_value(value: &ScillaValue) -> ProtoScillaVal {
 #[derive(Debug)]
 struct ActiveCall {
     sender: Address,
-    state: State,
+    state: PendingState,
 }
 
 impl ActiveCall {
     fn fetch_value_inner(
-        &self,
+        &mut self,
         addr: Address,
         name: String,
         indices: Vec<Vec<u8>>,
     ) -> Result<Option<(ProtoScillaVal, String)>> {
-        let account = self.state.get_account(addr)?;
+        let account = self.state.load_account(addr)?;
         let storage = account
             .contract
             .scilla_storage()
@@ -644,7 +639,7 @@ impl ActiveCall {
     }
 
     fn fetch_state_value(
-        &self,
+        &mut self,
         name: String,
         indices: Vec<Vec<u8>>,
     ) -> Result<Option<ProtoScillaVal>> {
@@ -654,7 +649,7 @@ impl ActiveCall {
     }
 
     fn fetch_external_state_value(
-        &self,
+        &mut self,
         addr: Address,
         name: String,
         indices: Vec<Vec<u8>>,
@@ -665,7 +660,7 @@ impl ActiveCall {
             }
         }
 
-        let account = self.state.get_account(addr)?;
+        let account = self.state.load_account(addr)?;
         match name.as_str() {
             "_balance" => {
                 let balance = ZilAmount::from_amount(account.balance);
@@ -694,7 +689,7 @@ impl ActiveCall {
         ignore_value: bool,
         value: ProtoScillaVal,
     ) -> Result<()> {
-        let mut account = self.state.get_account(self.sender)?;
+        let account = self.state.load_account(self.sender)?;
         let storage = account
             .contract
             .scilla_storage_mut()
@@ -756,8 +751,6 @@ impl ActiveCall {
 
             *storage_slot = value;
         }
-
-        self.state.save_account(self.sender, account)?;
 
         Ok(())
     }
