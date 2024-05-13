@@ -28,6 +28,120 @@ struct ParsedInput {
     rest: String,
 }
 
+fn split_into_components(prefix: &str) -> Result<Vec<String>> {
+    Ok(prefix.split("/").map(|x| x.to_string()).collect::<Vec<_>>())
+}
+
+// Mutating trees is just as painful in rust as it is in ML :-(
+fn remove_key(
+    val: &serde_yaml::Value,
+    components: &Vec<String>,
+    idx: usize,
+) -> Option<serde_yaml::Value> {
+    if idx >= components.len() {
+        return Some(val.clone());
+    }
+    let component = &components[idx];
+    match val {
+        serde_yaml::Value::Mapping(map) => {
+            // Insert all but
+            let mut new_map = serde_yaml::Mapping::new();
+            for (k, v) in map {
+                println!("k = {k:?}");
+                if let serde_yaml::Value::String(k_s) = k {
+                    if !(idx == components.len() - 1 && k_s == component) {
+                        let to_insert = remove_key(v, components, idx + 1);
+                        if let Some(v) = to_insert {
+                            new_map.insert(k.clone(), v);
+                        }
+                    }
+                }
+            }
+            // Implicitly remove empty maps.
+            if new_map.is_empty() {
+                None
+            } else {
+                Some(serde_yaml::Value::Mapping(new_map))
+            }
+        }
+        serde_yaml::Value::Sequence(seq) => {
+            let mut new_seq = serde_yaml::Sequence::new();
+            for s in seq.iter() {
+                if let Some(v) = remove_key(s, components, idx) {
+                    new_seq.push(v);
+                }
+            }
+            if new_seq.is_empty() {
+                None
+            } else {
+                Some(serde_yaml::Value::Sequence(new_seq))
+            }
+        }
+        // Ignore tags for now!
+        _ => Some(val.clone()),
+    }
+}
+
+fn insert_key(val: &mut serde_yaml::Value, components: &Vec<String>, idx: usize, value: &str) {
+    let k = &components[idx];
+    if idx == components.len() - 1 {
+        // We're here .
+        match val {
+            serde_yaml::Value::Mapping(ref mut map) => {
+                map.insert(
+                    serde_yaml::Value::String(k.clone().to_string()),
+                    serde_yaml::Value::String(value.to_string()),
+                );
+            }
+            serde_yaml::Value::Sequence(ref mut seq) => {
+                let mut new_map = serde_yaml::Mapping::new();
+                new_map.insert(
+                    serde_yaml::Value::String(k.clone()),
+                    serde_yaml::Value::String(value.to_string()),
+                );
+                seq.push(serde_yaml::Value::Mapping(new_map));
+            }
+            _ => (),
+        }
+    } else {
+        // Not yere het.
+        match val {
+            serde_yaml::Value::Mapping(ref mut map) => match map.get_mut(k) {
+                Some(ref mut seq) => {
+                    insert_key(seq, components, idx + 1, value);
+                }
+                None => {
+                    let mut seq = serde_yaml::Value::Sequence(serde_yaml::Sequence::new());
+                    insert_key(&mut seq, components, idx + 1, value);
+                    map.insert(serde_yaml::Value::String(k.clone()), seq);
+                }
+            },
+            serde_yaml::Value::Sequence(ref mut seq) => {
+                // Find the right map, if there is one, otherwise add one.
+                let mut found = false;
+                for s in seq.iter_mut() {
+                    match s {
+                        serde_yaml::Value::Mapping(ref mut map) => match map.get_mut(k) {
+                            None => (),
+                            Some(mut v) => {
+                                insert_key(v, components, idx + 1, value);
+                                found = true;
+                            }
+                        },
+                        _ => (),
+                    }
+                }
+                if !found {
+                    let mut map = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+                    insert_key(&mut map, components, idx, value);
+                    seq.push(map);
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
 impl Docs {
     pub fn new(
         source_dir: &str,
@@ -67,45 +181,23 @@ impl Docs {
         } else {
             serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
         };
-        let key_prefix_components = self
-            .index_file_key_prefix
-            .split("/")
-            .map(|x| x.to_string())
-            .collect::<Vec<_>>();
+        let key_prefix_components = split_into_components(&self.index_file_key_prefix)?;
 
         // We now need to zap the prefix ..
-        if !key_prefix_components.is_empty() {
-            let mut insert_at: Option<&mut serde_yaml::Value> = Some(&mut contents_map);
-            let mut found = true;
-            for component in key_prefix_components
+        let key_to_remove = if let Some(ref v) = self.id_prefix {
+            let id_components = split_into_components(v)?;
+            key_prefix_components
                 .iter()
-                .take(key_prefix_components.len() - 1)
-            {
-                if let Some(serde_yaml::Value::Mapping(ref mut map)) = insert_at {
-                    if map.contains_key(component) {
-                        insert_at = Some(map.get_mut(component).ok_or(anyhow!("Foo"))?);
-                    } else {
-                        found = false;
-                        insert_at = None;
-                        break;
-                    }
-                } else {
-                    found = false;
-                    insert_at = None;
-                    break;
-                }
-            }
-            if found {
-                let Some(serde_yaml::Value::Mapping(ref mut map)) = insert_at else {
-                    return Err(anyhow!("Internal error #5"));
-                };
-                map.remove(
-                    key_prefix_components
-                        .last()
-                        .ok_or(anyhow!("Empty key prefix"))?,
-                );
-            }
-        }
+                .chain(id_components.iter())
+                .map(|x| x.to_string())
+                .collect()
+        } else {
+            key_prefix_components.clone()
+        };
+        contents_map = remove_key(&contents_map, &key_to_remove, 0)
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+
+        println!("After remove {0}", serde_yaml::to_string(&contents_map)?);
 
         while let Some(ref path_entry) = stack.pop() {
             let md = fs::metadata(&path_entry.abs).await?;
@@ -131,33 +223,19 @@ impl Docs {
                         == "md"
                     {
                         println!("File: {:?} rel {:?}", &path_entry.abs, &path_entry.rel);
-                        let (desc_path, prefixed_id) =
+                        let (output_filename, prefixed_id) =
                             self.generate_file(&path_entry.abs, &path_entry.rel).await?;
-                        let mut the_iter = key_prefix_components.iter().chain(desc_path.iter());
-                        let key = the_iter.next_back().ok_or(anyhow!(
-                            "API file {0:?} has empty description path!",
-                            &path_entry.abs
-                        ))?;
-                        let mut insert_at: &mut serde_yaml::Value = &mut contents_map;
-                        for component in the_iter {
-                            let serde_yaml::Value::Mapping(ref mut map) = insert_at else {
-                                return Err(anyhow!("Internal error!"));
-                            };
-                            if !map.contains_key(component) {
-                                map.insert(
-                                    serde_yaml::Value::String(component.to_string()),
-                                    serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
-                                );
-                            }
-                            insert_at =
-                                map.get_mut(component).ok_or(anyhow!("Internal error 3"))?;
-                        }
-                        let serde_yaml::Value::Mapping(ref mut map) = insert_at else {
-                            return Err(anyhow!("Internal error 2"));
-                        };
-                        map.insert(
-                            serde_yaml::Value::String(key.to_string()),
-                            serde_yaml::Value::String(prefixed_id),
+                        let the_iter = key_prefix_components.iter().chain(prefixed_id.iter());
+                        //let key = the_iter.next_back().ok_or(anyhow!(
+                        //    "API file {0:?} has empty description path!",
+                        //   &path_entry.abs
+                        //))?;
+
+                        insert_key(
+                            &mut contents_map,
+                            &the_iter.map(|m| m.to_string()).collect(),
+                            0,
+                            &output_filename,
                         );
                     }
                 }
@@ -226,7 +304,7 @@ impl Docs {
     // which tells us how to generate the documentation - this is a resource for now, but
     // one day it might be programmable.
     // @return A vector of the components we will use to index this page in mkdocs.yaml
-    pub async fn generate_file(&self, src: &Path, rel: &Path) -> Result<(Vec<String>, String)> {
+    pub async fn generate_file(&self, src: &Path, rel: &Path) -> Result<(String, Vec<String>)> {
         // First, let's read the input
         let src_contents = fs::read_to_string(src).await?;
         let src_file = zqutils::utils::string_from_path(src)?;
@@ -260,42 +338,46 @@ impl Docs {
         // OK. Grab the template
         let mut page_tera: Tera = Default::default();
         page_tera.add_raw_template("api", include_str!("../resources/api.tera.md"))?;
-        let mut desc_path: Vec<String> = Vec::new();
-        let prefixed_id = if let Some(ref v) = self.id_prefix {
-            desc_path.push(v.to_string());
-            format!("{0}{1}", v, &rel_file)
-        } else {
-            rel_file.to_string()
-        };
-        desc_path.append(
-            &mut id
-                .clone()
-                .iter()
-                .map(|x| x.to_str().map_or(String::new(), |x| x.to_string()))
-                .collect::<Vec<String>>(),
-        );
+
+        // Where should we write the output?
+        let mut desc_path: PathBuf = PathBuf::new();
+        desc_path.push(&self.target_dir);
+        desc_path.push(&id);
+
+        // Where should we tell mkdocs the file is?
+        let mut mkdocs_path = PathBuf::new();
+        if let Some(ref v) = self.id_prefix {
+            mkdocs_path.push(v);
+        }
+        mkdocs_path.push(&id);
+
+        // That is also the mkdocs id of this file.
+        let prefixed_id = zqutils::utils::string_from_path(&mkdocs_path)?;
         final_context.insert("_id", &prefixed_id);
         let final_page = page_tera
             .render("api", &final_context)
             .context(format!("Whilst rendering {0:?}", src_file))?;
 
         // OK. Now we have some data, let's write it.
-        self.write_file(&final_page, &id).await?;
+        self.write_file(&final_page, &desc_path).await?;
+
+        let mkdocs_filename = zqutils::utils::string_from_path(&mkdocs_path)?;
+
+        println!("prefixed_id is {prefixed_id}");
+        println!("mkdocs_filename is {mkdocs_filename}");
+
+        let id_components = mkdocs_path
+            .iter()
+            .map(|x| x.to_str().unwrap_or("").to_string())
+            .collect();
 
         // Now, desc_path's last component should be the page title.
-        let Some(page_title) = parsed.sections.get("title") else {
-            return Err(anyhow!(
-                "Page {0} does not contain a title section - needed to build the mkdocs index",
-                src_file
-            ));
-        };
-        let out_path = desc_path
-            .iter()
-            .take(desc_path.len() - 1)
-            .chain(std::iter::once(page_title))
-            .map(|x| x.to_string())
-            .collect::<Vec<_>>();
-
-        Ok((out_path, prefixed_id))
+        //let Some(page_title) = parsed.sections.get("title") else {
+        //     return Err(anyhow!(
+        //         "Page {0} does not contain a title section - needed to build the mkdocs index",
+        //         src_file
+        //     ));
+        //};
+        Ok((mkdocs_filename, id_components))
     }
 }
