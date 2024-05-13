@@ -764,7 +764,7 @@ impl State {
     pub fn get_stakers_at_block(&self, block: &Block) -> Result<Vec<NodePublicKey>> {
         let block_root_hash = block.state_root_hash();
 
-        let state = self.at_root(H256(block_root_hash.0));
+        let state = self.at_root(block_root_hash.into());
         state.get_stakers()
     }
 
@@ -842,7 +842,7 @@ impl State {
             contracts::deposit::GET_PEER_ID.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
 
         let return_value = self.call_contract(
-            Address::zero(),
+            Address::ZERO,
             Some(contract_addr::DEPOSIT),
             data,
             0,

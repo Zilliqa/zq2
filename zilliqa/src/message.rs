@@ -8,7 +8,6 @@ use std::{
 use alloy_primitives::Address;
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
-use libp2p::PeerId;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
 use time::{macros::format_description, OffsetDateTime};

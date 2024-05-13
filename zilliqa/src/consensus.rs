@@ -1058,9 +1058,9 @@ impl Consensus {
             return Err(anyhow!("parent block not found: {:?}", parent_hash));
         };
 
-        let parent_root_hash = H256(parent.state_root_hash().0);
+        let parent_root_hash = parent.state_root_hash();
 
-        let state = self.state.at_root(parent_root_hash);
+        let state = self.state.at_root(parent_root_hash.into());
 
         let committee = state.get_stakers()?;
 

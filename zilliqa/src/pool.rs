@@ -5,8 +5,6 @@ use std::{
 
 use alloy_primitives::Address;
 
-use tracing::info;
-
 use crate::{
     crypto::Hash,
     transaction::{SignedTransaction, VerifiedTransaction},
