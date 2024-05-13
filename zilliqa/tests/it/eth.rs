@@ -610,6 +610,7 @@ async fn send_legacy_transaction_without_chain_id(mut network: Network) {
 
     let sig = wallet.signer().sign_hash(tx.sighash()).unwrap();
     let expected_hash = tx.hash(&sig);
+    eprintln!("expected: {}", hex::encode(tx.rlp_signed(&sig)));
 
     // Drop down to the provider, to prevent the wallet middleware from setting the chain ID.
     let hash = wallet

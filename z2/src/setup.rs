@@ -1,6 +1,7 @@
 //use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, str::FromStr};
+use std::path::PathBuf;
 
+use alloy_primitives::{address, Address};
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use tokio::fs;
@@ -8,7 +9,7 @@ use toml;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::SecretKey;
-use zilliqa::{cfg, crypto::NodePublicKey, state::Address};
+use zilliqa::{cfg, crypto::NodePublicKey};
 
 use crate::{
     collector::{self, Collector},
@@ -139,12 +140,12 @@ impl Setup {
 
         let genesis_accounts: Vec<(Address, String)> = vec![
             (
-                Address::from_str("7E5F4552091A69125d5DfCb7b8C2659029395Bdf")?,
+                address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"),
                 "5000000000000000000000".to_string(),
             ),
             // privkey db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3
             (
-                Address::from_str("0xcb57ec3f064a16cadb36c7c712f4c9fa62b77415")?,
+                address!("cb57ec3f064a16cadb36c7c712f4c9fa62b77415"),
                 "5000000000000000000000".to_string(),
             ),
         ];

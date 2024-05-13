@@ -2,13 +2,15 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy};
+use alloy_eips::eip2930::AccessList;
+use alloy_primitives::{Address, Bytes, Parity, Signature, TxKind, B256, U256, U64};
+use alloy_rlp::{Decodable, Header};
 use anyhow::{anyhow, Result};
 use itertools::{Either, Itertools};
 use jsonrpsee::{
     core::StringError, types::Params, PendingSubscriptionSink, RpcModule, SubscriptionMessage,
 };
-use primitive_types::{H160, H256, U256};
-use rlp::Rlp;
 use serde::Deserialize;
 use tracing::*;
 
@@ -20,10 +22,7 @@ use crate::{
     crypto::Hash,
     message::{Block, BlockNumber},
     node::Node,
-    state::Address,
-    transaction::{
-        EthSignature, EvmGas, SignedTransaction, Transaction, TxEip1559, TxEip2930, TxLegacy,
-    },
+    transaction::{EvmGas, SignedTransaction, Transaction},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -145,7 +144,7 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
-    let address: H160 = params.next()?;
+    let address: Address = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
     Ok(node
@@ -158,7 +157,7 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("get_code: params: {:?}", params);
     let mut params = params.sequence();
-    let address: H160 = params.next()?;
+    let address: Address = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
     Ok(node
@@ -174,13 +173,10 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("get_storage_at: params: {:?}", params);
     let mut params = params.sequence();
-    let address: H160 = params.next()?;
+    let address: Address = params.next()?;
     let position: U256 = params.next()?;
+    let position = B256::new(position.to_be_bytes());
     let block_number: BlockNumber = params.next()?;
-
-    let mut position_bytes = [0; 32];
-    position.to_big_endian(&mut position_bytes);
-    let position = H256::from_slice(&position_bytes);
 
     let value = node
         .lock()
@@ -193,7 +189,7 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("get_transaction_count: params: {:?}", params);
     let mut params = params.sequence();
-    let address: H160 = params.next()?;
+    let address: Address = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
     trace!(
@@ -232,7 +228,7 @@ fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option
 
 fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::Block>> {
     let mut params = params.sequence();
-    let hash: H256 = params.next()?;
+    let hash: B256 = params.next()?;
     let full: bool = params.next()?;
 
     let node = node.lock().unwrap();
@@ -271,7 +267,7 @@ fn get_block_transaction_count_by_hash(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<String>> {
-    let hash: H256 = params.one()?;
+    let hash: B256 = params.one()?;
 
     let node = node.lock().unwrap();
     let block = node.get_block_by_hash(Hash(hash.0))?;
@@ -298,7 +294,7 @@ fn get_block_transaction_count_by_number(
 struct GetLogsParams {
     from_block: Option<BlockNumber>,
     to_block: Option<BlockNumber>,
-    address: Option<OneOrMany<H160>>,
+    address: Option<OneOrMany<Address>>,
     /// Topics matches a prefix of the list of topics from each log. An empty element slice matches any topic. Non-empty
     /// elements represent an alternative that matches any of the contained topics.
     ///
@@ -308,8 +304,8 @@ struct GetLogsParams {
     /// * `[[], [B]]` or `[None, [B]]`  matches any topic in first position AND B in second position
     /// * `[[A], [B]]`                  matches topic A in first position AND B in second position
     /// * `[[A, B], [C, D]]`            matches topic (A OR B) in first position AND (C OR D) in second position
-    topics: Vec<OneOrMany<H256>>,
-    block_hash: Option<H256>,
+    topics: Vec<OneOrMany<B256>>,
+    block_hash: Option<B256>,
 }
 
 fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
@@ -411,8 +407,8 @@ fn get_transaction_by_block_hash_and_index(
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<eth::Transaction>> {
     let mut params = params.sequence();
-    let block_hash: H256 = params.next()?;
-    let index: ruint::aliases::U64 = params.next()?;
+    let block_hash: B256 = params.next()?;
+    let index: U64 = params.next()?;
 
     let node = node.lock().unwrap();
 
@@ -432,7 +428,7 @@ fn get_transaction_by_block_number_and_index(
 ) -> Result<Option<eth::Transaction>> {
     let mut params = params.sequence();
     let block_number: BlockNumber = params.next()?;
-    let index: ruint::aliases::U64 = params.next()?;
+    let index: U64 = params.next()?;
 
     let node = node.lock().unwrap();
 
@@ -451,7 +447,7 @@ fn get_transaction_by_hash(
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<eth::Transaction>> {
     trace!("get_transaction_by_hash: params: {:?}", params);
-    let hash: H256 = params.one()?;
+    let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
     let node = node.lock().unwrap();
 
@@ -506,7 +502,7 @@ pub(super) fn get_transaction_inner(
         gas_price,
         max_fee_per_gas,
         max_priority_fee_per_gas,
-        hash: H256(hash.0),
+        hash: hash.into(),
         input: transaction.payload().to_vec(),
         nonce: transaction.nonce().unwrap_or(u64::MAX),
         to: transaction.to_addr(),
@@ -586,9 +582,9 @@ pub(super) fn get_transaction_receipt_inner(
     let from = signed_transaction.signer;
     let transaction = signed_transaction.tx.into_transaction();
     let receipt = eth::TransactionReceipt {
-        transaction_hash: H256(hash.0),
+        transaction_hash: hash.into(),
         transaction_index: transaction_index as u64,
-        block_hash: H256(block.hash().0),
+        block_hash: block.hash().into(),
         block_number: block.number(),
         from,
         to: transaction.to_addr(),
@@ -610,8 +606,8 @@ fn get_transaction_receipt(
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<eth::TransactionReceipt>> {
     trace!("get_transaction_receipt: params: {:?}", params);
-    let hash: H256 = params.one()?;
-    let hash: Hash = Hash(hash.0);
+    let hash: B256 = params.one()?;
+    let hash: Hash = hash.into();
     let node = node.lock().unwrap();
     get_transaction_receipt_inner(hash, &node)
 }
@@ -632,7 +628,7 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
         }
     }
 
-    let transaction_hash = H256(node.lock().unwrap().create_transaction(transaction)?.0);
+    let transaction_hash = B256::from(node.lock().unwrap().create_transaction(transaction)?);
 
     Ok(transaction_hash.to_hex())
 }
@@ -643,9 +639,9 @@ fn parse_transaction(bytes: &[u8]) -> Result<SignedTransaction> {
     // If it starts with a value in the range [0, 0x7f] then it is a new transaction type, if it starts with a value in
     // the range [0xc0, 0xfe] then it is a legacy transaction type."
     match bytes[0] {
-        0xc0..=0xfe => parse_legacy_transaction(Rlp::new(bytes)),
-        0x01 => parse_eip2930_transaction(Rlp::new(&bytes[1..])),
-        0x02 => parse_eip1559_transaction(Rlp::new(&bytes[1..])),
+        0xc0..=0xfe => parse_legacy_transaction(bytes),
+        0x01 => parse_eip2930_transaction(&bytes[1..]),
+        0x02 => parse_eip1559_transaction(&bytes[1..]),
         _ => Err(anyhow!(
             "invalid transaction with starting byte {}",
             bytes[0]
@@ -653,97 +649,82 @@ fn parse_transaction(bytes: &[u8]) -> Result<SignedTransaction> {
     }
 }
 
-fn parse_legacy_transaction(rlp: Rlp<'_>) -> Result<SignedTransaction> {
-    let nonce = rlp.val_at(0)?;
-    let gas_price = rlp.val_at(1)?;
-    let gas_limit = rlp.val_at(2)?;
-    let to_addr = rlp.val_at::<Vec<u8>>(3)?;
-    let amount = rlp.val_at(4)?;
-    let payload = rlp.val_at(5)?;
-    let v = rlp.val_at::<u64>(6)?;
-    let r = left_pad_arr(&rlp.val_at::<Vec<_>>(7)?)?;
-    let s = left_pad_arr(&rlp.val_at::<Vec<_>>(8)?)?;
+fn parse_legacy_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
+    let mut bytes = Header::decode_bytes(&mut buf, true)?;
 
-    // If `v` is greater than `35`, then this is an EIP-155 value which includes the chain ID. If not, it must
-    // be set to either `27` or `28`.
-    let (y_is_odd, chain_id) = if v >= 35 {
-        // The last bit of `v - 35` tells us whether Y is odd; the other bits tell us the chain ID.
-        ((v - 35) % 2 != 0, Some((v - 35) / 2))
-    } else if v == 27 {
-        (false, None)
-    } else if v == 28 {
-        (true, None)
-    } else {
-        return Err(anyhow!("invalid signature with v={v}"));
-    };
+    let nonce = u64::decode(&mut bytes)?;
+    let gas_price = u128::decode(&mut bytes)?;
+    let gas_limit = u128::decode(&mut bytes)?;
+    let to = TxKind::decode(&mut bytes)?;
+    let value = U256::decode(&mut bytes)?;
+    let input = Bytes::decode(&mut bytes)?;
+    let v = u64::decode(&mut bytes)?;
+    let r = U256::decode(&mut bytes)?;
+    let s = U256::decode(&mut bytes)?;
 
-    let sig = EthSignature { r, s, y_is_odd };
+    let sig = Signature::from_rs_and_parity(r, s, v)?;
 
     let tx = TxLegacy {
-        chain_id,
+        chain_id: sig.v().chain_id(),
         nonce,
         gas_price,
         gas_limit,
-        to_addr: (!to_addr.is_empty()).then(|| Address::from_slice(&to_addr)),
-        amount,
-        payload,
+        to,
+        value,
+        input,
     };
 
     Ok(SignedTransaction::Legacy { tx, sig })
 }
 
-fn parse_eip2930_transaction(rlp: Rlp<'_>) -> Result<SignedTransaction> {
-    let chain_id = rlp.val_at(0)?;
-    let nonce = rlp.val_at(1)?;
-    let gas_price = rlp.val_at(2)?;
-    let gas_limit = rlp.val_at(3)?;
-    let to_addr = rlp.val_at::<Vec<u8>>(4)?;
-    let amount = rlp.val_at(5)?;
-    let payload = rlp.val_at(6)?;
-    let access_list = rlp
-        .at(7)?
-        .iter()
-        .map(|rlp| Ok((rlp.val_at::<H160>(0)?, rlp.list_at::<H256>(1)?)))
-        .collect::<Result<Vec<_>>>()?;
-    let y_is_odd = rlp.val_at::<bool>(8)?;
-    let r = left_pad_arr(&rlp.val_at::<Vec<_>>(9)?)?;
-    let s = left_pad_arr(&rlp.val_at::<Vec<_>>(10)?)?;
+fn parse_eip2930_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
+    let mut bytes = Header::decode_bytes(&mut buf, true)?;
 
-    let sig = EthSignature { r, s, y_is_odd };
+    let chain_id = u64::decode(&mut bytes)?;
+    let nonce = u64::decode(&mut bytes)?;
+    let gas_price = u128::decode(&mut bytes)?;
+    let gas_limit = u128::decode(&mut bytes)?;
+    let to = TxKind::decode(&mut bytes)?;
+    let value = U256::decode(&mut bytes)?;
+    let input = Bytes::decode(&mut bytes)?;
+    let access_list = AccessList::decode(&mut bytes)?;
+    let y_is_odd = bool::decode(&mut bytes)?;
+    let r = U256::decode(&mut bytes)?;
+    let s = U256::decode(&mut bytes)?;
+
+    let sig = Signature::from_rs_and_parity(r, s, Parity::Parity(y_is_odd))?;
 
     let tx = TxEip2930 {
         chain_id,
         nonce,
         gas_price,
         gas_limit,
-        to_addr: (!to_addr.is_empty()).then(|| Address::from_slice(&to_addr)),
-        amount,
-        payload,
+        to,
+        value,
+        input,
         access_list,
     };
 
     Ok(SignedTransaction::Eip2930 { tx, sig })
 }
 
-fn parse_eip1559_transaction(rlp: Rlp<'_>) -> Result<SignedTransaction> {
-    let chain_id = rlp.val_at(0)?;
-    let nonce = rlp.val_at(1)?;
-    let max_priority_fee_per_gas = rlp.val_at(2)?;
-    let max_fee_per_gas = rlp.val_at(3)?;
-    let gas_limit = rlp.val_at(4)?;
-    let to_addr = rlp.val_at::<Vec<u8>>(5)?;
-    let amount = rlp.val_at(6)?;
-    let payload = rlp.val_at(7)?;
-    let access_list = rlp
-        .at(8)?
-        .iter()
-        .map(|rlp| Ok((rlp.val_at::<H160>(0)?, rlp.list_at::<H256>(1)?)))
-        .collect::<Result<Vec<_>>>()?;
-    let y_is_odd = rlp.val_at::<bool>(9)?;
-    let r = left_pad_arr(&rlp.val_at::<Vec<_>>(10)?)?;
-    let s = left_pad_arr(&rlp.val_at::<Vec<_>>(11)?)?;
+fn parse_eip1559_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
+    let mut bytes = Header::decode_bytes(&mut buf, true)?;
 
-    let sig = EthSignature { r, s, y_is_odd };
+    let chain_id = u64::decode(&mut bytes)?;
+    let nonce = u64::decode(&mut bytes)?;
+    let max_priority_fee_per_gas = u128::decode(&mut bytes)?;
+    let max_fee_per_gas = u128::decode(&mut bytes)?;
+    let gas_limit = u128::decode(&mut bytes)?;
+    let to = TxKind::decode(&mut bytes)?;
+    let value = U256::decode(&mut bytes)?;
+    let input = Bytes::decode(&mut bytes)?;
+    let access_list = AccessList::decode(&mut bytes)?;
+    let y_is_odd = bool::decode(&mut bytes)?;
+    let r = U256::decode(&mut bytes)?;
+    let s = U256::decode(&mut bytes)?;
+
+    let sig = Signature::from_rs_and_parity(r, s, Parity::Parity(y_is_odd))?;
 
     let tx = TxEip1559 {
         chain_id,
@@ -751,33 +732,13 @@ fn parse_eip1559_transaction(rlp: Rlp<'_>) -> Result<SignedTransaction> {
         max_priority_fee_per_gas,
         max_fee_per_gas,
         gas_limit,
-        to_addr: (!to_addr.is_empty()).then(|| Address::from_slice(&to_addr)),
-        amount,
-        payload,
+        to,
+        value,
+        input,
         access_list,
     };
 
     Ok(SignedTransaction::Eip1559 { tx, sig })
-}
-
-fn left_pad_arr<const N: usize>(v: &[u8]) -> Result<[u8; N]> {
-    let mut arr = [0; N];
-
-    if v.len() > arr.len() {
-        return Err(anyhow!(
-            "invalid length: {}, expected: {}",
-            v.len(),
-            arr.len()
-        ));
-    }
-
-    if !v.is_empty() && v[0] == 0 {
-        return Err(anyhow!("unnecessary leading zero"));
-    }
-
-    let start = arr.len() - v.len();
-    arr[start..].copy_from_slice(v);
-    Ok(arr)
 }
 
 fn get_uncle_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
@@ -836,66 +797,4 @@ async fn subscribe(
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use primitive_types::U256;
-
-    use crate::{
-        api::eth::{left_pad_arr, parse_transaction},
-        crypto::Hash,
-        transaction::{EthSignature, EvmGas, SignedTransaction, TxLegacy, VerifiedTransaction},
-    };
-
-    #[test]
-    fn test_transaction_from_rlp() {
-        // From https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md#example
-        let transaction = hex::decode("f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83").unwrap();
-        let signed_tx = parse_transaction(&transaction).unwrap();
-        let recovered_tx = signed_tx.verify().unwrap();
-        let expected = VerifiedTransaction {
-            tx: SignedTransaction::Legacy {
-                tx: TxLegacy {
-                    chain_id: Some(1),
-                    nonce: 9,
-                    gas_price: 20 * 10_u128.pow(9),
-                    gas_limit: EvmGas(21000),
-                    to_addr: Some("0x3535353535353535353535353535353535353535".parse().unwrap()),
-                    amount: 10u128.pow(18),
-                    payload: Vec::new(),
-                },
-                sig: EthSignature {
-                    r: U256::from_dec_str("18515461264373351373200002665853028612451056578545711640558177340181847433846").unwrap().into(),
-                    s: U256::from_dec_str("46948507304638947509940763649030358759909902576025900602547168820602576006531").unwrap().into(),
-                    y_is_odd: false,
-                },
-            },
-            signer: "0x9d8A62f656a8d1615C1294fd71e9CFb3E4855A4F".parse().unwrap(),
-            hash: Hash::from_bytes(hex::decode("33469b22e9f636356c4160a87eb19df52b7412e8eac32a4a55ffe88ea8350788").unwrap()).unwrap(),
-        };
-        assert_eq!(recovered_tx, expected);
-    }
-
-    #[test]
-    fn test_left_pad_arr() {
-        let cases = [
-            ("", Ok([0; 4])),
-            ("01", Ok([0, 0, 0, 1])),
-            ("ffffffff", Ok([255; 4])),
-            ("ffffffffff", Err("invalid length: 5, expected: 4")),
-            ("0001", Err("unnecessary leading zero")),
-        ];
-
-        for (val, expected) in cases {
-            let vec = hex::decode(val).unwrap();
-            let actual = left_pad_arr(&vec);
-
-            match (expected, actual) {
-                (Ok(e), Ok(a)) => assert_eq!(e, a),
-                (Err(e), Err(a)) => assert_eq!(e, a.to_string()),
-                _ => panic!("case failed: {val}"),
-            }
-        }
-    }
 }

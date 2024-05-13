@@ -6,9 +6,9 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
+use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
-use primitive_types::{H160, H256};
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 
@@ -64,7 +64,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
 struct TransactionParams {
     version: u32,
     nonce: u64,
-    to_addr: H160,
+    to_addr: Address,
     #[serde(deserialize_with = "from_str")]
     amount: ZilAmount,
     pub_key: String,
@@ -147,7 +147,7 @@ fn get_contract_address_from_transaction_id(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<String> {
-    let hash: H256 = params.one()?;
+    let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
     let receipt = node
         .lock()
@@ -164,7 +164,7 @@ fn get_contract_address_from_transaction_id(
 
 fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<GetTxResponse>> {
     let jsonrpc_error_data: Option<String> = None;
-    let hash: H256 = params.one()?;
+    let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
 
     let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?.ok_or_else(|| {
@@ -209,7 +209,7 @@ pub(super) fn get_scilla_transaction_inner(
 }
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let address: H160 = params.one()?;
+    let address: Address = params.one()?;
 
     let node = node.lock().unwrap();
 
@@ -292,7 +292,7 @@ fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let smart_contract_address: H160 = params.one()?;
+    let smart_contract_address: Address = params.one()?;
     let node = node.lock().unwrap();
 
     // First get the account and check that its a scilla account
@@ -324,7 +324,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
 }
 
 fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let smart_contract_address: H160 = params.one()?;
+    let smart_contract_address: Address = params.one()?;
     let node = node.lock().unwrap();
     let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
 
@@ -336,7 +336,7 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
 }
 
 fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let smart_contract_address: H160 = params.one()?;
+    let smart_contract_address: Address = params.one()?;
     let node = node.lock().unwrap();
     let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
 
@@ -365,7 +365,7 @@ fn get_transactions_for_tx_block(
     Ok(vec![block
         .transactions
         .into_iter()
-        .map(|h| H256(h.0).to_hex_no_prefix())
+        .map(|h| B256::from(h).to_hex_no_prefix())
         .collect()])
 }
 
@@ -387,7 +387,7 @@ fn get_tx_block(
     let mut block: zil::TxBlock = (&block).into();
 
     if verbose {
-        block.header.committee_hash = Some(H256::zero());
+        block.header.committee_hash = Some(B256::ZERO);
         block.body.cosig_bitmap_1 = vec![true; 8];
         block.body.cosig_bitmap_2 = vec![true; 8];
         let mut scalar = [0; 32];
@@ -399,7 +399,7 @@ fn get_tx_block(
 }
 
 fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<SmartContract>> {
-    let address: H160 = params.one()?;
+    let address: Address = params.one()?;
 
     let nonce = node
         .lock()

@@ -21,6 +21,7 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+alloy-primitives = "0.7.2"
 anyhow = "1.0.82"
 async-trait = "0.1.80"
 clap = { version = "4.5.4", features = ["derive"] }

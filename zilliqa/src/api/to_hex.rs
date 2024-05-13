@@ -1,4 +1,4 @@
-use primitive_types::{H128, H160, H256, H384, H512, H768, U128, U256, U512};
+use alloy_primitives::{Address, B128, B256, B512, U128, U256, U512};
 
 use crate::transaction::{EvmGas, ScillaGas};
 
@@ -46,6 +46,23 @@ macro_rules! int_impl {
     };
 }
 
+/// Generates an implementation of [ToHex] via a type's [serde::Serialize] implementation.
+macro_rules! serde_impl {
+    ($T:ty) => {
+        impl ToHex for $T {
+            fn to_hex_inner(&self, prefix: bool) -> String {
+                let serde_json::Value::String(mut hex) = serde_json::to_value(self).unwrap() else {
+                    panic!("did not deserialize to a string");
+                };
+                if !prefix {
+                    hex = (&hex[2..]).to_owned();
+                }
+                hex
+            }
+        }
+    };
+}
+
 impl<T: ToHex + ?Sized> ToHex for &T {
     fn to_hex_inner(&self, prefix: bool) -> String {
         (*self).to_hex_inner(prefix)
@@ -74,12 +91,10 @@ as_ref_impl!(str);
 as_ref_impl!(String);
 as_ref_impl!([u8]);
 as_ref_impl!(Vec<u8>);
-as_ref_impl!(H128);
-as_ref_impl!(H160);
-as_ref_impl!(H256);
-as_ref_impl!(H384);
-as_ref_impl!(H512);
-as_ref_impl!(H768);
+as_ref_impl!(B128);
+as_ref_impl!(Address);
+as_ref_impl!(B256);
+as_ref_impl!(B512);
 
 int_impl!(i8);
 int_impl!(i16);
@@ -93,15 +108,15 @@ int_impl!(u64);
 int_impl!(u128);
 int_impl!(isize);
 int_impl!(usize);
-int_impl!(U128);
-int_impl!(U256);
-int_impl!(U512);
+serde_impl!(U128);
+serde_impl!(U256);
+serde_impl!(U512);
 
 #[cfg(test)]
 mod tests {
     use std::assert_eq;
 
-    use primitive_types::U128;
+    use alloy_primitives::U128;
 
     use super::ToHex;
 
@@ -133,8 +148,8 @@ mod tests {
     #[test]
     fn test_big_int_to_hex() {
         let cases = [
-            (U128::zero(), "0x0"),
-            (256.into(), "0x100"),
+            (U128::ZERO, "0x0"),
+            (U128::try_from(256u64).unwrap(), "0x100"),
             (U128::MAX, "0xffffffffffffffffffffffffffffffff"),
         ];
 

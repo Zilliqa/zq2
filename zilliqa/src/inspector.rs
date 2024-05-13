@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use primitive_types::H160;
+use alloy_primitives::{Address, U256};
 use revm::{
     inspectors::NoOpInspector,
     interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome},
@@ -12,17 +12,17 @@ use crate::api::types::ots::{Operation, OperationType, TraceEntry, TraceEntryTyp
 
 /// Provides callbacks from the Scilla interpreter.
 pub trait ScillaInspector {
-    fn create(&mut self, creator: H160, contract_address: H160, amount: u128) {
+    fn create(&mut self, creator: Address, contract_address: Address, amount: u128) {
         let _ = contract_address;
         let _ = creator;
         let _ = amount;
     }
-    fn transfer(&mut self, from: H160, to: H160, amount: u128) {
+    fn transfer(&mut self, from: Address, to: Address, amount: u128) {
         let _ = amount;
         let _ = to;
         let _ = from;
     }
-    fn call(&mut self, from: H160, to: H160, amount: u128) {
+    fn call(&mut self, from: Address, to: Address, amount: u128) {
         let _ = to;
         let _ = from;
         let _ = amount;
@@ -30,15 +30,15 @@ pub trait ScillaInspector {
 }
 
 impl<T: ScillaInspector> ScillaInspector for &mut T {
-    fn create(&mut self, creator: H160, contract_address: H160, amount: u128) {
+    fn create(&mut self, creator: Address, contract_address: Address, amount: u128) {
         (*self).create(creator, contract_address, amount);
     }
 
-    fn transfer(&mut self, from: H160, to: H160, amount: u128) {
+    fn transfer(&mut self, from: Address, to: Address, amount: u128) {
         (*self).transfer(from, to, amount)
     }
 
-    fn call(&mut self, from: H160, to: H160, amount: u128) {
+    fn call(&mut self, from: Address, to: Address, amount: u128) {
         (*self).call(from, to, amount)
     }
 }
@@ -51,14 +51,13 @@ impl ScillaInspector for NoOpInspector {}
 
 #[derive(Debug, Default)]
 pub struct TouchedAddressInspector {
-    pub touched: HashSet<H160>,
+    pub touched: HashSet<Address>,
 }
 
 impl<DB: Database> Inspector<DB> for TouchedAddressInspector {
     fn call(&mut self, _: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        self.touched
-            .insert(H160(inputs.context.caller.into_array()));
-        self.touched.insert(H160(inputs.contract.into_array()));
+        self.touched.insert(inputs.context.caller);
+        self.touched.insert(inputs.contract);
         None
     }
 
@@ -68,36 +67,31 @@ impl<DB: Database> Inspector<DB> for TouchedAddressInspector {
         inputs: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
-        self.touched.insert(H160(inputs.caller.into_array()));
+        self.touched.insert(inputs.caller);
         if let Some(address) = outcome.address {
-            self.touched.insert(H160(address.into_array()));
+            self.touched.insert(address);
         }
         outcome
     }
 
-    fn selfdestruct(
-        &mut self,
-        contract: revm::primitives::Address,
-        target: revm::primitives::Address,
-        _: ruint::aliases::U256,
-    ) {
-        self.touched.insert(H160(contract.into_array()));
-        self.touched.insert(H160(target.into_array()));
+    fn selfdestruct(&mut self, contract: Address, target: Address, _: U256) {
+        self.touched.insert(contract);
+        self.touched.insert(target);
     }
 }
 
 impl ScillaInspector for TouchedAddressInspector {
-    fn create(&mut self, creator: H160, contract_address: H160, _: u128) {
+    fn create(&mut self, creator: Address, contract_address: Address, _: u128) {
         self.touched.insert(creator);
         self.touched.insert(contract_address);
     }
 
-    fn transfer(&mut self, from: H160, to: H160, _: u128) {
+    fn transfer(&mut self, from: Address, to: Address, _: u128) {
         self.touched.insert(from);
         self.touched.insert(to);
     }
 
-    fn call(&mut self, from: H160, to: H160, _: u128) {
+    fn call(&mut self, from: Address, to: Address, _: u128) {
         self.touched.insert(from);
         self.touched.insert(to);
     }
@@ -105,19 +99,19 @@ impl ScillaInspector for TouchedAddressInspector {
 
 #[derive(Debug)]
 pub struct CreatorInspector {
-    contract: H160,
-    creator: Option<H160>,
+    contract: Address,
+    creator: Option<Address>,
 }
 
 impl CreatorInspector {
-    pub fn new(contract: H160) -> Self {
+    pub fn new(contract: Address) -> Self {
         CreatorInspector {
             contract,
             creator: None,
         }
     }
 
-    pub fn creator(&self) -> Option<H160> {
+    pub fn creator(&self) -> Option<Address> {
         self.creator
     }
 }
@@ -130,8 +124,8 @@ impl<DB: Database> Inspector<DB> for CreatorInspector {
         outcome: CreateOutcome,
     ) -> CreateOutcome {
         if let Some(address) = outcome.address {
-            if H160(address.into_array()) == self.contract {
-                self.creator = Some(H160(inputs.caller.into_array()));
+            if address == self.contract {
+                self.creator = Some(inputs.caller);
             }
         }
         outcome
@@ -139,7 +133,7 @@ impl<DB: Database> Inspector<DB> for CreatorInspector {
 }
 
 impl ScillaInspector for CreatorInspector {
-    fn create(&mut self, creator: H160, contract_address: H160, _: u128) {
+    fn create(&mut self, creator: Address, contract_address: Address, _: u128) {
         if contract_address == self.contract {
             self.creator = Some(creator);
         }
@@ -174,8 +168,8 @@ impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
         self.entries.push(TraceEntry {
             ty,
             depth: context.journaled_state.depth(),
-            from: H160(inputs.context.caller.into_array()),
-            to: H160(inputs.contract.into_array()),
+            from: inputs.context.caller,
+            to: inputs.contract,
             value,
             input: inputs.input.to_vec(),
         });
@@ -196,8 +190,8 @@ impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
         self.entries.push(TraceEntry {
             ty,
             depth: context.journaled_state.depth(),
-            from: H160(inputs.caller.into_array()),
-            to: H160(inputs.created_address(nonce).into_array()),
+            from: inputs.caller,
+            to: inputs.created_address(nonce),
             value: Some(inputs.value.to()),
             input: inputs.init_code.to_vec(),
         });
@@ -205,18 +199,13 @@ impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
         None
     }
 
-    fn selfdestruct(
-        &mut self,
-        contract: revm::primitives::Address,
-        target: revm::primitives::Address,
-        value: ruint::aliases::U256,
-    ) {
+    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         let depth = self.entries.last().map(|t| t.depth).unwrap_or_default();
         self.entries.push(TraceEntry {
             ty: TraceEntryType::SelfDestruct,
             depth,
-            from: H160(contract.into_array()),
-            to: H160(target.into_array()),
+            from: contract,
+            to: target,
             value: Some(value.to()),
             input: vec![],
         });
@@ -224,7 +213,7 @@ impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
 }
 
 impl ScillaInspector for OtterscanTraceInspector {
-    fn call(&mut self, from: H160, to: H160, amount: u128) {
+    fn call(&mut self, from: Address, to: Address, amount: u128) {
         self.entries.push(TraceEntry {
             ty: TraceEntryType::Call,
             depth: 0, // TODO: Track Scilla depth
@@ -235,7 +224,7 @@ impl ScillaInspector for OtterscanTraceInspector {
         })
     }
 
-    fn create(&mut self, creator: H160, contract_address: H160, amount: u128) {
+    fn create(&mut self, creator: Address, contract_address: Address, amount: u128) {
         self.entries.push(TraceEntry {
             ty: TraceEntryType::Create,
             depth: 0,
@@ -246,7 +235,7 @@ impl ScillaInspector for OtterscanTraceInspector {
         })
     }
 
-    fn transfer(&mut self, from: H160, to: H160, amount: u128) {
+    fn transfer(&mut self, from: Address, to: Address, amount: u128) {
         self.entries.push(TraceEntry {
             ty: TraceEntryType::Call,
             depth: 0,
@@ -280,8 +269,8 @@ impl<DB: Database> Inspector<DB> for OtterscanOperationInspector {
         if context.journaled_state.depth() != 0 && !inputs.transfer.value.is_zero() {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,
-                from: H160(inputs.context.caller.into_array()),
-                to: H160(inputs.contract.into_array()),
+                from: inputs.context.caller,
+                to: inputs.contract,
                 value: inputs.transfer.value.to(),
             });
         }
@@ -302,8 +291,8 @@ impl<DB: Database> Inspector<DB> for OtterscanOperationInspector {
             let nonce = context.journaled_state.account(inputs.caller).info.nonce;
             self.entries.push(Operation {
                 ty,
-                from: H160(inputs.caller.into_array()),
-                to: H160(inputs.created_address(nonce).into_array()),
+                from: inputs.caller,
+                to: inputs.created_address(nonce),
                 value: inputs.value.to(),
             });
         }
@@ -311,16 +300,11 @@ impl<DB: Database> Inspector<DB> for OtterscanOperationInspector {
         None
     }
 
-    fn selfdestruct(
-        &mut self,
-        contract: revm::primitives::Address,
-        target: revm::primitives::Address,
-        value: ruint::aliases::U256,
-    ) {
+    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         self.entries.push(Operation {
             ty: OperationType::SelfDestruct,
-            from: H160(contract.into_array()),
-            to: H160(target.into_array()),
+            from: contract,
+            to: target,
             value: value.to(),
         });
     }
@@ -328,7 +312,7 @@ impl<DB: Database> Inspector<DB> for OtterscanOperationInspector {
 
 // TODO: Filter depth=0 Scilla calls once we can track the depth.
 impl ScillaInspector for OtterscanOperationInspector {
-    fn call(&mut self, from: H160, to: H160, amount: u128) {
+    fn call(&mut self, from: Address, to: Address, amount: u128) {
         if amount != 0 {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,
@@ -339,7 +323,7 @@ impl ScillaInspector for OtterscanOperationInspector {
         }
     }
 
-    fn create(&mut self, creator: H160, contract_address: H160, amount: u128) {
+    fn create(&mut self, creator: Address, contract_address: Address, amount: u128) {
         self.entries.push(Operation {
             ty: OperationType::Create,
             from: creator,
@@ -348,7 +332,7 @@ impl ScillaInspector for OtterscanOperationInspector {
         });
     }
 
-    fn transfer(&mut self, from: H160, to: H160, amount: u128) {
+    fn transfer(&mut self, from: Address, to: Address, amount: u128) {
         if amount != 0 {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,

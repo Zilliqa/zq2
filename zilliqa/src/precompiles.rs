@@ -44,15 +44,13 @@ impl ERC20Precompile {
                 "Decoded value is not a proper address type!".into(),
             ));
         };
+        let address = Address::new(address.0);
 
         let Ok(account) = context.db.get_account(address) else {
-            return Ok((
-                0u64,
-                encode(&[Token::Uint(primitive_types::U256::from(0))]).into(),
-            ));
+            return Ok((0u64, encode(&[Token::Uint(ethabi::Uint::from(0))]).into()));
         };
 
-        let balance = primitive_types::U256::from(account.balance);
+        let balance = ethabi::Uint::from(account.balance);
         let output = encode(&[Token::Uint(balance)]);
 
         // Don't charge gas

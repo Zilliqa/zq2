@@ -6,18 +6,16 @@
 
 use std::fmt::Display;
 
+use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use bls12_381::{G1Projective, G2Affine};
 use bls_signatures::Serialize as BlsSerialize;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
-use primitive_types::H256;
 use serde::{
     de::{self, Unexpected},
     Deserialize, Serialize,
 };
 use sha3::{Digest, Keccak256};
-
-use crate::state::Address;
 
 /// The signature type used internally in consensus, to e.g. sign block proposals.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -293,9 +291,15 @@ impl Hash {
     }
 }
 
-impl From<H256> for Hash {
-    fn from(value: H256) -> Self {
-        Self(value.into())
+impl From<B256> for Hash {
+    fn from(value: B256) -> Self {
+        Self(value.0)
+    }
+}
+
+impl From<Hash> for B256 {
+    fn from(value: Hash) -> Self {
+        Self(value.0)
     }
 }
 
