@@ -6,5 +6,5 @@ export ZQ2_BASE
 
 if [[ -d $ZQ2_BASE ]]; then
   cd $ZQ2_BASE/zq2
-  cargo run -q --bin z2 -- $*
+  cargo run --release -q --bin z2 -- $*
 fi
