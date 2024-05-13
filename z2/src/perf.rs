@@ -498,11 +498,11 @@ impl Perf {
     }
 
     pub async fn monitor_one(&self, txn: &str) -> Result<TransactionResult> {
-        Ok(self.monitor(&vec![txn.to_string()]).await?[0].clone())
+        Ok(self.monitor(&[txn.to_string()]).await?[0].clone())
     }
 
     /// Monitor a transaction until it either completes or fails.
-    pub async fn monitor(&self, txns: &Vec<String>) -> Result<Vec<TransactionResult>> {
+    pub async fn monitor(&self, txns: &[String]) -> Result<Vec<TransactionResult>> {
         let mut results: Vec<TransactionResult> = Vec::new();
         println!(" --- 👓 --- ");
         for (idx, item) in txns.iter().enumerate() {

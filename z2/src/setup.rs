@@ -186,8 +186,14 @@ impl Setup {
                 .consensus
                 .genesis_committee
                 .push((public_key_node_0, peer_id_node_0));
-            node_config.consensus.genesis_deposits = genesis_deposits.clone();
-            node_config.consensus.genesis_accounts = genesis_accounts.clone();
+            node_config
+                .consensus
+                .genesis_deposits
+                .clone_from(&genesis_deposits);
+            node_config
+                .consensus
+                .genesis_accounts
+                .clone_from(&genesis_accounts);
             cfg.nodes = Vec::new();
             cfg.nodes.push(node_config);
             cfg.p2p_port = 0;

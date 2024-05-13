@@ -151,16 +151,17 @@ impl fmt::Display for LogLevel {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
     // Work out the base directory
     let base_dir = match env::var("ZQ2_BASE") {
         Ok(val) => val,
         _ => {
             return Err(anyhow!(
-                "Please define ZQ2_BASE or run bin/z2 from the checked out zq2 repository"
+                "Please run scripts/z2 from the checked out zq2 repository which sets ZQ2_BASE"
             ))
         }
     };
+    let cli = Cli::parse();
+
     match &cli.command {
         Commands::Run(ref arg) => {
             let mut to_run: HashSet<plumbing::Components> = HashSet::new();
