@@ -1274,10 +1274,12 @@ impl Consensus {
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
-        Ok(dbg!(dbg!(self.db.get_transaction(&dbg!(hash)))?
-            .map(|tx| dbg!(tx.verify()))
-            .transpose())?
-        .or_else(|| self.transaction_pool.get_transaction(hash).cloned()))
+        Ok(self
+            .db
+            .get_transaction(&hash)?
+            .map(|tx| tx.verify())
+            .transpose()?
+            .or_else(|| self.transaction_pool.get_transaction(hash).cloned()))
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {

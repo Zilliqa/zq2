@@ -532,13 +532,13 @@ pub(super) fn get_transaction_receipt_inner(
     hash: Hash,
     node: &MutexGuard<Node>,
 ) -> Result<Option<eth::TransactionReceipt>> {
-    let Some(signed_transaction) = dbg!(node.get_transaction_by_hash(hash))? else {
+    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else {
         warn!("Failed to get TX by hash when getting TX receipt! {}", hash);
         return Ok(None);
     };
     // TODO: Return error if receipt or block does not exist.
 
-    let Some(receipt) = dbg!(node.get_transaction_receipt(hash))? else {
+    let Some(receipt) = node.get_transaction_receipt(hash)? else {
         warn!("Failed to get TX receipt when getting TX receipt! {}", hash);
         return Ok(None);
     };
@@ -548,7 +548,7 @@ pub(super) fn get_transaction_receipt_inner(
         hash, receipt
     );
 
-    let Some(block) = dbg!(node.get_block_by_hash(receipt.block_hash))? else {
+    let Some(block) = node.get_block_by_hash(receipt.block_hash)? else {
         warn!("Failed to get block when getting TX receipt! {}", hash);
         return Ok(None);
     };
