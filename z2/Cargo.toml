@@ -22,7 +22,7 @@ test = false
 
 [dependencies]
 alloy-primitives = "0.7.2"
-anyhow = "1.0.82"
+anyhow = "1.0.83"
 async-trait = "0.1.80"
 clap = { version = "4.5.4", features = ["derive"] }
 colored = "2.1.0"
@@ -34,7 +34,7 @@ libp2p = { version = "0.53.2", features = [ "identify" ] }
 rand = "0.8.5"
 rand_core = "0.6.4"
 reqwest = { version = "0.12.3", features = [ "json", "rustls-tls", "http2", "charset" ], default-features=false}
-serde = { version = "1.0.200", features = ["derive"] }
+serde = { version = "1.0.201", features = ["derive"] }
 serde_json = "1.0.117"
 serde_yaml = "0.9.34"
 tempfile = "3.9.0"
