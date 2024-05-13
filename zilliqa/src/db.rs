@@ -230,7 +230,6 @@ impl Db {
     get_and_insert_methods!(transaction, Hash, SignedTransaction);
     get_and_insert_methods!(transaction_receipts, Hash, Vec<TransactionReceipt>);
     get_and_insert_methods!(block_hash_reverse_index, Hash, Hash);
-
 }
 
 /// An implementor of [eth_trie::DB] which uses a [sled::Tree] to persist data.

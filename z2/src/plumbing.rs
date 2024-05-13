@@ -1,15 +1,13 @@
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::{collections::HashSet, env};
+use std::{collections::HashSet, env, path::PathBuf, str::FromStr};
 
 use anyhow::{anyhow, Result};
 use primitive_types::H256;
 use tokio::fs;
+use zilliqa::crypto::SecretKey;
 
 use crate::{collector, deployer, otel, otterscan, perf, spout, zq1};
 /// Code for all the z2 commands, so you can invoke it from your own programs.
 use crate::{converter, setup};
-use zilliqa::crypto::SecretKey;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub enum Components {

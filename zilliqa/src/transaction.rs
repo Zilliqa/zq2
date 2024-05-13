@@ -577,9 +577,9 @@ impl ZilAmount {
 
     // Construct a [ZilAmount] from an amount in (10^-12) ZILs.
     pub fn from_raw(amount: u128) -> ZilAmount {
-        ZilAmount(amount) 
+        ZilAmount(amount)
     }
-    
+
     /// Get the ZIL amount in units of (10^-18) ZILs.
     pub fn get(self) -> u128 {
         self.0.checked_mul(10u128.pow(6)).expect("amount overflow")
