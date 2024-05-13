@@ -46,6 +46,23 @@ macro_rules! int_impl {
     };
 }
 
+/// Generates an implementation of [ToHex] via a type's [serde::Serialize] implementation.
+macro_rules! serde_impl {
+    ($T:ty) => {
+        impl ToHex for $T {
+            fn to_hex_inner(&self, prefix: bool) -> String {
+                let serde_json::Value::String(mut hex) = serde_json::to_value(self).unwrap() else {
+                    panic!("did not deserialize to a string");
+                };
+                if !prefix {
+                    hex = (&hex[2..]).to_owned();
+                }
+                hex
+            }
+        }
+    };
+}
+
 impl<T: ToHex + ?Sized> ToHex for &T {
     fn to_hex_inner(&self, prefix: bool) -> String {
         (*self).to_hex_inner(prefix)
@@ -91,9 +108,9 @@ int_impl!(u64);
 int_impl!(u128);
 int_impl!(isize);
 int_impl!(usize);
-int_impl!(U128);
-int_impl!(U256);
-int_impl!(U512);
+serde_impl!(U128);
+serde_impl!(U256);
+serde_impl!(U512);
 
 #[cfg(test)]
 mod tests {
@@ -132,7 +149,7 @@ mod tests {
     fn test_big_int_to_hex() {
         let cases = [
             (U128::ZERO, "0x0"),
-            (256u64.try_into().unwrap(), "0x100"),
+            (U128::try_from(256u64).unwrap(), "0x100"),
             (U128::MAX, "0xffffffffffffffffffffffffffffffff"),
         ];
 

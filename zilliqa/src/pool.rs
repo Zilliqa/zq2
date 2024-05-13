@@ -221,8 +221,12 @@ mod tests {
                     value: U256::ZERO,
                     input: Bytes::new(),
                 },
-                sig: Signature::from_rs_and_parity(U256::from(1), U256::from(1), Parity::Parity(false))
-                    .unwrap(),
+                sig: Signature::from_rs_and_parity(
+                    U256::from(1),
+                    U256::from(1),
+                    Parity::Parity(false),
+                )
+                .unwrap(),
             },
             signer: from_addr,
             hash: Hash::compute([from_addr.as_slice(), &[nonce]]),
