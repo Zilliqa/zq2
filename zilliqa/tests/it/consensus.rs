@@ -3,13 +3,10 @@ use ethers::{
     abi::FunctionExt, prelude::DeploymentTxFactory, providers::Middleware,
     types::TransactionRequest,
 };
-use primitive_types::{H160, U256};
+use primitive_types::{H160, H256, U256};
 use tokio::sync::Mutex;
 use tracing::*;
-use zilliqa::{
-    contracts,
-    state::contract_addr::{self, SHARD_REGISTRY},
-};
+use zilliqa::{contracts, crypto::Hash, state::contract_addr};
 
 use crate::{compile_contract, deploy_contract, deploy_contract_with_args, Network, Wallet};
 
@@ -199,7 +196,7 @@ async fn create_shard(
             Token::Uint((700 + 0x8000).into()),
             Token::Uint(5000.into()),
             Token::FixedBytes(shard_genesis.0.to_vec()),
-            Token::Address(SHARD_REGISTRY),
+            Token::Address(H160(contract_addr::SHARD_REGISTRY.into_array())),
         ]
         .as_slice(),
         wallet,
@@ -212,7 +209,7 @@ async fn create_shard(
 
     // * Register the shard in the shard registry on the main shard
     let tx_request = TransactionRequest::new()
-        .to(contract_addr::SHARD_REGISTRY)
+        .to(H160(contract_addr::SHARD_REGISTRY.into_array()))
         .data(
             contracts::shard_registry::ADD_SHARD
                 .encode_input(&[
@@ -376,7 +373,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         ])
         .unwrap();
     let tx_request = TransactionRequest::new()
-        .to(contract_addr::INTERSHARD_BRIDGE)
+        .to(H160(contract_addr::INTERSHARD_BRIDGE.into_array()))
         .data(data);
 
     // Send it from the shard wallet's address
@@ -497,7 +494,7 @@ async fn cross_shard_contract_creation(mut network: Network) {
         ])
         .unwrap();
     let tx_request = TransactionRequest::new()
-        .to(contract_addr::INTERSHARD_BRIDGE)
+        .to(H160(contract_addr::INTERSHARD_BRIDGE.into_array()))
         .data(data);
 
     // Send it from the shard wallet's address
@@ -569,7 +566,7 @@ async fn handle_forking_correctly(mut network: Network) {
         .unwrap();
 
     // Send a single TX to the network
-    let hash = wallet
+    let hash: H256 = wallet
         .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
         .await
         .unwrap()
@@ -580,11 +577,11 @@ async fn handle_forking_correctly(mut network: Network) {
     // Check that node 0 has executed the transaction while the others haven't
     let first = network
         .get_node(0)
-        .get_transaction_receipt(hash.into())
+        .get_transaction_receipt(Hash(hash.0))
         .unwrap();
     let second = network
         .get_node(1)
-        .get_transaction_receipt(hash.into())
+        .get_transaction_receipt(Hash(hash.0))
         .unwrap();
 
     // Only the first node should have executed the transaction
@@ -599,7 +596,7 @@ async fn handle_forking_correctly(mut network: Network) {
     network
         .run_until(
             |n| {
-                let receipt = n.get_node(0).get_transaction_receipt(hash.into());
+                let receipt = n.get_node(0).get_transaction_receipt(Hash(hash.0));
                 match receipt {
                     Ok(Some(receipt)) => receipt.block_hash != original_receipt.block_hash,
                     _ => false,

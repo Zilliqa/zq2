@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 
+use alloy_primitives::{keccak256, B256};
 use hashbrown::{HashMap, HashSet};
-use keccak_hash::{keccak, H256, KECCAK_NULL_RLP};
 use log::warn;
 use rlp::{Prototype, Rlp, RlpStream};
 
@@ -30,7 +30,7 @@ pub trait Trie<D: DB> {
 
     /// Saves all the nodes in the db, clears the cache data, recalculates the root.
     /// Returns the root hash of the trie.
-    fn root_hash(&mut self) -> TrieResult<H256>;
+    fn root_hash(&mut self) -> TrieResult<B256>;
 
     /// Prove constructs a merkle proof for key. The result contains all encoded nodes
     /// on the path to the value at key. The value itself is also included in the last
@@ -45,7 +45,7 @@ pub trait Trie<D: DB> {
     /// return value if key exists, None if key not exist, Error if proof is wrong
     fn verify_proof(
         &self,
-        root_hash: H256,
+        root_hash: B256,
         key: &[u8],
         proof: Vec<Vec<u8>>,
     ) -> TrieResult<Option<Vec<u8>>>;
@@ -57,7 +57,7 @@ where
     D: DB,
 {
     root: Node,
-    root_hash: H256,
+    root_hash: B256,
 
     db: Arc<D>,
 
@@ -68,7 +68,7 @@ where
 }
 
 enum EncodedNode {
-    Hash(H256),
+    Hash(B256),
     Inline(Vec<u8>),
 }
 
@@ -226,7 +226,7 @@ where
     pub fn new(db: Arc<D>) -> Self {
         Self {
             root: Node::Empty,
-            root_hash: KECCAK_NULL_RLP,
+            root_hash: keccak256(rlp::NULL_RLP),
 
             cache: HashMap::new(),
             passing_keys: HashSet::new(),
@@ -236,7 +236,7 @@ where
         }
     }
 
-    pub fn at_root(&self, root_hash: H256) -> Self {
+    pub fn at_root(&self, root_hash: B256) -> Self {
         Self {
             root: Node::from_hash(root_hash),
             root_hash,
@@ -338,7 +338,7 @@ where
 
     /// Saves all the nodes in the db, clears the cache data, recalculates the root.
     /// Returns the root hash of the trie.
-    fn root_hash(&mut self) -> TrieResult<H256> {
+    fn root_hash(&mut self) -> TrieResult<B256> {
         self.commit()
     }
 
@@ -383,16 +383,16 @@ where
     /// return value if key exists, None if key not exist, Error if proof is wrong
     fn verify_proof(
         &self,
-        root_hash: H256,
+        root_hash: B256,
         key: &[u8],
         proof: Vec<Vec<u8>>,
     ) -> TrieResult<Option<Vec<u8>>> {
         let proof_db = Arc::new(MemoryDB::new(true));
         for node_encoded in proof.into_iter() {
-            let hash = keccak(&node_encoded);
+            let hash = keccak256(&node_encoded);
 
             if root_hash.eq(&hash) || node_encoded.len() >= HASHED_LENGTH {
-                proof_db.insert(hash.as_bytes(), node_encoded).unwrap();
+                proof_db.insert(hash.as_slice(), node_encoded).unwrap();
             }
         }
         let trie = EthTrie::new(proof_db).at_root(root_hash);
@@ -413,7 +413,7 @@ where
         let partial = &path.offset(path_index);
         match source_node {
             Node::Empty => Ok(None),
-            Node::Hash(hash_node) if hash_node.hash == KECCAK_NULL_RLP => Ok(None),
+            Node::Hash(hash_node) if hash_node.hash == keccak256(rlp::NULL_RLP) => Ok(None),
             Node::Leaf(leaf) => {
                 if &leaf.key == partial {
                     Ok(Some(leaf.value.clone()))
@@ -547,7 +547,7 @@ where
             }
             Node::Hash(hash_node) => {
                 let node_hash = hash_node.hash;
-                self.passing_keys.insert(node_hash.as_bytes().to_vec());
+                self.passing_keys.insert(node_hash.to_vec());
                 let node =
                     self.recover_from_db(node_hash)?
                         .ok_or_else(|| TrieError::MissingTrieNode {
@@ -615,7 +615,7 @@ where
             }
             Node::Hash(hash_node) => {
                 let hash = hash_node.hash;
-                self.passing_keys.insert(hash.as_bytes().to_vec());
+                self.passing_keys.insert(hash.to_vec());
 
                 let node =
                     self.recover_from_db(hash)?
@@ -687,7 +687,7 @@ where
                     // try again after recovering node from the db.
                     Node::Hash(hash_node) => {
                         let node_hash = hash_node.hash;
-                        self.passing_keys.insert(node_hash.as_bytes().to_vec());
+                        self.passing_keys.insert(node_hash.to_vec());
 
                         let new_node =
                             self.recover_from_db(node_hash)?
@@ -762,12 +762,12 @@ where
         }
     }
 
-    fn commit(&mut self) -> TrieResult<H256> {
+    fn commit(&mut self) -> TrieResult<B256> {
         let root_hash = match self.write_node(&self.root.clone()) {
             EncodedNode::Hash(hash) => hash,
             EncodedNode::Inline(encoded) => {
-                let hash = keccak(&encoded);
-                self.cache.insert(hash.as_bytes().to_vec(), encoded);
+                let hash = keccak256(&encoded);
+                self.cache.insert(hash.to_vec(), encoded);
                 hash
             }
         };
@@ -815,10 +815,10 @@ where
         if data.len() < HASHED_LENGTH {
             EncodedNode::Inline(data)
         } else {
-            let hash = keccak(&data);
-            self.cache.insert(hash.as_bytes().to_vec(), data);
+            let hash = keccak256(&data);
+            self.cache.insert(hash.to_vec(), data);
 
-            self.gen_keys.insert(hash.as_bytes().to_vec());
+            self.gen_keys.insert(hash.to_vec());
             EncodedNode::Hash(hash)
         }
     }
@@ -839,7 +839,7 @@ where
                 for i in 0..16 {
                     let n = &borrow_branch.children[i];
                     match self.write_node(n) {
-                        EncodedNode::Hash(hash) => stream.append(&hash.as_bytes()),
+                        EncodedNode::Hash(hash) => stream.append(&hash.as_slice()),
                         EncodedNode::Inline(data) => stream.append_raw(&data, 1),
                     };
                 }
@@ -856,7 +856,7 @@ where
                 let mut stream = RlpStream::new_list(2);
                 stream.append(&borrow_ext.prefix.encode_compact());
                 match self.write_node(&borrow_ext.node) {
-                    EncodedNode::Hash(hash) => stream.append(&hash.as_bytes()),
+                    EncodedNode::Hash(hash) => stream.append(&hash.as_slice()),
                     EncodedNode::Inline(data) => stream.append_raw(&data, 1),
                 };
                 stream.out().to_vec()
@@ -903,7 +903,7 @@ where
             }
             _ => {
                 if r.is_data() && r.size() == HASHED_LENGTH {
-                    let hash = H256::from_slice(r.data()?);
+                    let hash = B256::from_slice(r.data()?);
                     Ok(Node::from_hash(hash))
                 } else {
                     Err(TrieError::InvalidData)
@@ -912,10 +912,10 @@ where
         }
     }
 
-    fn recover_from_db(&self, key: H256) -> TrieResult<Option<Node>> {
+    fn recover_from_db(&self, key: B256) -> TrieResult<Option<Node>> {
         let node = match self
             .db
-            .get(key.as_bytes())
+            .get(key.as_slice())
             .map_err(|e| TrieError::DB(e.to_string()))?
         {
             Some(value) => Some(Self::decode_node(&value)?),
@@ -932,7 +932,7 @@ mod tests {
         sync::Arc,
     };
 
-    use keccak_hash::{H256, KECCAK_NULL_RLP};
+    use alloy_primitives::{keccak256, B256};
     use rand::{distributions::Alphanumeric, seq::SliceRandom, thread_rng, Rng};
 
     use super::{EthTrie, Trie};
@@ -969,7 +969,7 @@ mod tests {
         assert_eq!(None, v)
     }
 
-    fn corrupt_trie() -> (EthTrie<MemoryDB>, H256, H256) {
+    fn corrupt_trie() -> (EthTrie<MemoryDB>, B256, B256) {
         let memdb = Arc::new(MemoryDB::new(true));
         let corruptor_db = memdb.clone();
         let mut trie = EthTrie::new(memdb);
@@ -989,7 +989,7 @@ mod tests {
         (
             trie,
             actual_root_hash,
-            H256::from_slice(node_hash_to_delete),
+            B256::from_slice(node_hash_to_delete),
         )
     }
 
@@ -1238,22 +1238,22 @@ mod tests {
 
     #[test]
     fn test_multiple_trie_roots() {
-        let k0: ethereum_types::H256 = ethereum_types::H256::zero();
-        let k1: ethereum_types::H256 = ethereum_types::H256::random();
-        let v: ethereum_types::H256 = ethereum_types::H256::random();
+        let k0 = B256::ZERO;
+        let k1 = B256::random();
+        let v = B256::random();
 
         let root1 = {
             let memdb = Arc::new(MemoryDB::new(true));
             let mut trie = EthTrie::new(memdb);
-            trie.insert(k0.as_bytes(), v.as_bytes()).unwrap();
+            trie.insert(k0.as_slice(), v.as_slice()).unwrap();
             trie.root_hash().unwrap()
         };
 
         let root2 = {
             let memdb = Arc::new(MemoryDB::new(true));
             let mut trie = EthTrie::new(memdb);
-            trie.insert(k0.as_bytes(), v.as_bytes()).unwrap();
-            trie.insert(k1.as_bytes(), v.as_bytes()).unwrap();
+            trie.insert(k0.as_slice(), v.as_slice()).unwrap();
+            trie.insert(k1.as_slice(), v.as_slice()).unwrap();
             trie.root_hash().unwrap();
             trie.remove(k1.as_ref()).unwrap();
             trie.root_hash().unwrap()
@@ -1262,12 +1262,12 @@ mod tests {
         let root3 = {
             let memdb = Arc::new(MemoryDB::new(true));
             let mut trie1 = EthTrie::new(Arc::clone(&memdb));
-            trie1.insert(k0.as_bytes(), v.as_bytes()).unwrap();
-            trie1.insert(k1.as_bytes(), v.as_bytes()).unwrap();
+            trie1.insert(k0.as_slice(), v.as_slice()).unwrap();
+            trie1.insert(k1.as_slice(), v.as_slice()).unwrap();
             trie1.root_hash().unwrap();
             let root = trie1.root_hash().unwrap();
             let mut trie2 = trie1.at_root(root);
-            trie2.remove(k1.as_bytes()).unwrap();
+            trie2.remove(k1.as_slice()).unwrap();
             trie2.root_hash().unwrap()
         };
 
@@ -1298,8 +1298,8 @@ mod tests {
         }
         trie.root_hash().unwrap();
 
-        let empty_node_key = KECCAK_NULL_RLP;
-        let value = trie.db.get(empty_node_key.as_ref()).unwrap().unwrap();
+        let empty_node_key = keccak256(rlp::NULL_RLP);
+        let value = trie.db.get(empty_node_key.as_slice()).unwrap().unwrap();
         assert_eq!(value, &rlp::NULL_RLP)
     }
 
@@ -1323,7 +1323,7 @@ mod tests {
     #[test]
     fn iterator_trie() {
         let memdb = Arc::new(MemoryDB::new(true));
-        let root1: H256;
+        let root1: B256;
         let mut kv = HashMap::new();
         kv.insert(b"test".to_vec(), b"test".to_vec());
         kv.insert(b"test1".to_vec(), b"test1".to_vec());

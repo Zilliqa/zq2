@@ -8,10 +8,10 @@ use std::{
     sync::Arc,
 };
 
+use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Result};
 use eth_trie::Trie;
 use ethabi::Token;
-use primitive_types::{H160, H256, U256};
 use revm::{
     inspector_handle_register,
     primitives::{
@@ -33,7 +33,7 @@ use crate::{
     message::BlockHeader,
     precompiles::get_custom_precompiles,
     scilla,
-    state::{contract_addr, Account, Address, Contract, ScillaValue, State},
+    state::{contract_addr, Account, Contract, ScillaValue, State},
     time::SystemTime,
     transaction::{
         total_scilla_gas_price, EvmGas, Log, ScillaGas, ScillaParam, Transaction, TxZilliqa,
@@ -110,19 +110,14 @@ impl Error for DatabaseError {
 impl Database for &State {
     type Error = DatabaseError;
 
-    fn basic(
-        &mut self,
-        address: revm::primitives::Address,
-    ) -> Result<Option<AccountInfo>, Self::Error> {
-        let address = H160(address.into_array());
-
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         if !self.has_account(address)? {
             return Ok(None);
         }
 
         let account = self.get_account(address)?;
         let account_info = AccountInfo {
-            balance: revm::primitives::U256::from(account.balance),
+            balance: U256::from(account.balance),
             nonce: account.nonce,
             code_hash: KECCAK_EMPTY,
             code: Some(Bytecode {
@@ -138,20 +133,15 @@ impl Database for &State {
         unimplemented!()
     }
 
-    fn storage(
-        &mut self,
-        address: revm::primitives::Address,
-        index: revm::primitives::U256,
-    ) -> Result<revm::primitives::U256, Self::Error> {
-        let address = H160(address.into_array());
-        let index = H256(index.to_be_bytes());
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        let index = B256::new(index.to_be_bytes());
 
         let result = self.get_account_storage(address, index)?;
 
-        Ok(revm::primitives::U256::from_be_bytes(result.0))
+        Ok(U256::from_be_bytes(result.0))
     }
 
-    fn block_hash(&mut self, _number: revm::primitives::U256) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, _number: U256) -> Result<B256, Self::Error> {
         // TODO
         Ok(B256::ZERO)
     }
@@ -176,7 +166,7 @@ impl State {
         override_address: Option<Address>,
     ) -> Result<Address> {
         let ResultAndState { result, mut state } = self.apply_transaction_evm(
-            H160::zero(),
+            Address::ZERO,
             None,
             GAS_PRICE,
             BLOCK_GAS_LIMIT,
@@ -194,7 +184,7 @@ impl State {
                 ..
             } => {
                 let addr = if let Some(override_address) = override_address {
-                    let override_address = revm::primitives::Address::from(override_address.0);
+                    let override_address = Address::from(override_address.0);
                     let account = state
                         .remove(&addr)
                         .ok_or_else(|| anyhow!("deployment did not change the contract account"))?;
@@ -205,7 +195,7 @@ impl State {
                 };
 
                 self.apply_delta_evm(state)?;
-                Ok(H160(addr.into_array()))
+                Ok(addr)
             }
             ExecutionResult::Success { .. } => {
                 Err(anyhow!("deployment did not create a transaction"))
@@ -232,18 +222,18 @@ impl State {
         let mut evm = Evm::builder()
             .with_db(self)
             .with_block_env(BlockEnv {
-                number: revm::primitives::U256::from(current_block.number),
-                coinbase: revm::primitives::Address::ZERO,
-                timestamp: revm::primitives::U256::from(
+                number: U256::from(current_block.number),
+                coinbase: Address::ZERO,
+                timestamp: U256::from(
                     current_block
                         .timestamp
                         .duration_since(SystemTime::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs(),
                 ),
-                gas_limit: revm::primitives::U256::from(BLOCK_GAS_LIMIT.0),
-                basefee: revm::primitives::U256::from(GAS_PRICE),
-                difficulty: revm::primitives::U256::from(1),
+                gas_limit: U256::from(BLOCK_GAS_LIMIT.0),
+                basefee: U256::from(GAS_PRICE),
+                difficulty: U256::from(1),
                 prevrandao: Some(B256::ZERO),
                 blob_excess_gas_and_price: None,
             })
@@ -261,11 +251,11 @@ impl State {
             .with_tx_env(TxEnv {
                 caller: from_addr.0.into(),
                 gas_limit: gas_limit.0,
-                gas_price: revm::primitives::U256::from(gas_price),
+                gas_price: U256::from(gas_price),
                 transact_to: to_addr
                     .map(|a| TransactTo::call(a.0.into()))
                     .unwrap_or_else(TransactTo::create),
-                value: revm::primitives::U256::from(amount),
+                value: U256::from(amount),
                 data: payload.clone().into(),
                 nonce,
                 chain_id: Some(chain_id),
@@ -290,7 +280,7 @@ impl State {
 
     fn apply_transaction_scilla(
         &mut self,
-        from_addr: H160,
+        from_addr: Address,
         current_block: BlockHeader,
         txn: TxZilliqa,
         inspector: impl ScillaInspector,
@@ -330,7 +320,7 @@ impl State {
     #[track_caller]
     fn deduct_from_account(
         &mut self,
-        addr: H160,
+        addr: Address,
         amount: ZilAmount,
     ) -> Result<Option<TransactionApplyResult>> {
         let caller = std::panic::Location::caller();
@@ -357,7 +347,7 @@ impl State {
 
     fn scilla_create(
         &mut self,
-        from_addr: H160,
+        from_addr: Address,
         txn: TxZilliqa,
         current_block: BlockHeader,
         mut inspector: impl ScillaInspector,
@@ -510,7 +500,7 @@ impl State {
 
     fn scilla_transfer_to_eoa(
         &mut self,
-        from_addr: H160,
+        from_addr: Address,
         txn: TxZilliqa,
         mut inspector: impl ScillaInspector,
     ) -> Result<TransactionApplyResult> {
@@ -554,7 +544,7 @@ impl State {
 
     fn scilla_call(
         &mut self,
-        from_addr: H160,
+        from_addr: Address,
         txn: TxZilliqa,
         mut inspector: impl ScillaInspector,
     ) -> Result<TransactionApplyResult> {
@@ -705,20 +695,14 @@ impl State {
                     ..
                 } = result
                 {
-                    c.map(|a| H160(a.into_array()))
+                    c
                 } else {
                     None
                 },
                 logs: result
                     .logs()
                     .iter()
-                    .map(|l| {
-                        Log::evm(
-                            H160(l.address.into_array()),
-                            l.topics().iter().map(|t| H256(t.0)).collect(),
-                            l.data.data.to_vec(),
-                        )
-                    })
+                    .map(|l| Log::evm(l.address, l.topics().to_vec(), l.data.data.to_vec()))
                     .collect(),
                 gas_used: EvmGas(result.gas_used()),
                 output: match result {
@@ -740,19 +724,17 @@ impl State {
     /// Applies a state delta from an EVM execution to the state.
     pub fn apply_delta_evm(
         &mut self,
-        state: revm::primitives::HashMap<revm::primitives::Address, revm::primitives::Account>,
+        state: revm::primitives::HashMap<Address, revm::primitives::Account>,
     ) -> Result<()> {
         for (address, account) in state {
-            let address = H160(address.into_array());
-
             let mut storage = self.get_account_trie(address)?;
 
             for (index, value) in account.changed_storage_slots() {
-                let index = H256(index.to_be_bytes());
-                let value = H256(value.present_value().to_be_bytes());
+                let index = B256::new(index.to_be_bytes());
+                let value = B256::new(value.present_value().to_be_bytes());
                 trace!(?address, ?index, ?value, "update storage");
 
-                storage.insert(&Self::account_storage_key(address, index), value.as_bytes())?;
+                storage.insert(&Self::account_storage_key(address, index), value.as_slice())?;
             }
 
             let account = Account {
@@ -782,7 +764,7 @@ impl State {
         let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
 
         let stakers = self.call_contract(
-            Address::zero(),
+            Address::ZERO,
             Some(contract_addr::DEPOSIT),
             data,
             0,
@@ -810,7 +792,7 @@ impl State {
             contracts::deposit::GET_STAKE.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
 
         let stake = self.call_contract(
-            Address::zero(),
+            Address::ZERO,
             Some(contract_addr::DEPOSIT),
             data,
             0,
@@ -820,7 +802,7 @@ impl State {
             BlockHeader::default(),
         )?;
 
-        Ok(NonZeroU128::new(U256::from_big_endian(&stake).as_u128()))
+        Ok(NonZeroU128::new(U256::from_be_slice(&stake).to()))
     }
 
     pub fn get_reward_address(&self, public_key: NodePublicKey) -> Result<Option<Address>> {
@@ -828,7 +810,7 @@ impl State {
             .encode_input(&[Token::Bytes(public_key.as_bytes())])?;
 
         let return_value = self.call_contract(
-            Address::zero(),
+            Address::ZERO,
             Some(contract_addr::DEPOSIT),
             data,
             0,
@@ -842,6 +824,7 @@ impl State {
             .clone()
             .into_address()
             .unwrap();
+        let addr = Address::new(addr.0);
 
         Ok((!addr.is_zero()).then_some(addr))
     }
@@ -850,7 +833,7 @@ impl State {
         let data = contracts::deposit::TOTAL_STAKE.encode_input(&[])?;
 
         let return_value = self.call_contract(
-            Address::zero(),
+            Address::ZERO,
             Some(contract_addr::DEPOSIT),
             data,
             0,
@@ -966,10 +949,10 @@ impl TransactionOutput {
 }
 
 /// Gets the contract address if a contract creation [TxZilliqa] is sent by `sender` with `nonce`.
-pub fn zil_contract_address(sender: H160, nonce: u64) -> H160 {
+pub fn zil_contract_address(sender: Address, nonce: u64) -> Address {
     let mut hasher = Sha256::new();
-    hasher.update(sender.as_bytes());
+    hasher.update(sender.into_array());
     hasher.update(nonce.to_be_bytes());
     let hashed = hasher.finalize();
-    H160::from_slice(&hashed[12..])
+    Address::from_slice(&hashed[12..])
 }

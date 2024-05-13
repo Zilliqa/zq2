@@ -1,12 +1,10 @@
 use std::time::Duration;
 
+use alloy_primitives::Address;
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    crypto::{Hash, NodePublicKey},
-    state::Address,
-};
+use crate::crypto::{Hash, NodePublicKey};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]

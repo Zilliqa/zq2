@@ -5,10 +5,10 @@ use std::{
     str::FromStr,
 };
 
+use alloy_primitives::Address;
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
 use libp2p::PeerId;
-use primitive_types::H160;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
 use time::{macros::format_description, OffsetDateTime};
@@ -205,8 +205,8 @@ pub struct BlockBatchResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntershardCall {
-    pub source_address: H160,
-    pub target_address: Option<H160>,
+    pub source_address: Address,
+    pub target_address: Option<Address>,
     pub source_chain_id: u64,
     pub bridge_nonce: u64,
     pub calldata: Vec<u8>,
@@ -218,7 +218,7 @@ pub struct IntershardCall {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExternalMessage {
     Proposal(Proposal),
-    Vote(Vote),
+    Vote(Box<Vote>),
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
@@ -458,7 +458,7 @@ impl Default for BlockHeader {
             hash: Hash::ZERO,
             parent_hash: Hash::ZERO,
             signature: NodeSignature::identity(),
-            state_root_hash: Hash(Keccak256::digest(rlp::NULL_RLP).into()),
+            state_root_hash: Hash(Keccak256::digest([alloy_rlp::EMPTY_STRING_CODE]).into()),
             timestamp: SystemTime::UNIX_EPOCH,
         }
     }

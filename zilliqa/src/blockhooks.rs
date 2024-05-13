@@ -1,3 +1,4 @@
+use alloy_primitives::Address;
 use anyhow::Result;
 use ethabi::{Event, Log, RawLog, Token};
 use tracing::warn;
@@ -5,7 +6,7 @@ use tracing::warn;
 use crate::{
     contracts,
     message::IntershardCall,
-    state::{contract_addr, Address},
+    state::contract_addr,
     transaction::{EvmGas, TransactionReceipt},
 };
 
@@ -18,13 +19,20 @@ fn filter_receipts(
         .iter()
         .flat_map(|receipt| &receipt.logs)
         .filter_map(|log| log.as_evm()) // Only consider EVM logs
-        .filter(|log| log.address == emitter && log.topics[0] == event.signature())
+        .filter(|log| {
+            log.address == emitter
+                && ethabi::ethereum_types::H256(log.topics[0].0) == event.signature()
+        })
         .map(|log| {
             event
                 // parse_log_whole can't be used here because it doesn't seem to work
                 // with dynamically-sized types (e.g. `bytes`), throwing a spurious error
                 .parse_log(RawLog {
-                    topics: log.topics.clone(),
+                    topics: log
+                        .topics
+                        .iter()
+                        .map(|t| ethabi::ethereum_types::H256(t.0))
+                        .collect(),
                     data: log.data.clone(),
                 })
                 .map_err(|e| {
@@ -127,12 +135,14 @@ pub fn get_cross_shard_messages(
             Some((
                 destination_shard,
                 IntershardCall {
-                    source_address: values.next().unwrap().into_address().unwrap(),
+                    source_address: Address::new(values.next().unwrap().into_address().unwrap().0),
                     target_address: if values.next().unwrap().into_bool().unwrap() {
                         values.next();
                         None
                     } else {
-                        Some(values.next().unwrap().into_address().unwrap())
+                        Some(Address::new(
+                            values.next().unwrap().into_address().unwrap().0,
+                        ))
                     },
                     source_chain_id: values.next().unwrap().into_uint().unwrap().as_u64(),
                     bridge_nonce: values.next().unwrap().into_uint().unwrap().as_u64(),

@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use keccak_hash::H256;
+use alloy_primitives::B256;
 use rlp::DecoderError;
 
 use crate::nibbles::Nibbles;
@@ -12,9 +12,9 @@ pub enum TrieError {
     InvalidData,
     InvalidProof,
     MissingTrieNode {
-        node_hash: H256,
+        node_hash: B256,
         traversed: Option<Nibbles>,
-        root_hash: Option<H256>,
+        root_hash: Option<B256>,
         err_key: Option<Vec<u8>>,
     },
 }

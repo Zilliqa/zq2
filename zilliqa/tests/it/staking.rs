@@ -45,7 +45,7 @@ async fn deposit_stake(
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
-        .to(contract_addr::DEPOSIT)
+        .to(H160(contract_addr::DEPOSIT.into_array()))
         .value(stake)
         .data(
             contracts::deposit::DEPOSIT
@@ -64,7 +64,7 @@ async fn get_stakers(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
 ) -> Vec<NodePublicKey> {
     let tx = TransactionRequest::new()
-        .to(contract_addr::DEPOSIT)
+        .to(H160(contract_addr::DEPOSIT.into_array()))
         .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
     let stakers = wallet.call(&tx.into(), None).await.unwrap();
     let stakers = contracts::deposit::GET_STAKERS

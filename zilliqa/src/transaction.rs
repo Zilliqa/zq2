@@ -5,15 +5,12 @@ use std::{
     str::FromStr,
 };
 
+use alloy_consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy};
+use alloy_primitives::{keccak256, Address, Signature, B256, U256};
+use alloy_rlp::{Encodable, Header, EMPTY_STRING_CODE};
 use anyhow::{anyhow, Result};
 use bytes::{BufMut, BytesMut};
-use k256::{
-    ecdsa::{RecoveryId, Signature, VerifyingKey},
-    elliptic_curve::sec1::ToEncodedPoint,
-};
-use primitive_types::{H160, H256};
-use prost::Message;
-use rlp::RlpStream;
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sha3::{
@@ -29,7 +26,6 @@ use crate::{
     crypto,
     exec::{ScillaError, ScillaException},
     schnorr,
-    state::Address,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
 
@@ -39,16 +35,19 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SignedTransaction {
     Legacy {
+        #[serde(with = "ser_rlp")]
         tx: TxLegacy,
-        sig: EthSignature,
+        sig: Signature,
     },
     Eip2930 {
+        #[serde(with = "ser_rlp")]
         tx: TxEip2930,
-        sig: EthSignature,
+        sig: Signature,
     },
     Eip1559 {
+        #[serde(with = "ser_rlp")]
         tx: TxEip1559,
-        sig: EthSignature,
+        sig: Signature,
     },
     Zilliqa {
         tx: TxZilliqa,
@@ -63,6 +62,32 @@ pub enum SignedTransaction {
     },
 }
 
+// alloy's transaction types contain annotations (such as `skip_serializing_if`) which cause issues when
+// (de)serializing with serde. Therefore, we serialize these transactions in their RLP form instead.
+mod ser_rlp {
+    use alloy_rlp::{Decodable, Encodable};
+    use serde::{de, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        T: Encodable,
+        S: Serializer,
+    {
+        let mut buf = Vec::with_capacity(value.length());
+        value.encode(&mut buf);
+        serializer.serialize_bytes(&buf)
+    }
+
+    pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+    where
+        T: Decodable,
+        D: Deserializer<'de>,
+    {
+        let buf = <Vec<u8>>::deserialize(deserializer)?;
+        T::decode(&mut buf.as_slice()).map_err(de::Error::custom)
+    }
+}
+
 impl SignedTransaction {
     pub fn into_transaction(self) -> Transaction {
         match self {
@@ -74,40 +99,35 @@ impl SignedTransaction {
         }
     }
 
-    pub fn sig_r(&self) -> [u8; 32] {
+    pub fn sig_r(&self) -> U256 {
         match self {
-            SignedTransaction::Legacy { sig, .. } => sig.r,
-            SignedTransaction::Eip2930 { sig, .. } => sig.r,
-            SignedTransaction::Eip1559 { sig, .. } => sig.r,
-            SignedTransaction::Zilliqa { sig, .. } => sig.r().to_bytes().into(),
-            SignedTransaction::Intershard { .. } => [0; 32],
+            SignedTransaction::Legacy { sig, .. } => sig.r(),
+            SignedTransaction::Eip2930 { sig, .. } => sig.r(),
+            SignedTransaction::Eip1559 { sig, .. } => sig.r(),
+            SignedTransaction::Zilliqa { sig, .. } => {
+                U256::from_be_bytes(sig.r().to_bytes().into())
+            }
+            SignedTransaction::Intershard { .. } => U256::ZERO,
         }
     }
 
-    pub fn sig_s(&self) -> [u8; 32] {
+    pub fn sig_s(&self) -> U256 {
         match self {
-            SignedTransaction::Legacy { sig, .. } => sig.s,
-            SignedTransaction::Eip2930 { sig, .. } => sig.s,
-            SignedTransaction::Eip1559 { sig, .. } => sig.s,
-            SignedTransaction::Zilliqa { sig, .. } => sig.s().to_bytes().into(),
-            SignedTransaction::Intershard { .. } => [0; 32],
+            SignedTransaction::Legacy { sig, .. } => sig.s(),
+            SignedTransaction::Eip2930 { sig, .. } => sig.s(),
+            SignedTransaction::Eip1559 { sig, .. } => sig.s(),
+            SignedTransaction::Zilliqa { sig, .. } => {
+                U256::from_be_bytes(sig.s().to_bytes().into())
+            }
+            SignedTransaction::Intershard { .. } => U256::ZERO,
         }
     }
 
     pub fn sig_v(&self) -> u64 {
         match self {
-            SignedTransaction::Legacy {
-                sig,
-                tx: TxLegacy {
-                    chain_id: Some(c), ..
-                },
-            } => (sig.y_is_odd as u64) + c * 2 + 35,
-            SignedTransaction::Legacy {
-                sig,
-                tx: TxLegacy { chain_id: None, .. },
-            } => (sig.y_is_odd as u64) + 27,
-            SignedTransaction::Eip2930 { sig, .. } => sig.y_is_odd as u64,
-            SignedTransaction::Eip1559 { sig, .. } => sig.y_is_odd as u64,
+            SignedTransaction::Legacy { sig, .. } => sig.v().to_u64(),
+            SignedTransaction::Eip2930 { sig, .. } => sig.v().to_u64(),
+            SignedTransaction::Eip1559 { sig, .. } => sig.v().to_u64(),
             SignedTransaction::Zilliqa { .. } => 0,
             SignedTransaction::Intershard { .. } => 0,
         }
@@ -148,56 +168,46 @@ impl SignedTransaction {
     }
 
     pub fn verify(self) -> Result<VerifiedTransaction> {
-        let signer = match &self {
+        let (tx, signer, hash) = match self {
             SignedTransaction::Legacy { tx, sig } => {
-                let recovery_id = RecoveryId::new(sig.y_is_odd, false);
-                let signature = Signature::from_scalars(sig.r, sig.s)?;
-                let key = VerifyingKey::recover_from_prehash(
-                    &tx.signature_hash().0,
-                    &signature,
-                    recovery_id,
-                )?;
-                ecdsa_key_to_address(&key)
+                let signed = tx.into_signed(sig);
+                let signer = signed.recover_signer()?;
+                let (tx, _, hash) = signed.into_parts();
+                (SignedTransaction::Legacy { tx, sig }, signer, hash.into())
             }
             SignedTransaction::Eip2930 { tx, sig } => {
-                let recovery_id = RecoveryId::new(sig.y_is_odd, false);
-                let signature = Signature::from_scalars(sig.r, sig.s)?;
-                let key = VerifyingKey::recover_from_prehash(
-                    &tx.signature_hash().0,
-                    &signature,
-                    recovery_id,
-                )?;
-                ecdsa_key_to_address(&key)
+                let signed = tx.into_signed(sig);
+                let signer = signed.recover_signer()?;
+                let (tx, _, hash) = signed.into_parts();
+                (SignedTransaction::Eip2930 { tx, sig }, signer, hash.into())
             }
             SignedTransaction::Eip1559 { tx, sig } => {
-                let recovery_id = RecoveryId::new(sig.y_is_odd, false);
-                let signature = Signature::from_scalars(sig.r, sig.s)?;
-                let key = VerifyingKey::recover_from_prehash(
-                    &tx.signature_hash().0,
-                    &signature,
-                    recovery_id,
-                )?;
-                ecdsa_key_to_address(&key)
+                let signed = tx.into_signed(sig);
+                let signer = signed.recover_signer()?;
+                let (tx, _, hash) = signed.into_parts();
+                (SignedTransaction::Eip1559 { tx, sig }, signer, hash.into())
             }
             SignedTransaction::Zilliqa { tx, key, sig } => {
-                let txn_data = encode_zilliqa_transaction(tx, *key);
+                let txn_data = encode_zilliqa_transaction(&tx, key);
 
-                schnorr::verify(&txn_data, *key, *sig)
-                    .ok_or_else(|| anyhow!("invalid signature"))?;
+                schnorr::verify(&txn_data, key, sig).ok_or_else(|| anyhow!("invalid signature"))?;
 
                 let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
                 let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
-                H160(bytes.into())
-            }
-            SignedTransaction::Intershard { from, .. } => *from,
-        };
-        let hash = self.calculate_hash();
+                let signer = Address::new(bytes.into());
 
-        Ok(VerifiedTransaction {
-            tx: self,
-            signer,
-            hash,
-        })
+                let tx = SignedTransaction::Zilliqa { tx, key, sig };
+                let hash = tx.calculate_hash();
+                (tx, signer, hash)
+            }
+            SignedTransaction::Intershard { tx, from } => {
+                let tx = SignedTransaction::Intershard { tx, from };
+                let hash = tx.calculate_hash();
+                (tx, from, hash)
+            }
+        };
+
+        Ok(VerifiedTransaction { tx, signer, hash })
     }
 
     /// Calculate the hash of this transaction. If you need to do this more than once, consider caching the result
@@ -205,66 +215,36 @@ impl SignedTransaction {
     pub fn calculate_hash(&self) -> crypto::Hash {
         match self {
             SignedTransaction::Legacy { tx, sig } => {
-                let mut rlp = RlpStream::new_list(9);
-                tx.encode_fields(&mut rlp);
-                sig.encode_legacy(&mut rlp, tx.chain_id);
-                crypto::Hash(Keccak256::digest(rlp.out()).into())
+                let mut out = BytesMut::with_capacity(1024);
+                tx.encode_with_signature_fields(sig, &mut out);
+                (keccak256(out)).into()
             }
             SignedTransaction::Eip2930 { tx, sig } => {
-                let mut buffer = BytesMut::with_capacity(1024);
-                buffer.put_u8(1);
-                let mut rlp = RlpStream::new_list_with_buffer(buffer, 11);
-                tx.encode_fields(&mut rlp);
-                sig.encode(&mut rlp);
-                crypto::Hash(Keccak256::digest(rlp.out()).into())
+                let mut out = BytesMut::with_capacity(1024);
+                tx.encode_with_signature(sig, &mut out, false);
+                (keccak256(out)).into()
             }
             SignedTransaction::Eip1559 { tx, sig } => {
-                let mut buffer = BytesMut::with_capacity(1024);
-                buffer.put_u8(2);
-                let mut rlp = RlpStream::new_list_with_buffer(buffer, 12);
-                tx.encode_fields(&mut rlp);
-                sig.encode(&mut rlp);
-                crypto::Hash(Keccak256::digest(rlp.out()).into())
+                let mut out = BytesMut::with_capacity(1024);
+                tx.encode_with_signature(sig, &mut out, false);
+                (keccak256(out)).into()
             }
             SignedTransaction::Zilliqa { tx, key, .. } => {
                 let txn_data = encode_zilliqa_transaction(tx, *key);
                 crypto::Hash(Sha256::digest(txn_data).into())
             }
             SignedTransaction::Intershard { tx, from } => {
-                let mut rlp = RlpStream::new_list(7);
-                tx.encode_fields(&mut rlp);
-                rlp.append(from);
-                crypto::Hash(Keccak256::digest(rlp.out()).into())
+                let mut buffer = BytesMut::with_capacity(1024);
+                Header {
+                    list: true,
+                    payload_length: 7,
+                }
+                .encode(&mut buffer);
+                tx.encode_fields(&mut buffer);
+                from.encode(&mut buffer);
+                crypto::Hash(Keccak256::digest(buffer).into())
             }
         }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EthSignature {
-    pub r: [u8; 32],
-    pub s: [u8; 32],
-    // True if the parity of the y value of the signature is odd.
-    pub y_is_odd: bool,
-}
-
-impl EthSignature {
-    fn encode(&self, rlp: &mut RlpStream) {
-        rlp.append(&self.y_is_odd)
-            .append(&strip_leading_zeroes(self.r.as_slice()))
-            .append(&strip_leading_zeroes(self.s.as_slice()));
-    }
-
-    fn encode_legacy(&self, rlp: &mut RlpStream, chain_id: Option<u64>) {
-        // Encode the 'v' value of the signature, based the specification of EIP-155.
-        let v = if let Some(chain_id) = chain_id {
-            (self.y_is_odd as u64) + chain_id * 2 + 35
-        } else {
-            (self.y_is_odd as u64) + 27
-        };
-        rlp.append(&v)
-            .append(&strip_leading_zeroes(self.r.as_slice()))
-            .append(&strip_leading_zeroes(self.s.as_slice()));
     }
 }
 
@@ -326,9 +306,9 @@ impl Transaction {
 
     pub fn gas_limit(&self) -> EvmGas {
         match self {
-            Transaction::Legacy(TxLegacy { gas_limit, .. }) => *gas_limit,
-            Transaction::Eip2930(TxEip2930 { gas_limit, .. }) => *gas_limit,
-            Transaction::Eip1559(TxEip1559 { gas_limit, .. }) => *gas_limit,
+            Transaction::Legacy(TxLegacy { gas_limit, .. }) => EvmGas(*gas_limit as u64),
+            Transaction::Eip2930(TxEip2930 { gas_limit, .. }) => EvmGas(*gas_limit as u64),
+            Transaction::Eip1559(TxEip1559 { gas_limit, .. }) => EvmGas(*gas_limit as u64),
             Transaction::Zilliqa(TxZilliqa { gas_limit, .. }) => (*gas_limit).into(),
             Transaction::Intershard(TxIntershard { gas_limit, .. }) => *gas_limit,
         }
@@ -336,9 +316,9 @@ impl Transaction {
 
     pub fn to_addr(&self) -> Option<Address> {
         match self {
-            Transaction::Legacy(TxLegacy { to_addr, .. }) => *to_addr,
-            Transaction::Eip2930(TxEip2930 { to_addr, .. }) => *to_addr,
-            Transaction::Eip1559(TxEip1559 { to_addr, .. }) => *to_addr,
+            Transaction::Legacy(TxLegacy { to, .. }) => to.to().copied(),
+            Transaction::Eip2930(TxEip2930 { to, .. }) => to.to().copied(),
+            Transaction::Eip1559(TxEip1559 { to, .. }) => to.to().copied(),
             // Note: we map the zero address to 'None' here so it is consistent with eth txs (contract creation).
             Transaction::Zilliqa(TxZilliqa { to_addr, .. }) => {
                 if !to_addr.is_zero() {
@@ -353,9 +333,9 @@ impl Transaction {
 
     pub fn amount(&self) -> u128 {
         match self {
-            Transaction::Legacy(TxLegacy { amount, .. }) => *amount,
-            Transaction::Eip2930(TxEip2930 { amount, .. }) => *amount,
-            Transaction::Eip1559(TxEip1559 { amount, .. }) => *amount,
+            Transaction::Legacy(TxLegacy { value, .. }) => value.to(),
+            Transaction::Eip2930(TxEip2930 { value, .. }) => value.to(),
+            Transaction::Eip1559(TxEip1559 { value, .. }) => value.to(),
             Transaction::Zilliqa(t) => t.amount.get(),
             Transaction::Intershard(_) => 0,
         }
@@ -363,9 +343,9 @@ impl Transaction {
 
     pub fn payload(&self) -> &[u8] {
         match self {
-            Transaction::Legacy(TxLegacy { payload, .. }) => payload,
-            Transaction::Eip2930(TxEip2930 { payload, .. }) => payload,
-            Transaction::Eip1559(TxEip1559 { payload, .. }) => payload,
+            Transaction::Legacy(TxLegacy { input, .. }) => input.as_ref(),
+            Transaction::Eip2930(TxEip2930 { input, .. }) => input.as_ref(),
+            Transaction::Eip1559(TxEip1559 { input, .. }) => input.as_ref(),
             // Zilliqa transactions can have both code and data set, but code takes precedence if it is non-empty.
             Transaction::Zilliqa(TxZilliqa { code, data, .. }) => {
                 if !code.is_empty() {
@@ -378,11 +358,23 @@ impl Transaction {
         }
     }
 
-    pub fn access_list(&self) -> Option<&[(Address, Vec<H256>)]> {
+    pub fn access_list(&self) -> Option<Vec<(Address, Vec<B256>)>> {
         match self {
             Transaction::Legacy(_) => None,
-            Transaction::Eip2930(TxEip2930 { access_list, .. }) => Some(access_list),
-            Transaction::Eip1559(TxEip1559 { access_list, .. }) => Some(access_list),
+            Transaction::Eip2930(TxEip2930 { access_list, .. }) => Some(
+                access_list
+                    .0
+                    .iter()
+                    .map(|i| (i.address, i.storage_keys.clone()))
+                    .collect(),
+            ),
+            Transaction::Eip1559(TxEip1559 { access_list, .. }) => Some(
+                access_list
+                    .0
+                    .iter()
+                    .map(|i| (i.address, i.storage_keys.clone()))
+                    .collect(),
+            ),
             Transaction::Zilliqa(_) => None,
             Transaction::Intershard(_) => None,
         }
@@ -419,39 +411,6 @@ impl From<TxIntershard> for Transaction {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TxLegacy {
-    /// `None` for non-EIP-155 transactions without replay protection.
-    pub chain_id: Option<u64>,
-    pub nonce: u64,
-    pub gas_price: u128,
-    pub gas_limit: EvmGas,
-    pub to_addr: Option<Address>,
-    pub amount: u128,
-    pub payload: Vec<u8>,
-}
-
-impl TxLegacy {
-    /// Returns the "signature hash" of the transaction, over which the transaction's signature is calculated.
-    fn signature_hash(&self) -> crypto::Hash {
-        let mut rlp = RlpStream::new_list(if self.chain_id.is_some() { 9 } else { 6 });
-        self.encode_fields(&mut rlp);
-        if let Some(chain_id) = &self.chain_id {
-            rlp.append(chain_id).append(&0u8).append(&0u8);
-        }
-        crypto::Hash(Keccak256::digest(rlp.out()).into())
-    }
-
-    fn encode_fields(&self, rlp: &mut RlpStream) {
-        rlp.append(&self.nonce)
-            .append(&self.gas_price)
-            .append(&self.gas_limit)
-            .append(&rlp_option_addr(&self.to_addr))
-            .append(&self.amount)
-            .append(&self.payload);
-    }
-}
-
 /// Nonceless
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TxIntershard {
@@ -467,86 +426,14 @@ pub struct TxIntershard {
 }
 
 impl TxIntershard {
-    fn encode_fields(&self, rlp: &mut RlpStream) {
-        rlp.append(&self.chain_id)
-            .append(&self.source_chain)
-            .append(&self.bridge_nonce)
-            .append(&self.gas_price)
-            .append(&self.gas_limit)
-            .append(&self.to_addr)
-            .append(&self.payload);
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TxEip2930 {
-    pub chain_id: u64,
-    pub nonce: u64,
-    pub gas_price: u128,
-    pub gas_limit: EvmGas,
-    pub to_addr: Option<Address>,
-    pub amount: u128,
-    pub payload: Vec<u8>,
-    pub access_list: Vec<(Address, Vec<H256>)>,
-}
-
-impl TxEip2930 {
-    /// Returns the "signature hash" of the transaction, over which the transaction's signature is calculated.
-    fn signature_hash(&self) -> crypto::Hash {
-        let mut buffer = BytesMut::with_capacity(1024);
-        buffer.put_u8(1);
-        let mut rlp = RlpStream::new_list_with_buffer(buffer, 8);
-        self.encode_fields(&mut rlp);
-
-        crypto::Hash(Keccak256::digest(rlp.out()).into())
-    }
-
-    fn encode_fields(&self, rlp: &mut RlpStream) {
-        rlp.append(&self.chain_id)
-            .append(&self.nonce)
-            .append(&self.gas_price)
-            .append(&self.gas_limit)
-            .append(&rlp_option_addr(&self.to_addr))
-            .append(&self.amount)
-            .append(&self.payload);
-        encode_access_list(rlp, &self.access_list);
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TxEip1559 {
-    pub chain_id: u64,
-    pub nonce: u64,
-    pub max_priority_fee_per_gas: u128,
-    pub max_fee_per_gas: u128,
-    pub gas_limit: EvmGas,
-    pub to_addr: Option<Address>,
-    pub amount: u128,
-    pub payload: Vec<u8>,
-    pub access_list: Vec<(Address, Vec<H256>)>,
-}
-
-impl TxEip1559 {
-    /// Returns the "signature hash" of the transaction, over which the transaction's signature is calculated.
-    fn signature_hash(&self) -> crypto::Hash {
-        let mut buffer = BytesMut::with_capacity(1024);
-        buffer.put_u8(2);
-        let mut rlp = RlpStream::new_list_with_buffer(buffer, 9);
-        self.encode_fields(&mut rlp);
-
-        crypto::Hash(Keccak256::digest(rlp.out()).into())
-    }
-
-    fn encode_fields(&self, rlp: &mut RlpStream) {
-        rlp.append(&self.chain_id)
-            .append(&self.nonce)
-            .append(&self.max_priority_fee_per_gas)
-            .append(&self.max_fee_per_gas)
-            .append(&self.gas_limit)
-            .append(&rlp_option_addr(&self.to_addr))
-            .append(&self.amount)
-            .append(&self.payload);
-        encode_access_list(rlp, &self.access_list);
+    fn encode_fields(&self, out: &mut BytesMut) {
+        self.chain_id.encode(out);
+        self.source_chain.encode(out);
+        self.bridge_nonce.encode(out);
+        self.gas_price.encode(out);
+        self.gas_limit.encode(out);
+        encode_option_addr(&self.to_addr, out);
+        self.payload.as_slice().encode(out);
     }
 }
 
@@ -690,22 +577,26 @@ impl FromStr for EvmGas {
     }
 }
 
-impl rlp::Decodable for EvmGas {
-    fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
-        Ok(EvmGas(<u64 as rlp::Decodable>::decode(rlp)?))
+impl alloy_rlp::Decodable for EvmGas {
+    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        Ok(EvmGas(<u64 as alloy_rlp::Decodable>::decode(buf)?))
     }
 }
 
-impl rlp::Encodable for EvmGas {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        self.0.rlp_append(s)
+impl alloy_rlp::Encodable for EvmGas {
+    fn encode(&self, out: &mut dyn BufMut) {
+        self.0.encode(out);
+    }
+
+    fn length(&self) -> usize {
+        self.0.length()
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvmLog {
     pub address: Address,
-    pub topics: Vec<H256>,
+    pub topics: Vec<B256>,
     pub data: Vec<u8>,
 }
 
@@ -724,7 +615,7 @@ pub enum Log {
 }
 
 impl Log {
-    pub fn evm(address: Address, topics: Vec<H256>, data: Vec<u8>) -> Self {
+    pub fn evm(address: Address, topics: Vec<B256>, data: Vec<u8>) -> Self {
         Log::Evm(EvmLog {
             address,
             topics,
@@ -785,36 +676,16 @@ pub struct TransactionReceipt {
     pub exceptions: Vec<ScillaException>,
 }
 
-fn strip_leading_zeroes(bytes: &[u8]) -> &[u8] {
-    // If `bytes` is all zeroes, default to `bytes.len() - 2`. This is because zeroes should be
-    // encoded as `[0]`.
-    let first_non_zero = bytes
-        .iter()
-        .position(|b| *b != 0)
-        .unwrap_or(bytes.len() - 2);
-
-    &bytes[first_non_zero..]
-}
-
-fn ecdsa_key_to_address(key: &VerifyingKey) -> Address {
-    // Remove the first byte before hashing - The first byte specifies the encoding tag.
-    let hashed = Keccak256::digest(&key.to_encoded_point(false).as_bytes()[1..]);
-    let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
-    H160(bytes.into())
-}
-
-/// Encode an `Option<H160>` ready to be added to an [RlpStream].
+/// RLP-encode an `Option<Address>`.
 /// `None` is represented as an empty string.
-fn rlp_option_addr(addr: &Option<H160>) -> &[u8] {
-    addr.as_ref().map(|a| a.as_ref()).unwrap_or_default()
-}
-
-fn encode_access_list(rlp: &mut RlpStream, access_list: &[(Address, Vec<H256>)]) {
-    rlp.begin_list(access_list.len());
-    for (address, storage_keys) in access_list {
-        rlp.begin_list(2);
-        rlp.append(address);
-        rlp.append_list(storage_keys);
+fn encode_option_addr(addr: &Option<Address>, out: &mut BytesMut) {
+    match addr {
+        Some(addr) => {
+            addr.encode(out);
+        }
+        None => {
+            out.put_u8(EMPTY_STRING_CODE);
+        }
     }
 }
 
@@ -823,7 +694,7 @@ fn encode_zilliqa_transaction(txn: &TxZilliqa, pub_key: schnorr::PublicKey) -> V
     let oneof9 = (!txn.data.is_empty()).then_some(Data::Data(txn.data.clone().into_bytes()));
     let proto = ProtoTransactionCoreInfo {
         version: (((txn.chain_id) as u32) << 16) | 0x0001,
-        toaddr: txn.to_addr.as_bytes().to_vec(),
+        toaddr: txn.to_addr.as_slice().to_vec(),
         senderpubkey: Some(pub_key.to_sec1_bytes().into()),
         amount: Some((txn.amount).to_be_bytes().to_vec().into()),
         gasprice: Some((txn.gas_price).to_be_bytes().to_vec().into()),
@@ -832,5 +703,5 @@ fn encode_zilliqa_transaction(txn: &TxZilliqa, pub_key: schnorr::PublicKey) -> V
         oneof8,
         oneof9,
     };
-    proto.encode_to_vec()
+    prost::Message::encode_to_vec(&proto)
 }

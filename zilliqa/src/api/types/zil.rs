@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
+use alloy_primitives::{Address, B256, B512};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
-use primitive_types::{H160, H256, H512};
 use serde::{Serialize, Serializer};
 
 use super::{hex, hex_no_prefix, option_hex_no_prefix};
@@ -33,16 +33,16 @@ impl From<&Block> for TxBlock {
                 gas_used: 0,
                 rewards: 0,
                 txn_fees: 0,
-                prev_block_hash: H256(block.parent_hash().0),
+                prev_block_hash: block.parent_hash().into(),
                 block_num: block.number(),
                 timestamp: block
                     .timestamp()
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_micros(),
-                mb_info_hash: H256::zero(),
-                state_root_hash: H256(block.state_root_hash().0),
-                state_delta_hash: H256::zero(),
+                mb_info_hash: B256::ZERO,
+                state_root_hash: block.state_root_hash().into(),
+                state_delta_hash: B256::ZERO,
                 num_txns: block.transactions.len() as u64,
                 num_pages: if block.transactions.is_empty() {
                     0
@@ -55,8 +55,8 @@ impl From<&Block> for TxBlock {
                 committee_hash: None,
             },
             body: TxBlockBody {
-                header_sign: H512::zero(),
-                block_hash: H256(block.hash().0),
+                header_sign: B512::ZERO,
+                block_hash: block.hash().into(),
                 micro_block_infos: vec![],
                 cosig_bitmap_1: vec![],
                 cosig_bitmap_2: vec![],
@@ -75,17 +75,17 @@ pub struct TxBlockHeader {
     pub rewards: u128,
     pub txn_fees: u128,
     #[serde(serialize_with = "hex_no_prefix")]
-    pub prev_block_hash: H256,
+    pub prev_block_hash: B256,
     #[serde(with = "num_as_str")]
     pub block_num: u64,
     #[serde(with = "num_as_str")]
     pub timestamp: u128,
     #[serde(serialize_with = "hex_no_prefix")]
-    pub mb_info_hash: H256,
+    pub mb_info_hash: B256,
     #[serde(serialize_with = "hex_no_prefix")]
-    pub state_root_hash: H256,
+    pub state_root_hash: B256,
     #[serde(serialize_with = "hex_no_prefix")]
-    pub state_delta_hash: H256,
+    pub state_delta_hash: B256,
     pub num_txns: u64,
     pub num_pages: usize,
     pub num_micro_blocks: u8,
@@ -96,20 +96,20 @@ pub struct TxBlockHeader {
         serialize_with = "option_hex_no_prefix",
         skip_serializing_if = "Option::is_none"
     )]
-    pub committee_hash: Option<H256>,
+    pub committee_hash: Option<B256>,
 }
 
 #[derive(Clone, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTxResponse {
     #[serde(rename = "ID", serialize_with = "hex_no_prefix")]
-    id: H256,
+    id: B256,
     #[serde(with = "num_as_str")]
     version: u32,
     #[serde(with = "num_as_str")]
     nonce: u64,
     #[serde(serialize_with = "hex_no_prefix")]
-    to_addr: H160,
+    to_addr: Address,
     #[serde(serialize_with = "schnorr_key")]
     sender_pub_key: schnorr::PublicKey,
     #[serde(with = "num_as_str")]
@@ -140,10 +140,10 @@ fn schnorr_sig<S: Serializer>(sig: &schnorr::Signature, serializer: S) -> Result
 #[serde(rename_all = "PascalCase")]
 pub struct CreateTransactionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub contract_address: Option<H160>,
+    pub contract_address: Option<Address>,
     pub info: String,
     #[serde(rename = "TranID")]
-    pub tran_id: H256,
+    pub tran_id: B256,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -172,7 +172,7 @@ impl GetTxResponse {
         let VerifiedTransaction { tx, hash, .. } = tx;
         if let SignedTransaction::Zilliqa { tx, key, sig } = tx {
             Some(GetTxResponse {
-                id: H256(hash.0),
+                id: hash.into(),
                 version: ((tx.chain_id as u32) << 16) | 1,
                 nonce: tx.nonce,
                 to_addr: tx.to_addr,
@@ -223,9 +223,9 @@ impl GetTxResponse {
 #[serde(rename_all = "PascalCase")]
 pub struct TxBlockBody {
     #[serde(serialize_with = "hex_no_prefix")]
-    pub header_sign: H512,
+    pub header_sign: B512,
     #[serde(serialize_with = "hex_no_prefix")]
-    pub block_hash: H256,
+    pub block_hash: B256,
     pub micro_block_infos: Vec<MicroBlockInfo>,
     #[serde(rename = "B1", skip_serializing_if = "Vec::is_empty")]
     pub cosig_bitmap_1: Vec<bool>,
@@ -238,9 +238,9 @@ pub struct TxBlockBody {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct MicroBlockInfo {
-    micro_block_hash: H256,
+    micro_block_hash: B256,
     micro_block_shard_id: u8,
-    micro_block_txn_root_hash: H256,
+    micro_block_txn_root_hash: B256,
 }
 
 #[derive(Clone, Serialize)]
@@ -282,7 +282,7 @@ pub struct ShardingStructure {
 #[derive(Clone, Serialize)]
 pub struct SmartContract {
     #[serde(serialize_with = "hex_no_prefix")]
-    pub address: H160,
+    pub address: Address,
 }
 
 #[derive(Clone, Debug)]
