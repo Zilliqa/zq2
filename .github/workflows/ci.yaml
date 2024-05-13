@@ -25,7 +25,7 @@ jobs:
     - name: Install nightly
       run: rustup toolchain install nightly
     - name: Install dependencies
-      run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake
+      run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler
     - uses: actions/checkout@v4
       with:
         submodules: recursive
