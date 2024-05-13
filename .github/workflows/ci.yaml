@@ -12,16 +12,20 @@ on:
       - checks_requested
 
 env:
+  CARGO_INCREMENTAL: 0
   CARGO_TERM_COLOR: always
   # Run a decent number of samples for our randomized
   ZQ_TEST_SAMPLES: 100
 
 jobs:
   check:
-    runs-on: [self-hosted, gcp]
+    permissions:
+      id-token: write
+      contents: write
+    runs-on: [self-hosted, z2]
     steps:
     - name: Install Rust
-      run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$CARGO_HOME/bin" >> $GITHUB_PATH
     - name: Install nightly
       run: rustup toolchain install nightly
     - name: Install dependencies
@@ -29,7 +33,22 @@ jobs:
     - uses: actions/checkout@v4
       with:
         submodules: recursive
-    - uses: Swatinem/rust-cache@v2
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        token_format: "access_token"
+        workload_identity_provider: "${{ secrets.GCP_PRD_GITHUB_WIF }}"
+        service_account: "${{ secrets.GCP_PRD_GITHUB_SA_GCS_CACHE }}"
+        create_credentials_file: true
+    - uses: mansagroup/gcs-cache-action@main
+      with:
+        bucket: btk-p-gha-gcs-asia-001
+        path: |
+          ~/.cargo/
+          target/
+        key: v0-rust-${{ github.job }}-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', '**/Cargo.lock', '**/Cargo.toml') }}
+        restore-keys: |
+          v0-rust-${{ github.job }}-
     - name: Build
       run: cargo build --release --all-targets --all-features
     - name: Clippy
@@ -42,13 +61,31 @@ jobs:
     - name: Verify working directory is clean
       run: git diff --exit-code
   e2e_test:
-    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+    runs-on: [self-hosted, z2]
     steps:
     - uses: actions/checkout@v4
       with:
         submodules: recursive
     - name: Install Rust
-      run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-    - uses: Swatinem/rust-cache@v2
+      run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$CARGO_HOME/bin" >> $GITHUB_PATH
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        token_format: "access_token"
+        workload_identity_provider: "${{ secrets.GCP_PRD_GITHUB_WIF }}"
+        service_account: "${{ secrets.GCP_PRD_GITHUB_SA_GCS_CACHE }}"
+        create_credentials_file: true
+    - uses: mansagroup/gcs-cache-action@main
+      with:
+        bucket: btk-p-gha-gcs-asia-001
+        path: |
+          ~/.cargo/
+          target/
+        key: v0-rust-${{ github.job }}-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', '**/Cargo.lock', '**/Cargo.toml') }}
+        restore-keys: |
+          v0-rust-${{ github.job }}-
     - name: JS test framework
       run: export PATH="/scilla/0/bin:$PATH" && ./scripts/js_test.sh
