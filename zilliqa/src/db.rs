@@ -1,7 +1,7 @@
 use std::path::Path;
 
+use alloy_primitives::Address;
 use anyhow::Result;
-use primitive_types::H160;
 use sled::{Batch, Tree};
 
 use crate::{
@@ -200,16 +200,15 @@ impl Db {
             .transpose()
     }
 
-    pub fn add_touched_address(&self, address: H160, txn_hash: Hash) -> Result<()> {
-        self.touched_address
-            .merge(address.as_bytes(), txn_hash.as_bytes())?;
+    pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {
+        self.touched_address.merge(address, txn_hash.as_bytes())?;
         Ok(())
     }
 
-    pub fn get_touched_addresses(&self, address: H160) -> Result<Vec<Hash>> {
+    pub fn get_touched_addresses(&self, address: Address) -> Result<Vec<Hash>> {
         Ok(self
             .touched_address
-            .get(address.as_bytes())?
+            .get(address)?
             .map(|b| b.chunks_exact(Hash::LEN).map(Hash::from_bytes).collect())
             .transpose()?
             .unwrap_or_default())

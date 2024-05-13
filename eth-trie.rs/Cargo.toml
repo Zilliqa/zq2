@@ -9,17 +9,17 @@ readme = "README.md"
 keywords = ["patricia", "mpt", "evm", "trie", "ethereum"]
 
 [dependencies]
+alloy-primitives = { version = "0.7.2", features = ["rlp"] }
 hashbrown = "0.14.5"
-keccak-hash = "0.10.0"
 log = "0.4.21"
 parking_lot = "0.12.2"
 rlp = "0.5.2"
 
 [dev-dependencies]
+alloy-primitives = { version = "0.7.2", features = ["getrandom"] }
 rand = "0.8.5"
 hex = "0.4.3"
 criterion = "0.5.1"
-ethereum-types = "0.14.1"
 uuid = { version = "1.8.0", features = ["serde", "v4"] }
 
 [[bench]]

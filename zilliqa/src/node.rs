@@ -1,8 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
+use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
-use primitive_types::H256;
 use revm::Inspector;
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
@@ -19,7 +19,7 @@ use crate::{
         BlockResponse, ExternalMessage, InternalMessage, IntershardCall, Proposal,
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
-    state::{Account, Address, State},
+    state::{Account, State},
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
@@ -148,7 +148,7 @@ impl Node {
                 }
             }
             ExternalMessage::Vote(m) => {
-                if let Some((block, transactions)) = self.consensus.vote(m)? {
+                if let Some((block, transactions)) = self.consensus.vote(*m)? {
                     self.message_sender
                         .broadcast_external_message(ExternalMessage::Proposal(
                             Proposal::from_parts(block, transactions),
@@ -312,7 +312,7 @@ impl Node {
         let mut state = self
             .consensus
             .state()
-            .at_root(H256(parent.state_root_hash().0));
+            .at_root(parent.state_root_hash().into());
 
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
@@ -353,7 +353,7 @@ impl Node {
         let state = self
             .consensus
             .state()
-            .at_root(H256(block.state_root_hash().0));
+            .at_root(block.state_root_hash().into());
 
         state.call_contract(
             from_addr,
@@ -410,7 +410,7 @@ impl Node {
         let state = self
             .consensus
             .state()
-            .at_root(H256(block.state_root_hash().0));
+            .at_root(block.state_root_hash().into());
 
         state.estimate_gas(
             from_addr,
@@ -445,9 +445,9 @@ impl Node {
     pub fn get_account_storage(
         &self,
         address: Address,
-        index: H256,
+        index: B256,
         block_number: BlockNumber,
-    ) -> Result<H256> {
+    ) -> Result<B256> {
         self.consensus
             .try_get_state_at(self.get_number(block_number))?
             .get_account_storage(address, index)

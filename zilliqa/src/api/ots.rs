@@ -3,10 +3,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use ethabi::Token;
 use jsonrpsee::{types::Params, RpcModule};
-use primitive_types::{H160, H256};
 use serde_json::{json, Value};
 
 use super::{
@@ -73,7 +73,7 @@ fn get_block_details_by_hash(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<ots::BlockDetails>> {
-    let block_hash: H256 = params.one()?;
+    let block_hash: B256 = params.one()?;
 
     let Some(ref block) = node.lock().unwrap().get_block_by_hash(Hash(block_hash.0))? else {
         return Ok(None);
@@ -132,7 +132,7 @@ fn get_block_transactions(
 }
 
 fn get_contract_creator(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<Value>> {
-    let address: H160 = params.one()?;
+    let address: Address = params.one()?;
 
     let touched = node.lock().unwrap().get_touched_transactions(address)?;
 
@@ -148,7 +148,7 @@ fn get_contract_creator(params: Params, node: &Arc<Mutex<Node>>) -> Result<Optio
 
         if let Some(creator) = inspector.creator() {
             return Ok(Some(json!({
-                "hash": H256(txn_hash.0).to_hex(),
+                "hash": B256::from(txn_hash).to_hex(),
                 "creator": creator.to_hex(),
             })));
         }
@@ -158,7 +158,7 @@ fn get_contract_creator(params: Params, node: &Arc<Mutex<Node>>) -> Result<Optio
 }
 
 fn get_internal_operations(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Operation>> {
-    let txn_hash: H256 = params.one()?;
+    let txn_hash: B256 = params.one()?;
     let txn_hash = Hash(txn_hash.0);
 
     let mut inspector = OtterscanOperationInspector::default();
@@ -174,7 +174,7 @@ fn get_transaction_by_sender_and_nonce(
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<String>> {
     let mut params = params.sequence();
-    let sender: H160 = params.next()?;
+    let sender: Address = params.next()?;
     let nonce: u64 = params.next()?;
 
     let node = node.lock().unwrap();
@@ -187,7 +187,7 @@ fn get_transaction_by_sender_and_nonce(
             .get_transaction_by_hash(txn_hash)?
             .ok_or_else(|| anyhow!("missing transaction: {txn_hash}"))?;
         if txn.signer == sender && txn.tx.nonce().map(|n| n == nonce).unwrap_or(false) {
-            return Ok(Some(H256(txn_hash.0).to_hex()));
+            return Ok(Some(B256::from(txn_hash).to_hex()));
         }
     }
 
@@ -195,7 +195,7 @@ fn get_transaction_by_sender_and_nonce(
 }
 
 fn get_transaction_error(params: Params, node: &Arc<Mutex<Node>>) -> Result<Cow<'static, str>> {
-    let txn_hash: H256 = params.one()?;
+    let txn_hash: B256 = params.one()?;
     let txn_hash = Hash(txn_hash.0);
 
     let result = node
@@ -225,7 +225,7 @@ fn get_transaction_error(params: Params, node: &Arc<Mutex<Node>>) -> Result<Cow<
 
 fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
     let mut params = params.sequence();
-    let address: H160 = params.next()?;
+    let address: Address = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
     let contract = node
@@ -243,7 +243,7 @@ fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
 
 fn search_transactions_inner(
     node: &Arc<Mutex<Node>>,
-    address: H160,
+    address: Address,
     block_number: u64,
     page_size: usize,
     reverse: bool,
@@ -336,7 +336,7 @@ fn search_transactions_inner(
 
 fn search_transactions_after(params: Params, node: &Arc<Mutex<Node>>) -> Result<ots::Transactions> {
     let mut params = params.sequence();
-    let address: H160 = params.next()?;
+    let address: Address = params.next()?;
     let block_number: u64 = params.next()?;
     let page_size: usize = params.next()?;
 
@@ -348,7 +348,7 @@ fn search_transactions_before(
     node: &Arc<Mutex<Node>>,
 ) -> Result<ots::Transactions> {
     let mut params = params.sequence();
-    let address: H160 = params.next()?;
+    let address: Address = params.next()?;
     let mut block_number: u64 = params.next()?;
     let page_size: usize = params.next()?;
 
@@ -361,7 +361,7 @@ fn search_transactions_before(
 }
 
 fn trace_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TraceEntry>> {
-    let txn_hash: H256 = params.one()?;
+    let txn_hash: B256 = params.one()?;
     let txn_hash = Hash(txn_hash.0);
 
     let mut inspector = OtterscanTraceInspector::default();

@@ -11,6 +11,7 @@ use std::{
     time::Duration,
 };
 
+use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use jsonrpsee::{
@@ -20,7 +21,6 @@ use jsonrpsee::{
     types::{error::CALL_EXECUTION_FAILED_CODE, ErrorObject},
     RpcModule,
 };
-use primitive_types::{H160, H256};
 use prost::Message as _;
 use serde::{
     de::{self, Unexpected},
@@ -179,13 +179,13 @@ impl Scilla {
 
     pub fn create_contract(
         &mut self,
-        sender: H160,
+        sender: Address,
         state: State,
         code: &str,
         gas_limit: ScillaGas,
         value: ZilAmount,
         init: &[Value],
-    ) -> Result<Result<(CreateOutput, H256), ErrorResponse>> {
+    ) -> Result<Result<(CreateOutput, B256), ErrorResponse>> {
         let args = vec![
             "-i".to_owned(),
             code.to_owned(),
@@ -241,7 +241,7 @@ impl Scilla {
         match serde_json::from_value(response)? {
             OutputOrError::Err(e) => Ok(Err(e)),
             OutputOrError::Output(response) => {
-                let root_hash = H256(state.root_hash()?.0);
+                let root_hash = state.root_hash()?.into();
                 Ok(Ok((response, root_hash)))
             }
         }
@@ -250,14 +250,14 @@ impl Scilla {
     #[allow(clippy::too_many_arguments)]
     pub fn invoke_contract(
         &mut self,
-        contract: H160,
+        contract: Address,
         state: State,
         code: &str,
         gas_limit: ScillaGas,
         value: ZilAmount,
         init: &[Value],
         msg: &Value,
-    ) -> Result<Result<(InvokeOutput, H256), ErrorResponse>> {
+    ) -> Result<Result<(InvokeOutput, B256), ErrorResponse>> {
         let args = vec![
             "-init".to_owned(),
             serde_json::to_string(&init)?,
@@ -317,7 +317,7 @@ impl Scilla {
         match serde_json::from_value(response)? {
             OutputOrError::Err(e) => Ok(Err(e)),
             OutputOrError::Output(response) => {
-                let root_hash = H256(state.root_hash()?.0);
+                let root_hash = state.root_hash()?.into();
                 Ok(Ok((response, root_hash)))
             }
         }
@@ -405,7 +405,7 @@ pub struct Message {
     #[serde(rename = "_amount")]
     pub amount: String,
     #[serde(rename = "_recipient")]
-    pub recipient: H160,
+    pub recipient: Address,
     pub params: Value,
 }
 
@@ -476,7 +476,7 @@ impl StateServer {
             move |params, ()| {
                 #[derive(Deserialize)]
                 struct Params {
-                    addr: H160,
+                    addr: Address,
                     #[serde(deserialize_with = "de_b64")]
                     query: Vec<u8>,
                 }
@@ -571,7 +571,7 @@ impl StateServer {
 
     fn active_call<R>(
         &mut self,
-        sender: H160, // TODO: rename
+        sender: Address, // TODO: rename
         state: State,
         f: impl FnOnce() -> Result<R>,
     ) -> Result<(R, State)> {
@@ -607,14 +607,14 @@ fn convert_scilla_value(value: &ScillaValue) -> ProtoScillaVal {
 
 #[derive(Debug)]
 struct ActiveCall {
-    sender: H160,
+    sender: Address,
     state: State,
 }
 
 impl ActiveCall {
     fn fetch_value_inner(
         &self,
-        addr: H160,
+        addr: Address,
         name: String,
         indices: Vec<Vec<u8>>,
     ) -> Result<Option<(ProtoScillaVal, String)>> {
@@ -655,7 +655,7 @@ impl ActiveCall {
 
     fn fetch_external_state_value(
         &self,
-        addr: H160,
+        addr: Address,
         name: String,
         indices: Vec<Vec<u8>>,
     ) -> Result<Option<(ProtoScillaVal, String)>> {

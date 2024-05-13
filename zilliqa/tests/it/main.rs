@@ -1,3 +1,4 @@
+use alloy_primitives::Address;
 use ethers::{
     abi::Tokenize,
     providers::{Middleware, PubsubClient},
@@ -60,7 +61,6 @@ use zilliqa::{
     crypto::{NodePublicKey, SecretKey},
     message::{ExternalMessage, InternalMessage},
     node::Node,
-    state::Address,
 };
 
 /// (source, destination, message) for both
@@ -229,7 +229,7 @@ impl Network {
                     k.node_public_key(),
                     k.to_libp2p_keypair().public().to_peer_id(),
                     stake.to_string(),
-                    Address::random_using(rng.lock().unwrap().deref_mut()),
+                    Address::random_with(rng.lock().unwrap().deref_mut()),
                 )
             })
             .collect();
@@ -297,7 +297,7 @@ impl Network {
 
     fn genesis_accounts(genesis_key: &SigningKey) -> Vec<(Address, String)> {
         vec![(
-            secret_key_to_address(genesis_key),
+            Address::new(secret_key_to_address(genesis_key).0),
             1_000_000_000u128
                 .checked_mul(10u128.pow(18))
                 .unwrap()
@@ -385,7 +385,7 @@ impl Network {
                     k.node_public_key(),
                     k.to_libp2p_keypair().public().to_peer_id(),
                     stake.to_string(),
-                    Address::random_using(self.rng.lock().unwrap().deref_mut()),
+                    Address::random_with(self.rng.lock().unwrap().deref_mut()),
                 )
             })
             .collect();

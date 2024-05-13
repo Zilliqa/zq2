@@ -1,4 +1,4 @@
-use primitive_types::{H160, H256};
+use alloy_primitives::{Address, B256, U128, U256, U64};
 use serde::{
     de::{self, Unexpected},
     Deserialize, Deserializer, Serialize,
@@ -10,7 +10,6 @@ use crate::{
     crypto::Hash,
     exec::BLOCK_GAS_LIMIT,
     message,
-    state::Address,
     time::SystemTime,
     transaction::{EvmGas, EvmLog},
 };
@@ -19,7 +18,7 @@ use crate::{
 #[serde(untagged)]
 #[allow(clippy::large_enum_variant)]
 pub enum HashOrTransaction {
-    Hash(H256),
+    Hash(B256),
     Transaction(Transaction),
 }
 
@@ -32,18 +31,18 @@ pub struct Block {
     #[serde(serialize_with = "hex")]
     pub size: u64,
     pub transactions: Vec<HashOrTransaction>,
-    pub uncles: Vec<H256>,
+    pub uncles: Vec<B256>,
 }
 
 impl Block {
-    pub fn from_block(block: &message::Block, miner: H160) -> Self {
+    pub fn from_block(block: &message::Block, miner: Address) -> Self {
         Block {
             header: Header::from_header(block.header, miner),
             size: 0,
             transactions: block
                 .transactions
                 .iter()
-                .map(|h| HashOrTransaction::Hash(H256(h.0)))
+                .map(|h| HashOrTransaction::Hash((*h).into()))
                 .collect(),
             uncles: vec![],
         }
@@ -56,23 +55,23 @@ pub struct Header {
     #[serde(serialize_with = "hex")]
     pub number: u64,
     #[serde(serialize_with = "hex")]
-    pub hash: H256,
+    pub hash: B256,
     #[serde(serialize_with = "hex")]
-    pub parent_hash: H256,
+    pub parent_hash: B256,
     #[serde(serialize_with = "hex")]
     pub nonce: [u8; 8],
     #[serde(serialize_with = "hex")]
-    pub sha_3_uncles: H256,
+    pub sha_3_uncles: B256,
     #[serde(serialize_with = "hex")]
     pub logs_bloom: [u8; 256],
     #[serde(serialize_with = "hex")]
-    pub transactions_root: H256,
+    pub transactions_root: B256,
     #[serde(serialize_with = "hex")]
-    pub state_root: H256,
+    pub state_root: B256,
     #[serde(serialize_with = "hex")]
-    pub receipts_root: H256,
+    pub receipts_root: B256,
     #[serde(serialize_with = "hex")]
-    pub miner: H160,
+    pub miner: Address,
     #[serde(serialize_with = "hex")]
     pub difficulty: u64,
     #[serde(serialize_with = "hex")]
@@ -88,18 +87,18 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn from_header(header: message::BlockHeader, miner: H160) -> Self {
+    pub fn from_header(header: message::BlockHeader, miner: Address) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Header {
             number: header.number,
-            hash: H256(header.hash.0),
-            parent_hash: H256(header.parent_hash.0),
+            hash: header.hash.into(),
+            parent_hash: header.parent_hash.into(),
             nonce: [0; 8],
-            sha_3_uncles: H256::zero(),
+            sha_3_uncles: B256::ZERO,
             logs_bloom: [0; 256],
-            transactions_root: H256::zero(),
-            state_root: H256(header.state_root_hash.0),
-            receipts_root: H256::zero(),
+            transactions_root: B256::ZERO,
+            state_root: header.state_root_hash.into(),
+            receipts_root: B256::ZERO,
             miner,
             difficulty: 0,
             total_difficulty: 0,
@@ -120,11 +119,11 @@ impl Header {
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
     #[serde(serialize_with = "option_hex")]
-    pub block_hash: Option<H256>,
+    pub block_hash: Option<B256>,
     #[serde(serialize_with = "option_hex")]
     pub block_number: Option<u64>,
     #[serde(serialize_with = "hex")]
-    pub from: H160,
+    pub from: Address,
     #[serde(serialize_with = "hex")]
     pub gas: EvmGas,
     #[serde(serialize_with = "hex")]
@@ -134,13 +133,13 @@ pub struct Transaction {
     #[serde(skip_serializing_if = "Option::is_none", serialize_with = "option_hex")]
     pub max_priority_fee_per_gas: Option<u128>,
     #[serde(serialize_with = "hex")]
-    pub hash: H256,
+    pub hash: B256,
     #[serde(serialize_with = "hex")]
     pub input: Vec<u8>,
     #[serde(serialize_with = "hex")]
     pub nonce: u64,
     #[serde(serialize_with = "option_hex")]
-    pub to: Option<H160>,
+    pub to: Option<Address>,
     #[serde(serialize_with = "option_hex")]
     pub transaction_index: Option<u64>,
     #[serde(serialize_with = "hex")]
@@ -148,33 +147,33 @@ pub struct Transaction {
     #[serde(serialize_with = "hex")]
     pub v: u64,
     #[serde(serialize_with = "hex")]
-    pub r: [u8; 32],
+    pub r: U256,
     #[serde(serialize_with = "hex")]
-    pub s: [u8; 32],
+    pub s: U256,
     #[serde(skip_serializing_if = "Option::is_none", serialize_with = "option_hex")]
     pub chain_id: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub access_list: Option<Vec<(H160, Vec<H256>)>>,
+    pub access_list: Option<Vec<(Address, Vec<B256>)>>,
     #[serde(rename = "type", serialize_with = "hex")]
     pub transaction_type: u64,
 }
 
 /// A transaction receipt object, returned by the Ethereum API.
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionReceipt {
     #[serde(serialize_with = "hex")]
-    pub transaction_hash: H256,
+    pub transaction_hash: B256,
     #[serde(serialize_with = "hex")]
     pub transaction_index: u64,
     #[serde(serialize_with = "hex")]
-    pub block_hash: H256,
+    pub block_hash: B256,
     #[serde(serialize_with = "hex")]
     pub block_number: u64,
     #[serde(serialize_with = "hex")]
-    pub from: H160,
+    pub from: Address,
     #[serde(serialize_with = "option_hex")]
-    pub to: Option<H160>,
+    pub to: Option<Address>,
     #[serde(serialize_with = "hex")]
     pub cumulative_gas_used: EvmGas,
     #[serde(serialize_with = "hex")]
@@ -182,7 +181,7 @@ pub struct TransactionReceipt {
     #[serde(serialize_with = "hex")]
     pub gas_used: EvmGas,
     #[serde(serialize_with = "option_hex")]
-    pub contract_address: Option<H160>,
+    pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
     #[serde(serialize_with = "hex")]
     pub logs_bloom: [u8; 256],
@@ -193,7 +192,7 @@ pub struct TransactionReceipt {
 }
 
 /// A transaction receipt object, returned by the Ethereum API.
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Log {
     pub removed: bool,
@@ -202,17 +201,17 @@ pub struct Log {
     #[serde(serialize_with = "hex")]
     pub transaction_index: u64,
     #[serde(serialize_with = "hex")]
-    pub transaction_hash: H256,
+    pub transaction_hash: B256,
     #[serde(serialize_with = "hex")]
-    pub block_hash: H256,
+    pub block_hash: B256,
     #[serde(serialize_with = "hex")]
     pub block_number: u64,
     #[serde(serialize_with = "hex")]
-    pub address: H160,
+    pub address: Address,
     #[serde(serialize_with = "hex")]
     pub data: Vec<u8>,
     #[serde(serialize_with = "vec_hex")]
-    pub topics: Vec<H256>,
+    pub topics: Vec<B256>,
 }
 
 impl Log {
@@ -228,8 +227,8 @@ impl Log {
             removed: false,
             log_index: log_index as u64,
             transaction_index: transaction_index as u64,
-            transaction_hash: H256(transaction_hash.0),
-            block_hash: H256(block_hash.0),
+            transaction_hash: transaction_hash.into(),
+            block_hash: block_hash.into(),
             block_number,
             address: log.address,
             data: log.data,
@@ -238,9 +237,9 @@ impl Log {
     }
 
     pub fn bloom(&self, bloom: &mut [u8; 256]) {
-        m3_2048(bloom, self.address.as_bytes());
+        m3_2048(bloom, self.address.as_slice());
         for topic in &self.topics {
-            m3_2048(bloom, topic.as_bytes());
+            m3_2048(bloom, topic.as_slice());
         }
     }
 }
@@ -290,13 +289,13 @@ impl<T: PartialEq> OneOrMany<T> {
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CallParams {
-    #[serde(default = "Address::zero")]
+    #[serde(default)]
     pub from: Address,
     pub to: Option<Address>,
-    pub gas: Option<ruint::aliases::U64>,
-    pub gas_price: Option<ruint::aliases::U128>,
+    pub gas: Option<U64>,
+    pub gas_price: Option<U128>,
     #[serde(default)]
-    pub value: ruint::aliases::U128,
+    pub value: U128,
     #[serde(default, deserialize_with = "deserialize_data")]
     pub data: Vec<u8>,
 }
@@ -313,7 +312,7 @@ fn deserialize_data<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8
 
 #[cfg(test)]
 mod tests {
-    use primitive_types::H256;
+    use alloy_primitives::B256;
 
     use super::Log;
 
@@ -324,8 +323,8 @@ mod tests {
             removed: false,
             log_index: 0,
             transaction_index: 0,
-            transaction_hash: H256::zero(),
-            block_hash: H256::zero(),
+            transaction_hash: B256::ZERO,
+            block_hash: B256::ZERO,
             block_number: 0,
             address: "0xdac17f958d2ee523a2206206994597c13d831ec7"
                 .parse()

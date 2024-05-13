@@ -3,11 +3,12 @@ use std::{
     collections::{BTreeMap, BinaryHeap},
 };
 
+use alloy_primitives::Address;
+
 use tracing::info;
 
 use crate::{
     crypto::Hash,
-    state::Address,
     transaction::{SignedTransaction, VerifiedTransaction},
 };
 
@@ -158,8 +159,8 @@ impl TransactionPool {
 
         // Finally we insert it into the tx store and the hash reverse-index
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
-        self.transactions.insert(txn.mempool_index(), txn.clone());
-        info!("Insertin txn with hash: {:?}", txn.hash);
+        self.transactions.insert(txn.mempool_index(), txn);
+
         true
     }
 
@@ -201,15 +202,13 @@ impl TransactionPool {
 
 #[cfg(test)]
 mod tests {
-    use primitive_types::H160;
+    use alloy_consensus::TxLegacy;
+    use alloy_primitives::{Address, Bytes, Parity, Signature, TxKind, U256};
 
     use super::TransactionPool;
     use crate::{
         crypto::Hash,
-        state::Address,
-        transaction::{
-            EthSignature, EvmGas, SignedTransaction, TxIntershard, TxLegacy, VerifiedTransaction,
-        },
+        transaction::{EvmGas, SignedTransaction, TxIntershard, VerifiedTransaction},
     };
 
     fn transaction(from_addr: Address, nonce: u8, gas_price: u128) -> VerifiedTransaction {
@@ -219,19 +218,20 @@ mod tests {
                     chain_id: Some(0),
                     nonce: nonce as u64,
                     gas_price,
-                    gas_limit: EvmGas(0),
-                    to_addr: None,
-                    amount: 0,
-                    payload: vec![],
+                    gas_limit: 0,
+                    to: TxKind::Create,
+                    value: U256::ZERO,
+                    input: Bytes::new(),
                 },
-                sig: EthSignature {
-                    r: [0; 32],
-                    s: [0; 32],
-                    y_is_odd: false,
-                },
+                sig: Signature::from_rs_and_parity(
+                    U256::from(1),
+                    U256::from(1),
+                    Parity::Parity(false),
+                )
+                .unwrap(),
             },
             signer: from_addr,
-            hash: Hash::compute([from_addr.as_bytes(), &[nonce]]),
+            hash: Hash::compute([from_addr.as_slice(), &[nonce]]),
         }
     }
 
@@ -251,9 +251,9 @@ mod tests {
                     to_addr: None,
                     payload: vec![],
                 },
-                from: H160::zero(),
+                from: Address::ZERO,
             },
-            signer: H160::zero(),
+            signer: Address::ZERO,
             hash: Hash::compute([[shard_nonce], [from_shard]]),
         }
     }

@@ -1,4 +1,4 @@
-use primitive_types::{H160, H256};
+use alloy_primitives::{Address, B256};
 use serde::Serialize;
 
 use super::{eth, hex, option_hex};
@@ -10,21 +10,21 @@ pub struct Block {
     #[serde(serialize_with = "hex")]
     number: u64,
     #[serde(serialize_with = "hex")]
-    hash: H256,
+    hash: B256,
     #[serde(serialize_with = "hex")]
-    parent_hash: H256,
+    parent_hash: B256,
     #[serde(serialize_with = "hex")]
     nonce: u64,
     #[serde(serialize_with = "hex")]
-    sha_3_uncles: H256,
+    sha_3_uncles: B256,
     #[serde(serialize_with = "hex")]
-    transactions_root: H256,
+    transactions_root: B256,
     #[serde(serialize_with = "hex")]
-    state_root: H256,
+    state_root: B256,
     #[serde(serialize_with = "hex")]
-    receipts_root: H256,
+    receipts_root: B256,
     #[serde(serialize_with = "hex")]
-    miner: H160,
+    miner: Address,
     #[serde(serialize_with = "hex")]
     difficulty: u64,
     #[serde(serialize_with = "hex")]
@@ -40,7 +40,7 @@ pub struct Block {
     #[serde(serialize_with = "hex")]
     timestamp: u64,
     transaction_count: usize,
-    uncles: Vec<H256>,
+    uncles: Vec<B256>,
     #[serde(serialize_with = "hex")]
     base_fee_per_gas: u64,
 }
@@ -63,7 +63,7 @@ pub struct BlockDetails {
 }
 
 impl BlockDetails {
-    pub fn from_block(block: &message::Block, miner: H160) -> Self {
+    pub fn from_block(block: &message::Block, miner: Address) -> Self {
         BlockDetails {
             block: Block::from_block(block, miner),
             issuance: BlockIssuance {
@@ -88,17 +88,17 @@ pub struct BlockIssuance {
 }
 
 impl Block {
-    pub fn from_block(block: &message::Block, miner: H160) -> Self {
+    pub fn from_block(block: &message::Block, miner: Address) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Block {
             number: block.number(),
-            hash: H256(block.hash().0),
-            parent_hash: H256(block.parent_hash().0),
+            hash: block.hash().into(),
+            parent_hash: block.parent_hash().into(),
             nonce: 0,
-            sha_3_uncles: H256::zero(),
-            transactions_root: H256::zero(),
-            state_root: H256(block.state_root_hash().0),
-            receipts_root: H256::zero(),
+            sha_3_uncles: B256::ZERO,
+            transactions_root: B256::ZERO,
+            state_root: block.state_root_hash().into(),
+            receipts_root: B256::ZERO,
             miner,
             difficulty: 0,
             total_difficulty: 0,
@@ -150,9 +150,9 @@ pub struct TraceEntry {
     pub ty: TraceEntryType,
     pub depth: u64,
     #[serde(serialize_with = "hex")]
-    pub from: H160,
+    pub from: Address,
     #[serde(serialize_with = "hex")]
-    pub to: H160,
+    pub to: Address,
     #[serde(serialize_with = "option_hex")]
     pub value: Option<u128>,
     #[serde(serialize_with = "hex")]
@@ -176,9 +176,9 @@ pub struct Operation {
     #[serde(rename = "type")]
     pub ty: OperationType,
     #[serde(serialize_with = "hex")]
-    pub from: H160,
+    pub from: Address,
     #[serde(serialize_with = "hex")]
-    pub to: H160,
+    pub to: Address,
     #[serde(serialize_with = "hex")]
     pub value: u128,
 }
