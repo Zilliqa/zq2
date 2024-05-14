@@ -113,7 +113,7 @@ mod tests {
     use ethers_solc::CompilerOutput;
 
     #[test]
-    //#[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
     fn compile_all() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let input = CompilerInput {
