@@ -353,6 +353,9 @@ impl Docs {
         // Where should we write the output?
         let mut desc_path: PathBuf = PathBuf::new();
         desc_path.push(&self.target_dir);
+        if let Some(ref v) = self.id_prefix {
+            desc_path.push(v.to_lowercase());
+        }
         for p in &nearly_id {
             desc_path.push(&p);
         }
@@ -361,7 +364,7 @@ impl Docs {
         // Where do we tell mkdocs the file is?
         let mut mkdocs_path = PathBuf::new();
         if let Some(ref v) = self.id_prefix {
-            mkdocs_path.push(v);
+            mkdocs_path.push(v.to_lowercase());
         }
         for p in &nearly_id {
             mkdocs_path.push(&p);
