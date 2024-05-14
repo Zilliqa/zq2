@@ -129,10 +129,14 @@ impl Setup {
         let public_key_node_0 = self.secret_keys[0].node_public_key();
 
         // The genesis deposits.
-        let mut genesis_deposits: Vec<(NodePublicKey, String, Address)> = Vec::new();
+        let mut genesis_deposits: Vec<(NodePublicKey, PeerId, String, Address)> = Vec::new();
         for i in 0..self.how_many {
             genesis_deposits.push((
                 self.secret_keys[i].node_public_key(),
+                self.secret_keys[i]
+                    .to_libp2p_keypair()
+                    .public()
+                    .to_peer_id(),
                 GENESIS_DEPOSIT.to_string(),
                 self.node_addresses[i],
             ))

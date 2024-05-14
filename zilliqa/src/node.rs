@@ -1,16 +1,18 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
+use alloy_rpc_types_trace::parity::{TraceResults, TraceType};
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use revm::Inspector;
+use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
     cfg::NodeConfig,
     consensus::Consensus,
-    crypto::{Hash, NodePublicKey, SecretKey},
+    crypto::{Hash, SecretKey},
     db::Db,
     exec::{TransactionApplyResult, GAS_PRICE},
     inspector::{self, ScillaInspector},
@@ -135,11 +137,9 @@ impl Node {
         let to = self.peer_id;
         let to_self = from == to;
         let message_name = message.name();
-        tracing::debug!(%from, %to, %message_name, "handling message");
+        debug!(%from, %to, %message_name, "handling message");
         match message {
             ExternalMessage::Proposal(m) => {
-                let m_view = m.header.view;
-
                 if let Some((to, message)) = self.consensus.proposal(m, false)? {
                     self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
                     if let Some(to) = to {
@@ -147,12 +147,6 @@ impl Node {
                     } else {
                         self.message_sender.broadcast_external_message(message)?;
                     }
-                } else {
-                    info!("We had nothing to respond to proposal, lets try to join committee for view {m_view:}");
-                    self.message_sender.send_external_message(
-                        from,
-                        ExternalMessage::JoinCommittee(self.consensus.public_key()),
-                    )?;
                 }
             }
             ExternalMessage::Vote(m) => {
@@ -207,9 +201,6 @@ impl Node {
                         self.message_sender.broadcast_external_message(message)?;
                     }
                 }
-            }
-            ExternalMessage::JoinCommittee(public_key) => {
-                self.add_peer(from, public_key)?;
             }
         }
 
@@ -269,18 +260,6 @@ impl Node {
         Ok(false)
     }
 
-    pub fn add_peer(&mut self, peer: PeerId, public_key: NodePublicKey) -> Result<()> {
-        if let Some((dest, message)) = self.consensus.add_peer(peer, public_key)? {
-            self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
-            if let Some(leader) = dest {
-                self.message_sender.send_external_message(leader, message)?;
-            } else {
-                self.message_sender.broadcast_external_message(message)?;
-            }
-        }
-        Ok(())
-    }
-
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
         let hash = txn.calculate_hash();
 
@@ -312,6 +291,67 @@ impl Node {
 
     pub fn peer_id(&self) -> PeerId {
         self.peer_id
+    }
+
+    pub fn trace_evm_transaction(
+        &self,
+        txn_hash: Hash,
+        trace_types: &HashSet<TraceType>,
+    ) -> Result<TraceResults> {
+        let txn = self
+            .get_transaction_by_hash(txn_hash)?
+            .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
+        let receipt = self
+            .get_transaction_receipt(txn_hash)?
+            .ok_or_else(|| anyhow!("transaction not mined: {txn_hash}"))?;
+
+        let block = self
+            .get_block_by_hash(receipt.block_hash)?
+            .ok_or_else(|| anyhow!("missing block: {}", receipt.block_hash))?;
+        let parent = self
+            .get_block_by_hash(block.parent_hash())?
+            .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
+        let mut state = self
+            .consensus
+            .state()
+            .at_root(parent.state_root_hash().into());
+
+        for other_txn_hash in block.transactions {
+            if txn_hash != other_txn_hash {
+                let other_txn = self
+                    .get_transaction_by_hash(other_txn_hash)?
+                    .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
+                state.apply_transaction(
+                    other_txn,
+                    self.get_chain_id(),
+                    parent.header,
+                    inspector::noop(),
+                )?;
+            } else {
+                let config = TracingInspectorConfig::from_parity_config(trace_types);
+                let mut inspector = TracingInspector::new(config);
+                let pre_state = state.try_clone()?;
+
+                let result = state.apply_transaction(
+                    txn,
+                    self.get_chain_id(),
+                    parent.header,
+                    &mut inspector,
+                )?;
+
+                let TransactionApplyResult::Evm(result) = result else {
+                    return Err(anyhow!("not an EVM transaction"));
+                };
+
+                let builder = inspector.into_parity_builder();
+                let trace =
+                    builder.into_trace_results_with_state(&result, trace_types, &pre_state)?;
+
+                return Ok(trace);
+            }
+        }
+
+        Err(anyhow!("transaction not found in block: {txn_hash}"))
     }
 
     pub fn replay_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
@@ -389,6 +429,7 @@ impl Node {
     }
 
     pub fn get_proposer_reward_address(&self, header: BlockHeader) -> Result<Option<Address>> {
+        // Return the zero address for the genesis block. There was no reward for it.
         if header.view == 0 {
             return Ok(None);
         }
@@ -398,7 +439,8 @@ impl Node {
             .ok_or_else(|| anyhow!("missing parent: {}", header.parent_hash))?;
         let proposer = self
             .consensus
-            .leader(&parent.committee, header.view)
+            .leader_at_block(&parent, header.view)
+            .unwrap()
             .public_key;
 
         self.consensus.state().get_reward_address(proposer)

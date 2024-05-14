@@ -16,7 +16,6 @@ use super::{
 use crate::{
     api::to_hex::ToHex,
     crypto::Hash,
-    exec::TransactionOutput,
     inspector::{self, CreatorInspector, OtterscanOperationInspector, OtterscanTraceInspector},
     message::BlockNumber,
     node::Node,
@@ -203,21 +202,21 @@ fn get_transaction_error(params: Params, node: &Arc<Mutex<Node>>) -> Result<Cow<
         .unwrap()
         .replay_transaction(txn_hash, inspector::noop())?;
 
-    if !result.exceptions.is_empty() {
+    if !result.exceptions().is_empty() {
         // If the transaction resulted in Scilla exceptions, concatenate them into a single string and ABI encode it.
-        let error: String =
-            itertools::intersperse_with(result.exceptions.into_iter().map(|e| e.message), || {
-                ", ".to_owned()
-            })
-            .collect();
+        let error: String = itertools::intersperse_with(
+            result.exceptions().iter().map(|e| e.message.as_str()),
+            || ", ",
+        )
+        .collect();
         let error = ethabi::encode(&[Token::String(error)]);
         // Prefix the error with the function selector for 'Error'. This is how raw reverts are encoded in Solidity.
         let mut encoded = vec![0x08, 0xc3, 0x79, 0xa0];
         encoded.extend_from_slice(&error);
         Ok(encoded.to_hex().into())
     } else {
-        match result.output {
-            TransactionOutput::Revert(output) => Ok(output.to_hex().into()),
+        match result.output() {
+            Some(output) => Ok(output.to_hex().into()),
             _ => Ok("0x".into()),
         }
     }

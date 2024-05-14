@@ -1,7 +1,7 @@
 //! Manages execution of transactions on state.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     error::Error,
     fmt::{self, Display, Formatter},
     num::NonZeroU128,
@@ -12,13 +12,14 @@ use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Result};
 use eth_trie::Trie;
 use ethabi::Token;
+use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
     primitives::{
         AccountInfo, BlockEnv, Bytecode, BytecodeState, ExecutionResult, HandlerCfg, Output,
         ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
     },
-    Database, Evm, Inspector,
+    Database, DatabaseRef, Evm, Inspector,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -30,30 +31,121 @@ use crate::{
     crypto::{Hash, NodePublicKey},
     eth_helpers::extract_revert_msg,
     inspector::{self, ScillaInspector},
-    message::BlockHeader,
+    message::{Block, BlockHeader},
     precompiles::get_custom_precompiles,
     scilla,
     state::{contract_addr, Account, Contract, ScillaValue, State},
     time::SystemTime,
     transaction::{
-        total_scilla_gas_price, EvmGas, Log, ScillaGas, ScillaParam, Transaction, TxZilliqa,
-        VerifiedTransaction, ZilAmount,
+        total_scilla_gas_price, EvmGas, EvmLog, Log, ScillaGas, ScillaLog, ScillaParam,
+        Transaction, TxZilliqa, VerifiedTransaction, ZilAmount,
     },
 };
 
 /// Data returned after applying a [Transaction] to [State].
-pub struct TransactionApplyResult {
+pub enum TransactionApplyResult {
+    Evm(ResultAndState),
+    Scilla(ScillaResult),
+}
+
+impl TransactionApplyResult {
+    pub fn output(&self) -> Option<&[u8]> {
+        match self {
+            TransactionApplyResult::Evm(ResultAndState { result, .. }) => {
+                result.output().map(|b| b.as_ref())
+            }
+            TransactionApplyResult::Scilla(_) => None,
+        }
+    }
+
+    pub fn success(&self) -> bool {
+        match self {
+            TransactionApplyResult::Evm(ResultAndState { result, .. }) => result.is_success(),
+            TransactionApplyResult::Scilla(ScillaResult { success, .. }) => *success,
+        }
+    }
+
+    pub fn contract_address(&self) -> Option<Address> {
+        match self {
+            TransactionApplyResult::Evm(ResultAndState {
+                result: ExecutionResult::Success { output, .. },
+                ..
+            }) => output.address().copied(),
+            TransactionApplyResult::Evm(_) => None,
+            TransactionApplyResult::Scilla(ScillaResult {
+                contract_address, ..
+            }) => *contract_address,
+        }
+    }
+
+    pub fn gas_used(&self) -> EvmGas {
+        match self {
+            TransactionApplyResult::Evm(ResultAndState { result, .. }) => EvmGas(result.gas_used()),
+            TransactionApplyResult::Scilla(ScillaResult { gas_used, .. }) => *gas_used,
+        }
+    }
+
+    pub fn accepted(&self) -> Option<bool> {
+        match self {
+            TransactionApplyResult::Evm(_) => None,
+            TransactionApplyResult::Scilla(ScillaResult { accepted, .. }) => *accepted,
+        }
+    }
+
+    pub fn exceptions(&self) -> &[ScillaException] {
+        match self {
+            TransactionApplyResult::Evm(_) => &[],
+            TransactionApplyResult::Scilla(ScillaResult { exceptions, .. }) => exceptions,
+        }
+    }
+
+    pub fn into_parts(
+        self,
+    ) -> (
+        Vec<Log>,
+        BTreeMap<u64, Vec<ScillaError>>,
+        Vec<ScillaException>,
+    ) {
+        match self {
+            TransactionApplyResult::Evm(ResultAndState { result, .. }) => (
+                result
+                    .into_logs()
+                    .into_iter()
+                    .map(|l| {
+                        let (topics, data) = l.data.split();
+                        Log::Evm(EvmLog {
+                            address: l.address,
+                            topics,
+                            data: data.to_vec(),
+                        })
+                    })
+                    .collect(),
+                BTreeMap::new(),
+                Vec::new(),
+            ),
+            TransactionApplyResult::Scilla(ScillaResult {
+                logs,
+                errors,
+                exceptions,
+                ..
+            }) => (
+                logs.into_iter().map(Log::Scilla).collect(),
+                errors,
+                exceptions,
+            ),
+        }
+    }
+}
+
+pub struct ScillaResult {
     /// Whether the transaction succeeded and the resulting state changes were persisted.
     pub success: bool,
     /// If the transaction was a contract creation, the address of the resulting contract.
     pub contract_address: Option<Address>,
     /// The logs emitted by the transaction execution.
-    pub logs: Vec<Log>,
+    pub logs: Vec<ScillaLog>,
     /// The gas paid by the transaction
     pub gas_used: EvmGas,
-    /// The output of the transaction execution. Note that Scilla calls cannot return data, so the output will always
-    /// be empty.
-    pub output: TransactionOutput,
     /// If the transaction was a call to a Scilla contract, whether the called contract accepted the ZIL sent to it.
     pub accepted: Option<bool>,
     /// Errors from calls to Scilla contracts. Indexed by the call depth of erroring contract.
@@ -111,6 +203,26 @@ impl Database for &State {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.basic_ref(address)
+    }
+
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.code_by_hash_ref(code_hash)
+    }
+
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.storage_ref(address, index)
+    }
+
+    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
+        self.block_hash_ref(number)
+    }
+}
+
+impl DatabaseRef for &State {
+    type Error = DatabaseError;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         if !self.has_account(address)? {
             return Ok(None);
         }
@@ -129,11 +241,11 @@ impl Database for &State {
         Ok(Some(account_info))
     }
 
-    fn code_by_hash(&mut self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
+    fn code_by_hash_ref(&self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
         unimplemented!()
     }
 
-    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         let index = B256::new(index.to_be_bytes());
 
         let result = self.get_account_storage(address, index)?;
@@ -141,7 +253,7 @@ impl Database for &State {
         Ok(U256::from_be_bytes(result.0))
     }
 
-    fn block_hash(&mut self, _number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, _number: U256) -> Result<B256, Self::Error> {
         // TODO
         Ok(B256::ZERO)
     }
@@ -194,7 +306,7 @@ impl State {
                     addr
                 };
 
-                self.apply_delta_evm(state)?;
+                self.apply_delta_evm(&state)?;
                 Ok(addr)
             }
             ExecutionResult::Success { .. } => {
@@ -284,7 +396,7 @@ impl State {
         current_block: BlockHeader,
         txn: TxZilliqa,
         inspector: impl ScillaInspector,
-    ) -> Result<TransactionApplyResult> {
+    ) -> Result<ScillaResult> {
         let code = self
             .get_account(txn.to_addr)?
             .contract
@@ -322,17 +434,16 @@ impl State {
         &mut self,
         addr: Address,
         amount: ZilAmount,
-    ) -> Result<Option<TransactionApplyResult>> {
+    ) -> Result<Option<ScillaResult>> {
         let caller = std::panic::Location::caller();
         self.mutate_account(addr, |acc| {
             let Some(balance) = acc.balance.checked_sub(amount.get()) else {
                 info!("insufficient balance: {caller}");
-                return Some(TransactionApplyResult {
+                return Some(ScillaResult {
                     success: false,
                     contract_address: None,
                     logs: vec![],
                     gas_used: ScillaGas(0).into(),
-                    output: TransactionOutput::Error,
                     accepted: None,
                     errors: [(0, vec![ScillaError::InsufficientBalance])]
                         .into_iter()
@@ -351,7 +462,7 @@ impl State {
         txn: TxZilliqa,
         current_block: BlockHeader,
         mut inspector: impl ScillaInspector,
-    ) -> Result<TransactionApplyResult> {
+    ) -> Result<ScillaResult> {
         if txn.data.is_empty() {
             return Err(anyhow!("contract creation without init data"));
         }
@@ -375,12 +486,11 @@ impl State {
 
         let Some(gas) = gas.checked_sub(SCILLA_INVOKE_CHECKER) else {
             warn!("not enough gas to invoke scilla checker");
-            return Ok(TransactionApplyResult {
+            return Ok(ScillaResult {
                 success: false,
                 contract_address: Some(contract_address),
                 logs: vec![],
                 gas_used: (txn.gas_limit - gas).into(),
-                output: TransactionOutput::Error,
                 accepted: Some(false),
                 errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
                 exceptions: vec![],
@@ -392,12 +502,11 @@ impl State {
             Err(e) => {
                 warn!(?e, "transaction failed");
                 let gas = gas.min(e.gas_remaining);
-                return Ok(TransactionApplyResult {
+                return Ok(ScillaResult {
                     success: false,
                     contract_address: Some(contract_address),
                     logs: vec![],
                     gas_used: (txn.gas_limit - gas).into(),
-                    output: TransactionOutput::Error,
                     accepted: Some(false),
                     errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
                     exceptions: e.errors.into_iter().map(Into::into).collect(),
@@ -441,12 +550,11 @@ impl State {
 
         let Some(gas) = gas.checked_sub(SCILLA_INVOKE_RUNNER) else {
             warn!("not enough gas to invoke scilla runner");
-            return Ok(TransactionApplyResult {
+            return Ok(ScillaResult {
                 success: false,
                 contract_address: Some(contract_address),
                 logs: vec![],
                 gas_used: (txn.gas_limit - gas).into(),
-                output: TransactionOutput::Error,
                 accepted: Some(false),
                 errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
                 exceptions: vec![],
@@ -466,12 +574,11 @@ impl State {
             Err(e) => {
                 warn!(?e, "transaction failed");
                 let gas = gas.min(e.gas_remaining);
-                return Ok(TransactionApplyResult {
+                return Ok(ScillaResult {
                     success: false,
                     contract_address: Some(contract_address),
                     logs: vec![],
                     gas_used: (txn.gas_limit - gas).into(),
-                    output: TransactionOutput::Error,
                     accepted: Some(false),
                     errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
                     exceptions: e.errors.into_iter().map(Into::into).collect(),
@@ -486,12 +593,11 @@ impl State {
 
         inspector.create(from_addr, contract_address, txn.amount.get());
 
-        Ok(TransactionApplyResult {
+        Ok(ScillaResult {
             success: true,
             contract_address: Some(contract_address),
             logs: vec![],
             gas_used: (txn.gas_limit - gas).into(),
-            output: TransactionOutput::Success(vec![]),
             accepted: None,
             errors: BTreeMap::new(),
             exceptions: vec![],
@@ -503,17 +609,16 @@ impl State {
         from_addr: Address,
         txn: TxZilliqa,
         mut inspector: impl ScillaInspector,
-    ) -> Result<TransactionApplyResult> {
+    ) -> Result<ScillaResult> {
         let gas = txn.gas_limit;
 
         let Some(gas) = gas.checked_sub(SCILLA_TRANSFER) else {
             warn!("not enough gas to make transfer");
-            return Ok(TransactionApplyResult {
+            return Ok(ScillaResult {
                 success: false,
                 contract_address: None,
                 logs: vec![],
                 gas_used: (txn.gas_limit - gas).into(),
-                output: TransactionOutput::Error,
                 accepted: Some(false),
                 errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
                 exceptions: vec![],
@@ -530,12 +635,11 @@ impl State {
 
         inspector.transfer(from_addr, txn.to_addr, txn.amount.get());
 
-        Ok(TransactionApplyResult {
+        Ok(ScillaResult {
             success: true,
             contract_address: None,
             logs: vec![],
             gas_used: (txn.gas_limit - gas).into(),
-            output: TransactionOutput::Success(vec![]),
             accepted: None,
             errors: BTreeMap::new(),
             exceptions: vec![],
@@ -547,7 +651,7 @@ impl State {
         from_addr: Address,
         txn: TxZilliqa,
         mut inspector: impl ScillaInspector,
-    ) -> Result<TransactionApplyResult> {
+    ) -> Result<ScillaResult> {
         // TODO: Interop
         let Contract::Scilla {
             code,
@@ -568,12 +672,11 @@ impl State {
         let gas = txn.gas_limit;
         let Some(gas) = gas.checked_sub(SCILLA_INVOKE_RUNNER) else {
             warn!("not enough gas to invoke scilla runner");
-            return Ok(TransactionApplyResult {
+            return Ok(ScillaResult {
                 success: false,
                 contract_address: None,
                 logs: vec![],
                 gas_used: (txn.gas_limit - gas).into(),
-                output: TransactionOutput::Error,
                 accepted: Some(false),
                 errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
                 exceptions: vec![],
@@ -594,12 +697,11 @@ impl State {
             Err(e) => {
                 warn!(?e, "transaction failed");
                 let gas = gas.min(e.gas_remaining);
-                return Ok(TransactionApplyResult {
+                return Ok(ScillaResult {
                     success: false,
                     contract_address: None,
                     logs: vec![],
                     gas_used: (txn.gas_limit - gas).into(),
-                    output: TransactionOutput::Error,
                     accepted: Some(false),
                     errors: [(0, vec![ScillaError::CallFailed])].into_iter().collect(),
                     exceptions: e.errors.into_iter().map(Into::into).collect(),
@@ -627,30 +729,28 @@ impl State {
         let logs = output
             .events
             .into_iter()
-            .map(|e| {
-                Log::scilla(
-                    txn.to_addr,
-                    e.event_name,
-                    e.params
-                        .into_iter()
-                        .map(|p| ScillaParam {
-                            ty: p.ty,
-                            value: p.value,
-                            name: p.name,
-                        })
-                        .collect(),
-                )
+            .map(|e| ScillaLog {
+                address: txn.to_addr,
+                event_name: e.event_name,
+                params: e
+                    .params
+                    .into_iter()
+                    .map(|p| ScillaParam {
+                        ty: p.ty,
+                        value: p.value,
+                        name: p.name,
+                    })
+                    .collect(),
             })
             .collect();
 
         inspector.call(from_addr, txn.to_addr, txn.amount.get());
 
-        Ok(TransactionApplyResult {
+        Ok(ScillaResult {
             success: true,
             contract_address: None,
             logs,
             gas_used: (txn.gas_limit - gas).into(),
-            output: TransactionOutput::Success(vec![]),
             accepted: Some(output.accepted),
             errors: BTreeMap::new(),
             exceptions: vec![],
@@ -671,7 +771,9 @@ impl State {
 
         let txn = txn.tx.into_transaction();
         if let Transaction::Zilliqa(txn) = txn {
-            self.apply_transaction_scilla(from_addr, current_block, txn, inspector)
+            Ok(TransactionApplyResult::Scilla(
+                self.apply_transaction_scilla(from_addr, current_block, txn, inspector)?,
+            ))
         } else {
             let ResultAndState { result, state } = self.apply_transaction_evm(
                 from_addr,
@@ -686,47 +788,21 @@ impl State {
                 inspector,
             )?;
 
-            self.apply_delta_evm(state)?;
+            self.apply_delta_evm(&state)?;
 
-            Ok(TransactionApplyResult {
-                success: result.is_success(),
-                contract_address: if let ExecutionResult::Success {
-                    output: Output::Create(_, c),
-                    ..
-                } = result
-                {
-                    c
-                } else {
-                    None
-                },
-                logs: result
-                    .logs()
-                    .iter()
-                    .map(|l| Log::evm(l.address, l.topics().to_vec(), l.data.data.to_vec()))
-                    .collect(),
-                gas_used: EvmGas(result.gas_used()),
-                output: match result {
-                    ExecutionResult::Success { output, .. } => {
-                        TransactionOutput::Success(output.into_data().to_vec())
-                    }
-                    ExecutionResult::Revert { output, .. } => {
-                        TransactionOutput::Revert(output.to_vec())
-                    }
-                    ExecutionResult::Halt { .. } => TransactionOutput::Error,
-                },
-                accepted: None,
-                errors: BTreeMap::new(),
-                exceptions: vec![],
-            })
+            Ok(TransactionApplyResult::Evm(ResultAndState {
+                result,
+                state,
+            }))
         }
     }
 
     /// Applies a state delta from an EVM execution to the state.
     pub fn apply_delta_evm(
         &mut self,
-        state: revm::primitives::HashMap<Address, revm::primitives::Account>,
+        state: &HashMap<Address, revm::primitives::Account>,
     ) -> Result<()> {
-        for (address, account) in state {
+        for (&address, account) in state {
             let mut storage = self.get_account_trie(address)?;
 
             for (index, value) in account.changed_storage_slots() {
@@ -744,6 +820,7 @@ impl State {
                     code: account
                         .info
                         .code
+                        .as_ref()
                         .map(|c| c.original_bytes().to_vec())
                         .unwrap_or_default(),
                     storage_root: if storage.iter().count() != 0 {
@@ -758,6 +835,13 @@ impl State {
         }
 
         Ok(())
+    }
+
+    pub fn get_stakers_at_block(&self, block: &Block) -> Result<Vec<NodePublicKey>> {
+        let block_root_hash = block.state_root_hash();
+
+        let state = self.at_root(block_root_hash.into());
+        state.get_stakers()
     }
 
     pub fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
@@ -827,6 +911,29 @@ impl State {
         let addr = Address::new(addr.0);
 
         Ok((!addr.is_zero()).then_some(addr))
+    }
+
+    pub fn get_peer_id(&self, public_key: NodePublicKey) -> Result<Option<PeerId>> {
+        let data =
+            contracts::deposit::GET_PEER_ID.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
+
+        let return_value = self.call_contract(
+            Address::ZERO,
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // dummy values.
+            0,
+            BlockHeader::default(),
+        )?;
+
+        let data = contracts::deposit::GET_PEER_ID.decode_output(&return_value)?[0]
+            .clone()
+            .into_bytes()
+            .unwrap();
+
+        Ok(Some(PeerId::from_bytes(&data)?))
     }
 
     pub fn get_total_stake(&self) -> Result<u128> {
@@ -928,22 +1035,6 @@ impl State {
             ExecutionResult::Success { output, .. } => Ok(output.into_data().to_vec()),
             ExecutionResult::Revert { output, .. } => Ok(output.to_vec()),
             ExecutionResult::Halt { reason, .. } => Err(anyhow!("halted due to: {reason:?}")),
-        }
-    }
-}
-
-pub enum TransactionOutput {
-    Success(Vec<u8>),
-    Revert(Vec<u8>),
-    Error,
-}
-
-impl TransactionOutput {
-    pub fn into_vec(self) -> Vec<u8> {
-        match self {
-            TransactionOutput::Success(v) => v,
-            TransactionOutput::Revert(v) => v,
-            TransactionOutput::Error => vec![],
         }
     }
 }

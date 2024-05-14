@@ -65,6 +65,7 @@ use zilliqa::{
 
 /// (source, destination, message) for both
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 enum AnyMessage {
     External(ExternalMessage),
     Internal(u64, u64, InternalMessage),
@@ -152,7 +153,7 @@ struct TestNode {
 
 struct Network {
     pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
-    pub genesis_deposits: Vec<(NodePublicKey, String, Address)>,
+    pub genesis_deposits: Vec<(NodePublicKey, PeerId, String, Address)>,
     /// Child shards.
     pub children: HashMap<u64, Network>,
     pub shard_id: u64,
@@ -226,6 +227,7 @@ impl Network {
             .map(|k| {
                 (
                     k.node_public_key(),
+                    k.to_libp2p_keypair().public().to_peer_id(),
                     stake.to_string(),
                     Address::random_with(rng.lock().unwrap().deref_mut()),
                 )
@@ -263,6 +265,10 @@ impl Network {
             .chain(local_receivers)
             .collect();
 
+        let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
+        let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
+        receivers.push(receive_resend_message);
+
         for node in &nodes {
             trace!(
                 "Node {}: {} (dir: {})",
@@ -271,10 +277,6 @@ impl Network {
                 node.dir.as_ref().unwrap().path().to_string_lossy(),
             );
         }
-
-        let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
-        let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
-        receivers.push(receive_resend_message);
 
         Network {
             genesis_committee,
@@ -346,17 +348,7 @@ impl Network {
         let (node, receiver, local_receiver) =
             node(config, secret_key, self.nodes.len(), None).unwrap();
 
-        self.resend_message
-            .send((
-                node.peer_id,
-                None,
-                AnyMessage::External(ExternalMessage::JoinCommittee(
-                    node.secret_key.node_public_key(),
-                )),
-            ))
-            .unwrap();
-
-        info!("Node {}: {}", node.index, node.peer_id);
+        trace!("Node {}: {}", node.index, node.peer_id);
 
         let index = node.index;
 
@@ -391,6 +383,7 @@ impl Network {
             .map(|k| {
                 (
                     k.node_public_key(),
+                    k.to_libp2p_keypair().public().to_peer_id(),
                     stake.to_string(),
                     Address::random_with(self.rng.lock().unwrap().deref_mut()),
                 )
@@ -775,14 +768,23 @@ impl Network {
                         .filter(|(index, _)| !self.disconnected.contains(index))
                         .collect()
                 };
+                let sender_node = self
+                    .nodes
+                    .iter()
+                    .find(|&node| node.peer_id == source)
+                    .expect("Sender should be on the nodes list");
+                let sender_chain_id = sender_node.inner.lock().unwrap().config.eth_chain_id;
+
                 for (index, node) in nodes.iter() {
                     let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                     span.in_scope(|| {
-                        node.inner
-                            .lock()
-                            .unwrap()
-                            .handle_network_message(source, external_message.clone())
-                            .unwrap();
+                        let mut inner = node.inner.lock().unwrap();
+                        // Send broadcast to nodes only in the same shard (having same chain_id)
+                        if inner.config.eth_chain_id == sender_chain_id {
+                            inner
+                                .handle_network_message(source, external_message.clone())
+                                .unwrap();
+                        }
                     });
                 }
             }
@@ -952,16 +954,9 @@ fn format_message(
 ) -> String {
     let message = match message {
         AnyMessage::External(message) => match message {
-            ExternalMessage::Proposal(proposal) => format!(
-                "{} [{}] ({:?})",
-                message.name(),
-                proposal.header.number,
-                proposal
-                    .committee
-                    .iter()
-                    .map(|v| nodes.iter().find(|n| n.peer_id == v.peer_id).unwrap().index)
-                    .collect::<Vec<_>>()
-            ),
+            ExternalMessage::Proposal(proposal) => {
+                format!("{} [{}]", message.name(), proposal.header.number,)
+            }
             ExternalMessage::BlockRequest(request) => {
                 format!("{} [{:?}]", message.name(), request.0)
             }

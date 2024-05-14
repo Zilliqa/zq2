@@ -539,11 +539,11 @@ pub(super) fn get_transaction_receipt_inner(
     // TODO: Return error if receipt or block does not exist.
 
     let Some(receipt) = node.get_transaction_receipt(hash)? else {
-        warn!("Failed to get TX receipt when getting TX receipt! {}", hash);
+        debug!("Failed to get TX receipt when getting TX receipt! {}", hash);
         return Ok(None);
     };
 
-    info!(
+    debug!(
         "get_transaction_receipt_inner: hash: {:?} result: {:?}",
         hash, receipt
     );

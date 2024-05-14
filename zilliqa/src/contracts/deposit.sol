@@ -6,6 +6,7 @@ struct Staker {
     uint256 keyIndex;
     uint256 balance;
     address rewardAddress;
+    bytes peerId;
 }
 
 contract Deposit {
@@ -15,14 +16,15 @@ contract Deposit {
 
     uint256 public minimumStake = 32_000_000_000_000_000_000;
 
-    function deposit(bytes calldata blsPubKey, bytes calldata /* signature */, address rewardAddress) public payable {
+    function deposit(bytes calldata blsPubKey, bytes calldata peerId, bytes calldata /* signature */, address rewardAddress) public payable {
         require(blsPubKey.length == 48);
-
+        require(peerId.length == 38);
         // TODO: Verify signature as a proof-of-possession of the private key.
 
         _stakersMap[blsPubKey].balance += msg.value;
         totalStake += msg.value;
         _stakersMap[blsPubKey].rewardAddress = rewardAddress;
+        _stakersMap[blsPubKey].peerId = peerId;
         uint256 keyIndex = _stakersMap[blsPubKey].keyIndex;
         if (keyIndex == 0) {
             // The staker will be at index `_stakerKeys.length`. We also need to add 1 to avoid the 0 sentinel value.
@@ -31,14 +33,16 @@ contract Deposit {
         }
     }
 
-    function setStake(bytes calldata blsPubKey, address rewardAddress, uint256 amount) public {
+    function setStake(bytes calldata blsPubKey, bytes calldata peerId, address rewardAddress, uint256 amount) public {
         require(msg.sender == address(0));
         require(blsPubKey.length == 48);
+        require(peerId.length == 38);
 
         totalStake -= _stakersMap[blsPubKey].balance;
         _stakersMap[blsPubKey].balance = amount;
         totalStake += amount;
         _stakersMap[blsPubKey].rewardAddress = rewardAddress;
+        _stakersMap[blsPubKey].peerId = peerId;
         uint256 keyIndex = _stakersMap[blsPubKey].keyIndex;
         if (keyIndex == 0) {
             // The staker will be at index `_stakerKeys.length`. We also need to add 1 to avoid the 0 sentinel value.
@@ -67,5 +71,13 @@ contract Deposit {
 
     function getStakers() public view returns (bytes[] memory) {
         return _stakerKeys;
+    }
+
+    function getPeerId(bytes calldata blsPubKey) public view returns (bytes memory) {
+        require(blsPubKey.length == 48);
+        if (_stakersMap[blsPubKey].rewardAddress == address(0)) {
+            revert("not staked");
+        }
+        return _stakersMap[blsPubKey].peerId;
     }
 }
