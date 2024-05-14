@@ -117,6 +117,7 @@ pub async fn convert_persistence(
     // out of thin air (like we do below).
     let data = contracts::deposit::SET_STAKE.encode_input(&[
         Token::Bytes(secret_key.node_public_key().as_bytes()),
+        Token::Bytes(secret_key.to_libp2p_keypair().public().to_peer_id().to_bytes()),
         Token::Address(ethabi::Address::from_low_u64_be(1)),
         Token::Uint((64 * 10u128.pow(18)).into()),
     ])?;
