@@ -32,12 +32,12 @@ use zilliqa::{
     db::Db,
     exec::{BLOCK_GAS_LIMIT, GAS_PRICE},
     inspector,
-    message::{Block, BlockHeader, Committee, QuorumCertificate, Vote},
+    message::{Block, BlockHeader, QuorumCertificate, Vote},
     schnorr,
     state::{contract_addr, Account, Contract, State},
     time::SystemTime,
     transaction::{
-        EvmGas, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
+        EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
     },
 };
 
@@ -112,10 +112,6 @@ pub async fn convert_persistence(
         }
     }
 
-    let committee = Committee::new(Validator {
-        public_key: secret_key.node_public_key(),
-        peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
-    });
     // Add stake for this validator. For now, we just assume they've always had 64 ZIL staked.
     // This assumptions will need to change for the actual testnet and mainnet launches, where we cannot invent ZIL
     // out of thin air (like we do below).
@@ -142,7 +138,7 @@ pub async fn convert_persistence(
     if !result.is_success() {
         return Err(anyhow!("setting stake failed: {result:?}"));
     }
-    state.apply_delta_evm(result_state)?;
+    state.apply_delta_evm(&result_state)?;
 
     let max_block = zq1_db.get_tx_blocks_aux("MaxTxBlockNumber")?.unwrap();
 
@@ -216,7 +212,6 @@ pub async fn convert_persistence(
                 state.root_hash()?,
                 txn_hashes.iter().map(|h| Hash(h.0)).collect(),
                 SystemTime::UNIX_EPOCH + Duration::from_micros(block.timestamp),
-                committee.clone(),
             );
 
             let mut block_receipts = Vec::new();
@@ -264,7 +259,11 @@ pub async fn convert_persistence(
                                 .map(|log| {
                                     let log = log.to_eth_log()?;
 
-                                    Ok(Log::evm(log.address, log.topics, log.data))
+                                    Ok(Log::Evm(EvmLog {
+                                        address: log.address,
+                                        topics: log.topics,
+                                        data: log.data,
+                                    }))
                                 })
                                 .collect::<Result<_>>()?,
                             accepted: None,
@@ -320,7 +319,11 @@ pub async fn convert_persistence(
                                 .map(|log| {
                                     let log = log.to_eth_log()?;
 
-                                    Ok(Log::evm(log.address, log.topics, log.data))
+                                    Ok(Log::Evm(EvmLog {
+                                        address: log.address,
+                                        topics: log.topics,
+                                        data: log.data,
+                                    }))
                                 })
                                 .collect::<Result<_>>()?,
                             accepted: None,
