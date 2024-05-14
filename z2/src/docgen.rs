@@ -29,7 +29,7 @@ struct ParsedInput {
 }
 
 fn split_into_components(prefix: &str) -> Result<Vec<String>> {
-    Ok(prefix.split("/").map(|x| x.to_string()).collect::<Vec<_>>())
+    Ok(prefix.split('/').map(|x| x.to_string()).collect::<Vec<_>>())
 }
 
 // Mutating trees is just as painful in rust as it is in ML :-(
@@ -120,15 +120,14 @@ fn insert_key(val: &mut serde_yaml::Value, components: &Vec<String>, idx: usize,
                 // Find the right map, if there is one, otherwise add one.
                 let mut found = false;
                 for s in seq.iter_mut() {
-                    match s {
-                        serde_yaml::Value::Mapping(ref mut map) => match map.get_mut(k) {
+                    if let serde_yaml::Value::Mapping(ref mut map) = s {
+                        match map.get_mut(k) {
                             None => (),
-                            Some(mut v) => {
+                            Some(v) => {
                                 insert_key(v, components, idx + 1, value);
                                 found = true;
                             }
-                        },
-                        _ => (),
+                        }
                     }
                 }
                 if !found {
@@ -217,11 +216,7 @@ impl Docs {
             } else if md.is_file() {
                 // It's a file. does it end `.md`? If so, it's a candidate for documentation.
                 if let Some(v) = path_entry.abs.extension() {
-                    if v.to_str()
-                        .ok_or(anyhow!("Can't convert extension"))?
-                        .to_string()
-                        == "md"
-                    {
+                    if v.to_str().ok_or(anyhow!("Can't convert extension"))? == "md" {
                         println!("File: {:?} rel {:?}", &path_entry.abs, &path_entry.rel);
                         let (output_filename, prefixed_id) =
                             self.generate_file(&path_entry.abs, &path_entry.rel).await?;
@@ -357,7 +352,7 @@ impl Docs {
             desc_path.push(v.to_lowercase());
         }
         for p in &nearly_id {
-            desc_path.push(&p);
+            desc_path.push(p);
         }
         desc_path.push(format!("{page_title}.md"));
 
@@ -367,7 +362,7 @@ impl Docs {
             mkdocs_path.push(v.to_lowercase());
         }
         for p in &nearly_id {
-            mkdocs_path.push(&p);
+            mkdocs_path.push(p);
         }
         mkdocs_path.push(format!("{page_title}.md"));
 
@@ -377,9 +372,9 @@ impl Docs {
             id_path.push(v);
         }
         for p in &nearly_id {
-            id_path.push(&p);
+            id_path.push(p);
         }
-        id_path.push(format!("{page_title}"));
+        id_path.push(page_title);
 
         // That is also the mkdocs id of this file.
         let prefixed_id = zqutils::utils::string_from_path(&id_path)?;
