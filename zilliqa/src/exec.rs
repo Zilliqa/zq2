@@ -29,7 +29,7 @@ use tracing::{info, trace, warn};
 use crate::{
     contracts,
     crypto::{Hash, NodePublicKey},
-    eth_helpers::extract_revert_msg,
+    eth_helpers::{extract_revert_msg, lower_bound_gas_estimate},
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
     precompiles::get_custom_precompiles,
@@ -260,6 +260,9 @@ impl DatabaseRef for &State {
 }
 
 pub const BLOCK_GAS_LIMIT: EvmGas = EvmGas(84_000_000);
+// As per EIP-150
+pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_000_000);
+
 /// The price per unit of [EvmGas].
 pub const GAS_PRICE: u128 = 4761904800000;
 
@@ -971,41 +974,47 @@ impl State {
         value: u128,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(GAS_PRICE);
-        let gas = gas.unwrap_or(BLOCK_GAS_LIMIT);
 
-        let ResultAndState { result, .. } = self.apply_transaction_evm(
-            from_addr,
-            to_addr,
-            gas_price,
-            gas,
-            value,
-            data,
-            None,
-            chain_id,
-            current_block,
-            inspector::noop(),
-        )?;
+        let upper_bound = gas.unwrap_or(MAX_EVM_GAS_LIMIT);
+        let lower_bound = lower_bound_gas_estimate(to_addr, &data);
 
-        match result {
-            ExecutionResult::Success { gas_used, .. } => Ok(gas_used),
-            ExecutionResult::Revert {
-                gas_used: _,
-                output,
-            } => {
-                let decoded_revert_msg = extract_revert_msg(&output);
-                // See: https://github.com/ethereum/go-ethereum/blob/9b9a1b677d894db951dc4714ea1a46a2e7b74ffc/internal/ethapi/api.go#L1026
-                const REVERT_ERROR_CODE: i32 = 3;
+        while lower_bound != upper_bound.0 {
+            let ResultAndState { result, .. } = self.apply_transaction_evm(
+                from_addr,
+                to_addr,
+                gas_price,
+                upper_bound,
+                value,
+                data.clone(),
+                None,
+                chain_id,
+                current_block,
+                inspector::noop(),
+            )?;
 
-                let response = jsonrpsee::types::ErrorObjectOwned::owned(
-                    REVERT_ERROR_CODE,
-                    decoded_revert_msg,
-                    None::<()>,
-                );
+            return match result {
+                ExecutionResult::Success { gas_used, .. } => Ok(gas_used),
+                ExecutionResult::Revert {
+                    gas_used: _,
+                    output,
+                } => {
+                    let decoded_revert_msg = extract_revert_msg(&output);
+                    // See: https://github.com/ethereum/go-ethereum/blob/9b9a1b677d894db951dc4714ea1a46a2e7b74ffc/internal/ethapi/api.go#L1026
+                    const REVERT_ERROR_CODE: i32 = 3;
 
-                Err(response.into())
-            }
-            ExecutionResult::Halt { reason, .. } => Err(anyhow!("halted due to: {reason:?}")),
+                    let response = jsonrpsee::types::ErrorObjectOwned::owned(
+                        REVERT_ERROR_CODE,
+                        decoded_revert_msg,
+                        None::<()>,
+                    );
+
+                    Err(response.into())
+                }
+                ExecutionResult::Halt { reason, .. } => Err(anyhow!("halted due to: {reason:?}")),
+            };
         }
+
+        Ok(lower_bound)
     }
 
     #[allow(clippy::too_many_arguments)]

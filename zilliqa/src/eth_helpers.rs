@@ -1,3 +1,4 @@
+use alloy_primitives::Address;
 use ethabi::{ParamType, Token};
 
 pub(crate) fn extract_revert_msg(encoded: &[u8]) -> String {
@@ -41,6 +42,31 @@ pub(crate) fn extract_revert_msg(encoded: &[u8]) -> String {
         }
         _ => generic_error,
     }
+}
+
+pub fn lower_bound_gas_estimate(to: Option<Address>, data: &[u8]) -> u64 {
+    const GAS_COST_FOR_ZERO_DATA: u64 = 4;
+    const GAS_COST_FOR_NON_ZERO_DATA: u64 = 16;
+    const CONTRACT_DEPLOYMENT_BASE_FEE: u64 = 32000;
+    const CONTRACT_CALL_BASE_FEE: u64 = 21000;
+
+    let base_fee = {
+        if to.is_some() {
+            CONTRACT_DEPLOYMENT_BASE_FEE
+        } else {
+            CONTRACT_CALL_BASE_FEE
+        }
+    };
+
+    let data_fee = data.iter().fold(0u64, |value, byte| {
+        if *byte == 0 {
+            value + GAS_COST_FOR_ZERO_DATA
+        } else {
+            value + GAS_COST_FOR_NON_ZERO_DATA
+        }
+    });
+
+    base_fee + data_fee
 }
 
 #[cfg(test)]
