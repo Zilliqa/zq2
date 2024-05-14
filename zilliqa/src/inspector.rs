@@ -7,6 +7,7 @@ use revm::{
     primitives::CreateScheme,
     Database, EvmContext, Inspector,
 };
+use revm_inspectors::tracing::TracingInspector;
 
 use crate::api::types::ots::{Operation, OperationType, TraceEntry, TraceEntryType};
 
@@ -343,3 +344,5 @@ impl ScillaInspector for OtterscanOperationInspector {
         }
     }
 }
+
+impl ScillaInspector for TracingInspector {}

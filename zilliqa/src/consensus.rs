@@ -774,7 +774,7 @@ impl Consensus {
         // Tell the transaction pool that the sender's nonce has been incremented.
         self.transaction_pool.mark_executed(&txn);
 
-        if !result.success {
+        if !result.success() {
             info!("Transaction was a failure...");
         }
 
@@ -2089,16 +2089,21 @@ impl Consensus {
             for address in inspector.touched {
                 self.db.add_touched_address(address, tx_hash)?;
             }
+            let success = result.success();
+            let contract_address = result.contract_address();
+            let gas_used = result.gas_used();
+            let accepted = result.accepted();
+            let (logs, errors, exceptions) = result.into_parts();
             let receipt = TransactionReceipt {
                 block_hash: block.hash(),
                 tx_hash,
-                success: result.success,
-                contract_address: result.contract_address,
-                logs: result.logs,
-                gas_used: result.gas_used,
-                accepted: result.accepted,
-                errors: result.errors,
-                exceptions: result.exceptions,
+                success,
+                contract_address,
+                logs,
+                gas_used,
+                accepted,
+                errors,
+                exceptions,
             };
             info!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push(receipt);

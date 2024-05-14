@@ -610,22 +610,6 @@ pub enum Log {
 }
 
 impl Log {
-    pub fn evm(address: Address, topics: Vec<B256>, data: Vec<u8>) -> Self {
-        Log::Evm(EvmLog {
-            address,
-            topics,
-            data,
-        })
-    }
-
-    pub fn scilla(address: Address, event_name: String, params: Vec<ScillaParam>) -> Self {
-        Log::Scilla(ScillaLog {
-            address,
-            event_name,
-            params,
-        })
-    }
-
     pub fn into_evm(self) -> Option<EvmLog> {
         match self {
             Log::Evm(l) => Some(l),

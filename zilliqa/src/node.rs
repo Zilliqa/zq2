@@ -1,9 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
+use alloy_rpc_types_trace::parity::{TraceResults, TraceType};
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use revm::Inspector;
+use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
@@ -312,6 +314,67 @@ impl Node {
 
     pub fn peer_id(&self) -> PeerId {
         self.peer_id
+    }
+
+    pub fn trace_evm_transaction(
+        &self,
+        txn_hash: Hash,
+        trace_types: &HashSet<TraceType>,
+    ) -> Result<TraceResults> {
+        let txn = self
+            .get_transaction_by_hash(txn_hash)?
+            .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
+        let receipt = self
+            .get_transaction_receipt(txn_hash)?
+            .ok_or_else(|| anyhow!("transaction not mined: {txn_hash}"))?;
+
+        let block = self
+            .get_block_by_hash(receipt.block_hash)?
+            .ok_or_else(|| anyhow!("missing block: {}", receipt.block_hash))?;
+        let parent = self
+            .get_block_by_hash(block.parent_hash())?
+            .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
+        let mut state = self
+            .consensus
+            .state()
+            .at_root(parent.state_root_hash().into());
+
+        for other_txn_hash in block.transactions {
+            if txn_hash != other_txn_hash {
+                let other_txn = self
+                    .get_transaction_by_hash(other_txn_hash)?
+                    .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
+                state.apply_transaction(
+                    other_txn,
+                    self.get_chain_id(),
+                    parent.header,
+                    inspector::noop(),
+                )?;
+            } else {
+                let config = TracingInspectorConfig::from_parity_config(trace_types);
+                let mut inspector = TracingInspector::new(config);
+                let pre_state = state.try_clone()?;
+
+                let result = state.apply_transaction(
+                    txn,
+                    self.get_chain_id(),
+                    parent.header,
+                    &mut inspector,
+                )?;
+
+                let TransactionApplyResult::Evm(result) = result else {
+                    return Err(anyhow!("not an EVM transaction"));
+                };
+
+                let builder = inspector.into_parity_builder();
+                let trace =
+                    builder.into_trace_results_with_state(&result, trace_types, &pre_state)?;
+
+                return Ok(trace);
+            }
+        }
+
+        Err(anyhow!("transaction not found in block: {txn_hash}"))
     }
 
     pub fn replay_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(

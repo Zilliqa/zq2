@@ -121,7 +121,7 @@ impl State {
             if !result.is_success() {
                 return Err(anyhow!("setting stake failed: {result:?}"));
             }
-            state.apply_delta_evm(result_state)?;
+            state.apply_delta_evm(&result_state)?;
         }
 
         Ok(state)
