@@ -117,7 +117,13 @@ pub async fn convert_persistence(
     // out of thin air (like we do below).
     let data = contracts::deposit::SET_STAKE.encode_input(&[
         Token::Bytes(secret_key.node_public_key().as_bytes()),
-        Token::Bytes(secret_key.to_libp2p_keypair().public().to_peer_id().to_bytes()),
+        Token::Bytes(
+            secret_key
+                .to_libp2p_keypair()
+                .public()
+                .to_peer_id()
+                .to_bytes(),
+        ),
         Token::Address(ethabi::Address::from_low_u64_be(1)),
         Token::Uint((64 * 10u128.pow(18)).into()),
     ])?;
@@ -332,15 +338,13 @@ pub async fn convert_persistence(
                             exceptions: vec![],
                         };
 
-                        let transaction = infer_eth_signature(
-                            *txn_hash,
-                            dbg!(version),
-                            dbg!(chain_id) + 0x8000,
-                            dbg!(transaction),
-                        )
-                        .with_context(|| {
-                            format!("failed to infer signature of transaction: {txn_hash:?}")
-                        })?;
+                        let transaction =
+                            infer_eth_signature(*txn_hash, version, chain_id + 0x8000, transaction)
+                                .with_context(|| {
+                                    format!(
+                                        "failed to infer signature of transaction: {txn_hash:?}"
+                                    )
+                                })?;
 
                         (transaction, receipt)
                     }
@@ -395,7 +399,8 @@ fn infer_eth_signature(
     let s = U256::try_from_be_slice(&transaction.signature.0[32..]).unwrap();
 
     for y_is_odd in [false, true] {
-        let sig = Signature::from_rs_and_parity(r, s, Parity::Parity(y_is_odd))?;
+        let parity = Parity::Parity(y_is_odd).with_chain_id(chain_id as u64);
+        let sig = Signature::from_rs_and_parity(r, s, parity)?;
         let payload = transaction
             .code
             .as_ref()
