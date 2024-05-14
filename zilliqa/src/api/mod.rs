@@ -1,7 +1,7 @@
 mod erigon;
 pub mod eth;
 mod net;
-pub mod ots;
+mod ots;
 pub mod ots_calls;
 pub mod subscription_id_provider;
 mod to_hex;
