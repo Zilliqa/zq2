@@ -1,10 +1,13 @@
 // Code to generate documentation from .tera.md files.
 #![allow(unused_imports)]
 
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
+
 use anyhow::{anyhow, Context as _, Result};
 use regex::Regex;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use tera::Tera;
 use tokio::fs;
 use zqutils::utils;
