@@ -920,7 +920,7 @@ async fn priority_fees_tx(mut network: Network) {
 
     // collect the promises and await on them
     let mut promises = Vec::new();
-
+    let txns_count = txs_to_send.len();
     // Send all of them
     for tx in txs_to_send {
         let prom = wallet.send_transaction(tx, None);
@@ -931,6 +931,11 @@ async fn priority_fees_tx(mut network: Network) {
     // as messages too and you can't guarantee which miner will try to create a block
     for prom in promises {
         let _hash = prom.await.unwrap().tx_hash();
+        network.tick().await;
+    }
+
+    // Give enough time for all transactions to reach possible proposer
+    for _ in 0..10 * txns_count {
         network.tick().await;
     }
 
@@ -999,13 +1004,15 @@ async fn pending_transaction_is_returned_by_get_transaction_by_hash(mut network:
 async fn get_transaction_by_index(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
+    // Send transaction in reverse nonce order to ensure they land in the same block
     let h1 = wallet
-        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .send_transaction(TransactionRequest::pay(H160::random(), 10).nonce(1), None)
         .await
         .unwrap()
         .tx_hash();
+
     let h2 = wallet
-        .send_transaction(TransactionRequest::pay(H160::random(), 10).nonce(1), None)
+        .send_transaction(TransactionRequest::pay(H160::random(), 10).nonce(0), None)
         .await
         .unwrap()
         .tx_hash();
@@ -1023,14 +1030,14 @@ async fn get_transaction_by_index(mut network: Network) {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(txn.hash, h1);
+    assert_eq!(txn.hash, h2);
 
     let txn = wallet
         .get_transaction_by_block_and_index(block_number, 1u64.into())
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(txn.hash, h2);
+    assert_eq!(txn.hash, h1);
 }
 
 #[zilliqa_macros::test]

@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::HashSet,
     fmt,
     fmt::{Display, Formatter},
     str::FromStr,
@@ -8,13 +8,11 @@ use std::{
 use alloy_primitives::Address;
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
-use libp2p::PeerId;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
 use time::{macros::format_description, OffsetDateTime};
 
 use crate::{
-    consensus::Validator,
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
@@ -30,7 +28,6 @@ pub struct Proposal {
     pub header: BlockHeader,
     pub qc: QuorumCertificate,
     pub agg: Option<AggregateQc>,
-    pub committee: Committee,
     pub transactions: Vec<SignedTransaction>,
     pub opaque_transactions: Vec<Hash>,
 }
@@ -70,7 +67,6 @@ impl Proposal {
             header: block.header,
             qc: block.qc,
             agg: block.agg,
-            committee: block.committee,
             transactions: tx_bodies,
             opaque_transactions: block
                 .transactions
@@ -86,7 +82,6 @@ impl Proposal {
                 header: self.header,
                 qc: self.qc,
                 agg: self.agg,
-                committee: self.committee,
                 transactions: self
                     .transactions
                     .iter()
@@ -226,7 +221,6 @@ pub enum ExternalMessage {
     BlockBatchResponse(BlockBatchResponse),
     NewTransaction(SignedTransaction),
     RequestResponse,
-    JoinCommittee(NodePublicKey),
 }
 
 impl ExternalMessage {
@@ -262,7 +256,6 @@ impl ExternalMessage {
             ExternalMessage::BlockBatchResponse(_) => "BlockBatchResponse",
             ExternalMessage::NewTransaction(_) => "NewTransaction",
             ExternalMessage::RequestResponse => "RequestResponse",
-            ExternalMessage::JoinCommittee(_) => "JoinCommittee",
         }
     }
 }
@@ -553,44 +546,6 @@ impl FromStr for BlockNumber {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-// Invariant: The set is non-empty
-pub struct Committee(BTreeSet<Validator>);
-
-impl Committee {
-    pub fn new(validator: Validator) -> Committee {
-        Committee([validator].into_iter().collect())
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = Validator> + '_ {
-        self.0.iter().copied()
-    }
-
-    pub fn get_by_index(&self, index: usize) -> Option<Validator> {
-        self.0.iter().nth(index).copied()
-    }
-
-    pub fn add_validators(&mut self, validators: impl IntoIterator<Item = Validator>) {
-        self.0.extend(validators);
-    }
-
-    pub fn remove_by_peer_id(&mut self, peer_id: PeerId) {
-        self.0.retain(|v| v.peer_id != peer_id);
-    }
-
-    pub fn public_keys(&self) -> Vec<NodePublicKey> {
-        self.0.iter().map(|v| v.public_key).collect()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub header: BlockHeader,
     /// A block's quorum certificate (QC) is proof that more than `2n/3` nodes (out of `n`) have voted for this block.
@@ -600,8 +555,6 @@ pub struct Block {
     /// this is not `None`, `qc` will contain a clone of the highest QC within this [AggregateQc];
     pub agg: Option<AggregateQc>,
     pub transactions: Vec<Hash>,
-    /// The consensus committee for this block.
-    pub committee: Committee,
 }
 
 impl Display for Block {
@@ -612,21 +565,12 @@ impl Display for Block {
             write!(f, "Agg QC view: {}, ", agg.view)?;
         }
         write!(f, "Transactions: {:?}, ", self.transactions)?;
-        write!(
-            f,
-            "Committee: {:?}, ",
-            self.committee
-                .0
-                .iter()
-                .map(|c| c.peer_id)
-                .collect::<Vec<_>>()
-        )?;
         Ok(())
     }
 }
 
 impl Block {
-    pub fn genesis(committee: Committee, state_root_hash: Hash) -> Block {
+    pub fn genesis(state_root_hash: Hash) -> Block {
         let view = 0u64;
         let number = 0u64;
         let qc = QuorumCertificate {
@@ -638,13 +582,6 @@ impl Block {
         let parent_hash = Hash::ZERO;
         let timestamp = SystemTime::UNIX_EPOCH;
 
-        // FIXME: Just concatenating the keys is dumb.
-        let committee_keys: Vec<_> = committee
-            .0
-            .iter()
-            .flat_map(|v| v.public_key.as_bytes())
-            .collect();
-
         // Could the hash be all zeroes for genesis perhaps?
         let digest = Hash::compute([
             &view.to_be_bytes(),
@@ -653,7 +590,6 @@ impl Block {
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
             state_root_hash.as_bytes(),
-            &committee_keys,
         ]);
 
         Block {
@@ -674,19 +610,10 @@ impl Block {
             },
             agg: None,
             transactions: vec![],
-            committee,
         }
     }
 
     pub fn verify_hash(&self) -> Result<()> {
-        // FIXME: Just concatenating the keys is dumb.
-        let committee_keys: Vec<_> = self
-            .committee
-            .0
-            .iter()
-            .flat_map(|v| v.public_key.as_bytes())
-            .collect();
-
         let computed_hash = if let Some(agg) = &self.agg {
             Hash::compute([
                 &self.view().to_be_bytes(),
@@ -695,7 +622,6 @@ impl Block {
                 agg.compute_hash().as_bytes(),
                 self.parent_hash().as_bytes(),
                 self.state_root_hash().as_bytes(),
-                &committee_keys,
             ])
         } else {
             Hash::compute([
@@ -704,7 +630,6 @@ impl Block {
                 self.qc.compute_hash().as_bytes(),
                 self.parent_hash().as_bytes(),
                 self.state_root_hash().as_bytes(),
-                &committee_keys,
             ])
         };
 
@@ -725,15 +650,7 @@ impl Block {
         state_root_hash: Hash,
         transactions: Vec<Hash>,
         timestamp: SystemTime,
-        committee: Committee,
     ) -> Block {
-        // FIXME: Just concatenating the keys is dumb.
-        let committee_keys: Vec<_> = committee
-            .0
-            .iter()
-            .flat_map(|v| v.public_key.as_bytes())
-            .collect();
-
         let digest = Hash::compute([
             &view.to_be_bytes(),
             &number.to_be_bytes(),
@@ -741,7 +658,6 @@ impl Block {
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
             state_root_hash.as_bytes(),
-            &committee_keys,
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {
@@ -757,7 +673,6 @@ impl Block {
             qc,
             agg: None,
             transactions,
-            committee,
         }
     }
 
@@ -771,15 +686,7 @@ impl Block {
         parent_hash: Hash,
         state_root_hash: Hash,
         timestamp: SystemTime,
-        committee: Committee,
     ) -> Block {
-        // FIXME: Just concatenating the keys is dumb.
-        let committee_keys: Vec<_> = committee
-            .0
-            .iter()
-            .flat_map(|v| v.public_key.as_bytes())
-            .collect();
-
         let digest = Hash::compute([
             &view.to_be_bytes(),
             &number.to_be_bytes(),
@@ -787,7 +694,6 @@ impl Block {
             agg.compute_hash().as_bytes(),
             parent_hash.as_bytes(),
             state_root_hash.as_bytes(),
-            &committee_keys,
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {
@@ -803,7 +709,6 @@ impl Block {
             qc,
             agg: Some(agg),
             transactions: vec![],
-            committee,
         }
     }
 

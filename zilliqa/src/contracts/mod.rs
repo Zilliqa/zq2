@@ -18,6 +18,8 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.function("getStake").unwrap().clone());
     pub static GET_REWARD_ADDRESS: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getRewardAddress").unwrap().clone());
+    pub static GET_PEER_ID: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getPeerId").unwrap().clone());
     pub static GET_STAKERS: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getStakers").unwrap().clone());
     pub static TOTAL_STAKE: Lazy<Function> =
@@ -111,7 +113,7 @@ mod tests {
     use ethers_solc::CompilerOutput;
 
     #[test]
-    #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
+    //#[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
     fn compile_all() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let input = CompilerInput {

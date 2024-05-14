@@ -12,6 +12,7 @@ use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Result};
 use eth_trie::Trie;
 use ethabi::Token;
+use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
     primitives::{
@@ -30,7 +31,7 @@ use crate::{
     crypto::{Hash, NodePublicKey},
     eth_helpers::extract_revert_msg,
     inspector::{self, ScillaInspector},
-    message::BlockHeader,
+    message::{Block, BlockHeader},
     precompiles::get_custom_precompiles,
     scilla,
     state::{contract_addr, Account, Contract, ScillaValue, State},
@@ -836,6 +837,13 @@ impl State {
         Ok(())
     }
 
+    pub fn get_stakers_at_block(&self, block: &Block) -> Result<Vec<NodePublicKey>> {
+        let block_root_hash = block.state_root_hash();
+
+        let state = self.at_root(block_root_hash.into());
+        state.get_stakers()
+    }
+
     pub fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
         let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
 
@@ -903,6 +911,29 @@ impl State {
         let addr = Address::new(addr.0);
 
         Ok((!addr.is_zero()).then_some(addr))
+    }
+
+    pub fn get_peer_id(&self, public_key: NodePublicKey) -> Result<Option<PeerId>> {
+        let data =
+            contracts::deposit::GET_PEER_ID.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
+
+        let return_value = self.call_contract(
+            Address::ZERO,
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // dummy values.
+            0,
+            BlockHeader::default(),
+        )?;
+
+        let data = contracts::deposit::GET_PEER_ID.decode_output(&return_value)?[0]
+            .clone()
+            .into_bytes()
+            .unwrap();
+
+        Ok(Some(PeerId::from_bytes(&data)?))
     }
 
     pub fn get_total_stake(&self) -> Result<u128> {

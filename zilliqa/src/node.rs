@@ -12,7 +12,7 @@ use tracing::*;
 use crate::{
     cfg::NodeConfig,
     consensus::Consensus,
-    crypto::{Hash, NodePublicKey, SecretKey},
+    crypto::{Hash, SecretKey},
     db::Db,
     exec::{TransactionApplyResult, GAS_PRICE},
     inspector::{self, ScillaInspector},
@@ -137,11 +137,9 @@ impl Node {
         let to = self.peer_id;
         let to_self = from == to;
         let message_name = message.name();
-        tracing::debug!(%from, %to, %message_name, "handling message");
+        debug!(%from, %to, %message_name, "handling message");
         match message {
             ExternalMessage::Proposal(m) => {
-                let m_view = m.header.view;
-
                 if let Some((to, message)) = self.consensus.proposal(m, false)? {
                     self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
                     if let Some(to) = to {
@@ -149,12 +147,6 @@ impl Node {
                     } else {
                         self.message_sender.broadcast_external_message(message)?;
                     }
-                } else {
-                    info!("We had nothing to respond to proposal, lets try to join committee for view {m_view:}");
-                    self.message_sender.send_external_message(
-                        from,
-                        ExternalMessage::JoinCommittee(self.consensus.public_key()),
-                    )?;
                 }
             }
             ExternalMessage::Vote(m) => {
@@ -209,9 +201,6 @@ impl Node {
                         self.message_sender.broadcast_external_message(message)?;
                     }
                 }
-            }
-            ExternalMessage::JoinCommittee(public_key) => {
-                self.add_peer(from, public_key)?;
             }
         }
 
@@ -269,18 +258,6 @@ impl Node {
             return Ok(true);
         }
         Ok(false)
-    }
-
-    pub fn add_peer(&mut self, peer: PeerId, public_key: NodePublicKey) -> Result<()> {
-        if let Some((dest, message)) = self.consensus.add_peer(peer, public_key)? {
-            self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
-            if let Some(leader) = dest {
-                self.message_sender.send_external_message(leader, message)?;
-            } else {
-                self.message_sender.broadcast_external_message(message)?;
-            }
-        }
-        Ok(())
     }
 
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
@@ -452,6 +429,7 @@ impl Node {
     }
 
     pub fn get_proposer_reward_address(&self, header: BlockHeader) -> Result<Option<Address>> {
+        // Return the zero address for the genesis block. There was no reward for it.
         if header.view == 0 {
             return Ok(None);
         }
@@ -461,7 +439,8 @@ impl Node {
             .ok_or_else(|| anyhow!("missing parent: {}", header.parent_hash))?;
         let proposer = self
             .consensus
-            .leader(&parent.committee, header.view)
+            .leader_at_block(&parent, header.view)
+            .unwrap()
             .public_key;
 
         self.consensus.state().get_reward_address(proposer)

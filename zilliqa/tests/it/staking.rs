@@ -7,6 +7,7 @@ use ethers::{
     signers::LocalWallet,
     types::{BlockId, BlockNumber, TransactionRequest},
 };
+use libp2p::PeerId;
 use primitive_types::H160;
 use tracing::{info, trace};
 use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
@@ -35,13 +36,14 @@ async fn deposit_stake(
     network: &mut Network,
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
     key: NodePublicKey,
+    peer_id: PeerId,
     stake: u128,
     reward_address: H160,
 ) {
     // Transfer the new validator enough ZIL to stake.
     let tx = TransactionRequest::pay(reward_address, stake);
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
-    network.run_until_receipt(wallet, hash, 50).await;
+    network.run_until_receipt(wallet, hash, 80).await;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
@@ -51,13 +53,14 @@ async fn deposit_stake(
             contracts::deposit::DEPOSIT
                 .encode_input(&[
                     Token::Bytes(key.as_bytes()),
+                    Token::Bytes(peer_id.to_bytes()),
                     Token::Bytes(vec![]),
                     Token::Address(reward_address),
                 ])
                 .unwrap(),
         );
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
-    network.run_until_receipt(wallet, hash, 50).await;
+    network.run_until_receipt(wallet, hash, 80).await;
 }
 
 async fn get_stakers(
@@ -84,7 +87,10 @@ async fn get_stakers(
 async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
     let wallet = network.random_wallet().await;
 
-    network.run_until_block(&wallet, 1.into(), 50).await;
+    let stakers = get_stakers(&wallet).await;
+    assert_eq!(stakers.len(), 4);
+
+    network.run_until_block(&wallet, 1.into(), 80).await;
 
     check_miner_got_reward(&wallet, 1).await;
 }
@@ -92,6 +98,7 @@ async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
 #[zilliqa_macros::test]
 async fn validators_can_join_and_become_proposer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
+
     let index = network.add_node(true);
     let new_validator_key = network.get_node_raw(index).secret_key;
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
@@ -104,6 +111,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         &mut network,
         &wallet,
         new_validator_key.node_public_key(),
+        new_validator_key.to_libp2p_keypair().public().to_peer_id(),
         32 * 10u128.pow(18),
         reward_address,
     )
@@ -139,6 +147,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     // and check that it produces a statistically significant proportion of the subsequent blocks.
 
     let wallet = network.genesis_wallet().await;
+
     let index = network.add_node(true);
     let new_validator_key = network.get_node_raw(index).secret_key;
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
@@ -147,6 +156,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
         &mut network,
         &wallet,
         new_validator_key.node_public_key(),
+        new_validator_key.to_libp2p_keypair().public().to_peer_id(),
         1024 * 10u128.pow(18),
         reward_address,
     )
@@ -166,7 +176,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
                     .unwrap()
                     == reward_address
             },
-            500,
+            1000,
         )
         .await
         .unwrap();
@@ -176,7 +186,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     network
         .run_until_async(
             || async { wallet.get_block_number().await.unwrap().as_u64() >= current_block + 20 },
-            500,
+            1000,
         )
         .await
         .unwrap();

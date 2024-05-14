@@ -97,9 +97,10 @@ impl State {
             .encode_input(contracts::deposit::BYTECODE.to_vec(), &[])?;
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
 
-        for (pub_key, stake, reward_address) in config.genesis_deposits {
+        for (pub_key, peer_id, stake, reward_address) in config.genesis_deposits {
             let data = contracts::deposit::SET_STAKE.encode_input(&[
                 Token::Bytes(pub_key.as_bytes()),
+                Token::Bytes(peer_id.to_bytes()),
                 Token::Address(ethabi::Address::from(reward_address.into_array())),
                 Token::Uint(ethabi::Uint::from_dec_str(&stake)?),
             ])?;
