@@ -399,7 +399,11 @@ fn infer_eth_signature(
     let s = U256::try_from_be_slice(&transaction.signature.0[32..]).unwrap();
 
     for y_is_odd in [false, true] {
-        let parity = Parity::Parity(y_is_odd).with_chain_id(chain_id as u64);
+        let mut parity = Parity::Parity(y_is_odd);
+        // Legacy transactions should have the chain ID included in their parity.
+        if version == 2 {
+            parity = parity.with_chain_id(chain_id as u64);
+        }
         let sig = Signature::from_rs_and_parity(r, s, parity)?;
         let payload = transaction
             .code
@@ -416,7 +420,7 @@ fn infer_eth_signature(
         let transaction = match version {
             2 => SignedTransaction::Legacy {
                 tx: TxLegacy {
-                    // TODO: Handle `None` chain IDs - How are they represented in ZQ1 persistence?
+                    // Legacy transactions without a chain ID are not supported in ZQ1.
                     chain_id: Some(chain_id.into()),
                     nonce: transaction.nonce - 1,
                     gas_price: transaction.gas_price,
