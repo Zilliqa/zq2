@@ -17,8 +17,8 @@ use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
     primitives::{
-        AccountInfo, BlockEnv, Bytecode, BytecodeState, ExecutionResult, HandlerCfg, Output,
-        ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
+        AccountInfo, BlockEnv, Bytecode, ExecutionResult, HandlerCfg, Output, ResultAndState,
+        SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
     },
     Database, DatabaseRef, Evm, Inspector,
 };
@@ -241,10 +241,9 @@ impl DatabaseRef for &State {
             balance: U256::from(account.balance),
             nonce: account.nonce,
             code_hash: KECCAK_EMPTY,
-            code: Some(Bytecode {
-                bytecode: account.contract.evm_code().unwrap_or_default().into(),
-                state: BytecodeState::Raw,
-            }),
+            code: Some(Bytecode::new_raw(
+                account.contract.evm_code().unwrap_or_default().into(),
+            )),
         };
 
         Ok(Some(account_info))
@@ -384,6 +383,8 @@ impl State {
                 gas_priority_fee: None,
                 blob_hashes: vec![],
                 max_fee_per_blob_gas: None,
+                eof_initcodes: vec![],
+                eof_initcodes_hashed: HashMap::new(),
             })
             .append_handler_register(|handler| {
                 let precompiles = handler.pre_execution.load_precompiles();
