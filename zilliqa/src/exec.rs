@@ -24,7 +24,7 @@ use revm::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tracing::{info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     contracts,
@@ -984,32 +984,49 @@ impl State {
 
         let upper_bound = right;
 
-        while left <= right {
-            let mid = left + (right - left) / 2;
+        // Check if estimation succeeds with the highest possible gas
+        self.estimate_gas_inner(
+            from_addr,
+            to_addr,
+            data.clone(),
+            chain_id,
+            current_block,
+            EvmGas(upper_bound),
+            gas_price,
+            value,
+        )?;
 
-            if self
-                .estimate_gas_inner(
-                    from_addr,
-                    to_addr,
-                    data.clone(),
-                    chain_id,
-                    current_block,
-                    EvmGas(mid),
-                    gas_price,
-                    value,
-                )?
-                .is_some()
-            {
-                // Try with lower gas
-                right = mid - 1;
-            } else {
-                // Try with higher gas
-                left = mid + 1;
+        // We don't do deeper search if the range is smaller than the following param
+        const MINIMUM_ABSOLUTE_RANGE_DIFF: u64 = 100;
+
+        while left + MINIMUM_ABSOLUTE_RANGE_DIFF < right {
+            let mid = (left + right) / 2;
+
+            let ResultAndState { result, .. } = self.apply_transaction_evm(
+                from_addr,
+                to_addr,
+                gas_price,
+                EvmGas(mid),
+                value,
+                data.clone(),
+                None,
+                chain_id,
+                current_block,
+                inspector::noop(),
+            )?;
+
+            match result {
+                ExecutionResult::Success { .. } => right = mid,
+                ExecutionResult::Revert { .. } => left = mid + 1,
+                ExecutionResult::Halt { reason, .. } => match reason {
+                    HaltReason::OutOfGas(_) | HaltReason::InvalidFEOpcode => left = mid + 1,
+                    _ => return Err(anyhow!("halted due to: {reason:?}")),
+                },
             }
         }
 
         if right == upper_bound {
-            let Some(result) = self.estimate_gas_inner(
+            self.estimate_gas_inner(
                 from_addr,
                 to_addr,
                 data.clone(),
@@ -1018,13 +1035,11 @@ impl State {
                 EvmGas(right),
                 gas_price,
                 value,
-            )?
-            else {
-                return Ok(0);
-            };
-            return Ok(result);
-        }
+            )?;
 
+            return Ok(right);
+        }
+        debug!("Estimated gas: {}", right);
         Ok(right)
     }
     #[allow(clippy::too_many_arguments)]
@@ -1038,7 +1053,7 @@ impl State {
         gas: EvmGas,
         gas_price: u128,
         value: u128,
-    ) -> Result<Option<u64>> {
+    ) -> Result<()> {
         let ResultAndState { result, .. } = self.apply_transaction_evm(
             from_addr,
             to_addr,
@@ -1053,7 +1068,7 @@ impl State {
         )?;
 
         match result {
-            ExecutionResult::Success { gas_used, .. } => Ok(Some(gas_used)),
+            ExecutionResult::Success { .. } => Ok(()),
             ExecutionResult::Revert {
                 gas_used: _,
                 output,
@@ -1070,10 +1085,7 @@ impl State {
 
                 Err(response.into())
             }
-            ExecutionResult::Halt { reason, .. } => match reason {
-                HaltReason::OutOfGas(_) => Ok(None),
-                _ => Err(anyhow!("halted due to: {reason:?}")),
-            },
+            ExecutionResult::Halt { reason, .. } => Err(anyhow!("halted due to: {reason:?}")),
         }
     }
 
