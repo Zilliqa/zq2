@@ -50,7 +50,6 @@ fn remove_key(
             // Insert all but
             let mut new_map = serde_yaml::Mapping::new();
             for (k, v) in map {
-                println!("k = {k:?}");
                 if let serde_yaml::Value::String(k_s) = k {
                     if !(idx == components.len() - 1 && k_s == component) {
                         let to_insert = remove_key(v, components, idx + 1);

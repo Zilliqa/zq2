@@ -7,7 +7,6 @@ use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use ethabi::Token;
 use jsonrpsee::{types::Params, RpcModule};
-use serde_json::{json, Value};
 
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},
@@ -16,10 +15,8 @@ use super::{
 use crate::{
     api::to_hex::ToHex,
     crypto::Hash,
-    inspector::{self, CreatorInspector, OtterscanOperationInspector, OtterscanTraceInspector},
-    message::BlockNumber,
+    inspector::{self, OtterscanOperationInspector, OtterscanTraceInspector},
     node::Node,
-    state::Contract,
     time::SystemTime,
 };
 
@@ -31,127 +28,34 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 "ots_getApiLevel",
                 crate::api::ots::ots_getapilevel::get_otterscan_api_level
             ),
-            ("ots_getBlockDetails", get_block_details),
-            ("ots_getBlockDetailsByHash", get_block_details_by_hash),
-            ("ots_getBlockTransactions", get_block_transactions),
-            ("ots_getContractCreator", get_contract_creator),
+            (
+                "ots_getBlockDetails",
+                crate::api::ots::ots_getblockdetails::get_block_details
+            ),
+            (
+                "ots_getBlockDetailsByHash",
+                crate::api::ots::ots_getblockdetailsbyhash::get_block_details_by_hash
+            ),
+            (
+                "ots_getBlockTransactions",
+                crate::api::ots::ots_getblocktransactions::get_block_transactions
+            ),
+            (
+                "ots_getContractCreator",
+                crate::api::ots::ots_getcontractcreator::get_contract_creator
+            ),
             ("ots_getInternalOperations", get_internal_operations),
             (
                 "ots_getTransactionBySenderAndNonce",
                 get_transaction_by_sender_and_nonce
             ),
             ("ots_getTransactionError", get_transaction_error),
-            ("ots_hasCode", has_code),
+            ("ots_hasCode", crate::api::ots::ots_hascode::has_code),
             ("ots_searchTransactionsAfter", search_transactions_after),
             ("ots_searchTransactionsBefore", search_transactions_before),
             ("ots_traceTransaction", trace_transaction),
         ],
     )
-}
-
-fn get_block_details(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<ots::BlockDetails>> {
-    let block: u64 = params.one()?;
-
-    let Some(ref block) = node.lock().unwrap().get_block_by_number(block)? else {
-        return Ok(None);
-    };
-    let miner = node
-        .lock()
-        .unwrap()
-        .get_proposer_reward_address(block.header)?;
-
-    Ok(Some(ots::BlockDetails::from_block(
-        block,
-        miner.unwrap_or_default(),
-    )))
-}
-
-fn get_block_details_by_hash(
-    params: Params,
-    node: &Arc<Mutex<Node>>,
-) -> Result<Option<ots::BlockDetails>> {
-    let block_hash: B256 = params.one()?;
-
-    let Some(ref block) = node.lock().unwrap().get_block_by_hash(Hash(block_hash.0))? else {
-        return Ok(None);
-    };
-    let miner = node
-        .lock()
-        .unwrap()
-        .get_proposer_reward_address(block.header)?;
-
-    Ok(Some(ots::BlockDetails::from_block(
-        block,
-        miner.unwrap_or_default(),
-    )))
-}
-
-fn get_block_transactions(
-    params: Params,
-    node: &Arc<Mutex<Node>>,
-) -> Result<Option<ots::BlockTransactions>> {
-    let mut params = params.sequence();
-    let block_num: u64 = params.next()?;
-    let page_number: usize = params.next()?;
-    let page_size: usize = params.next()?;
-
-    let node = node.lock().unwrap();
-
-    let Some(block) = node.get_block_by_number(block_num)? else {
-        return Ok(None);
-    };
-    let miner = node.get_proposer_reward_address(block.header)?;
-
-    let start = usize::min(page_number * page_size, block.transactions.len());
-    let end = usize::min((page_number + 1) * page_size, block.transactions.len());
-
-    let txn_results = block.transactions[start..end].iter().map(|hash| {
-        // There are some redundant calls between these two functions - We could optimise by combining them.
-        let txn = get_transaction_inner(*hash, &node)?
-            .ok_or_else(|| anyhow!("transaction not found: {hash}"))?;
-        let receipt = get_transaction_receipt_inner(*hash, &node)?
-            .ok_or_else(|| anyhow!("receipt not found: {hash}"))?;
-
-        Ok::<_, anyhow::Error>((txn, receipt))
-    });
-    let (transactions, receipts): (Vec<_>, Vec<_>) =
-        itertools::process_results(txn_results, |iter| iter.unzip())?;
-
-    let full_block = ots::BlockWithTransactions {
-        transactions,
-        block: ots::Block::from_block(&block, miner.unwrap_or_default()),
-    };
-
-    Ok(Some(ots::BlockTransactions {
-        full_block,
-        receipts,
-    }))
-}
-
-fn get_contract_creator(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<Value>> {
-    let address: Address = params.one()?;
-
-    let touched = node.lock().unwrap().get_touched_transactions(address)?;
-
-    // Perform a linear search over each transaction which touched this address. Replay each one to try and find the
-    // transaction which created it.
-    for txn_hash in touched {
-        // Replay the creation transaction to work out the creator. This is important for contracts which are created
-        // by other contracts, for which the creator is not the same as `txn.from_addr`.
-        let mut inspector = CreatorInspector::new(address);
-        node.lock()
-            .unwrap()
-            .replay_transaction(txn_hash, &mut inspector)?;
-
-        if let Some(creator) = inspector.creator() {
-            return Ok(Some(json!({
-                "hash": B256::from(txn_hash).to_hex(),
-                "creator": creator.to_hex(),
-            })));
-        }
-    }
-
-    Ok(None)
 }
 
 fn get_internal_operations(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Operation>> {
@@ -218,24 +122,6 @@ fn get_transaction_error(params: Params, node: &Arc<Mutex<Node>>) -> Result<Cow<
             _ => Ok("0x".into()),
         }
     }
-}
-
-fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
-    let mut params = params.sequence();
-    let address: Address = params.next()?;
-    let block_number: BlockNumber = params.next()?;
-
-    let contract = node
-        .lock()
-        .unwrap()
-        .get_account(address, block_number)?
-        .contract;
-    let empty = match contract {
-        Contract::Evm { code, .. } => code.is_empty(),
-        Contract::Scilla { code, .. } => code.is_empty(),
-    };
-
-    Ok(!empty)
 }
 
 fn search_transactions_inner(
