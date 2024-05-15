@@ -16,8 +16,8 @@ use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
     primitives::{
-        AccountInfo, BlockEnv, Bytecode, BytecodeState, ExecutionResult, HandlerCfg, Output,
-        ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
+        AccountInfo, BlockEnv, Bytecode, BytecodeState, ExecutionResult, HaltReason, HandlerCfg,
+        Output, ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
     },
     Database, DatabaseRef, Evm, Inspector,
 };
@@ -261,7 +261,7 @@ impl DatabaseRef for &State {
 
 pub const BLOCK_GAS_LIMIT: EvmGas = EvmGas(84_000_000);
 // As per EIP-150
-pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_000_000);
+pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_500_000);
 
 /// The price per unit of [EvmGas].
 pub const GAS_PRICE: u128 = 4761904800000;
@@ -975,46 +975,106 @@ impl State {
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(GAS_PRICE);
 
-        let upper_bound = gas.unwrap_or(MAX_EVM_GAS_LIMIT);
-        let lower_bound = lower_bound_gas_estimate(to_addr, &data);
+        let mut right = gas.unwrap_or(MAX_EVM_GAS_LIMIT).0;
+        let mut left = lower_bound_gas_estimate(to_addr, &data);
 
-        while lower_bound != upper_bound.0 {
-            let ResultAndState { result, .. } = self.apply_transaction_evm(
-                from_addr,
-                to_addr,
-                gas_price,
-                upper_bound,
-                value,
-                data.clone(),
-                None,
-                chain_id,
-                current_block,
-                inspector::noop(),
-            )?;
-
-            return match result {
-                ExecutionResult::Success { gas_used, .. } => Ok(gas_used),
-                ExecutionResult::Revert {
-                    gas_used: _,
-                    output,
-                } => {
-                    let decoded_revert_msg = extract_revert_msg(&output);
-                    // See: https://github.com/ethereum/go-ethereum/blob/9b9a1b677d894db951dc4714ea1a46a2e7b74ffc/internal/ethapi/api.go#L1026
-                    const REVERT_ERROR_CODE: i32 = 3;
-
-                    let response = jsonrpsee::types::ErrorObjectOwned::owned(
-                        REVERT_ERROR_CODE,
-                        decoded_revert_msg,
-                        None::<()>,
-                    );
-
-                    Err(response.into())
-                }
-                ExecutionResult::Halt { reason, .. } => Err(anyhow!("halted due to: {reason:?}")),
-            };
+        if gas.is_some() {
+            right = gas.unwrap().0;
         }
 
-        Ok(lower_bound)
+        let upper_bound = right;
+
+        while left <= right {
+            let mid = left + (right - left) / 2;
+
+            if self
+                .estimate_gas_inner(
+                    from_addr,
+                    to_addr,
+                    data.clone(),
+                    chain_id,
+                    current_block,
+                    EvmGas(mid),
+                    gas_price,
+                    value,
+                )?
+                .is_some()
+            {
+                // Try with lower gas
+                right = mid - 1;
+            } else {
+                // Try with higher gas
+                left = mid + 1;
+            }
+        }
+
+        if right == upper_bound {
+            let Some(result) = self.estimate_gas_inner(
+                from_addr,
+                to_addr,
+                data.clone(),
+                chain_id,
+                current_block,
+                EvmGas(right),
+                gas_price,
+                value,
+            )?
+            else {
+                return Ok(0);
+            };
+            return Ok(result);
+        }
+
+        Ok(right)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn estimate_gas_inner(
+        &self,
+        from_addr: Address,
+        to_addr: Option<Address>,
+        data: Vec<u8>,
+        chain_id: u64,
+        current_block: BlockHeader,
+        gas: EvmGas,
+        gas_price: u128,
+        value: u128,
+    ) -> Result<Option<u64>> {
+        let ResultAndState { result, .. } = self.apply_transaction_evm(
+            from_addr,
+            to_addr,
+            gas_price,
+            gas,
+            value,
+            data.clone(),
+            None,
+            chain_id,
+            current_block,
+            inspector::noop(),
+        )?;
+
+        match result {
+            ExecutionResult::Success { gas_used, .. } => Ok(Some(gas_used)),
+            ExecutionResult::Revert {
+                gas_used: _,
+                output,
+            } => {
+                let decoded_revert_msg = extract_revert_msg(&output);
+                // See: https://github.com/ethereum/go-ethereum/blob/9b9a1b677d894db951dc4714ea1a46a2e7b74ffc/internal/ethapi/api.go#L1026
+                const REVERT_ERROR_CODE: i32 = 3;
+
+                let response = jsonrpsee::types::ErrorObjectOwned::owned(
+                    REVERT_ERROR_CODE,
+                    decoded_revert_msg,
+                    None::<()>,
+                );
+
+                Err(response.into())
+            }
+            ExecutionResult::Halt { reason, .. } => match reason {
+                HaltReason::OutOfGas(_) => Ok(None),
+                _ => Err(anyhow!("halted due to: {reason:?}")),
+            },
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
