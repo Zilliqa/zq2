@@ -64,6 +64,10 @@ struct DocStruct {
     /// Key prefix in the index file.
     #[clap(long)]
     key_prefix: Option<String>,
+
+    /// Should we fail with an error if there is a mismatch between docs and implementation
+    #[clap(long)]
+    fail_on_mismatch: bool,
 }
 
 // See https://jwodder.github.io/kbits/posts/clap-bool-negate/
@@ -229,6 +233,7 @@ async fn main() -> Result<()> {
                 &arg.id_prefix,
                 &arg.index_file,
                 &arg.key_prefix,
+                arg.fail_on_mismatch,
             )
             .await?;
             Ok(())
