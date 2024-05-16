@@ -2,7 +2,6 @@ mod erigon;
 pub mod eth;
 mod net;
 pub mod ots;
-pub mod ots_calls;
 pub mod subscription_id_provider;
 mod to_hex;
 mod trace;
@@ -17,7 +16,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     module.merge(eth::rpc_module(node.clone())).unwrap();
     module.merge(net::rpc_module(node.clone())).unwrap();
     module.merge(trace::rpc_module(node.clone())).unwrap();
-    module.merge(ots_calls::rpc_module(node.clone())).unwrap();
+    module.merge(ots::rpc_module(node.clone())).unwrap();
     module.merge(web3::rpc_module(node.clone())).unwrap();
     module.merge(zil::rpc_module(node)).unwrap();
 

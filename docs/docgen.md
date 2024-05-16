@@ -6,7 +6,7 @@ This:
 
  * Deletes all subkeys of a given prefix from `mkdocs.yaml`
  * Recurses through the source tree.
- * Locates files called `<prefix>.tera.md`
+ * Locates files called `<prefix>.doc.md`
  * For each such file, splits it (using a regex!) into heading/content pairs.
  * Uses tera to substitute some keys into each section of content, as a separate template (see below)
  * Substitutes the heading/content pairs into a template in `z2/resources/api.tera.md`

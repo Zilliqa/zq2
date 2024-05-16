@@ -152,7 +152,7 @@ pub async fn generate_docs(
     in_key_prefix: &Option<String>,
 ) -> Result<()> {
     // Grotty, but easier than lots of silly Path conversions.
-    let scan_dir = format!("{}/zq2/zilliqa", base_dir);
+    let scan_dir = format!("{}/zq2/docs", base_dir);
     let key_prefix = if let Some(v) = in_key_prefix {
         v.to_string()
     } else {

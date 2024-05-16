@@ -50,7 +50,6 @@ fn remove_key(
             // Insert all but
             let mut new_map = serde_yaml::Mapping::new();
             for (k, v) in map {
-                println!("k = {k:?}");
                 if let serde_yaml::Value::String(k_s) = k {
                     if !(idx == components.len() - 1 && k_s == component) {
                         let to_insert = remove_key(v, components, idx + 1);
@@ -202,7 +201,9 @@ impl Docs {
         println!("After remove {0}", serde_yaml::to_string(&contents_map)?);
 
         while let Some(ref path_entry) = stack.pop() {
-            let md = fs::metadata(&path_entry.abs).await?;
+            let md = fs::metadata(&path_entry.abs)
+                .await
+                .context(format!("Cannot find {0:?}", path_entry.abs))?;
             if md.is_dir() {
                 let mut entries = fs::read_dir(&path_entry.abs).await?;
                 loop {
@@ -217,25 +218,31 @@ impl Docs {
                     });
                 }
             } else if md.is_file() {
-                // It's a file. does it end `.md`? If so, it's a candidate for documentation.
-                if let Some(v) = path_entry.abs.extension() {
-                    if v.to_str().ok_or(anyhow!("Can't convert extension"))? == "md" {
-                        println!("File: {:?} rel {:?}", &path_entry.abs, &path_entry.rel);
-                        let (output_filename, prefixed_id) =
-                            self.generate_file(&path_entry.abs, &path_entry.rel).await?;
-                        let the_iter = key_prefix_components.iter().chain(prefixed_id.iter());
-                        //let key = the_iter.next_back().ok_or(anyhow!(
-                        //    "API file {0:?} has empty description path!",
-                        //   &path_entry.abs
-                        //))?;
-
-                        insert_key(
-                            &mut contents_map,
-                            &the_iter.map(|m| m.to_string()).collect(),
-                            0,
-                            &output_filename,
-                        );
-                    }
+                // It's a file. does it end `.doc.md`? If so, it's a candidate for documentation.
+                let name = path_entry
+                    .abs
+                    .file_name()
+                    .ok_or(anyhow!("{0:?} has no file name", path_entry.abs))?
+                    .to_str()
+                    .ok_or(anyhow!(
+                        "{0:?} is not representable as a string",
+                        path_entry.abs
+                    ))?;
+                let components = name.split('.').collect::<Vec<&str>>();
+                if components.len() >= 2
+                    && components[components.len() - 1] == "md"
+                    && components[components.len() - 2] == "doc"
+                {
+                    println!("File: {:?} rel {:?}", &path_entry.abs, &path_entry.rel);
+                    let (output_filename, prefixed_id) =
+                        self.generate_file(&path_entry.abs, &path_entry.rel).await?;
+                    let the_iter = key_prefix_components.iter().chain(prefixed_id.iter());
+                    insert_key(
+                        &mut contents_map,
+                        &the_iter.map(|m| m.to_string()).collect(),
+                        0,
+                        &output_filename,
+                    );
                 }
             }
         }
@@ -340,10 +347,8 @@ impl Docs {
                 src_file
             ));
         };
-        // By convention, for ids, we drop the "src" from the start of rel.
         let mut nearly_id: Vec<String> = PathBuf::from(rel)
             .iter()
-            .skip(1)
             .map(|x| x.to_str().unwrap_or("").to_string())
             .collect();
         nearly_id.pop();
