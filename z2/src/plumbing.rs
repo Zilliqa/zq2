@@ -7,7 +7,6 @@ use zilliqa::crypto::SecretKey;
 
 use crate::{collector, deployer, otel, otterscan, perf, spout, zq1};
 /// Code for all the z2 commands, so you can invoke it from your own programs.
-use crate::{collector, deployer, otel, otterscan, perf, spout};
 use crate::{converter, docgen, setup};
 
 #[derive(PartialEq, Eq, Hash, Clone)]
