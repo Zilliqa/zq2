@@ -27,10 +27,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
         node,
         [
-            (
-                "ots_getApiLevel",
-                crate::api::ots::ots_getapilevel::get_otterscan_api_level
-            ),
+            ("ots_getApiLevel", get_otterscan_api_level),
             ("ots_getBlockDetails", get_block_details),
             ("ots_getBlockDetailsByHash", get_block_details_by_hash),
             ("ots_getBlockTransactions", get_block_transactions),
@@ -47,6 +44,11 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("ots_traceTransaction", trace_transaction),
         ],
     )
+}
+
+pub fn get_otterscan_api_level(_: Params, _: &Arc<Mutex<Node>>) -> Result<u64> {
+    // https://github.com/otterscan/otterscan/blob/0a819f3557fe19c0f47327858261881ec5f56d6c/src/params.ts#L1
+    Ok(8)
 }
 
 fn get_block_details(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<ots::BlockDetails>> {
