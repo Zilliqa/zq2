@@ -7,7 +7,8 @@ use zilliqa::crypto::SecretKey;
 
 use crate::{collector, deployer, otel, otterscan, perf, spout, zq1};
 /// Code for all the z2 commands, so you can invoke it from your own programs.
-use crate::{converter, setup};
+use crate::{collector, deployer, otel, otterscan, perf, spout};
+use crate::{converter, docgen, setup};
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub enum Components {
@@ -183,5 +184,24 @@ pub async fn run_print_txs_by_hash(
 ) -> Result<()> {
     println!("🐼 Printing txn with hash {tx_hash} .. ");
     converter::print_tx_by_hash(zq1_pers_dir, block_num, tx_hash).await?;
+    Ok(())
+}
+
+pub async fn generate_docs(
+    base_dir: &str,
+    target_dir: &str,
+    id_prefix: &Option<String>,
+    index_file: &Option<String>,
+    in_key_prefix: &Option<String>,
+) -> Result<()> {
+    // Grotty, but easier than lots of silly Path conversions.
+    let scan_dir = format!("{}/zq2/zilliqa", base_dir);
+    let key_prefix = if let Some(v) = in_key_prefix {
+        v.to_string()
+    } else {
+        "nav".to_string()
+    };
+    let docs = docgen::Docs::new(&scan_dir, target_dir, id_prefix, index_file, &key_prefix)?;
+    docs.generate_all().await?;
     Ok(())
 }

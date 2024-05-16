@@ -1,6 +1,7 @@
 pub mod collector;
 pub mod converter;
 pub mod deployer;
+pub mod docgen;
 pub mod mitmweb;
 pub mod otel;
 pub mod otterscan;

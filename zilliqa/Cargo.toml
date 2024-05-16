@@ -26,9 +26,9 @@ vergen = { version = "8.3.1", features = ["git", "git2"] }
 [dependencies]
 alloy-primitives = { version = "0.7.2", features = ["rlp", "serde"] }
 alloy-rlp = { version = "0.3.4", features = ["derive"] }
-alloy-consensus = { git = "https://github.com/alloy-rs/alloy.git", rev = "77c1240", features = ["serde", "k256"] }
-alloy-eips = { git = "https://github.com/alloy-rs/alloy.git", rev = "77c1240", features = ["serde"] }
-alloy-rpc-types-trace = { git = "https://github.com/alloy-rs/alloy.git", rev = "77c1240" }
+alloy-consensus = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf", features = ["serde", "k256"] }
+alloy-eips = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf", features = ["serde"] }
+alloy-rpc-types-trace = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf" }
 anyhow = { version = "1.0.83", features = ["backtrace"] }
 async-trait = "0.1.80"
 base64 = "0.22.1"
@@ -60,8 +60,8 @@ prost = "0.12.4"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rand_core = "0.6.4"
-revm = { version = "8.0.0", features = ["optional_balance_check"] }
-revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors.git", version = "0.1.0" }
+revm = { version = "9.0.0", features = ["optional_balance_check"] }
+revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors.git", rev = "5c47bc8" }
 serde = { version = "1.0.201", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"
 serde_json = { version = "1.0.117", features = ["raw_value"] }

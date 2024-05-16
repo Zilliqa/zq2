@@ -25,6 +25,8 @@ enum Commands {
     #[clap(subcommand)]
     /// Convert Zilliqa 1 to Zilliqa 2 persistnce
     Converter(ConverterCommands),
+    /// Generate documentation
+    DocGen(DocStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -77,6 +79,24 @@ struct PerfStruct {
     config_dir: String,
 
     perf_file: String,
+}
+
+#[derive(Args, Debug)]
+struct DocStruct {
+    /// Where should we write the resulting documentation?
+    target_dir: String,
+
+    /// id prefix, if there is one.
+    #[clap(long)]
+    id_prefix: Option<String>,
+
+    /// Modify this index file
+    #[clap(long)]
+    index_file: Option<String>,
+
+    /// Key prefix in the index file.
+    #[clap(long)]
+    key_prefix: Option<String>,
 }
 
 // See https://jwodder.github.io/kbits/posts/clap-bool-negate/
@@ -256,5 +276,16 @@ async fn main() -> Result<()> {
                 unimplemented!();
             }
         },
+        Commands::DocGen(ref arg) => {
+            plumbing::generate_docs(
+                &base_dir,
+                &arg.target_dir,
+                &arg.id_prefix,
+                &arg.index_file,
+                &arg.key_prefix,
+            )
+            .await?;
+            Ok(())
+        }
     }
 }

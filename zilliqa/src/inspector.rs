@@ -57,8 +57,9 @@ pub struct TouchedAddressInspector {
 
 impl<DB: Database> Inspector<DB> for TouchedAddressInspector {
     fn call(&mut self, _: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        self.touched.insert(inputs.context.caller);
-        self.touched.insert(inputs.contract);
+        self.touched.insert(inputs.caller);
+        self.touched.insert(inputs.bytecode_address);
+        self.touched.insert(inputs.target_address);
         None
     }
 
@@ -158,20 +159,18 @@ impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
         context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        let (ty, value) = match inputs.context.scheme {
-            CallScheme::Call => (TraceEntryType::Call, Some(inputs.transfer.value.to())),
-            CallScheme::CallCode => (TraceEntryType::CallCode, None),
-            CallScheme::DelegateCall => (TraceEntryType::DelegateCall, None),
-            CallScheme::StaticCall => {
-                (TraceEntryType::StaticCall, Some(inputs.transfer.value.to()))
-            }
+        let ty = match inputs.scheme {
+            CallScheme::Call => TraceEntryType::Call,
+            CallScheme::CallCode => TraceEntryType::CallCode,
+            CallScheme::DelegateCall => TraceEntryType::DelegateCall,
+            CallScheme::StaticCall => TraceEntryType::StaticCall,
         };
         self.entries.push(TraceEntry {
             ty,
             depth: context.journaled_state.depth(),
-            from: inputs.context.caller,
-            to: inputs.contract,
-            value,
+            from: inputs.caller,
+            to: inputs.target_address,
+            value: inputs.transfer_value().map(|v| v.to()),
             input: inputs.input.to_vec(),
         });
 
@@ -267,12 +266,12 @@ impl<DB: Database> Inspector<DB> for OtterscanOperationInspector {
         context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        if context.journaled_state.depth() != 0 && !inputs.transfer.value.is_zero() {
+        if context.journaled_state.depth() != 0 && inputs.transfers_value() {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,
-                from: inputs.context.caller,
-                to: inputs.contract,
-                value: inputs.transfer.value.to(),
+                from: inputs.caller,
+                to: inputs.target_address,
+                value: inputs.call_value().to(),
             });
         }
 
