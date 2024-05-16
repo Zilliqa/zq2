@@ -18,10 +18,10 @@ env:
 
 jobs:
   check:
-    runs-on: [self-hosted, z2]
+    runs-on: [self-hosted, gcp]
     steps:
     - name: Install Rust
-      run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "/etc/skel/.cargo/bin" >> $GITHUB_PATH
+      run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
     - name: Install nightly
       run: rustup toolchain install nightly
     - name: Install dependencies
