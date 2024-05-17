@@ -28,6 +28,7 @@ alloy-primitives = { version = "0.7.2", features = ["rlp", "serde"] }
 alloy-rlp = { version = "0.3.4", features = ["derive"] }
 alloy-consensus = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf", features = ["serde", "k256"] }
 alloy-eips = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf", features = ["serde"] }
+alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf" }
 alloy-rpc-types-trace = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf" }
 anyhow = { version = "1.0.83", features = ["backtrace"] }
 async-trait = "0.1.80"

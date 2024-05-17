@@ -491,6 +491,11 @@ impl Node {
         self.consensus.new_blocks.subscribe()
     }
 
+    /// Returns a stream of pairs of (receipt, index of transaction in block)
+    pub fn subscribe_to_receipts(&self) -> broadcast::Receiver<(TransactionReceipt, usize)> {
+        self.consensus.receipts.subscribe()
+    }
+
     pub fn get_chain_id(&self) -> u64 {
         self.config.eth_chain_id // using eth as a universal ID for now
     }
