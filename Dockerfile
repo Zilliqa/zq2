@@ -1,5 +1,6 @@
 FROM rust:1.78.0-slim-bullseye as builder
 
+ARG is_release=false
 RUN apt update -y && \
     apt upgrade -y && \
     apt install -y protobuf-compiler
@@ -14,8 +15,13 @@ COPY . .
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/target \
-    cargo build --bin zilliqa && \
-    mv ./target/debug/zilliqa ./build/
+    if [ "${is_release}" != "true " ] ; then \
+        cargo build --bin zilliqa && \
+        mv ./target/debug/zilliqa ./build/ ;\
+    else \
+        cargo build --release --bin zilliqa && \
+        mv ./target/release/zilliqa ./build/ ;\
+    fi
 
 
 FROM ubuntu:22.04
