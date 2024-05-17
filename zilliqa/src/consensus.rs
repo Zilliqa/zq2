@@ -149,6 +149,7 @@ pub struct Consensus {
     /// Flag indicating that block creation should be postponed due to empty mempool
     create_next_block_on_timeout: bool,
     pub new_blocks: broadcast::Sender<BlockHeader>,
+    pub receipts: broadcast::Sender<(TransactionReceipt, usize)>,
 }
 
 // View in consensus should be have access monitored so last_timeout is always correct
@@ -304,6 +305,7 @@ impl Consensus {
             )),
             create_next_block_on_timeout: false,
             new_blocks: broadcast::Sender::new(4),
+            receipts: broadcast::Sender::new(128),
         };
 
         // If we're at genesis, add the genesis block.
@@ -2029,7 +2031,7 @@ impl Consensus {
         transactions: Vec<SignedTransaction>,
         committee: &[NodePublicKey],
     ) -> Result<()> {
-        info!("Executing block: {:?}", block.header.hash);
+        debug!("Executing block: {:?}", block.header.hash);
         let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
         let parent = self
             .get_block(&block.parent_hash())?
@@ -2057,7 +2059,7 @@ impl Consensus {
             }
         }
 
-        for txn in transactions {
+        for (txn_index, txn) in transactions.into_iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
@@ -2086,6 +2088,7 @@ impl Consensus {
                 exceptions,
             };
             info!(?receipt, "applied transaction {:?}", receipt);
+            let _ = self.receipts.send((receipt.clone(), txn_index));
             block_receipts.push(receipt);
         }
 
