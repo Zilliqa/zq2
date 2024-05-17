@@ -15,7 +15,7 @@ COPY . .
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/target \
-    if [ "${is_release}" != "true " ] ; then \
+    if [ "${is_release}" != "true" ] ; then \
         cargo build --bin zilliqa && \
         mv ./target/debug/zilliqa ./build/ ;\
     else \
