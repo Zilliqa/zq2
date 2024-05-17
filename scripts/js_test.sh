@@ -2,7 +2,7 @@ echo "The CI is running this script."
 
 sudo add-apt-repository ppa:ethereum/ethereum > /dev/null 2>&1
 sudo apt-get update > /dev/null 2>&1
-sudo apt-get install solc libsecp256k1-dev > /dev/null 2>&1
+sudo apt-get install solc libsecp256k1-dev protobuf-compiler > /dev/null 2>&1
 
 # Start network early.
 pwd
