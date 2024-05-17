@@ -40,8 +40,8 @@ npx hardhat run scripts/FundAccountsFromEth.ts
 echo "Running tests"
 
 # Run tests
-# TODO: Remove `./test/scilla/HelloWorld.ts` to run more tests.
-npx hardhat test ./test/scilla/HelloWorld.ts
+# TODO: Remove these files to run all tests.
+npx hardhat test ./test/scilla/HelloWorld.ts ./test/GasEstimationCreate.ts
 
 retVal=$?
 pkill -INT zilliqa

@@ -30,7 +30,7 @@ use tracing::{debug, info, trace, warn};
 use crate::{
     contracts,
     crypto::{Hash, NodePublicKey},
-    eth_helpers::{extract_revert_msg, lower_bound_gas_estimate},
+    eth_helpers::extract_revert_msg,
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
     precompiles::get_custom_precompiles,
@@ -677,17 +677,17 @@ impl State {
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(GAS_PRICE);
 
-        let mut right = gas.unwrap_or(MAX_EVM_GAS_LIMIT).0;
-        let mut left = lower_bound_gas_estimate(to_addr, &data);
+        let mut max = gas.unwrap_or(MAX_EVM_GAS_LIMIT).0;
 
-        if gas.is_some() {
-            right = gas.unwrap().0;
+        if let Some(gas) = gas {
+            max = gas.0;
         }
 
-        let upper_bound = right;
+        let upper_bound = max;
 
         // Check if estimation succeeds with the highest possible gas
-        self.estimate_gas_inner(
+        // We use the result as lower bound
+        let mut min = self.estimate_gas_inner(
             from_addr,
             to_addr,
             data.clone(),
@@ -698,11 +698,12 @@ impl State {
             value,
         )?;
 
-        // We don't do deeper search if the range is smaller than the following param
-        const MINIMUM_ABSOLUTE_RANGE_DIFF: u64 = 1000;
+        // Execute the while loop iff min/max < MINIMUM_PERCENT_RATIO_FOR_MAX_AND_MIN [%]
+        const MINIMUM_PERCENT_RATIO_FOR_MAX_AND_MIN: u64 = 15;
 
-        while left + MINIMUM_ABSOLUTE_RANGE_DIFF < right {
-            let mid = (left + right) / 2;
+        // result should be somewhere in (min, max]
+        while min < ((max * MINIMUM_PERCENT_RATIO_FOR_MAX_AND_MIN) / 100) {
+            let mid = (min + max) / 2;
 
             let ResultAndState { result, .. } = self.apply_transaction_evm(
                 from_addr,
@@ -718,31 +719,31 @@ impl State {
             )?;
 
             match result {
-                ExecutionResult::Success { .. } => right = mid,
-                ExecutionResult::Revert { .. } => left = mid + 1,
+                ExecutionResult::Success { .. } => max = mid,
+                ExecutionResult::Revert { .. } => min = mid + 1,
                 ExecutionResult::Halt { reason, .. } => match reason {
-                    HaltReason::OutOfGas(_) | HaltReason::InvalidFEOpcode => left = mid + 1,
+                    HaltReason::OutOfGas(_) | HaltReason::InvalidFEOpcode => min = mid + 1,
                     _ => return Err(anyhow!("halted due to: {reason:?}")),
                 },
             }
         }
 
-        if right == upper_bound {
+        if max == upper_bound {
             self.estimate_gas_inner(
                 from_addr,
                 to_addr,
                 data.clone(),
                 chain_id,
                 current_block,
-                EvmGas(right),
+                EvmGas(max),
                 gas_price,
                 value,
             )?;
 
-            return Ok(right);
+            return Ok(max);
         }
-        debug!("Estimated gas: {}", right);
-        Ok(right)
+        debug!("Estimated gas: {}", max);
+        Ok(max)
     }
     #[allow(clippy::too_many_arguments)]
     fn estimate_gas_inner(
@@ -755,7 +756,7 @@ impl State {
         gas: EvmGas,
         gas_price: u128,
         value: u128,
-    ) -> Result<()> {
+    ) -> Result<u64> {
         let ResultAndState { result, .. } = self.apply_transaction_evm(
             from_addr,
             to_addr,
@@ -770,7 +771,7 @@ impl State {
         )?;
 
         match result {
-            ExecutionResult::Success { .. } => Ok(()),
+            ExecutionResult::Success { gas_used, .. } => Ok(gas_used),
             ExecutionResult::Revert {
                 gas_used: _,
                 output,
