@@ -45,7 +45,7 @@ resource "google_compute_firewall" "allow_internal_p2p" {
 
 
   direction     = "INGRESS"
-  source_ranges = [data.google_compute_subnetwork.default.ip_cidr_range]
+  source_ranges = [ "0.0.0.0/0" ]
 
   allow {
     protocol = "tcp"
@@ -129,7 +129,7 @@ module "bootstrap_node" {
   consensus.consensus_timeout = { secs = 60, nanos = 0 }
   consensus.genesis_committee = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}"] ]
   consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
-  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "32000000000000000000", "${local.genesis_address}"] ]
+  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "32000000000000000000", "${local.genesis_address}"] ]
 
   EOT
   secret_key            = var.bootstrap_key
@@ -162,7 +162,7 @@ module "node" {
   consensus.consensus_timeout = { secs = 60, nanos = 0 }
   consensus.genesis_committee = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}"] ]
   consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
-  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "32000000000000000000", "${local.genesis_address}"] ]
+  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "32000000000000000000", "${local.genesis_address}"] ]
 
   EOT
   secret_key      = var.secret_keys[count.index]

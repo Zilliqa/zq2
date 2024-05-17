@@ -119,6 +119,7 @@ resource "google_compute_instance" "this" {
   network_interface {
     network    = var.network_name
     subnetwork = var.subnetwork_name
+    access_config {}
   }
 
   metadata = {

@@ -4,13 +4,33 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
+use alloy_primitives::{address, Address};
 use anyhow::{anyhow, Context as _, Result};
+use libp2p::PeerId;
 use regex::Regex;
 use tera::Tera;
-use tokio::fs;
+use tokio::{
+    fs,
+    sync::{broadcast, mpsc::UnboundedSender},
+};
+use zilliqa::{
+    cfg::{ConsensusConfig, NodeConfig},
+    crypto::SecretKey,
+    node::{MessageSender, Node},
+};
 use zqutils::utils;
+
+pub struct GeneratedFile {
+    /// What is the filename we should give in the nav entry in mkdocs?
+    pub mkdocs_filename: String,
+    /// Components of the id for the nav entry in mkdocs.
+    pub id_components: Vec<String>,
+    /// Name of the API for our list.
+    pub api_name: String,
+}
 
 pub struct Docs {
     // Where do we render to?
@@ -50,7 +70,6 @@ fn remove_key(
             // Insert all but
             let mut new_map = serde_yaml::Mapping::new();
             for (k, v) in map {
-                println!("k = {k:?}");
                 if let serde_yaml::Value::String(k_s) = k {
                     if !(idx == components.len() - 1 && k_s == component) {
                         let to_insert = remove_key(v, components, idx + 1);
@@ -144,6 +163,56 @@ fn insert_key(val: &mut serde_yaml::Value, components: &Vec<String>, idx: usize,
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+pub enum ApiMethod {
+    JsonRpc { name: String },
+    Rest { uri: String },
+}
+
+pub fn get_implemented_jsonrpc_methods() -> Result<Vec<ApiMethod>> {
+    let mut methods = Vec::new();
+    // Construct an empty node so we can check for the existence of RPC methods without constructing a full node.
+    let n0 = SecretKey::new()?;
+    let genesis_accounts: Vec<(Address, String)> = vec![
+        (
+            address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"),
+            "5000000000000000000000".to_string(),
+        ),
+        // privkey db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3
+        (
+            address!("cb57ec3f064a16cadb36c7c712f4c9fa62b77415"),
+            "5000000000000000000000".to_string(),
+        ),
+    ];
+
+    let config = NodeConfig {
+        consensus: ConsensusConfig {
+            genesis_committee: vec![(
+                n0.node_public_key(),
+                n0.to_libp2p_keypair().public().to_peer_id(),
+            )],
+            genesis_accounts,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let secret_key = SecretKey::new()?;
+    let (s1, _) = tokio::sync::mpsc::unbounded_channel();
+    let (s2, _) = tokio::sync::mpsc::unbounded_channel();
+    let (s3, _) = tokio::sync::mpsc::unbounded_channel();
+
+    let my_node = Arc::new(Mutex::new(zilliqa::node::Node::new(
+        config, secret_key, s1, s2, s3,
+    )?));
+    let module = zilliqa::api::rpc_module(my_node.clone());
+    for m in module.method_names() {
+        methods.push(ApiMethod::JsonRpc {
+            name: m.to_string(),
+        })
+    }
+    Ok(methods)
+}
+
 impl Docs {
     pub fn new(
         source_dir: &str,
@@ -161,19 +230,21 @@ impl Docs {
         })
     }
 
-    pub async fn generate_all(&self) -> Result<()> {
-        self.generate_dir(&PathBuf::from(&self.source_dir)).await?;
-        Ok(())
+    pub async fn generate_all(&self) -> Result<Vec<ApiMethod>> {
+        let result = self.generate_dir(&PathBuf::from(&self.source_dir)).await?;
+        Ok(result)
     }
 
     // Recursively generate documentation.
     // Because of the weird rules around recursive async, this is done iteratively.
-    pub async fn generate_dir(&self, dir: &Path) -> Result<()> {
+    // @return A vector of the APIs documented
+    pub async fn generate_dir(&self, dir: &Path) -> Result<Vec<ApiMethod>> {
         struct Entry {
             abs: PathBuf,
             rel: PathBuf,
         }
         let mut stack: Vec<Entry> = Vec::new();
+        let mut documented_apis: Vec<ApiMethod> = Vec::new();
         stack.push(Entry {
             abs: PathBuf::from(dir),
             rel: PathBuf::from(""),
@@ -202,7 +273,9 @@ impl Docs {
         println!("After remove {0}", serde_yaml::to_string(&contents_map)?);
 
         while let Some(ref path_entry) = stack.pop() {
-            let md = fs::metadata(&path_entry.abs).await?;
+            let md = fs::metadata(&path_entry.abs)
+                .await
+                .context(format!("Cannot find {0:?}", path_entry.abs))?;
             if md.is_dir() {
                 let mut entries = fs::read_dir(&path_entry.abs).await?;
                 loop {
@@ -217,25 +290,35 @@ impl Docs {
                     });
                 }
             } else if md.is_file() {
-                // It's a file. does it end `.md`? If so, it's a candidate for documentation.
-                if let Some(v) = path_entry.abs.extension() {
-                    if v.to_str().ok_or(anyhow!("Can't convert extension"))? == "md" {
-                        println!("File: {:?} rel {:?}", &path_entry.abs, &path_entry.rel);
-                        let (output_filename, prefixed_id) =
-                            self.generate_file(&path_entry.abs, &path_entry.rel).await?;
-                        let the_iter = key_prefix_components.iter().chain(prefixed_id.iter());
-                        //let key = the_iter.next_back().ok_or(anyhow!(
-                        //    "API file {0:?} has empty description path!",
-                        //   &path_entry.abs
-                        //))?;
-
-                        insert_key(
-                            &mut contents_map,
-                            &the_iter.map(|m| m.to_string()).collect(),
-                            0,
-                            &output_filename,
-                        );
-                    }
+                // It's a file. does it end `.doc.md`? If so, it's a candidate for documentation.
+                let name = path_entry
+                    .abs
+                    .file_name()
+                    .ok_or(anyhow!("{0:?} has no file name", path_entry.abs))?
+                    .to_str()
+                    .ok_or(anyhow!(
+                        "{0:?} is not representable as a string",
+                        path_entry.abs
+                    ))?;
+                let components = name.split('.').collect::<Vec<&str>>();
+                if components.len() >= 2
+                    && components[components.len() - 1] == "md"
+                    && components[components.len() - 2] == "doc"
+                {
+                    println!("File: {:?} rel {:?}", &path_entry.abs, &path_entry.rel);
+                    let generated = self.generate_file(&path_entry.abs, &path_entry.rel).await?;
+                    let the_iter = key_prefix_components
+                        .iter()
+                        .chain(generated.id_components.iter());
+                    insert_key(
+                        &mut contents_map,
+                        &the_iter.map(|m| m.to_string()).collect(),
+                        0,
+                        &generated.mkdocs_filename,
+                    );
+                    documented_apis.push(ApiMethod::JsonRpc {
+                        name: generated.api_name,
+                    });
                 }
             }
         }
@@ -243,7 +326,7 @@ impl Docs {
             // Save the index file back out again.
             fs::write(val, &serde_yaml::to_string(&contents_map)?).await?;
         }
-        Ok(())
+        Ok(documented_apis)
     }
 
     // Old-style parser. You can probably do better (you can certainly do more elegant!)
@@ -302,7 +385,7 @@ impl Docs {
     // which tells us how to generate the documentation - this is a resource for now, but
     // one day it might be programmable.
     // @return A vector of the components we will use to index this page in mkdocs.yaml
-    pub async fn generate_file(&self, src: &Path, rel: &Path) -> Result<(String, Vec<String>)> {
+    pub async fn generate_file(&self, src: &Path, rel: &Path) -> Result<GeneratedFile> {
         // First, let's read the input
         let src_contents = fs::read_to_string(src).await?;
         let src_file = zqutils::utils::string_from_path(src)?;
@@ -340,10 +423,8 @@ impl Docs {
                 src_file
             ));
         };
-        // By convention, for ids, we drop the "src" from the start of rel.
         let mut nearly_id: Vec<String> = PathBuf::from(rel)
             .iter()
-            .skip(1)
             .map(|x| x.to_str().unwrap_or("").to_string())
             .collect();
         nearly_id.pop();
@@ -399,6 +480,10 @@ impl Docs {
             .map(|x| x.to_str().unwrap_or("").to_string())
             .collect();
 
-        Ok((mkdocs_filename, id_components))
+        Ok(GeneratedFile {
+            mkdocs_filename,
+            id_components,
+            api_name: page_title.to_string(),
+        })
     }
 }
