@@ -3,8 +3,13 @@ HERE=`pwd`
 SCRIPTDIR=$(dirname "$BASH_SOURCE")
 ZQ2_BASE=$SCRIPTDIR/../..
 export ZQ2_BASE
+RUN_OPT="-q"
 
+if [[ $Z2_CONVERTER == "true" ]];
+then
+    RUN_OPT+=" --release"
+fi
 if [[ -d $ZQ2_BASE ]]; then
   cd $ZQ2_BASE/zq2
-  cargo run -q --bin z2 -- $*
+  cargo run ${RUN_OPT} --bin z2 -- $*
 fi

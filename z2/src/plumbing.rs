@@ -1,12 +1,14 @@
-use std::{collections::HashSet, env};
+use std::{collections::HashSet, env, path::PathBuf, str::FromStr};
 
+use alloy_primitives::B256;
 use anyhow::{anyhow, Result};
 use colored::Colorize;
 use tokio::fs;
+use zilliqa::crypto::SecretKey;
 
+use crate::{collector, deployer, otel, otterscan, perf, spout, zq1};
 /// Code for all the z2 commands, so you can invoke it from your own programs.
-use crate::{collector, deployer, otel, otterscan, perf, spout};
-use crate::{docgen, setup};
+use crate::{converter, docgen, setup};
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub enum Components {
@@ -142,6 +144,46 @@ pub async fn run_deployer_new(
 pub async fn run_deployer_upgrade(config_file: &str) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
     deployer::upgrade(config_file).await?;
+    Ok(())
+}
+
+pub async fn run_persistence_converter(
+    zq1_pers_dir: &str,
+    zq2_data_dir: &str,
+    zq2_config: &str,
+    secret_key: SecretKey,
+    skip_accounts: bool,
+) -> Result<()> {
+    println!("🐼 Converting {zq1_pers_dir} into {zq2_data_dir}.. ");
+    let zq1_dir = PathBuf::from_str(zq1_pers_dir)?;
+    let zq2_dir = PathBuf::from_str(zq2_data_dir)?;
+    let config_file = PathBuf::from_str(zq2_config)?;
+    let zq1_db = zq1::Db::new(zq1_dir)?;
+    let zq2_config = fs::read_to_string(config_file).await?;
+    let zq2_config: zilliqa::cfg::Config = toml::from_str(&zq2_config)?;
+    let shard_id: u64 = zq2_config
+        .nodes
+        .first()
+        .map(|node| node.eth_chain_id)
+        .unwrap_or(0);
+    let zq2_db = zilliqa::db::Db::new(Some(zq2_dir), shard_id)?;
+    converter::convert_persistence(zq1_db, zq2_db, zq2_config, secret_key, skip_accounts).await?;
+    Ok(())
+}
+
+pub async fn run_print_txs_in_block(zq1_pers_dir: &str, block_num: u64) -> Result<()> {
+    println!("🐼 Printing txns into block {block_num} .. ");
+    converter::print_tx_in_block(zq1_pers_dir, block_num).await?;
+    Ok(())
+}
+
+pub async fn run_print_txs_by_hash(
+    zq1_pers_dir: &str,
+    block_num: u64,
+    tx_hash: B256,
+) -> Result<()> {
+    println!("🐼 Printing txn with hash {tx_hash} .. ");
+    converter::print_tx_by_hash(zq1_pers_dir, block_num, tx_hash).await?;
     Ok(())
 }
 

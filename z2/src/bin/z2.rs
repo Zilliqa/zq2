@@ -1,8 +1,10 @@
 use std::{collections::HashSet, env, fmt};
 
+use alloy_primitives::B256;
 use anyhow::{anyhow, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use z2lib::plumbing;
+use zilliqa::crypto::SecretKey;
 
 #[derive(Parser, Debug)]
 #[clap(about)]
@@ -13,13 +15,16 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Run a copy of zilliqa 2
+    /// Run a copy of Zilliqa 2
     Run(RunStruct),
     /// Test
     Perf(PerfStruct),
     #[clap(subcommand)]
-    /// Deploy
+    /// Deploy Zilliqa 2
     Deployer(DeployerCommands),
+    #[clap(subcommand)]
+    /// Convert Zilliqa 1 to Zilliqa 2 persistnce
+    Converter(ConverterCommands),
     /// Generate documentation
     DocGen(DocStruct),
 }
@@ -39,6 +44,34 @@ pub struct DeployerConfigStruct {
     binary_bucket: Option<String>,
     bootstrap_pk: Option<String>,
     config_file: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum ConverterCommands {
+    /// Convert Zilliqa 1 to Zilliqa 2 persistence format.
+    Convert(ConvertConfigStruct),
+    /// Print the transaction in a given block
+    PrintTransactionsInBlock(ConverterPrintTransactionConfigStruct),
+    /// Print transaction by Hash
+    PrintTransactionConverter(ConverterPrintTransactionConfigStruct),
+}
+
+#[derive(Args, Debug)]
+struct ConvertConfigStruct {
+    zq1_persistence_directory: String,
+    zq2_data_dir: String,
+    zq2_config_file: String,
+    #[arg(value_parser = SecretKey::from_hex)]
+    secret_key: SecretKey,
+    #[clap(long)]
+    skip_accounts: bool,
+}
+
+#[derive(Args, Debug)]
+struct ConverterPrintTransactionConfigStruct {
+    zq1_persistence_directory: String,
+    block_number: u64,
+    txn_hash: Option<B256>,
 }
 
 #[derive(Args, Debug)]
@@ -224,6 +257,27 @@ async fn main() -> Result<()> {
                         anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
                     })?;
                 Ok(())
+            }
+        },
+        Commands::Converter(converter_command) => match &converter_command {
+            ConverterCommands::Convert(ref arg) => {
+                plumbing::run_persistence_converter(
+                    &arg.zq1_persistence_directory,
+                    &arg.zq2_data_dir,
+                    &arg.zq2_config_file,
+                    arg.secret_key,
+                    arg.skip_accounts,
+                )
+                .await?;
+                Ok(())
+            }
+            ConverterCommands::PrintTransactionsInBlock(ref arg) => {
+                plumbing::run_print_txs_in_block(&arg.zq1_persistence_directory, arg.block_number)
+                    .await?;
+                Ok(())
+            }
+            ConverterCommands::PrintTransactionConverter(ref _arg) => {
+                unimplemented!();
             }
         },
         Commands::DocGen(ref arg) => {
