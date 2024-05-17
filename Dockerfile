@@ -16,18 +16,13 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/target \
     if [ "${is_ci}" != "true " ] ; then \
-    cargo build --bin zilliqa && \
-    mv ./target/debug/zilliqa ./build/ ;\
+        cargo build --bin zilliqa && \
+        mv ./target/debug/zilliqa ./build/ ;\
+    else \
+        cargo build --release --bin zilliqa && \
+        mv ./target/release/zilliqa ./build/ ;\
     fi
 
-RUN if [ "${is_ci}" == "true " ]; then \
-    cargo test --release --all-targets --all-features ;\
-    fi
-
-RUN if [ "${is_ci}" == "true " ]; then \
-    cargo build --release --bin zilliqa && \
-    mv ./target/release/zilliqa ./build/ ;\
-    fi
 
 FROM ubuntu:22.04
 

@@ -13,8 +13,8 @@ jobs:
     permissions:
       id-token: write
       contents: write
-    if: ${{ github.ref_name != 'main' && github.ref_type == 'tag' }} 
-    runs-on: docker
+    if: ${{ github.ref_name != 'gh-issue-937' && github.ref_type == 'tag' }} 
+    runs-on: [ self-hosted, gcp]
     env:
       GCP_REGISTRY_DOMAIN: asia-docker.pkg.dev
       GCP_REGISTRY: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public
@@ -60,7 +60,7 @@ jobs:
         id-token: write
         contents: write
       if: ${{ github.ref_name == 'gh-issue-937' }} 
-      runs-on: docker
+      runs-on: [ self-hosted, gcp]
       env:
         GCP_REGISTRY_DOMAIN: asia-docker.pkg.dev
         GCP_REGISTRY: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private
