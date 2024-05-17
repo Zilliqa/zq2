@@ -1,11 +1,12 @@
 use std::{collections::HashSet, env};
 
 use anyhow::{anyhow, Result};
+use colored::Colorize;
 use tokio::fs;
 
 /// Code for all the z2 commands, so you can invoke it from your own programs.
-use crate::setup;
 use crate::{collector, deployer, otel, otterscan, perf, spout};
+use crate::{docgen, setup};
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub enum Components {
@@ -142,4 +143,49 @@ pub async fn run_deployer_upgrade(config_file: &str) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
     deployer::upgrade(config_file).await?;
     Ok(())
+}
+
+pub async fn generate_docs(
+    base_dir: &str,
+    target_dir: &str,
+    id_prefix: &Option<String>,
+    index_file: &Option<String>,
+    in_key_prefix: &Option<String>,
+    error_on_mismatch: bool,
+) -> Result<()> {
+    // Grotty, but easier than lots of silly Path conversions.
+    let scan_dir = format!("{}/zq2/docs", base_dir);
+    let key_prefix = if let Some(v) = in_key_prefix {
+        v.to_string()
+    } else {
+        "nav".to_string()
+    };
+    let docs = docgen::Docs::new(&scan_dir, target_dir, id_prefix, index_file, &key_prefix)?;
+    let documented_apis = docs.generate_all().await?;
+    let implemented_apis = docgen::get_implemented_jsonrpc_methods()?;
+    let doc_set = documented_apis
+        .iter()
+        .cloned()
+        .collect::<HashSet<docgen::ApiMethod>>();
+    let impl_set = implemented_apis
+        .iter()
+        .cloned()
+        .collect::<HashSet<docgen::ApiMethod>>();
+
+    let mut ok = true;
+    for i in doc_set.difference(&impl_set) {
+        println!("{0}", format!("🎄 not implemented: {i:?}").red());
+        ok = false;
+    }
+    for i in impl_set.difference(&doc_set) {
+        println!("{0}", format!("🎲 not documented : {i:?}").yellow());
+        ok = false;
+    }
+    if ok || !error_on_mismatch {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "There are RPC methods implemented but not documented, or vice versa"
+        ))
+    }
 }

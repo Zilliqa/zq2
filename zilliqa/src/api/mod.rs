@@ -15,8 +15,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     module.merge(erigon::rpc_module(node.clone())).unwrap();
     module.merge(eth::rpc_module(node.clone())).unwrap();
     module.merge(net::rpc_module(node.clone())).unwrap();
-    module.merge(ots::rpc_module(node.clone())).unwrap();
     module.merge(trace::rpc_module(node.clone())).unwrap();
+    module.merge(ots::rpc_module(node.clone())).unwrap();
     module.merge(web3::rpc_module(node.clone())).unwrap();
     module.merge(zil::rpc_module(node)).unwrap();
 
