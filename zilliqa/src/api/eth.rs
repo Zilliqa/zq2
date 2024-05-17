@@ -6,6 +6,10 @@ use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{Address, Bytes, Parity, Signature, TxKind, B256, U256, U64};
 use alloy_rlp::{Decodable, Header};
+use alloy_rpc_types::{
+    pubsub::{self, SubscriptionKind},
+    FilteredParams,
+};
 use anyhow::{anyhow, Result};
 use itertools::{Either, Itertools};
 use jsonrpsee::{
@@ -22,7 +26,8 @@ use crate::{
     crypto::Hash,
     message::{Block, BlockNumber},
     node::Node,
-    transaction::{EvmGas, SignedTransaction, Transaction},
+    time::SystemTime,
+    transaction::{EvmGas, Log, SignedTransaction, Transaction},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -776,11 +781,14 @@ async fn subscribe(
     node: Arc<Arc<Mutex<Node>>>,
 ) -> Result<(), StringError> {
     let mut params = params.sequence();
-    let kind: String = params.next()?;
+    let kind: SubscriptionKind = params.next()?;
+    let params: Option<pubsub::Params> = params.optional_next()?;
+    let params = params.unwrap_or_default();
 
-    match kind.as_str() {
-        "newHeads" => {
-            let sink = pending.accept().await?;
+    let sink = pending.accept().await?;
+
+    match kind {
+        SubscriptionKind::NewHeads => {
             let mut new_blocks = node.lock().unwrap().subscribe_to_new_blocks();
 
             while let Ok(header) = new_blocks.recv().await {
@@ -789,7 +797,71 @@ async fn subscribe(
                 let _ = sink.send(SubscriptionMessage::from_json(&header)?).await;
             }
         }
-        //"logs" => {},
+        SubscriptionKind::Logs => {
+            let filter = match params {
+                pubsub::Params::None => None,
+                pubsub::Params::Logs(f) => Some(*f),
+                pubsub::Params::Bool(_) => {
+                    return Err("invalid params for logs".into());
+                }
+            };
+            let filter = FilteredParams::new(filter);
+
+            let mut receipts = node.lock().unwrap().subscribe_to_receipts();
+
+            'outer: while let Ok((receipt, transaction_index)) = receipts.recv().await {
+                if !filter.filter_block_hash(receipt.block_hash.into()) {
+                    continue;
+                }
+                for (log_index, log) in receipt.logs.into_iter().enumerate() {
+                    // Only consider EVM logs
+                    let Log::Evm(log) = log else {
+                        continue;
+                    };
+                    if !filter.filter_address(&log.address) {
+                        continue;
+                    }
+                    if !filter.filter_topics(&log.topics) {
+                        continue;
+                    }
+
+                    // We defer this check to later to avoid querying the block if the log was already filtered out by
+                    // something else.
+                    let block = node
+                        .lock()
+                        .unwrap()
+                        .get_block_by_hash(receipt.block_hash)?
+                        .ok_or_else(|| anyhow!("missing block"))?;
+                    if !filter.filter_block_range(block.number()) {
+                        continue 'outer;
+                    }
+
+                    let log = alloy_rpc_types::Log {
+                        inner: alloy_primitives::Log {
+                            address: log.address,
+                            data: alloy_primitives::LogData::new_unchecked(
+                                log.topics,
+                                log.data.into(),
+                            ),
+                        },
+                        block_hash: Some(block.hash().into()),
+                        block_number: Some(block.number()),
+                        block_timestamp: Some(
+                            block
+                                .timestamp()
+                                .duration_since(SystemTime::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
+                        transaction_hash: Some(receipt.tx_hash.into()),
+                        transaction_index: Some(transaction_index as u64),
+                        log_index: Some(log_index as u64),
+                        removed: false,
+                    };
+                    let _ = sink.send(SubscriptionMessage::from_json(&log)?).await;
+                }
+            }
+        }
         //"newPendingTransactions" => {},
         _ => {
             return Err("invalid subscription kind".into());

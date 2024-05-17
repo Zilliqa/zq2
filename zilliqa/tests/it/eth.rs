@@ -1064,3 +1064,41 @@ async fn block_subscription(mut network: Network) {
 
     assert!(block_stream.unsubscribe().await.unwrap());
 }
+
+#[zilliqa_macros::test]
+async fn logs_subscription(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let (hash, contract) = deploy_contract(
+        "tests/it/contracts/EmitEvents.sol",
+        "EmitEvents",
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+
+    // Our filtering logic is tested above by the `eth_getLogs` test, so in this test we just check whether logs are
+    // returned at all from the subscription.
+    let mut log_stream = wallet.subscribe_logs(&Filter::new()).await.unwrap();
+
+    let emit_events = contract.function("emitEvents").unwrap();
+    let call_tx = TransactionRequest::new()
+        .to(contract_address)
+        .data(emit_events.encode_input(&[]).unwrap());
+
+    let call_tx_hash = wallet
+        .send_transaction(call_tx, None)
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, call_tx_hash, 50).await;
+
+    // Assert the stream contains 3 blocks.
+    assert_eq!(log_stream.next().await.unwrap().address, contract_address,);
+    assert_eq!(log_stream.next().await.unwrap().address, contract_address,);
+
+    assert!(log_stream.unsubscribe().await.unwrap());
+}
