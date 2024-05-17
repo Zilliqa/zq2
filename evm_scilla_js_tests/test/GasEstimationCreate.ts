@@ -15,7 +15,7 @@ describe("Estimation test with Create/Create2", function () {
         expect(await this.contract.test()).to.be.properAddress;
     });
 
-    it("Should return proper address when Create is performed [@transactional]", async function () {
+    it("Should return proper address when Create2 is performed [@transactional]", async function () {
         const estimated = await this.contract.estimateGas.deploy2(1234);
         const result = await this.contract.deploy2(1234, {gasLimit: estimated});
         await result.wait();
