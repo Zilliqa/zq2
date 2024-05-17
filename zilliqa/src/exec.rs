@@ -997,7 +997,7 @@ impl State {
         )?;
 
         // We don't do deeper search if the range is smaller than the following param
-        const MINIMUM_ABSOLUTE_RANGE_DIFF: u64 = 100;
+        const MINIMUM_ABSOLUTE_RANGE_DIFF: u64 = 1000;
 
         while left + MINIMUM_ABSOLUTE_RANGE_DIFF < right {
             let mid = (left + right) / 2;
@@ -1080,9 +1080,8 @@ impl State {
                 let response = jsonrpsee::types::ErrorObjectOwned::owned(
                     REVERT_ERROR_CODE,
                     decoded_revert_msg,
-                    None::<()>,
+                    Some(output),
                 );
-
                 Err(response.into())
             }
             ExecutionResult::Halt { reason, .. } => Err(anyhow!("halted due to: {reason:?}")),
