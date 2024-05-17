@@ -89,7 +89,7 @@ session later. Use `screen`)
 
 ```
 screen -a
-
+export Z2_CONVERTER=true
 z2 converter convert /my/dir/persistences/zq1 /my/dir/persistences/zq2 config.toml <secret key>
 ```
 
