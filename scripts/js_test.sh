@@ -9,7 +9,7 @@ pwd
 echo "building zilliqa and running it as a detached process"
 cargo build --all-targets
 ls ./target
-RUST_LOG=zilliqa=warn,zilliqa=info ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 -c config-example.toml > /tmp/zil_log_out.txt 2>&1 &
+RUST_LOG=zilliqa=warn,zilliqa=info ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 -c config-single.toml > /tmp/zil_log_out.txt 2>&1 &
 
 cd evm_scilla_js_tests
 
