@@ -496,6 +496,14 @@ impl Node {
         self.consensus.receipts.subscribe()
     }
 
+    pub fn subscribe_to_new_transactions(&self) -> broadcast::Receiver<VerifiedTransaction> {
+        self.consensus.new_transactions.subscribe()
+    }
+
+    pub fn subscribe_to_new_transaction_hashes(&self) -> broadcast::Receiver<Hash> {
+        self.consensus.new_transaction_hashes.subscribe()
+    }
+
     pub fn get_chain_id(&self) -> u64 {
         self.config.eth_chain_id // using eth as a universal ID for now
     }

@@ -27,7 +27,7 @@ use crate::{
     message::{Block, BlockNumber},
     node::Node,
     time::SystemTime,
-    transaction::{EvmGas, Log, SignedTransaction, Transaction},
+    transaction::{EvmGas, Log, SignedTransaction},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -476,61 +476,7 @@ pub(super) fn get_transaction_inner(
         None
     };
 
-    let from = tx.signer;
-    let v = tx.tx.sig_v();
-    let r = tx.tx.sig_r();
-    let s = tx.tx.sig_s();
-    let transaction = tx.tx.into_transaction();
-    let (gas_price, max_fee_per_gas, max_priority_fee_per_gas) = match transaction {
-        Transaction::Legacy(_)
-        | Transaction::Eip2930(_)
-        | Transaction::Zilliqa(_)
-        | Transaction::Intershard(_) => (transaction.max_fee_per_gas(), None, None),
-        Transaction::Eip1559(TxEip1559 {
-            max_fee_per_gas,
-            max_priority_fee_per_gas,
-            ..
-        }) => (
-            // The `gasPrice` for EIP-1559 transactions should be set to the effective gas price of this transaction,
-            // which depends on the block's base fee. We don't yet have a base fee so we just set it to the max fee
-            // per gas.
-            max_fee_per_gas,
-            Some(max_fee_per_gas),
-            Some(max_priority_fee_per_gas),
-        ),
-    };
-    let transaction = eth::Transaction {
-        block_hash: block.as_ref().map(|b| b.hash().0.into()),
-        block_number: block.as_ref().map(|b| b.number()),
-        from,
-        gas: transaction.gas_limit(),
-        gas_price,
-        max_fee_per_gas,
-        max_priority_fee_per_gas,
-        hash: hash.into(),
-        input: transaction.payload().to_vec(),
-        nonce: transaction.nonce().unwrap_or(u64::MAX),
-        to: transaction.to_addr(),
-        transaction_index: block
-            .map(|b| b.transactions.iter().position(|t| *t == hash).unwrap() as u64),
-        value: transaction.amount(),
-        v,
-        r,
-        s,
-        chain_id: transaction.chain_id(),
-        access_list: transaction.access_list().map(|a| a.to_vec()),
-        transaction_type: match transaction {
-            Transaction::Legacy(_) => 0,
-            Transaction::Eip2930(_) => 1,
-            Transaction::Eip1559(_) => 2,
-            // Set Zilliqa transaction types to a unique number. This is "ZIL" encoded in ASCII.
-            Transaction::Zilliqa(_) => 90_73_76,
-            // Set intershard transactions as unique, too. This is ZIL + 1.
-            Transaction::Intershard(_) => 90_73_77,
-        },
-    };
-
-    Ok(Some(transaction))
+    Ok(Some(eth::Transaction::new(tx, block)))
 }
 
 pub(super) fn get_transaction_receipt_inner(
@@ -862,7 +808,32 @@ async fn subscribe(
                 }
             }
         }
-        //"newPendingTransactions" => {},
+        SubscriptionKind::NewPendingTransactions => {
+            let full = match params {
+                pubsub::Params::None => false,
+                pubsub::Params::Bool(b) => b,
+                pubsub::Params::Logs(_) => {
+                    return Err("invalid params for newPendingTransactions".into());
+                }
+            };
+
+            if full {
+                let mut txns = node.lock().unwrap().subscribe_to_new_transactions();
+
+                while let Ok(txn) = txns.recv().await {
+                    let txn = eth::Transaction::new(txn, None);
+                    let _ = sink.send(SubscriptionMessage::from_json(&txn)?).await;
+                }
+            } else {
+                let mut txns = node.lock().unwrap().subscribe_to_new_transaction_hashes();
+
+                while let Ok(txn) = txns.recv().await {
+                    let _ = sink
+                        .send(SubscriptionMessage::from_json(&B256::from(txn))?)
+                        .await;
+                }
+            }
+        }
         _ => {
             return Err("invalid subscription kind".into());
         }

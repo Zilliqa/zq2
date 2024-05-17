@@ -128,6 +128,7 @@ Please open an issue or PR for APIs that you think should be included.
 | `eth_newPendingTransactionFilter`         | 🔴                                              |
 | `eth_sendRawTransaction`                  | 🟢                                              |
 | `eth_syncing`                             | 🟠                                              |
+| `eth_subscribe`                           | 🟢                                              |
 | `eth_uninstallFilter`                     | 🔴                                              |
 | `net_listening`                           | 🟢                                              |
 | `net_peerCount`                           | 🟠                                              |
