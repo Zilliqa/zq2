@@ -500,7 +500,7 @@ impl State {
     }
 
     /// Applies a state delta from an EVM execution to the state.
-    pub(crate) fn apply_delta_evm(
+    pub fn apply_delta_evm(
         &mut self,
         state: &HashMap<Address, revm::primitives::Account>,
     ) -> Result<()> {
