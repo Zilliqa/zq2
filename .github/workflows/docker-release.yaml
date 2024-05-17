@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - 'release/**'
-      - 'gh-issue-937'
+      - 'main'
     tags:        
       - v*
 
@@ -13,7 +13,7 @@ jobs:
     permissions:
       id-token: write
       contents: write
-    if: ${{ github.ref_name != 'gh-issue-937' && github.ref_type == 'tag' }} 
+    if: ${{ github.ref_name != 'main' && github.ref_type == 'tag' }} 
     runs-on: [ self-hosted, gcp]
     env:
       GCP_REGISTRY_DOMAIN: asia-docker.pkg.dev
@@ -59,7 +59,7 @@ jobs:
       permissions:
         id-token: write
         contents: write
-      if: ${{ github.ref_name == 'gh-issue-937' }} 
+      if: ${{ github.ref_name == 'main' }} 
       runs-on: [ self-hosted, gcp]
       env:
         GCP_REGISTRY_DOMAIN: asia-docker.pkg.dev
