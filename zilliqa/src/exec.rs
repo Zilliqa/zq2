@@ -678,11 +678,6 @@ impl State {
         let gas_price = gas_price.unwrap_or(GAS_PRICE);
 
         let mut max = gas.unwrap_or(MAX_EVM_GAS_LIMIT).0;
-
-        if let Some(gas) = gas {
-            max = gas.0;
-        }
-
         let upper_bound = max;
 
         // Check if estimation succeeds with the highest possible gas
