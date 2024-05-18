@@ -210,6 +210,11 @@ pub async fn generate_docs(
     } else {
         DEFAULT_API_URL.to_string()
     };
+    let implemented_apis = docgen::get_implemented_jsonrpc_methods()?;
+    let impl_set = implemented_apis
+        .iter()
+        .cloned()
+        .collect::<HashSet<docgen::ApiMethod>>();
     let docs = docgen::Docs::new(
         &scan_dir,
         target_dir,
@@ -217,14 +222,10 @@ pub async fn generate_docs(
         index_file,
         &key_prefix,
         &api_url,
+        &impl_set,
     )?;
     let documented_apis = docs.generate_all().await?;
-    let implemented_apis = docgen::get_implemented_jsonrpc_methods()?;
     let doc_set = documented_apis
-        .iter()
-        .cloned()
-        .collect::<HashSet<docgen::ApiMethod>>();
-    let impl_set = implemented_apis
         .iter()
         .cloned()
         .collect::<HashSet<docgen::ApiMethod>>();

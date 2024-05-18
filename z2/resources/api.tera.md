@@ -14,22 +14,28 @@ keywords: {{ keywords }}
 ---
 
 {% if status is defined %}
-
-{% if status == "NotYetImplemented"  %}
+{% if status == "Implemented" -%}
+{% else -%}
+{% if status == "NotYetImplemented"  -%}
 !!! warning
 
     This API is not yet implemented in this version of Zilliqa 2.0
 {% else %}
-{% if status == "PartiallyImplemented" %}
-!!! warning 
+{% if status == "PartiallyImplemented" -%}
+!!! warning
 
     Whilst this API is implemented in this version of Zilliqa 2.0, the implementation is not yet complete. Use with caution!
 {% else %}
-!!! warning 
+{% if status == "NotYetDocumented" -%}
+!!! warning
 
+    This call works differently in Zilliqa 2; documentation on the differences will be available in a future version.
+{% else -%}
 {% filter indent4 -%}
 {{ status }}
 {% endfilter -%}
+{% endif -%}
+{% endif -%}
 {% endif -%}
 {% endif -%}
 {% endif -%}
