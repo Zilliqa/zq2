@@ -13,18 +13,81 @@ keywords: {{ keywords }}
 ---
 ---
 
+{% if status is defined %}
+
+{% if status == "NotYetImplemented"  %}
+!!! warning
+
+    This API is not yet implemented in this version of Zilliqa 2.0
+{% else %}
+{% if status == "PartiallyImplemented" %}
+!!! warning 
+
+    Whilst this API is implemented in this version of Zilliqa 2.0, the implementation is not yet complete. Use with caution!
+{% else %}
+!!! warning 
+
+{% filter indent4 -%}
+{{ status }}
+{% endfilter -%}
+{% endif -%}
+{% endif -%}
+{% endif -%}
+
 {% if description is defined %}
 {{description}}
-{% else %}
+{% else -%}
 {{ throw(message="No description section") }}
-{% endif %}
+{% endif -%}
 
 ### Example Request
 
 {% if curl is defined %}
 === "cURL"
 
+{% filter indent4 -%}
 {{ curl }}
+{% endfilter -%}
+{% endif %}
+
+{% if nodejs is defined %}
+=== "node.js"
+
+{% filter indent4 -%}
+{{ nodejs }}
+{% endfilter -%}
+{% endif %}
+
+{% if java is defined %}
+=== "java"
+
+{% filter indent4 -%}
+{{ java }}
+{% endfilter -%}
+{% endif %}
+
+{% if python is defined %}
+=== "python"
+
+{% filter indent4 -%}
+{{ python }}
+{% endfilter -%}
+{% endif %}
+
+{% if go is defined %}
+=== "go"
+
+{% filter indent4 -%}
+{{ go }}
+{% endfilter -%}
+{% endif %}
+
+{% if rust is defined %}
+=== "rust"
+
+{% filter indent4 -%}
+{{ rust }}
+{% endfilter -%}
 {% endif %}
 
 ### Example response

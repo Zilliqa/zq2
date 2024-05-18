@@ -34,10 +34,23 @@ Sections expected in API documentation:
 | Curl    |  No       | Sample curl call  |
 | Response | Yes       | Sample API response |
 | Arguments | Yes     | Table of arguments |
+| Status | No   |  See below |
+
+### Status
+
+You can signal the status of an API with the status section:
+
+ * If the status section does not exist, we assume this API is fully implemented.
+ * `NotYetImplemented` means this API is not yet implemented - an admonition will be printed in the docs.
+ * `PartiallyImplemented` means this API is not finished yet - an admonition will be printed in the docs.
+ * Any other content is treated as `PartiallyImplemented` and the contents of the header become the admonition.
 
 ## Tera keys provided to API documentation
 
 This section documents the keys you can use in API documentation.
 
-Currently there aren't any.
+|    Key    |   Value   |
+| --------- | --------- |
+| `_api_url` | The RPC API endpoint to synthesise examples for |
+
 

@@ -386,6 +386,29 @@ impl Docs {
     // one day it might be programmable.
     // @return A vector of the components we will use to index this page in mkdocs.yaml
     pub async fn generate_file(&self, src: &Path, rel: &Path) -> Result<GeneratedFile> {
+        fn indent4(
+            v: &tera::Value,
+            _args: &HashMap<String, tera::Value>,
+        ) -> tera::Result<tera::Value> {
+            // no-op if this is not a string
+            match v {
+                tera::Value::String(ref in_str) => Ok(tera::Value::String(
+                    in_str
+                        .split('\n')
+                        .map(|x| {
+                            if !x.is_empty() {
+                                format!("    {x}")
+                            } else {
+                                String::new()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )),
+                _ => Ok(v.clone()),
+            }
+        }
+
         // First, let's read the input
         let src_contents = fs::read_to_string(src).await?;
         let src_file = zqutils::utils::string_from_path(src)?;
@@ -401,7 +424,7 @@ impl Docs {
         let mut section_tera: Tera = Default::default();
         let mut context = tera::Context::new();
         // Keep rust happy.
-        context.insert("_test", "test");
+        context.insert("_api_url", "https://fish");
         // Add context keys here when we have some.
         for (k, v) in &parsed.sections {
             section_tera.add_raw_template(k, v)?;
@@ -463,6 +486,9 @@ impl Docs {
         // That is also the mkdocs id of this file.
         let prefixed_id = zqutils::utils::string_from_path(&id_path)?;
         final_context.insert("_id", &prefixed_id);
+        // Because we need to indent every line in a section by exactly 4
+        // spaces or tabs don't work . Grr!
+        page_tera.register_filter("indent4", indent4);
         let final_page = page_tera
             .render("api", &final_context)
             .context(format!("Whilst rendering {0:?}", src_file))?;
