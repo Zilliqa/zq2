@@ -43,6 +43,8 @@ pub struct Docs {
     pub index_file: Option<String>,
     // At what key should we start?
     pub index_file_key_prefix: String,
+    // What is the API url ?
+    pub api_url: String,
 }
 
 #[derive(Debug)]
@@ -220,6 +222,7 @@ impl Docs {
         id_prefix: &Option<String>,
         index_file: &Option<String>,
         index_file_key_prefix: &str,
+        api_url: &str,
     ) -> Result<Self> {
         Ok(Self {
             target_dir: target_dir.to_string(),
@@ -227,6 +230,7 @@ impl Docs {
             id_prefix: id_prefix.clone(),
             index_file: index_file.clone(),
             index_file_key_prefix: index_file_key_prefix.to_string(),
+            api_url: api_url.to_string(),
         })
     }
 
@@ -424,7 +428,7 @@ impl Docs {
         let mut section_tera: Tera = Default::default();
         let mut context = tera::Context::new();
         // Keep rust happy.
-        context.insert("_api_url", "https://fish");
+        context.insert("_api_url", &self.api_url);
         // Add context keys here when we have some.
         for (k, v) in &parsed.sections {
             section_tera.add_raw_template(k, v)?;

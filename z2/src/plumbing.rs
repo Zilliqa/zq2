@@ -6,6 +6,8 @@ use colored::Colorize;
 use tokio::fs;
 use zilliqa::crypto::SecretKey;
 
+const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
+
 use crate::{collector, deployer, otel, otterscan, perf, spout, zq1};
 /// Code for all the z2 commands, so you can invoke it from your own programs.
 use crate::{converter, docgen, setup};
@@ -194,6 +196,7 @@ pub async fn generate_docs(
     index_file: &Option<String>,
     in_key_prefix: &Option<String>,
     error_on_mismatch: bool,
+    api_url_opt: &Option<String>,
 ) -> Result<()> {
     // Grotty, but easier than lots of silly Path conversions.
     let scan_dir = format!("{}/zq2/docs", base_dir);
@@ -202,7 +205,19 @@ pub async fn generate_docs(
     } else {
         "nav".to_string()
     };
-    let docs = docgen::Docs::new(&scan_dir, target_dir, id_prefix, index_file, &key_prefix)?;
+    let api_url = if let Some(v) = api_url_opt {
+        v.to_string()
+    } else {
+        DEFAULT_API_URL.to_string()
+    };
+    let docs = docgen::Docs::new(
+        &scan_dir,
+        target_dir,
+        id_prefix,
+        index_file,
+        &key_prefix,
+        &api_url,
+    )?;
     let documented_apis = docs.generate_all().await?;
     let implemented_apis = docgen::get_implemented_jsonrpc_methods()?;
     let doc_set = documented_apis
