@@ -26,6 +26,7 @@ use zqutils::utils;
 
 const PAGE_STATUS_IMPLEMENTED: &str = "Implemented";
 const PAGE_STATUS_NOT_IMPLEMENTED: &str = "NotYetImplemented";
+const PAGE_STATUS_NEVER_IMPLEMENTED: &str = "NeverImplemented";
 
 pub struct GeneratedFile {
     /// What is the filename we should give in the nav entry in mkdocs?
@@ -474,8 +475,9 @@ impl Docs {
         let api_name = ApiMethod::JsonRpc {
             name: page_title.to_string(),
         };
-        if !self.implemented.contains(&api_name) {
-            // Set the status to not implemented
+        // If the API is not implemented, and it is supposed to be ..
+        if !self.implemented.contains(&api_name) && page_status != PAGE_STATUS_NEVER_IMPLEMENTED {
+            // ... set the status to not implemented
             page_status = PAGE_STATUS_NOT_IMPLEMENTED.to_string();
         }
         final_context.insert("status", &page_status);

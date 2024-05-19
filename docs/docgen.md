@@ -60,6 +60,7 @@ You can signal the status of an API with the status section:
  * If the status section does not exist, we assume this API is fully implemented - ie. status `Implemented`.
  * `Implemented` means that the API is implemented and documented.
  * `NotYetImplemented` means this API is not yet implemented - an admonition will be printed in the docs.
+ * `NeverImplemented` means this API will never be implemented - documentation is here as a convenience.
  * `PartiallyImplemented` means this API is not finished yet - an admonition will be printed in the docs.
  * `NotYetDocumented` means that the API is implemented (though it may not be finished yet), but the docs are to be written.
  * Any other content is treated as `PartiallyImplemented` and the contents of the header become the admonition.

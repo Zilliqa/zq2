@@ -14,19 +14,21 @@ keywords: {{ keywords }}
 ---
 
 {% if status is defined %}
-{% if status == "Implemented" -%}
-{% else -%}
-{% if status == "NotYetImplemented"  -%}
+{% if status == "NeverImplemented" -%}
+!!! warning
+
+    This API is no longer relevant to Zilliqa 2.0 and will not be implemented; attempts to call it will
+    result in an error. This documentation is retained for historical reasons.
+{% elif status == "Implemented" -%}
+{% elif status == "NotYetImplemented"  -%}
 !!! warning
 
     This API is not yet implemented in this version of Zilliqa 2.0
-{% else %}
-{% if status == "PartiallyImplemented" -%}
+{% elif status == "PartiallyImplemented" -%}
 !!! warning
 
     Whilst this API is implemented in this version of Zilliqa 2.0, the implementation is not yet complete. Use with caution!
-{% else %}
-{% if status == "NotYetDocumented" -%}
+{% elif status == "NotYetDocumented" -%}
 !!! warning
 
     This call works differently in Zilliqa 2; documentation on the differences will be available in a future version.
@@ -35,15 +37,12 @@ keywords: {{ keywords }}
 {{ status }}
 {% endfilter -%}
 {% endif -%}
-{% endif -%}
-{% endif -%}
-{% endif -%}
-{% endif -%}
 
 {% if description is defined %}
 {{description}}
 {% else -%}
 {{ throw(message="No description section") }}
+{% endif -%}
 {% endif -%}
 
 ### Example Request
