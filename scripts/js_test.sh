@@ -2,14 +2,14 @@ echo "The CI is running this script."
 
 sudo add-apt-repository ppa:ethereum/ethereum > /dev/null 2>&1
 sudo apt-get update > /dev/null 2>&1
-sudo apt-get install solc libsecp256k1-dev > /dev/null 2>&1
+sudo apt-get install solc libsecp256k1-dev protobuf-compiler > /dev/null 2>&1
 
 # Start network early.
 pwd
 echo "building zilliqa and running it as a detached process"
 cargo build --all-targets
 ls ./target
-RUST_LOG=zilliqa=warn,zilliqa=info ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 -c config-example.toml > /tmp/zil_log_out.txt 2>&1 &
+RUST_LOG=zilliqa=warn,zilliqa=info ./target/debug/zilliqa 65d7f4da9bedc8fb79cbf6722342960bbdfb9759bc0d9e3fb4989e831ccbc227 -c config-single-node.toml > /tmp/zil_log_out.txt 2>&1 &
 
 cd evm_scilla_js_tests
 
