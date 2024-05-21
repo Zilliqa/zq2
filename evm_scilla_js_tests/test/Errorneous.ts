@@ -13,7 +13,8 @@ describe("While Calling a method on erroneous contract with given gas limit #par
     let signer = contract.signer;
     const funds = await signer.getBalance();
     const nonce = await signer.getTransactionCount();
-    await contract.foo({gasLimit: 5000000});
+    const tx = await contract.foo({gasLimit: 5000000});
+    await expect(tx.wait()).to.be.rejected;
     expect(funds).to.be.greaterThan(await signer.getBalance());
     expect(nonce).to.be.lessThan(await signer.getTransactionCount());
   });
