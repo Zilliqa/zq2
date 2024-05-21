@@ -1,84 +1,245 @@
-## Ancilliary applications for ZQ2 networks are deployed to a GKE cluster.
+################################################################################
+# ZQ2 GCP Terraform main resources
+################################################################################
+
+resource "google_compute_firewall" "allow_apps_ingress_from_iap" {
+  name    = "${var.network_name}-allow-apps-ingress-from-iap"
+  network = local.network_name
+
+  direction     = "INGRESS"
+  source_ranges = ["35.235.240.0/20"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+}
+
+resource "google_compute_firewall" "allow_apps_external_http" {
+  name    = "${var.network_name}-apps-allow-external-http"
+  network = local.network_name
 
 
-resource "google_service_account" "zq2_apps" {
+  direction     = "INGRESS"
+  source_ranges = ["0.0.0.0/0"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80", "8080"]
+  }
+}
+
+resource "google_compute_firewall" "allow_apps_external_https" {
+  name    = "${var.network_name}-apps-allow-external-https"
+  network = local.network_name
+
+  direction     = "INGRESS"
+  source_ranges = ["0.0.0.0/0"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["443"]
+  }
+}
+
+resource "google_service_account" "apps" {
   account_id = "${var.network_name}-apps"
 }
 
-resource "google_container_cluster" "zq2_apps" {
-  name     = "${var.network_name}-apps"
-  location = var.region
+data "google_project" "apps" {}
 
-  network    = local.network_name
-  subnetwork = data.google_compute_subnetwork.default.name
+resource "google_project_iam_member" "apps_metric_writer" {
+  project = data.google_project.apps.project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:${google_service_account.apps.email}"
+}
 
-  enable_autopilot = true
+resource "google_project_iam_member" "apps_log_writer" {
+  project = data.google_project.apps.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.apps.email}"
+}
 
-  cluster_autoscaling {
-    auto_provisioning_defaults {
-      service_account = google_service_account.zq2_apps.email
-    }
+resource "google_project_iam_member" "apps_artifact_registry_reader" {
+  project = var.gcp_docker_registry_project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.apps.email}"
+}
+
+
+module "apps" {
+  source                = "./modules/node"
+  count                 = 1
+  role                  = "apps"
+  name                  = "${var.network_name}-apps-${count.index}"
+  service_account_email = google_service_account.apps.email
+  network_name          = local.network_name
+  node_zone             = data.google_compute_zones.zones.names.0
+  subnetwork_name       = data.google_compute_subnetwork.default.name
+  otterscan_image       = var.otterscan_image
+  spout_image           = var.spout_image
+  subdomain             = var.subdomain
+  config                = ""
+  secret_key            = ""
+  persistence_url       = ""
+  genesis_key           = var.genesis_key
+
+  zq_network_name = var.network_name
+}
+
+resource "google_project_service" "osconfig_apps" {
+  service = "osconfig.googleapis.com"
+}
+
+resource "google_compute_managed_ssl_certificate" "apps" {
+  name = "${var.network_name}-apps"
+
+  managed {
+    domains = ["explorer.${var.subdomain}", "faucet.${var.subdomain}"]
+  }
+}
+
+resource "google_compute_instance_group" "apps" {
+  name      = "${var.network_name}-apps"
+  zone      = "${var.region}-a"
+  instances = module.apps[*].self_link
+
+
+  named_port {
+    name = "otterscan"
+    port = "80"
   }
 
-  dns_config {
-    cluster_dns        = "CLOUD_DNS"
-    cluster_dns_domain = "cluster.local"
-    cluster_dns_scope  = "CLUSTER_SCOPE"
-  }
-
-  private_cluster_config {
-    enable_private_nodes = true
+  named_port {
+    name = "spout"
+    port = "8080"
   }
 }
 
-data "google_client_config" "default" {}
-
-provider "kubernetes" {
-  host  = "https://${google_container_cluster.zq2_apps.endpoint}"
-  token = data.google_client_config.default.access_token
-
-  cluster_ca_certificate = base64decode(google_container_cluster.zq2_apps.master_auth.0.cluster_ca_certificate)
-
-  ignore_annotations = [
-    "^autopilot\\.gke\\.io\\/.*",
-    "cloud.google.com/neg-status",
-  ]
+resource "google_compute_backend_service" "otterscan" {
+  name                  = "${var.network_name}-apps-otterscan"
+  health_checks         = [google_compute_health_check.otterscan.id]
+  port_name             = "otterscan"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  enable_cdn            = false
+  session_affinity      = "CLIENT_IP"
+  backend {
+    group           = google_compute_instance_group.apps.self_link
+    balancing_mode  = "UTILIZATION"
+    capacity_scaler = 1.0
+  }
 }
 
-provider "kubectl" {
-  host  = "https://${google_container_cluster.zq2_apps.endpoint}"
-  token = data.google_client_config.default.access_token
+resource "google_compute_health_check" "otterscan" {
+  name = "${var.network_name}-otterscan"
 
-  cluster_ca_certificate = base64decode(google_container_cluster.zq2_apps.master_auth.0.cluster_ca_certificate)
-  load_config_file       = false
+  http_health_check {
+    port_name          = "otterscan"
+    port_specification = "USE_NAMED_PORT"
+    request_path       = "/"
+  }
 }
 
-module "otterscan" {
-  source = "./modules/app"
-
-  name  = "otterscan"
-  image = "zilliqa/otterscan:develop"
-  env = [
-    ["ERIGON_URL", "https://api.${var.subdomain}"],
-  ]
-  static_ip_name = "explorer-${replace(var.subdomain, ".", "-")}"
-  domain         = "explorer.${var.subdomain}"
+resource "google_compute_backend_service" "spout" {
+  name                  = "${var.network_name}-apps-spout"
+  health_checks         = [google_compute_health_check.spout.id]
+  port_name             = "spout"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  enable_cdn            = false
+  session_affinity      = "CLIENT_IP"
+  backend {
+    group           = google_compute_instance_group.apps.self_link
+    balancing_mode  = "UTILIZATION"
+    capacity_scaler = 1.0
+  }
 }
 
-module "faucet" {
-  source = "./modules/app"
+resource "google_compute_health_check" "spout" {
+  name = "${var.network_name}-spout"
 
-  name  = "faucet"
-  image = "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa/eth-spout:89eb40d3"
-  env = [
-    ["RPC_URL", "https://api.${var.subdomain}"],
-    ["NATIVE_TOKEN_SYMBOL", "ZIL"],
-    ["PRIVATE_KEY", var.genesis_key],
-    ["ETH_AMOUNT", "100"],
-    ["EXPLORER_URL", "https://explorer.${var.subdomain}"],
-    ["MINIMUM_SECONDS_BETWEEN_REQUESTS", "60"],
-    ["BECH32_HRP", "zil"],
-  ]
-  static_ip_name = "faucet-${replace(var.subdomain, ".", "-")}"
-  domain         = "faucet.${var.subdomain}"
+  http_health_check {
+    port_name          = "spout"
+    port_specification = "USE_NAMED_PORT"
+    request_path       = "/"
+  }
+}
+
+resource "google_compute_url_map" "apps" {
+  name            = "${var.network_name}-apps"
+  default_service = google_compute_backend_service.otterscan.id
+
+  host_rule {
+    hosts        = ["explorer.${var.subdomain}"]
+    path_matcher = "explorer"
+  }
+
+  host_rule {
+    hosts        = ["faucet.${var.subdomain}"]
+    path_matcher = "faucet"
+  }
+
+  path_matcher {
+    name            = "explorer"
+    default_service = google_compute_backend_service.otterscan.id
+  }
+
+  path_matcher {
+    name            = "faucet"
+    default_service = google_compute_backend_service.spout.id
+  }
+}
+
+resource "google_compute_target_http_proxy" "apps" {
+  name    = "${var.network_name}-apps-target-proxy"
+  url_map = google_compute_url_map.apps.id
+}
+
+resource "google_compute_target_https_proxy" "apps" {
+  name             = "${var.network_name}-apps-target-proxy"
+  url_map          = google_compute_url_map.apps.id
+  ssl_certificates = [google_compute_managed_ssl_certificate.apps.id]
+}
+
+data "google_compute_global_address" "explorer" {
+  name = "explorer-${replace(var.subdomain, ".", "-")}"
+}
+
+data "google_compute_global_address" "faucet" {
+  name = "faucet-${replace(var.subdomain, ".", "-")}"
+}
+
+resource "google_compute_global_forwarding_rule" "otterscan_http" {
+  name                  = "${var.network_name}-otter-forwarding-rule-http"
+  ip_protocol           = "TCP"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  port_range            = "80"
+  target                = google_compute_target_http_proxy.apps.id
+  ip_address            = data.google_compute_global_address.explorer.address
+}
+
+resource "google_compute_global_forwarding_rule" "otter_https" {
+  name                  = "${var.network_name}-otter-forwarding-rule-https"
+  ip_protocol           = "TCP"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  port_range            = "443"
+  target                = google_compute_target_https_proxy.apps.id
+  ip_address            = data.google_compute_global_address.explorer.address
+}
+
+resource "google_compute_global_forwarding_rule" "faucet_http" {
+  name                  = "${var.network_name}-faucet-forwarding-rule-http"
+  ip_protocol           = "TCP"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  port_range            = "80"
+  target                = google_compute_target_http_proxy.apps.id
+  ip_address            = data.google_compute_global_address.faucet.address
+}
+
+resource "google_compute_global_forwarding_rule" "faucet_https" {
+  name                  = "${var.network_name}-faucet-forwarding-rule-https"
+  ip_protocol           = "TCP"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  port_range            = "443"
+  target                = google_compute_target_https_proxy.apps.id
+  ip_address            = data.google_compute_global_address.faucet.address
 }

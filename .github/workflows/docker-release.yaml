@@ -42,7 +42,7 @@ jobs:
         username: "oauth2accesstoken"
         password: "${{ steps.google-auth.outputs.access_token }}"
     - name: Build ZQ2 Docker images
-      run: DOCKER_BUILDKIT=1 docker build -t zilliqa/zq2:${{ github.ref_name }} -t ${{ env.GCP_REGISTRY }}/zq2:${{ github.ref_name }} -f Dockerfile .
+      run: DOCKER_BUILDKIT=1 docker build --build-arg="is_release=true" -t zilliqa/zq2:${{ github.ref_name }} -t ${{ env.GCP_REGISTRY }}/zq2:${{ github.ref_name }} -f Dockerfile .
       shell: bash
     - name: Login to the DockerHub
       uses: docker/login-action@v3

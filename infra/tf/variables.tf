@@ -17,8 +17,7 @@ variable "region" {
 
 variable "node_zone" {
   type     = string
-  default  = "europe-west2-a"
-  nullable = false
+  nullable = true
 }
 
 variable "eth_chain_id" {
@@ -84,4 +83,41 @@ variable "persistence_url" {
   type        = string
   nullable    = true
   default     = ""
+}
+
+variable "docker_image" {
+  description = "ZQ2 Docker image URL"
+  type        = string
+  default     = ""
+}
+
+variable "otterscan_image" {
+  description = "Otterscan Docker image URL"
+  type        = string
+  default     = ""
+}
+
+variable "spout_image" {
+  description = "Spout Docker image URL"
+  type        = string
+  default     = ""
+}
+
+variable "gcp_docker_registry_project_id" {
+  description = "(Optional) ZQ2 Artifact Registry project id"
+  type        = string
+  default     = "prj-p-devops-services-tvwmrf63"
+}
+
+variable "distributed_validators" {
+  type = list(object({
+    region          = string
+    vm_num          = number
+    vpc_subnet_name = string
+    vm_type         = optional(string)
+    node_keys       = list(string)
+    vm_zone         = optional(string)
+  }))
+  default     = []
+  description = "(Optional) regional validators deployment. Useful for distributed load tests."
 }

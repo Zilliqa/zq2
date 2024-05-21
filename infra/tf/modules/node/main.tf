@@ -18,25 +18,32 @@ variable "subnetwork_name" {
   nullable = false
 }
 
-variable "binary_url" {
-  type     = string
-  nullable = false
+
+variable "subdomain" {
+  description = "(Optional) ZQ2 network subdomain"
+  type        = string
+  default     = ""
 }
 
-variable "binary_md5" {
-  type     = string
-  nullable = false
+variable "docker_image" {
+  description = "(Option): ZQ2 validator docker image"
+  type        = string
+  default     = ""
 }
 
 variable "config" {
   type     = string
-  nullable = false
 }
 
 variable "secret_key" {
   type     = string
-  nullable = false
 }
+
+variable "genesis_key" {
+  type = string
+  default = ""
+}
+
 
 variable "node_type" {
   type     = string
@@ -66,12 +73,38 @@ variable "region" {
   default     = "europe-west2"
 }
 
+variable "role" {
+  description = "VM role"
+  default     = "validator"
+  validation {
+    condition     = contains(["validator", "apps"], var.role)
+    error_message = "The role value must be one of 'validator' or 'apps'."
+  }
+}
 
 variable "labels" {
   type        = map(string)
   description = "A single-level map/object with key value pairs of metadata labels to apply to the GCP resources. All keys should use underscores and values should use hyphens. All values must be wrapped in quotes."
   nullable    = true
   default     = {}
+}
+
+variable "external_ip" {
+  description = "The external IP address. Leave empty for no external IP."
+  type        = string
+  default     = ""
+}
+
+variable "otterscan_image" {
+  description = "(Optional): Otterscan docker image url (incl. version)"
+  type        = string
+  default     = ""
+}
+
+variable "spout_image" {
+  description = "(Optional): spout docker image url (incl. version)"
+  type        = string
+  default     = ""
 }
 
 # Add a random suffix to the compute instance names. This ensures that when they are re-created, their `self_link`
@@ -84,8 +117,9 @@ resource "random_id" "name_suffix" {
     service_account_email = var.service_account_email
     network_name          = var.network_name
     subnetwork_name       = var.subnetwork_name
-    binary_url            = var.binary_url
-    binary_md5            = var.binary_md5
+    docker_image          = var.docker_image
+    otterscan_image       = var.otterscan_image
+    spout_image           = var.spout_image
     config                = var.config
     secret_key            = var.secret_key
   }
@@ -96,7 +130,8 @@ resource "google_compute_instance" "this" {
   machine_type              = var.node_type
   allow_stopping_for_update = true
   zone                      = var.node_zone
-  labels                    = merge({ "zq2-network" = var.zq_network_name }, var.labels)
+  labels = merge({ "zq2-network" = var.zq_network_name },
+  { "role" = var.role }, var.labels)
 
   service_account {
     email = var.service_account_email
@@ -112,14 +147,22 @@ resource "google_compute_instance" "this" {
   boot_disk {
     initialize_params {
       size  = 256
-      image = "debian-cloud/debian-11"
+      image = "ubuntu-os-cloud/ubuntu-2204-lts"
+      type  = "pd-ssd"
     }
   }
 
   network_interface {
     network    = var.network_name
     subnetwork = var.subnetwork_name
-    access_config {}
+
+    dynamic "access_config" {
+      for_each = [ var.role == "validator" ? 1 : 0 ] # Always create the access_config block for validators
+      content {
+        # Conditionally set nat_ip only if var.external_ip is not empty
+        nat_ip = var.external_ip != "" ? var.external_ip : null
+      }
+    }
   }
 
   metadata = {
@@ -127,100 +170,19 @@ resource "google_compute_instance" "this" {
     "enable-osconfig"         = "TRUE"
   }
 
-  metadata_startup_script = <<EOT
-#!/bin/bash
-
-set -Eeuxo pipefail
-
-# Install the ops-agent
-curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
-sudo bash add-google-cloud-ops-agent-repo.sh --also-install
-
-# Configure the ops-agent
-cat << EOF > /etc/google-cloud-ops-agent/config.yaml
-logging:
-  receivers:
-    zilliqa:
-      type: files
-      include_paths: [ "/zilliqa.log" ]
-  processors:
-    json:
-      type: parse_json
-      time_key: timestamp
-      time_format: "%Y-%m-%dT%H:%M:%S.%LZ"
-    move_fields:
-      type: modify_fields
-      fields:
-        jsonPayload."logging.googleapis.com/severity":
-          move_from: jsonPayload.level
-        jsonPayload."logging.googleapis.com/sourceLocation".function:
-          move_from: jsonPayload.target
-  service:
-    pipelines:
-      zilliqa:
-        receivers: [ zilliqa ]
-        processors: [ json, move_fields ]
-EOF
-sudo systemctl restart google-cloud-ops-agent
-
-# Ensure pigz is installed
-
-apt update -y
-apt install -y pigz
-
-# Download and extract the persistence
-if [[ -n "${var.persistence_url}" ]]; then
-  PERSISTENCE_DIR="/data"
-  PERSISTENCE_URL=${var.persistence_url}
-  PERSISTENCE_FILENAME="$${PERSISTENCE_URL##*/}"
-  mkdir -p "$${PERSISTENCE_DIR}"
-  gsutil cp "$${PERSISTENCE_URL}" "$${PERSISTENCE_DIR}/$${PERSISTENCE_FILENAME}"
-  cd "$${PERSISTENCE_DIR}" && tar xf "$${PERSISTENCE_FILENAME}" && rm -f "$${PERSISTENCE_FILENAME}"
-fi
-
-# Download the Zilliqa binary
-gsutil cp ${var.binary_url} /zilliqa
-MD5_SUM=$(echo "${var.binary_md5}" | base64 --decode | hexdump -v -e '/1 "%02x" ')
-echo "$MD5_SUM /zilliqa" | md5sum --check -
-chmod +x /zilliqa
-
-# Set up our configuration
-cat << EOF > /config.toml
-${var.config}
-EOF
-
-# Set up logrotate to limit the size of the log file
-cat << EOF > /etc/logrotate.d/zilliqa.conf
-/zilliqa.log
-{
-    rotate 2
-    copytruncate
-    delaycompress
-    maxsize 256M
-    missingok
-}
-EOF
-
-# Set up a systemd service for Zilliqa
-cat << EOF > /etc/systemd/system/zilliqa.service
-[Unit]
-Description=Zilliqa Node
-
-[Service]
-Type=simple
-ExecStart=/zilliqa ${var.secret_key} --log-json
-Environment="RUST_LOG=zilliqa=debug"
-Environment="RUST_BACKTRACE=1"
-StandardOutput=append:/zilliqa.log
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Start the systemd service
-systemctl enable zilliqa.service
-systemctl start zilliqa.service
-EOT
+  metadata_startup_script = templatefile("${path.module}/scripts/node_provision.py.tpl",
+    {
+      config          = var.config
+      secret_key      = var.secret_key
+      genesis_key     = var.genesis_key
+      docker_image    = var.docker_image
+      persistence_url = var.persistence_url
+      otterscan_image = var.otterscan_image
+      spout_image     = var.spout_image
+      subdomain       = var.subdomain
+      role            = var.role
+    }
+  )
 }
 
 output "id" {
