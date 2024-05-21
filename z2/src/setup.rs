@@ -124,10 +124,6 @@ impl Setup {
     }
 
     pub async fn generate_config(&self) -> Result<()> {
-        let p2p_keypair = self.secret_keys[0].to_libp2p_keypair();
-        let peer_id_node_0 = PeerId::from_public_key(&p2p_keypair.public());
-        let public_key_node_0 = self.secret_keys[0].node_public_key();
-
         // The genesis deposits.
         let mut genesis_deposits: Vec<(NodePublicKey, PeerId, String, Address)> = Vec::new();
         for i in 0..self.how_many {
@@ -187,10 +183,6 @@ impl Setup {
             node_config.disable_rpc = false;
             node_config.eth_chain_id = 700 | 0x8000;
             node_config.data_dir = Some(utils::string_from_path(&full_node_data_path)?);
-            node_config
-                .consensus
-                .genesis_committee
-                .push((public_key_node_0, peer_id_node_0));
             node_config
                 .consensus
                 .genesis_deposits
