@@ -127,7 +127,6 @@ module "bootstrap_node" {
   allowed_timestamp_skew = { secs = 60, nanos = 0 }
   data_dir = "/data"
   consensus.consensus_timeout = { secs = 60, nanos = 0 }
-  consensus.genesis_committee = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}"] ]
   consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
   consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "32000000000000000000", "${local.genesis_address}"] ]
 
@@ -160,7 +159,6 @@ module "node" {
   allowed_timestamp_skew = { secs = 60, nanos = 0 }
   data_dir = "/data"
   consensus.consensus_timeout = { secs = 60, nanos = 0 }
-  consensus.genesis_committee = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}"] ]
   consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
   consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "32000000000000000000", "${local.genesis_address}"] ]
 

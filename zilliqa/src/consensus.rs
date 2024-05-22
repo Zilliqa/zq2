@@ -235,15 +235,12 @@ impl Consensus {
         let (latest_block, latest_block_view, latest_block_number, latest_block_hash) =
             match latest_block {
                 Some(l) => (Some(l.clone()), l.view(), l.number(), l.hash()),
-                None => match (
-                    config.consensus.genesis_committee.len(),
-                    config.consensus.genesis_hash,
-                ) {
-                    (0, Some(hash)) => {
+                None => match config.consensus.genesis_hash {
+                    Some(hash) => {
                         block_store.request_block(hash)?;
                         (None, 0, 0, hash)
                     }
-                    (1, hash) => {
+                    hash => {
                         let genesis = Block::genesis(state.root_hash()?);
                         if let Some(hash) = hash {
                             if genesis.hash() != hash {
@@ -251,15 +248,6 @@ impl Consensus {
                             }
                         }
                         (Some(genesis.clone()), 0, 0, genesis.hash())
-                    }
-                    (0, None) => {
-                        return Err(anyhow!("At least one of genesis_committee or genesis_hash must be specified in config"));
-                    }
-                    _ => {
-                        return Err(anyhow!(
-                            "genesis committee must have length 0 or 1, not {}",
-                            config.consensus.genesis_committee.len()
-                        ));
                     }
                 },
             };
