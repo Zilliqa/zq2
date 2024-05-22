@@ -678,11 +678,6 @@ impl State {
         let gas_price = gas_price.unwrap_or(GAS_PRICE);
 
         let mut max = gas.unwrap_or(MAX_EVM_GAS_LIMIT).0;
-
-        if let Some(gas) = gas {
-            max = gas.0;
-        }
-
         let upper_bound = max;
 
         // Check if estimation succeeds with the highest possible gas
@@ -698,11 +693,15 @@ impl State {
             value,
         )?;
 
-        // Execute the while loop iff min/max < MINIMUM_PERCENT_RATIO_FOR_MAX_AND_MIN [%]
-        const MINIMUM_PERCENT_RATIO_FOR_MAX_AND_MIN: u64 = 15;
+        // Execute the while loop iff (max - min)/max < MINIMUM_PERCENT_RATIO [%]
+        const MINIMUM_PERCENT_RATIO: u64 = 3;
 
         // result should be somewhere in (min, max]
-        while min < ((max * MINIMUM_PERCENT_RATIO_FOR_MAX_AND_MIN) / 100) {
+        while min < max {
+            let break_cond = (max - min) <= (max * MINIMUM_PERCENT_RATIO) / 100;
+            if break_cond {
+                break;
+            }
             let mid = (min + max) / 2;
 
             let ResultAndState { result, .. } = self.apply_transaction_evm(
@@ -726,21 +725,6 @@ impl State {
                     _ => return Err(anyhow!("halted due to: {reason:?}")),
                 },
             }
-        }
-
-        if max == upper_bound {
-            self.estimate_gas_inner(
-                from_addr,
-                to_addr,
-                data.clone(),
-                chain_id,
-                current_block,
-                EvmGas(max),
-                gas_price,
-                value,
-            )?;
-
-            return Ok(max);
         }
         debug!("Estimated gas: {}", max);
         Ok(max)
