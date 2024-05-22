@@ -101,6 +101,10 @@ struct DocStruct {
     /// Should we fail with an error if there is a mismatch between docs and implementation
     #[clap(long)]
     fail_on_mismatch: bool,
+
+    /// API url to show in the generated documentation
+    #[clap(long)]
+    api_url: Option<String>,
 }
 
 // See https://jwodder.github.io/kbits/posts/clap-bool-negate/
@@ -288,6 +292,7 @@ async fn main() -> Result<()> {
                 &arg.index_file,
                 &arg.key_prefix,
                 arg.fail_on_mismatch,
+                &arg.api_url,
             )
             .await?;
             Ok(())

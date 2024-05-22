@@ -18,7 +18,7 @@ Returns the Otterscan API level
         "jsonrpc": "2.0",
         "method": "ots_getApiLevel",
         "params": [ ]
-    }' -H "Content-Type: application/json" -X POST "https://api.zq2-devnet.zilliqa.com/"
+    }' -H "Content-Type: application/json" -X POST "{{ _api_url }}"
 ```
 
 # Response
