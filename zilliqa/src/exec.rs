@@ -17,15 +17,15 @@ use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
     primitives::{
-        AccountInfo, BlockEnv, Bytecode, ExecutionResult, HandlerCfg, Output, ResultAndState,
-        SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
+        AccountInfo, BlockEnv, Bytecode, ExecutionResult, HaltReason, HandlerCfg, Output,
+        ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
     },
     Database, DatabaseRef, Evm, Inspector,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tracing::{info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     contracts,
@@ -268,6 +268,9 @@ impl DatabaseRef for &State {
 }
 
 pub const BLOCK_GAS_LIMIT: EvmGas = EvmGas(84_000_000);
+// As per EIP-150
+pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_500_000);
+
 /// The price per unit of [EvmGas].
 pub const GAS_PRICE: u128 = 4761904800000;
 
@@ -673,15 +676,78 @@ impl State {
         value: u128,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(GAS_PRICE);
-        let gas = gas.unwrap_or(BLOCK_GAS_LIMIT);
 
+        let mut max = gas.unwrap_or(MAX_EVM_GAS_LIMIT).0;
+        let upper_bound = max;
+
+        // Check if estimation succeeds with the highest possible gas
+        // We use the result as lower bound
+        let mut min = self.estimate_gas_inner(
+            from_addr,
+            to_addr,
+            data.clone(),
+            chain_id,
+            current_block,
+            EvmGas(upper_bound),
+            gas_price,
+            value,
+        )?;
+
+        // Execute the while loop iff (max - min)/max < MINIMUM_PERCENT_RATIO [%]
+        const MINIMUM_PERCENT_RATIO: u64 = 3;
+
+        // result should be somewhere in (min, max]
+        while min < max {
+            let break_cond = (max - min) <= (max * MINIMUM_PERCENT_RATIO) / 100;
+            if break_cond {
+                break;
+            }
+            let mid = (min + max) / 2;
+
+            let ResultAndState { result, .. } = self.apply_transaction_evm(
+                from_addr,
+                to_addr,
+                gas_price,
+                EvmGas(mid),
+                value,
+                data.clone(),
+                None,
+                chain_id,
+                current_block,
+                inspector::noop(),
+            )?;
+
+            match result {
+                ExecutionResult::Success { .. } => max = mid,
+                ExecutionResult::Revert { .. } => min = mid + 1,
+                ExecutionResult::Halt { reason, .. } => match reason {
+                    HaltReason::OutOfGas(_) | HaltReason::InvalidFEOpcode => min = mid + 1,
+                    _ => return Err(anyhow!("halted due to: {reason:?}")),
+                },
+            }
+        }
+        debug!("Estimated gas: {}", max);
+        Ok(max)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn estimate_gas_inner(
+        &self,
+        from_addr: Address,
+        to_addr: Option<Address>,
+        data: Vec<u8>,
+        chain_id: u64,
+        current_block: BlockHeader,
+        gas: EvmGas,
+        gas_price: u128,
+        value: u128,
+    ) -> Result<u64> {
         let ResultAndState { result, .. } = self.apply_transaction_evm(
             from_addr,
             to_addr,
             gas_price,
             gas,
             value,
-            data,
+            data.clone(),
             None,
             chain_id,
             current_block,
@@ -701,9 +767,8 @@ impl State {
                 let response = jsonrpsee::types::ErrorObjectOwned::owned(
                     REVERT_ERROR_CODE,
                     decoded_revert_msg,
-                    None::<()>,
+                    Some(output),
                 );
-
                 Err(response.into())
             }
             ExecutionResult::Halt { reason, .. } => Err(anyhow!("halted due to: {reason:?}")),
