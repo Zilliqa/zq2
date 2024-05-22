@@ -1,3 +1,4 @@
+use alloy_consensus::TxEip1559;
 use alloy_primitives::{Address, B256, U128, U256, U64};
 use serde::{
     de::{self, Unexpected},
@@ -11,7 +12,7 @@ use crate::{
     exec::BLOCK_GAS_LIMIT,
     message,
     time::SystemTime,
-    transaction::{EvmGas, EvmLog},
+    transaction::{self, EvmGas, EvmLog},
 };
 
 #[derive(Clone, Serialize)]
@@ -156,6 +157,67 @@ pub struct Transaction {
     pub access_list: Option<Vec<(Address, Vec<B256>)>>,
     #[serde(rename = "type", serialize_with = "hex")]
     pub transaction_type: u64,
+}
+
+impl Transaction {
+    pub fn new(tx: transaction::VerifiedTransaction, block: Option<message::Block>) -> Self {
+        let hash = tx.hash;
+        let from = tx.signer;
+        let v = tx.tx.sig_v();
+        let r = tx.tx.sig_r();
+        let s = tx.tx.sig_s();
+        let transaction = tx.tx.into_transaction();
+        let (gas_price, max_fee_per_gas, max_priority_fee_per_gas) = match transaction {
+            transaction::Transaction::Legacy(_)
+            | transaction::Transaction::Eip2930(_)
+            | transaction::Transaction::Zilliqa(_)
+            | transaction::Transaction::Intershard(_) => {
+                (transaction.max_fee_per_gas(), None, None)
+            }
+            transaction::Transaction::Eip1559(TxEip1559 {
+                max_fee_per_gas,
+                max_priority_fee_per_gas,
+                ..
+            }) => (
+                // The `gasPrice` for EIP-1559 transactions should be set to the effective gas price of this transaction,
+                // which depends on the block's base fee. We don't yet have a base fee so we just set it to the max fee
+                // per gas.
+                max_fee_per_gas,
+                Some(max_fee_per_gas),
+                Some(max_priority_fee_per_gas),
+            ),
+        };
+        Transaction {
+            block_hash: block.as_ref().map(|b| b.hash().0.into()),
+            block_number: block.as_ref().map(|b| b.number()),
+            from,
+            gas: transaction.gas_limit(),
+            gas_price,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            hash: hash.into(),
+            input: transaction.payload().to_vec(),
+            nonce: transaction.nonce().unwrap_or(u64::MAX),
+            to: transaction.to_addr(),
+            transaction_index: block
+                .map(|b| b.transactions.iter().position(|t| *t == hash).unwrap() as u64),
+            value: transaction.amount(),
+            v,
+            r,
+            s,
+            chain_id: transaction.chain_id(),
+            access_list: transaction.access_list().map(|a| a.to_vec()),
+            transaction_type: match transaction {
+                transaction::Transaction::Legacy(_) => 0,
+                transaction::Transaction::Eip2930(_) => 1,
+                transaction::Transaction::Eip1559(_) => 2,
+                // Set Zilliqa transaction types to a unique number. This is "ZIL" encoded in ASCII.
+                transaction::Transaction::Zilliqa(_) => 90_73_76,
+                // Set intershard transactions as unique, too. This is ZIL + 1.
+                transaction::Transaction::Intershard(_) => 90_73_77,
+            },
+        }
+    }
 }
 
 /// A transaction receipt object, returned by the Ethereum API.
