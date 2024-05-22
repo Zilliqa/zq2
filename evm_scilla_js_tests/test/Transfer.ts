@@ -135,11 +135,13 @@ describe("Transfer ethers #parallel", function () {
     const singleTransfer = await hre.deployContractWithSigner("SingleTransfer", owner);
 
     // call SC with a value to move funds across
-    await singleTransfer.doTransfer(randomAccount, TRANSFER_VALUE, {
+    const tx = await singleTransfer.doTransfer(randomAccount, TRANSFER_VALUE, {
       gasLimit: 25000000,
       value: TRANSFER_VALUE
     });
 
+    await tx.wait();
+    
     const receivedBal = await ethers.provider.getBalance(randomAccount);
 
     expect(receivedBal).to.be.eq(TRANSFER_VALUE);
