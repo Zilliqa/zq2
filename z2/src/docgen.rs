@@ -180,7 +180,6 @@ pub enum ApiMethod {
 pub fn get_implemented_jsonrpc_methods() -> Result<Vec<ApiMethod>> {
     let mut methods = Vec::new();
     // Construct an empty node so we can check for the existence of RPC methods without constructing a full node.
-    let n0 = SecretKey::new()?;
     let genesis_accounts: Vec<(Address, String)> = vec![
         (
             address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"),
@@ -195,10 +194,6 @@ pub fn get_implemented_jsonrpc_methods() -> Result<Vec<ApiMethod>> {
 
     let config = NodeConfig {
         consensus: ConsensusConfig {
-            genesis_committee: vec![(
-                n0.node_public_key(),
-                n0.to_libp2p_keypair().public().to_peer_id(),
-            )],
             genesis_accounts,
             ..Default::default()
         },
