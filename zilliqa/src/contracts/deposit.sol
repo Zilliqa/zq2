@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 struct Staker {
     // The index of this staker's `blsPubKey` in the `_stakerKeys` array, plus 1. 0 is used for non-existing entries.
     uint256 keyIndex;
+    // Invariant: `balance >= minimumStake`
     uint256 balance;
     address rewardAddress;
     bytes peerId;
@@ -20,6 +21,10 @@ contract Deposit {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
         // TODO: Verify signature as a proof-of-possession of the private key.
+
+        if (msg.value < minimumStake) {
+            revert("stake less than minimum stake");
+        }
 
         _stakersMap[blsPubKey].balance += msg.value;
         totalStake += msg.value;
@@ -38,6 +43,10 @@ contract Deposit {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
 
+        if (amount < minimumStake) {
+            revert("stake less than minimum stake");
+        }
+
         totalStake -= _stakersMap[blsPubKey].balance;
         _stakersMap[blsPubKey].balance = amount;
         totalStake += amount;
@@ -54,11 +63,7 @@ contract Deposit {
     function getStake(bytes calldata blsPubKey) public view returns (uint256) {
         require(blsPubKey.length == 48);
 
-        if (_stakersMap[blsPubKey].balance >= minimumStake) {
-            return _stakersMap[blsPubKey].balance;
-        } else {
-            return 0;
-        }
+        return _stakersMap[blsPubKey].balance;
     }
 
     function getRewardAddress(bytes calldata blsPubKey) public view returns (address) {

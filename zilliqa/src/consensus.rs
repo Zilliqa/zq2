@@ -150,6 +150,8 @@ pub struct Consensus {
     create_next_block_on_timeout: bool,
     pub new_blocks: broadcast::Sender<BlockHeader>,
     pub receipts: broadcast::Sender<(TransactionReceipt, usize)>,
+    pub new_transactions: broadcast::Sender<VerifiedTransaction>,
+    pub new_transaction_hashes: broadcast::Sender<Hash>,
 }
 
 // View in consensus should be have access monitored so last_timeout is always correct
@@ -235,15 +237,12 @@ impl Consensus {
         let (latest_block, latest_block_view, latest_block_number, latest_block_hash) =
             match latest_block {
                 Some(l) => (Some(l.clone()), l.view(), l.number(), l.hash()),
-                None => match (
-                    config.consensus.genesis_committee.len(),
-                    config.consensus.genesis_hash,
-                ) {
-                    (0, Some(hash)) => {
+                None => match config.consensus.genesis_hash {
+                    Some(hash) => {
                         block_store.request_block(hash)?;
                         (None, 0, 0, hash)
                     }
-                    (1, hash) => {
+                    hash => {
                         let genesis = Block::genesis(state.root_hash()?);
                         if let Some(hash) = hash {
                             if genesis.hash() != hash {
@@ -251,15 +250,6 @@ impl Consensus {
                             }
                         }
                         (Some(genesis.clone()), 0, 0, genesis.hash())
-                    }
-                    (0, None) => {
-                        return Err(anyhow!("At least one of genesis_committee or genesis_hash must be specified in config"));
-                    }
-                    _ => {
-                        return Err(anyhow!(
-                            "genesis committee must have length 0 or 1, not {}",
-                            config.consensus.genesis_committee.len()
-                        ));
                     }
                 },
             };
@@ -306,6 +296,8 @@ impl Consensus {
             create_next_block_on_timeout: false,
             new_blocks: broadcast::Sender::new(4),
             receipts: broadcast::Sender::new(128),
+            new_transactions: broadcast::Sender::new(128),
+            new_transaction_hashes: broadcast::Sender::new(128),
         };
 
         // If we're at genesis, add the genesis block.
@@ -1223,7 +1215,24 @@ impl Consensus {
         }
 
         let account_nonce = self.state.get_account(txn.signer)?.nonce;
-        Ok(self.transaction_pool.insert_transaction(txn, account_nonce))
+        let txn_hash = txn.hash;
+        let new = self.transaction_pool.insert_transaction(txn, account_nonce);
+        if new {
+            let _ = self.new_transaction_hashes.send(txn_hash);
+
+            // Avoid cloning the transaction aren't any subscriptions to send it to.
+            if self.new_transactions.receiver_count() != 0 {
+                // Clone the transaction from the pool, because we moved it in.
+                let txn = self
+                    .transaction_pool
+                    .get_transaction(txn_hash)
+                    .ok_or_else(|| anyhow!("transaction we just added is missing"))?
+                    .clone();
+                let _ = self.new_transactions.send(txn);
+            }
+        }
+
+        Ok(new)
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
@@ -2088,7 +2097,10 @@ impl Consensus {
                 exceptions,
             };
             info!(?receipt, "applied transaction {:?}", receipt);
-            let _ = self.receipts.send((receipt.clone(), txn_index));
+            // Avoid cloning the receipt if there are no subscriptions to send it to.
+            if self.receipts.receiver_count() != 0 {
+                let _ = self.receipts.send((receipt.clone(), txn_index));
+            }
             block_receipts.push(receipt);
         }
 

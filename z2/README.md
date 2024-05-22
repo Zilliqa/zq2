@@ -77,7 +77,6 @@ eth_chain_id = 33101 # change the chain it for your conversion
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
 consensus.consensus_timeout = { secs = 60, nanos = 0 }
-consensus.genesis_committee = [ ["a8b48d731061d1d7387cf113c96d9c2693e4442b91a8cf933037fe4b15f8977e4bc3afc4ed118d35a5181c05fb7e18be", "12D3KooWNYaasyfY1wFrSHga3WBdZkb7bGhQiUz9926bQvk4HQj2"] ]
 consensus.genesis_accounts = [ ["0xcca93a2e1169caf02e515203d1539cc3f390890a", "1000000000000000000000000"] ]
 EOF
 ```

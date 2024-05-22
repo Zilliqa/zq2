@@ -152,7 +152,6 @@ struct TestNode {
 }
 
 struct Network {
-    pub genesis_committee: Vec<(NodePublicKey, PeerId)>,
     pub genesis_deposits: Vec<(NodePublicKey, PeerId, String, Address)>,
     /// Child shards.
     pub children: HashMap<u64, Network>,
@@ -213,11 +212,6 @@ impl Network {
         // up with indices in the committee, making logs easier to read.
         keys.sort_unstable_by_key(|key| key.to_libp2p_keypair().public().to_peer_id());
 
-        let validator = (
-            keys[0].node_public_key(),
-            keys[0].to_libp2p_keypair().public().to_peer_id(),
-        );
-        let genesis_committee = vec![validator];
         let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
         // The initial stake of each node.
@@ -237,7 +231,6 @@ impl Network {
         let config = NodeConfig {
             eth_chain_id: shard_id,
             consensus: ConsensusConfig {
-                genesis_committee: genesis_committee.clone(),
                 genesis_deposits: genesis_deposits.clone(),
                 genesis_hash: None,
                 is_main: send_to_parent.is_none(),
@@ -279,7 +272,6 @@ impl Network {
         }
 
         Network {
-            genesis_committee,
             genesis_deposits,
             nodes,
             disconnected: HashSet::new(),
@@ -315,26 +307,22 @@ impl Network {
     }
 
     pub fn add_node_with_key(&mut self, genesis: bool, secret_key: SecretKey) -> usize {
-        let (genesis_committee, genesis_hash) = if genesis {
-            (self.genesis_committee.clone(), None)
+        let genesis_hash = if genesis {
+            None
         } else {
-            (
-                vec![],
-                Some(
-                    self.nodes[0]
-                        .inner
-                        .lock()
-                        .unwrap()
-                        .get_genesis_hash()
-                        .unwrap(),
-                ),
+            Some(
+                self.nodes[0]
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .get_genesis_hash()
+                    .unwrap(),
             )
         };
 
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
             consensus: ConsensusConfig {
-                genesis_committee,
                 genesis_deposits: self.genesis_deposits.clone(),
                 genesis_hash,
                 is_main: self.is_main(),
@@ -369,12 +357,6 @@ impl Network {
 
         // Collect the keys from the validators
         let keys = self.nodes.iter().map(|n| n.secret_key).collect::<Vec<_>>();
-
-        let validator = (
-            keys[0].node_public_key(),
-            keys[0].to_libp2p_keypair().public().to_peer_id(),
-        );
-        let genesis_committee = vec![validator];
 
         // The initial stake of each node.
         let stake = 32_000_000_000_000_000_000u128;
@@ -415,7 +397,6 @@ impl Network {
                 let config = NodeConfig {
                     eth_chain_id: self.shard_id,
                     consensus: ConsensusConfig {
-                        genesis_committee: genesis_committee.clone(),
                         genesis_deposits: genesis_deposits.clone(),
                         genesis_hash: None,
                         is_main: self.is_main(),

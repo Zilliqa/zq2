@@ -1096,9 +1096,27 @@ async fn logs_subscription(mut network: Network) {
         .tx_hash();
     network.run_until_receipt(&wallet, call_tx_hash, 50).await;
 
-    // Assert the stream contains 3 blocks.
-    assert_eq!(log_stream.next().await.unwrap().address, contract_address,);
-    assert_eq!(log_stream.next().await.unwrap().address, contract_address,);
+    assert_eq!(log_stream.next().await.unwrap().address, contract_address);
+    assert_eq!(log_stream.next().await.unwrap().address, contract_address);
 
     assert!(log_stream.unsubscribe().await.unwrap());
+}
+
+#[zilliqa_macros::test]
+async fn new_transaction_subscription(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let mut txn_stream = wallet.subscribe_full_pending_txs().await.unwrap();
+    let mut hash_stream = wallet.subscribe_pending_txs().await.unwrap();
+
+    let txn = TransactionRequest::pay(H160::random(), 10);
+    let txn = wallet.send_transaction(txn, None).await.unwrap();
+
+    // Note we don't wait for the transaction to be mined - The subscriptions should already contain this transaction.
+
+    assert_eq!(txn_stream.next().await.unwrap().hash, txn.tx_hash());
+    assert_eq!(hash_stream.next().await.unwrap(), txn.tx_hash());
+
+    assert!(txn_stream.unsubscribe().await.unwrap());
+    assert!(hash_stream.unsubscribe().await.unwrap());
 }
