@@ -7,7 +7,6 @@ import sendJsonRpcRequest from "../helpers/JsonRpcHelper";
 describe("Parent Child Contract Functionality #parallel", function () {
   const INITIAL_FUND = 10_000_000;
   const CHILD_CONTRACT_VALUE = 12345;
-  let installedChild: Contract;
   let childContractAddress: string;
   let childContract: Contract;
   let parentContract: Contract;
@@ -25,7 +24,8 @@ describe("Parent Child Contract Functionality #parallel", function () {
   });
 
   it("Should instantiate a new child if installChild is called @block-2", async function () {
-    installedChild = await parentContract.installChild(CHILD_CONTRACT_VALUE, {gasLimit: 25000000});
+    const tx = await parentContract.installChild(CHILD_CONTRACT_VALUE, {gasLimit: 25000000});
+    await tx.wait();
     childContractAddress = await parentContract.childAddress();
     expect(childContractAddress).to.be.properAddress;
     expect(await ethers.provider.getBalance(parentContract.address)).to.be.eq(0);

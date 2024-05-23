@@ -36,7 +36,8 @@ contract Caller {
   function callCalled(address called) public returns(bool, bytes memory) {
 
     (bool success, bytes memory data) = called.staticcall(abi.encodeWithSignature("increment()"));
-    assert(success);
+    // state modifications in staticcall are treated as failure by revm
+    assert(!success);
 
     return (success, data);
   }
