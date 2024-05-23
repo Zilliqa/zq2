@@ -24,7 +24,7 @@ test = false
 alloy-primitives = { version = "0.7.2", features = ["rlp", "serde"] }
 alloy-consensus = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf", features = ["serde", "k256"] }
 alloy-eips = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf", features = ["serde"] }
-anyhow = "1.0.83"
+anyhow = "1.0.86"
 async-trait = "0.1.80"
 base64 = "0.22.0"
 bitvec = "1.0.1"
