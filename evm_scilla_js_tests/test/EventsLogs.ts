@@ -17,12 +17,14 @@ describe("Events and logs #parallel", function () {
 
   it("Should return 1 log whenever a function with one event is called @block-1", async function () {
     const tx = await contract.one_log();
+    await tx.wait();
     const receipt = await ethers.provider.getTransactionReceipt(tx.hash);
     expect(receipt.logs.length).to.be.eq(1);
   });
 
   it("Should return 2 logs whenever a function with two events is called @block-1", async function () {
     const tx = await contract.two_logs();
+    await tx.wait();
     const receipt = await ethers.provider.getTransactionReceipt(tx.hash);
     expect(receipt.logs.length).to.be.eq(2);
   });
