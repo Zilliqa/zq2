@@ -2,7 +2,7 @@
 #![allow(unused_imports)]
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -23,13 +23,17 @@ use zilliqa::{
 };
 use zqutils::utils;
 
+const PAGE_STATUS_IMPLEMENTED: &str = "Implemented";
+const PAGE_STATUS_NOT_IMPLEMENTED: &str = "NotYetImplemented";
+const PAGE_STATUS_NEVER_IMPLEMENTED: &str = "NeverImplemented";
+
 pub struct GeneratedFile {
     /// What is the filename we should give in the nav entry in mkdocs?
     pub mkdocs_filename: String,
     /// Components of the id for the nav entry in mkdocs.
     pub id_components: Vec<String>,
     /// Name of the API for our list.
-    pub api_name: String,
+    pub api_name: ApiMethod,
 }
 
 pub struct Docs {
@@ -43,6 +47,10 @@ pub struct Docs {
     pub index_file: Option<String>,
     // At what key should we start?
     pub index_file_key_prefix: String,
+    // What is the API url ?
+    pub api_url: String,
+    // What APIs are actually implemented?
+    pub implemented: HashSet<ApiMethod>,
 }
 
 #[derive(Debug)]
@@ -215,6 +223,8 @@ impl Docs {
         id_prefix: &Option<String>,
         index_file: &Option<String>,
         index_file_key_prefix: &str,
+        api_url: &str,
+        implemented: &HashSet<ApiMethod>,
     ) -> Result<Self> {
         Ok(Self {
             target_dir: target_dir.to_string(),
@@ -222,6 +232,8 @@ impl Docs {
             id_prefix: id_prefix.clone(),
             index_file: index_file.clone(),
             index_file_key_prefix: index_file_key_prefix.to_string(),
+            api_url: api_url.to_string(),
+            implemented: implemented.clone(),
         })
     }
 
@@ -234,11 +246,13 @@ impl Docs {
     // Because of the weird rules around recursive async, this is done iteratively.
     // @return A vector of the APIs documented
     pub async fn generate_dir(&self, dir: &Path) -> Result<Vec<ApiMethod>> {
+        #[derive(PartialEq, Debug, Clone)]
         struct Entry {
             abs: PathBuf,
             rel: PathBuf,
         }
         let mut stack: Vec<Entry> = Vec::new();
+        let mut to_generate: Vec<Entry> = Vec::new();
         let mut documented_apis: Vec<ApiMethod> = Vec::new();
         stack.push(Entry {
             abs: PathBuf::from(dir),
@@ -300,23 +314,29 @@ impl Docs {
                     && components[components.len() - 1] == "md"
                     && components[components.len() - 2] == "doc"
                 {
-                    println!("File: {:?} rel {:?}", &path_entry.abs, &path_entry.rel);
-                    let generated = self.generate_file(&path_entry.abs, &path_entry.rel).await?;
-                    let the_iter = key_prefix_components
-                        .iter()
-                        .chain(generated.id_components.iter());
-                    insert_key(
-                        &mut contents_map,
-                        &the_iter.map(|m| m.to_string()).collect(),
-                        0,
-                        &generated.mkdocs_filename,
-                    );
-                    documented_apis.push(ApiMethod::JsonRpc {
-                        name: generated.api_name,
-                    });
+                    // Push onto the "files" list - we'll sort it in a bit
+                    to_generate.push(path_entry.clone());
                 }
             }
         }
+
+        // Now sort the list of files to generate.
+        to_generate.sort_by(|a, b| a.rel.cmp(&b.rel));
+        for path_entry in to_generate.iter() {
+            println!("File: {:?} rel {:?}", &path_entry.abs, &path_entry.rel);
+            let generated = self.generate_file(&path_entry.abs, &path_entry.rel).await?;
+            let the_iter = key_prefix_components
+                .iter()
+                .chain(generated.id_components.iter());
+            insert_key(
+                &mut contents_map,
+                &the_iter.map(|m| m.to_string()).collect(),
+                0,
+                &generated.mkdocs_filename,
+            );
+            documented_apis.push(generated.api_name);
+        }
+
         if let Some(val) = &self.index_file {
             // Save the index file back out again.
             fs::write(val, &serde_yaml::to_string(&contents_map)?).await?;
@@ -381,6 +401,29 @@ impl Docs {
     // one day it might be programmable.
     // @return A vector of the components we will use to index this page in mkdocs.yaml
     pub async fn generate_file(&self, src: &Path, rel: &Path) -> Result<GeneratedFile> {
+        fn indent4(
+            v: &tera::Value,
+            _args: &HashMap<String, tera::Value>,
+        ) -> tera::Result<tera::Value> {
+            // no-op if this is not a string
+            match v {
+                tera::Value::String(ref in_str) => Ok(tera::Value::String(
+                    in_str
+                        .split('\n')
+                        .map(|x| {
+                            if !x.is_empty() {
+                                format!("    {x}")
+                            } else {
+                                String::new()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )),
+                _ => Ok(v.clone()),
+            }
+        }
+
         // First, let's read the input
         let src_contents = fs::read_to_string(src).await?;
         let src_file = zqutils::utils::string_from_path(src)?;
@@ -396,8 +439,9 @@ impl Docs {
         let mut section_tera: Tera = Default::default();
         let mut context = tera::Context::new();
         // Keep rust happy.
-        context.insert("_test", "test");
+        context.insert("_api_url", &self.api_url);
         // Add context keys here when we have some.
+        let mut page_status: String = PAGE_STATUS_IMPLEMENTED.to_string();
         for (k, v) in &parsed.sections {
             section_tera.add_raw_template(k, v)?;
         }
@@ -405,7 +449,11 @@ impl Docs {
         let mut final_context = tera::Context::new();
         for k in parsed.sections.keys() {
             let rendered = section_tera.render(k, &context)?;
-            final_context.insert(k, &rendered);
+            if k == "status" {
+                page_status = rendered.trim().to_string();
+            } else {
+                final_context.insert(k, &rendered);
+            }
         }
 
         // OK. Grab the template
@@ -418,6 +466,16 @@ impl Docs {
                 src_file
             ));
         };
+        let api_name = ApiMethod::JsonRpc {
+            name: page_title.to_string(),
+        };
+        // If the API is not implemented, and it is supposed to be ..
+        if !self.implemented.contains(&api_name) && page_status != PAGE_STATUS_NEVER_IMPLEMENTED {
+            // ... set the status to not implemented
+            page_status = PAGE_STATUS_NOT_IMPLEMENTED.to_string();
+        }
+        final_context.insert("status", &page_status);
+
         let mut nearly_id: Vec<String> = PathBuf::from(rel)
             .iter()
             .map(|x| x.to_str().unwrap_or("").to_string())
@@ -458,6 +516,9 @@ impl Docs {
         // That is also the mkdocs id of this file.
         let prefixed_id = zqutils::utils::string_from_path(&id_path)?;
         final_context.insert("_id", &prefixed_id);
+        // Because we need to indent every line in a section by exactly 4
+        // spaces or tabs don't work . Grr!
+        page_tera.register_filter("indent4", indent4);
         let final_page = page_tera
             .render("api", &final_context)
             .context(format!("Whilst rendering {0:?}", src_file))?;
@@ -478,7 +539,7 @@ impl Docs {
         Ok(GeneratedFile {
             mkdocs_filename,
             id_components,
-            api_name: page_title.to_string(),
+            api_name,
         })
     }
 }
