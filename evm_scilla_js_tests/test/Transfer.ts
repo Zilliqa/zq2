@@ -22,14 +22,16 @@ describe("ForwardZil contract functionality #parallel", function () {
   it(`Should move ${ethers.utils.formatEther(
     FUND
   )} ethers to the contract if deposit is called @block-1`, async function () {
-    await contract.deposit({value: FUND});
+    const tx = await contract.deposit({value: FUND});
+    await tx.wait()
     expect(await ethers.provider.getBalance(contract.address)).to.be.eq(FUND);
   });
 
   // TODO: Add notPayable contract function test.
 
   it("Should move 1 ether to the owner if withdraw function is called so 1 ether is left for the contract itself [@transactional]", async function () {
-    expect(await contract.withdraw()).to.changeEtherBalances(
+    const tx = await contract.withdraw();
+    expect(await tx.wait()).to.changeEtherBalances(
       [contract.address, await contract.signer.getAddress()],
       [ethers.utils.parseEther("-1.0"), ethers.utils.parseEther("1.0")],
       {includeFee: true}
@@ -148,11 +150,11 @@ describe("Transfer ethers #parallel", function () {
     hre.releaseEthSigner(owner);
   });
 
-  // Disabled in q4-working-branch
-  xit("should return check gas and funds consistency", async function () {
+  it("should return check gas and funds consistency", async function () {
     let rndAccount = ethers.Wallet.createRandom();
 
-    const FUND = BigNumber.from(200_000_000_000_000_000n);
+    // Gas price could be very high so the initial fund is so too
+    const FUND = BigNumber.from(200_000_000_000_000_000_000n);
 
     const tx = await hre.sendEthTransaction({
       to: rndAccount.address,

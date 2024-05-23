@@ -101,7 +101,8 @@ const config: HardhatUserConfig = {
       url: "http://127.0.0.1:4201/",
       websocketUrl: "ws://127.0.0.1:4201/",
       accounts: [
-        "0000000000000000000000000000000000000000000000000000000000000001",
+        // Don't use account with private key = '0x1' because it's also used as staking reward address
+        // This could lead to false tests failures when checks are made against balance changes
         "0000000000000000000000000000000000000000000000000000000000000002",
         "0000000000000000000000000000000000000000000000000000000000000003",
         "0000000000000000000000000000000000000000000000000000000000000004",

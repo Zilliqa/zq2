@@ -2092,6 +2092,7 @@ impl Consensus {
                 contract_address,
                 logs,
                 gas_used,
+                gas_price: txn.tx.gas_price(),
                 accepted,
                 errors,
                 exceptions,

@@ -540,7 +540,7 @@ pub(super) fn get_transaction_receipt_inner(
         from,
         to: transaction.to_addr(),
         cumulative_gas_used: EvmGas(0),
-        effective_gas_price: 0,
+        effective_gas_price: receipt.gas_price,
         gas_used: receipt.gas_used,
         contract_address: receipt.contract_address,
         logs,

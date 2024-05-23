@@ -653,6 +653,7 @@ pub struct TransactionReceipt {
     pub tx_hash: crypto::Hash,
     pub success: bool,
     pub gas_used: EvmGas,
+    pub gas_price: u128,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
     pub accepted: Option<bool>,
