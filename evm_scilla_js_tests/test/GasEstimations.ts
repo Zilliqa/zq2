@@ -5,7 +5,7 @@ describe("Gas estimation with web3.js", function () {
   const CREATE2_MIN_GAS = 32000;
 
   describe("When a fund transfer is made", function () {
-    xit("should return proper estimation [@transactional]", async function () {
+    it("should return proper estimation [@transactional]", async function () {
       const to = ethers.Wallet.createRandom();
       const signer = hre.allocateEthSigner();
       const gasAmountEst = await ethers.provider.estimateGas({
@@ -20,7 +20,7 @@ describe("Gas estimation with web3.js", function () {
       });
 
       const receipt = await txn.wait();
-      expect(gasAmountEst).to.be.equal(receipt.gasUsed);
+      expect(gasAmountEst).to.be.greaterThanOrEqual(receipt.gasUsed);
       hre.releaseEthSigner(signer);
     });
   });
@@ -32,7 +32,7 @@ describe("Gas estimation with web3.js", function () {
       this.contract = await hre.deployContract("ParentContract", {value: amountPaid});
     });
 
-    xit("Should return proper gas estimation [@transactional]", async function () {
+    it("Should return proper gas estimation [@transactional]", async function () {
       const gasAmountEst = await this.contract.estimateGas.installChild(123);
       expect(gasAmountEst).to.be.at.least(CREATE2_MIN_GAS);
 

@@ -166,10 +166,17 @@ extendEnvironment((hre: HardhatRuntimeEnvironment) => {
     const contractRaw = hre.artifacts.readArtifactSync(contractName);
     const contract = new hre.web3.eth.Contract(contractRaw.abi);
     const gasPrice = options.gasPrice || (await hre.web3.eth.getGasPrice());
-    const gasLimit = options.gasLimit || 210_000;
     const value = options.value || 0;
 
     const signerAddress = await signer.getAddress();
+
+    const estimatedGas = await contract.deploy({data: contractRaw.bytecode, arguments: args}).estimateGas({
+      from: signerAddress,
+      value
+    });
+
+
+    const gasLimit = options.gasLimit || estimatedGas;
 
     const deployedContract = await contract.deploy({data: contractRaw.bytecode, arguments: args}).send({
       from: signerAddress,
