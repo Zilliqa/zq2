@@ -2,7 +2,7 @@ use alloy_primitives::{Address, B256};
 use serde::Serialize;
 
 use super::{eth, hex, option_hex};
-use crate::{message, time::SystemTime};
+use crate::{exec::BLOCK_GAS_LIMIT, message, time::SystemTime, transaction::EvmGas};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,9 +34,9 @@ pub struct Block {
     #[serde(serialize_with = "hex")]
     size: u64,
     #[serde(serialize_with = "hex")]
-    gas_limit: u64,
+    gas_limit: EvmGas,
     #[serde(serialize_with = "hex")]
-    gas_used: u64,
+    gas_used: EvmGas,
     #[serde(serialize_with = "hex")]
     timestamp: u64,
     transaction_count: usize,
@@ -104,8 +104,8 @@ impl Block {
             total_difficulty: 0,
             extra_data: vec![],
             size: 0,
-            gas_limit: 1,
-            gas_used: 0,
+            gas_limit: BLOCK_GAS_LIMIT,
+            gas_used: block.gas_used(),
             timestamp: block
                 .timestamp()
                 .duration_since(SystemTime::UNIX_EPOCH)

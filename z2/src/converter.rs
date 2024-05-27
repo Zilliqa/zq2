@@ -219,6 +219,7 @@ pub async fn convert_persistence(
                 state.root_hash()?,
                 txn_hashes.iter().map(|h| Hash(h.0)).collect(),
                 SystemTime::UNIX_EPOCH + Duration::from_micros(block.timestamp),
+                ScillaGas(block.gas_used).into(),
             );
 
             let mut block_receipts = Vec::new();
