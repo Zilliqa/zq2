@@ -20,7 +20,7 @@ use crate::{
     block_store::BlockStore,
     blockhooks,
     cfg::NodeConfig,
-    crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
+    crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
     db::Db,
     exec::TransactionApplyResult,
     inspector::{self, ScillaInspector, TouchedAddressInspector},
@@ -1786,28 +1786,27 @@ impl Consensus {
         agg: &AggregateQc,
         committee: &[NodePublicKey],
     ) -> Result<()> {
+        let public_keys: Vec<_> = agg
+            .signers
+            .iter()
+            .map(|i| *committee.get(*i as usize).unwrap())
+            .collect();
+
         let messages: Vec<_> = agg
             .qcs
             .iter()
-            .enumerate()
-            .map(|(i, qc)| {
+            .zip(public_keys.iter())
+            .map(|(qc, key)| {
                 let mut bytes = Vec::new();
                 bytes.extend_from_slice(qc.compute_hash().as_bytes());
-                bytes.extend_from_slice(&agg.signers[i].to_be_bytes());
+                bytes.extend_from_slice(&key.as_bytes());
                 bytes.extend_from_slice(&agg.view.to_be_bytes());
                 bytes
             })
             .collect();
-        let _messages: Vec<_> = messages.iter().map(|m| m.as_slice()).collect();
+        let messages: Vec<_> = messages.iter().map(|m| m.as_slice()).collect();
 
-        let _public_keys: Vec<_> = agg
-            .signers
-            .iter()
-            .map(|i| committee.get(*i as usize).unwrap())
-            .collect();
-
-        // TODO: Implement batch verification - this will not work atm.
-        //verify_messages(agg.signature, &messages, &public_keys)
+        verify_messages(agg.signature, &messages, &public_keys)?;
         Ok(())
     }
 
