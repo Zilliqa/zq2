@@ -657,7 +657,7 @@ impl Node {
         let block_number = proposal.header.number;
         let mut proposals: Vec<Proposal> = Vec::new();
 
-        for i in block_number..block_number + 100 {
+        for i in block_number..block_number + 1000 {
             let block = self.consensus.get_block_by_number(i);
             if let Ok(Some(block)) = block {
                 proposal = self.block_to_proposal(block);
