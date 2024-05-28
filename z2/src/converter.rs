@@ -369,7 +369,7 @@ pub async fn convert_persistence(
             parent_hash = block.hash();
         }
 
-        zq2_db.do_sqlite_tx(|sqlite_tx| {
+        zq2_db.with_sqlite_tx(|sqlite_tx| {
             for (hash, transaction) in &transactions {
                 zq2_db.insert_transaction_with_db_tx(sqlite_tx, hash, transaction)?;
             }

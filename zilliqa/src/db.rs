@@ -1,7 +1,7 @@
-use std::{collections::BTreeMap, path::Path, sync::Mutex};
+use std::{collections::BTreeMap, path::Path, sync::Mutex, time::Duration};
 
 use alloy_primitives::Address;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use itertools::Either;
 use rusqlite::{
     named_params,
@@ -124,8 +124,9 @@ impl ToSql for SystemTimeSqlable {
 }
 impl FromSql for SystemTimeSqlable {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
-        // TODO
-        bincode::deserialize(value.as_blob()?).map_err(|e| FromSqlError::Other(e))
+        Ok(SystemTimeSqlable(
+            SystemTime::UNIX_EPOCH + Duration::from_secs(value.as_i64()? as u64),
+        ))
     }
 }
 
@@ -145,16 +146,12 @@ impl FromSql for AddressSqlable {
 
 impl ToSql for Hash {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-        Ok(ToSqlOutput::from(hex::encode(self.0)))
+        Ok(ToSqlOutput::from(self.0.to_vec()))
     }
 }
 impl FromSql for Hash {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
-        // ugly...
-        hex::decode(value.as_str()?)
-            .map_err(|e| anyhow!(e))
-            .and_then(|bytes| Hash::from_bytes(bytes).map_err(|e| anyhow!(e)))
-            .map_err(|e| FromSqlError::Other(e.into()))
+        Ok(Hash(<[u8; 32]>::column_result(value)?))
     }
 }
 
@@ -180,7 +177,7 @@ impl Db {
                 let path = path.as_ref().join(shard_id.to_string());
                 (
                     sled::open(path.join("state"))?,
-                    Connection::open(path.join("blockdata"))?,
+                    Connection::open(path.join("blockdata.db"))?,
                 )
             }
             None => (
@@ -200,46 +197,40 @@ impl Db {
     fn ensure_schema(connection: &Connection) -> Result<()> {
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS blocks (
-                hash TEXT NOT NULL PRIMARY KEY,
+                hash BLOB NOT NULL PRIMARY KEY,
                 view INTEGER NOT NULL UNIQUE,
                 height INTEGER NOT NULL,
-                parent_hash TEXT NOT NULL,
-                signature TEXT NOT NULL,
-                state_root_hash TEXT NOT NULL,
+                parent_hash BLOB NOT NULL,
+                signature BLOB NOT NULL,
+                state_root_hash BLOB NOT NULL,
                 timestamp NUMERIC NOT NULL,
                 qc BLOB NOT NULL,
-                agg BLOB,
-                );
+                agg BLOB);
             CREATE TABLE IF NOT EXISTS main_chain_canonical_blocks (
                 height INTEGER NOT NULL PRIMARY KEY,
-                block_hash TEXT NOT NULL REFERENCES blocks (hash),
-                );
+                block_hash TEXT NOT NULL REFERENCES blocks (hash));
             CREATE TABLE IF NOT EXISTS transactions (
-                hash TEXT NOT NULL PRIMARY KEY,
-                data BLOB NOT NULL,
-                );
+                hash BLOB NOT NULL PRIMARY KEY,
+                data BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS receipts (
-                tx_hash TEXT NOT NULL PRIMARY KEY REFERENCES transactions (hash),
-                block_hash TEXT NOT NULL REFERENCES blocks (hash),
-                index INTEGER NOT NULL,
+                tx_hash BLOB NOT NULL PRIMARY KEY REFERENCES transactions (hash),
+                block_hash BLOB NOT NULL REFERENCES blocks (hash),
+                tx_index INTEGER NOT NULL,
                 success INTEGER NOT NULL,
                 gas_used INTEGER NOT NULL,
                 contract_address BLOB,
                 logs BLOB,
                 accepted INTEGER,
                 errors BLOB,
-                exceptions BLOB
-                );
+                exceptions BLOB);
             CREATE TABLE IF NOT EXISTS touched_address_index (
                 address BLOB,
-                tx_hash TEXT,
-                PRIMARY KEY (address, tx_hash)
-                );
+                tx_hash BLOB,
+                PRIMARY KEY (address, tx_hash));
             CREATE TABLE IF NOT EXISTS tip_info (
                 latest_finalized_view INTEGER,
                 high_qc BLOB,
-                _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0),
-            )
+                _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0))
             ",
         )?;
         Ok(())
@@ -255,7 +246,7 @@ impl Db {
         ))
     }
 
-    pub fn do_sqlite_tx(&self, operations: impl Fn(&Connection) -> Result<()>) -> Result<()> {
+    pub fn with_sqlite_tx(&self, operations: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
         let mut sqlite_tx = self.block_store.lock().unwrap();
         let sqlite_tx = sqlite_tx.transaction()?;
         operations(&sqlite_tx)?;
@@ -294,11 +285,9 @@ impl Db {
             .block_store
             .lock()
             .unwrap()
-            .query_row_and_then(
-                "SELECT block_hash FROM blocks WHERE view = ?1",
-                [view],
-                |row| row.get(0),
-            )
+            .query_row_and_then("SELECT hash FROM blocks WHERE view = ?1", [view], |row| {
+                row.get(0)
+            })
             .optional()?)
     }
 
@@ -375,7 +364,7 @@ impl Db {
             .lock()
             .unwrap()
             .query_row(
-                "SELECT hash, data FROM transactions WHERE hash = ?1",
+                "SELECT data FROM transactions WHERE hash = ?1",
                 [txn_hash],
                 |row| row.get(0),
             )
@@ -495,14 +484,14 @@ impl Db {
         let Some(mut block) = self.get_transactionless_block(key)? else {
             return Ok(None);
         };
-        let transactions = self
+        let transaction_hashes = self
             .block_store
             .lock()
             .unwrap()
             .prepare_cached("SELECT tx_hash FROM receipts WHERE block_hash = ?1")?
             .query_map([block.header.hash], |row| row.get(0))?
             .collect::<Result<Vec<Hash>, _>>()?;
-        block.transactions = transactions;
+        block.transactions = transaction_hashes;
         Ok(Some(block))
     }
 
@@ -550,13 +539,13 @@ impl Db {
     ) -> Result<()> {
         sqlite_tx.execute(
             "INSERT INTO receipts
-                (tx_hash, block_hash, index, success, gas_used, contract_address, logs, accepted, errors, exceptions)
-            VALUES (:tx_hash, :block_hash, :index, :success, :gas_used, :contract_address, :logs, :accepted, :errors, :exceptions)
+                (tx_hash, block_hash, tx_index, success, gas_used, contract_address, logs, accepted, errors, exceptions)
+            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :contract_address, :logs, :accepted, :errors, :exceptions)
             ON CONFLICT DO NOTHING",
             named_params! {
                 ":tx_hash": receipt.tx_hash,
                 ":block_hash": receipt.block_hash,
-                ":index": receipt.index,
+                ":tx_index": receipt.index,
                 ":success": receipt.success,
                 ":gas_used": receipt.gas_used,
                 ":contract_address": receipt.contract_address.map(|a| AddressSqlable(a)),
@@ -574,14 +563,14 @@ impl Db {
     }
 
     pub fn get_transaction_receipt(&self, txn_hash: &Hash) -> Result<Option<TransactionReceipt>> {
-        Ok(self.block_store.lock().unwrap().query_row("SELECT tx_hash, block_hash, index, success, gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1", [txn_hash], Self::make_receipt).optional()?)
+        Ok(self.block_store.lock().unwrap().query_row("SELECT tx_hash, block_hash, tx_index, success, gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1", [txn_hash], Self::make_receipt).optional()?)
     }
 
     pub fn get_transaction_receipts_in_block(
         &self,
         block_hash: &Hash,
     ) -> Result<Vec<TransactionReceipt>> {
-        Ok(self.block_store.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, index, success, gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
+        Ok(self.block_store.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
     }
 
     pub fn remove_transaction_receipts_in_block(&self, block_hash: &Hash) -> Result<()> {

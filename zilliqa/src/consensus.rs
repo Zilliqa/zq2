@@ -708,7 +708,9 @@ impl Consensus {
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
 
-        self.db.insert_transaction(&txn.hash, &txn.tx)?;
+        if !self.db.contains_transaction(&txn.hash)? {
+            self.db.insert_transaction(&txn.hash, &txn.tx)?;
+        }
 
         let result = self.state.apply_transaction(
             txn.clone(),
@@ -2064,6 +2066,7 @@ impl Consensus {
             }
         }
 
+        let mut block_receipts = Vec::new();
         for (tx_index, txn) in transactions.into_iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
@@ -2096,8 +2099,8 @@ impl Consensus {
             if self.receipts.receiver_count() != 0 {
                 let _ = self.receipts.send((receipt.clone(), tx_index));
             }
-            self.db.insert_transaction_receipt(receipt)?;
-            // block_receipts.push(receipt);
+            // self.db.insert_transaction_receipt(receipt)?;
+            block_receipts.push(receipt);
         }
 
         self.apply_rewards(committee, block.view(), &block.qc.cosigned)?;
@@ -2112,6 +2115,17 @@ impl Consensus {
         // overwrite the mapping of block height to block, which there should only be one of.
         // for example, this HAS to be after the deal with fork call
         self.add_block(block.clone())?;
+        {
+            // helper scope to shadow db, to avoid moving it into the closure
+            // closure has to be move to take ownership of block_receipts
+            let db = &self.db;
+            self.db.with_sqlite_tx(move |sqlite_tx| {
+                for receipt in block_receipts {
+                    db.insert_transaction_receipt_with_db_tx(sqlite_tx, receipt)?;
+                }
+                Ok(())
+            })?;
+        }
 
         self.set_canonical_number(block.hash(), block.number())?;
 
