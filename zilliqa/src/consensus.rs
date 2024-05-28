@@ -305,11 +305,7 @@ impl Consensus {
             if let Some(genesis) = latest_block {
                 consensus.add_block(genesis.clone())?;
             }
-            consensus.save_highest_view(
-                latest_block_hash,
-                latest_block_view,
-                latest_block_number,
-            )?;
+            consensus.set_canonical_number(latest_block_hash, latest_block_number)?;
             // treat genesis as finalized
             consensus.finalize(latest_block_hash, latest_block_view)?;
         }
@@ -712,7 +708,7 @@ impl Consensus {
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
 
-        self.db.insert_transaction(&hash, &txn.tx)?;
+        self.db.insert_transaction(&txn.tx)?;
 
         let result = self.state.apply_transaction(
             txn.clone(),
@@ -1255,18 +1251,14 @@ impl Consensus {
         let Some(block_hash) = self.db.get_block_hash_reverse_index(hash)? else {
             return Ok(None);
         };
-        let block_receipts = self
-            .db
-            .get_transaction_receipts(&block_hash)?
-            .unwrap_or_default();
+        let block_receipts = self.db.get_transaction_receipts_in_block(&block_hash)?;
         Ok(block_receipts
             .into_iter()
             .find(|receipt| receipt.tx_hash == *hash))
     }
 
-    fn save_highest_view(&mut self, block_hash: Hash, number: u64, view: u64) -> Result<()> {
-        self.block_store.set_canonical(number, view, block_hash)?;
-        self.db.put_highest_block_number(number)?;
+    fn set_canonical_number(&mut self, block_hash: Hash, number: u64) -> Result<()> {
+        self.block_store.set_canonical(number, block_hash)?;
         Ok(())
     }
 
@@ -1454,7 +1446,7 @@ impl Consensus {
         self.finalized_view = view;
         self.db.put_latest_finalized_view(view)?;
 
-        let receipts = self.db.get_transaction_receipts(&hash)?.unwrap_or_default();
+        let receipts = self.db.get_transaction_receipts_in_block(&hash)?;
 
         for (destination_shard, intershard_call) in blockhooks::get_cross_shard_messages(&receipts)?
         {
@@ -1963,7 +1955,8 @@ impl Consensus {
             // block store doesn't require anything, it will just hold blocks that may now be invalid
 
             // TX receipts are indexed by block
-            self.db.remove_transaction_receipts(&head_block.hash())?;
+            self.db
+                .remove_transaction_receipts_in_block(&head_block.hash())?;
 
             // State is easily set - must be to the parent block, though
             trace!(
@@ -1983,23 +1976,20 @@ impl Consensus {
             }
 
             // block transactions need to be removed from self.transactions and re-injected
+            self.db.remove_transactions_in_block(&head_block.hash())?;
             for tx_hash in &head_block.transactions {
                 let orig_tx = self.get_transaction_by_hash(*tx_hash).unwrap().unwrap();
-                self.db.remove_transaction(tx_hash)?;
 
                 // Insert this unwound transaction back into the transaction pool too.
                 let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
                 self.transaction_pool
                     .insert_transaction(orig_tx, account_nonce);
-
-                // block hash reverse index, remove tx hash too
-                self.db.remove_block_hash_reverse_index(tx_hash)?;
             }
 
-            // Persistence - only need to update head block pointer as it should be impossible
-            // to change finalized height
-            let new_highest = head_block.header.number.saturating_sub(1);
-            self.db.put_highest_block_number(new_highest)?;
+            // Persistence - since this block is no longer in the main chain, ensure it's not
+            // recorded as such in the height mappings
+            self.db
+                .revert_canonical_block_number(head_block.header.number)?;
         }
 
         // Now, we execute forward from the common ancestor to the new block parent which can
@@ -2048,7 +2038,6 @@ impl Consensus {
         committee: &[NodePublicKey],
     ) -> Result<()> {
         debug!("Executing block: {:?}", block.header.hash);
-        let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
         let parent = self
             .get_block(&block.parent_hash())?
             .ok_or_else(|| anyhow!("missing parent block when executing block!"))?;
@@ -2075,15 +2064,13 @@ impl Consensus {
             }
         }
 
-        for (txn_index, txn) in transactions.into_iter().enumerate() {
+        for (tx_index, txn) in transactions.into_iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = self
                 .apply_transaction(txn.clone(), parent.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
-            self.db
-                .insert_block_hash_reverse_index(&tx_hash, &block.hash())?;
             for address in inspector.touched {
                 self.db.add_touched_address(address, tx_hash)?;
             }
@@ -2095,6 +2082,7 @@ impl Consensus {
             let receipt = TransactionReceipt {
                 block_hash: block.hash(),
                 tx_hash,
+                index: tx_index as u64,
                 success,
                 contract_address,
                 logs,
@@ -2106,25 +2094,26 @@ impl Consensus {
             info!(?receipt, "applied transaction {:?}", receipt);
             // Avoid cloning the receipt if there are no subscriptions to send it to.
             if self.receipts.receiver_count() != 0 {
-                let _ = self.receipts.send((receipt.clone(), txn_index));
+                let _ = self.receipts.send((receipt.clone(), tx_index));
             }
-            block_receipts.push(receipt);
+            self.db.insert_transaction_receipt(receipt)?;
+            // block_receipts.push(receipt);
         }
 
         self.apply_rewards(committee, block.view(), &block.qc.cosigned)?;
 
         // If we were the proposer we would've already processed the transactions
-        if !self.db.contains_transaction_receipts(&block.hash())? {
-            self.db
-                .insert_transaction_receipts(&block.hash(), &block_receipts)?;
-        }
+        // if !self.db.contains_transaction_receipts(&block.hash())? {
+        //     self.db
+        //         .insert_transaction_receipts(&block.hash(), &block_receipts)?;
+        // }
 
         // Important - only add blocks we are going to execute because they can potentially
         // overwrite the mapping of block height to block, which there should only be one of.
         // for example, this HAS to be after the deal with fork call
         self.add_block(block.clone())?;
 
-        self.save_highest_view(block.hash(), block.number(), block.view())?;
+        self.set_canonical_number(block.hash(), block.number())?;
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(
