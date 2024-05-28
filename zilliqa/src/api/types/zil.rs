@@ -181,7 +181,7 @@ impl GetTxResponse {
                 amount: tx.amount,
                 signature: sig,
                 receipt: GetTxResponseReceipt {
-                    cumulative_gas: receipt.gas_used.into(),
+                    cumulative_gas: receipt.cumulative_gas_used.into(),
                     epoch_num: block_number,
                     event_logs: receipt
                         .logs

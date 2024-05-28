@@ -258,6 +258,7 @@ pub async fn convert_persistence(
                             tx_hash: Hash(txn_hash.0),
                             success: transaction.receipt.success,
                             gas_used: EvmGas(transaction.receipt.cumulative_gas),
+                            cumulative_gas_used: EvmGas(transaction.receipt.cumulative_gas),
                             contract_address,
                             logs: transaction
                                 .receipt
@@ -318,6 +319,7 @@ pub async fn convert_persistence(
                             tx_hash: Hash(txn_hash.0),
                             success: transaction.receipt.success,
                             gas_used: EvmGas(transaction.receipt.cumulative_gas),
+                            cumulative_gas_used: EvmGas(transaction.receipt.cumulative_gas),
                             contract_address,
                             logs: transaction
                                 .receipt
