@@ -15,14 +15,18 @@ contract Deposit {
     mapping(bytes => Staker) _stakersMap;
     uint256 totalStake;
 
-    uint256 public minimumStake = 32_000_000_000_000_000_000;
+    uint256 public _minimumStake;
+
+    constructor(uint256 minimumStake) {
+        _minimumStake = minimumStake;
+    }
 
     function deposit(bytes calldata blsPubKey, bytes calldata peerId, bytes calldata /* signature */, address rewardAddress) public payable {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
         // TODO: Verify signature as a proof-of-possession of the private key.
 
-        if (msg.value < minimumStake) {
+        if (msg.value < _minimumStake) {
             revert("stake less than minimum stake");
         }
 
@@ -43,7 +47,7 @@ contract Deposit {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
 
-        if (amount < minimumStake) {
+        if (amount < _minimumStake) {
             revert("stake less than minimum stake");
         }
 

@@ -6,7 +6,7 @@ use std::{
 use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
-use ethabi::{Constructor, Token};
+use ethabi::Token;
 use revm::primitives::ResultAndState;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
@@ -93,8 +93,11 @@ impl State {
             state.mutate_account(address, |a| a.balance = balance)?;
         }
 
-        let deposit_data = Constructor { inputs: vec![] }
-            .encode_input(contracts::deposit::BYTECODE.to_vec(), &[])?;
+        let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
+            contracts::deposit::BYTECODE.to_vec(),
+            &[Token::Uint(config.minimum_stake.into())],
+        )?;
+
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
 
         for (pub_key, peer_id, stake, reward_address) in config.genesis_deposits {

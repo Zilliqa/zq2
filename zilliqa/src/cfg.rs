@@ -1,8 +1,8 @@
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 
 use alloy_primitives::Address;
 use libp2p::{Multiaddr, PeerId};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::crypto::{Hash, NodePublicKey};
 
@@ -73,6 +73,11 @@ pub struct ConsensusConfig {
     /// Scilla process in Docker and this process on the host, you probably want to pass
     /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
     pub local_address: String,
+    #[serde(deserialize_with = "str_to_u128")]
+    pub rewards_per_hour: u128,
+    pub blocks_per_hour: u64,
+    #[serde(deserialize_with = "str_to_u128")]
+    pub minimum_stake: u128,
 }
 
 impl Default for ConsensusConfig {
@@ -88,6 +93,9 @@ impl Default for ConsensusConfig {
             minimum_time_left_for_empty_block: Duration::from_millis(3000),
             scilla_address: "http://localhost:3000".to_owned(),
             local_address: "localhost".to_owned(),
+            rewards_per_hour: 32_000_000_000_000u128,
+            blocks_per_hour: 50_000,
+            minimum_stake: 32_000_000_000_000_000_000u128,
         }
     }
 }
@@ -104,4 +112,13 @@ impl Default for NodeConfig {
             data_dir: None,
         }
     }
+}
+
+fn str_to_u128<'de, D>(deserializer: D) -> Result<u128, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let res = String::deserialize(deserializer)?;
+    let res = res.replace('_', "");
+    Ok(u128::from_str(&res).unwrap())
 }
