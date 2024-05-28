@@ -708,7 +708,7 @@ impl Consensus {
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
 
-        self.db.insert_transaction(&txn.tx)?;
+        self.db.insert_transaction(&txn.hash, &txn.tx)?;
 
         let result = self.state.apply_transaction(
             txn.clone(),

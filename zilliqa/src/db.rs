@@ -245,7 +245,7 @@ impl Db {
         Ok(())
     }
 
-    pub fn flush(&self) {
+    pub fn flush_state(&self) {
         while self.state_root.flush().unwrap() > 0 {}
     }
 
@@ -253,6 +253,13 @@ impl Db {
         Ok(TrieStorage::new(
             self.state_root.open_tree(STATE_TRIE_TREE)?,
         ))
+    }
+
+    pub fn do_sqlite_tx(&self, operations: impl Fn(&Connection) -> Result<()>) -> Result<()> {
+        let mut sqlite_tx = self.block_store.lock().unwrap();
+        let sqlite_tx = sqlite_tx.transaction()?;
+        operations(&sqlite_tx)?;
+        Ok(sqlite_tx.commit()?)
     }
 
     pub fn put_canonical_block_number(&self, number: u64, hash: Hash) -> Result<()> {
@@ -389,12 +396,23 @@ impl Db {
             .is_some())
     }
 
-    pub fn insert_transaction(&self, tx: &SignedTransaction) -> Result<()> {
-        self.block_store.lock().unwrap().execute(
+    pub fn insert_transaction_with_db_tx(
+        &self,
+        sqlite_tx: &Connection,
+        hash: &Hash,
+        tx: &SignedTransaction,
+    ) -> Result<()> {
+        sqlite_tx.execute(
             "INSERT INTO transactions (hash, data) VALUES (?1, ?2)",
-            (tx.calculate_hash(), tx),
+            (hash, tx),
         )?;
         Ok(())
+    }
+
+    /// Insert a transaction whose hash was precalculated, to save a call to calculate_hash() if it
+    /// is already known
+    pub fn insert_transaction(&self, hash: &Hash, tx: &SignedTransaction) -> Result<()> {
+        self.insert_transaction_with_db_tx(&self.block_store.lock().unwrap(), hash, tx)
     }
 
     pub fn remove_transactions_in_block(&self, block_hash: &Hash) -> Result<()> {
@@ -418,8 +436,8 @@ impl Db {
             .optional()?)
     }
 
-    pub fn insert_block(&self, block: &Block) -> Result<()> {
-        self.block_store.lock().unwrap().execute(
+    pub fn insert_block_with_db_tx(&self, sqlite_tx: &Connection, block: &Block) -> Result<()> {
+        sqlite_tx.execute(
             "INSERT INTO blocks
                 (hash, view, height, parent_hash, signature, state_root_hash, timestamp, qc, agg)
             VALUES (:hash, :view, :height, :parent_hash, :signature, :state_root_hash, :timestamp, :qc, :agg)",
@@ -435,6 +453,10 @@ impl Db {
                 ":agg": block.agg,
             })?;
         Ok(())
+    }
+
+    pub fn insert_block(&self, block: &Block) -> Result<()> {
+        self.insert_block_with_db_tx(&self.block_store.lock().unwrap(), block)
     }
 
     fn get_transactionless_block(&self, key: Either<&Hash, &u64>) -> Result<Option<Block>> {
@@ -521,27 +543,12 @@ impl Db {
         })
     }
 
-    pub fn get_transaction_receipt(&self, txn_hash: Hash) -> Result<Option<TransactionReceipt>> {
-        Ok(self.block_store.lock().unwrap().query_row("SELECT tx_hash, block_hash, index, success, gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1", [txn_hash], Self::make_receipt).optional()?)
-    }
-
-    pub fn get_transaction_receipts_in_block(
+    pub fn insert_transaction_receipt_with_db_tx(
         &self,
-        block_hash: &Hash,
-    ) -> Result<Vec<TransactionReceipt>> {
-        Ok(self.block_store.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, index, success, gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
-    }
-
-    pub fn remove_transaction_receipts_in_block(&self, block_hash: &Hash) -> Result<()> {
-        self.block_store
-            .lock()
-            .unwrap()
-            .execute("DELETE FROM receipts WHERE block_hash = ?1", [block_hash])?;
-        Ok(())
-    }
-
-    pub fn insert_transaction_receipt(&self, receipt: TransactionReceipt) -> Result<()> {
-        self.block_store.lock().unwrap().execute(
+        sqlite_tx: &Connection,
+        receipt: TransactionReceipt,
+    ) -> Result<()> {
+        sqlite_tx.execute(
             "INSERT INTO receipts
                 (tx_hash, block_hash, index, success, gas_used, contract_address, logs, accepted, errors, exceptions)
             VALUES (:tx_hash, :block_hash, :index, :success, :gas_used, :contract_address, :logs, :accepted, :errors, :exceptions)
@@ -559,6 +566,29 @@ impl Db {
                 ":exceptions": VecScillaExceptionSqlable(receipt.exceptions.into()),
             })?;
 
+        Ok(())
+    }
+
+    pub fn insert_transaction_receipt(&self, receipt: TransactionReceipt) -> Result<()> {
+        self.insert_transaction_receipt_with_db_tx(&self.block_store.lock().unwrap(), receipt)
+    }
+
+    pub fn get_transaction_receipt(&self, txn_hash: &Hash) -> Result<Option<TransactionReceipt>> {
+        Ok(self.block_store.lock().unwrap().query_row("SELECT tx_hash, block_hash, index, success, gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1", [txn_hash], Self::make_receipt).optional()?)
+    }
+
+    pub fn get_transaction_receipts_in_block(
+        &self,
+        block_hash: &Hash,
+    ) -> Result<Vec<TransactionReceipt>> {
+        Ok(self.block_store.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, index, success, gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn remove_transaction_receipts_in_block(&self, block_hash: &Hash) -> Result<()> {
+        self.block_store
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM receipts WHERE block_hash = ?1", [block_hash])?;
         Ok(())
     }
 }
