@@ -12,13 +12,8 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    cfg::ConsensusConfig,
-    contracts, crypto,
-    db::TrieStorage,
-    exec::{BLOCK_GAS_LIMIT, GAS_PRICE},
-    inspector,
-    message::BlockHeader,
-    scilla::Scilla,
+    cfg::ConsensusConfig, contracts, crypto, db::TrieStorage, inspector, message::BlockHeader,
+    scilla::Scilla, transaction::EvmGas,
 };
 
 #[derive(Debug)]
@@ -37,6 +32,8 @@ pub struct State {
     scilla: Arc<OnceLock<Mutex<Scilla>>>,
     scilla_address: String,
     local_address: String,
+    pub block_gas_limit: EvmGas,
+    pub gas_price: u128,
 }
 
 impl State {
@@ -48,6 +45,8 @@ impl State {
             scilla: Arc::new(OnceLock::new()),
             scilla_address: config.scilla_address.clone(),
             local_address: config.local_address.clone(),
+            block_gas_limit: EvmGas(config.block_gas_limit),
+            gas_price: config.gas_price,
         }
     }
 
@@ -113,8 +112,8 @@ impl State {
             } = state.apply_transaction_evm(
                 Address::ZERO,
                 Some(contract_addr::DEPOSIT),
-                GAS_PRICE,
-                BLOCK_GAS_LIMIT,
+                config.gas_price,
+                EvmGas(config.block_gas_limit),
                 0,
                 data,
                 None,
@@ -138,6 +137,8 @@ impl State {
             scilla: self.scilla.clone(),
             scilla_address: self.scilla_address.clone(),
             local_address: self.local_address.clone(),
+            block_gas_limit: self.block_gas_limit,
+            gas_price: self.gas_price,
         }
     }
 

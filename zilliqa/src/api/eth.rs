@@ -248,7 +248,12 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
 fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
     if !full {
         let miner = node.get_proposer_reward_address(block.header)?;
-        Ok(eth::Block::from_block(block, miner.unwrap_or_default()))
+        let block_gas_limit = node.config.consensus.block_gas_limit;
+        Ok(eth::Block::from_block(
+            block,
+            miner.unwrap_or_default(),
+            block_gas_limit,
+        ))
     } else {
         let transactions = block
             .transactions
@@ -260,7 +265,8 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<e
             .map(|t| Ok(HashOrTransaction::Transaction(t?)))
             .collect::<Result<_>>()?;
         let miner = node.get_proposer_reward_address(block.header)?;
-        let block = eth::Block::from_block(block, miner.unwrap_or_default());
+        let block_gas_limit = node.config.consensus.block_gas_limit;
+        let block = eth::Block::from_block(block, miner.unwrap_or_default(), block_gas_limit);
         Ok(eth::Block {
             transactions,
             ..block
@@ -739,7 +745,9 @@ async fn subscribe(
 
             while let Ok(header) = new_blocks.recv().await {
                 let miner = node.lock().unwrap().get_proposer_reward_address(header)?;
-                let header = eth::Header::from_header(header, miner.unwrap_or_default());
+                let block_gas_limit = node.lock().unwrap().config.consensus.block_gas_limit;
+                let header =
+                    eth::Header::from_header(header, miner.unwrap_or_default(), block_gas_limit);
                 let _ = sink.send(SubscriptionMessage::from_json(&header)?).await;
             }
         }

@@ -9,7 +9,6 @@ use sha3::{Digest, Keccak256};
 use super::{bool_as_int, hex, option_hex, vec_hex};
 use crate::{
     crypto::Hash,
-    exec::BLOCK_GAS_LIMIT,
     message,
     time::SystemTime,
     transaction::{self, EvmGas, EvmLog},
@@ -36,9 +35,9 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn from_block(block: &message::Block, miner: Address) -> Self {
+    pub fn from_block(block: &message::Block, miner: Address, block_gas_limit: u64) -> Self {
         Block {
-            header: Header::from_header(block.header, miner),
+            header: Header::from_header(block.header, miner, block_gas_limit),
             size: 0,
             transactions: block
                 .transactions
@@ -88,7 +87,7 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn from_header(header: message::BlockHeader, miner: Address) -> Self {
+    pub fn from_header(header: message::BlockHeader, miner: Address, block_gas_limit: u64) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Header {
             number: header.number,
@@ -104,7 +103,7 @@ impl Header {
             difficulty: 0,
             total_difficulty: 0,
             extra_data: vec![],
-            gas_limit: BLOCK_GAS_LIMIT,
+            gas_limit: EvmGas(block_gas_limit),
             gas_used: EvmGas(0),
             timestamp: header
                 .timestamp

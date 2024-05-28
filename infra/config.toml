@@ -22,6 +22,9 @@ consensus.genesis_accounts = [
 ]
 
 # Reward parameters
-consensus.rewards_per_hour = "734_400_000_000_000"
+consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
 consensus.blocks_per_hour = 3600
-consensus.minimum_stake = "200_000_000_000_000_000_000_000"
+consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
+# Gas parameters
+consensus.block_gas_limit = 84000000
+consensus.gas_price = "4_761_904_800_000"
