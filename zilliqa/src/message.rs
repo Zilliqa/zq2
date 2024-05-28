@@ -360,7 +360,7 @@ impl AggregateQc {
         let mut signers = Vec::new();
         for (index, bit) in self.signers.iter().enumerate() {
             if *bit {
-                signers.push(index);
+                signers.push(index as u16);
             }
         }
 
