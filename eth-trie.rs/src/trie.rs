@@ -223,6 +223,25 @@ where
             nodes,
         }
     }
+
+    /// Return an iterator of key-value pairs in the trie that start with the given prefix. The keys are returned in
+    /// order.
+    pub fn iter_by_prefix(&self, prefix: &[u8]) -> TrieResult<TrieIterator<D>> {
+        let nibble = Nibbles::from_raw(prefix, false);
+        let node = self.node_with_prefix(&self.root, &nibble)?;
+        let nodes = vec![node.into()];
+
+        // Here we utilise the same `TrieIterator` code as above, which iterates over a whole trie. However, instead
+        // of setting its `nodes` stack to the root trie, we set it to the node returned by `node_by_prefix`. This node
+        // and all nodes under it are guaranteed to be prefixed by `prefix`. We also initialize `nibble` to the prefix,
+        // as the `TrieIterator` will prepend this value to the returned keys.
+        Ok(TrieIterator {
+            trie: self,
+            nibble,
+            nodes,
+        })
+    }
+
     pub fn new(db: Arc<D>) -> Self {
         Self {
             root: Node::Empty,
@@ -404,6 +423,79 @@ impl<D> EthTrie<D>
 where
     D: DB,
 {
+    /// Returns the highest level node in the trie which is prefixed by `prefix`. If the returned node is a leaf or
+    /// extension whose key does contain the required prefix, we strip the prefix from the key before returning the
+    /// node.
+    fn node_with_prefix(&self, source_node: &Node, prefix: &Nibbles) -> TrieResult<Node> {
+        match source_node {
+            Node::Empty => Ok(Node::Empty),
+            Node::Hash(hash_node) => {
+                let node_hash = hash_node.hash;
+                let node = self
+                    .recover_from_db(node_hash)?
+                    .ok_or(TrieError::MissingTrieNode {
+                        node_hash,
+                        traversed: None,
+                        root_hash: Some(self.root_hash),
+                        err_key: None,
+                    })?;
+                self.node_with_prefix(&node, prefix)
+            }
+            Node::Leaf(leaf) => {
+                // We require the precondition (and assert) that the provided path is never a leaf itself. This means
+                // when we return a leaf, the final `16` byte from the leaf's key is only included once.
+                assert!(prefix.is_empty() || !prefix.is_leaf());
+
+                // If our path is a prefix of the leaf's key, strip the prefix before returning the leaf.
+                if let Some(rest) = leaf.key.strip_prefix(prefix) {
+                    Ok(Node::from_leaf(rest, leaf.value.clone()))
+                } else {
+                    Ok(Node::Empty)
+                }
+            }
+            Node::Branch(branch) => {
+                let borrow_branch = branch.read().unwrap();
+
+                if prefix.is_empty() || prefix.at(0) == 16 {
+                    Ok(source_node.clone())
+                } else {
+                    let index = prefix.at(0);
+                    self.node_with_prefix(&borrow_branch.children[index], &prefix.offset(1))
+                }
+            }
+            Node::Extension(extension) => {
+                let extension = extension.read().unwrap();
+
+                // An extension node means all nodes under this point in the trie (under `extension.node`) have a
+                // common prefix of `extension.prefix`. If `prefix` is a prefix of `extension.prefix`, we make a
+                // recursive call with the inner `extension.node`. There is an edge case to consider here, where
+                // `prefix` is longer than `extension.prefix` - In this case, we truncate `prefix` to be the same
+                // length and use the remainder in our recursive call.
+
+                // Truncate `prefix` to the length of the extension prefix.
+                let split_point = prefix.len().min(extension.prefix.len());
+                // `candidate_prefix` is what we will try to strip from the start of this `extension.prefix`.
+                // `rest_of_prefix` is anything left from the original `prefix`. Note that this can be empty.
+                let (candidate_prefix, rest_of_prefix) = prefix.split_at(split_point);
+
+                if let Some(rest) = extension.prefix.strip_prefix(&candidate_prefix) {
+                    let inner = self.node_with_prefix(&extension.node, &rest_of_prefix)?;
+                    if rest.is_empty() {
+                        // If there is no prefix left for this extension, it doesn't need to exist and we can just
+                        // return the inner node.
+                        Ok(inner)
+                    } else {
+                        // As mentioned in the documentation for this method, we return the extension node with the
+                        // matching prefix removed.
+                        Ok(Node::from_extension(rest, inner))
+                    }
+                } else {
+                    Ok(Node::Empty)
+                }
+            }
+        }
+    }
+
     fn get_at(
         &self,
         source_node: &Node,
@@ -913,6 +1005,9 @@ where
     }
 
     fn recover_from_db(&self, key: B256) -> TrieResult<Option<Node>> {
+        if key == keccak256(rlp::NULL_RLP) {
+            return Ok(Some(Node::Empty));
+        }
         let node = match self
             .db
             .get(key.as_slice())
@@ -1384,6 +1479,54 @@ mod tests {
         trie.iter()
             .for_each(|(k, v)| assert_eq!(kv.remove(&k).unwrap(), v));
         assert!(kv.is_empty());
+    }
+
+    #[test]
+    fn prefix_iterator_trie() {
+        let memdb = Arc::new(MemoryDB::new(true));
+        let mut kv = HashMap::new();
+        kv.insert(b"test".to_vec(), b"test".to_vec());
+        kv.insert(b"test1".to_vec(), b"test1".to_vec());
+        kv.insert(b"test11".to_vec(), b"test2".to_vec());
+        kv.insert(b"test14".to_vec(), b"test3".to_vec());
+        kv.insert(b"test16".to_vec(), b"test4".to_vec());
+        kv.insert(b"test18".to_vec(), b"test5".to_vec());
+        kv.insert(b"test2".to_vec(), b"test6".to_vec());
+        kv.insert(b"test23".to_vec(), b"test7".to_vec());
+        kv.insert(b"test9".to_vec(), b"test8".to_vec());
+        kv.insert(b"TTTest9".to_vec(), b"test9".to_vec());
+
+        let mut trie = EthTrie::new(memdb.clone());
+        kv.iter().for_each(|(k, v)| {
+            trie.insert(k, v).unwrap();
+        });
+        trie.root_hash().unwrap();
+
+        let cases: &[&[u8]] = &[
+            b"", b"t", b"te", b"tes", b"test", b"test1", b"test11", b"test14", b"test15", b"test2",
+            b"test23", b"test24", b"test9", b"T", b"TT", b"s",
+        ];
+
+        for prefix in cases {
+            println!("prefix: {:?}", Nibbles::from_raw(prefix, false).get_data());
+            let mut kv: HashMap<_, _> = kv
+                .clone()
+                .into_iter()
+                .filter(|(k, _)| k.starts_with(prefix))
+                .collect();
+            let iter = trie.iter_by_prefix(prefix).unwrap();
+            for (k, v) in iter {
+                println!("key: {:?}", Nibbles::from_raw(prefix, false).get_data());
+                assert_eq!(kv.remove(&k).unwrap(), v);
+            }
+            println!(
+                "remaining keys: {:?}",
+                kv.keys()
+                    .map(|k| String::from_utf8_lossy(k))
+                    .collect::<Vec<_>>()
+            );
+            assert!(kv.is_empty());
+        }
     }
 
     #[test]

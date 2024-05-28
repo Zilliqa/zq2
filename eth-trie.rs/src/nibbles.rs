@@ -125,12 +125,29 @@ impl Nibbles {
         i
     }
 
+    /// If `self` starts with `other`, returns the rest of `self` after the prefix is removed, wrapped in `Some`.
+    ///
+    /// If `self` does not start with `other`, returns `None`.
+    pub fn strip_prefix(&self, other: &Nibbles) -> Option<Nibbles> {
+        if other.len() <= self.len() {
+            let (head, tail) = self.hex_data.split_at(other.len());
+            if head == other.hex_data {
+                return Some(Nibbles::from_hex(tail));
+            }
+        }
+        None
+    }
+
     pub fn offset(&self, index: usize) -> Nibbles {
         self.slice(index, self.hex_data.len())
     }
 
     pub fn slice(&self, start: usize, end: usize) -> Nibbles {
         Nibbles::from_hex(&self.hex_data[start..end])
+    }
+
+    pub fn split_at(&self, mid: usize) -> (Nibbles, Nibbles) {
+        (self.slice(0, mid), self.slice(mid, self.len()))
     }
 
     pub fn get_data(&self) -> &[u8] {
