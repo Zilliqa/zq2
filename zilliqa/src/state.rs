@@ -45,7 +45,7 @@ impl State {
             scilla: Arc::new(OnceLock::new()),
             scilla_address: config.scilla_address.clone(),
             local_address: config.local_address.clone(),
-            block_gas_limit: EvmGas(config.block_gas_limit),
+            block_gas_limit: config.eth_block_gas_limit,
             gas_price: config.gas_price,
         }
     }
@@ -113,7 +113,7 @@ impl State {
                 Address::ZERO,
                 Some(contract_addr::DEPOSIT),
                 config.gas_price,
-                EvmGas(config.block_gas_limit),
+                config.eth_block_gas_limit,
                 0,
                 data,
                 None,

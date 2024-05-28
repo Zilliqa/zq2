@@ -133,7 +133,7 @@ pub async fn convert_persistence(
         Address::ZERO,
         Some(contract_addr::DEPOSIT),
         node_config.consensus.gas_price,
-        EvmGas(node_config.consensus.block_gas_limit),
+        node_config.consensus.eth_block_gas_limit,
         0,
         data,
         None,

@@ -4,7 +4,10 @@ use alloy_primitives::Address;
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::crypto::{Hash, NodePublicKey};
+use crate::{
+    crypto::{Hash, NodePublicKey},
+    transaction::EvmGas,
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -78,7 +81,7 @@ pub struct ConsensusConfig {
     pub blocks_per_hour: u64,
     #[serde(deserialize_with = "str_to_u128")]
     pub minimum_stake: u128,
-    pub block_gas_limit: u64,
+    pub eth_block_gas_limit: EvmGas,
     #[serde(deserialize_with = "str_to_u128")]
     pub gas_price: u128,
 }
@@ -99,7 +102,7 @@ impl Default for ConsensusConfig {
             rewards_per_hour: 32_000_000_000_000u128,
             blocks_per_hour: 50_000,
             minimum_stake: 32_000_000_000_000_000_000u128,
-            block_gas_limit: 84_000_000,
+            eth_block_gas_limit: EvmGas(84_000_000),
             gas_price: 4_761_904_800_000,
         }
     }

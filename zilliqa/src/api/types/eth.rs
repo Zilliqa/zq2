@@ -35,7 +35,7 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn from_block(block: &message::Block, miner: Address, block_gas_limit: u64) -> Self {
+    pub fn from_block(block: &message::Block, miner: Address, block_gas_limit: EvmGas) -> Self {
         Block {
             header: Header::from_header(block.header, miner, block_gas_limit),
             size: 0,
@@ -87,7 +87,11 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn from_header(header: message::BlockHeader, miner: Address, block_gas_limit: u64) -> Self {
+    pub fn from_header(
+        header: message::BlockHeader,
+        miner: Address,
+        block_gas_limit: EvmGas,
+    ) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Header {
             number: header.number,
@@ -103,7 +107,7 @@ impl Header {
             difficulty: 0,
             total_difficulty: 0,
             extra_data: vec![],
-            gas_limit: EvmGas(block_gas_limit),
+            gas_limit: block_gas_limit,
             gas_used: EvmGas(0),
             timestamp: header
                 .timestamp
