@@ -10,7 +10,6 @@ use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
-use time::{macros::format_description, OffsetDateTime};
 
 use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
@@ -394,34 +393,7 @@ pub struct BlockHeader {
     pub state_root_hash: Hash,
     /// The time this block was mined at.
     pub timestamp: SystemTime,
-}
-
-impl fmt::Display for BlockHeader {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "View: {}, ", self.view)?;
-        write!(f, "Block Number: {}, ", self.number)?;
-        write!(f, "Block Hash: {}, ", self.hash)?;
-        write!(f, "Parent Hash: {}, ", self.parent_hash)?;
-        write!(f, "State Root Hash: {}, ", self.state_root_hash)?;
-        write!(
-            f,
-            "Timestamp: {}, ",
-            systemtime_strftime(self.timestamp).unwrap()
-        )?;
-        Ok(())
-    }
-}
-
-// Helper function to format SystemTime as a string
-// https://stackoverflow.com/questions/45386585
-fn systemtime_strftime(timestamp: SystemTime) -> Result<String> {
-    let time_since_epoch = timestamp
-        .elapsed()
-        .map(|d| d.as_nanos() as i128)
-        // Handle the case where `timestamp` was before unix epoch.
-        .unwrap_or_else(|e| -(e.duration().as_nanos() as i128));
-    let format = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
-    Ok(OffsetDateTime::from_unix_timestamp_nanos(time_since_epoch)?.format(&format)?)
+    pub gas_used: EvmGas,
 }
 
 impl BlockHeader {
@@ -438,6 +410,7 @@ impl BlockHeader {
             signature: NodeSignature::identity(),
             state_root_hash,
             timestamp: SystemTime::UNIX_EPOCH,
+            gas_used: EvmGas(0),
         }
     }
 }
@@ -453,6 +426,7 @@ impl Default for BlockHeader {
             signature: NodeSignature::identity(),
             state_root_hash: Hash(Keccak256::digest([alloy_rlp::EMPTY_STRING_CODE]).into()),
             timestamp: SystemTime::UNIX_EPOCH,
+            gas_used: EvmGas(0),
         }
     }
 }
@@ -557,18 +531,6 @@ pub struct Block {
     pub transactions: Vec<Hash>,
 }
 
-impl Display for Block {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Header: {} ", self.header)?;
-        write!(f, "QC hash: {}, ", self.qc.block_hash)?;
-        if let Some(agg) = &self.agg {
-            write!(f, "Agg QC view: {}, ", agg.view)?;
-        }
-        write!(f, "Transactions: {:?}, ", self.transactions)?;
-        Ok(())
-    }
-}
-
 impl Block {
     pub fn genesis(state_root_hash: Hash) -> Block {
         let view = 0u64;
@@ -582,7 +544,6 @@ impl Block {
         let parent_hash = Hash::ZERO;
         let timestamp = SystemTime::UNIX_EPOCH;
 
-        // Could the hash be all zeroes for genesis perhaps?
         let digest = Hash::compute([
             &view.to_be_bytes(),
             &number.to_be_bytes(),
@@ -601,6 +562,7 @@ impl Block {
                 signature: NodeSignature::identity(),
                 state_root_hash,
                 timestamp,
+                gas_used: EvmGas(0),
             },
             qc: QuorumCertificate {
                 signature: NodeSignature::identity(),
@@ -622,6 +584,7 @@ impl Block {
                 agg.compute_hash().as_bytes(),
                 self.parent_hash().as_bytes(),
                 self.state_root_hash().as_bytes(),
+                &self.gas_used().0.to_be_bytes(),
             ])
         } else {
             Hash::compute([
@@ -630,6 +593,7 @@ impl Block {
                 self.qc.compute_hash().as_bytes(),
                 self.parent_hash().as_bytes(),
                 self.state_root_hash().as_bytes(),
+                &self.gas_used().0.to_be_bytes(),
             ])
         };
 
@@ -650,6 +614,7 @@ impl Block {
         state_root_hash: Hash,
         transactions: Vec<Hash>,
         timestamp: SystemTime,
+        gas_used: EvmGas,
     ) -> Block {
         let digest = Hash::compute([
             &view.to_be_bytes(),
@@ -658,6 +623,7 @@ impl Block {
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
             state_root_hash.as_bytes(),
+            &gas_used.0.to_be_bytes(),
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {
@@ -669,6 +635,7 @@ impl Block {
                 signature,
                 state_root_hash,
                 timestamp,
+                gas_used,
             },
             qc,
             agg: None,
@@ -694,6 +661,7 @@ impl Block {
             agg.compute_hash().as_bytes(),
             parent_hash.as_bytes(),
             state_root_hash.as_bytes(),
+            &EvmGas(0).0.to_be_bytes(),
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {
@@ -705,6 +673,7 @@ impl Block {
                 signature,
                 state_root_hash,
                 timestamp,
+                gas_used: EvmGas(0),
             },
             qc,
             agg: Some(agg),
@@ -742,5 +711,9 @@ impl Block {
 
     pub fn timestamp(&self) -> SystemTime {
         self.header.timestamp
+    }
+
+    pub fn gas_used(&self) -> EvmGas {
+        self.header.gas_used
     }
 }

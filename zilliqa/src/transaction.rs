@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
-    ops::{Add, Sub},
+    ops::{Add, AddAssign, Sub},
     str::FromStr,
 };
 
@@ -574,6 +574,12 @@ impl FromStr for EvmGas {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self(u64::from_str(s)?))
+    }
+}
+
+impl AddAssign for EvmGas {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0.add_assign(rhs.0)
     }
 }
 
