@@ -61,6 +61,7 @@ use zilliqa::{
     crypto::{NodePublicKey, SecretKey},
     message::{ExternalMessage, InternalMessage},
     node::Node,
+    transaction::EvmGas,
 };
 
 /// (source, destination, message) for both
@@ -240,6 +241,11 @@ impl Network {
                 empty_block_timeout: Duration::from_millis(25),
                 scilla_address: scilla_address.clone(),
                 local_address: "host.docker.internal".to_owned(),
+                rewards_per_hour: Some(51_000_000_000_000_000_000_000u128),
+                blocks_per_hour: Some(3600 * 40),
+                minimum_stake: Some(10_000_000_000_000_000_000_000_000u128),
+                eth_block_gas_limit: Some(EvmGas(84000000)),
+                gas_price: Some(4_761_904_800_000u128),
                 ..Default::default()
             },
             ..Default::default()
@@ -329,6 +335,12 @@ impl Network {
                 consensus_timeout: Duration::from_secs(1),
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
+                local_address: "host.docker.internal".to_owned(),
+                rewards_per_hour: Some(51_000_000_000_000_000_000_000u128),
+                blocks_per_hour: Some(3600 * 40),
+                minimum_stake: Some(10_000_000_000_000_000_000_000_000u128),
+                eth_block_gas_limit: Some(EvmGas(84000000)),
+                gas_price: Some(4_761_904_800_000u128),
                 ..Default::default()
             },
             ..Default::default()
@@ -404,6 +416,11 @@ impl Network {
                         // Give a genesis account 1 billion ZIL.
                         genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                         empty_block_timeout: Duration::from_millis(25),
+                        rewards_per_hour: Some(51_000_000_000_000_000_000_000u128),
+                        blocks_per_hour: Some(3600 * 40),
+                        minimum_stake: Some(10_000_000_000_000_000_000_000_000u128),
+                        eth_block_gas_limit: Some(EvmGas(84000000)),
+                        gas_price: Some(4_761_904_800_000u128),
                         ..Default::default()
                     },
                     ..Default::default()

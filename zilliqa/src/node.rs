@@ -451,7 +451,7 @@ impl Node {
     }
 
     pub fn get_gas_price(&self) -> u128 {
-        self.config.consensus.gas_price
+        self.config.consensus.gas_price.unwrap()
     }
 
     #[allow(clippy::too_many_arguments)]

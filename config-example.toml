@@ -19,6 +19,14 @@ consensus.genesis_accounts = [
     ["1efF47bc3a10a45D4B230B5d10E37751FE6AA718", "5000000000000000000000"],
 ]
 
+# Reward parameters
+consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
+consensus.blocks_per_hour = 3600
+consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
+# Gas parameters
+consensus.eth_block_gas_limit = 84000000
+consensus.gas_price = "4_761_904_800_000"
+
 [[nodes]]
 json_rpc_port = 4202
 eth_chain_id = 0x8002
@@ -38,3 +46,13 @@ genesis_accounts = [
     ["6813Eb9362372EEF6200f3b1dbC3f819671cBA69", "5000000000000000000000"],
     ["1efF47bc3a10a45D4B230B5d10E37751FE6AA718", "5000000000000000000000"],
 ]
+
+# Reward parameters
+consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
+consensus.blocks_per_hour = 3600
+consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
+# Gas parameters
+consensus.eth_block_gas_limit = 84000000
+consensus.gas_price = "4_761_904_800_000"
+
+

@@ -1,7 +1,10 @@
 use ethers::{providers::Middleware, types::TransactionRequest};
 use primitive_types::H160;
 use tracing::*;
-use zilliqa::crypto::{Hash, SecretKey};
+use zilliqa::{
+    crypto::{Hash, SecretKey},
+    transaction::EvmGas,
+};
 
 use crate::{ConsensusConfig, Network, NodeConfig, TestNode};
 
@@ -74,6 +77,13 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             genesis_hash: None,
             is_main: true,
             genesis_accounts: Network::genesis_accounts(&network.genesis_key),
+            empty_block_timeout: Duration::from_millis(25),
+            local_address: "host.docker.internal".to_owned(),
+            rewards_per_hour: Some(51_000_000_000_000_000_000_000u128),
+            blocks_per_hour: Some(3600 * 40),
+            minimum_stake: Some(10_000_000_000_000_000_000_000_000u128),
+            eth_block_gas_limit: Some(EvmGas(84000000)),
+            gas_price: Some(4_761_904_800_000u128),
             ..Default::default()
         },
         ..Default::default()

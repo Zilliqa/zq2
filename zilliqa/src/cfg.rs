@@ -76,14 +76,15 @@ pub struct ConsensusConfig {
     /// Scilla process in Docker and this process on the host, you probably want to pass
     /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
     pub local_address: String,
+    // Keep the following fields as optionals - they don't have default values and have to be explicitly specified
     #[serde(deserialize_with = "str_to_u128")]
-    pub rewards_per_hour: u128,
-    pub blocks_per_hour: u64,
+    pub rewards_per_hour: Option<u128>,
+    pub blocks_per_hour: Option<u64>,
     #[serde(deserialize_with = "str_to_u128")]
-    pub minimum_stake: u128,
-    pub eth_block_gas_limit: EvmGas,
+    pub minimum_stake: Option<u128>,
+    pub eth_block_gas_limit: Option<EvmGas>,
     #[serde(deserialize_with = "str_to_u128")]
-    pub gas_price: u128,
+    pub gas_price: Option<u128>,
 }
 
 impl Default for ConsensusConfig {
@@ -99,11 +100,11 @@ impl Default for ConsensusConfig {
             minimum_time_left_for_empty_block: Duration::from_millis(3000),
             scilla_address: "http://localhost:3000".to_owned(),
             local_address: "localhost".to_owned(),
-            rewards_per_hour: 32_000_000_000_000u128,
-            blocks_per_hour: 50_000,
-            minimum_stake: 32_000_000_000_000_000_000u128,
-            eth_block_gas_limit: EvmGas(84_000_000),
-            gas_price: 4_761_904_800_000,
+            rewards_per_hour: None,
+            blocks_per_hour: None,
+            minimum_stake: None,
+            eth_block_gas_limit: None,
+            gas_price: None,
         }
     }
 }
@@ -122,11 +123,11 @@ impl Default for NodeConfig {
     }
 }
 
-fn str_to_u128<'de, D>(deserializer: D) -> Result<u128, D::Error>
+fn str_to_u128<'de, D>(deserializer: D) -> Result<Option<u128>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let res = String::deserialize(deserializer)?;
     let res = res.replace('_', "");
-    Ok(u128::from_str(&res).unwrap())
+    Ok(Some(u128::from_str(&res).unwrap()))
 }
