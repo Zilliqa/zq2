@@ -62,9 +62,17 @@ fn get_block_details(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<o
         .unwrap()
         .get_proposer_reward_address(block.header)?;
 
+    let block_gas_limit = node
+        .lock()
+        .unwrap()
+        .config
+        .consensus
+        .eth_block_gas_limit
+        .unwrap();
     Ok(Some(ots::BlockDetails::from_block(
         block,
         miner.unwrap_or_default(),
+        block_gas_limit,
     )))
 }
 
@@ -81,10 +89,17 @@ fn get_block_details_by_hash(
         .lock()
         .unwrap()
         .get_proposer_reward_address(block.header)?;
-
+    let block_gas_limit = node
+        .lock()
+        .unwrap()
+        .config
+        .consensus
+        .eth_block_gas_limit
+        .unwrap();
     Ok(Some(ots::BlockDetails::from_block(
         block,
         miner.unwrap_or_default(),
+        block_gas_limit,
     )))
 }
 
@@ -119,9 +134,10 @@ fn get_block_transactions(
     let (transactions, receipts): (Vec<_>, Vec<_>) =
         itertools::process_results(txn_results, |iter| iter.unzip())?;
 
+    let block_gas_limit = node.config.consensus.eth_block_gas_limit.unwrap();
     let full_block = ots::BlockWithTransactions {
         transactions,
-        block: ots::Block::from_block(&block, miner.unwrap_or_default()),
+        block: ots::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit),
     };
 
     Ok(Some(ots::BlockTransactions {
