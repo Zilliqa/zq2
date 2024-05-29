@@ -216,7 +216,7 @@ impl Network {
         let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
         // The initial stake of each node.
-        let stake = 32_000_000_000_000_000_000u128;
+        let stake = 10_000_000_000_000_000_000_000_000u128;
         let genesis_deposits: Vec<_> = keys
             .iter()
             .map(|k| {
@@ -371,7 +371,7 @@ impl Network {
         let keys = self.nodes.iter().map(|n| n.secret_key).collect::<Vec<_>>();
 
         // The initial stake of each node.
-        let stake = 32_000_000_000_000_000_000u128;
+        let stake = 10_000_000_000_000_000_000_000_000u128;
         let genesis_deposits: Vec<_> = keys
             .iter()
             .map(|k| {
