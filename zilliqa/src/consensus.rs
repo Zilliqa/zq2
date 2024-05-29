@@ -32,7 +32,7 @@ use crate::{
     pool::TransactionPool,
     state::State,
     time::SystemTime,
-    transaction::{SignedTransaction, TransactionReceipt, VerifiedTransaction},
+    transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 #[derive(Debug)]
@@ -571,7 +571,7 @@ impl Consensus {
             if head_block.hash() != parent.hash() || block.number() != head_block.header.number + 1
             {
                 warn!(
-                    "******* Fork detected! \nHead block: {} \nBlock prop: {}. We are node {}",
+                    "******* Fork detected! \nHead block: {:?} \nBlock prop: {:?}. We are node {}",
                     head_block,
                     block,
                     self.peer_id()
@@ -581,7 +581,7 @@ impl Consensus {
 
             // Must make sure state root hash is set to the parent's state root hash before applying transactions
             if self.state.root_hash()? != parent.state_root_hash() {
-                warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}.\nHead: {}", parent.state_root_hash(), self.state.root_hash()?, head_block);
+                warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}, head: {:?}", parent.state_root_hash(), self.state.root_hash()?, head_block);
             }
             let stakers = self.state.get_stakers()?;
             self.execute_block(&block, transactions, &stakers)?;
@@ -971,12 +971,18 @@ impl Consensus {
 
         let transactions = self.get_txns_to_execute();
 
+        let mut gas_used = EvmGas(0);
         let applied_transactions: Vec<_> = transactions
             .into_iter()
             .filter_map(|tx| {
                 self.apply_transaction(tx.clone(), parent_header, inspector::noop())
                     .transpose()
-                    .map(|r| r.map(|_| tx))
+                    .map(|r| {
+                        r.map(|result| {
+                            gas_used += result.gas_used();
+                            tx
+                        })
+                    })
             })
             .collect::<Result<_>>()?;
         let applied_transaction_hashes: Vec<_> =
@@ -993,6 +999,7 @@ impl Consensus {
             self.state.root_hash()?,
             applied_transaction_hashes.clone(),
             SystemTime::max(SystemTime::now(), parent_header.timestamp),
+            gas_used,
         );
 
         self.state.set_to_root(previous_state_root_hash.into());
@@ -1605,7 +1612,7 @@ impl Consensus {
         );
         if self.block_store.contains_block(block.hash())? {
             trace!(
-                "recieved block already seen: {} - our head is {}",
+                "recieved block already seen: {} - our head is {:?}",
                 block.hash(),
                 self.head_block()
             );
@@ -1947,7 +1954,7 @@ impl Consensus {
                 panic!("genesis block is not supposed to be reverted");
             }
 
-            trace!("Reverting block {}", head_block);
+            trace!("Reverting block {head_block:?}");
             // block store doesn't require anything, it will just hold blocks that may now be invalid
 
             // TX receipts are indexed by block
@@ -1955,9 +1962,8 @@ impl Consensus {
 
             // State is easily set - must be to the parent block, though
             trace!(
-                "Setting state to: {} aka block: {}",
-                parent_block.state_root_hash(),
-                parent_block
+                "Setting state to: {} aka block: {parent_block:?}",
+                parent_block.state_root_hash()
             );
             self.state
                 .set_to_root(parent_block.state_root_hash().into());
@@ -1996,7 +2002,7 @@ impl Consensus {
         // We have the chain of blocks from the ancestor upwards to the proposed block via walking back.
         while self.head_block().hash() != block.parent_hash() {
             trace!("Advancing the head block to prepare for proposed block fork.");
-            trace!("Head block: {}", self.head_block());
+            trace!("Head block: {:?}", self.head_block());
             trace!("desired block hash: {}", block.parent_hash());
 
             let desired_block_height = self.head_block().number() + 1;
@@ -2017,7 +2023,7 @@ impl Consensus {
             }
 
             // We now have the block pointer at the desired height, we can apply it.
-            trace!("Fork execution of block: {}", block_pointer);
+            trace!("Fork execution of block: {block_pointer:?}");
             let transactions = block_pointer.transactions.clone();
             let transactions = transactions
                 .iter()
@@ -2117,7 +2123,7 @@ impl Consensus {
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(
-                "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {}",
+                "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}",
                 self.state.root_hash()?,
                 block.state_root_hash(),
                 block

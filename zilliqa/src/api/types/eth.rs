@@ -108,7 +108,7 @@ impl Header {
             total_difficulty: 0,
             extra_data: vec![],
             gas_limit: block_gas_limit,
-            gas_used: EvmGas(0),
+            gas_used: header.gas_used,
             timestamp: header
                 .timestamp
                 .duration_since(SystemTime::UNIX_EPOCH)
