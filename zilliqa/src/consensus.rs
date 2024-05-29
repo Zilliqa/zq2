@@ -1,4 +1,5 @@
 use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration};
+use std::collections::btree_map::Entry;
 
 use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Context as _, Result};
@@ -38,7 +39,7 @@ use crate::{
 #[derive(Debug)]
 struct NewViewVote {
     // Keeps signer index in deposit contract and sent signature
-    signatures: Vec<(u16, NodeSignature)>,
+    signatures: BTreeMap<u16, NodeSignature>,
     cosigned_weight: u128,
     qcs: Vec<QuorumCertificate>,
 }
@@ -1088,7 +1089,6 @@ impl Consensus {
             return Ok(None);
         };
 
-        let index = index as u16;
         new_view.verify(public_key)?;
 
         // check if the sender's qc is higher than our high_qc or even higher than our view
@@ -1102,24 +1102,19 @@ impl Consensus {
             .new_views
             .remove(&new_view.view)
             .unwrap_or_else(|| NewViewVote {
-                signatures: Vec::new(),
+                signatures: BTreeMap::new(),
                 cosigned_weight: 0,
                 qcs: Vec::new(),
             });
 
         let mut supermajority = false;
 
+        let index: u16 = index.try_into()?;
         // the index is not checked here...
         // if the vote is new, store it
-        let has_voted = signatures.iter().any(|(idx, _)| *idx == index);
-
-        if !has_voted {
-            // Keeps (signer, signature) sorted by signer index in deposit contract
-            let pos = signatures
-                .binary_search_by(|(elem, _)| elem.cmp(&index))
-                .unwrap();
-            signatures.insert(pos, (index, new_view.signature));
-
+        if let Entry::Vacant(v) = signatures.entry(index) {
+            v.insert(new_view.signature);
+            info!("INSERTED NEW signature");
             let Some(weight) = self.state.get_stake(new_view.public_key)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
@@ -1150,7 +1145,7 @@ impl Consensus {
                 // if we are already in the round in which the vote counts and have reached supermajority
                 if new_view.view == self.view.get_view() {
                     // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
-                    let agg = self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures)?;
+                    let agg = self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, committee.len())?;
                     let high_qc = self.get_highest_from_agg(&agg)?;
                     let parent_hash = high_qc.block_hash;
                     let parent = self
@@ -1305,15 +1300,18 @@ impl Consensus {
         &self,
         view: u64,
         qcs: Vec<QuorumCertificate>,
-        signatures: &[(u16, NodeSignature)],
+        signers: &BTreeMap<u16, NodeSignature>,
+        committee_size: usize
     ) -> Result<AggregateQc> {
-        assert_eq!(qcs.len(), signatures.len());
+        assert_eq!(qcs.len(), signers.len());
 
-        let mut cosigned: BitVec = bitvec![u8, bitvec::order::Msb0; 0; 0];
-        for (idx, _) in signatures.iter() {
-            cosigned.set(*idx as usize, true);
+        let mut cosigned: BitVec = bitvec![u8, bitvec::order::Msb0; 0; committee_size];
+        let mut signatures: Vec<NodeSignature> = Vec::new();
+
+        for (index, signature) in signers {
+            cosigned.set(usize::try_from(*index)?, true);
+            signatures.push(*signature);
         }
-        let signatures: Vec<_> = signatures.iter().map(|(_, signature)| *signature).collect();
         Ok(AggregateQc {
             signature: NodeSignature::aggregate(&signatures)?,
             signers: cosigned,
@@ -1794,11 +1792,12 @@ impl Consensus {
         agg: &AggregateQc,
         committee: &[NodePublicKey],
     ) -> Result<()> {
-        let public_keys: Vec<_> = agg
-            .signers
-            .iter()
-            .map(|i| *committee.get(*i as usize).unwrap())
-            .collect();
+        let mut public_keys = Vec::new();
+        for (index, bit) in agg.signers.iter().enumerate() {
+            if *bit {
+                public_keys.push(*committee.get(index).unwrap());
+            }
+        }
 
         let messages: Vec<_> = agg
             .qcs

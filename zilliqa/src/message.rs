@@ -360,17 +360,16 @@ impl AggregateQc {
         let mut signers = Vec::new();
         for (index, bit) in self.signers.iter().enumerate() {
             if *bit {
-                signers.push(index as u16);
+                let index: u16 = index.try_into().expect("Unable to convert cosigned index!");
+                let bytes = index.to_be_bytes().to_vec();
+                signers.extend_from_slice(&bytes);
             }
         }
 
         let hashes: Vec<_> = self.qcs.iter().map(|qc| qc.compute_hash()).collect();
         Hash::compute([
             &self.signature.to_bytes(),
-            &signers
-                .iter()
-                .flat_map(|signer| signer.to_be_bytes())
-                .collect::<Vec<_>>(),
+            &signers,
             Hash::compute(
                 hashes
                     .iter()
