@@ -1,5 +1,10 @@
-use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration};
-use std::collections::btree_map::Entry;
+use std::{
+    collections::{btree_map::Entry, BTreeMap},
+    error::Error,
+    fmt::Display,
+    sync::Arc,
+    time::Duration,
+};
 
 use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Context as _, Result};
@@ -1145,7 +1150,12 @@ impl Consensus {
                 // if we are already in the round in which the vote counts and have reached supermajority
                 if new_view.view == self.view.get_view() {
                     // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
-                    let agg = self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, committee.len())?;
+                    let agg = self.aggregate_qc_from_indexes(
+                        new_view.view,
+                        qcs,
+                        &signatures,
+                        committee.len(),
+                    )?;
                     let high_qc = self.get_highest_from_agg(&agg)?;
                     let parent_hash = high_qc.block_hash;
                     let parent = self
@@ -1301,7 +1311,7 @@ impl Consensus {
         view: u64,
         qcs: Vec<QuorumCertificate>,
         signers: &BTreeMap<u16, NodeSignature>,
-        committee_size: usize
+        committee_size: usize,
     ) -> Result<AggregateQc> {
         assert_eq!(qcs.len(), signers.len());
 
@@ -1309,7 +1319,7 @@ impl Consensus {
         let mut signatures: Vec<NodeSignature> = Vec::new();
 
         for (index, signature) in signers {
-            cosigned.set(usize::try_from(*index)?, true);
+            cosigned.set(*index as usize, true);
             signatures.push(*signature);
         }
         Ok(AggregateQc {
