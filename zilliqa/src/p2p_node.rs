@@ -37,7 +37,7 @@ type DirectMessage = (u64, ExternalMessage);
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
-    request_response: request_response::json::Behaviour<DirectMessage, DirectMessage>,
+    request_response: request_response::cbor::Behaviour<DirectMessage, DirectMessage>,
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
     identify: identify::Behaviour,
@@ -92,7 +92,7 @@ impl P2pNode {
             .boxed();
 
         let behaviour = Behaviour {
-            request_response: request_response::json::Behaviour::new(
+            request_response: request_response::cbor::Behaviour::new(
                 iter::once((StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full)),
                 Default::default(),
             ),
