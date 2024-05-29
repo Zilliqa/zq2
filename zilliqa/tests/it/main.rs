@@ -216,7 +216,7 @@ impl Network {
         let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
         // The initial stake of each node.
-        let stake = 10_000_000_000_000_000_000_000_000u128;
+        let stake = 32_000_000_000_000_000_000u128;
         let genesis_deposits: Vec<_> = keys
             .iter()
             .map(|k| {
@@ -241,9 +241,9 @@ impl Network {
                 empty_block_timeout: Duration::from_millis(25),
                 scilla_address: scilla_address.clone(),
                 local_address: "host.docker.internal".to_owned(),
-                rewards_per_hour: Some(51_000_000_000_000_000_000_000u128),
+                rewards_per_hour: Some(204_000_000_000_000_000_000_000u128),
                 blocks_per_hour: Some(3600 * 40),
-                minimum_stake: Some(10_000_000_000_000_000_000_000_000u128),
+                minimum_stake: Some(32_000_000_000_000_000_000u128),
                 eth_block_gas_limit: Some(EvmGas(84000000)),
                 gas_price: Some(4_761_904_800_000u128),
                 ..Default::default()
@@ -336,9 +336,9 @@ impl Network {
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
                 local_address: "host.docker.internal".to_owned(),
-                rewards_per_hour: Some(51_000_000_000_000_000_000_000u128),
+                rewards_per_hour: Some(204_000_000_000_000_000_000_000u128),
                 blocks_per_hour: Some(3600 * 40),
-                minimum_stake: Some(10_000_000_000_000_000_000_000_000u128),
+                minimum_stake: Some(32_000_000_000_000_000_000u128),
                 eth_block_gas_limit: Some(EvmGas(84000000)),
                 gas_price: Some(4_761_904_800_000u128),
                 ..Default::default()
@@ -371,7 +371,7 @@ impl Network {
         let keys = self.nodes.iter().map(|n| n.secret_key).collect::<Vec<_>>();
 
         // The initial stake of each node.
-        let stake = 10_000_000_000_000_000_000_000_000u128;
+        let stake = 32_000_000_000_000_000_000u128;
         let genesis_deposits: Vec<_> = keys
             .iter()
             .map(|k| {
@@ -416,9 +416,9 @@ impl Network {
                         // Give a genesis account 1 billion ZIL.
                         genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                         empty_block_timeout: Duration::from_millis(25),
-                        rewards_per_hour: Some(51_000_000_000_000_000_000_000u128),
+                        rewards_per_hour: Some(204_000_000_000_000_000_000_000u128),
                         blocks_per_hour: Some(3600 * 40),
-                        minimum_stake: Some(10_000_000_000_000_000_000_000_000u128),
+                        minimum_stake: Some(32_000_000_000_000_000_000u128),
                         eth_block_gas_limit: Some(EvmGas(84000000)),
                         gas_price: Some(4_761_904_800_000u128),
                         ..Default::default()
