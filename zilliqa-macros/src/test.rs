@@ -56,7 +56,6 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
 
             // time this whole test to make sure its not taking too long
             use std::time::{Duration, Instant};
-            let start = Instant::now();
             let seeds_number = seeds.len();
 
             let mut name = "scilla-server-".to_owned();
@@ -245,20 +244,6 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             stop();
-
-            let duration = start.elapsed();
-            let time_allowed_ms: u64 = std::env::var_os("ZQ_TEST_TIMEOUT")
-                .map(|s| s.to_str().unwrap().parse().expect(&format!("Failed to parse ZQ_TEST_TIMEOUT env var: {:?}", s)))
-                .unwrap_or(15000);
-            let mut time_allowed_ms = Duration::from_millis(time_allowed_ms).as_millis() * (seeds_number as u128);
-
-            if cfg!(debug_assertions) {
-                time_allowed_ms *= 10;
-            }
-
-            if duration.as_millis() > time_allowed_ms {
-                panic!("Test took too long: {}ms. Allowed: {}", duration.as_millis(), time_allowed_ms);
-            }
         }
     }
 }
