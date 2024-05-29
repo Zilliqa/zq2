@@ -533,7 +533,7 @@ impl Consensus {
             return Ok(None);
         }
 
-        match self.check_block(&block) {
+        match self.check_block(&block, during_sync) {
             Ok(()) => {}
             Err(e) => {
                 if let Some(e) = e.downcast_ref::<MissingBlockError>() {
@@ -1483,12 +1483,13 @@ impl Consensus {
     }
 
     /// Check the validity of a block
-    fn check_block(&mut self, block: &Block) -> Result<()> {
+    fn check_block(&mut self, block: &Block, during_sync: bool) -> Result<()> {
         block.verify_hash()?;
 
-        // This should be checked against genesis
         if block.view() == 0 {
-            return Ok(());
+            // We only check a block if we receive it from an external source. We obviously already have the genesis
+            // block, so we aren't ever expecting to receive it.
+            return Err(anyhow!("tried to check genesis block"));
         }
 
         let Some(parent) = self.get_block(&block.parent_hash())? else {
@@ -1570,10 +1571,11 @@ impl Consensus {
             .timestamp()
             .elapsed()
             .unwrap_or_else(|err| err.duration());
-        if difference > self.config.allowed_timestamp_skew && parent.view() > 0 {
-            warn!(
-                "timestamp difference greater than allowed skew: {difference:?}. Blocks {0:?} and {1:?}", block.view(), parent.view(),
-            );
+        if !during_sync && difference > self.config.allowed_timestamp_skew {
+            return Err(anyhow!(
+                "timestamp difference for block {} greater than allowed skew: {difference:?}",
+                block.view()
+            ));
         }
 
         // Blocks must be in sequential order
@@ -1635,7 +1637,7 @@ impl Consensus {
             return Ok((false, None));
         }
 
-        match self.check_block(&block) {
+        match self.check_block(&block, true) {
             Ok(()) => {
                 trace!(
                     "updating high QC and view, blocks seems good! hash: {} number: {} view: {}",
