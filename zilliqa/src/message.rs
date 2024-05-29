@@ -350,7 +350,7 @@ impl Display for QuorumCertificate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateQc {
     pub signature: NodeSignature,
-    pub signers: BitVec,
+    pub cosigned: BitVec,
     pub view: u64,
     pub qcs: Vec<QuorumCertificate>,
 }
@@ -358,7 +358,7 @@ pub struct AggregateQc {
 impl AggregateQc {
     pub fn compute_hash(&self) -> Hash {
         let mut signers = Vec::new();
-        for (index, bit) in self.signers.iter().enumerate() {
+        for (index, bit) in self.cosigned.iter().enumerate() {
             if *bit {
                 let index: u16 = index.try_into().expect("Unable to convert cosigned index!");
                 let bytes = index.to_be_bytes().to_vec();

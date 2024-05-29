@@ -43,7 +43,7 @@ use crate::{
 
 #[derive(Debug)]
 struct NewViewVote {
-    // Keeps signer index in deposit contract and sent signature
+    // Represents signer index as kept in deposit contract and received signature
     signatures: BTreeMap<u16, NodeSignature>,
     cosigned_weight: u128,
     qcs: Vec<QuorumCertificate>,
@@ -1324,7 +1324,7 @@ impl Consensus {
         }
         Ok(AggregateQc {
             signature: NodeSignature::aggregate(&signatures)?,
-            signers: cosigned,
+            cosigned,
             view,
             qcs,
         })
@@ -1536,7 +1536,7 @@ impl Consensus {
             // Check if the signers of the block's aggregate QC represent the supermajority
 
             let mut signers = Vec::new();
-            for (index, bit) in agg.signers.iter().enumerate() {
+            for (index, bit) in agg.cosigned.iter().enumerate() {
                 if *bit {
                     signers.push(index as u16);
                 }
@@ -1803,7 +1803,7 @@ impl Consensus {
         committee: &[NodePublicKey],
     ) -> Result<()> {
         let mut public_keys = Vec::new();
-        for (index, bit) in agg.signers.iter().enumerate() {
+        for (index, bit) in agg.cosigned.iter().enumerate() {
             if *bit {
                 public_keys.push(*committee.get(index).unwrap());
             }
