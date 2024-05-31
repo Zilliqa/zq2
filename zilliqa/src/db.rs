@@ -260,9 +260,11 @@ impl Db {
             .block_store
             .lock()
             .unwrap()
-            .query_row_and_then("SELECT block_hash FROM blocks WHERE view = ?1", [view], |row| {
-                row.get(0)
-            })
+            .query_row_and_then(
+                "SELECT block_hash FROM blocks WHERE view = ?1",
+                [view],
+                |row| row.get(0),
+            )
             .optional()?)
     }
 
@@ -300,10 +302,10 @@ impl Db {
     }
 
     pub fn set_high_qc(&self, high_qc: QuorumCertificate) -> Result<()> {
-        self.block_store
-            .lock()
-            .unwrap()
-            .execute("INSERT INTO tip_info (high_qc) VALUES (?1) ON CONFLICT DO UPDATE SET high_qc = ?1", [high_qc])?;
+        self.block_store.lock().unwrap().execute(
+            "INSERT INTO tip_info (high_qc) VALUES (?1) ON CONFLICT DO UPDATE SET high_qc = ?1",
+            [high_qc],
+        )?;
         Ok(())
     }
 
@@ -529,11 +531,11 @@ impl Db {
                 ":tx_index": receipt.index,
                 ":success": receipt.success,
                 ":gas_used": receipt.gas_used,
-                ":contract_address": receipt.contract_address.map(|a| AddressSqlable(a)),
+                ":contract_address": receipt.contract_address.map(AddressSqlable),
                 ":logs": VecLogSqlable(receipt.logs),
                 ":accepted": receipt.accepted,
-                ":errors": MapScillaErrorSqlable(receipt.errors.into()),
-                ":exceptions": VecScillaExceptionSqlable(receipt.exceptions.into()),
+                ":errors": MapScillaErrorSqlable(receipt.errors),
+                ":exceptions": VecScillaExceptionSqlable(receipt.exceptions),
             })?;
 
         Ok(())

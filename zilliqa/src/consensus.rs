@@ -2102,7 +2102,6 @@ impl Consensus {
 
         self.apply_rewards(committee, block.view(), &block.qc.cosigned)?;
 
-
         // Important - only add blocks we are going to execute because they can potentially
         // overwrite the mapping of block height to block, which there should only be one of.
         // for example, this HAS to be after the deal with fork call
