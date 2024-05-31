@@ -2,7 +2,10 @@
 #![allow(unused_imports)]
 
 use std::{
+    cmp::{Ord, Ordering, PartialOrd},
     collections::{HashMap, HashSet},
+    convert::TryFrom,
+    fmt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -11,6 +14,7 @@ use alloy_primitives::{address, Address};
 use anyhow::{anyhow, Context as _, Result};
 use libp2p::PeerId;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use tera::Tera;
 use tokio::{
     fs,
@@ -23,9 +27,43 @@ use zilliqa::{
 };
 use zqutils::utils;
 
-const PAGE_STATUS_IMPLEMENTED: &str = "Implemented";
-const PAGE_STATUS_NOT_IMPLEMENTED: &str = "NotYetImplemented";
-const PAGE_STATUS_NEVER_IMPLEMENTED: &str = "NeverImplemented";
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+pub enum PageStatus {
+    Implemented,
+    NotYetImplemented,
+    NeverImplemented,
+    PartiallyImplemented,
+    NotYetDocumented,
+}
+
+impl fmt::Display for PageStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let val = match self {
+            Self::Implemented => "Implemented",
+            Self::NotYetImplemented => "NotYetImplemented",
+            Self::NeverImplemented => "NeverImplemented",
+            Self::PartiallyImplemented => "PartiallyImplemented",
+            Self::NotYetDocumented => "NotYetDocumented",
+        };
+        write!(f, "{}", val)
+    }
+}
+
+impl TryFrom<&str> for PageStatus {
+    type Error = anyhow::Error;
+
+    fn try_from(s: &str) -> Result<Self> {
+        // From docs/docgen.md
+        Ok(match s {
+            "Implemented" => Self::Implemented,
+            "NotYetImplemented" => Self::NotYetImplemented,
+            "NeverImplemented" => Self::NeverImplemented,
+            "PartiallyImplemented" => Self::PartiallyImplemented,
+            "NotYetDocumented" => Self::NotYetDocumented,
+            _ => Self::PartiallyImplemented,
+        })
+    }
+}
 
 pub struct GeneratedFile {
     /// What is the filename we should give in the nav entry in mkdocs?
@@ -34,6 +72,8 @@ pub struct GeneratedFile {
     pub id_components: Vec<String>,
     /// Name of the API for our list.
     pub api_name: ApiMethod,
+    /// Page status.
+    pub page_status: PageStatus,
 }
 
 pub struct Docs {
@@ -50,7 +90,7 @@ pub struct Docs {
     // What is the API url ?
     pub api_url: String,
     // What APIs are actually implemented?
-    pub implemented: HashSet<ApiMethod>,
+    pub implemented: HashMap<ApiMethod, PageStatus>,
 }
 
 #[derive(Debug)]
@@ -171,14 +211,49 @@ fn insert_key(val: &mut serde_yaml::Value, components: &Vec<String>, idx: usize,
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq, Serialize, Deserialize)]
 pub enum ApiMethod {
     JsonRpc { name: String },
     Rest { uri: String },
 }
 
-pub fn get_implemented_jsonrpc_methods() -> Result<Vec<ApiMethod>> {
-    let mut methods = Vec::new();
+impl PartialOrd for ApiMethod {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ApiMethod {
+    fn cmp(&self, other: &Self) -> Ordering {
+        fn cmp_prefix(s1: &str, s2: &str) -> Ordering {
+            // This implements a heuristic order: if there is a prefix (xxx_), then this is a non-ZIL API and comes first.
+            // non-prefixed APIs are ZIL APIs and are all ordered second.
+            match (s1.contains('_'), s2.contains('_')) {
+                (true, true) | (false, false) => s1.cmp(s2),
+                (true, false) => Ordering::Less,
+                _ => Ordering::Greater,
+            }
+        }
+
+        // All JsonRpc comes before all Rest
+        match (self, other) {
+            (Self::JsonRpc { name: _ }, Self::Rest { uri: _ }) => Ordering::Less,
+            (Self::Rest { uri: _ }, Self::JsonRpc { name: _ }) => Ordering::Greater,
+            (Self::JsonRpc { name: n1 }, Self::JsonRpc { name: n2 }) => cmp_prefix(n1, n2),
+            (Self::Rest { uri: n1 }, Self::Rest { uri: n2 }) => cmp_prefix(n1, n2),
+        }
+    }
+}
+
+/// Used when we want to construct an ordered list of API call status.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ApiCallStatus {
+    pub method: ApiMethod,
+    pub status: PageStatus,
+}
+
+pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus>> {
+    let mut methods = HashMap::new();
     // Construct an empty node so we can check for the existence of RPC methods without constructing a full node.
     let genesis_accounts: Vec<(Address, String)> = vec![
         (
@@ -209,9 +284,12 @@ pub fn get_implemented_jsonrpc_methods() -> Result<Vec<ApiMethod>> {
     )?));
     let module = zilliqa::api::rpc_module(my_node.clone());
     for m in module.method_names() {
-        methods.push(ApiMethod::JsonRpc {
-            name: m.to_string(),
-        })
+        methods.insert(
+            ApiMethod::JsonRpc {
+                name: m.to_string(),
+            },
+            PageStatus::Implemented,
+        );
     }
     Ok(methods)
 }
@@ -224,7 +302,7 @@ impl Docs {
         index_file: &Option<String>,
         index_file_key_prefix: &str,
         api_url: &str,
-        implemented: &HashSet<ApiMethod>,
+        implemented: &HashMap<ApiMethod, PageStatus>,
     ) -> Result<Self> {
         Ok(Self {
             target_dir: target_dir.to_string(),
@@ -237,32 +315,12 @@ impl Docs {
         })
     }
 
-    pub async fn generate_all(&self) -> Result<Vec<ApiMethod>> {
+    pub async fn generate_all(&self) -> Result<HashMap<ApiMethod, PageStatus>> {
         let result = self.generate_dir(&PathBuf::from(&self.source_dir)).await?;
         Ok(result)
     }
 
-    // Recursively generate documentation.
-    // Because of the weird rules around recursive async, this is done iteratively.
-    // @return A vector of the APIs documented
-    pub async fn generate_dir(&self, dir: &Path) -> Result<Vec<ApiMethod>> {
-        #[derive(PartialEq, Debug, Clone)]
-        struct Entry {
-            abs: PathBuf,
-            rel: PathBuf,
-        }
-        let mut stack: Vec<Entry> = Vec::new();
-        let mut to_generate: Vec<Entry> = Vec::new();
-        let mut documented_apis: Vec<ApiMethod> = Vec::new();
-        stack.push(Entry {
-            abs: PathBuf::from(dir),
-            rel: PathBuf::from(""),
-        });
-        let mut contents_map: serde_yaml::Value = if let Some(val) = &self.index_file {
-            serde_yaml::from_str(&fs::read_to_string(val).await?)?
-        } else {
-            serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
-        };
+    pub async fn get_base_mkdocs_key(&self) -> Result<Vec<String>> {
         let key_prefix_components = split_into_components(&self.index_file_key_prefix)?;
 
         // We now need to zap the prefix ..
@@ -276,7 +334,33 @@ impl Docs {
         } else {
             key_prefix_components.clone()
         };
-        contents_map = remove_key(&contents_map, &key_to_remove, 0)
+        Ok(key_to_remove)
+    }
+
+    // Recursively generate documentation.
+    // Because of the weird rules around recursive async, this is done iteratively.
+    // @return A vector of the APIs documented
+    pub async fn generate_dir(&self, dir: &Path) -> Result<HashMap<ApiMethod, PageStatus>> {
+        #[derive(PartialEq, Debug, Clone)]
+        struct Entry {
+            abs: PathBuf,
+            rel: PathBuf,
+        }
+        let mut stack: Vec<Entry> = Vec::new();
+        let mut to_generate: Vec<Entry> = Vec::new();
+        let mut documented_apis = HashMap::new();
+        stack.push(Entry {
+            abs: PathBuf::from(dir),
+            rel: PathBuf::from(""),
+        });
+        let mut contents_map: serde_yaml::Value = if let Some(val) = &self.index_file {
+            serde_yaml::from_str(&fs::read_to_string(val).await?)?
+        } else {
+            serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+        };
+        let base_key = self.get_base_mkdocs_key().await?;
+        let key_prefix_components = split_into_components(&self.index_file_key_prefix)?;
+        contents_map = remove_key(&contents_map, &base_key, 0)
             .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
 
         println!("After remove {0}", serde_yaml::to_string(&contents_map)?);
@@ -334,7 +418,7 @@ impl Docs {
                 0,
                 &generated.mkdocs_filename,
             );
-            documented_apis.push(generated.api_name);
+            documented_apis.insert(generated.api_name, generated.page_status);
         }
 
         if let Some(val) = &self.index_file {
@@ -342,6 +426,78 @@ impl Docs {
             fs::write(val, &serde_yaml::to_string(&contents_map)?).await?;
         }
         Ok(documented_apis)
+    }
+
+    pub async fn generate_api_table(
+        &self,
+        documented_apis: &HashMap<ApiMethod, PageStatus>,
+        implemented_apis: &HashMap<ApiMethod, PageStatus>,
+    ) -> Result<Vec<ApiCallStatus>> {
+        // Documented APIs will have had their page status set properly (to NotImplemented if necessary) already
+        // Implemented APIs that are not documented need to get it set to NotYetDocumented.
+        // I am turning into JH...
+        let mut all_apis: Vec<ApiCallStatus> = documented_apis
+            .iter()
+            .chain(
+                implemented_apis
+                    .iter()
+                    .filter(|(k, _)| !documented_apis.contains_key(k))
+                    .map(|(k, _)| (k, &PageStatus::NotYetDocumented)),
+            )
+            .map(|(k, v)| ApiCallStatus {
+                method: k.clone(),
+                status: v.clone(),
+            })
+            .collect::<Vec<ApiCallStatus>>();
+        all_apis.sort_by(|a, b| a.method.cmp(&b.method));
+        let mut list_tera: Tera = Default::default();
+        let mut context = tera::Context::new();
+
+        // Find some paths for later ..
+        let mut desc_path: PathBuf = PathBuf::new();
+        desc_path.push(&self.target_dir);
+        desc_path.push("supported_apis.md");
+
+        let mut out_path = PathBuf::new();
+        out_path.push(&self.target_dir);
+        out_path.push("supported_apis.md");
+        let mut mkdocs_path = PathBuf::new();
+        if let Some(ref v) = self.id_prefix {
+            mkdocs_path.push(v.to_lowercase());
+        }
+        mkdocs_path.push(format!("supported_apis.md"));
+        let mut id_path = PathBuf::new();
+        if let Some(ref v) = self.id_prefix {
+            id_path.push(v);
+        }
+        id_path.push("supported_apis");
+        let mkdocs_filename = zqutils::utils::string_from_path(&mkdocs_path)?;
+
+        context.insert("apis", &all_apis);
+        let prefixed_id = zqutils::utils::string_from_path(&id_path)?;
+        context.insert("_id", &prefixed_id);
+
+        list_tera.add_raw_template(
+            "api_calls",
+            include_str!("../resources/supported_apis.tera.md"),
+        )?;
+        let list_page = list_tera
+            .render("api_calls", &context)
+            .context(format!("Whilst rendering api call list"))?;
+
+        self.write_file(&list_page, &desc_path).await?;
+
+        if let Some(val) = &self.index_file {
+            // Now write out...
+            let contents_map = serde_yaml::from_str(&fs::read_to_string(val).await?)?;
+            let mut base_key = self.get_base_mkdocs_key().await?;
+            base_key.push("apis".to_string());
+            let mut contents_map = remove_key(&contents_map, &base_key, 0)
+                .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+            insert_key(&mut contents_map, &base_key, 0, &mkdocs_filename);
+            fs::write(val, &serde_yaml::to_string(&contents_map)?).await?;
+        }
+        Ok(all_apis)
     }
 
     // Old-style parser. You can probably do better (you can certainly do more elegant!)
@@ -441,7 +597,7 @@ impl Docs {
         // Keep rust happy.
         context.insert("_api_url", &self.api_url);
         // Add context keys here when we have some.
-        let mut page_status: String = PAGE_STATUS_IMPLEMENTED.to_string();
+        let mut page_status = PageStatus::Implemented;
         for (k, v) in &parsed.sections {
             section_tera.add_raw_template(k, v)?;
         }
@@ -450,7 +606,7 @@ impl Docs {
         for k in parsed.sections.keys() {
             let rendered = section_tera.render(k, &context)?;
             if k == "status" {
-                page_status = rendered.trim().to_string();
+                page_status = rendered.trim().try_into()?;
             } else {
                 final_context.insert(k, &rendered);
             }
@@ -470,11 +626,12 @@ impl Docs {
             name: page_title.to_string(),
         };
         // If the API is not implemented, and it is supposed to be ..
-        if !self.implemented.contains(&api_name) && page_status != PAGE_STATUS_NEVER_IMPLEMENTED {
+        if !self.implemented.contains_key(&api_name) && page_status != PageStatus::NeverImplemented
+        {
             // ... set the status to not implemented
-            page_status = PAGE_STATUS_NOT_IMPLEMENTED.to_string();
+            page_status = PageStatus::NotYetImplemented;
         }
-        final_context.insert("status", &page_status);
+        final_context.insert("status", &page_status.to_string());
 
         let mut nearly_id: Vec<String> = PathBuf::from(rel)
             .iter()
@@ -540,6 +697,7 @@ impl Docs {
             mkdocs_filename,
             id_components,
             api_name,
+            page_status,
         })
     }
 }

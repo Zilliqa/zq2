@@ -211,10 +211,6 @@ pub async fn generate_docs(
         DEFAULT_API_URL.to_string()
     };
     let implemented_apis = docgen::get_implemented_jsonrpc_methods()?;
-    let impl_set = implemented_apis
-        .iter()
-        .cloned()
-        .collect::<HashSet<docgen::ApiMethod>>();
     let docs = docgen::Docs::new(
         &scan_dir,
         target_dir,
@@ -222,22 +218,38 @@ pub async fn generate_docs(
         index_file,
         &key_prefix,
         &api_url,
-        &impl_set,
+        &implemented_apis,
     )?;
     let documented_apis = docs.generate_all().await?;
-    let doc_set = documented_apis
-        .iter()
-        .cloned()
-        .collect::<HashSet<docgen::ApiMethod>>();
-
+    let api_table = docs
+        .generate_api_table(&documented_apis, &implemented_apis)
+        .await?;
     let mut ok = true;
-    for i in doc_set.difference(&impl_set) {
-        println!("{0}", format!("🎄 not implemented: {i:?}").red());
-        ok = false;
-    }
-    for i in impl_set.difference(&doc_set) {
-        println!("{0}", format!("🎲 not documented : {i:?}").yellow());
-        ok = false;
+    for api in &api_table {
+        match api.status {
+            docgen::PageStatus::NotYetDocumented => {
+                println!(
+                    "{0}",
+                    format!("🎲 not documented : {0:?}", &api.method).yellow()
+                );
+                ok = false;
+            }
+            docgen::PageStatus::NotYetImplemented => {
+                println!(
+                    "{0}",
+                    format!("🎄 not implemented: {0:?}", &api.method).red()
+                );
+                ok = false;
+            }
+            docgen::PageStatus::PartiallyImplemented => {
+                println!(
+                    "{0}",
+                    format!("🍄 partially implemented: {0:?}", &api.method).red()
+                );
+                ok = false;
+            }
+            _ => (),
+        }
     }
     if ok || !error_on_mismatch {
         Ok(())
