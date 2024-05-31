@@ -27,6 +27,9 @@ use zilliqa::{
 };
 use zqutils::utils;
 
+const SUPPORTED_APIS_PATH_NAME: &str = "supported_apis";
+const SUPPORTED_APIS_PAGE_NAME: &str = "Supported APIs";
+
 #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub enum PageStatus {
     Implemented,
@@ -456,21 +459,28 @@ impl Docs {
         // Find some paths for later ..
         let mut desc_path: PathBuf = PathBuf::new();
         desc_path.push(&self.target_dir);
-        desc_path.push("supported_apis.md");
+        if let Some(ref v) = self.id_prefix {
+            desc_path.push(v.to_lowercase());
+        }
+        let supported_api_filename = format!("{0}.md", SUPPORTED_APIS_PATH_NAME);
+        desc_path.push(&supported_api_filename);
 
         let mut out_path = PathBuf::new();
         out_path.push(&self.target_dir);
-        out_path.push("supported_apis.md");
+        if let Some(ref v) = self.id_prefix {
+            out_path.push(v.to_lowercase());
+        }
+        out_path.push(&supported_api_filename);
         let mut mkdocs_path = PathBuf::new();
         if let Some(ref v) = self.id_prefix {
             mkdocs_path.push(v.to_lowercase());
         }
-        mkdocs_path.push(format!("supported_apis.md"));
+        mkdocs_path.push(format!("{0}.md", SUPPORTED_APIS_PATH_NAME));
         let mut id_path = PathBuf::new();
         if let Some(ref v) = self.id_prefix {
             id_path.push(v);
         }
-        id_path.push("supported_apis");
+        id_path.push(SUPPORTED_APIS_PATH_NAME);
         let mkdocs_filename = zqutils::utils::string_from_path(&mkdocs_path)?;
 
         context.insert("apis", &all_apis);
@@ -491,7 +501,7 @@ impl Docs {
             // Now write out...
             let contents_map = serde_yaml::from_str(&fs::read_to_string(val).await?)?;
             let mut base_key = self.get_base_mkdocs_key().await?;
-            base_key.push("apis".to_string());
+            base_key.push(SUPPORTED_APIS_PAGE_NAME.to_string());
             let mut contents_map = remove_key(&contents_map, &base_key, 0)
                 .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
             insert_key(&mut contents_map, &base_key, 0, &mkdocs_filename);

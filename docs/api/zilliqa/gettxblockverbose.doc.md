@@ -6,9 +6,15 @@ GetTxBlockVerbose
 
 tx,block,get,verbose,number
 
+# Status
+
+PartiallyImplemented
+
 # Description
 
 `GetTxBlockVerbose` returns the verbose details of a specified transaction block
+
+This API is partially implemented - see (<https://github.com/Zilliqa/zq2/issues/79>)
 
 # Curl
 

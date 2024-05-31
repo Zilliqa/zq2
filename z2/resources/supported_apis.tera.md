@@ -23,8 +23,7 @@ Please open an issue or PR for APIs that you think should be included.
 
 | Method                                    | Status                                          |
 | ----------------------------------------- | ----------------------------------------------- |
-
-{%- for api in apis -%}
+{% for api in apis -%}
 | {%- if api.method.JsonRpc -%}
 `{{ api.method.JsonRpc.name }}`
 {%- endif -%}
