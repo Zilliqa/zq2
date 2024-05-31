@@ -493,7 +493,7 @@ impl Docs {
         )?;
         let list_page = list_tera
             .render("api_calls", &context)
-            .context(format!("Whilst rendering api call list"))?;
+            .context("Whilst rendering api call list")?;
 
         self.write_file(&list_page, &desc_path).await?;
 
