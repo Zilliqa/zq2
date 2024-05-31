@@ -25,33 +25,7 @@ pub struct Db {
     block_store: Mutex<Connection>,
 }
 
-// database tree names
-/// Key: trie hash; value: trie node
 const STATE_TRIE_TREE: &[u8] = b"state_trie";
-// /// Key: transaction hash; value: transaction data
-// const TXS_TREE: &[u8] = b"txs_tree";
-// /// Key: block hash; value: vector of transaction receipts in that block
-// const RECEIPTS_TREE: &[u8] = b"receipts_tree";
-// /// Key: tx_hash; value: corresponding block_hash
-// const TX_BLOCK_INDEX: &[u8] = b"tx_block_index";
-// /// Key: block hash; value: block header
-// const BLOCK_HEADERS_TREE: &[u8] = b"block_headers_tree";
-// /// Key: block number (on the current main branch); value: block hash
-// const CANONICAL_BLOCK_NUMBERS_TREE: &[u8] = b"canonical_block_numbers_tree";
-// /// Key: block view (on the current main branch); value: block hash
-// const CANONICAL_BLOCK_VIEWS_TREE: &[u8] = b"canonical_block_views_tree";
-// /// Key: block hash; value: entire block (with hashes for transactions)
-// const BLOCKS_TREE: &[u8] = b"blocks_tree";
-// /// Key: address; value: list of transactions which touched this address, in order of execution.
-// const TOUCHED_ADDRESS_TREE: &[u8] = b"touched_address_tree";
-
-// // single keys stored in default tree in DB
-// /// value: u64
-// const LATEST_FINALIZED_VIEW: &[u8] = b"latest_finalized_view";
-// /// The highest block number we have seen and stored. It is guaranteed that we have the block at this number in our
-// /// block store.
-// const HIGHEST_BLOCK_NUMBER: &[u8] = b"highest_block_number";
-// const HIGH_QC: &[u8] = b"high_qc";
 
 macro_rules! sqlify_with_bincode {
     ($type: ty) => {
@@ -125,7 +99,7 @@ impl ToSql for SystemTimeSqlable {
 impl FromSql for SystemTimeSqlable {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
         Ok(SystemTimeSqlable(
-            SystemTime::UNIX_EPOCH + Duration::from_secs(value.as_i64()? as u64),
+            SystemTime::UNIX_EPOCH + Duration::from_secs(u64::column_result(value)?),
         ))
     }
 }
@@ -197,24 +171,25 @@ impl Db {
     fn ensure_schema(connection: &Connection) -> Result<()> {
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS blocks (
-                hash BLOB NOT NULL PRIMARY KEY,
+                block_hash BLOB NOT NULL PRIMARY KEY,
                 view INTEGER NOT NULL UNIQUE,
                 height INTEGER NOT NULL,
                 parent_hash BLOB NOT NULL,
                 signature BLOB NOT NULL,
                 state_root_hash BLOB NOT NULL,
                 timestamp NUMERIC NOT NULL,
+                gas_used INTEGER NOT NULL,
                 qc BLOB NOT NULL,
                 agg BLOB);
             CREATE TABLE IF NOT EXISTS main_chain_canonical_blocks (
                 height INTEGER NOT NULL PRIMARY KEY,
-                block_hash TEXT NOT NULL REFERENCES blocks (hash));
+                block_hash TEXT NOT NULL REFERENCES blocks (block_hash));
             CREATE TABLE IF NOT EXISTS transactions (
-                hash BLOB NOT NULL PRIMARY KEY,
+                tx_hash BLOB NOT NULL PRIMARY KEY,
                 data BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS receipts (
-                tx_hash BLOB NOT NULL PRIMARY KEY REFERENCES transactions (hash),
-                block_hash BLOB NOT NULL REFERENCES blocks (hash),
+                tx_hash BLOB NOT NULL PRIMARY KEY REFERENCES transactions (tx_hash) ON DELETE CASCADE,
+                block_hash BLOB NOT NULL REFERENCES blocks (block_hash), -- the touched_address_index needs to be updated for all the txs in the block, so delete txs first - thus no cascade here
                 tx_index INTEGER NOT NULL,
                 success INTEGER NOT NULL,
                 gas_used INTEGER NOT NULL,
@@ -225,12 +200,12 @@ impl Db {
                 exceptions BLOB);
             CREATE TABLE IF NOT EXISTS touched_address_index (
                 address BLOB,
-                tx_hash BLOB,
+                tx_hash BLOB REFERENCES transactions (tx_hash) ON DELETE CASCADE,
                 PRIMARY KEY (address, tx_hash));
             CREATE TABLE IF NOT EXISTS tip_info (
                 latest_finalized_view INTEGER,
                 high_qc BLOB,
-                _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0))
+                _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0)); -- max 1 row
             ",
         )?;
         Ok(())
@@ -285,7 +260,7 @@ impl Db {
             .block_store
             .lock()
             .unwrap()
-            .query_row_and_then("SELECT hash FROM blocks WHERE view = ?1", [view], |row| {
+            .query_row_and_then("SELECT block_hash FROM blocks WHERE view = ?1", [view], |row| {
                 row.get(0)
             })
             .optional()?)
@@ -295,7 +270,8 @@ impl Db {
         self.block_store
             .lock()
             .unwrap()
-            .execute("UPDATE tip_info SET latest_finalized_view = ?1", [view])?;
+            .execute("INSERT INTO tip_info (latest_finalized_view) VALUES (?1) ON CONFLICT DO UPDATE SET latest_finalized_view = ?1",
+                     [view])?;
         Ok(())
     }
 
@@ -316,7 +292,7 @@ impl Db {
             .lock()
             .unwrap()
             .query_row_and_then(
-                "SELECT height FROM blocks ORDER BY height DESC LIMIT 1",
+                "SELECT height FROM main_chain_canonical_blocks ORDER BY height DESC LIMIT 1",
                 (),
                 |row| row.get(0),
             )
@@ -327,7 +303,7 @@ impl Db {
         self.block_store
             .lock()
             .unwrap()
-            .execute("UPDATE tip_info SET high_qc = ?1", [high_qc])?;
+            .execute("INSERT INTO tip_info (high_qc) VALUES (?1) ON CONFLICT DO UPDATE SET high_qc = ?1", [high_qc])?;
         Ok(())
     }
 
@@ -348,12 +324,14 @@ impl Db {
         Ok(())
     }
 
-    pub fn get_touched_addresses(&self, address: Address) -> Result<Vec<Hash>> {
+    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
+        // TODO: this is only ever used in one API, so keep an eye on performance - in case e.g.
+        // the index table might need to be denormalised to simplify this lookup
         Ok(self
             .block_store
             .lock()
             .unwrap()
-            .prepare_cached("SELECT tx_hash FROM touched_address_index WHERE address = ?1")?
+            .prepare_cached("SELECT tx_hash FROM touched_address_index JOIN receipts USING (tx_hash) JOIN blocks USING (block_hash) WHERE address = ?1 ORDER BY blocks.height, receipts.tx_index")?
             .query_map([AddressSqlable(address)], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?)
     }
@@ -364,7 +342,7 @@ impl Db {
             .lock()
             .unwrap()
             .query_row(
-                "SELECT data FROM transactions WHERE hash = ?1",
+                "SELECT data FROM transactions WHERE tx_hash = ?1",
                 [txn_hash],
                 |row| row.get(0),
             )
@@ -377,7 +355,7 @@ impl Db {
             .lock()
             .unwrap()
             .query_row(
-                "SELECT 1 FROM transactions WHERE hash = ?1",
+                "SELECT 1 FROM transactions WHERE tx_hash = ?1",
                 [hash],
                 |row| row.get::<_, i64>(0),
             )
@@ -392,7 +370,7 @@ impl Db {
         tx: &SignedTransaction,
     ) -> Result<()> {
         sqlite_tx.execute(
-            "INSERT INTO transactions (hash, data) VALUES (?1, ?2)",
+            "INSERT INTO transactions (tx_hash, data) VALUES (?1, ?2)",
             (hash, tx),
         )?;
         Ok(())
@@ -404,9 +382,10 @@ impl Db {
         self.insert_transaction_with_db_tx(&self.block_store.lock().unwrap(), hash, tx)
     }
 
-    pub fn remove_transactions_in_block(&self, block_hash: &Hash) -> Result<()> {
+    pub fn remove_transactions_executed_in_block(&self, block_hash: &Hash) -> Result<()> {
+        // foreign key triggers will take care of receipts and touched_address_index
         self.block_store.lock().unwrap().execute(
-            "DELETE FROM transactions WHERE block_hash = ?1",
+            "DELETE FROM transactions WHERE tx_hash IN (SELECT tx_hash FROM receipts WHERE block_hash = ?1)",
             [block_hash],
         )?;
         Ok(())
@@ -428,16 +407,17 @@ impl Db {
     pub fn insert_block_with_db_tx(&self, sqlite_tx: &Connection, block: &Block) -> Result<()> {
         sqlite_tx.execute(
             "INSERT INTO blocks
-                (hash, view, height, parent_hash, signature, state_root_hash, timestamp, qc, agg)
-            VALUES (:hash, :view, :height, :parent_hash, :signature, :state_root_hash, :timestamp, :qc, :agg)",
+                (block_hash, view, height, parent_hash, signature, state_root_hash, timestamp, gas_used, qc, agg)
+            VALUES (:block_hash, :view, :height, :parent_hash, :signature, :state_root_hash, :timestamp, :gas_used, :qc, :agg)",
             named_params! {
-                ":hash": block.header.hash,
+                ":block_hash": block.header.hash,
                 ":view": block.header.view,
                 ":height": block.header.number,
                 ":parent_hash": block.header.parent_hash,
                 ":signature": block.header.signature,
                 ":state_root_hash": block.header.state_root_hash,
                 ":timestamp": SystemTimeSqlable(block.header.timestamp),
+                ":gas_used": block.header.gas_used,
                 ":qc": block.qc,
                 ":agg": block.agg,
             })?;
@@ -459,20 +439,21 @@ impl Db {
                     signature: row.get(4)?,
                     state_root_hash: row.get(5)?,
                     timestamp: row.get::<_, SystemTimeSqlable>(6)?.into(),
+                    gas_used: row.get(7)?,
                 },
-                qc: row.get(7)?,
-                agg: row.get(8)?,
+                qc: row.get(8)?,
+                agg: row.get(9)?,
                 transactions: vec![],
             })
         }
         macro_rules! query_block {
             ($cond: tt, $key: tt) => {
-                self.block_store.lock().unwrap().query_row(concat!("SELECT hash, view, height, parent_hash, signature, state_root_hash, timestamp, qc, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
+                self.block_store.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, parent_hash, signature, state_root_hash, timestamp, gas_used, qc, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
             };
         }
         Ok(match key {
             Either::Left(hash) => {
-                query_block!("hash = ?1", hash)
+                query_block!("block_hash = ?1", hash)
             }
             Either::Right(view) => {
                 query_block!("view = ?1", view)
@@ -509,7 +490,7 @@ impl Db {
             .lock()
             .unwrap()
             .query_row(
-                "SELECT 1 FROM blocks WHERE hash = ?1",
+                "SELECT 1 FROM blocks WHERE block_hash = ?1",
                 [block_hash],
                 |row| row.get::<_, i64>(0),
             )

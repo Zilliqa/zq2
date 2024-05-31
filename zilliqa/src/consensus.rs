@@ -319,7 +319,6 @@ impl Consensus {
 
     pub fn head_block(&self) -> Block {
         let highest_block_number = self.db.get_highest_block_number().unwrap().unwrap();
-
         self.block_store
             .get_block_by_number(highest_block_number)
             .unwrap()
@@ -752,7 +751,7 @@ impl Consensus {
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
-        self.db.get_touched_addresses(address)
+        self.db.get_touched_transactions(address)
     }
 
     /// Clear up anything in memory that is no longer required. This is to avoid memory leaks.
@@ -1444,7 +1443,7 @@ impl Consensus {
     /// Intended to be used with the oldest pending block, to move the
     /// finalized tip forward by one. Does not update view/height.
     pub fn finalize(&mut self, hash: Hash, view: u64) -> Result<()> {
-        trace!("Finalizing block {hash}");
+        trace!("Finalizing block {hash} at view {view}");
         self.finalized_view = view;
         self.db.put_latest_finalized_view(view)?;
 
@@ -1956,10 +1955,6 @@ impl Consensus {
             trace!("Reverting block {head_block:?}");
             // block store doesn't require anything, it will just hold blocks that may now be invalid
 
-            // TX receipts are indexed by block
-            self.db
-                .remove_transaction_receipts_in_block(&head_block.hash())?;
-
             // State is easily set - must be to the parent block, though
             trace!(
                 "Setting state to: {} aka block: {parent_block:?}",
@@ -1978,15 +1973,17 @@ impl Consensus {
             }
 
             // block transactions need to be removed from self.transactions and re-injected
-            self.db.remove_transactions_in_block(&head_block.hash())?;
             for tx_hash in &head_block.transactions {
                 let orig_tx = self.get_transaction_by_hash(*tx_hash).unwrap().unwrap();
 
-                // Insert this unwound transaction back into the transaction pool too.
+                // Insert this unwound transaction back into the transaction pool.
                 let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
                 self.transaction_pool
                     .insert_transaction(orig_tx, account_nonce);
             }
+            // then purge them all from the db, including receipts and indexes
+            self.db
+                .remove_transactions_executed_in_block(&head_block.hash())?;
 
             // Persistence - since this block is no longer in the main chain, ensure it's not
             // recorded as such in the height mappings
@@ -2040,6 +2037,7 @@ impl Consensus {
         committee: &[NodePublicKey],
     ) -> Result<()> {
         debug!("Executing block: {:?}", block.header.hash);
+
         let parent = self
             .get_block(&block.parent_hash())?
             .ok_or_else(|| anyhow!("missing parent block when executing block!"))?;
@@ -2099,22 +2097,19 @@ impl Consensus {
             if self.receipts.receiver_count() != 0 {
                 let _ = self.receipts.send((receipt.clone(), tx_index));
             }
-            // self.db.insert_transaction_receipt(receipt)?;
             block_receipts.push(receipt);
         }
 
         self.apply_rewards(committee, block.view(), &block.qc.cosigned)?;
 
-        // If we were the proposer we would've already processed the transactions
-        // if !self.db.contains_transaction_receipts(&block.hash())? {
-        //     self.db
-        //         .insert_transaction_receipts(&block.hash(), &block_receipts)?;
-        // }
 
         // Important - only add blocks we are going to execute because they can potentially
         // overwrite the mapping of block height to block, which there should only be one of.
         // for example, this HAS to be after the deal with fork call
-        self.add_block(block.clone())?;
+        if !self.db.contains_block(&block.hash())? {
+            // If we were the proposer we would've already processed the block, hence the check
+            self.add_block(block.clone())?;
+        }
         {
             // helper scope to shadow db, to avoid moving it into the closure
             // closure has to be move to take ownership of block_receipts
