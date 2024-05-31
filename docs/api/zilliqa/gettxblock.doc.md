@@ -6,9 +6,15 @@ GetTxBlock
 
 tx,block,get,number
 
+# Status
+
+PartiallyImplemented
+
 # Description
 
 `GetTxBlock` returns the details of a specified transaction block.
+
+This API is partially implemented - see (<https://github.com/Zilliqa/zq2/issues/79>)
 
 # Curl
 
