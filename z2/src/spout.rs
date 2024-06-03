@@ -2,7 +2,11 @@ use anyhow::Result;
 use futures::future::JoinAll;
 use tokio::{process::Command, sync::mpsc, task::JoinHandle};
 
-use crate::{collector, utils};
+use crate::{
+    collector,
+    components::{self, Component},
+    utils,
+};
 
 /// Run the eth spout from a sibling directory
 pub struct Runner {
@@ -24,6 +28,13 @@ pub async fn exists(base_dir: &str) -> Result<bool> {
 }
 
 impl Runner {
+    pub async fn requirements() -> Result<components::Requirements> {
+        Ok(components::Requirements {
+            software: vec![],
+            repos: vec!["zilliqa-developer".to_string()],
+        })
+    }
+
     pub async fn spawn_spout(
         base_dir: &str,
         chain_url: &str,
@@ -48,7 +59,7 @@ impl Runner {
         let join_handlers = collector::spawn(
             &mut cmd,
             &dir,
-            &collector::Legend::new(collector::Program::Spout, 0)?,
+            &collector::Legend::new(Component::Spout, 0)?,
             channel.clone(),
         )
         .await?;

@@ -2,13 +2,15 @@ use std::{str::FromStr, time::Duration};
 
 use alloy_primitives::Address;
 use libp2p::{Multiaddr, PeerId};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     crypto::{Hash, NodePublicKey},
     transaction::EvmGas,
 };
 
+// Note that z2 constructs instances of this to save as a configuration so it must be both
+// serializable and deserializable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -101,13 +103,13 @@ pub struct ConsensusConfig {
     #[serde(default = "local_address_default")]
     pub local_address: String,
     // Keep the following fields as optionals - they don't have default values and have to be explicitly specified
-    #[serde(deserialize_with = "str_to_u128")]
+    #[serde(serialize_with = "u128_to_str", deserialize_with = "str_to_u128")]
     pub rewards_per_hour: u128,
     pub blocks_per_hour: u64,
-    #[serde(deserialize_with = "str_to_u128")]
+    #[serde(serialize_with = "u128_to_str", deserialize_with = "str_to_u128")]
     pub minimum_stake: u128,
     pub eth_block_gas_limit: EvmGas,
-    #[serde(deserialize_with = "str_to_u128")]
+    #[serde(serialize_with = "u128_to_str", deserialize_with = "str_to_u128")]
     pub gas_price: u128,
 }
 
@@ -133,6 +135,13 @@ pub fn local_address_default() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+fn u128_to_str<S>(u: &u128, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&u.to_string())
 }
 
 fn str_to_u128<'de, D>(deserializer: D) -> Result<u128, D::Error>

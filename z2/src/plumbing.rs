@@ -3,35 +3,14 @@ use std::{collections::HashSet, env, path::PathBuf, str::FromStr};
 use alloy_primitives::B256;
 use anyhow::{anyhow, Result};
 use colored::Colorize;
-use tokio::fs;
+use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
 
-use crate::{collector, deployer, otel, otterscan, perf, spout, zq1};
+use crate::{collector, deployer, perf, zq1};
 /// Code for all the z2 commands, so you can invoke it from your own programs.
-use crate::{converter, docgen, setup};
-
-#[derive(PartialEq, Eq, Hash, Clone)]
-pub enum Components {
-    ZQ2,
-    Otterscan,
-    Otel,
-    Spout,
-    Mitmweb,
-}
-
-impl Components {
-    pub fn all() -> HashSet<Components> {
-        HashSet::from([
-            Components::ZQ2,
-            Components::Otterscan,
-            Components::Otel,
-            Components::Spout,
-            Components::Mitmweb,
-        ])
-    }
-}
+use crate::{components::Component, converter, docgen, setup};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_local_net(
@@ -41,7 +20,7 @@ pub async fn run_local_net(
     log_level: &str,
     debug_modules: &Vec<String>,
     trace_modules: &Vec<String>,
-    components: &HashSet<Components>,
+    components: &HashSet<Component>,
     keep_old_network: bool,
 ) -> Result<()> {
     // Now build the log string. If there already was one, use that ..
@@ -66,14 +45,6 @@ pub async fn run_local_net(
     println!("RUST_LOG = {log_spec}");
     println!("Create config directory .. ");
     let _ = fs::create_dir(&config_dir).await;
-    if components.contains(&Components::Otel) {
-        println!("Setting up otel .. ");
-        let otel = otel::Otel::new(config_dir)?;
-        println!("Write otel configuration .. ");
-        otel.write_files().await?;
-        println!("Start otel .. ");
-        otel.ensure_otel().await?;
-    }
     println!("Generate zq2 configuration .. ");
     let mut setup_obj = setup::Setup::new(
         4,
@@ -86,41 +57,16 @@ pub async fn run_local_net(
     println!("{0}", setup_obj.get_port_map());
     println!("Set up collector");
     let mut collector = collector::Collector::new(&log_spec, base_dir).await?;
-    if components.contains(&Components::ZQ2) {
-        println!("Start zq2 .. ");
-        setup_obj.run_zq2(&mut collector).await?;
-    }
-
-    if components.contains(&Components::Mitmweb) {
-        println!("Start mitmweb");
-        setup_obj.run_mitmweb(&mut collector).await?;
-    }
-
-    if components.contains(&Components::Otterscan) {
-        println!("Start otterscan .. ");
-        if otterscan::exists(base_dir).await? {
-            setup_obj.run_otterscan(&mut collector).await?;
+    // Iterate through the components in dependency order.
+    for c in Component::in_dependency_order().iter() {
+        if components.contains(c) {
+            println!("Start {c}");
+            setup_obj.run_component(c, &mut collector).await?;
         } else {
-            return Err(anyhow!(
-                "Otterscan was not detected as sibling checkout; cannot run otterscan"
-            ));
+            println!("Skipping {c}");
         }
     }
 
-    // Wait until the chain is up and running
-    setup_obj.wait_for_chain().await?;
-
-    if components.contains(&Components::Spout) {
-        println!("Start spout at localhost:5200 .. ");
-        if spout::exists(base_dir).await? {
-            setup_obj.run_spout(&mut collector).await?;
-        } else {
-            return Err(anyhow!(
-                "{} was not detected",
-                spout::get_spout_directory(base_dir)
-            ));
-        }
-    }
     collector.complete().await?;
     Ok(())
 }
@@ -146,6 +92,61 @@ pub async fn run_deployer_new(
 pub async fn run_deployer_upgrade(config_file: &str) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
     deployer::upgrade(config_file).await?;
+    Ok(())
+}
+
+pub async fn print_depends(_base_dir: &str) -> Result<()> {
+    for p in Component::all().iter() {
+        let req = setup::Setup::describe_component(p).await?;
+        println!("{0} requires:\n {1}", &p, req)
+    }
+    Ok(())
+}
+
+pub async fn update_depends(base_dir: &str, with_ssh: bool) -> Result<()> {
+    for p in Component::all().iter() {
+        let req = setup::Setup::describe_component(p).await?;
+        for repo in &req.repos {
+            // If it doesn't exit ..
+            let mut dest_dir = PathBuf::from(base_dir);
+            dest_dir.push(repo);
+            let repo_base = if with_ssh {
+                format!("git@github.com:zilliqa/{0}", repo)
+            } else {
+                format!("https://github.com/zilliqa/{0}", repo)
+            };
+            if !dest_dir.exists() {
+                println!("🌱 Cloning {repo_base} for {p} in {base_dir}/{repo} .. ");
+                let mut cmd = Command::new("git");
+                cmd.args(["clone", &repo_base]);
+                cmd.current_dir(base_dir);
+                let result = cmd.spawn()?.wait().await?;
+                if !result.success() {
+                    return Err(anyhow!("Couldn't clone {repo}"));
+                }
+            } else if !dest_dir.is_dir() {
+                return Err(anyhow!("{base_dir}/{repo} is not a directory"));
+            }
+            // Only do this if there is a remote tracking branch. If not, just ignore the update.
+            println!("🌲  Updating {repo_base} for {p} in {base_dir}/{repo} .. ");
+            let mut check = Command::new("git");
+            check.args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+            check.current_dir(&dest_dir);
+            let result = check.spawn()?.wait().await?;
+            if result.success() {
+                println!("   🪴 there is an upstream. Merging from it .. ");
+                let mut cmd = Command::new("git");
+                cmd.arg("pull");
+                cmd.current_dir(&dest_dir);
+                let result = cmd.spawn()?.wait().await?;
+                if !result.success() {
+                    return Err(anyhow!("Couldn't update {repo} in {base_dir}/{repo}"));
+                }
+            } else {
+                println!("  🌻 no upstream branch; you are probably working here. Skipping");
+            }
+        }
+    }
     Ok(())
 }
 
