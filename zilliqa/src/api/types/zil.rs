@@ -7,11 +7,12 @@ use serde::{Serialize, Serializer};
 use super::{hex, hex_no_prefix, option_hex_no_prefix};
 use crate::{
     api::zil::{TRANSACTIONS_PER_PAGE, TX_BLOCKS_PER_DS_BLOCK},
-    exec::{ScillaError, ScillaException, BLOCK_GAS_LIMIT},
+    exec::{ScillaError, ScillaException},
     message::Block,
     schnorr,
     serde_util::num_as_str,
     time::SystemTime,
+    transaction,
     transaction::{
         ScillaGas, ScillaLog, SignedTransaction, TransactionReceipt, VerifiedTransaction, ZilAmount,
     },
@@ -29,7 +30,7 @@ impl From<&Block> for TxBlock {
         TxBlock {
             header: TxBlockHeader {
                 version: 0,
-                gas_limit: BLOCK_GAS_LIMIT.into(),
+                gas_limit: transaction::ScillaGas(0),
                 gas_used: 0,
                 rewards: 0,
                 txn_fees: 0,

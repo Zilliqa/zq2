@@ -1,7 +1,14 @@
 use ethers::{providers::Middleware, types::TransactionRequest};
 use primitive_types::H160;
 use tracing::*;
-use zilliqa::crypto::{Hash, SecretKey};
+use zilliqa::{
+    cfg::{
+        allowed_timestamp_skew_default, consensus_timeout_default, eth_chain_id_default,
+        json_rcp_port_default, minimum_time_left_for_empty_block_default, scilla_address_default,
+    },
+    crypto::{Hash, SecretKey},
+    transaction::EvmGas,
+};
 
 use crate::{ConsensusConfig, Network, NodeConfig, TestNode};
 
@@ -74,9 +81,24 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             genesis_hash: None,
             is_main: true,
             genesis_accounts: Network::genesis_accounts(&network.genesis_key),
-            ..Default::default()
+            empty_block_timeout: Duration::from_millis(25),
+            local_address: "host.docker.internal".to_owned(),
+            rewards_per_hour: 204_000_000_000_000_000_000_000u128,
+            blocks_per_hour: 3600 * 40,
+            minimum_stake: 32_000_000_000_000_000_000u128,
+            eth_block_gas_limit: EvmGas(84000000),
+            gas_price: 4_761_904_800_000u128,
+            consensus_timeout: consensus_timeout_default(),
+            genesis_deposits: Vec::new(),
+            main_shard_id: None,
+            minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
+            scilla_address: scilla_address_default(),
         },
-        ..Default::default()
+        allowed_timestamp_skew: allowed_timestamp_skew_default(),
+        data_dir: None,
+        disable_rpc: false,
+        json_rpc_port: json_rcp_port_default(),
+        eth_chain_id: eth_chain_id_default(),
     };
     let result = crate::node(config, SecretKey::new().unwrap(), 0, Some(dir));
 

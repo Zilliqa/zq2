@@ -2,7 +2,7 @@ use alloy_primitives::{Address, B256};
 use serde::Serialize;
 
 use super::{eth, hex, option_hex};
-use crate::{exec::BLOCK_GAS_LIMIT, message, time::SystemTime, transaction::EvmGas};
+use crate::{message, time::SystemTime, transaction::EvmGas};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,9 +63,9 @@ pub struct BlockDetails {
 }
 
 impl BlockDetails {
-    pub fn from_block(block: &message::Block, miner: Address) -> Self {
+    pub fn from_block(block: &message::Block, miner: Address, block_gas_limit: EvmGas) -> Self {
         BlockDetails {
-            block: Block::from_block(block, miner),
+            block: Block::from_block(block, miner, block_gas_limit),
             issuance: BlockIssuance {
                 block_reward: 0,
                 uncle_reward: 0,
@@ -88,7 +88,7 @@ pub struct BlockIssuance {
 }
 
 impl Block {
-    pub fn from_block(block: &message::Block, miner: Address) -> Self {
+    pub fn from_block(block: &message::Block, miner: Address, block_gas_limit: EvmGas) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Block {
             number: block.number(),
@@ -104,7 +104,7 @@ impl Block {
             total_difficulty: 0,
             extra_data: vec![],
             size: 0,
-            gas_limit: BLOCK_GAS_LIMIT,
+            gas_limit: block_gas_limit,
             gas_used: block.gas_used(),
             timestamp: block
                 .timestamp()

@@ -6,19 +6,14 @@ use std::{
 use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
-use ethabi::{Constructor, Token};
+use ethabi::Token;
 use revm::primitives::ResultAndState;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    cfg::ConsensusConfig,
-    contracts, crypto,
-    db::TrieStorage,
-    exec::{BLOCK_GAS_LIMIT, GAS_PRICE},
-    inspector,
-    message::BlockHeader,
-    scilla::Scilla,
+    cfg::ConsensusConfig, contracts, crypto, db::TrieStorage, inspector, message::BlockHeader,
+    scilla::Scilla, transaction::EvmGas,
 };
 
 #[derive(Debug)]
@@ -37,6 +32,8 @@ pub struct State {
     scilla: Arc<OnceLock<Mutex<Scilla>>>,
     scilla_address: String,
     local_address: String,
+    pub block_gas_limit: EvmGas,
+    pub gas_price: u128,
 }
 
 impl State {
@@ -48,6 +45,8 @@ impl State {
             scilla: Arc::new(OnceLock::new()),
             scilla_address: config.scilla_address.clone(),
             local_address: config.local_address.clone(),
+            block_gas_limit: config.eth_block_gas_limit,
+            gas_price: config.gas_price,
         }
     }
 
@@ -93,8 +92,11 @@ impl State {
             state.mutate_account(address, |a| a.balance = balance)?;
         }
 
-        let deposit_data = Constructor { inputs: vec![] }
-            .encode_input(contracts::deposit::BYTECODE.to_vec(), &[])?;
+        let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
+            contracts::deposit::BYTECODE.to_vec(),
+            &[Token::Uint(config.minimum_stake.into())],
+        )?;
+
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
 
         for (pub_key, peer_id, stake, reward_address) in config.genesis_deposits {
@@ -110,8 +112,8 @@ impl State {
             } = state.apply_transaction_evm(
                 Address::ZERO,
                 Some(contract_addr::DEPOSIT),
-                GAS_PRICE,
-                BLOCK_GAS_LIMIT,
+                config.gas_price,
+                config.eth_block_gas_limit,
                 0,
                 data,
                 None,
@@ -135,6 +137,8 @@ impl State {
             scilla: self.scilla.clone(),
             scilla_address: self.scilla_address.clone(),
             local_address: self.local_address.clone(),
+            block_gas_limit: self.block_gas_limit,
+            gas_price: self.gas_price,
         }
     }
 

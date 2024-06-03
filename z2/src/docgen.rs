@@ -21,9 +21,15 @@ use tokio::{
     sync::{broadcast, mpsc::UnboundedSender},
 };
 use zilliqa::{
-    cfg::{ConsensusConfig, NodeConfig},
+    cfg::{
+        allowed_timestamp_skew_default, consensus_timeout_default, disable_rpc_default,
+        empty_block_timeout_default, eth_chain_id_default, json_rcp_port_default,
+        local_address_default, minimum_time_left_for_empty_block_default, scilla_address_default,
+        ConsensusConfig, NodeConfig,
+    },
     crypto::SecretKey,
     node::{MessageSender, Node},
+    transaction::EvmGas,
 };
 use zqutils::utils;
 
@@ -273,9 +279,26 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
     let config = NodeConfig {
         consensus: ConsensusConfig {
             genesis_accounts,
-            ..Default::default()
+            rewards_per_hour: 51_000_000_000_000_000_000_000u128,
+            blocks_per_hour: 3600,
+            is_main: true,
+            empty_block_timeout: empty_block_timeout_default(),
+            minimum_stake: 10_000_000_000_000_000_000_000_000u128,
+            gas_price: 4_761_904_800_000u128,
+            eth_block_gas_limit: EvmGas(84000000),
+            genesis_deposits: Vec::new(),
+            consensus_timeout: consensus_timeout_default(),
+            local_address: local_address_default(),
+            main_shard_id: None,
+            minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
+            scilla_address: scilla_address_default(),
+            genesis_hash: None,
         },
-        ..Default::default()
+        data_dir: None,
+        eth_chain_id: eth_chain_id_default(),
+        disable_rpc: disable_rpc_default(),
+        allowed_timestamp_skew: allowed_timestamp_skew_default(),
+        json_rpc_port: json_rcp_port_default(),
     };
     let secret_key = SecretKey::new()?;
     let (s1, _) = tokio::sync::mpsc::unbounded_channel();

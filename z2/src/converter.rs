@@ -30,7 +30,6 @@ use zilliqa::{
     contracts,
     crypto::{Hash, SecretKey},
     db::Db,
-    exec::{BLOCK_GAS_LIMIT, GAS_PRICE},
     inspector,
     message::{Block, BlockHeader, QuorumCertificate, Vote},
     schnorr,
@@ -133,8 +132,8 @@ pub async fn convert_persistence(
     } = state.apply_transaction_evm(
         Address::ZERO,
         Some(contract_addr::DEPOSIT),
-        GAS_PRICE,
-        BLOCK_GAS_LIMIT,
+        node_config.consensus.gas_price,
+        node_config.consensus.eth_block_gas_limit,
         0,
         data,
         None,
