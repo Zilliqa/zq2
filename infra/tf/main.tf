@@ -2,30 +2,6 @@
 # ZQ2 GCP Terraform main resources
 ################################################################################
 
-resource "google_storage_bucket" "binaries" {
-  name                        = "${var.project_id}-${var.network_name}-binaries"
-  location                    = upper(var.region)
-  uniform_bucket_level_access = true
-}
-
-resource "null_resource" "build_binary" {
-  triggers = {
-    always_run = "${timestamp()}"
-  }
-
-  provisioner "local-exec" {
-    command     = "cross build --target x86_64-unknown-linux-gnu --profile release"
-    working_dir = "${path.module}/../.."
-  }
-}
-
-resource "google_storage_bucket_object" "binary" {
-  depends_on = [null_resource.build_binary]
-  name       = "${var.network_name}-binary"
-  source     = local.binary_location
-  bucket     = google_storage_bucket.binaries.name
-}
-
 resource "google_compute_firewall" "allow_ingress_from_iap" {
   name    = "${var.network_name}-allow-ingress-from-iap"
   network = local.network_name
@@ -39,13 +15,13 @@ resource "google_compute_firewall" "allow_ingress_from_iap" {
   }
 }
 
-resource "google_compute_firewall" "allow_internal_p2p" {
-  name    = "${var.network_name}-allow-internal-p2p"
+resource "google_compute_firewall" "allow_p2p" {
+  name    = "${var.network_name}-allow-p2p"
   network = local.network_name
 
 
   direction     = "INGRESS"
-  source_ranges = [ "0.0.0.0/0" ]
+  source_ranges = ["0.0.0.0/0"]
 
   allow {
     protocol = "tcp"
@@ -84,12 +60,11 @@ resource "google_project_iam_member" "log_writer" {
   member  = "serviceAccount:${google_service_account.node.email}"
 }
 
-resource "google_storage_bucket_iam_member" "this" {
-  bucket = google_storage_bucket.binaries.name
-  role   = "roles/storage.objectViewer"
-  member = "serviceAccount:${google_service_account.node.email}"
+resource "google_project_iam_member" "artifact_registry_reader" {
+  project = var.gcp_docker_registry_project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.node.email}"
 }
-
 
 data "external" "genesis_key_converted" {
   program     = ["cargo", "run", "--bin", "convert-key"]
@@ -114,11 +89,11 @@ module "bootstrap_node" {
 
   name                  = "${var.network_name}-bootstrap-node"
   service_account_email = google_service_account.node.email
-  node_zone             = var.node_zone
+  node_zone             = var.node_zone != "" ? var.node_zone : data.google_compute_zones.zones.names.0
   network_name          = local.network_name
   subnetwork_name       = data.google_compute_subnetwork.default.name
-  binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
-  binary_md5            = google_storage_bucket_object.binary.md5hash
+  docker_image          = var.docker_image
+  external_ip           = data.google_compute_address.bootstrap.address
   persistence_url       = var.persistence_url
   config                = <<-EOT
   p2p_port = 3333
@@ -144,10 +119,9 @@ module "node" {
   name                  = "${var.network_name}-node-${count.index}"
   service_account_email = google_service_account.node.email
   network_name          = local.network_name
-  node_zone             = var.node_zone
+  node_zone             = var.node_zone != "" ? var.node_zone : sort(data.google_compute_zones.zones.names)[count.index % length(data.google_compute_zones.zones.names)]
   subnetwork_name       = data.google_compute_subnetwork.default.name
-  binary_url            = "gs://${google_storage_bucket.binaries.name}/${google_storage_bucket_object.binary.name}"
-  binary_md5            = google_storage_bucket_object.binary.md5hash
+  docker_image          = var.docker_image
   persistence_url       = var.persistence_url
 
   config          = <<-EOT
@@ -171,10 +145,23 @@ resource "google_project_service" "osconfig" {
   service = "osconfig.googleapis.com"
 }
 
-resource "google_compute_instance_group" "api" {
-  name      = "${var.network_name}-nodes"
-  zone      = "${var.region}-a"
-  instances = concat([module.bootstrap_node.self_link], module.node[*].self_link)
+resource "google_compute_instance_group" "ig_api_zn-a" {
+  name      = "${var.network_name}-api-zone-a"
+  zone      = var.node_zone != "" ? var.node_zone : data.google_compute_zones.zones.names.0
+  instances = [module.bootstrap_node.self_link]
+
+
+  named_port {
+    name = "jsonrpc"
+    port = "4201"
+  }
+}
+
+resource "google_compute_instance_group" "ig_api_znx" {
+  count     = var.node_count
+  name      = "${var.network_name}-api-zone-${sort(data.google_compute_zones.zones.names)[count.index % length(data.google_compute_zones.zones.names)]}"
+  zone      = var.node_zone != "" ? var.node_zone : sort(data.google_compute_zones.zones.names)[count.index % length(data.google_compute_zones.zones.names)]
+  instances = [module.node[count.index].self_link]
 
 
   named_port {
@@ -184,16 +171,25 @@ resource "google_compute_instance_group" "api" {
 }
 
 resource "google_compute_backend_service" "api" {
-  name                  = "${var.network_name}-nodes"
+  name                  = "${var.network_name}-api-nodes"
   health_checks         = [google_compute_health_check.api.id]
   port_name             = "jsonrpc"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   enable_cdn            = false
   session_affinity      = "CLIENT_IP"
   backend {
-    group           = google_compute_instance_group.api.self_link
+    group           = google_compute_instance_group.ig_api_zn-a.self_link
     balancing_mode  = "UTILIZATION"
     capacity_scaler = 1.0
+  }
+
+  dynamic "backend" {
+    for_each = google_compute_instance_group.ig_api_znx
+    content {
+      group           = backend.value.self_link
+      balancing_mode  = "UTILIZATION"
+      capacity_scaler = 1.0
+    }
   }
 }
 
@@ -225,6 +221,10 @@ resource "google_compute_target_https_proxy" "api" {
 
 data "google_compute_global_address" "api" {
   name = "api-${replace(var.subdomain, ".", "-")}"
+}
+
+data "google_compute_address" "bootstrap" {
+  name = "bootstrap-${replace(var.subdomain, ".", "-")}"
 }
 
 resource "google_compute_global_forwarding_rule" "api_http" {
