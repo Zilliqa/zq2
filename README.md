@@ -72,7 +72,7 @@ RUST_LOG=zilliqa=[warn|info|debug|trace]
 Or via individual modules using eg.
 
 ```unset
-RUST_LOG=edbug,sled=info,zilliqa::scilla=trace
+RUST_LOG=debug,sled=info,zilliqa::scilla=trace
 ```
 
 ## `rustfmt`
