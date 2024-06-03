@@ -8244,6 +8244,7 @@ dependencies = [
  "eth_trie",
  "ethabi",
  "ethereum",
+ "ethers",
  "futures",
  "git2",
  "hex",

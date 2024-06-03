@@ -94,8 +94,6 @@ struct ConverterPrintTransactionConfigStruct {
 
 #[derive(Args, Debug)]
 struct PerfStruct {
-    config_dir: String,
-
     perf_file: String,
 }
 
@@ -175,6 +173,9 @@ struct RunStruct {
     docs: bool,
     #[clap(long = "docs", overrides_with = "docs")]
     _no_docs: bool,
+
+    #[clap(long)]
+    log_file: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
@@ -249,12 +250,13 @@ async fn main() -> Result<()> {
                 &arg.trace_modules,
                 &to_run,
                 keep_old_network,
+                &arg.log_file,
             )
             .await?;
             Ok(())
         }
         Commands::Perf(ref arg) => {
-            plumbing::run_perf_file(&arg.config_dir, &arg.perf_file).await?;
+            plumbing::run_perf_file(&arg.perf_file).await?;
             Ok(())
         }
         Commands::Deployer(deployer_command) => match &deployer_command {

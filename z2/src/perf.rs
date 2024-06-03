@@ -13,6 +13,8 @@ use std::{
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use clap::ValueEnum;
+use ethers::middleware::Middleware as _;
+use ethers::signers::Signer;
 use lazy_static::lazy_static;
 use rand::{self, distributions::DistString as _, prelude::*};
 use serde::{Deserialize, Serialize};
@@ -66,6 +68,15 @@ pub struct Config {
     pub gas: GasParams,
     pub source_of_funds: Option<ConfigAccount>,
     pub steps: Vec<ConfigSet>,
+}
+
+impl Config {
+    pub fn zil_chainid(&self) -> u32 {
+        self.chainid
+    }
+    pub fn eth_chainid(&self) -> u64 {
+        u64::from(self.chainid | 0x8000)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -145,6 +156,31 @@ impl Account {
         Ok(zilliqa_rs::core::ZilAddress::try_from(
             &self.get_zq_pubkey()?,
         )?)
+    }
+    pub fn get_eth_wallet(&self) -> Result<ethers::signers::LocalWallet> {
+        Ok(ethers::signers::LocalWallet::from_str(&self.privkey)?)
+    }
+
+    pub fn get_address_as_zil(&self) -> Result<zilliqa_rs::core::ZilAddress> {
+        Ok(zilliqa_rs::core::ZilAddress::from_str(
+            &self.get_address()?,
+        )?)
+    }
+
+    pub fn get_address_as_eth(&self) -> Result<ethers::types::Address> {
+        Ok(ethers::types::Address::from_str(&self.get_address()?)?)
+    }
+
+    pub fn get_address(&self) -> Result<String> {
+        Ok(match self.kind {
+            AccountKind::Zil => self.get_zq_address()?.to_string(),
+            AccountKind::Eth => self.get_eth_address()?.to_string(),
+        })
+    }
+
+    pub fn get_eth_address(&self) -> Result<ethers::types::Address> {
+        let wallet = self.get_eth_wallet()?;
+        Ok(wallet.address())
     }
     pub fn get_zq_hex(&self) -> Result<String> {
         Ok(format!("{}", self.get_zq_address()?))
@@ -256,10 +292,6 @@ pub struct ConformConfig {
 
 impl Perf {
     pub fn from_file(config_file: &str) -> Result<Self> {
-        let config_path = Path::new(config_file);
-        if !config_path.is_absolute() {
-            return Err(anyhow!("z changes directory internally and {config_file} is not absolute - please pass an absolute path"));
-        }
         let file_contents =
             fs::read_to_string(config_file).context("Cannot read configuration {config_file}")?;
         let config_obj: Config = serde_yaml::from_str(&file_contents)?;
@@ -278,8 +310,18 @@ impl Perf {
         })
     }
 
-    pub fn make_provider(&self) -> Result<Provider<Http>> {
+    pub fn make_zil_provider(&self) -> Result<Provider<Http>> {
         Ok(Provider::<Http>::try_from(self.config.rpc_url.as_str())?)
+    }
+
+    pub fn make_eth_provider(
+        &self,
+    ) -> Result<ethers::providers::Provider<ethers::providers::Http>> {
+        Ok(
+            ethers::providers::Provider::<ethers::providers::Http>::try_from(
+                self.config.rpc_url.as_str(),
+            )?,
+        )
     }
 
     pub fn make_rng(&self) -> Result<StdRng> {
@@ -433,7 +475,24 @@ impl Perf {
         Ok(result)
     }
 
-    pub async fn get_middleware(
+    pub async fn get_eth_middleware(
+        &self,
+        from: &Account,
+    ) -> Result<
+        ethers::middleware::signer::SignerMiddleware<
+            ethers::providers::Provider<ethers::providers::Http>,
+            ethers::signers::LocalWallet,
+        >,
+    > {
+        let provider = self.make_eth_provider()?;
+        Ok(ethers::middleware::SignerMiddleware::new(
+            provider,
+            from.get_eth_wallet()?
+                .with_chain_id(self.config.eth_chainid()),
+        ))
+    }
+
+    pub async fn get_zil_middleware(
         &self,
         from: &Account,
     ) -> Result<
@@ -443,7 +502,7 @@ impl Perf {
         >,
     > {
         let wallet = zilliqa_rs::signers::LocalWallet::from_str(&from.privkey)?;
-        let provider = self.make_provider()?;
+        let provider = self.make_zil_provider()?;
         Ok(zilliqa_rs::middlewares::signer::SignerMiddleware::new(
             provider, wallet,
         ))
@@ -453,28 +512,50 @@ impl Perf {
         &self,
         from: &Account,
         to: &Account,
-        amt: u128,
+        amt_zil: u128,
         nonce: Option<u64>,
     ) -> Result<String> {
-        println!(
-            "> Transfer {0} -> {1} : {amt} / {nonce:?} ",
-            from.get_zq_address()?,
-            to.get_zq_address()?
-        );
-        let middleware = self.get_middleware(from).await?;
-        let mut txn = zilliqa_rs::transaction::builder::TransactionBuilder::default()
-            .chain_id(self.config.chainid.try_into()?)
-            .pay(amt, to.get_zq_address()?);
-        txn = match nonce {
-            Some(val) => txn.nonce(val),
-            None => txn,
-        };
-        let txn_sent = middleware
-            .send_transaction_without_confirm::<zilliqa_rs::core::types::CreateTransactionResponse>(
-                txn.build(),
-            )
-            .await?;
-        Ok(txn_sent.tran_id.to_string())
+        match from.kind {
+            AccountKind::Zil => {
+                println!(
+                    "> ZIL Transfer {0} -> {1} : {amt_zil} / {nonce:?} ",
+                    from.get_zq_address()?,
+                    to.get_address()?
+                );
+                let middleware = self.get_zil_middleware(from).await?;
+                let mut txn = zilliqa_rs::transaction::builder::TransactionBuilder::default()
+                    .chain_id(self.config.zil_chainid().try_into()?)
+                    .pay(amt_zil, to.get_address_as_zil()?);
+                txn = match nonce {
+                    Some(val) => txn.nonce(val),
+                    None => txn,
+                };
+                let txn_sent = middleware
+                    .send_transaction_without_confirm::<zilliqa_rs::core::types::CreateTransactionResponse>(
+                        txn.build(),
+                    )
+                    .await?;
+                Ok(txn_sent.tran_id.to_string())
+            }
+            AccountKind::Eth => {
+                let amt_eth = zil_to_eth(amt_zil);
+                println!(
+                    "> ETH Transfer {0:#032X} -> {1}: {amt_eth} / {nonce:?} ",
+                    from.get_eth_address()?,
+                    to.get_address()?
+                );
+                let mut txn =
+                    ethers::types::TransactionRequest::pay(to.get_address_as_eth()?, amt_eth)
+                        .chain_id(self.config.eth_chainid());
+                txn = match nonce {
+                    Some(val) => txn.nonce(val),
+                    None => txn,
+                };
+                let mware = self.get_eth_middleware(&from).await?;
+                let txn_sent = mware.send_transaction(txn, None).await?;
+                Ok(format!("{0:32x}", txn_sent.tx_hash()))
+            }
+        }
     }
 
     pub async fn transfer(
@@ -607,4 +688,8 @@ impl Perf {
             },
         }
     }
+}
+
+pub fn zil_to_eth(zil_amt: u128) -> u128 {
+    return zil_amt * 1000000;
 }

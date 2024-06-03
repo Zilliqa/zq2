@@ -22,6 +22,7 @@ pub async fn run_local_net(
     trace_modules: &Vec<String>,
     components: &HashSet<Component>,
     keep_old_network: bool,
+    log_file: &Option<String>,
 ) -> Result<()> {
     // Now build the log string. If there already was one, use that ..
     let log_var = env::var("RUST_LOG");
@@ -56,7 +57,7 @@ pub async fn run_local_net(
     )?;
     println!("{0}", setup_obj.get_port_map());
     println!("Set up collector");
-    let mut collector = collector::Collector::new(&log_spec, base_dir).await?;
+    let mut collector = collector::Collector::new(&log_spec, base_dir, log_file).await?;
     // Iterate through the components in dependency order.
     for c in Component::in_dependency_order().iter() {
         if components.contains(c) {
@@ -71,7 +72,7 @@ pub async fn run_local_net(
     Ok(())
 }
 
-pub async fn run_perf_file(_base_dir: &str, config_file: &str) -> Result<()> {
+pub async fn run_perf_file(config_file: &str) -> Result<()> {
     let perf = perf::Perf::from_file(config_file)?;
     let mut rng = perf.make_rng()?;
     println!("🦆 Running {config_file} .. ");

@@ -4,7 +4,8 @@ use anyhow::{Context as _, Result};
 use colored::{self, Colorize as _};
 use futures::future::JoinAll;
 use tokio::{
-    io::{AsyncBufReadExt, BufReader},
+    fs,
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::Command,
     sync::mpsc,
     task::JoinHandle,
@@ -87,6 +88,7 @@ pub struct Collector {
     pub tx: Tx,
     pub log_spec: String,
     pub base_dir: String,
+    pub log_file: Option<String>,
 }
 
 impl Collector {
@@ -95,9 +97,11 @@ impl Collector {
         format!("{colored} {rest}")
     }
 
-    pub async fn new(log_spec: &str, base_dir: &str) -> Result<Self> {
+    pub async fn new(log_spec: &str, base_dir: &str, log_file: &Option<String>) -> Result<Self> {
         let (tx, mut rx) = mpsc::channel(MSG_CHANNEL_BUFFER);
+        let log_file_for_reader = log_file.clone();
         let reader = Some(tokio::spawn(async move {
+            let mut log_lines: Vec<String> = Vec::new();
             // Now, output here is already colored, so just color the legends.
             while let Some(msg) = rx.recv().await {
                 match msg {
@@ -110,12 +114,49 @@ impl Collector {
                                 &format!("return code {:?}", st.status.code())
                             )
                         );
+                        log_lines.push(format!(
+                            "{0}#Exited: return code {1:?}",
+                            st.legend,
+                            st.status.code()
+                        ));
                     }
                     Message::OutputData(od) => {
                         println!("{}", Self::color_log(&od.legend, "Rx", &od.line));
+                        log_lines.push(format!("{0}#Rx: {1}", &od.legend, &od.line));
                     }
                     Message::ErrorData(od) => {
                         println!("{}", Self::color_log(&od.legend, "Rx!", &od.line));
+                        log_lines.push(format!("{0}#Rx!: {1}", &od.legend, &od.line));
+                    }
+                }
+                if let Some(ref val) = log_file_for_reader {
+                    if !log_lines.is_empty() {
+                        let result = fs::File::options()
+                            .append(true)
+                            .create(true)
+                            .open(val)
+                            .await;
+                        match result {
+                            Ok(mut file) => {
+                                let write_result =
+                                    file.write_all(log_lines.join("\n").as_bytes()).await;
+                                if let Err(x) = write_result {
+                                    println!(
+                                        "{0}",
+                                        format!("Can't write to log {val} - {:?}", x)
+                                            .color(colored::Color::Red)
+                                    );
+                                }
+                            }
+                            // @todo maybe don't output this every single time?
+                            Err(x) => {
+                                println!(
+                                    "{0}",
+                                    format!("Can't write to log {val} - {:?}", x)
+                                        .color(colored::Color::Red)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -128,6 +169,7 @@ impl Collector {
             tx,
             log_spec: log_spec.to_string(),
             base_dir: base_dir.to_string(),
+            log_file: log_file.clone(),
         })
     }
 
