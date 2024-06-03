@@ -1115,7 +1115,6 @@ impl Consensus {
         let mut supermajority = false;
 
         let index: u16 = index.try_into()?;
-        // the index is not checked here...
         // if the vote is new, store it
         if let Entry::Vacant(v) = signatures.entry(index) {
             v.insert(new_view.signature);
