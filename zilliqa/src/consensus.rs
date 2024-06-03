@@ -1118,7 +1118,6 @@ impl Consensus {
         // if the vote is new, store it
         if let Entry::Vacant(v) = signatures.entry(index) {
             v.insert(new_view.signature);
-            info!("INSERTED NEW signature");
             let Some(weight) = self.state.get_stake(new_view.public_key)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
