@@ -115,7 +115,6 @@ async fn minimum_stake_is_properly_set(mut network: Network) {
             .config
             .consensus
             .minimum_stake
-            .unwrap()
     );
 }
 
