@@ -9,7 +9,16 @@ use toml;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::SecretKey;
-use zilliqa::{cfg, crypto::NodePublicKey};
+use zilliqa::{
+    cfg,
+    cfg::{
+        allowed_timestamp_skew_default, consensus_timeout_default, disable_rpc_default,
+        empty_block_timeout_default, eth_chain_id_default, local_address_default,
+        minimum_time_left_for_empty_block_default, scilla_address_default, ConsensusConfig,
+    },
+    crypto::NodePublicKey,
+    transaction::EvmGas,
+};
 
 use crate::{
     collector::{self, Collector},
@@ -155,12 +164,34 @@ impl Setup {
         for i in 0..self.how_many {
             let mut cfg = zilliqa::cfg::Config {
                 otlp_collector_endpoint: Some("http://localhost:4317".to_string()),
-                ..Default::default()
+                bootstrap_address: None,
+                nodes: Vec::new(),
+                p2p_port: 0,
             };
             // @todo should pass this in!
             let mut node_config = cfg::NodeConfig {
                 json_rpc_port: self.get_json_rpc_port(usize::try_into(i)?, false),
-                ..Default::default()
+                allowed_timestamp_skew: allowed_timestamp_skew_default(),
+                data_dir: None,
+                disable_rpc: disable_rpc_default(),
+                eth_chain_id: eth_chain_id_default(),
+                consensus: ConsensusConfig {
+                    genesis_hash: None,
+                    scilla_address: scilla_address_default(),
+                    minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
+                    main_shard_id: None,
+                    local_address: local_address_default(),
+                    consensus_timeout: consensus_timeout_default(),
+                    genesis_deposits: Vec::new(),
+                    eth_block_gas_limit: EvmGas(84000000),
+                    gas_price: 4_761_904_800_000u128,
+                    minimum_stake: 10_000_000_000_000_000_000_000_000u128,
+                    empty_block_timeout: empty_block_timeout_default(),
+                    genesis_accounts: Vec::new(),
+                    is_main: true,
+                    blocks_per_hour: 3600,
+                    rewards_per_hour: 51_000_000_000_000_000_000_000u128,
+                },
             };
             println!("Node {i} has RPC port {0}", node_config.json_rpc_port);
             let data_dir_name = format!("{0}{1}", DATADIR_PREFIX, i);

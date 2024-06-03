@@ -45,8 +45,8 @@ impl State {
             scilla: Arc::new(OnceLock::new()),
             scilla_address: config.scilla_address.clone(),
             local_address: config.local_address.clone(),
-            block_gas_limit: config.eth_block_gas_limit.unwrap(),
-            gas_price: config.gas_price.unwrap(),
+            block_gas_limit: config.eth_block_gas_limit,
+            gas_price: config.gas_price,
         }
     }
 
@@ -94,7 +94,7 @@ impl State {
 
         let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
             contracts::deposit::BYTECODE.to_vec(),
-            &[Token::Uint(config.minimum_stake.unwrap().into())],
+            &[Token::Uint(config.minimum_stake.into())],
         )?;
 
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
@@ -112,8 +112,8 @@ impl State {
             } = state.apply_transaction_evm(
                 Address::ZERO,
                 Some(contract_addr::DEPOSIT),
-                config.gas_price.unwrap(),
-                config.eth_block_gas_limit.unwrap(),
+                config.gas_price,
+                config.eth_block_gas_limit,
                 0,
                 data,
                 None,

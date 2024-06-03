@@ -23,13 +23,7 @@ fn get_header_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Optio
         .unwrap()
         .get_proposer_reward_address(block.header)?;
 
-    let block_gas_limit = node
-        .lock()
-        .unwrap()
-        .config
-        .consensus
-        .eth_block_gas_limit
-        .unwrap();
+    let block_gas_limit = node.lock().unwrap().config.consensus.eth_block_gas_limit;
     Ok(Some(eth::Block::from_block(
         block,
         miner.unwrap_or_default(),

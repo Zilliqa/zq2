@@ -2,6 +2,10 @@ use ethers::{providers::Middleware, types::TransactionRequest};
 use primitive_types::H160;
 use tracing::*;
 use zilliqa::{
+    cfg::{
+        allowed_timestamp_skew_default, consensus_timeout_default, eth_chain_id_default,
+        json_rcp_port_default, minimum_time_left_for_empty_block_default, scilla_address_default,
+    },
     crypto::{Hash, SecretKey},
     transaction::EvmGas,
 };
@@ -84,9 +88,17 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             minimum_stake: Some(32_000_000_000_000_000_000u128),
             eth_block_gas_limit: Some(EvmGas(84000000)),
             gas_price: Some(4_761_904_800_000u128),
-            ..Default::default()
+            consensus_timeout: consensus_timeout_default(),
+            genesis_deposits: Vec::new(),
+            main_shard_id: None,
+            minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
+            scilla_address: scilla_address_default(),
         },
-        ..Default::default()
+        allowed_timestamp_skew: allowed_timestamp_skew_default(),
+        data_dir: None,
+        disable_rpc: false,
+        json_rpc_port: json_rcp_port_default(),
+        eth_chain_id: eth_chain_id_default(),
     };
     let result = crate::node(config, SecretKey::new().unwrap(), 0, Some(dir));
 

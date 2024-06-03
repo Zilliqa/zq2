@@ -132,8 +132,8 @@ pub async fn convert_persistence(
     } = state.apply_transaction_evm(
         Address::ZERO,
         Some(contract_addr::DEPOSIT),
-        node_config.consensus.gas_price.unwrap(),
-        node_config.consensus.eth_block_gas_limit.unwrap(),
+        node_config.consensus.gas_price,
+        node_config.consensus.eth_block_gas_limit,
         0,
         data,
         None,

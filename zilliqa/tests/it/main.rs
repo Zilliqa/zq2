@@ -57,7 +57,11 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tracing::*;
 use zilliqa::{
-    cfg::{ConsensusConfig, NodeConfig},
+    cfg::{
+        allowed_timestamp_skew_default, disable_rpc_default, eth_chain_id_default,
+        json_rcp_port_default, local_address_default, minimum_time_left_for_empty_block_default,
+        scilla_address_default, ConsensusConfig, NodeConfig,
+    },
     crypto::{NodePublicKey, SecretKey},
     message::{ExternalMessage, InternalMessage},
     node::Node,
@@ -188,7 +192,7 @@ impl Network {
             rng,
             nodes,
             None,
-            NodeConfig::default().eth_chain_id,
+            eth_chain_id_default(),
             seed,
             None,
             scilla_address,
@@ -236,6 +240,7 @@ impl Network {
                 genesis_hash: None,
                 is_main: send_to_parent.is_none(),
                 consensus_timeout: Duration::from_secs(1),
+                minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
@@ -246,9 +251,12 @@ impl Network {
                 minimum_stake: Some(32_000_000_000_000_000_000u128),
                 eth_block_gas_limit: Some(EvmGas(84000000)),
                 gas_price: Some(4_761_904_800_000u128),
-                ..Default::default()
+                main_shard_id: None,
             },
-            ..Default::default()
+            json_rpc_port: json_rcp_port_default(),
+            allowed_timestamp_skew: allowed_timestamp_skew_default(),
+            disable_rpc: disable_rpc_default(),
+            data_dir: None,
         };
 
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
@@ -328,6 +336,10 @@ impl Network {
 
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
+            json_rpc_port: json_rcp_port_default(),
+            allowed_timestamp_skew: allowed_timestamp_skew_default(),
+            data_dir: None,
+            disable_rpc: disable_rpc_default(),
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),
                 genesis_hash,
@@ -341,9 +353,10 @@ impl Network {
                 minimum_stake: Some(32_000_000_000_000_000_000u128),
                 eth_block_gas_limit: Some(EvmGas(84000000)),
                 gas_price: Some(4_761_904_800_000u128),
-                ..Default::default()
+                main_shard_id: None,
+                minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
+                scilla_address: scilla_address_default(),
             },
-            ..Default::default()
         };
         let (node, receiver, local_receiver) =
             node(config, secret_key, self.nodes.len(), None).unwrap();
@@ -408,6 +421,10 @@ impl Network {
 
                 let config = NodeConfig {
                     eth_chain_id: self.shard_id,
+                    allowed_timestamp_skew: allowed_timestamp_skew_default(),
+                    data_dir: None,
+                    disable_rpc: disable_rpc_default(),
+                    json_rpc_port: json_rcp_port_default(),
                     consensus: ConsensusConfig {
                         genesis_deposits: genesis_deposits.clone(),
                         genesis_hash: None,
@@ -421,9 +438,12 @@ impl Network {
                         minimum_stake: Some(32_000_000_000_000_000_000u128),
                         eth_block_gas_limit: Some(EvmGas(84000000)),
                         gas_price: Some(4_761_904_800_000u128),
-                        ..Default::default()
+                        local_address: local_address_default(),
+                        main_shard_id: None,
+                        minimum_time_left_for_empty_block:
+                            minimum_time_left_for_empty_block_default(),
+                        scilla_address: scilla_address_default(),
                     },
-                    ..Default::default()
                 };
 
                 node(config, key, i, Some(new_data_dir)).unwrap()

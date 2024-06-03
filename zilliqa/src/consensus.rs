@@ -658,8 +658,8 @@ impl Consensus {
     ) -> Result<()> {
         debug!("apply rewards in view {view}");
 
-        let rewards_per_block = self.config.consensus.rewards_per_hour.unwrap()
-            / self.config.consensus.blocks_per_hour.unwrap() as u128;
+        let rewards_per_block =
+            self.config.consensus.rewards_per_hour / self.config.consensus.blocks_per_hour as u128;
         let block = self.head_block();
         // Genesis is the earliest therefore let's not overflow with subtraction
         let parent_block = self
