@@ -69,7 +69,7 @@ pub fn disable_rpc_default() -> bool {
 #[serde(deny_unknown_fields)]
 pub struct ConsensusConfig {
     /// If main, deploy a shard registry contract.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub is_main: bool,
     /// If not main, parent main shard.
     #[serde(default)]
@@ -129,6 +129,10 @@ pub fn scilla_address_default() -> String {
 
 pub fn local_address_default() -> String {
     String::from("localhost")
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn str_to_u128<'de, D>(deserializer: D) -> Result<u128, D::Error>
