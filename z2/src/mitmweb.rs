@@ -2,7 +2,10 @@ use anyhow::Result;
 use futures::future::JoinAll;
 use tokio::{process::Command, sync::mpsc, task::JoinHandle};
 
-use crate::collector;
+use crate::{
+    collector,
+    components::{self, Component},
+};
 
 /// Run the eth spout from a sibling directory
 pub struct Runner {
@@ -16,6 +19,13 @@ impl collector::Runner for Runner {
 }
 
 impl Runner {
+    pub async fn requirements() -> Result<components::Requirements> {
+        Ok(components::Requirements {
+            software: vec!["mitmweb".to_string()],
+            repos: vec![],
+        })
+    }
+
     pub async fn spawn_mitmproxy(
         _base_dir: &str,
         index: usize,
@@ -36,7 +46,7 @@ impl Runner {
         let join_handlers = collector::spawn(
             &mut cmd,
             "mitmweb",
-            &collector::Legend::new(collector::Program::Mitmweb, index)?,
+            &collector::Legend::new(Component::Mitmweb, index)?,
             channel.clone(),
         )
         .await?;

@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Context as _, Result};
 use tokio::{fs, process::Command};
 
+use crate::components;
+
 /// Tracks otel - this is just a container we run with docker-compose up (because that's the only practical way)
 /// so that you can see API traces.
 pub struct Otel {
@@ -12,6 +14,10 @@ impl Otel {
         Ok(Self {
             config_dir: config_dir.to_string(),
         })
+    }
+
+    pub async fn requirements() -> Result<components::Requirements> {
+        Ok(components::Requirements::default())
     }
 
     pub async fn write_files(&self) -> Result<()> {
