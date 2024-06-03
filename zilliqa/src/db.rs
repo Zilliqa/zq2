@@ -523,8 +523,7 @@ impl Db {
         sqlite_tx.execute(
             "INSERT INTO receipts
                 (tx_hash, block_hash, tx_index, success, gas_used, contract_address, logs, accepted, errors, exceptions)
-            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :contract_address, :logs, :accepted, :errors, :exceptions)
-            ON CONFLICT DO NOTHING",
+            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :contract_address, :logs, :accepted, :errors, :exceptions)",
             named_params! {
                 ":tx_hash": receipt.tx_hash,
                 ":block_hash": receipt.block_hash,
