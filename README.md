@@ -79,6 +79,12 @@ Or via individual modules using eg.
 RUST_LOG=debug,sled=info,zilliqa::scilla=trace
 ```
 
+It's quite convenient to log `node` and the `api`s :
+
+```unset
+export RUST_LOG=zilliqa::api::*=trace,zilliqa::node=trace
+```
+
 ## `rustfmt`
 
 We use a couple of nightly-only rustfmt features. The easiest way to get these is:
