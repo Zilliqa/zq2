@@ -167,6 +167,16 @@ impl SignedTransaction {
         }
     }
 
+    pub fn gas_limit(&self) -> EvmGas {
+        match self {
+            SignedTransaction::Legacy { tx, .. } => EvmGas(tx.gas_limit as u64),
+            SignedTransaction::Eip2930 { tx, .. } => EvmGas(tx.gas_limit as u64),
+            SignedTransaction::Eip1559 { tx, .. } => EvmGas(tx.gas_limit as u64),
+            SignedTransaction::Zilliqa { tx, .. } => tx.gas_limit.into(),
+            SignedTransaction::Intershard { tx, .. } => tx.gas_limit,
+        }
+    }
+
     pub fn verify(self) -> Result<VerifiedTransaction> {
         let (tx, signer, hash) = match self {
             SignedTransaction::Legacy { tx, sig } => {
@@ -557,6 +567,20 @@ impl FromStr for ScillaGas {
 #[serde(transparent)]
 pub struct EvmGas(pub u64);
 
+impl EvmGas {
+    pub fn checked_sub(self, rhs: EvmGas) -> Option<EvmGas> {
+        Some(EvmGas(self.0.checked_sub(rhs.0)?))
+    }
+}
+
+impl Sub for EvmGas {
+    type Output = EvmGas;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.checked_sub(rhs).expect("evm gas underflow")
+    }
+}
+
 impl From<ScillaGas> for EvmGas {
     fn from(gas: ScillaGas) -> Self {
         EvmGas(gas.0 * EVM_GAS_PER_SCILLA_GAS)
@@ -659,6 +683,7 @@ pub struct TransactionReceipt {
     pub tx_hash: crypto::Hash,
     pub success: bool,
     pub gas_used: EvmGas,
+    pub cumulative_gas_used: EvmGas,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
     pub accepted: Option<bool>,

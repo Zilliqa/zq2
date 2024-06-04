@@ -545,7 +545,7 @@ pub(super) fn get_transaction_receipt_inner(
         block_number: block.number(),
         from,
         to: transaction.to_addr(),
-        cumulative_gas_used: EvmGas(0),
+        cumulative_gas_used: receipt.cumulative_gas_used,
         effective_gas_price: transaction.max_fee_per_gas(),
         gas_used: receipt.gas_used,
         contract_address: receipt.contract_address,

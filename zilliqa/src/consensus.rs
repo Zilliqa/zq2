@@ -736,6 +736,7 @@ impl Consensus {
     }
 
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
+        let mut gas_left = self.config.consensus.eth_block_gas_limit;
         std::iter::from_fn(|| self.transaction_pool.best_transaction())
             .filter(|txn| {
                 let account_nonce = self.state.must_get_account(txn.signer).nonce;
@@ -746,6 +747,14 @@ impl Consensus {
                     .nonce()
                     .map(|tx_nonce| tx_nonce >= account_nonce)
                     .unwrap_or(true)
+            })
+            .take_while(|txn| {
+                if let Some(g) = gas_left.checked_sub(txn.tx.gas_limit()) {
+                    gas_left = g;
+                    true
+                } else {
+                    false
+                }
             })
             .collect()
     }
@@ -971,16 +980,18 @@ impl Consensus {
 
         let transactions = self.get_txns_to_execute();
 
-        let mut gas_used = EvmGas(0);
+        let mut gas_left = self.config.consensus.eth_block_gas_limit;
         let applied_transactions: Vec<_> = transactions
             .into_iter()
             .filter_map(|tx| {
                 self.apply_transaction(tx.clone(), parent_header, inspector::noop())
                     .transpose()
                     .map(|r| {
-                        r.map(|result| {
-                            gas_used += result.gas_used();
-                            tx
+                        r.and_then(|result| {
+                            gas_left = gas_left
+                                .checked_sub(result.gas_used())
+                                .ok_or_else(|| anyhow!("too much gas used"))?;
+                            Ok(tx)
                         })
                     })
             })
@@ -999,7 +1010,7 @@ impl Consensus {
             self.state.root_hash()?,
             applied_transaction_hashes.clone(),
             SystemTime::max(SystemTime::now(), parent_header.timestamp),
-            gas_used,
+            self.config.consensus.eth_block_gas_limit - gas_left,
         );
 
         self.state.set_to_root(previous_state_root_hash.into());
@@ -2072,6 +2083,7 @@ impl Consensus {
             }
         }
 
+        let mut cumulative_gas_used = EvmGas(0);
         for (txn_index, txn) in transactions.into_iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
@@ -2087,6 +2099,7 @@ impl Consensus {
             let success = result.success();
             let contract_address = result.contract_address();
             let gas_used = result.gas_used();
+            cumulative_gas_used += gas_used;
             let accepted = result.accepted();
             let (logs, errors, exceptions) = result.into_parts();
             let receipt = TransactionReceipt {
@@ -2096,6 +2109,7 @@ impl Consensus {
                 contract_address,
                 logs,
                 gas_used,
+                cumulative_gas_used,
                 accepted,
                 errors,
                 exceptions,
