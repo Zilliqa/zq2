@@ -13,8 +13,7 @@ use std::{
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use clap::ValueEnum;
-use ethers::middleware::Middleware as _;
-use ethers::signers::Signer;
+use ethers::{middleware::Middleware as _, signers::Signer};
 use lazy_static::lazy_static;
 use rand::{self, distributions::DistString as _, prelude::*};
 use serde::{Deserialize, Serialize};
@@ -551,7 +550,7 @@ impl Perf {
                     Some(val) => txn.nonce(val),
                     None => txn,
                 };
-                let mware = self.get_eth_middleware(&from).await?;
+                let mware = self.get_eth_middleware(from).await?;
                 let txn_sent = mware.send_transaction(txn, None).await?;
                 Ok(format!("{0:32x}", txn_sent.tx_hash()))
             }
@@ -691,5 +690,5 @@ impl Perf {
 }
 
 pub fn zil_to_eth(zil_amt: u128) -> u128 {
-    return zil_amt * 1000000;
+    zil_amt * 1000000
 }
