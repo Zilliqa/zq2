@@ -1,10 +1,4 @@
-use std::{
-    collections::{btree_map::Entry, BTreeMap},
-    error::Error,
-    fmt::Display,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Context as _, Result};
@@ -44,7 +38,8 @@ use crate::{
 #[derive(Debug)]
 struct NewViewVote {
     // Represents signer index as kept in deposit contract and received signature
-    signatures: BTreeMap<u16, NodeSignature>,
+    signatures: Vec<NodeSignature>,
+    cosigned: BitVec,
     cosigned_weight: u128,
     qcs: Vec<QuorumCertificate>,
 }
@@ -1101,23 +1096,25 @@ impl Consensus {
 
         let NewViewVote {
             mut signatures,
+            mut cosigned,
             mut cosigned_weight,
             mut qcs,
         } = self
             .new_views
             .remove(&new_view.view)
             .unwrap_or_else(|| NewViewVote {
-                signatures: BTreeMap::new(),
+                signatures: Vec::new(),
+                cosigned: bitvec![u8, bitvec::order::Msb0; 0; committee.len()],
                 cosigned_weight: 0,
                 qcs: Vec::new(),
             });
 
         let mut supermajority = false;
 
-        let index: u16 = index.try_into()?;
         // if the vote is new, store it
-        if let Entry::Vacant(v) = signatures.entry(index) {
-            v.insert(new_view.signature);
+        if !cosigned[index] {
+            cosigned.set(index, true);
+            signatures.push(new_view.signature);
             let Some(weight) = self.state.get_stake(new_view.public_key)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
@@ -1148,12 +1145,8 @@ impl Consensus {
                 // if we are already in the round in which the vote counts and have reached supermajority
                 if new_view.view == self.view.get_view() {
                     // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
-                    let agg = self.aggregate_qc_from_indexes(
-                        new_view.view,
-                        qcs,
-                        &signatures,
-                        committee.len(),
-                    )?;
+                    let agg =
+                        self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, cosigned)?;
                     let high_qc = self.get_highest_from_agg(&agg)?;
                     let parent_hash = high_qc.block_hash;
                     let parent = self
@@ -1199,6 +1192,7 @@ impl Consensus {
                 new_view.view,
                 NewViewVote {
                     signatures,
+                    cosigned,
                     cosigned_weight,
                     qcs,
                 },
@@ -1308,20 +1302,13 @@ impl Consensus {
         &self,
         view: u64,
         qcs: Vec<QuorumCertificate>,
-        signers: &BTreeMap<u16, NodeSignature>,
-        committee_size: usize,
+        signatures: &[NodeSignature],
+        cosigned: BitVec,
     ) -> Result<AggregateQc> {
-        assert_eq!(qcs.len(), signers.len());
+        assert_eq!(qcs.len(), signatures.len());
 
-        let mut cosigned: BitVec = bitvec![u8, bitvec::order::Msb0; 0; committee_size];
-        let mut signatures: Vec<NodeSignature> = Vec::new();
-
-        for (index, signature) in signers {
-            cosigned.set(*index as usize, true);
-            signatures.push(*signature);
-        }
         Ok(AggregateQc {
-            signature: NodeSignature::aggregate(&signatures)?,
+            signature: NodeSignature::aggregate(signatures)?,
             cosigned,
             view,
             qcs,
