@@ -343,8 +343,7 @@ impl Consensus {
         let chosen = stakers
             .into_iter()
             .filter(|&v| v != my_public_key)
-            .choose(&mut self.rng)
-            .unwrap();
+            .choose(&mut self.rng)?;
 
         let Ok(peer_id) = self.state.get_peer_id(chosen) else {
             return None;

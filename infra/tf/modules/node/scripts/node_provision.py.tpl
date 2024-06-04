@@ -28,6 +28,7 @@ PERSISTENCE_URL="${persistence_url}"
 ZQ2_IMAGE="${docker_image}"
 OTTERSCAN_IMAGE="${otterscan_image}"
 SPOUT_IMAGE="${spout_image}"
+GENESIS_KEY="genesis_key"
 
 VERSIONS={
     "zilliqa": ZQ2_IMAGE.split(":")[-1] if ZQ2_IMAGE.split(":")[-1] else "latest",
@@ -35,13 +36,21 @@ VERSIONS={
     "spout": SPOUT_IMAGE.split(":")[-1] if SPOUT_IMAGE.split(":")[-1] else "latest",
 }
 
+def query_metadata_key(key: str) -> str:
+    url = f"http://metadata.google.internal/computeMetadata/v1/instance/attributes/{key}"
+    r = requests.get(url, headers = {
+        "Metadata-Flavor" : "Google" })
+    return r.text
+
+
 ZQ2_SCRIPT="""#!/bin/bash
 echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
 ZQ2_IMAGE="${docker_image}"
 
 start() {
-    docker run -td -p 3333:3333 -p 4201:4201 --rm --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
+    docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
+    docker run -td -p 3333:3333 -p 4201:4201 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
     -e RUST_LOG="zilliqa=debug" -e RUST_BACKTRACE=1 \
     -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
     $${ZQ2_IMAGE} $${1} --log-json
@@ -88,7 +97,8 @@ echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.d
 OTTERSCAN_IMAGE="${otterscan_image}"
 
 start() {
-    docker run -td -p 80:80 --rm --name otterscan-""" + VERSIONS.get('otterscan') + """ \
+     docker rm otterscan-""" + VERSIONS.get('otterscan') + """ &> /dev/null || echo 0
+    docker run -td -p 80:80 --name otterscan-""" + VERSIONS.get('otterscan') + """ \
         -e ERIGON_URL=https://api.${subdomain} \
         $${OTTERSCAN_IMAGE} &> /dev/null &
 }
@@ -127,7 +137,8 @@ echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.d
 SPOUT_IMAGE="${spout_image}"
 
 start() {
-    docker run -td -p 8080:80 --rm --name spout-""" + VERSIONS.get('spout') + """ \
+    docker rm spout-""" + VERSIONS.get('spout') + """ &> /dev/null || echo 0
+    docker run -td -p 8080:80 --name spout-""" + VERSIONS.get('spout') + """ \
         -e RPC_URL=https://api.${subdomain} \
         -e NATIVE_TOKEN_SYMBOL="ZIL" \
         -e PRIVATE_KEY="${genesis_key}" \
@@ -180,7 +191,7 @@ logging:
         - /var/lib/docker/containers/*/*.log
         - /zilliqa.log
   processors:
-    parse-log:
+    parse_log:
         type: parse_json
         field: log
     json:
@@ -198,7 +209,7 @@ logging:
     pipelines:
       zilliqa:
         receivers: [ zilliqa ]
-        processors: [ parse-log, json, move_fields ]
+        processors: [ parse_log, json, move_fields ]
 """
 
 LOGROTATE_CONFIG="""
@@ -502,12 +513,13 @@ def configure_logrotate():
 
 
 def create_zq2_config():
-    with open("/config.toml", "w") as f:
-        f.write(ZQ2_CONFIG)
+    if not os.path.exists("/config.toml"):
+        with open("/config.toml", "w") as f:
+            f.write(ZQ2_CONFIG)
 
 
 def download_persistence():
-    if PERSISTENCE_URL:
+    if PERSISTENCE_URL is not None and PERSISTENCE_URL != "${persistence_url}":
         PERSISTENCE_DIR="/data"
         PERSISTENCE_FILENAME = os.path.basename(urlparse(PERSISTENCE_URL).path)
         os.makedirs(PERSISTENCE_DIR, exist_ok=True)

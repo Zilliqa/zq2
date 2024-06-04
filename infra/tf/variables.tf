@@ -120,4 +120,8 @@ variable "distributed_validators" {
   }))
   default     = []
   description = "(Optional) regional validators deployment. Useful for distributed load tests."
+  validation {
+    condition     = alltrue([for v in var.distributed_validators : (length(v.node_keys) == v.vm_num)])
+    error_message = "ERROR: num of vms and number of keys mismatch"
+  }
 }

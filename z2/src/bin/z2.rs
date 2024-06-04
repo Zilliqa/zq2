@@ -3,7 +3,7 @@ use std::{collections::HashSet, env, fmt};
 use alloy_primitives::B256;
 use anyhow::{anyhow, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
-use z2lib::{components::Component, plumbing};
+use z2lib::{components::Component, deployer, plumbing, validators};
 use zilliqa::crypto::SecretKey;
 
 #[derive(Parser, Debug)]
@@ -32,6 +32,8 @@ enum Commands {
     /// Print the list of sibling repositories for z2 start
     #[clap(subcommand)]
     Depends(DependsCommands),
+    /// Join a ZQ2 network
+    Join(JoinStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -52,20 +54,28 @@ pub struct DependsUpdateOptions {
 #[derive(Subcommand, Debug)]
 enum DeployerCommands {
     /// Generate the deployer config file
-    New(DeployerConfigStruct),
+    New(DeployerNewArgs),
     /// Perfom the network upgrade
-    Upgrade(DeployerConfigStruct),
+    Upgrade(DeployerUpgradeArgs),
 }
 
 #[derive(Args, Debug)]
-pub struct DeployerConfigStruct {
+pub struct DeployerNewArgs {
+    #[clap(long)]
+    /// ZQ2 network name
     network_name: Option<String>,
-    gcp_project: Option<String>,
-    binary_bucket: Option<String>,
-    bootstrap_pk: Option<String>,
-    config_file: Option<String>,
+    #[clap(long)]
+    /// GCP project-id where the network is running
+    project_id: Option<String>,
+    #[clap(long, value_enum, value_delimiter = ',')]
+    /// Virtual Machine roles
+    roles: Option<Vec<deployer::NodeRole>>,
 }
 
+#[derive(Args, Debug)]
+pub struct DeployerUpgradeArgs {
+    config_file: Option<String>,
+}
 #[derive(Subcommand, Debug)]
 enum ConverterCommands {
     /// Convert Zilliqa 1 to Zilliqa 2 persistence format.
@@ -217,6 +227,13 @@ struct OnlyStruct {
 
     #[clap(long = "docs", action = ArgAction::SetTrue)]
     docs: bool,
+
+}
+
+#[derive(Args, Debug)]
+struct JoinStruct {
+    /// Specify the ZQ2 chain you want join
+    chain_name: String,
 }
 
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
@@ -340,17 +357,17 @@ async fn main() -> Result<()> {
                 let network_name = arg
                     .network_name
                     .clone()
-                    .ok_or_else(|| anyhow::anyhow!("network_name is a mandatory argument"))?;
-                let binary_bucket = arg
-                    .binary_bucket
+                    .ok_or_else(|| anyhow::anyhow!("--network-name is a mandatory argument"))?;
+                let project_id = arg
+                    .project_id
                     .clone()
-                    .ok_or_else(|| anyhow::anyhow!("binary_bucket is a mandatory argument"))?;
-                let gcp_project = arg
-                    .gcp_project
+                    .ok_or_else(|| anyhow::anyhow!("--project-id is a mandatory argument"))?;
+                let roles = arg
+                    .roles
                     .clone()
-                    .ok_or_else(|| anyhow::anyhow!("gcp_project is a mandatory argument"))?;
+                    .ok_or_else(|| anyhow::anyhow!("--roles is a mandatory argument"))?;
 
-                plumbing::run_deployer_new(&network_name, &binary_bucket, &gcp_project)
+                plumbing::run_deployer_new(&network_name, &project_id, roles)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer new command: {}", err)
@@ -358,10 +375,11 @@ async fn main() -> Result<()> {
                 Ok(())
             }
             DeployerCommands::Upgrade(ref arg) => {
-                let config_file = arg
-                    .config_file
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("config_file is a mandatory argument"))?;
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
                 plumbing::run_deployer_upgrade(&config_file)
                     .await
                     .map_err(|err| {
@@ -410,5 +428,10 @@ async fn main() -> Result<()> {
                 plumbing::update_depends(&base_dir, opts.with_ssh).await
             }
         },
+        Commands::Join(ref args) => {
+            let chain = validators::ChainConfig::new(&args.chain_name).await?;
+            println!("{:?}", chain);
+            Ok(())
+        }
     }
 }

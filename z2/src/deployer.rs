@@ -1,58 +1,207 @@
 #![allow(unused_imports)]
 
 use std::{
+    collections::HashMap,
+    fmt::{self, Display},
     path::PathBuf,
     process::{self, Stdio},
+    str::FromStr,
 };
 
 use anyhow::{anyhow, Result};
+use bitvec::order::verify_for_type;
+use clap::ValueEnum;
 use git2::Repository;
-use serde::{Deserialize, Serialize};
+use regex::Regex;
+use revm::handler::validation;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use tempfile::TempDir;
-use tokio::fs;
+use tokio::{
+    fs::{self, File},
+    io::AsyncWriteExt,
+};
+use zilliqa::node::Node;
 
-#[derive(Deserialize, Serialize)]
-struct NetworkConfig {
-    name: String,
-    version: String,
-    gcp_project: String,
-    binary_bucket: String,
+use crate::github::{self, get_release_or_commit};
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum Components {
+    #[serde(rename = "zq2")]
+    ZQ2,
+    #[serde(rename = "otterscan")]
+    Otterscan,
+    #[serde(rename = "spout")]
+    Spout,
 }
 
-impl NetworkConfig {
-    fn new(name: String, gcp_project: String, binary_bucket: String) -> Self {
-        Self {
-            name,
-            version: "main".to_owned(),
-            gcp_project,
-            binary_bucket,
+impl FromStr for Components {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "zq2" => Ok(Components::ZQ2),
+            "otterscan" => Ok(Components::Otterscan),
+            "spout" => Ok(Components::Spout),
+            _ => Err(anyhow!("Component not supported")),
         }
     }
 }
 
-async fn get_local_block_number(project: &str, instance: &str, zone: &str) -> Result<u64> {
-    let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
-    let output = zqutils::commands::CommandBuilder::new()
-        .cmd(
-            "gcloud",
-            &[
-                "--project",
-                project,
-                "compute",
-                "ssh",
-                "--ssh-flag=-o StrictHostKeyChecking=no",
-                instance,
-                "--tunnel-through-iap",
-                "--zone",
-                zone,
-                "--command",
-                inner_command,
-            ],
-        )
-        .run()
-        .await?;
+#[derive(Deserialize, Serialize, Debug)]
+pub struct NetworkConfig {
+    name: String,
+    project_id: String,
+    regions: Vec<String>,
+    roles: Vec<NodeRole>,
+    versions: HashMap<String, String>,
+}
 
+pub fn docker_image(component: &str, version: &str) -> Result<String> {
+    // Define regular expressions for semantic version and 8-character commit ID
+    let semver_re = Regex::new(r"^v\d+\.\d+\.\d+(-[a-zA-Z0-9]+)?$").unwrap();
+    let commit_id_re = Regex::new(r"^[a-f0-9]{8}$").unwrap();
+    match component.to_string().parse::<Components>()? {
+        Components::ZQ2 => {
+            if semver_re.is_match(version) {
+                Ok(format!(
+                    "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:{}",
+                    version
+                ))
+            } else if commit_id_re.is_match(version) {
+                Ok(format!(
+                    "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private/zq2:{}",
+                    version
+                ))
+            } else {
+                Err(anyhow!("Invalid version for ZQ2"))
+            }
+        }
+        Components::Spout => Ok(format!(
+            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:{}",
+            version
+        )),
+        Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, ValueEnum)]
+pub enum NodeRole {
+    #[serde(rename = "validator")]
+    /// Virtual machine validator
+    Validator,
+    #[serde(rename = "apps")]
+    /// Virtual machine apps
+    Apps,
+}
+
+impl FromStr for NodeRole {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s.to_lowercase().as_str() {
+            "validator" => Ok(NodeRole::Validator),
+            "apps" => Ok(NodeRole::Apps),
+            _ => Err(anyhow!("Node role not supported")),
+        }
+    }
+}
+
+impl fmt::Display for NodeRole {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            NodeRole::Apps => write!(f, "apps"),
+            NodeRole::Validator => write!(f, "validator"),
+        }
+    }
+}
+
+impl NetworkConfig {
+    async fn new(name: String, project_id: String, roles: Vec<NodeRole>) -> Result<Self> {
+        let mut versions = HashMap::new();
+
+        for r in roles.clone() {
+            if r.to_string().to_lowercase() == "validator" {
+                versions.insert(
+                    "zq2".to_string(),
+                    github::get_release_or_commit("zq2").await?,
+                );
+            } else if r.to_string().to_lowercase() == "apps" {
+                versions.insert(
+                    "spout".to_string(),
+                    github::get_release_or_commit("zilliqa-developer").await?,
+                );
+                versions.insert("otterscan".to_string(), "latest".to_string());
+            }
+        }
+
+        Ok(Self {
+            name,
+            project_id,
+            roles,
+            versions,
+            regions: vec!["asia-southeast1".to_owned()],
+        })
+    }
+}
+
+pub struct Machine {
+    pub project_id: String,
+    pub zone: String,
+    pub name: String,
+}
+
+impl Machine {
+    pub async fn copy_to(&self, file_from: &str, file_to: &str) -> Result<()> {
+        let tgt_spec = format!("{0}:{file_to}", &self.name);
+        zqutils::commands::CommandBuilder::new()
+            .silent()
+            .cmd(
+                "gcloud",
+                &[
+                    "compute",
+                    "scp",
+                    "--project",
+                    &self.project_id,
+                    "--zone",
+                    &self.zone,
+                    "--tunnel-through-iap",
+                    "--scp-flag=-r",
+                    file_from,
+                    &tgt_spec,
+                ],
+            )
+            .run()
+            .await?;
+        Ok(())
+    }
+
+    pub async fn run(&self, cmd: &str) -> Result<zqutils::commands::CommandOutput> {
+        let output: zqutils::commands::CommandOutput = zqutils::commands::CommandBuilder::new()
+            .silent()
+            .cmd(
+                "gcloud",
+                &[
+                    "compute",
+                    "ssh",
+                    "--project",
+                    &self.project_id,
+                    "--zone",
+                    &self.zone,
+                    &self.name,
+                    "--tunnel-through-iap",
+                    "--ssh-flag=",
+                    "--command",
+                    cmd,
+                ],
+            )
+            .run_for_output()
+            .await?;
+        Ok(output)
+    }
+}
+async fn get_local_block_number(instance: &Machine) -> Result<u64> {
+    let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
+    let output = instance.run(inner_command).await?;
     if !output.success {
         return Err(anyhow!(
             "getting local block number failed: {:?}",
@@ -73,159 +222,173 @@ async fn get_local_block_number(project: &str, instance: &str, zone: &str) -> Re
     Ok(block_number)
 }
 
-pub async fn new(network_name: &str, gcp_project: &str, binary_bucket: &str) -> Result<()> {
-    let config = NetworkConfig::new(
-        network_name.to_string(),
-        gcp_project.to_string(),
-        binary_bucket.to_string(),
-    );
-    let config = toml::to_string_pretty(&config)?;
-    fs::write(format!("{network_name}.toml"), config).await?;
+pub async fn new(network_name: &str, project_id: &str, roles: Vec<NodeRole>) -> Result<()> {
+    let config =
+        NetworkConfig::new(network_name.to_string(), project_id.to_string(), roles).await?;
+    let content = serde_yaml::to_string(&config)?;
+    fs::write(format!("{network_name}.yaml"), content).await?;
+    Ok(())
+}
+
+pub async fn create_provisioning_script(
+    provisioning_script: &str,
+    file_name: &str,
+    role: &str,
+    config: &NetworkConfig,
+) -> Result<()> {
+    let mut result: Vec<String> = Vec::new();
+    // horrific implementation of a rendering engine for the provisioning script used
+    // for both first install and upgrade of the ZQ2 network instances.
+    // After the proto-testnet launch we can split the provisioning of the infra from the
+    // deployment and the configuration of the apps and validator so, we can move it to a proper
+    // tera template and remove this.
+    for line in provisioning_script.split('\n') {
+        if line.contains("$${") {
+            result.push(line.replace("$${", "${"));
+        } else if line.starts_with("ZQ2_IMAGE") {
+            println!("Found ZQ2 image");
+            result.push(format!(
+                "ZQ2_IMAGE='{}'",
+                docker_image(
+                    "zq2",
+                    config.versions.get("zq2").unwrap_or(&"latest".to_string())
+                )?
+            ));
+        } else if line.starts_with("OTTERSCAN_IMAGE") {
+            println!("Found Otterscan image");
+            result.push(format!(
+                "OTTERSCAN_IMAGE='{}'",
+                docker_image(
+                    "otterscan",
+                    config
+                        .versions
+                        .get("otterscan")
+                        .unwrap_or(&"latest".to_string())
+                )?
+            ));
+        } else if line.starts_with("SPOUT_IMAGE") {
+            println!("Found Spout image");
+            result.push(format!(
+                "SPOUT_IMAGE='{}'",
+                docker_image(
+                    "spout",
+                    config
+                        .versions
+                        .get("spout")
+                        .unwrap_or(&"latest".to_string())
+                )?
+            ));
+        } else if line.contains("${genesis_key}") {
+            result.push(line.replace(
+                "${genesis_key}",
+                "\"\" + base64.b64decode(query_metadata_key(GENESIS_KEY)).decode('utf-8') + \"\"",
+            ));
+        } else if line.contains("go(role=\"${role}\")") {
+            result.push(line.replace("go(role=\"${role}\")", &format!("go(role=\"{}\")", role)));
+        } else {
+            result.push(line.to_string())
+        }
+    }
+    let resulting_code = result.join("\n");
+    let mut fh = File::create(file_name).await?;
+    fh.write_all(resulting_code.as_bytes()).await?;
+    println!("Provisioning file created: {file_name}");
     Ok(())
 }
 
 pub async fn upgrade(config_file: &str) -> Result<()> {
     let config = fs::read_to_string(config_file).await?;
-    let config: NetworkConfig = toml::from_str(&config)?;
+    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
 
-    // Checkout Zilliqa 2 source
-    let repo_dir: TempDir = TempDir::new()?;
-    let repo = Repository::clone("https://github.com/Zilliqa/zq2", repo_dir.path())?;
-    let (object, _) = repo
-        .revparse_ext(&format!("origin/{}", config.version))
-        .or_else(|_| repo.revparse_ext(&config.version))?;
-    repo.checkout_tree(&object, None)?;
+    let mut validators: Vec<Machine> = Vec::new();
+    let mut apps: Vec<Machine> = Vec::new();
+    for r in config.roles.clone() {
+        let r_name = r.to_string();
+        let file_name = &format!("provision_{}.py", r_name);
+        create_provisioning_script(
+            include_str!("../../infra/tf/modules/node/scripts/node_provision.py.tpl"),
+            file_name,
+            &r.to_string(),
+            &config,
+        )
+        .await?;
 
-    let binary_name = format!("zilliqa_{}", object.id());
-    let binary_location = format!("gs://{}/{binary_name}", config.binary_bucket);
+        println!("Create the instance list for {r_name}");
 
-    // Check if binary already exists
-    let status = process::Command::new("gsutil")
-        .args(["-q", "stat"])
-        .arg(&binary_location)
-        .status()?;
-    if !status.success() {
-        println!("Building binary");
-
-        // Build binary
-        let status = process::Command::new("cross")
-            .args([
-                "build",
-                "--target",
-                "x86_64-unknown-linux-gnu",
-                "--profile",
-                "release",
-                "--bin",
-                "zilliqa",
-            ])
-            .current_dir(repo_dir.path())
-            .status()?;
-        if !status.success() {
-            return Err(anyhow!("build failed"));
-        }
-
-        println!("Binary built, uploading to GCS");
-
-        // Upload binary to GCS
-        let binary = repo_dir
-            .path()
-            .join("target")
-            .join("x86_64-unknown-linux-gnu")
-            .join("release")
-            .join("zilliqa");
-        let status = process::Command::new("gcloud")
-            .arg("--project")
-            .arg(&config.gcp_project)
-            .args(["storage", "cp"])
-            .arg(binary)
-            .arg(&binary_location)
-            .status()?;
-        if !status.success() {
-            return Err(anyhow!("upload failed"));
-        }
-
-        println!("Binary uploaded to GCS");
-    } else {
-        println!("Binary already exists in GCS");
-    }
-
-    // Get the list of instances we need to update.
-    let output = process::Command::new("gcloud")
-        .arg("--project")
-        .arg(&config.gcp_project)
-        .args(["compute", "instances", "list"])
-        .args(["--format", "json"])
-        .args(["--filter", &format!("labels.zq2-network={}", config.name)])
-        .output()?;
-    if !output.status.success() {
-        return Err(anyhow!("listing instances failed"));
-    }
-    let output: Value = serde_json::from_slice(&output.stdout)?;
-    let instances: Vec<_> = output
-        .as_array()
-        .ok_or_else(|| anyhow!("instances is not an array"))?
-        .iter()
-        .map(|i| {
-            let name = i
-                .get("name")
-                .ok_or_else(|| anyhow!("name is missing"))?
-                .as_str()
-                .ok_or_else(|| anyhow!("name is not a string"))?;
-            let zone = i
-                .get("zone")
-                .ok_or_else(|| anyhow!("zone is missing"))?
-                .as_str()
-                .ok_or_else(|| anyhow!("zone is not a string"))?;
-            Ok((name, zone))
-        })
-        .collect::<Result<_>>()?;
-
-    if instances.is_empty() {
-        println!("No instances found");
-    }
-
-    for (instance, zone) in instances {
-        println!("Upgrading instance {instance}");
-
-        let inner_command = format!(
-            r#"
-            sudo gcloud storage cp {binary_location} /{binary_name} &&
-            sudo chmod +x /{binary_name} &&
-            sudo rm /zilliqa &&
-            sudo ln -s /{binary_name} /zilliqa &&
-            sudo systemctl restart zilliqa.service
-        "#
-        );
+        // Create a list of instances we need to update
         let output = zqutils::commands::CommandBuilder::new()
+            .silent()
             .cmd(
                 "gcloud",
                 &[
                     "--project",
-                    &config.gcp_project,
+                    &config.project_id,
                     "compute",
-                    "ssh",
-                    "--ssh-flag=-o StrictHostKeyChecking=no",
-                    instance,
-                    "--tunnel-through-iap",
-                    "--zone",
-                    zone,
-                    "--command",
-                    &inner_command,
+                    "instances",
+                    "list",
+                    "--format=json",
+                    &format!("--filter=labels.zq2-network={}", config.name),
+                    &format!("--filter=labels.role={}", r_name),
                 ],
             )
             .run()
             .await?;
+
+        if !output.success {
+            return Err(anyhow!("listing instances failed"));
+        }
+
+        let j_output: Value = serde_json::from_slice(&output.stdout)?;
+
+        let instances = j_output
+            .as_array()
+            .ok_or_else(|| anyhow!("instances is not an array"))?;
+
+        let role_instances = instances
+            .iter()
+            .map(|i| {
+                let name = i
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .ok_or_else(|| anyhow!("name is missing or not a string"))?;
+                let zone = i
+                    .get("zone")
+                    .and_then(|z| z.as_str())
+                    .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
+                let project_id = &config.project_id;
+                Ok(Machine {
+                    project_id: project_id.to_string(),
+                    zone: zone.to_string(),
+                    name: name.to_string(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        if r_name == "validator" {
+            validators = role_instances
+        } else if r_name == "apps" {
+            apps = role_instances;
+            if apps.is_empty() {
+                println!("No apps instances found");
+            }
+        }
+    }
+
+    for validator in validators {
+        println!("Upgrading instance {}", validator.name);
+        validator
+            .copy_to("./provision_validator.py", "/tmp/provision_validator.py")
+            .await?;
+        let cmd = "sudo python3 /tmp/provision_validator.py";
+        let output = validator.run(cmd).await?;
         if !output.success {
             println!("{:?}", output.stderr);
             return Err(anyhow!("upgrade failed"));
         }
-
         // Check the node is making progress
-        let first_block_number =
-            get_local_block_number(&config.gcp_project, instance, zone).await?;
+        let first_block_number = get_local_block_number(&validator).await?;
         loop {
-            let next_block_number =
-                get_local_block_number(&config.gcp_project, instance, zone).await?;
+            let next_block_number = get_local_block_number(&validator).await?;
             println!(
                 "Polled block number at {next_block_number}, waiting for {} more blocks",
                 (first_block_number + 10).saturating_sub(next_block_number)
@@ -235,5 +398,18 @@ pub async fn upgrade(config_file: &str) -> Result<()> {
             }
         }
     }
+
+    for app in apps {
+        println!("Upgrading instance {}", app.name);
+        app.copy_to("./provision_apps.py", "/tmp/provision_apps.py")
+            .await?;
+        let cmd = "sudo python3 /tmp/provision_apps.py";
+        let output = app.run(cmd).await?;
+        if !output.success {
+            println!("{:?}", output.stderr);
+            return Err(anyhow!("upgrade failed"));
+        }
+    }
+
     Ok(())
 }

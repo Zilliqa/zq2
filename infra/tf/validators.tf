@@ -60,6 +60,14 @@ module "validators" {
   consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
   consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "32000000000000000000", "${local.genesis_address}"] ]
 
+  # Reward parameters
+  consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
+  consensus.blocks_per_hour = 3600
+  consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
+  # Gas parameters
+  consensus.eth_block_gas_limit = 84000000
+  consensus.gas_price = "4_761_904_800_000"
+  
   EOT
   secret_key      = each.value.node_keys[each.key]
   zq_network_name = var.network_name
