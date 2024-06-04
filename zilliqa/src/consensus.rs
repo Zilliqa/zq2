@@ -37,7 +37,6 @@ use crate::{
 
 #[derive(Debug)]
 struct NewViewVote {
-    // Represents signer index as kept in deposit contract and received signature
     signatures: Vec<NodeSignature>,
     cosigned: BitVec,
     cosigned_weight: u128,
