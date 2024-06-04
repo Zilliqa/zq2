@@ -9,6 +9,40 @@ transaction,get,hash
 # Description
 
 Returns the details of a specified Transaction.
+Querying for non-existent transactions or transactions that have not yet been mined will result in an error.
+
+## Response Object
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `ID`  | Hex string without `0x` | The transaction hash. |
+| `version` | Number as string | A 16 bit chain ID for the transaction, concatenated with a 16 bit type. Transaction types are provided in a table below. Transactions without a chain ID (such as some legacy Ethereum transactions) use a chain ID of 0. |
+| `nonce` | Number as string | The transaction nonce. Transactions without a nonce (such as intershard transactions) will use a nonce of 0 here. |
+| `toAddr` | Hex string without `0x` | The "to address" of the transaction. Transactions without a "to address" (such as contract creation Ethereum transactions) will use the zero address here. |
+| `senderPubKey` | Hex string with `0x` | The public key of the sender of the transaction. All keys are encoded using the SEC1 compressed encoding scheme. Transactions without a sender (such as intershard transactions) will contain an empty string here. |
+| `amount` | Number as string | The value of the transaction. This amount is always returned in units of Qa (10^-12 ZILs). For Zilliqa transactions, this means we return the exact amount that was passed into `CreateTransaction`. For Ethereum transactions, the true amount is truncated from 18 digits to 12.
+| `signature` | Hex string with `0x` | The transaction signature. Zilliqa signatures are 64 bytes, consisting of `r` followed by `s`. Ethereum signatures are 65 bytes, consisting of `r`, followed by `s`, followed by the `v` value in 'Electrum' notation. Intershard transactions have no signature, so contain an empty string here.
+| `receipt.accepted` | Optional boolean | If the transaction was a Zilliqa transaction and was a call to a Scilla contract, whether the called contract accepted the ZIL sent to it. |
+| `receipt.cumulativeGas` | Number as string | The gas used by this transactions and all transactions in the same block that preceded it. This amount is always returned in units of Scilla gas. Internally, gas is tracked in units of EVM gas. When the true amount is not an exact multiple of the EVM to Scilla gas exchange rate, this value will be rounded. |
+| `receipt.epochNum` | Number as string | The number of the block in which this transaction was mined. |
+| `receipt.eventLogs` | Optional array | If the transaction was a Zilliqa transaction, the logs from any Scilla contracts that were executed. EVM logs are not included. |
+| `receipt.errors` | Optional map | If the transaction was a Zilliqa transaction, a map of error codes produced by Scilla contracts, indexed by their call depth. |
+| `receipt.exceptions` | Optional array | If the transaction was a Zilliqa transaction, a list of exceptions produced by Scilla contracts. |
+| `receipt.success` | Boolean | Whether the transaction succeeded. |
+| `gasPrice` | Number as string | The gas price of the transaction. This amount is always returned in units of Qa (10^-12 ZILs) per unit of Scilla gas. Truncation can occur here for Ethereum transactions.
+| `gasLimit` | Number as string | The gas limit of the transaction. This amount is always returned in units of Scilla gas. Internally, gas is tracked in units of EVM gas. When the true amount is not an exact multiple of the EVM to Scilla gas exchange rate, this value will be rounded.
+| `code` | Optional string | If the transaction was a Zilliqa transaction, the exact value of the transaction's code. Otherwise, if the transaction was a contract creation, a hex string with a `0x` prefix containing the payload of the transaction. |
+| `data` | Optional string | If the transaction was a Zilliqa transaction, the exact value of the transaction's data. Otherwise, if the transaction was not a contract creation, a hex string with a `0x` prefix containing the payload of the transaction. |
+
+### Transaction types
+
+| Type | Value |
+| ---- | ----- |
+| Zilliqa | 1 |
+| Ethereum Legacy | 2 |
+| Ethereum EIP-2930 | 3 |
+| Ethereum EIP-1559 | 4 |
+| Intershard | 20 |
 
 # Curl
 
