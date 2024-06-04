@@ -38,7 +38,6 @@ use crate::{
 #[derive(Debug)]
 struct NewViewVote {
     signatures: Vec<NodeSignature>,
-    signers: Vec<u16>,
     cosigned: BitVec,
     cosigned_weight: u128,
     qcs: Vec<QuorumCertificate>,
@@ -1103,16 +1102,14 @@ impl Consensus {
             debug!("ignoring new view from unknown node (buffer?) - committee size is : {:?} hash is: {:?} high hash is: {:?}", committee.len(), new_view.qc.block_hash, self.high_qc.block_hash);
             return Ok(None);
         };
+
         new_view.verify(public_key)?;
 
         // check if the sender's qc is higher than our high_qc or even higher than our view
         self.update_high_qc_and_view(false, new_view.qc.clone())?;
 
-        let committee_size = committee.len();
-
         let NewViewVote {
             mut signatures,
-            mut signers,
             mut cosigned,
             mut cosigned_weight,
             mut qcs,
@@ -1121,20 +1118,17 @@ impl Consensus {
             .remove(&new_view.view)
             .unwrap_or_else(|| NewViewVote {
                 signatures: Vec::new(),
-                signers: Vec::new(),
-                cosigned: bitvec![u8, bitvec::order::Msb0; 0; committee_size],
+                cosigned: bitvec![u8, bitvec::order::Msb0; 0; committee.len()],
                 cosigned_weight: 0,
                 qcs: Vec::new(),
             });
 
         let mut supermajority = false;
 
-        // the index is not checked here...
         // if the vote is new, store it
         if !cosigned[index] {
-            signatures.push(new_view.signature);
-            signers.push(index as u16);
             cosigned.set(index, true);
+            signatures.push(new_view.signature);
             let Some(weight) = self.state.get_stake(new_view.public_key)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
@@ -1143,7 +1137,7 @@ impl Consensus {
 
             supermajority = cosigned_weight * 3 > self.total_weight(&committee) * 2;
 
-            let num_signers = signers.len();
+            let num_signers = signatures.len();
             let current_view = self.view.get_view();
             trace!(
                 num_signers,
@@ -1166,7 +1160,7 @@ impl Consensus {
                 if new_view.view == self.view.get_view() {
                     // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
                     let agg =
-                        self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, signers)?;
+                        self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, cosigned)?;
                     let high_qc = self.get_highest_from_agg(&agg)?;
                     let parent_hash = high_qc.block_hash;
                     let parent = self
@@ -1212,7 +1206,6 @@ impl Consensus {
                 new_view.view,
                 NewViewVote {
                     signatures,
-                    signers,
                     cosigned,
                     cosigned_weight,
                     qcs,
@@ -1324,13 +1317,13 @@ impl Consensus {
         view: u64,
         qcs: Vec<QuorumCertificate>,
         signatures: &[NodeSignature],
-        signers: Vec<u16>,
+        cosigned: BitVec,
     ) -> Result<AggregateQc> {
         assert_eq!(qcs.len(), signatures.len());
-        assert_eq!(signatures.len(), signers.len());
+
         Ok(AggregateQc {
             signature: NodeSignature::aggregate(signatures)?,
-            signers,
+            cosigned,
             view,
             qcs,
         })
@@ -1541,7 +1534,7 @@ impl Consensus {
         self.verify_qc_signature(&block.qc, committee.clone())?;
         if let Some(agg) = &block.agg {
             // Check if the signers of the block's aggregate QC represent the supermajority
-            self.check_quorum_in_indices(&agg.signers, &committee)?;
+            self.check_quorum_in_indices(&agg.cosigned, &committee)?;
             // Verify the aggregate QC's signature
             self.batch_verify_agg_signature(agg, &committee)?;
         }
@@ -1803,11 +1796,12 @@ impl Consensus {
         agg: &AggregateQc,
         committee: &[NodePublicKey],
     ) -> Result<()> {
-        let public_keys: Vec<_> = agg
-            .signers
-            .iter()
-            .map(|i| *committee.get(*i as usize).unwrap())
-            .collect();
+        let mut public_keys = Vec::new();
+        for (index, bit) in agg.cosigned.iter().enumerate() {
+            if *bit {
+                public_keys.push(*committee.get(index).unwrap());
+            }
+        }
 
         let messages: Vec<_> = agg
             .qcs
@@ -1850,13 +1844,18 @@ impl Consensus {
         Ok(())
     }
 
-    fn check_quorum_in_indices(&self, signers: &[u16], committee: &[NodePublicKey]) -> Result<()> {
+    fn check_quorum_in_indices(&self, signers: &BitVec, committee: &[NodePublicKey]) -> Result<()> {
         let cosigned_sum: u128 = signers
             .iter()
-            .map(|i| {
-                let public_key = committee.get(*i as usize).unwrap();
-                let stake = self.state.get_stake(*public_key).unwrap().unwrap();
-                stake.get()
+            .enumerate()
+            .map(|(i, bit)| {
+                if *bit {
+                    let public_key = committee.get(i).unwrap();
+                    let stake = self.state.get_stake(*public_key).unwrap().unwrap();
+                    stake.get()
+                } else {
+                    0
+                }
             })
             .sum();
 
