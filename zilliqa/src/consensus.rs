@@ -1518,14 +1518,7 @@ impl Consensus {
         self.verify_qc_signature(&block.qc, committee.clone())?;
         if let Some(agg) = &block.agg {
             // Check if the signers of the block's aggregate QC represent the supermajority
-
-            let mut signers = Vec::new();
-            for (index, bit) in agg.cosigned.iter().enumerate() {
-                if *bit {
-                    signers.push(index as u16);
-                }
-            }
-            self.check_quorum_in_indices(&signers, &committee)?;
+            self.check_quorum_in_indices(&agg.cosigned, &committee)?;
             // Verify the aggregate QC's signature
             self.batch_verify_agg_signature(agg, &committee)?;
         }
@@ -1834,13 +1827,18 @@ impl Consensus {
         Ok(())
     }
 
-    fn check_quorum_in_indices(&self, signers: &[u16], committee: &[NodePublicKey]) -> Result<()> {
+    fn check_quorum_in_indices(&self, signers: &BitVec, committee: &[NodePublicKey]) -> Result<()> {
         let cosigned_sum: u128 = signers
             .iter()
-            .map(|i| {
-                let public_key = committee.get(*i as usize).unwrap();
-                let stake = self.state.get_stake(*public_key).unwrap().unwrap();
-                stake.get()
+            .enumerate()
+            .map(|(i, bit)| {
+                if *bit {
+                    let public_key = committee.get(i).unwrap();
+                    let stake = self.state.get_stake(*public_key).unwrap().unwrap();
+                    stake.get()
+                } else {
+                    0
+                }
             })
             .sum();
 

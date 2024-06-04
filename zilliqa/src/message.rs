@@ -367,9 +367,10 @@ impl AggregateQc {
         }
 
         let hashes: Vec<_> = self.qcs.iter().map(|qc| qc.compute_hash()).collect();
+        let signers = self.cosigned.as_raw_slice();
         Hash::compute([
             &self.signature.to_bytes(),
-            &signers,
+            signers,
             Hash::compute(
                 hashes
                     .iter()
