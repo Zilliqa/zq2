@@ -63,6 +63,10 @@ svm install <solc version>
 
 ## Logging
 
+Logging is currently provided by `tracing_subscriber::EnvFilter` - <https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html> .
+
+You can get JSON logging info via the `--log-json` command line option.
+
 You can get log output globally via
 
 ```unset
