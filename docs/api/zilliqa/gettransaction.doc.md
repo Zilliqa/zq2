@@ -23,9 +23,9 @@ Querying for non-existent transactions or transactions that have not yet been mi
 | `amount` | Number as string | The value of the transaction. This amount is always returned in units of Qa (10^-12 ZILs). For Zilliqa transactions, this means we return the exact amount that was passed into `CreateTransaction`. For Ethereum transactions, the true amount is truncated from 18 digits to 12.
 | `signature` | Hex string with `0x` | The transaction signature. Zilliqa signatures are 64 bytes, consisting of `r` followed by `s`. Ethereum signatures are 65 bytes, consisting of `r`, followed by `s`, followed by the `v` value in 'Electrum' notation. Intershard transactions have no signature, so contain an empty string here.
 | `receipt.accepted` | Optional boolean | If the transaction was a Zilliqa transaction and was a call to a Scilla contract, whether the called contract accepted the ZIL sent to it. |
-| `receipt.cumulativeGas` | Number as string | The gas used by this transactions and all transactions in the same block that preceded it. This amount is always returned in units of Scilla gas. Internally, gas is tracked in units of EVM gas. When the true amount is not an exact multiple of the EVM to Scilla gas exchange rate, this value will be rounded. |
-| `receipt.epochNum` | Number as string | The number of the block in which this transaction was mined. |
-| `receipt.eventLogs` | Optional array | If the transaction was a Zilliqa transaction, the logs from any Scilla contracts that were executed. EVM logs are not included. |
+| `receipt.cumulative_gas` | Number as string | The gas used by this transactions and all transactions in the same block that preceded it. This amount is always returned in units of Scilla gas. Internally, gas is tracked in units of EVM gas. When the true amount is not an exact multiple of the EVM to Scilla gas exchange rate, this value will be rounded. |
+| `receipt.epoch_num` | Number as string | The number of the block in which this transaction was mined. |
+| `receipt.event_logs` | Optional array | If the transaction was a Zilliqa transaction, the logs from any Scilla contracts that were executed. EVM logs are not included. |
 | `receipt.errors` | Optional map | If the transaction was a Zilliqa transaction, a map of error codes produced by Scilla contracts, indexed by their call depth. |
 | `receipt.exceptions` | Optional array | If the transaction was a Zilliqa transaction, a list of exceptions produced by Scilla contracts. |
 | `receipt.success` | Boolean | Whether the transaction succeeded. |
