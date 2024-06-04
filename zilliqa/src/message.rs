@@ -357,15 +357,6 @@ pub struct AggregateQc {
 
 impl AggregateQc {
     pub fn compute_hash(&self) -> Hash {
-        let mut signers = Vec::new();
-        for (index, bit) in self.cosigned.iter().enumerate() {
-            if *bit {
-                let index: u16 = index.try_into().expect("Unable to convert cosigned index!");
-                let bytes = index.to_be_bytes().to_vec();
-                signers.extend_from_slice(&bytes);
-            }
-        }
-
         let hashes: Vec<_> = self.qcs.iter().map(|qc| qc.compute_hash()).collect();
         let signers = self.cosigned.as_raw_slice();
         Hash::compute([
