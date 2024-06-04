@@ -26,6 +26,7 @@ use crate::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
 };
+use crate::pool::TxPoolContent;
 
 #[derive(Debug, Clone)]
 pub struct MessageSender {
@@ -587,6 +588,10 @@ impl Node {
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
         self.consensus.get_transaction_by_hash(hash)
+    }
+
+    pub fn txpool_content(&self) -> TxPoolContent {
+        self.consensus.txpool_content()
     }
 
     fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {

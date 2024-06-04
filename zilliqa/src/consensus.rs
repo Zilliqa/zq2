@@ -29,7 +29,7 @@ use crate::{
         InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
     },
     node::{MessageSender, NetworkMessage},
-    pool::TransactionPool,
+    pool::{TransactionPool, TxPoolContent},
     state::State,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -748,6 +748,29 @@ impl Consensus {
                     .unwrap_or(true)
             })
             .collect()
+    }
+
+    pub fn txpool_content(&self) -> TxPoolContent {
+        let mut content = self.transaction_pool.preview_content();
+        // Ignore txns having too low nonces
+        content.pending = content
+            .pending
+            .into_iter()
+            .filter(|txn| {
+                let account_nonce = self.state.must_get_account(txn.signer).nonce;
+                return txn.tx.nonce().unwrap() >= account_nonce;
+            })
+            .collect();
+
+        content.queued = content
+            .queued
+            .into_iter()
+            .filter(|txn| {
+                let account_nonce = self.state.must_get_account(txn.signer).nonce;
+                return txn.tx.nonce().unwrap() >= account_nonce;
+            })
+            .collect();
+        content
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
