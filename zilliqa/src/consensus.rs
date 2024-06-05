@@ -753,23 +753,15 @@ impl Consensus {
     pub fn txpool_content(&self) -> TxPoolContent {
         let mut content = self.transaction_pool.preview_content();
         // Ignore txns having too low nonces
-        content.pending = content
-            .pending
-            .into_iter()
-            .filter(|txn| {
-                let account_nonce = self.state.must_get_account(txn.signer).nonce;
-                return txn.tx.nonce().unwrap() >= account_nonce;
-            })
-            .collect();
+        content.pending.retain(|txn| {
+            let account_nonce = self.state.must_get_account(txn.signer).nonce;
+            txn.tx.nonce().unwrap() >= account_nonce
+        });
 
-        content.queued = content
-            .queued
-            .into_iter()
-            .filter(|txn| {
-                let account_nonce = self.state.must_get_account(txn.signer).nonce;
-                return txn.tx.nonce().unwrap() >= account_nonce;
-            })
-            .collect();
+        content.queued.retain(|txn| {
+            let account_nonce = self.state.must_get_account(txn.signer).nonce;
+            txn.tx.nonce().unwrap() >= account_nonce
+        });
         content
     }
 

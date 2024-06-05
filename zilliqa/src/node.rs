@@ -21,12 +21,12 @@ use crate::{
         BlockResponse, ExternalMessage, InternalMessage, IntershardCall, Proposal,
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
+    pool::TxPoolContent,
     state::{Account, State},
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
 };
-use crate::pool::TxPoolContent;
 
 #[derive(Debug, Clone)]
 pub struct MessageSender {

@@ -1,12 +1,13 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::Result;
-use hyper::ext::HashMap;
 use jsonrpsee::{types::Params, RpcModule};
 
 use super::types::eth;
-use crate::{message::BlockNumber, node::Node};
+use crate::{api::types::eth::Transaction, message::BlockNumber, node::Node};
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
@@ -40,21 +41,28 @@ fn get_header_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Optio
 }
 
 fn txpool_content(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::TxPoolContent>> {
-
     let content = node.lock().unwrap().txpool_content();
 
-    let result = eth::TxPoolContent { pending: Vec::HashMap(), queued: Vec::HashMap()};
-
-
-
-    for item in content.pending {
-
-    }
-
-
-
-    Ok(Some(eth::TxPoolContent {
+    let mut result = eth::TxPoolContent {
         pending: HashMap::new(),
         queued: HashMap::new(),
-    }))
+    };
+
+    for item in content.pending {
+        if result.pending.get(&item.signer).is_none() {
+            result.pending.insert(item.signer, HashMap::new());
+        };
+        let txns = result.pending.get_mut(&item.signer).unwrap();
+        txns.insert(item.tx.nonce().unwrap(), Transaction::new(item, None));
+    }
+
+    for item in content.queued {
+        if result.queued.get(&item.signer).is_none() {
+            result.queued.insert(item.signer, HashMap::new());
+        };
+        let txns = result.queued.get_mut(&item.signer).unwrap();
+        txns.insert(item.tx.nonce().unwrap(), Transaction::new(item, None));
+    }
+
+    Ok(Some(result))
 }
