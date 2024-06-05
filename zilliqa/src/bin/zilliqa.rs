@@ -1,7 +1,6 @@
-extern crate bs58;
 use std::{fs, path::PathBuf};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use opentelemetry_sdk::runtime;
@@ -13,8 +12,8 @@ use zilliqa::{cfg::Config, crypto::SecretKey, p2p_node::P2pNode};
 struct Args {
     #[arg(value_parser = SecretKey::from_hex)]
     secret_key: SecretKey,
-    #[clap(long, short, default_value = "config.toml")]
-    config_file: PathBuf,
+    #[clap(long, short, default_values = ["config.toml"])]
+    config_file: Vec<PathBuf>,
     #[clap(long, default_value = "false")]
     log_json: bool,
 }
@@ -32,12 +31,22 @@ async fn main() -> Result<()> {
         builder.init();
     }
 
-    let config = if args.config_file.exists() {
-        fs::read_to_string(&args.config_file)?
-    } else {
-        panic!("There needs to be a config file provided");
-    };
-    let config: Config = toml::from_str(&config)?;
+    let mut merged_config = toml::Table::new();
+    for config_file in args.config_file {
+        let config = fs::read_to_string(&config_file)?;
+        let config: toml::Table = toml::from_str(&config)?;
+        for key in config.keys() {
+            if merged_config.contains_key(key) {
+                return Err(anyhow!(
+                    "configuration conflict: {config_file:?} contained a key {key:?} that was already included in an earlier file"
+                ));
+            }
+        }
+        merged_config.extend(config);
+    }
+
+    let config: Config = serde::Deserialize::deserialize(merged_config)?;
+
     assert!(
         !config.nodes.is_empty(),
         "At least one shard must be configured"
