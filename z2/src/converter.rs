@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy};
+use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy, EMPTY_ROOT_HASH};
 use alloy_primitives::{Address, Parity, Signature, TxKind, B256, U256};
 use anyhow::{anyhow, Context, Result};
 use bitvec::bitvec;
@@ -33,7 +33,7 @@ use zilliqa::{
     inspector,
     message::{Block, BlockHeader, QuorumCertificate, Vote},
     schnorr,
-    state::{contract_addr, Account, Contract, State},
+    state::{contract_addr, Account, Code, State},
     time::SystemTime,
     transaction::{
         EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
@@ -95,14 +95,8 @@ pub async fn convert_persistence(
             let account = Account {
                 nonce: zq1_account.nonce,
                 balance: zq1_account.balance * 10u128.pow(6),
-                contract: Contract::Evm {
-                    code: zq1_account
-                        .contract
-                        .as_ref()
-                        .map(|_| zq1_db.get_contract_code(address).unwrap().unwrap())
-                        .unwrap_or_default(),
-                    storage_root: None,
-                },
+                code: Code::Evm(vec![]), // TODO: Convert contract code and state
+                storage_root: EMPTY_ROOT_HASH,
             };
 
             state.save_account(address, account)?;

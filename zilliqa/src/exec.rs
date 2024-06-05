@@ -11,7 +11,8 @@ use std::{
 
 use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Result};
-use eth_trie::Trie;
+use bytes::Bytes;
+use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
 use libp2p::PeerId;
 use revm::{
@@ -30,12 +31,13 @@ use tracing::{debug, info, trace, warn};
 use crate::{
     contracts,
     crypto::{Hash, NodePublicKey},
+    db::TrieStorage,
     eth_helpers::extract_revert_msg,
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
     precompiles::get_custom_precompiles,
-    scilla::{self, Scilla},
-    state::{contract_addr, Account, Contract, ScillaValue, State},
+    scilla::{self, split_storage_key, storage_key, Scilla},
+    state::{contract_addr, Account, Code, State},
     time::SystemTime,
     transaction::{
         total_scilla_gas_price, EvmGas, EvmLog, Log, ScillaGas, ScillaLog, ScillaParam,
@@ -43,7 +45,7 @@ use crate::{
     },
 };
 
-type ScillaResultAndState = (ScillaResult, HashMap<Address, Account>);
+type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
 
 /// Data returned after applying a [Transaction] to [State].
 pub enum TransactionApplyResult {
@@ -242,7 +244,7 @@ impl DatabaseRef for &State {
             nonce: account.nonce,
             code_hash: KECCAK_EMPTY,
             code: Some(Bytecode::new_raw(
-                account.contract.evm_code().unwrap_or_default().into(),
+                account.code.evm_code().unwrap_or_default().into(),
             )),
         };
 
@@ -408,11 +410,11 @@ impl State {
     ) -> Result<ScillaResultAndState> {
         let mut state = PendingState::new(self.try_clone()?);
 
-        let code = self
-            .get_account(txn.to_addr)?
-            .contract
-            .scilla_code()
-            .unwrap_or_default();
+        let has_code = !txn.to_addr.is_zero()
+            && matches!(
+                state.load_account(txn.to_addr)?.account.code,
+                Code::Scilla { .. }
+            );
 
         let deposit = total_scilla_gas_price(txn.gas_limit, txn.gas_price);
         if let Some(result) = state.deduct_from_account(from_addr, deposit)? {
@@ -431,7 +433,7 @@ impl State {
                 current_block,
                 inspector,
             )
-        } else if code.is_empty() {
+        } else if !has_code {
             scilla_transfer_to_eoa(state, from_addr, txn, inspector)
         } else {
             scilla_call(state, self.scilla(), from_addr, txn, inspector)
@@ -440,8 +442,8 @@ impl State {
         let from = state.load_account(from_addr)?;
         let refund =
             total_scilla_gas_price(gas_limit - ScillaGas::from(result.gas_used), gas_price);
-        from.balance += refund.get();
-        from.nonce += 1;
+        from.account.balance += refund.get();
+        from.account.nonce += 1;
 
         Ok((result, state.finalize()))
     }
@@ -490,9 +492,57 @@ impl State {
     }
 
     /// Applies a state delta from a Scilla execution to the state.
-    fn apply_delta_scilla(&mut self, state: &HashMap<Address, Account>) -> Result<()> {
+    fn apply_delta_scilla(&mut self, state: &HashMap<Address, PendingAccount>) -> Result<()> {
         for (&address, account) in state {
-            self.save_account(address, account.clone())?;
+            let mut storage = self.get_account_trie(address)?;
+
+            /// Recursively called internal function which assigns `value` at the correct key to `storage`.
+            fn handle(
+                storage: &mut EthTrie<TrieStorage>,
+                var: &str,
+                value: &StorageValue,
+                indices: &mut Vec<Vec<u8>>,
+            ) -> Result<()> {
+                match value {
+                    StorageValue::Map { map, complete } => {
+                        // If this is a complete view of the map, delete any existing values first.
+                        if *complete {
+                            storage.remove_by_prefix(&storage_key(var, indices))?;
+                        }
+
+                        // Add the next level of index before making the recursive call.
+                        indices.push(vec![]);
+                        for (k, v) in map {
+                            indices.last_mut().unwrap().clone_from(k);
+                            handle(storage, var, v, indices)?;
+                        }
+                    }
+                    StorageValue::Value(Some(value)) => {
+                        let key = storage_key(var, indices);
+                        storage.insert(&key, value)?;
+                    }
+                    StorageValue::Value(None) => {
+                        let key = storage_key(var, indices);
+                        // A deletion may occur at any depth of the map. Therefore we remove all keys with the relevent
+                        // prefix.
+                        storage.remove_by_prefix(&key)?;
+                    }
+                }
+                Ok(())
+            }
+
+            for (var, value) in &account.storage {
+                handle(&mut storage, var, value, &mut vec![])?;
+            }
+
+            let account = Account {
+                nonce: account.account.nonce,
+                balance: account.account.balance,
+                code: account.account.code.clone(),
+                storage_root: storage.root_hash()?,
+            };
+
+            self.save_account(address, account)?;
         }
 
         Ok(())
@@ -517,19 +567,16 @@ impl State {
             let account = Account {
                 nonce: account.info.nonce,
                 balance: account.info.balance.try_into()?,
-                contract: Contract::Evm {
-                    code: account
+                code: Code::Evm(
+                    account
                         .info
                         .code
                         .as_ref()
-                        .map(|c| c.original_bytes().to_vec())
-                        .unwrap_or_default(),
-                    storage_root: if storage.iter().count() != 0 {
-                        Some(storage.root_hash()?)
-                    } else {
-                        None
-                    },
-                },
+                        .expect("code_by_hash is not used")
+                        .original_bytes()
+                        .to_vec(),
+                ),
+                storage_root: storage.root_hash()?,
             };
             trace!(?address, ?account, "update account");
             self.save_account(address, account)?;
@@ -815,7 +862,24 @@ pub fn zil_contract_address(sender: Address, nonce: u64) -> Address {
 #[derive(Debug)]
 pub struct PendingState {
     pre_state: State,
-    new_state: HashMap<Address, Account>,
+    new_state: HashMap<Address, PendingAccount>,
+}
+
+/// Private helper function for `PendingState::load_account`. The only difference is that the fields of `PendingState`
+/// are passed explicitly. This means the borrow-checker can see the reference we return only borrows from the
+/// `new_state` field and thus we can later use `pre_state` without an error.
+fn load_account<'a>(
+    pre_state: &State,
+    new_state: &'a mut HashMap<Address, PendingAccount>,
+    address: Address,
+) -> Result<&'a mut PendingAccount> {
+    match new_state.entry(address) {
+        Entry::Occupied(entry) => Ok(entry.into_mut()),
+        Entry::Vacant(vac) => {
+            let account = pre_state.get_account(address)?;
+            Ok(vac.insert(account.into()))
+        }
+    }
 }
 
 impl PendingState {
@@ -826,14 +890,183 @@ impl PendingState {
         }
     }
 
-    pub fn load_account(&mut self, address: Address) -> Result<&mut Account> {
-        match self.new_state.entry(address) {
-            Entry::Occupied(entry) => Ok(entry.into_mut()),
-            Entry::Vacant(vac) => {
-                let account = self.pre_state.get_account(address)?;
-                Ok(vac.insert(account))
-            }
+    pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
+        load_account(&self.pre_state, &mut self.new_state, address)
+    }
+
+    pub fn load_var_info(&mut self, address: Address, variable: &str) -> Result<(&str, u8)> {
+        let account = self.load_account(address)?;
+        let Code::Scilla { types, .. } = &account.account.code else {
+            return Err(anyhow!("not a scilla contract"));
+        };
+        let (ty, depth) = types
+            .get(variable)
+            .ok_or_else(|| anyhow!("missing type for variable: {variable}"))?;
+        Ok((ty, *depth))
+    }
+
+    /// Set the value of a given variable at the given indices. This can be used for setting map values, unlike
+    /// `load_storage`.
+    pub fn set_storage(
+        &mut self,
+        address: Address,
+        var_name: &str,
+        indices: &[Vec<u8>],
+        value: StorageValue,
+    ) -> Result<()> {
+        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+
+        let mut current = account
+            .storage
+            .entry(var_name.to_owned())
+            .or_insert_with(StorageValue::incomplete);
+        for key in indices {
+            let current_map = match current {
+                StorageValue::Map { map, .. } => map,
+                StorageValue::Value(Some(_)) => {
+                    return Err(anyhow!("expected a map"));
+                }
+                StorageValue::Value(None) => {
+                    unimplemented!("deletes of whole maps are unsupported")
+                }
+            };
+            let child = current_map
+                .entry(key.clone())
+                .or_insert_with(StorageValue::incomplete);
+            current = child;
         }
+
+        *current = value;
+
+        Ok(())
+    }
+
+    pub fn load_storage(
+        &mut self,
+        address: Address,
+        var_name: &str,
+        indices: &[Vec<u8>],
+    ) -> Result<&mut Option<Bytes>> {
+        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+
+        fn get_cached<'a>(
+            storage: &'a mut BTreeMap<String, StorageValue>,
+            var_name: &str,
+            indices: &[Vec<u8>],
+        ) -> Result<(&'a mut StorageValue, bool)> {
+            let mut cached = true;
+            let mut current = storage.entry(var_name.to_owned()).or_insert_with(|| {
+                cached = false;
+                StorageValue::incomplete()
+            });
+            for key in indices {
+                let current_map = match current {
+                    StorageValue::Map { map, .. } => map,
+                    StorageValue::Value(Some(_)) => {
+                        return Err(anyhow!("expected a map"));
+                    }
+                    StorageValue::Value(None) => {
+                        unimplemented!("deletes of whole maps are unsupported")
+                    }
+                };
+                let child = current_map.entry(key.clone()).or_insert_with(|| {
+                    cached = false;
+                    StorageValue::incomplete()
+                });
+                current = child;
+            }
+            Ok((current, cached))
+        }
+
+        let (value, cached) = get_cached(&mut account.storage, var_name, indices)?;
+
+        if !cached {
+            let value_from_disk = self
+                .pre_state
+                .get_account_trie(address)?
+                .get(&storage_key(var_name, indices))?
+                .map(Vec::<u8>::from);
+
+            *value = StorageValue::Value(value_from_disk.map(|b| b.into()));
+        }
+
+        match value {
+            StorageValue::Map { .. } => Err(anyhow!("expected bytes")),
+            StorageValue::Value(value) => Ok(value),
+        }
+    }
+
+    pub fn load_storage_by_prefix(
+        &mut self,
+        address: Address,
+        var_name: &str,
+        indices: &[Vec<u8>],
+    ) -> Result<BTreeMap<Vec<u8>, StorageValue>> {
+        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+
+        // Even if we have something cached for this prefix, we don't know if it is a full representation of the map.
+        // It might have been the case that only a few subfields were cached. Therefore, we need to retrieve the full
+        // map from disk and apply any cached (and potentially updated) values. In future, we should use the 'complete'
+        // flag on maps to avoid needing to read from disk unconditionally.
+
+        let values_from_disk: Vec<_> = self
+            .pre_state
+            .get_account_trie(address)?
+            .iter_by_prefix(&storage_key(var_name, indices))?
+            .collect();
+
+        let mut map = StorageValue::complete();
+        let cached = account.storage.get(var_name);
+
+        // Un-flatten the values from disk into their true representation.
+        for (k, v) in values_from_disk {
+            let (disk_var_name, disk_indices) = split_storage_key(&k)?;
+            assert_eq!(var_name, disk_var_name);
+            assert!(disk_indices.starts_with(indices));
+
+            let mut current_value = &mut map;
+            let mut current_cached = cached;
+
+            for index in disk_indices {
+                if let Some(c) = current_cached {
+                    match c {
+                        StorageValue::Map { map, .. } => {
+                            current_cached = map.get(&index);
+                        }
+                        // This branch can be hit in two cases:
+                        // * Firstly, we expect the final index to point to a value in the cache, rather than a map.
+                        // * Secondly, if a portion of the map has been deleted, then the cache can contain a `None`
+                        // value at a greater height than the depth of the map.
+                        StorageValue::Value(_) => {}
+                    }
+                }
+
+                let map = match current_value {
+                    StorageValue::Map { map, .. } => map,
+                    StorageValue::Value(_) => {
+                        return Err(anyhow!("expected map"));
+                    }
+                };
+                // Note that we insert 'complete' maps here, because we know we are going to add *ALL* values from
+                // within this map.
+                current_value = map.entry(index).or_insert_with(StorageValue::complete);
+            }
+
+            *current_value = if let Some(cached) = current_cached {
+                cached.clone()
+            } else {
+                StorageValue::Value(Some(v.into()))
+            };
+        }
+
+        let map = match map {
+            StorageValue::Map { map, .. } => map,
+            StorageValue::Value(_) => {
+                return Err(anyhow!("expected map"));
+            }
+        };
+
+        Ok(map)
     }
 
     #[track_caller]
@@ -844,7 +1077,7 @@ impl PendingState {
     ) -> Result<Option<ScillaResult>> {
         let caller = std::panic::Location::caller();
         let account = self.load_account(address)?;
-        let Some(balance) = account.balance.checked_sub(amount.get()) else {
+        let Some(balance) = account.account.balance.checked_sub(amount.get()) else {
             info!("insufficient balance: {caller}");
             return Ok(Some(ScillaResult {
                 success: false,
@@ -858,13 +1091,54 @@ impl PendingState {
                 exceptions: vec![],
             }));
         };
-        account.balance = balance;
+        account.account.balance = balance;
         Ok(None)
     }
 
     /// Return the changed state and resets the [PendingState] to its initial state in [PendingState::new].
-    pub fn finalize(&mut self) -> HashMap<Address, Account> {
+    pub fn finalize(&mut self) -> HashMap<Address, PendingAccount> {
         mem::take(&mut self.new_state)
+    }
+}
+
+#[derive(Debug)]
+pub struct PendingAccount {
+    pub account: Account,
+    /// Cached values of updated or deleted storage. Note that deletions can happen at any level of a map.
+    pub storage: BTreeMap<String, StorageValue>,
+}
+
+#[derive(Debug, Clone)]
+pub enum StorageValue {
+    Map {
+        map: BTreeMap<Vec<u8>, StorageValue>,
+        complete: bool,
+    },
+    Value(Option<Bytes>),
+}
+
+impl StorageValue {
+    pub fn incomplete() -> StorageValue {
+        StorageValue::Map {
+            map: BTreeMap::new(),
+            complete: false,
+        }
+    }
+
+    pub fn complete() -> StorageValue {
+        StorageValue::Map {
+            map: BTreeMap::new(),
+            complete: true,
+        }
+    }
+}
+
+impl From<Account> for PendingAccount {
+    fn from(account: Account) -> PendingAccount {
+        PendingAccount {
+            account,
+            storage: BTreeMap::new(),
+        }
     }
 }
 
@@ -936,31 +1210,19 @@ fn scilla_create(
 
     let gas = gas.min(check_output.gas_remaining);
 
-    let storage = check_output
+    let types = check_output
         .contract_info
         .fields
         .into_iter()
-        .map(|p| {
-            (
-                p.name,
-                (
-                    if p.depth == 0 {
-                        ScillaValue::Bytes(Vec::new())
-                    } else {
-                        ScillaValue::map()
-                    },
-                    p.ty,
-                ),
-            )
-        })
+        .map(|p| (p.name, (p.ty, p.depth as u8)))
         .collect();
 
     let account = state.load_account(contract_address)?;
-    account.balance = txn.amount.get();
-    account.contract = Contract::Scilla {
+    account.account.balance = txn.amount.get();
+    account.account.code = Code::Scilla {
         code: txn.code.clone(),
         init_data: serde_json::to_string(&init_data)?,
-        storage,
+        types,
     };
 
     let Some(gas) = gas.checked_sub(SCILLA_INVOKE_RUNNER) else {
@@ -1056,7 +1318,7 @@ fn scilla_transfer_to_eoa(
     }
 
     let to = state.load_account(txn.to_addr)?;
-    to.balance += txn.amount.get();
+    to.account.balance += txn.amount.get();
 
     inspector.transfer(from_addr, txn.to_addr, txn.amount.get());
 
@@ -1082,11 +1344,9 @@ fn scilla_call(
     mut inspector: impl ScillaInspector,
 ) -> Result<(ScillaResult, PendingState)> {
     // TODO: Interop
-    let Contract::Scilla {
-        ref code,
-        ref init_data,
-        storage: _,
-    } = state.load_account(txn.to_addr)?.contract
+    let Code::Scilla {
+        code, init_data, ..
+    } = &state.load_account(txn.to_addr)?.account.code
     else {
         return Err(anyhow!("Scilla call to a non-Scilla contract"));
     };
@@ -1155,7 +1415,7 @@ fn scilla_call(
         }
 
         let to = state.load_account(txn.to_addr)?;
-        to.balance += txn.amount.get();
+        to.account.balance += txn.amount.get();
     }
 
     // TODO: Handle `output.messages` for multi-contract calls.
@@ -1163,20 +1423,29 @@ fn scilla_call(
     let logs = output
         .events
         .into_iter()
-        .map(|e| ScillaLog {
-            address: txn.to_addr,
-            event_name: e.event_name,
-            params: e
-                .params
-                .into_iter()
-                .map(|p| ScillaParam {
-                    ty: p.ty,
-                    value: p.value,
-                    name: p.name,
-                })
-                .collect(),
+        .map(|e| {
+            Ok(ScillaLog {
+                address: txn.to_addr,
+                event_name: e.event_name,
+                params: e
+                    .params
+                    .into_iter()
+                    .map(|p| {
+                        Ok(ScillaParam {
+                            ty: p.ty,
+                            // If the value is a JSON string, don't double encode it.
+                            value: if let Value::String(v) = p.value {
+                                v
+                            } else {
+                                serde_json::to_string(&p.value)?
+                            },
+                            name: p.name,
+                        })
+                    })
+                    .collect::<Result<_>>()?,
+            })
         })
-        .collect();
+        .collect::<Result<_>>()?;
 
     inspector.call(from_addr, txn.to_addr, txn.amount.get());
 

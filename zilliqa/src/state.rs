@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
+use alloy_consensus::EMPTY_ROOT_HASH;
 use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
@@ -202,13 +203,7 @@ impl State {
     /// If using this to modify the account, ensure save_account gets called
     pub fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
         let account = self.get_account(address)?;
-        let Contract::Evm { storage_root, .. } = account.contract else {
-            return Err(anyhow!("not an EVM contract"));
-        };
-        Ok(match storage_root {
-            Some(root) => PatriciaTrie::new(self.db.clone()).at_root(root),
-            None => PatriciaTrie::new(self.db.clone()),
-        })
+        Ok(PatriciaTrie::new(self.db.clone()).at_root(account.storage_root))
     }
 
     /// Returns an error if there are any issues fetching the account from the state trie
@@ -255,7 +250,8 @@ pub mod contract_addr {
 pub struct Account {
     pub nonce: u64,
     pub balance: u128,
-    pub contract: Contract,
+    pub code: Code,
+    pub storage_root: B256,
 }
 
 impl Default for Account {
@@ -263,26 +259,55 @@ impl Default for Account {
         Self {
             nonce: 0,
             balance: 0,
-            contract: Contract::Evm {
-                code: vec![],
-                storage_root: None,
-            },
+            code: Code::default(),
+            storage_root: EMPTY_ROOT_HASH,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Contract {
-    Evm {
-        #[serde(with = "serde_bytes")]
-        code: Vec<u8>,
-        storage_root: Option<B256>,
-    },
+pub enum Code {
+    Evm(#[serde(with = "serde_bytes")] Vec<u8>),
     Scilla {
         code: String,
         init_data: String,
-        storage: BTreeMap<String, (ScillaValue, String)>,
+        types: BTreeMap<String, (String, u8)>,
     },
+}
+
+impl Default for Code {
+    fn default() -> Self {
+        Code::Evm(Vec::new())
+    }
+}
+
+impl Code {
+    pub fn is_eoa(&self) -> bool {
+        matches!(self, Code::Evm(c) if c.is_empty())
+    }
+
+    pub fn evm_code_ref(&self) -> Option<&[u8]> {
+        match self {
+            Code::Evm(code) => Some(code.as_slice()),
+            _ => None,
+        }
+    }
+
+    pub fn evm_code(self) -> Option<Vec<u8>> {
+        match self {
+            Code::Evm(code) => Some(code),
+            _ => None,
+        }
+    }
+
+    pub fn scilla_code_and_init_data(self) -> Option<(String, String)> {
+        match self {
+            Code::Scilla {
+                code, init_data, ..
+            } => Some((code, init_data)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,43 +339,6 @@ impl ScillaValue {
         match self {
             ScillaValue::Map(m) => Some(m),
             ScillaValue::Bytes(_) => None,
-        }
-    }
-}
-
-impl Contract {
-    pub fn evm_code_ref(&self) -> Option<&[u8]> {
-        match self {
-            Contract::Evm { code, .. } => Some(code.as_slice()),
-            Contract::Scilla { .. } => None,
-        }
-    }
-
-    pub fn evm_code(self) -> Option<Vec<u8>> {
-        match self {
-            Contract::Evm { code, .. } => Some(code),
-            Contract::Scilla { .. } => None,
-        }
-    }
-
-    pub fn scilla_code(self) -> Option<String> {
-        match self {
-            Contract::Scilla { code, .. } => Some(code),
-            Contract::Evm { .. } => None,
-        }
-    }
-
-    pub fn scilla_storage(&self) -> Option<&BTreeMap<String, (ScillaValue, String)>> {
-        match self {
-            Contract::Scilla { storage, .. } => Some(storage),
-            Contract::Evm { .. } => None,
-        }
-    }
-
-    pub fn scilla_storage_mut(&mut self) -> Option<&mut BTreeMap<String, (ScillaValue, String)>> {
-        match self {
-            Contract::Scilla { storage, .. } => Some(storage),
-            Contract::Evm { .. } => None,
         }
     }
 }
