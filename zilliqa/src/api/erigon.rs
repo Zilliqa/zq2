@@ -49,18 +49,12 @@ fn txpool_content(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth
     };
 
     for item in content.pending {
-        if result.pending.get(&item.signer).is_none() {
-            result.pending.insert(item.signer, HashMap::new());
-        };
-        let txns = result.pending.get_mut(&item.signer).unwrap();
+        let txns = result.pending.entry(item.signer).or_default();
         txns.insert(item.tx.nonce().unwrap(), Transaction::new(item, None));
     }
 
     for item in content.queued {
-        if result.queued.get(&item.signer).is_none() {
-            result.queued.insert(item.signer, HashMap::new());
-        };
-        let txns = result.queued.get_mut(&item.signer).unwrap();
+        let txns = result.queued.entry(item.signer).or_default();
         txns.insert(item.tx.nonce().unwrap(), Transaction::new(item, None));
     }
 
