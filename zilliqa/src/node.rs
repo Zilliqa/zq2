@@ -14,7 +14,7 @@ use crate::{
     consensus::Consensus,
     crypto::{Hash, SecretKey},
     db::Db,
-    exec::{TransactionApplyResult, GAS_PRICE},
+    exec::TransactionApplyResult,
     inspector::{self, ScillaInspector},
     message::{
         Block, BlockBatchRequest, BlockBatchResponse, BlockHeader, BlockNumber, BlockRequest,
@@ -451,7 +451,7 @@ impl Node {
     }
 
     pub fn get_gas_price(&self) -> u128 {
-        GAS_PRICE
+        self.config.consensus.gas_price
     }
 
     #[allow(clippy::too_many_arguments)]

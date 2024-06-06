@@ -9,14 +9,24 @@ use toml;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::SecretKey;
-use zilliqa::{cfg, crypto::NodePublicKey};
+use zilliqa::{
+    cfg,
+    cfg::{
+        allowed_timestamp_skew_default, consensus_timeout_default, disable_rpc_default,
+        empty_block_timeout_default, eth_chain_id_default, local_address_default,
+        minimum_time_left_for_empty_block_default, scilla_address_default, ConsensusConfig,
+    },
+    crypto::NodePublicKey,
+    transaction::EvmGas,
+};
 
 use crate::{
     collector::{self, Collector},
-    utils,
+    components::{Component, Requirements},
+    otel, utils,
 };
 
-const GENESIS_DEPOSIT: &str = "32000000000000000000";
+const GENESIS_DEPOSIT: &str = "10000000000000000000000000";
 const DATADIR_PREFIX: &str = "z2_node_";
 
 pub struct Setup {
@@ -76,6 +86,10 @@ impl Setup {
         index + 201 + self.base_port + if proxied { 1000 } else { 0 }
     }
 
+    pub fn get_docs_port(&self) -> u16 {
+        self.base_port + 2004
+    }
+
     /// this used to be + 2000, but the default (base_port=4000) causes chrome to fail to browse, because it considers
     /// 6000 unsafe. Sigh.
     pub fn get_otterscan_port(&self) -> u16 {
@@ -96,6 +110,10 @@ impl Setup {
 
     pub fn get_json_rpc_url(&self, proxied: bool) -> String {
         format!("http://localhost:{0}", self.get_json_rpc_port(0, proxied))
+    }
+
+    pub fn get_docs_listening_hostport(&self) -> String {
+        format!("0.0.0.0:{0}", self.get_docs_port())
     }
 
     pub fn get_port_map(&self) -> String {
@@ -119,6 +137,10 @@ impl Setup {
         result.push_str(&format!(
             "🦏  mitmproxy port at http://localhost:{0}/\n",
             self.get_mitmproxy_port()
+        ));
+        result.push_str(&format!(
+            "🦏  docs port at http://localhost:{0}/\n",
+            self.get_docs_port()
         ));
         result
     }
@@ -155,12 +177,34 @@ impl Setup {
         for i in 0..self.how_many {
             let mut cfg = zilliqa::cfg::Config {
                 otlp_collector_endpoint: Some("http://localhost:4317".to_string()),
-                ..Default::default()
+                bootstrap_address: None,
+                nodes: Vec::new(),
+                p2p_port: 0,
             };
             // @todo should pass this in!
             let mut node_config = cfg::NodeConfig {
                 json_rpc_port: self.get_json_rpc_port(usize::try_into(i)?, false),
-                ..Default::default()
+                allowed_timestamp_skew: allowed_timestamp_skew_default(),
+                data_dir: None,
+                disable_rpc: disable_rpc_default(),
+                eth_chain_id: eth_chain_id_default(),
+                consensus: ConsensusConfig {
+                    genesis_hash: None,
+                    scilla_address: scilla_address_default(),
+                    minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
+                    main_shard_id: None,
+                    local_address: local_address_default(),
+                    consensus_timeout: consensus_timeout_default(),
+                    genesis_deposits: Vec::new(),
+                    eth_block_gas_limit: EvmGas(84000000),
+                    gas_price: 4_761_904_800_000u128,
+                    minimum_stake: 10_000_000_000_000_000_000_000_000u128,
+                    empty_block_timeout: empty_block_timeout_default(),
+                    genesis_accounts: Vec::new(),
+                    is_main: true,
+                    blocks_per_hour: 3600,
+                    rewards_per_hour: 51_000_000_000_000_000_000_000u128,
+                },
             };
             println!("Node {i} has RPC port {0}", node_config.json_rpc_port);
             let data_dir_name = format!("{0}{1}", DATADIR_PREFIX, i);
@@ -205,61 +249,93 @@ impl Setup {
         Ok(())
     }
 
-    pub async fn run_zq2(&mut self, collector: &mut Collector) -> Result<()> {
-        // Generate a collector
-        self.generate_config().await?;
-        let config_files = (0..self.how_many)
-            .map(|x| format!("{0}/{1}{2}/config.yaml", self.config_dir, DATADIR_PREFIX, x))
-            .collect::<Vec<String>>();
-        for (idx, _) in config_files.iter().enumerate() {
-            collector
-                .start_zq2_node(
-                    &self.base_dir,
-                    idx,
-                    &self.secret_keys[idx],
-                    &config_files[idx],
-                )
-                .await?;
+    pub async fn describe_component(component: &Component) -> Result<Requirements> {
+        match component {
+            Component::ZQ2 => crate::zq2::Runner::requirements().await,
+            Component::Otel => crate::otel::Otel::requirements().await,
+            Component::Otterscan => crate::otterscan::Runner::requirements().await,
+            Component::Spout => crate::spout::Runner::requirements().await,
+            Component::Docs => crate::docs::Runner::requirements().await,
+            Component::Mitmweb => crate::mitmweb::Runner::requirements().await,
         }
-        Ok(())
     }
 
-    pub async fn run_otterscan(&mut self, collector: &mut Collector) -> Result<()> {
-        collector
-            .start_otterscan(
-                &self.base_dir,
-                &self.get_json_rpc_url(false),
-                self.get_otterscan_port(),
-            )
-            .await?;
-        Ok(())
-    }
-
-    pub async fn run_spout(&mut self, collector: &mut Collector) -> Result<()> {
-        collector
-            .start_spout(
-                &self.base_dir,
-                &self.get_json_rpc_url(true),
-                &self.get_explorer_url(),
-                // 0xcb...
-                "db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3",
-                self.get_spout_port(),
-            )
-            .await?;
-        Ok(())
-    }
-
-    pub async fn run_mitmweb(&mut self, collector: &mut Collector) -> Result<()> {
-        collector
-            .start_mitmweb(
-                &self.base_dir,
-                0,
-                self.get_json_rpc_port(0, true),
-                self.get_json_rpc_port(0, false),
-                self.get_mitmproxy_port(),
-            )
-            .await?;
-        Ok(())
+    pub async fn run_component(
+        &mut self,
+        component: &Component,
+        collector: &mut Collector,
+    ) -> Result<()> {
+        match component {
+            Component::ZQ2 => {
+                // Generate a collector
+                self.generate_config().await?;
+                let config_files = (0..self.how_many)
+                    .map(|x| format!("{0}/{1}{2}/config.yaml", self.config_dir, DATADIR_PREFIX, x))
+                    .collect::<Vec<String>>();
+                for (idx, _) in config_files.iter().enumerate() {
+                    collector
+                        .start_zq2_node(
+                            &self.base_dir,
+                            idx,
+                            &self.secret_keys[idx],
+                            &config_files[idx],
+                        )
+                        .await?;
+                }
+                Ok(())
+            }
+            Component::Otel => {
+                println!("Setting up otel .. ");
+                let otel = otel::Otel::new(&self.config_dir)?;
+                println!("Write otel configuration .. ");
+                otel.write_files().await?;
+                println!("Start otel .. ");
+                otel.ensure_otel().await?;
+                Ok(())
+            }
+            Component::Otterscan => {
+                collector
+                    .start_otterscan(
+                        &self.base_dir,
+                        &self.get_json_rpc_url(false),
+                        self.get_otterscan_port(),
+                    )
+                    .await?;
+                Ok(())
+            }
+            Component::Spout => {
+                self.wait_for_chain().await?;
+                collector
+                    .start_spout(
+                        &self.base_dir,
+                        &self.get_json_rpc_url(true),
+                        &self.get_explorer_url(),
+                        // 0xcb...
+                        "db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3",
+                        self.get_spout_port(),
+                    )
+                    .await?;
+                Ok(())
+            }
+            Component::Docs => {
+                collector
+                    .start_docs(&self.base_dir, &self.get_docs_listening_hostport())
+                    .await?;
+                Ok(())
+            }
+            Component::Mitmweb => {
+                collector
+                    .start_mitmweb(
+                        &self.base_dir,
+                        0,
+                        self.get_json_rpc_port(0, true),
+                        self.get_json_rpc_port(0, false),
+                        self.get_mitmproxy_port(),
+                    )
+                    .await?;
+                Ok(())
+            }
+        }
     }
 
     pub async fn wait_for_chain(&mut self) -> Result<()> {

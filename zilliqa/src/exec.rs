@@ -267,12 +267,8 @@ impl DatabaseRef for &State {
     }
 }
 
-pub const BLOCK_GAS_LIMIT: EvmGas = EvmGas(84_000_000);
 // As per EIP-150
 pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_500_000);
-
-/// The price per unit of [EvmGas].
-pub const GAS_PRICE: u128 = 4761904800000;
 
 const SCILLA_TRANSFER: ScillaGas = ScillaGas(50);
 const SCILLA_INVOKE_CHECKER: ScillaGas = ScillaGas(100);
@@ -291,8 +287,8 @@ impl State {
         let ResultAndState { result, mut state } = self.apply_transaction_evm(
             Address::ZERO,
             None,
-            GAS_PRICE,
-            BLOCK_GAS_LIMIT,
+            self.gas_price,
+            self.block_gas_limit,
             0,
             creation_bytecode,
             None,
@@ -354,8 +350,8 @@ impl State {
                         .unwrap_or_default()
                         .as_secs(),
                 ),
-                gas_limit: U256::from(BLOCK_GAS_LIMIT.0),
-                basefee: U256::from(GAS_PRICE),
+                gas_limit: U256::from(self.block_gas_limit.0),
+                basefee: U256::from(self.gas_price),
                 difficulty: U256::from(1),
                 prevrandao: Some(B256::ZERO),
                 blob_excess_gas_and_price: None,
@@ -675,7 +671,7 @@ impl State {
         gas_price: Option<u128>,
         value: u128,
     ) -> Result<u64> {
-        let gas_price = gas_price.unwrap_or(GAS_PRICE);
+        let gas_price = gas_price.unwrap_or(self.gas_price);
 
         let mut max = gas.unwrap_or(MAX_EVM_GAS_LIMIT).0;
         let upper_bound = max;
@@ -788,8 +784,8 @@ impl State {
         let ResultAndState { result, .. } = self.apply_transaction_evm(
             from_addr,
             to_addr,
-            GAS_PRICE,
-            BLOCK_GAS_LIMIT,
+            self.gas_price,
+            self.block_gas_limit,
             amount,
             data,
             None,

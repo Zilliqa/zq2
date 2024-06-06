@@ -2,7 +2,11 @@ use anyhow::Result;
 use futures::future::JoinAll;
 use tokio::{process::Command, sync::mpsc, task::JoinHandle};
 
-use crate::{collector, utils};
+use crate::{
+    collector,
+    components::{self, Component},
+    utils,
+};
 
 pub struct Runner {
     pub join_handles: Option<JoinAll<JoinHandle<()>>>,
@@ -23,6 +27,13 @@ pub async fn exists(base_dir: &str) -> Result<bool> {
 }
 
 impl Runner {
+    pub async fn requirements() -> Result<components::Requirements> {
+        Ok(components::Requirements {
+            software: vec![],
+            repos: vec!["otterscan".to_string()],
+        })
+    }
+
     pub async fn spawn_otter(
         base_dir: &str,
         chain_url: &str,
@@ -38,7 +49,7 @@ impl Runner {
         let join_handles = collector::spawn(
             &mut cmd,
             &startup,
-            &collector::Legend::new(collector::Program::Otterscan, 0)?,
+            &collector::Legend::new(Component::Otterscan, 0)?,
             channel.clone(),
         )
         .await?;

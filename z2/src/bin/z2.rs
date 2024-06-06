@@ -3,7 +3,7 @@ use std::{collections::HashSet, env, fmt};
 use alloy_primitives::B256;
 use anyhow::{anyhow, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
-use z2lib::plumbing;
+use z2lib::{components::Component, plumbing};
 use zilliqa::crypto::SecretKey;
 
 #[derive(Parser, Debug)]
@@ -27,6 +27,24 @@ enum Commands {
     Converter(ConverterCommands),
     /// Generate documentation
     DocGen(DocStruct),
+    /// Print the list of sibling repositories for z2 start
+    #[clap(subcommand)]
+    Depends(DependsCommands),
+}
+
+#[derive(Subcommand, Debug)]
+enum DependsCommands {
+    /// Print the repos required.
+    Print,
+    /// Update the required repos
+    Update(DependsUpdateOptions),
+}
+
+#[derive(Args, Debug)]
+pub struct DependsUpdateOptions {
+    /// When checking out repositories, should we use ssh? This requires authentication, but is useful for those in Zilliqa.
+    #[clap(long,action=ArgAction::SetTrue)]
+    with_ssh: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -152,6 +170,11 @@ struct RunStruct {
     mitmweb: bool,
     #[clap(long = "mitmweb", overrides_with = "mitmweb")]
     _no_mitmweb: bool,
+
+    #[clap(long="no-docs",action=ArgAction::SetFalse)]
+    docs: bool,
+    #[clap(long = "docs", overrides_with = "docs")]
+    _no_docs: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
@@ -181,7 +204,10 @@ impl fmt::Display for LogLevel {
 async fn main() -> Result<()> {
     // Work out the base directory
     let base_dir = match env::var("ZQ2_BASE") {
-        Ok(val) => val,
+        Ok(val) => {
+            let canon = tokio::fs::canonicalize(val).await?;
+            zqutils::utils::string_from_path(&canon)?
+        }
         _ => {
             return Err(anyhow!(
                 "Please run scripts/z2 from the checked out zq2 repository which sets ZQ2_BASE"
@@ -192,22 +218,25 @@ async fn main() -> Result<()> {
 
     match &cli.command {
         Commands::Run(ref arg) => {
-            let mut to_run: HashSet<plumbing::Components> = HashSet::new();
+            let mut to_run: HashSet<Component> = HashSet::new();
 
             if arg.otterscan {
-                to_run.insert(plumbing::Components::Otterscan);
+                to_run.insert(Component::Otterscan);
             }
             if arg.otel {
-                to_run.insert(plumbing::Components::Otel);
+                to_run.insert(Component::Otel);
             }
             if arg.zq2 {
-                to_run.insert(plumbing::Components::ZQ2);
+                to_run.insert(Component::ZQ2);
             }
             if arg.spout {
-                to_run.insert(plumbing::Components::Spout);
+                to_run.insert(Component::Spout);
             }
             if arg.mitmweb {
-                to_run.insert(plumbing::Components::Mitmweb);
+                to_run.insert(Component::Mitmweb);
+            }
+            if arg.docs {
+                to_run.insert(Component::Docs);
             }
 
             let keep_old_network = !arg.restart_network;
@@ -297,5 +326,11 @@ async fn main() -> Result<()> {
             .await?;
             Ok(())
         }
+        Commands::Depends(ref rs) => match rs {
+            DependsCommands::Print => plumbing::print_depends(&base_dir).await,
+            DependsCommands::Update(ref opts) => {
+                plumbing::update_depends(&base_dir, opts.with_ssh).await
+            }
+        },
     }
 }

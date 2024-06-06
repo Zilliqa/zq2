@@ -193,6 +193,7 @@ impl Db {
                 tx_index INTEGER NOT NULL,
                 success INTEGER NOT NULL,
                 gas_used INTEGER NOT NULL,
+                cumulative_gas_used INTEGER NOT NULL,
                 contract_address BLOB,
                 logs BLOB,
                 accepted INTEGER,
@@ -507,11 +508,12 @@ impl Db {
             index: row.get(2)?,
             success: row.get(3)?,
             gas_used: row.get(4)?,
-            contract_address: row.get::<_, Option<AddressSqlable>>(5)?.map(|a| a.into()),
-            logs: row.get::<_, VecLogSqlable>(6)?.into(),
-            accepted: row.get(7)?,
-            errors: row.get::<_, MapScillaErrorSqlable>(8)?.into(),
-            exceptions: row.get::<_, VecScillaExceptionSqlable>(9)?.into(),
+            cumulative_gas_used: row.get(5)?,
+            contract_address: row.get::<_, Option<AddressSqlable>>(6)?.map(|a| a.into()),
+            logs: row.get::<_, VecLogSqlable>(7)?.into(),
+            accepted: row.get(8)?,
+            errors: row.get::<_, MapScillaErrorSqlable>(9)?.into(),
+            exceptions: row.get::<_, VecScillaExceptionSqlable>(10)?.into(),
         })
     }
 
@@ -522,14 +524,15 @@ impl Db {
     ) -> Result<()> {
         sqlite_tx.execute(
             "INSERT INTO receipts
-                (tx_hash, block_hash, tx_index, success, gas_used, contract_address, logs, accepted, errors, exceptions)
-            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :contract_address, :logs, :accepted, :errors, :exceptions)",
+                (tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, accepted, errors, exceptions)
+            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :cumulative_gas_used, :contract_address, :logs, :accepted, :errors, :exceptions)",
             named_params! {
                 ":tx_hash": receipt.tx_hash,
                 ":block_hash": receipt.block_hash,
                 ":tx_index": receipt.index,
                 ":success": receipt.success,
                 ":gas_used": receipt.gas_used,
+                ":cumulative_gas_used": receipt.cumulative_gas_used,
                 ":contract_address": receipt.contract_address.map(AddressSqlable),
                 ":logs": VecLogSqlable(receipt.logs),
                 ":accepted": receipt.accepted,
@@ -545,14 +548,14 @@ impl Db {
     }
 
     pub fn get_transaction_receipt(&self, txn_hash: &Hash) -> Result<Option<TransactionReceipt>> {
-        Ok(self.block_store.lock().unwrap().query_row("SELECT tx_hash, block_hash, tx_index, success, gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1", [txn_hash], Self::make_receipt).optional()?)
+        Ok(self.block_store.lock().unwrap().query_row("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1", [txn_hash], Self::make_receipt).optional()?)
     }
 
     pub fn get_transaction_receipts_in_block(
         &self,
         block_hash: &Hash,
     ) -> Result<Vec<TransactionReceipt>> {
-        Ok(self.block_store.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
+        Ok(self.block_store.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
     }
 
     pub fn remove_transaction_receipts_in_block(&self, block_hash: &Hash) -> Result<()> {

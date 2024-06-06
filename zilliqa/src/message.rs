@@ -349,7 +349,7 @@ impl Display for QuorumCertificate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateQc {
     pub signature: NodeSignature,
-    pub signers: Vec<u16>,
+    pub cosigned: BitVec,
     pub view: u64,
     pub qcs: Vec<QuorumCertificate>,
 }
@@ -357,13 +357,10 @@ pub struct AggregateQc {
 impl AggregateQc {
     pub fn compute_hash(&self) -> Hash {
         let hashes: Vec<_> = self.qcs.iter().map(|qc| qc.compute_hash()).collect();
+        let signers = self.cosigned.as_raw_slice();
         Hash::compute([
             &self.signature.to_bytes(),
-            &self
-                .signers
-                .iter()
-                .flat_map(|signer| signer.to_be_bytes())
-                .collect::<Vec<_>>(),
+            signers,
             Hash::compute(
                 hashes
                     .iter()

@@ -2,7 +2,10 @@ use anyhow::Result;
 use futures::future::JoinAll;
 use tokio::{process::Command, sync::mpsc, task::JoinHandle};
 
-use crate::collector;
+use crate::{
+    collector,
+    components::{self, Component},
+};
 
 pub struct Runner {
     pub index: usize,
@@ -15,7 +18,18 @@ impl collector::Runner for Runner {
     }
 }
 
+pub fn get_zq2_dir(base_dir: &str) -> String {
+    format!("{base_dir}/zq2")
+}
+
 impl Runner {
+    pub async fn requirements() -> Result<components::Requirements> {
+        Ok(components::Requirements {
+            software: vec![],
+            repos: vec!["zq2".to_string()],
+        })
+    }
+
     pub async fn spawn(
         base_dir: &str,
         index: usize,
@@ -35,7 +49,7 @@ impl Runner {
         let join_handles = collector::spawn(
             &mut cmd,
             &exe_name,
-            &collector::Legend::new(collector::Program::Zq2, index)?,
+            &collector::Legend::new(Component::ZQ2, index)?,
             channel.clone(),
         )
         .await?;

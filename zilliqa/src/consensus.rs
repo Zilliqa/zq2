@@ -38,7 +38,6 @@ use crate::{
 #[derive(Debug)]
 struct NewViewVote {
     signatures: Vec<NodeSignature>,
-    signers: Vec<u16>,
     cosigned: BitVec,
     cosigned_weight: u128,
     qcs: Vec<QuorumCertificate>,
@@ -652,12 +651,9 @@ impl Consensus {
         cosigned: &BitSlice,
     ) -> Result<()> {
         debug!("apply rewards in view {view}");
-        // TODO: Read from a contract.
-        let rewards_per_hour = 204_000_000_000_000_000_000_000u128;
-        // TODO: Calculate
-        let blocks_per_hour = 50_000;
 
-        let rewards_per_block = rewards_per_hour / blocks_per_hour;
+        let rewards_per_block =
+            self.config.consensus.rewards_per_hour / self.config.consensus.blocks_per_hour as u128;
         let block = self.head_block();
         // Genesis is the earliest therefore let's not overflow with subtraction
         let parent_block = self
@@ -736,6 +732,7 @@ impl Consensus {
     }
 
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
+        let mut gas_left = self.config.consensus.eth_block_gas_limit;
         std::iter::from_fn(|| self.transaction_pool.best_transaction())
             .filter(|txn| {
                 let account_nonce = self.state.must_get_account(txn.signer).nonce;
@@ -746,6 +743,14 @@ impl Consensus {
                     .nonce()
                     .map(|tx_nonce| tx_nonce >= account_nonce)
                     .unwrap_or(true)
+            })
+            .take_while(|txn| {
+                if let Some(g) = gas_left.checked_sub(txn.tx.gas_limit()) {
+                    gas_left = g;
+                    true
+                } else {
+                    false
+                }
             })
             .collect()
     }
@@ -971,16 +976,18 @@ impl Consensus {
 
         let transactions = self.get_txns_to_execute();
 
-        let mut gas_used = EvmGas(0);
+        let mut gas_left = self.config.consensus.eth_block_gas_limit;
         let applied_transactions: Vec<_> = transactions
             .into_iter()
             .filter_map(|tx| {
                 self.apply_transaction(tx.clone(), parent_header, inspector::noop())
                     .transpose()
                     .map(|r| {
-                        r.map(|result| {
-                            gas_used += result.gas_used();
-                            tx
+                        r.and_then(|result| {
+                            gas_left = gas_left
+                                .checked_sub(result.gas_used())
+                                .ok_or_else(|| anyhow!("too much gas used"))?;
+                            Ok(tx)
                         })
                     })
             })
@@ -999,7 +1006,7 @@ impl Consensus {
             self.state.root_hash()?,
             applied_transaction_hashes.clone(),
             SystemTime::max(SystemTime::now(), parent_header.timestamp),
-            gas_used,
+            self.config.consensus.eth_block_gas_limit - gas_left,
         );
 
         self.state.set_to_root(previous_state_root_hash.into());
@@ -1092,16 +1099,14 @@ impl Consensus {
             debug!("ignoring new view from unknown node (buffer?) - committee size is : {:?} hash is: {:?} high hash is: {:?}", committee.len(), new_view.qc.block_hash, self.high_qc.block_hash);
             return Ok(None);
         };
+
         new_view.verify(public_key)?;
 
         // check if the sender's qc is higher than our high_qc or even higher than our view
         self.update_high_qc_and_view(false, new_view.qc.clone())?;
 
-        let committee_size = committee.len();
-
         let NewViewVote {
             mut signatures,
-            mut signers,
             mut cosigned,
             mut cosigned_weight,
             mut qcs,
@@ -1110,20 +1115,17 @@ impl Consensus {
             .remove(&new_view.view)
             .unwrap_or_else(|| NewViewVote {
                 signatures: Vec::new(),
-                signers: Vec::new(),
-                cosigned: bitvec![u8, bitvec::order::Msb0; 0; committee_size],
+                cosigned: bitvec![u8, bitvec::order::Msb0; 0; committee.len()],
                 cosigned_weight: 0,
                 qcs: Vec::new(),
             });
 
         let mut supermajority = false;
 
-        // the index is not checked here...
         // if the vote is new, store it
         if !cosigned[index] {
-            signatures.push(new_view.signature);
-            signers.push(index as u16);
             cosigned.set(index, true);
+            signatures.push(new_view.signature);
             let Some(weight) = self.state.get_stake(new_view.public_key)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
@@ -1132,7 +1134,7 @@ impl Consensus {
 
             supermajority = cosigned_weight * 3 > self.total_weight(&committee) * 2;
 
-            let num_signers = signers.len();
+            let num_signers = signatures.len();
             let current_view = self.view.get_view();
             trace!(
                 num_signers,
@@ -1155,7 +1157,7 @@ impl Consensus {
                 if new_view.view == self.view.get_view() {
                     // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
                     let agg =
-                        self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, signers)?;
+                        self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, cosigned)?;
                     let high_qc = self.get_highest_from_agg(&agg)?;
                     let parent_hash = high_qc.block_hash;
                     let parent = self
@@ -1201,7 +1203,6 @@ impl Consensus {
                 new_view.view,
                 NewViewVote {
                     signatures,
-                    signers,
                     cosigned,
                     cosigned_weight,
                     qcs,
@@ -1309,13 +1310,13 @@ impl Consensus {
         view: u64,
         qcs: Vec<QuorumCertificate>,
         signatures: &[NodeSignature],
-        signers: Vec<u16>,
+        cosigned: BitVec,
     ) -> Result<AggregateQc> {
         assert_eq!(qcs.len(), signatures.len());
-        assert_eq!(signatures.len(), signers.len());
+
         Ok(AggregateQc {
             signature: NodeSignature::aggregate(signatures)?,
-            signers,
+            cosigned,
             view,
             qcs,
         })
@@ -1526,7 +1527,7 @@ impl Consensus {
         self.verify_qc_signature(&block.qc, committee.clone())?;
         if let Some(agg) = &block.agg {
             // Check if the signers of the block's aggregate QC represent the supermajority
-            self.check_quorum_in_indices(&agg.signers, &committee)?;
+            self.check_quorum_in_indices(&agg.cosigned, &committee)?;
             // Verify the aggregate QC's signature
             self.batch_verify_agg_signature(agg, &committee)?;
         }
@@ -1788,11 +1789,12 @@ impl Consensus {
         agg: &AggregateQc,
         committee: &[NodePublicKey],
     ) -> Result<()> {
-        let public_keys: Vec<_> = agg
-            .signers
-            .iter()
-            .map(|i| *committee.get(*i as usize).unwrap())
-            .collect();
+        let mut public_keys = Vec::new();
+        for (index, bit) in agg.cosigned.iter().enumerate() {
+            if *bit {
+                public_keys.push(*committee.get(index).unwrap());
+            }
+        }
 
         let messages: Vec<_> = agg
             .qcs
@@ -1835,13 +1837,18 @@ impl Consensus {
         Ok(())
     }
 
-    fn check_quorum_in_indices(&self, signers: &[u16], committee: &[NodePublicKey]) -> Result<()> {
+    fn check_quorum_in_indices(&self, signers: &BitVec, committee: &[NodePublicKey]) -> Result<()> {
         let cosigned_sum: u128 = signers
             .iter()
-            .map(|i| {
-                let public_key = committee.get(*i as usize).unwrap();
-                let stake = self.state.get_stake(*public_key).unwrap().unwrap();
-                stake.get()
+            .enumerate()
+            .map(|(i, bit)| {
+                if *bit {
+                    let public_key = committee.get(i).unwrap();
+                    let stake = self.state.get_stake(*public_key).unwrap().unwrap();
+                    stake.get()
+                } else {
+                    0
+                }
             })
             .sum();
 
@@ -2065,6 +2072,7 @@ impl Consensus {
         }
 
         let mut block_receipts = Vec::new();
+        let mut cumulative_gas_used = EvmGas(0);
         for (tx_index, txn) in transactions.into_iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
@@ -2078,6 +2086,7 @@ impl Consensus {
             let success = result.success();
             let contract_address = result.contract_address();
             let gas_used = result.gas_used();
+            cumulative_gas_used += gas_used;
             let accepted = result.accepted();
             let (logs, errors, exceptions) = result.into_parts();
             let receipt = TransactionReceipt {
@@ -2088,6 +2097,7 @@ impl Consensus {
                 contract_address,
                 logs,
                 gas_used,
+                cumulative_gas_used,
                 accepted,
                 errors,
                 exceptions,

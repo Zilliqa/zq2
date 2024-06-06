@@ -11,7 +11,10 @@ use tokio::{
 };
 use zilliqa::crypto::SecretKey;
 
-use crate::{mitmweb, otterscan, spout, zq2};
+use crate::{
+    components::{Component, Requirements},
+    docs, mitmweb, otterscan, spout, zq2,
+};
 
 type Tx = mpsc::Sender<Message>;
 
@@ -24,34 +27,24 @@ pub enum Program {
     Otterscan,
     Spout,
     Mitmweb,
-}
-
-impl fmt::Display for Program {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Program::Zq2 => write!(f, "zq2"),
-            Program::Otterscan => write!(f, "otterscan"),
-            Program::Spout => write!(f, "spout"),
-            Program::Mitmweb => write!(f, "mitmweb"),
-        }
-    }
+    Docs,
 }
 
 #[derive(PartialEq, Clone)]
 pub struct Legend {
-    pub program: Program,
+    pub component: Component,
     pub index: usize,
 }
 
 impl fmt::Display for Legend {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{0}{1}", self.program, self.index)
+        write!(f, "{0}{1}", self.component, self.index)
     }
 }
 
 impl Legend {
-    pub fn new(program: Program, index: usize) -> Result<Self> {
-        Ok(Self { program, index })
+    pub fn new(component: Component, index: usize) -> Result<Self> {
+        Ok(Self { component, index })
     }
 
     pub fn get_color(&self) -> colored::Color {
@@ -138,6 +131,18 @@ impl Collector {
         })
     }
 
+    // Some question as to where this should go, but Program is notionally logic-free, so here for now.
+    pub async fn fetch_requirements(p: &Program) -> Result<Requirements> {
+        let r = match p {
+            Program::Zq2 => zq2::Runner::requirements().await?,
+            Program::Otterscan => otterscan::Runner::requirements().await?,
+            Program::Spout => spout::Runner::requirements().await?,
+            Program::Mitmweb => mitmweb::Runner::requirements().await?,
+            Program::Docs => docs::Runner::requirements().await?,
+        };
+        Ok(r)
+    }
+
     pub async fn start_zq2_node(
         &mut self,
         base_dir: &str,
@@ -199,6 +204,13 @@ impl Collector {
                 base_dir, index, from_port, to_port, mgmt_port, &self.tx,
             )
             .await?,
+        ));
+        Ok(())
+    }
+
+    pub async fn start_docs(&mut self, base_dir: &str, listen_hostport: &str) -> Result<()> {
+        self.runners.push(Box::new(
+            docs::Runner::spawn_docs(base_dir, listen_hostport, &self.tx).await?,
         ));
         Ok(())
     }

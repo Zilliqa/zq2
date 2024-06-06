@@ -6,4 +6,4 @@ trap 'kill $(jobs -p) 2>/dev/null' EXIT
 /scilla/0/bin/scilla-server-http &
 
 # Start Zilliqa
-/zilliqa $1
+/zilliqa $@

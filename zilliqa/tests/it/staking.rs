@@ -83,6 +83,41 @@ async fn get_stakers(
         .collect()
 }
 
+async fn get_minimum_deposit(
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+) -> u128 {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .data(contracts::deposit::MIN_DEPOSIT.encode_input(&[]).unwrap());
+    let deposit = wallet.call(&tx.into(), None).await.unwrap();
+
+    let deposit = contracts::deposit::MIN_DEPOSIT
+        .decode_output(&deposit)
+        .unwrap()[0]
+        .clone()
+        .into_uint()
+        .unwrap();
+
+    deposit.as_u128()
+}
+
+#[zilliqa_macros::test]
+async fn minimum_stake_is_properly_set(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let deposit = get_minimum_deposit(&wallet).await;
+    assert_eq!(
+        deposit,
+        network.nodes[0]
+            .inner
+            .lock()
+            .unwrap()
+            .config
+            .consensus
+            .minimum_stake
+    );
+}
+
 #[zilliqa_macros::test]
 async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
     let wallet = network.random_wallet().await;
