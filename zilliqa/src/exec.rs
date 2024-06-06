@@ -410,11 +410,10 @@ impl State {
     ) -> Result<ScillaResultAndState> {
         let mut state = PendingState::new(self.try_clone()?);
 
-        let has_code = !txn.to_addr.is_zero()
-            && matches!(
-                state.load_account(txn.to_addr)?.account.code,
-                Code::Scilla { .. }
-            );
+        let has_code = matches!(
+            state.load_account(txn.to_addr)?.account.code,
+            Code::Scilla { .. }
+        );
 
         let deposit = total_scilla_gas_price(txn.gas_limit, txn.gas_price);
         if let Some(result) = state.deduct_from_account(from_addr, deposit)? {
@@ -510,7 +509,10 @@ impl State {
                             storage.remove_by_prefix(&storage_key(var, indices))?;
                         }
 
-                        // Add the next level of index before making the recursive call.
+                        // We will iterate over each key-value pair in this map and make a recursive call to this
+                        // function with the given value. Before each call, we need to make sure we update `inidices`
+                        // to include the key. To avoid changing the length of the `Vec` in each iteration, we first
+                        // add a dummy index (`vec![]`) and update it before each call.
                         indices.push(vec![]);
                         for (k, v) in map {
                             indices.last_mut().unwrap().clone_from(k);
@@ -919,7 +921,7 @@ impl PendingState {
         let mut current = account
             .storage
             .entry(var_name.to_owned())
-            .or_insert_with(StorageValue::incomplete);
+            .or_insert_with(StorageValue::incomplete_map);
         for key in indices {
             let current_map = match current {
                 StorageValue::Map { map, .. } => map,
@@ -927,12 +929,14 @@ impl PendingState {
                     return Err(anyhow!("expected a map"));
                 }
                 StorageValue::Value(None) => {
-                    unimplemented!("deletes of whole maps are unsupported")
+                    // This branch is unreachable because `update_state_value` in `ActiveCall` asserts that a deletion
+                    // can only occur at the same depth as a variable.
+                    unreachable!("deletes of whole maps are unsupported")
                 }
             };
             let child = current_map
                 .entry(key.clone())
-                .or_insert_with(StorageValue::incomplete);
+                .or_insert_with(StorageValue::incomplete_map);
             current = child;
         }
 
@@ -957,7 +961,7 @@ impl PendingState {
             let mut cached = true;
             let mut current = storage.entry(var_name.to_owned()).or_insert_with(|| {
                 cached = false;
-                StorageValue::incomplete()
+                StorageValue::incomplete_map()
             });
             for key in indices {
                 let current_map = match current {
@@ -966,12 +970,14 @@ impl PendingState {
                         return Err(anyhow!("expected a map"));
                     }
                     StorageValue::Value(None) => {
-                        unimplemented!("deletes of whole maps are unsupported")
+                        // This branch is unreachable because `update_state_value` in `ActiveCall` asserts that a deletion
+                        // can only occur at the same depth as a variable.
+                        unreachable!("deletes of whole maps are unsupported")
                     }
                 };
                 let child = current_map.entry(key.clone()).or_insert_with(|| {
                     cached = false;
-                    StorageValue::incomplete()
+                    StorageValue::incomplete_map()
                 });
                 current = child;
             }
@@ -1015,7 +1021,7 @@ impl PendingState {
             .iter_by_prefix(&storage_key(var_name, indices))?
             .collect();
 
-        let mut map = StorageValue::complete();
+        let mut map = StorageValue::complete_map();
         let cached = account.storage.get(var_name);
 
         // Un-flatten the values from disk into their true representation.
@@ -1048,8 +1054,8 @@ impl PendingState {
                     }
                 };
                 // Note that we insert 'complete' maps here, because we know we are going to add *ALL* values from
-                // within this map.
-                current_value = map.entry(index).or_insert_with(StorageValue::complete);
+                // with this prefix.
+                current_value = map.entry(index).or_insert_with(StorageValue::complete_map);
             }
 
             *current_value = if let Some(cached) = current_cached {
@@ -1114,18 +1120,19 @@ pub enum StorageValue {
         map: BTreeMap<Vec<u8>, StorageValue>,
         complete: bool,
     },
+    /// A value can either be `Some(bytes)` to represent an updated value or `None` to represent a deleted value.
     Value(Option<Bytes>),
 }
 
 impl StorageValue {
-    pub fn incomplete() -> StorageValue {
+    pub fn incomplete_map() -> StorageValue {
         StorageValue::Map {
             map: BTreeMap::new(),
             complete: false,
         }
     }
 
-    pub fn complete() -> StorageValue {
+    pub fn complete_map() -> StorageValue {
         StorageValue::Map {
             map: BTreeMap::new(),
             complete: true,
