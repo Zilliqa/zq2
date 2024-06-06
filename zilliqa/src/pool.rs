@@ -135,22 +135,22 @@ impl TransactionPool {
 
     pub fn preview_content(&self) -> TxPoolContent {
         // First make a copy of 'ready' transactions
-        let mut ready: BinaryHeap<ReadyItem> = BinaryHeap::new();
-        for item in self.ready.iter() {
-            ready.push(*item);
-        }
+        let mut ready = self.ready.clone();
 
         let mut pending = Vec::new();
         let mut pending_set = HashSet::new();
 
         // Find all transactions that are pending for inclusion in the next block
         while let Some(ReadyItem { tx_index, .. }) = ready.pop() {
-            // Should we care about nonceless txns?
+            // We don't include nonceless txns because the way we present results on API level requires having proper nonce
             if let TxIndex::Intershard(_, _) = tx_index {
                 continue;
             }
 
-            // Expired txn?
+            // A transaction might have been ready, but it might have gotten popped
+            // or the sender's nonce might have increased, making it invalid. In this case,
+            // we will have a stale reference would still exist in the heap.
+            //
             let Some(txn) = self.transactions.get(&tx_index) else {
                 continue;
             };
