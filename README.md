@@ -41,6 +41,13 @@ Run:
 docker-compose up
 ```
 
+## Node configuration
+
+Nodes are configured by TOML files.
+Pass the path to configuration files on the command line with `-c` or `--config-file`.
+If multiple configuration files are provided, they will be merged together.
+If a configuration key occurs in more than one configuration file, the process will exit with an error.
+
 ## Testing
 
 The tests can be run with `cargo test`.
