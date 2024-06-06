@@ -1,7 +1,10 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
-use alloy_rpc_types_trace::parity::{TraceResults, TraceType};
+use alloy_rpc_types_trace::{
+    geth::{GethDebugTracingOptions, TraceResult},
+    parity::{TraceResults, TraceType},
+};
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use revm::Inspector;
@@ -397,6 +400,56 @@ impl Node {
         }
 
         Err(anyhow!("transaction not found in block: {txn_hash}"))
+    }
+
+    pub fn debug_trace_block_by_number(
+        &self,
+        block_number: BlockNumber,
+        trace_opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>> {
+        let block = self
+            .get_block_by_blocknum(block_number)?
+            .ok_or_else(|| anyhow!("missing block: {}", block_number))?;
+        let parent = self
+            .get_block_by_hash(block.parent_hash())?
+            .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
+        let mut state = self
+            .consensus
+            .state()
+            .at_root(parent.state_root_hash().into());
+
+        let mut traces: Vec<TraceResult> = Vec::new();
+
+        let GethDebugTracingOptions { config, .. } = trace_opts;
+
+        for txn_hash in block.transactions {
+            let txn = self
+                .get_transaction_by_hash(txn_hash)?
+                .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
+            let inspector_config = TracingInspectorConfig::from_geth_config(&config);
+            let mut inspector = TracingInspector::new(inspector_config);
+
+            let result =
+                state.apply_transaction(txn, self.get_chain_id(), parent.header, &mut inspector)?;
+
+            let TransactionApplyResult::Evm(result) = result else {
+                // What about scilla->evm interop txns?
+                continue;
+            };
+
+            let builder = inspector.into_geth_builder();
+            let trace = builder.geth_traces(
+                result.result.gas_used(),
+                result.result.into_output().unwrap_or_default(),
+                config,
+            );
+            traces.push(TraceResult::Success {
+                result: trace.into(),
+                tx_hash: Some(txn_hash.0.into()),
+            });
+        }
+
+        Ok(traces)
     }
 
     pub fn call_contract(
