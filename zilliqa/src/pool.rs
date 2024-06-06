@@ -94,7 +94,7 @@ impl Ord for ReadyItem {
 impl From<&VerifiedTransaction> for ReadyItem {
     fn from(txn: &VerifiedTransaction) -> Self {
         ReadyItem {
-            gas_price: txn.tx.gas_price(),
+            gas_price: txn.tx.gas_price_per_evm_gas(),
             tx_index: txn.mempool_index(),
         }
     }
@@ -292,11 +292,26 @@ mod tests {
         pool.insert_transaction(intershard_transaction(0, 1, 5), 0);
         assert_eq!(pool.size(), 5);
 
-        assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 5);
-        assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 3);
-        assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 2);
-        assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 1);
-        assert_eq!(pool.best_transaction().unwrap().tx.gas_price(), 0);
+        assert_eq!(
+            pool.best_transaction().unwrap().tx.gas_price_per_evm_gas(),
+            5
+        );
+        assert_eq!(
+            pool.best_transaction().unwrap().tx.gas_price_per_evm_gas(),
+            3
+        );
+        assert_eq!(
+            pool.best_transaction().unwrap().tx.gas_price_per_evm_gas(),
+            2
+        );
+        assert_eq!(
+            pool.best_transaction().unwrap().tx.gas_price_per_evm_gas(),
+            1
+        );
+        assert_eq!(
+            pool.best_transaction().unwrap().tx.gas_price_per_evm_gas(),
+            0
+        );
         assert_eq!(pool.size(), 0);
     }
 

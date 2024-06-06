@@ -3,7 +3,7 @@
 use std::{
     fmt::Display,
     str::FromStr,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex},
 };
 
 use alloy_primitives::{Address, B256};
@@ -24,10 +24,7 @@ use crate::{
     node::Node,
     schnorr,
     state::{Contract, ScillaValue},
-    transaction::{
-        ScillaGas, SignedTransaction, TxZilliqa, VerifiedTransaction, ZilAmount,
-        EVM_GAS_PER_SCILLA_GAS,
-    },
+    transaction::{ScillaGas, SignedTransaction, TxZilliqa, ZilAmount, EVM_GAS_PER_SCILLA_GAS},
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -162,18 +159,22 @@ fn get_contract_address_from_transaction_id(
     Ok(contract_address.to_hex_no_prefix())
 }
 
-fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<GetTxResponse>> {
+fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<GetTxResponse> {
     let jsonrpc_error_data: Option<String> = None;
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
 
-    let tx = get_scilla_transaction_inner(hash, &node.lock().unwrap())?.ok_or_else(|| {
-        jsonrpsee::types::ErrorObject::owned(
-            RPCErrorCode::RpcDatabaseError as i32,
-            "Txn Hash not Present".to_string(),
-            jsonrpc_error_data.clone(),
-        )
-    })?;
+    let tx = node
+        .lock()
+        .unwrap()
+        .get_transaction_by_hash(hash)?
+        .ok_or_else(|| {
+            jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcDatabaseError as i32,
+                "Txn Hash not Present".to_string(),
+                jsonrpc_error_data.clone(),
+            )
+        })?;
     let receipt = node
         .lock()
         .unwrap()
@@ -191,21 +192,7 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<Get
         .get_block_by_hash(receipt.block_hash)?
         .ok_or_else(|| anyhow!("block does not exist"))?;
 
-    Ok(GetTxResponse::new(tx, receipt, block.number()))
-}
-
-pub(super) fn get_scilla_transaction_inner(
-    hash: Hash,
-    node: &MutexGuard<Node>,
-) -> Result<Option<VerifiedTransaction>> {
-    let Some(tx) = node.get_transaction_by_hash(hash)? else {
-        return Ok(None);
-    };
-
-    match tx.tx {
-        SignedTransaction::Zilliqa { .. } => Ok(Some(tx)),
-        _ => Ok(None),
-    }
+    GetTxResponse::new(tx, receipt, block.number())
 }
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
