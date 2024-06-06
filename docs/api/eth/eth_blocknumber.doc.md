@@ -1,14 +1,14 @@
 # Title
 
-eth_accounts
+eth_blockNumber
 
 # Keywords
 
-accounts
+block,number,count
 
 # Description
 
-Returns a list of addresses for the accounts owned by this client. Not applicable in Zilliqa 2.0 and thus returns the empty list.
+Returns a hexadecimal integer representing the most recent block this node has executed and knows to be final.
 
 # Curl
 
@@ -16,15 +16,14 @@ Returns a list of addresses for the accounts owned by this client. Not applicabl
 curl -d '{
     "id": "1",
     "jsonrpc": "2.0",
-    "method": "eth_accounts"
+    "method": "eth_blockNumber"
 }' -H "Content-Type: application/json" -X POST "{{ _api_url }}"
 ```
 
 # Response
 
-
-```sh
-{"jsonrpc":"2.0","result":[],"id":"1"}
+```json
+{"jsonrpc":"2.0","result":"0x4b3","id":1}
 ```
 
 # Arguments
