@@ -2103,7 +2103,7 @@ impl Consensus {
             let gas_used = result.gas_used();
             cumulative_gas_used += gas_used;
             let accepted = result.accepted();
-            let (logs, errors, exceptions) = result.into_parts();
+            let (logs, transitions, errors, exceptions) = result.into_parts();
             let receipt = TransactionReceipt {
                 block_hash: block.hash(),
                 tx_hash,
@@ -2111,6 +2111,7 @@ impl Consensus {
                 success,
                 contract_address,
                 logs,
+                transitions,
                 gas_used,
                 cumulative_gas_used,
                 accepted,

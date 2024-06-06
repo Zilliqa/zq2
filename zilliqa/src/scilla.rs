@@ -398,8 +398,8 @@ pub struct ParamValue {
 pub struct Message {
     #[serde(rename = "_tag")]
     pub tag: String,
-    #[serde(rename = "_amount")]
-    pub amount: String,
+    #[serde(rename = "_amount", with = "num_as_str")]
+    pub amount: ZilAmount,
     #[serde(rename = "_recipient")]
     pub recipient: Address,
     pub params: Value,
