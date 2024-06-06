@@ -1110,40 +1110,14 @@ pub struct LocalRpcClient {
     subscriptions: Arc<Mutex<HashMap<u64, mpsc::Receiver<String>>>>,
 }
 
-#[async_trait]
-impl PubsubClient for LocalRpcClient {
-    type NotificationStream = Pin<Box<dyn Stream<Item = Box<RawValue>> + Send + Sync + 'static>>;
-
-    fn subscribe<T: Into<U256>>(&self, id: T) -> Result<Self::NotificationStream, Self::Error> {
-        let id: U256 = id.into();
-        let rx = self
-            .subscriptions
-            .lock()
-            .unwrap()
-            .remove(&id.as_u64())
-            .unwrap();
-        Ok(Box::pin(ReceiverStream::new(rx).map(|s| {
-            serde_json::value::to_raw_value(
-                &serde_json::from_str::<Notification<Value>>(&s)
-                    .unwrap()
-                    .params["result"],
-            )
-            .unwrap()
-        })))
-    }
-
-    fn unsubscribe<T: Into<U256>>(&self, id: T) -> Result<(), Self::Error> {
-        let id: U256 = id.into();
-        self.subscriptions.lock().unwrap().remove(&id.as_u64());
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl JsonRpcClient for LocalRpcClient {
-    type Error = HttpClientError;
-
-    async fn request<T, R>(&self, method: &str, params: T) -> Result<R, Self::Error>
+impl LocalRpcClient {
+    /// A version of request that allows the params to be optional, so we can test behaviour under
+    /// those circumstances.
+    async fn request_optional<T, R>(
+        &self,
+        method: &str,
+        params: Option<T>,
+    ) -> Result<R, <LocalRpcClient as JsonRpcClient>::Error>
     where
         T: Debug + Serialize + Send + Sync,
         R: DeserializeOwned + Send,
@@ -1153,11 +1127,13 @@ impl JsonRpcClient for LocalRpcClient {
         // produces integers and `ethers-rs` expects hex-encoded integers. Our hacks convert to this encoding.
 
         let next_id = self.id.fetch_add(1, Ordering::SeqCst);
-        let mut params: Value = serde_json::to_value(&params).unwrap();
+        let mut params: Option<Value> = params.map(|p| serde_json::to_value(&p).unwrap());
         if method == "eth_unsubscribe" {
-            let id = params.as_array_mut().unwrap().get_mut(0).unwrap();
-            let str_id = id.as_str().unwrap().strip_prefix("0x").unwrap();
-            *id = u64::from_str_radix(str_id, 16).unwrap().into();
+            params.iter_mut().for_each(|p| {
+                let id = p.as_array_mut().unwrap().get_mut(0).unwrap();
+                let str_id = id.as_str().unwrap().strip_prefix("0x").unwrap();
+                *id = u64::from_str_radix(str_id, 16).unwrap().into();
+            });
         }
         let payload = RequestSer::owned(
             Id::Number(next_id),
@@ -1202,5 +1178,47 @@ impl JsonRpcClient for LocalRpcClient {
 
         let r = Rc::try_unwrap(r.into_owned()).unwrap_or_else(|_| panic!());
         Ok(r)
+    }
+}
+
+#[async_trait]
+impl PubsubClient for LocalRpcClient {
+    type NotificationStream = Pin<Box<dyn Stream<Item = Box<RawValue>> + Send + Sync + 'static>>;
+
+    fn subscribe<T: Into<U256>>(&self, id: T) -> Result<Self::NotificationStream, Self::Error> {
+        let id: U256 = id.into();
+        let rx = self
+            .subscriptions
+            .lock()
+            .unwrap()
+            .remove(&id.as_u64())
+            .unwrap();
+        Ok(Box::pin(ReceiverStream::new(rx).map(|s| {
+            serde_json::value::to_raw_value(
+                &serde_json::from_str::<Notification<Value>>(&s)
+                    .unwrap()
+                    .params["result"],
+            )
+            .unwrap()
+        })))
+    }
+
+    fn unsubscribe<T: Into<U256>>(&self, id: T) -> Result<(), Self::Error> {
+        let id: U256 = id.into();
+        self.subscriptions.lock().unwrap().remove(&id.as_u64());
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl JsonRpcClient for LocalRpcClient {
+    type Error = HttpClientError;
+
+    async fn request<T, R>(&self, method: &str, params: T) -> Result<R, Self::Error>
+    where
+        T: Debug + Serialize + Send + Sync,
+        R: DeserializeOwned + Send,
+    {
+        self.request_optional(method, Some(params)).await
     }
 }
