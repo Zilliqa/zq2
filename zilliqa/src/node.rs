@@ -21,6 +21,7 @@ use crate::{
         BlockResponse, ExternalMessage, InternalMessage, IntershardCall, Proposal,
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
+    pool::TxPoolContent,
     state::{Account, State},
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
@@ -589,6 +590,10 @@ impl Node {
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
         self.consensus.get_transaction_by_hash(hash)
+    }
+
+    pub fn txpool_content(&self) -> TxPoolContent {
+        self.consensus.txpool_content()
     }
 
     fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
