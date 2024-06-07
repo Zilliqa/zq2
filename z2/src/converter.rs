@@ -126,10 +126,13 @@ pub async fn convert_persistence(
         Token::Address(ethabi::Address::from_low_u64_be(1)),
         Token::Uint((64 * 10u128.pow(18)).into()),
     ])?;
-    let ResultAndState {
-        result,
-        state: result_state,
-    } = state.apply_transaction_evm(
+    let (
+        ResultAndState {
+            result,
+            state: result_state,
+        },
+        ..,
+    ) = state.apply_transaction_evm(
         Address::ZERO,
         Some(contract_addr::DEPOSIT),
         node_config.consensus.gas_price,

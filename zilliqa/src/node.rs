@@ -2,13 +2,19 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_trace::{
-    geth::{GethDebugTracingOptions, TraceResult},
+    geth::{
+        FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
+        GethTrace, NoopFrame, TraceResult,
+    },
     parity::{TraceResults, TraceType},
 };
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use revm::Inspector;
-use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
+use revm_inspectors::tracing::{
+    js::{JsInspector, TransactionContext},
+    FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
+};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
@@ -342,7 +348,7 @@ impl Node {
                     &mut inspector,
                 )?;
 
-                let TransactionApplyResult::Evm(result) = result else {
+                let TransactionApplyResult::Evm(result, ..) = result else {
                     return Err(anyhow!("not an EVM transaction"));
                 };
 
@@ -420,21 +426,55 @@ impl Node {
 
         let mut traces: Vec<TraceResult> = Vec::new();
 
-        let GethDebugTracingOptions { config, .. } = trace_opts;
+        for (index, &txn_hash) in block.transactions.iter().enumerate() {
+            if let Ok(Some(trace)) = self.debug_trace_transaction(
+                &mut state,
+                txn_hash,
+                index,
+                &block,
+                &parent,
+                trace_opts.clone(),
+            ) {
+                traces.push(trace);
+            }
+        }
 
-        for txn_hash in block.transactions {
-            let txn = self
-                .get_transaction_by_hash(txn_hash)?
-                .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
+        Ok(traces)
+    }
+
+    fn debug_trace_transaction(
+        &self,
+        state: &mut State,
+        txn_hash: Hash,
+        txn_index: usize,
+        block: &Block,
+        parent_block: &Block,
+        trace_opts: GethDebugTracingOptions,
+    ) -> Result<Option<TraceResult>> {
+        let GethDebugTracingOptions {
+            config,
+            tracer,
+            tracer_config,
+            ..
+        } = trace_opts;
+
+        let txn = self
+            .get_transaction_by_hash(txn_hash)?
+            .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
+
+        let Some(tracer) = tracer else {
             let inspector_config = TracingInspectorConfig::from_geth_config(&config);
             let mut inspector = TracingInspector::new(inspector_config);
 
-            let result =
-                state.apply_transaction(txn, self.get_chain_id(), parent.header, &mut inspector)?;
+            let result = state.apply_transaction(
+                txn,
+                self.get_chain_id(),
+                parent_block.header,
+                &mut inspector,
+            )?;
 
-            let TransactionApplyResult::Evm(result) = result else {
-                // What about scilla->evm interop txns?
-                continue;
+            let TransactionApplyResult::Evm(result, ..) = result else {
+                return Ok(None);
             };
 
             let builder = inspector.into_geth_builder();
@@ -443,13 +483,146 @@ impl Node {
                 result.result.into_output().unwrap_or_default(),
                 config,
             );
-            traces.push(TraceResult::Success {
+            return Ok(Some(TraceResult::Success {
                 result: trace.into(),
                 tx_hash: Some(txn_hash.0.into()),
-            });
-        }
+            }));
+        };
 
-        Ok(traces)
+        match tracer {
+            GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
+                GethDebugBuiltInTracerType::CallTracer => {
+                    let call_config = tracer_config.into_call_config()?;
+                    let mut inspector = TracingInspector::new(
+                        TracingInspectorConfig::from_geth_call_config(&call_config),
+                    );
+
+                    let result = state.apply_transaction(
+                        txn,
+                        self.get_chain_id(),
+                        parent_block.header,
+                        &mut inspector,
+                    )?;
+
+                    let TransactionApplyResult::Evm(result, ..) = result else {
+                        return Ok(None);
+                    };
+
+                    let trace = inspector
+                        .into_geth_builder()
+                        .geth_call_traces(call_config, result.result.gas_used());
+
+                    Ok(Some(TraceResult::Success {
+                        result: trace.into(),
+                        tx_hash: Some(txn_hash.0.into()),
+                    }))
+                }
+                GethDebugBuiltInTracerType::FourByteTracer => {
+                    let mut inspector = FourByteInspector::default();
+                    let result = state.apply_transaction(
+                        txn,
+                        self.get_chain_id(),
+                        parent_block.header,
+                        &mut inspector,
+                    )?;
+
+                    let TransactionApplyResult::Evm(_, _) = result else {
+                        return Ok(None);
+                    };
+
+                    Ok(Some(TraceResult::Success {
+                        result: FourByteFrame::from(inspector).into(),
+                        tx_hash: Some(txn_hash.0.into()),
+                    }))
+                }
+                GethDebugBuiltInTracerType::MuxTracer => {
+                    let mux_config = tracer_config.into_mux_config()?;
+
+                    let mut inspector = MuxInspector::try_from_config(mux_config)?;
+                    let result = state.apply_transaction(
+                        txn,
+                        self.get_chain_id(),
+                        parent_block.header,
+                        &mut inspector,
+                    )?;
+
+                    let TransactionApplyResult::Evm(result, ..) = result else {
+                        return Ok(None);
+                    };
+                    let state_ref = &(*state);
+                    let trace = inspector.try_into_mux_frame(&result, &state_ref)?;
+                    Ok(Some(TraceResult::Success {
+                        result: trace.into(),
+                        tx_hash: Some(txn_hash.0.into()),
+                    }))
+                }
+                GethDebugBuiltInTracerType::NoopTracer => Ok(Some(TraceResult::Success {
+                    result: NoopFrame::default().into(),
+                    tx_hash: Some(txn_hash.0.into()),
+                })),
+                GethDebugBuiltInTracerType::PreStateTracer => {
+                    let prestate_config = tracer_config.into_pre_state_config()?;
+
+                    let mut inspector = TracingInspector::new(
+                        TracingInspectorConfig::from_geth_prestate_config(&prestate_config),
+                    );
+                    let result = state.apply_transaction(
+                        txn,
+                        self.get_chain_id(),
+                        parent_block.header,
+                        &mut inspector,
+                    )?;
+
+                    let TransactionApplyResult::Evm(result, ..) = result else {
+                        return Ok(None);
+                    };
+                    let state_ref = &(*state);
+                    let trace = inspector.into_geth_builder().geth_prestate_traces(
+                        &result,
+                        prestate_config,
+                        state_ref,
+                    )?;
+
+                    Ok(Some(TraceResult::Success {
+                        result: trace.into(),
+                        tx_hash: Some(txn_hash.0.into()),
+                    }))
+                }
+            },
+            // JS tracer is incompatible with
+            GethDebugTracerType::JsTracer(js_code) => {
+                let config = tracer_config.into_json();
+
+                let transaction_context = TransactionContext {
+                    block_hash: Some(block.hash().0.into()),
+                    tx_hash: Some(txn_hash.0.into()),
+                    tx_index: txn_index.into(),
+                };
+                let mut inspector =
+                    JsInspector::with_transaction_context(js_code, config, transaction_context)
+                        .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
+
+                let result = state.apply_transaction(
+                    txn,
+                    self.get_chain_id(),
+                    parent_block.header,
+                    &mut inspector,
+                )?;
+
+                let TransactionApplyResult::Evm(result, env) = result else {
+                    return Ok(None);
+                };
+                let state_ref = &(*state);
+                let result = inspector
+                    .json_result(result, &env, &state_ref)
+                    .map_err(|e| anyhow!("Unable to create json result: {e}"))?;
+
+                Ok(Some(TraceResult::Success {
+                    result: GethTrace::JS(result),
+                    tx_hash: Some(txn_hash.0.into()),
+                }))
+            }
+        }
     }
 
     pub fn call_contract(

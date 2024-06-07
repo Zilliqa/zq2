@@ -106,10 +106,13 @@ impl State {
                 Token::Address(ethabi::Address::from(reward_address.into_array())),
                 Token::Uint(ethabi::Uint::from_dec_str(&stake)?),
             ])?;
-            let ResultAndState {
-                result,
-                state: result_state,
-            } = state.apply_transaction_evm(
+            let (
+                ResultAndState {
+                    result,
+                    state: result_state,
+                },
+                ..,
+            ) = state.apply_transaction_evm(
                 Address::ZERO,
                 Some(contract_addr::DEPOSIT),
                 config.gas_price,
