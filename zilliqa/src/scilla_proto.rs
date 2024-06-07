@@ -20,6 +20,20 @@ pub struct ProtoScillaVal {
     pub val_type: Option<ValType>,
 }
 
+impl ProtoScillaVal {
+    pub fn map(m: HashMap<String, ProtoScillaVal>) -> ProtoScillaVal {
+        ProtoScillaVal {
+            val_type: Some(ValType::Mval(Map { m })),
+        }
+    }
+
+    pub fn bytes(b: Vec<u8>) -> ProtoScillaVal {
+        ProtoScillaVal {
+            val_type: Some(ValType::Bval(b)),
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Oneof)]
 pub enum ValType {
     #[prost(bytes, tag = "1")]

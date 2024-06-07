@@ -23,7 +23,7 @@ use crate::{
     message::BlockNumber,
     node::Node,
     schnorr,
-    state::{Contract, ScillaValue},
+    scilla::split_storage_key,
     transaction::{ScillaGas, SignedTransaction, TxZilliqa, ZilAmount, EVM_GAS_PER_SCILLA_GAS},
 };
 
@@ -279,35 +279,39 @@ fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let smart_contract_address: Address = params.one()?;
+    let address: Address = params.one()?;
     let node = node.lock().unwrap();
 
     // First get the account and check that its a scilla account
-    let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
+    let account = node.get_account(address, BlockNumber::Latest)?;
 
-    let mut result = json!({
+    let result = json!({
         "_balance": ZilAmount::from_amount(account.balance).to_string(),
     });
+    let Value::Object(mut result) = result else {
+        unreachable!()
+    };
 
-    fn convert(value: ScillaValue) -> Result<Value> {
-        let value = match value {
-            ScillaValue::Bytes(b) => serde_json::from_slice(&b)?,
-            ScillaValue::Map(m) => Value::Object(
-                m.into_iter()
-                    .map(|(k, v)| Ok((serde_json::from_str(&k)?, convert(v)?)))
-                    .collect::<Result<_>>()?,
-            ),
-        };
-        Ok(value)
-    }
-
-    if let Contract::Scilla { storage, .. } = account.contract {
-        for (k, (v, _)) in storage {
-            result[k] = convert(v)?;
+    let is_scilla = account.code.scilla_code_and_init_data().is_some();
+    if is_scilla {
+        let state = node.state_at(BlockNumber::Latest)?;
+        let trie = state.get_account_trie(address)?;
+        for (k, v) in trie.iter() {
+            let (var_name, indices) = split_storage_key(&k)?;
+            let mut var = result.entry(var_name);
+            for index in indices {
+                let next = var.or_insert_with(|| Value::Object(Default::default()));
+                let Value::Object(next) = next else {
+                    unreachable!()
+                };
+                let key: String = serde_json::from_slice(&index)?;
+                var = next.entry(key);
+            }
+            var.or_insert(serde_json::from_slice(&v)?);
         }
     }
 
-    Ok(result)
+    Ok(result.into())
 }
 
 fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
@@ -315,11 +319,11 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     let node = node.lock().unwrap();
     let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
 
-    if let Contract::Scilla { code, .. } = account.contract {
-        Ok(json!({ "code": code }))
-    } else {
-        Err(anyhow!("Address not contract address"))
-    }
+    let Some((code, _)) = account.code.scilla_code_and_init_data() else {
+        return Err(anyhow!("Address not contract address"));
+    };
+
+    Ok(json!({ "code": code }))
 }
 
 fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
@@ -327,11 +331,11 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     let node = node.lock().unwrap();
     let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
 
-    if let Contract::Scilla { init_data, .. } = account.contract {
-        Ok(serde_json::from_str(&init_data)?)
-    } else {
-        Err(anyhow!("Address not contract address"))
-    }
+    let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
+        return Err(anyhow!("Address not contract address"));
+    };
+
+    Ok(serde_json::from_str(&init_data)?)
 }
 
 fn get_transactions_for_tx_block(
@@ -399,14 +403,16 @@ fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Sm
     for i in 0..nonce {
         let contract_address = zil_contract_address(address, i);
 
-        let contract = node
+        let is_scilla = node
             .lock()
             .unwrap()
             .get_account(contract_address, BlockNumber::Latest)?
-            .contract;
+            .code
+            .scilla_code_and_init_data()
+            .is_some();
 
         // Note that we only expose created Scilla contracts in this API.
-        if matches!(contract, Contract::Scilla { .. }) {
+        if is_scilla {
             contracts.push(SmartContract {
                 address: contract_address,
             });

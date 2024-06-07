@@ -169,7 +169,7 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         .lock()
         .unwrap()
         .get_account(address, block_number)?
-        .contract
+        .code
         .evm_code()
         .unwrap_or_default()
         .to_hex())

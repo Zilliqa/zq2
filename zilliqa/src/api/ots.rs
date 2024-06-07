@@ -19,7 +19,6 @@ use crate::{
     inspector::{self, CreatorInspector, OtterscanOperationInspector, OtterscanTraceInspector},
     message::BlockNumber,
     node::Node,
-    state::Contract,
     time::SystemTime,
 };
 
@@ -231,15 +230,12 @@ fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
     let address: Address = params.next()?;
     let block_number: BlockNumber = params.next()?;
 
-    let contract = node
+    let empty = node
         .lock()
         .unwrap()
         .get_account(address, block_number)?
-        .contract;
-    let empty = match contract {
-        Contract::Evm { code, .. } => code.is_empty(),
-        Contract::Scilla { code, .. } => code.is_empty(),
-    };
+        .code
+        .is_eoa();
 
     Ok(!empty)
 }

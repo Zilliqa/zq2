@@ -242,6 +242,17 @@ where
         })
     }
 
+    pub fn remove_by_prefix(&mut self, prefix: &[u8]) -> TrieResult<()> {
+        // TODO(#1025): Optimise this
+        let keys: Vec<_> = self.iter_by_prefix(prefix)?.map(|(k, _)| k).collect();
+
+        for key in keys {
+            assert!(self.remove(&key)?);
+        }
+
+        Ok(())
+    }
+
     pub fn new(db: Arc<D>) -> Self {
         Self {
             root: Node::Empty,

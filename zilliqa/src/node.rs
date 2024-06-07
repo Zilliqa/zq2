@@ -512,6 +512,11 @@ impl Node {
         self.consensus.head_block().header.number
     }
 
+    pub fn state_at(&self, block_number: BlockNumber) -> Result<State> {
+        self.consensus
+            .try_get_state_at(self.get_number(block_number))
+    }
+
     pub fn get_account(&self, address: Address, block_number: BlockNumber) -> Result<Account> {
         self.consensus
             .try_get_state_at(self.get_number(block_number))?
