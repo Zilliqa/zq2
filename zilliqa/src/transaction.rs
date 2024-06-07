@@ -723,6 +723,7 @@ pub struct ScillaParam {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionReceipt {
     pub block_hash: crypto::Hash,
+    pub index: u64,
     pub tx_hash: crypto::Hash,
     pub success: bool,
     pub gas_used: EvmGas,

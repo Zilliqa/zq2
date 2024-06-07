@@ -559,10 +559,7 @@ impl Node {
         &self,
         block_hash: Hash,
     ) -> Result<Vec<TransactionReceipt>> {
-        Ok(self
-            .db
-            .get_transaction_receipts(&block_hash)?
-            .unwrap_or_default())
+        self.db.get_transaction_receipts_in_block(&block_hash)
     }
 
     pub fn get_finalized_height(&self) -> u64 {

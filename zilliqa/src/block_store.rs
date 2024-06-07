@@ -39,7 +39,7 @@ impl BlockStore {
         if let Some(block) = block_cache.get(&hash) {
             return Ok(Some(block.clone()));
         }
-        let Some(block) = self.db.get_block(&hash)? else {
+        let Some(block) = self.db.get_block_by_hash(&hash)? else {
             return Ok(None);
         };
         block_cache.put(hash, block.clone());
@@ -47,7 +47,7 @@ impl BlockStore {
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        let Some(hash) = self.db.get_canonical_block_view(view)? else {
+        let Some(hash) = self.db.get_block_hash_by_view(view)? else {
             return Ok(None);
         };
         self.get_block(hash)
@@ -61,7 +61,7 @@ impl BlockStore {
     }
 
     pub fn request_block_by_view(&mut self, view: u64) -> Result<()> {
-        if let Some(hash) = self.db.get_canonical_block_view(view)? {
+        if let Some(hash) = self.db.get_block_hash_by_view(view)? {
             self.request_block(hash)?;
         } else {
             self.message_sender
@@ -130,18 +130,16 @@ impl BlockStore {
         Ok(())
     }
 
-    pub fn set_canonical(&mut self, number: u64, view: u64, hash: Hash) -> Result<()> {
-        self.db.put_canonical_block_view(view, hash)?;
+    pub fn set_canonical(&mut self, number: u64, hash: Hash) -> Result<()> {
         self.db.put_canonical_block_number(number, hash)?;
         Ok(())
     }
 
     pub fn process_block(&mut self, block: Block) -> Result<()> {
         trace!(number = block.number(), hash = ?block.hash(), "insert block");
-        self.db.insert_block_header(&block.hash(), &block.header)?;
-        self.db.insert_block(&block.hash(), &block)?;
+        self.db.insert_block(&block)?;
         // TODO: Is this correct?
-        self.set_canonical(block.number(), block.view(), block.hash())?;
+        self.set_canonical(block.number(), block.hash())?;
         Ok(())
     }
 }

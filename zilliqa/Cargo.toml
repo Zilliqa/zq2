@@ -63,6 +63,7 @@ rand_chacha = "0.3.1"
 rand_core = "0.6.4"
 revm = { version = "9.0.0", features = ["optional_balance_check"] }
 revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors.git", rev = "5c47bc8" }
+rusqlite = { version = "0.31.0", features = ["bundled"] }
 serde = { version = "1.0.203", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"
 serde_json = { version = "1.0.117", features = ["raw_value"] }

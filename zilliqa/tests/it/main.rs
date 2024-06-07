@@ -398,7 +398,7 @@ impl Network {
             .collect();
 
         for nodes in &mut self.nodes {
-            nodes.inner.lock().unwrap().db.flush();
+            nodes.inner.lock().unwrap().db.flush_state();
         }
 
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
