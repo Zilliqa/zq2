@@ -17,6 +17,8 @@ struct Cli {
 enum Commands {
     /// Run a copy of Zilliqa 2
     Run(RunStruct),
+    /// Run only some components of Zilliqa 2
+    Only(OnlyStruct),
     /// Test
     Perf(PerfStruct),
     #[clap(subcommand)]
@@ -177,6 +179,46 @@ struct RunStruct {
     _no_docs: bool,
 }
 
+// See https://jwodder.github.io/kbits/posts/clap-bool-negate/
+#[derive(Args, Debug)]
+struct OnlyStruct {
+    config_dir: String,
+
+    #[clap(long)]
+    #[clap(default_value = "warn")]
+    log_level: LogLevel,
+
+    #[clap(long)]
+    debug_modules: Vec<String>,
+
+    #[clap(long)]
+    trace_modules: Vec<String>,
+
+    #[clap(long, default_value = "4000")]
+    base_port: u16,
+
+    #[clap(long = "restart-network")]
+    restart_network: bool,
+
+    #[clap(long = "otterscan", action =ArgAction::SetTrue)]
+    otterscan: bool,
+
+    #[clap(long = "otel", action = ArgAction::SetTrue)]
+    otel: bool,
+
+    #[clap(long = "zq2", action = ArgAction::SetTrue)]
+    zq2: bool,
+
+    #[clap(long = "spout", action = ArgAction::SetTrue)]
+    spout: bool,
+
+    #[clap(long = "mitmweb", action = ArgAction::SetTrue)]
+    mitmweb: bool,
+
+    #[clap(long = "docs", action = ArgAction::SetTrue)]
+    docs: bool,
+}
+
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
 enum LogLevel {
     Warn,
@@ -217,6 +259,42 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
+        Commands::Only(ref arg) => {
+            let mut to_run: HashSet<Component> = HashSet::new();
+
+            if arg.otterscan {
+                to_run.insert(Component::Otterscan);
+            }
+            if arg.otel {
+                to_run.insert(Component::Otel);
+            }
+            if arg.zq2 {
+                to_run.insert(Component::ZQ2);
+            }
+            if arg.spout {
+                to_run.insert(Component::Spout);
+            }
+            if arg.mitmweb {
+                to_run.insert(Component::Mitmweb);
+            }
+            if arg.docs {
+                to_run.insert(Component::Docs);
+            }
+
+            let keep_old_network = !arg.restart_network;
+            plumbing::run_local_net(
+                &base_dir,
+                arg.base_port,
+                &arg.config_dir,
+                &arg.log_level.to_string(),
+                &arg.debug_modules,
+                &arg.trace_modules,
+                &to_run,
+                keep_old_network,
+            )
+            .await?;
+            Ok(())
+        }
         Commands::Run(ref arg) => {
             let mut to_run: HashSet<Component> = HashSet::new();
 

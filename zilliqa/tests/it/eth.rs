@@ -1,5 +1,6 @@
 use std::{fmt::Debug, ops::DerefMut};
 
+use alloy_primitives::Address;
 use ethabi::{ethereum_types::U64, Token};
 use ethers::{
     abi::FunctionExt,
@@ -1119,4 +1120,29 @@ async fn new_transaction_subscription(mut network: Network) {
 
     assert!(txn_stream.unsubscribe().await.unwrap());
     assert!(hash_stream.unsubscribe().await.unwrap());
+}
+
+#[zilliqa_macros::test]
+async fn get_accounts_with_nonexistent_params(mut network: Network) {
+    let client = network.rpc_client(0).await.unwrap();
+    // Attempt to call eth_accounts (as a random example) with no parameters at all and check that the
+    // call succeeds and the result is empty.
+    let result = client
+        .request_optional::<(), Vec<Address>>("eth_accounts", None)
+        .await
+        .unwrap();
+
+    assert!(result.is_empty());
+}
+
+#[zilliqa_macros::test]
+async fn get_accounts_with_extra_args(mut network: Network) {
+    let client = network.rpc_client(0).await.unwrap();
+    // Attempt to call eth_accounts (as a random example) with no parameters at all and check that the
+    // call succeeds and the result is empty.
+    let result = client
+        .request_optional::<Vec<&str>, Vec<Address>>("eth_accounts", Some(vec!["extra"]))
+        .await;
+
+    assert!(result.is_err());
 }
