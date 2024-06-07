@@ -13,7 +13,9 @@ use alloy_rpc_types::{
 use anyhow::{anyhow, Result};
 use itertools::{Either, Itertools};
 use jsonrpsee::{
-    core::StringError, types::Params, PendingSubscriptionSink, RpcModule, SubscriptionMessage,
+    core::StringError,
+    types::{error::ErrorObjectOwned, params::ParamsSequence, Params},
+    PendingSubscriptionSink, RpcModule, SubscriptionMessage,
 };
 use serde::Deserialize;
 use tracing::*;
@@ -90,11 +92,31 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     module
 }
 
-fn accounts(_: Params, _: &Arc<Mutex<Node>>) -> Result<[(); 0]> {
+fn expect_end_of_params(seq: &mut ParamsSequence, min: u32, max: u32) -> Result<()> {
+    // Styled after the geth error message.
+    let msg = if min != max {
+        format!("too many arguments, want at most {max}")
+    } else {
+        format!("too many arguments, want {max}")
+    };
+    match seq.next::<serde_json::Value>() {
+        Ok(_) => Err(ErrorObjectOwned::owned(
+            jsonrpsee::types::error::INVALID_PARAMS_CODE,
+            msg,
+            Option::<String>::None,
+        )
+        .into()),
+        _ => Ok(()),
+    }
+}
+
+fn accounts(params: Params, _: &Arc<Mutex<Node>>) -> Result<[(); 0]> {
+    expect_end_of_params(&mut params.sequence(), 0, 0)?;
     Ok([])
 }
 
-fn block_number(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+fn block_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    expect_end_of_params(&mut params.sequence(), 0, 0)?;
     Ok(node.lock().unwrap().number().to_hex())
 }
 
@@ -102,7 +124,8 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("call: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
-    let block_number: BlockNumber = params.next()?;
+    let block_number: BlockNumber = params.optional_next()?.unwrap_or(BlockNumber::Latest);
+    expect_end_of_params(&mut params, 1, 2)?;
 
     let ret = node.lock().unwrap().call_contract(
         block_number,
@@ -124,7 +147,8 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(ret.to_hex())
 }
 
-fn chain_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+fn chain_id(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    expect_end_of_params(&mut params.sequence(), 0, 0)?;
     Ok(node.lock().unwrap().config.eth_chain_id.to_hex())
 }
 
@@ -132,7 +156,8 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("estimate_gas: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
-    let block_number: BlockNumber = params.next().unwrap_or(BlockNumber::Latest);
+    let block_number: BlockNumber = params.optional_next()?.unwrap_or(BlockNumber::Latest);
+    expect_end_of_params(&mut params, 1, 2)?;
 
     let return_value = node.lock().unwrap().estimate_gas(
         block_number,
@@ -151,6 +176,7 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let block_number: BlockNumber = params.next()?;
+    expect_end_of_params(&mut params, 2, 2)?;
 
     Ok(node
         .lock()

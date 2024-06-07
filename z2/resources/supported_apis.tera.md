@@ -27,20 +27,28 @@ Zilliqa 2 supports APIs from a number of sources:
    intended to be compatible with [the otterscan json-rpc API
    spec](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md).
 
- * Ethereum APIs (generally prefixes with `eth_`) are intended to be compatible with Zilliqa 1, [geth](https://geth.ethereum.org/) and [erigon](https://erigon.tech/). 
-   Some reference material is also taken from the [Ethereum JSON-RPC spec](https://ethereum.github.io/execution-apis/api-documentation/),  [quicknode](https://www.quicknode.com/docs/ethereum), [infura](docs.infura.io) and [alchemy](https://docs.alchemy.com/reference).
+ * Ethereum APIs (generally prefixed with `eth_`) are specified by the
+   [Ethereum JSON-RPC
+   spec](https://ethereum.github.io/execution-apis/api-documentation/)
+   and intended to be compatible with Zilliqa 1,
+   [geth](https://geth.ethereum.org/) and
+   [erigon](https://erigon.tech/).  Some reference material is also
+   taken from [quicknode](https://www.quicknode.com/docs/ethereum),
+   [infura](docs.infura.io) and
+   [alchemy](https://docs.alchemy.com/reference).
 
-  * Zilliqa APIs are intended, as far as possible, to be compatible with existing Zilliqa 1 applications. There are various differences due to the different construction of Zilliqa 2 which are noted on the individual API pages.
+  * Zilliqa APIs are intended, as far as possible, to be compatible
+    with existing Zilliqa 1 applications. There are various
+    differences due to the different construction of Zilliqa 2 which
+    are noted on the individual API pages.
 
 ## Unsupported APIs
 
 Zilliqa 2 does not support the ethereum node to node protocol. You cannot sync transactions between Zilliqa 2 and Ethereum nodes.
 
-## Differences from other ethereum implementations
+## Differences from other ethereum implementations and from Zilliqa 1
 
- * D0001: Zilliqa (and Zilliqa 2) will, in general, ignore extra arguments to JSON-RPC calls where other EVM implementations will raise an error.
-
-## Common definitions for eth_ API calls
+ * D0001: Zilliqa 1 maintained balances in Qa and multiplied by 10^6 to get Wei. Zilliqa 2 maintains balances in Wei and divides them to get Qa. This means that there will be slight rounding differences in the behaviour of the two chains when switching between Zilliqa native and EVM APIs.
 
 ## List of entry points
 

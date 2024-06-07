@@ -935,6 +935,14 @@ impl Network {
         self.nodes[index].inner.lock().unwrap()
     }
 
+    pub async fn rpc_client(&mut self, index: usize) -> Result<LocalRpcClient> {
+        Ok(LocalRpcClient {
+            id: Arc::new(AtomicU64::new(0)),
+            rpc_module: self.nodes[index].rpc_module.clone(),
+            subscriptions: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+
     pub async fn wallet_from_key(&mut self, key: SigningKey) -> Wallet {
         let wallet: LocalWallet = key.into();
         let node = self
@@ -1138,7 +1146,7 @@ impl LocalRpcClient {
         let payload = RequestSer::owned(
             Id::Number(next_id),
             method,
-            Some(serde_json::value::to_raw_value(&params).unwrap()),
+            params.map(|x| serde_json::value::to_raw_value(&x).unwrap()),
         );
         let request = serde_json::to_string(&payload).unwrap();
 

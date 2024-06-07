@@ -29,9 +29,9 @@ curl -d '{
 
 # Arguments
 
-| Parameter | Type   | Required | Description                                                |
-| --------- | ------ | -------- | ---------------------------------------------------------- |
-| `id`      | string | Required | `"1"`                                                      |
-| `jsonrpc` | string | Required | `"2.0"`                                                    |
-| `method`  | string | Required | `"DSBlockListing"`                                         |
-| `params`  | empty  | Optional | Can be anything, but contents are ignored                  |
+| Parameter | Type   | Required | Description      |
+|-----------|--------|----------|------------------|
+| `id`      | string | Required | `"1"`            |
+| `jsonrpc` | string | Required | `"2.0"`          |
+| `method`  | string | Required | `"eth_accounts"` |
+| `params`  | empty  | Optional | `[]` if present  |
