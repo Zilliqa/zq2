@@ -60,7 +60,7 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, disable_rpc_default, eth_chain_id_default,
         json_rcp_port_default, local_address_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, Amount, ConsensusConfig, NodeConfig,
+        scilla_address_default, scilla_lib_dir_default, Amount, ConsensusConfig, NodeConfig,
     },
     crypto::{NodePublicKey, SecretKey},
     message::{ExternalMessage, InternalMessage},
@@ -178,6 +178,7 @@ struct Network {
     seed: u64,
     pub genesis_key: SigningKey,
     scilla_address: String,
+    scilla_lib_dir: String,
 }
 
 impl Network {
@@ -187,6 +188,7 @@ impl Network {
         nodes: usize,
         seed: u64,
         scilla_address: String,
+        scilla_lib_dir: String,
     ) -> Network {
         Self::new_shard(
             rng,
@@ -196,6 +198,7 @@ impl Network {
             seed,
             None,
             scilla_address,
+            scilla_lib_dir,
         )
     }
 
@@ -207,6 +210,7 @@ impl Network {
         seed: u64,
         keys: Option<Vec<SecretKey>>,
         scilla_address: String,
+        scilla_lib_dir: String,
     ) -> Network {
         let mut keys = keys.unwrap_or_else(|| {
             (0..nodes)
@@ -245,6 +249,7 @@ impl Network {
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
                 scilla_address: scilla_address.clone(),
+                scilla_lib_dir: scilla_lib_dir.clone(),
                 local_address: "host.docker.internal".to_owned(),
                 rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                 blocks_per_hour: 3600 * 40,
@@ -298,6 +303,7 @@ impl Network {
             children: HashMap::new(),
             genesis_key,
             scilla_address,
+            scilla_lib_dir,
         }
     }
 
@@ -356,6 +362,7 @@ impl Network {
                 main_shard_id: None,
                 minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                 scilla_address: scilla_address_default(),
+                scilla_lib_dir: scilla_lib_dir_default(),
             },
         };
         let (node, receiver, local_receiver) =
@@ -443,6 +450,7 @@ impl Network {
                         minimum_time_left_for_empty_block:
                             minimum_time_left_for_empty_block_default(),
                         scilla_address: scilla_address_default(),
+                        scilla_lib_dir: scilla_lib_dir_default(),
                     },
                 };
 
@@ -725,6 +733,7 @@ impl Network {
                                     self.seed,
                                     Some(vec![secret_key]),
                                     self.scilla_address.clone(),
+                                    self.scilla_lib_dir.clone(),
                                 ),
                             );
                         }

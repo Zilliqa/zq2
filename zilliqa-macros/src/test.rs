@@ -63,6 +63,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
 
             name.extend(rand::Rng::sample_iter(rng, &rand::distributions::Alphanumeric).map(char::from).take(8));
 
+            let scilla_lib_dir = "/scilla/0/_build/default/src/stdlib/";
             // Spawn a Scilla container for this group of tests.
             let mut child = std::process::Command::new("docker")
                 .arg("run")
@@ -161,7 +162,8 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
 
                     async move {
                         let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
-                        let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed, format!("http://{addr}"));
+                        let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed, format!("http://{addr}"),
+                                                          scilla_lib_dir.to_string());
 
                         // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
                         let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
