@@ -202,6 +202,7 @@ impl Network {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_shard(
         rng: Arc<Mutex<ChaCha8Rng>>,
         nodes: usize,
