@@ -46,7 +46,7 @@ libp2p = { version = "0.53.2", features = [ "identify" ] }
 prost = "0.12.6"
 rand = "0.8.5"
 rand_core = "0.6.4"
-regex = "1.10.4"
+regex = "1.10.5"
 reqwest = { version = "0.12.3", features = [ "json", "rustls-tls", "http2", "charset" ], default-features=false}
 revm = { version = "9.0.0", features = ["optional_balance_check"] }
 rs-leveldb = "0.1.5"
