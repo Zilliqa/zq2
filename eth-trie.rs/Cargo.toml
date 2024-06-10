@@ -9,14 +9,14 @@ readme = "README.md"
 keywords = ["patricia", "mpt", "evm", "trie", "ethereum"]
 
 [dependencies]
-alloy-primitives = { version = "0.7.2", features = ["rlp"] }
+alloy-primitives = { version = "0.7.5", features = ["rlp"] }
 hashbrown = "0.14.5"
 log = "0.4.21"
 parking_lot = "0.12.3"
 rlp = "0.5.2"
 
 [dev-dependencies]
-alloy-primitives = { version = "0.7.2", features = ["getrandom"] }
+alloy-primitives = { version = "0.7.5", features = ["getrandom"] }
 rand = "0.8.5"
 hex = "0.4.3"
 criterion = "0.5.1"

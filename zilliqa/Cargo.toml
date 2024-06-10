@@ -24,7 +24,7 @@ anyhow = { version = "1.0.86", features = ["backtrace"] }
 vergen = { version = "8.3.1", features = ["git", "git2"] }
 
 [dependencies]
-alloy-primitives = { version = "0.7.2", features = ["rlp", "serde"] }
+alloy-primitives = { version = "0.7.5", features = ["rlp", "serde"] }
 alloy-rlp = { version = "0.3.4", features = ["derive"] }
 alloy-consensus = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf", features = ["serde", "k256"] }
 alloy-eips = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf", features = ["serde"] }
@@ -81,7 +81,7 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 
 [dev-dependencies]
-alloy-primitives = { version = "0.7.2", features = ["rand"] }
+alloy-primitives = { version = "0.7.5", features = ["rand"] }
 async-trait = "0.1.80"
 ethers = { version = "2.0.14", default-features = false, features = ["ethers-solc", "legacy"] }
 ethers-solc = { version = "2.0.13", features = ["svm-solc"] }
