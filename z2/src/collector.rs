@@ -13,7 +13,7 @@ use zilliqa::crypto::SecretKey;
 
 use crate::{
     components::{Component, Requirements},
-    docs, mitmweb, otterscan, scilla, spout, zq2,
+    docs, mitmweb, otel, otterscan, scilla, spout, zq2,
 };
 
 type Tx = mpsc::Sender<Message>;
@@ -79,6 +79,7 @@ pub enum Message {
     Exited(ExitValue),
     OutputData(OutputData),
     ErrorData(OutputData),
+    Startup(OutputData),
 }
 
 pub struct Collector {
@@ -102,6 +103,9 @@ impl Collector {
             // Now, output here is already colored, so just color the legends.
             while let Some(msg) = rx.recv().await {
                 match msg {
+                    Message::Startup(od) => {
+                        println!("{}", Self::color_log(&od.legend, "St", &od.line));
+                    }
                     Message::Exited(st) => {
                         println!(
                             "{}",
@@ -158,6 +162,7 @@ impl Collector {
         idx: usize,
         key: &SecretKey,
         config_file: &str,
+        watch: bool,
     ) -> Result<()> {
         self.runners.push(Box::new(
             zq2::Runner::spawn(
@@ -166,6 +171,7 @@ impl Collector {
                 &key.to_hex(),
                 config_file,
                 &Some(self.log_spec.clone()),
+                watch,
                 &self.tx,
             )
             .await?,
@@ -185,6 +191,12 @@ impl Collector {
         Ok(())
     }
 
+    pub async fn start_otel(&mut self, base_dir: &str, config_dir: &str) -> Result<()> {
+        self.runners.push(Box::new(
+            otel::Runner::spawn_otel(base_dir, config_dir, &self.tx).await?,
+        ));
+        Ok(())
+    }
     pub async fn start_spout(
         &mut self,
         base_dir: &str,
@@ -245,6 +257,12 @@ pub async fn spawn(
 ) -> Result<JoinAll<JoinHandle<()>>> {
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+    channel
+        .send(Message::Startup(OutputData {
+            legend: legend.clone(),
+            line: format!("{cmd:?}"),
+        }))
+        .await?;
     let mut child = cmd.spawn().context(format!("Failed to spawn {desc}"))?;
     let stdout = child.stdout.take().context("no handle to stdout")?;
     let stderr = child.stderr.take().context("no handle to stderr")?;

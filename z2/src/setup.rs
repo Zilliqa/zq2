@@ -28,7 +28,7 @@ use zilliqa::{
 use crate::{
     collector::{self, Collector},
     components::{Component, Requirements},
-    otel, scilla, utils,
+    scilla, utils,
 };
 
 const GENESIS_DEPOSIT: u128 = 10000000000000000000000000;
@@ -53,6 +53,8 @@ pub struct Setup {
     pub base_port: u16,
     /// Restart an old network
     pub keep_old_network: bool,
+    /// Watch source
+    pub watch: bool,
 }
 
 impl Setup {
@@ -63,6 +65,7 @@ impl Setup {
         base_dir: &str,
         base_port: u16,
         keep_old_network: bool,
+        watch: bool,
     ) -> Result<Self> {
         let mut secret_keys = Vec::new();
         let mut node_addresses = Vec::new();
@@ -83,6 +86,7 @@ impl Setup {
             base_dir: base_dir.to_string(),
             base_port,
             keep_old_network,
+            watch,
         })
     }
 
@@ -273,7 +277,7 @@ impl Setup {
     pub async fn describe_component(component: &Component) -> Result<Requirements> {
         match component {
             Component::ZQ2 => crate::zq2::Runner::requirements().await,
-            Component::Otel => crate::otel::Otel::requirements().await,
+            Component::Otel => crate::otel::Runner::requirements().await,
             Component::Otterscan => crate::otterscan::Runner::requirements().await,
             Component::Spout => crate::spout::Runner::requirements().await,
             Component::Docs => crate::docs::Runner::requirements().await,
@@ -318,6 +322,7 @@ impl Setup {
                             idx,
                             &self.secret_keys[idx],
                             &config_files[idx],
+                            self.watch,
                         )
                         .await?;
                 }
@@ -325,11 +330,9 @@ impl Setup {
             }
             Component::Otel => {
                 println!("Setting up otel .. ");
-                let otel = otel::Otel::new(&self.config_dir)?;
-                println!("Write otel configuration .. ");
-                otel.write_files().await?;
-                println!("Start otel .. ");
-                otel.ensure_otel().await?;
+                collector
+                    .start_otel(&self.base_dir, &self.config_dir)
+                    .await?;
                 Ok(())
             }
             Component::Otterscan => {

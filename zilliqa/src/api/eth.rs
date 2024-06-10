@@ -187,7 +187,6 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("get_code: params: {:?}", params);
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let block_number: BlockNumber = params.next()?;

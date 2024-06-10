@@ -25,6 +25,7 @@ pub async fn run_local_net(
     trace_modules: &Vec<String>,
     components: &HashSet<Component>,
     keep_old_network: bool,
+    watch: bool,
 ) -> Result<()> {
     // Now build the log string. If there already was one, use that ..
     let log_var = env::var("RUST_LOG");
@@ -56,6 +57,7 @@ pub async fn run_local_net(
         base_dir,
         base_port,
         keep_old_network,
+        watch,
     )?;
     println!("{0}", setup_obj.get_port_map());
     println!("Set up collector");

@@ -155,6 +155,10 @@ struct RunStruct {
     #[clap(long, default_value = "4000")]
     base_port: u16,
 
+    /// If --watch is specified, we will auto-reload Zilliqa 2 (but not other programs!) when the source changes.
+    #[clap(long, action=ArgAction::SetTrue)]
+    watch: bool,
+
     #[clap(long = "restart-network")]
     restart_network: bool,
 
@@ -211,6 +215,10 @@ struct OnlyStruct {
 
     #[clap(long, default_value = "4000")]
     base_port: u16,
+
+    /// If --watch is specified, we will auto-reload Zilliqa 2 (but not other programs!) when the source changes.
+    #[clap(long, action=ArgAction::SetTrue)]
+    watch: bool,
 
     #[clap(long = "restart-network")]
     restart_network: bool,
@@ -319,6 +327,7 @@ async fn main() -> Result<()> {
                 &arg.trace_modules,
                 &to_run,
                 keep_old_network,
+                arg.watch,
             )
             .await?;
             Ok(())
@@ -358,6 +367,7 @@ async fn main() -> Result<()> {
                 &arg.trace_modules,
                 &to_run,
                 keep_old_network,
+                arg.watch,
             )
             .await?;
             Ok(())
