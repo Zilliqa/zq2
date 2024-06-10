@@ -1348,11 +1348,32 @@ fn scilla_call(
         let mut current_state = state.take().expect("missing state");
 
         let code_and_data = match &current_state.load_account(to_addr)?.account.code {
-            // Both EOAs and EVM contracts are represented by [Code::Evm]. For now we handle them all as EOAs.
-            Code::Evm(_) => None,
+            // EOAs are currently represented by [Code::Evm] with no code.
+            Code::Evm(code) if code.is_empty() => None,
             Code::Scilla {
                 code, init_data, ..
             } => Some((code, init_data)),
+            // Calls to EVM contracts should fail.
+            Code::Evm(_) => {
+                return Ok((
+                    ScillaResult {
+                        success: false,
+                        contract_address: None,
+                        logs: vec![],
+                        gas_used: (txn.gas_limit - gas).into(),
+                        transitions: vec![],
+                        accepted: Some(false),
+                        errors: [(depth, vec![ScillaError::CallFailed])]
+                            .into_iter()
+                            .collect(),
+                        exceptions: vec![ScillaException {
+                            line: 0,
+                            message: "Scilla call to EVM contract".to_owned(),
+                        }],
+                    },
+                    current_state,
+                ));
+            }
         };
 
         if let Some((code, init_data)) = code_and_data {
