@@ -1,12 +1,13 @@
 #![allow(unused_imports)]
 use std::{collections::HashSet, env, path::PathBuf, str::FromStr};
 
-use crate::utils;
 use alloy_primitives::B256;
 use anyhow::{anyhow, Result};
 use colored::Colorize;
 use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
+
+use crate::utils;
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
 

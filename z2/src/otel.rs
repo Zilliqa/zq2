@@ -26,8 +26,8 @@ impl Runner {
         config_dir: &str,
         channel: &mpsc::Sender<collector::Message>,
     ) -> Result<Runner> {
-        Runner::write_config_files(&config_dir).await?;
-        let join_handles = Runner::start_otel(&config_dir, channel).await?;
+        Runner::write_config_files(config_dir).await?;
+        let join_handles = Runner::start_otel(config_dir, channel).await?;
         Ok(Self {
             config_dir: config_dir.to_string(),
             join_handles: Some(join_handles),
