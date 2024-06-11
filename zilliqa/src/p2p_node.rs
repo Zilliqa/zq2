@@ -295,9 +295,8 @@ impl P2pNode {
                         })) => {
                             let source = source.expect("message should have a source");
                             let message = serde_json::from_slice::<ExternalMessage>(&data).unwrap();
-                            let message_type = message.name();
                             let to = self.peer_id;
-                            debug!(%source, %to, message_type, "broadcast recieved");
+                            debug!(%source, %to, %message, "broadcast recieved");
                             self.forward_external_message_to_node(&topic_hash, source, message)?;
                         }
 
@@ -306,8 +305,7 @@ impl P2pNode {
                                 request_response::Message::Request {request, channel, ..} => {
                                     let to = self.peer_id;
                                     let (shard_id, external_message) = request;
-                                    let message_type = external_message.name();
-                                    debug!(%source, %to, message_type, "message received");
+                                    debug!(%source, %to, %external_message, "message received");
                                     let topic = Self::shard_id_to_topic(shard_id);
                                     self.forward_external_message_to_node(&topic.hash(), source, external_message)?;
                                     let _ = self.swarm.behaviour_mut().request_response.send_response(channel, (shard_id, ExternalMessage::RequestResponse));
@@ -346,7 +344,6 @@ impl P2pNode {
                 },
                 message = self.outbound_message_receiver.next() => {
                     let (dest, shard_id, message) = message.expect("message stream should be infinite");
-                    let message_type = message.name();
                     let data = serde_json::to_vec(&message).unwrap();
                     let from = self.peer_id;
 
@@ -354,7 +351,7 @@ impl P2pNode {
 
                     match dest {
                         Some(dest) => {
-                            debug!(%from, %dest, message_type, "sending direct message");
+                            debug!(%from, %dest, %message, "sending direct message");
                             if from == dest {
                                 self.forward_external_message_to_node(&topic.hash(), from, message)?;
                             } else {
@@ -362,7 +359,7 @@ impl P2pNode {
                             }
                         },
                         None => {
-                            debug!(%from, message_type, "broadcasting");
+                            debug!(%from, %message, "broadcasting");
                             match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
                                 Ok(_) => {},
                                 Err(e) => {

@@ -12,10 +12,11 @@ use zilliqa::crypto::SecretKey;
 use zilliqa::{
     cfg,
     cfg::{
-        allowed_timestamp_skew_default, consensus_timeout_default, disable_rpc_default,
+        allowed_timestamp_skew_default, block_request_batch_size_default,
+        block_request_limit_default, consensus_timeout_default, disable_rpc_default,
         empty_block_timeout_default, eth_chain_id_default, local_address_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
-        Amount, ConsensusConfig,
+        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
+        scilla_address_default, scilla_lib_dir_default, Amount, ConsensusConfig,
     },
     crypto::NodePublicKey,
     transaction::EvmGas,
@@ -202,7 +203,6 @@ impl Setup {
                 disable_rpc: disable_rpc_default(),
                 eth_chain_id: eth_chain_id_default(),
                 consensus: ConsensusConfig {
-                    genesis_hash: None,
                     scilla_address: scilla_address_default(),
                     scilla_lib_dir: scilla_lib_dir_default(),
                     minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
@@ -219,6 +219,9 @@ impl Setup {
                     blocks_per_hour: 3600,
                     rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
                 },
+                block_request_limit: block_request_limit_default(),
+                max_blocks_in_flight: max_blocks_in_flight_default(),
+                block_request_batch_size: block_request_batch_size_default(),
             };
             println!("Node {i} has RPC port {0}", node_config.json_rpc_port);
             let data_dir_name = format!("{0}{1}", DATADIR_PREFIX, i);

@@ -149,7 +149,7 @@ impl Db {
     where
         P: AsRef<Path>,
     {
-        let (db, connection) = match data_dir {
+        let (db, mut connection) = match data_dir {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
                 (
@@ -162,6 +162,8 @@ impl Db {
                 Connection::open_in_memory()?,
             ),
         };
+
+        connection.trace(Some(|statement| tracing::trace!(statement, "sql executed")));
 
         Self::ensure_schema(&connection)?;
 
@@ -472,6 +474,7 @@ impl Db {
         let Some(mut block) = self.get_transactionless_block(key)? else {
             return Ok(None);
         };
+
         let transaction_hashes = self
             .block_store
             .lock()
@@ -479,6 +482,10 @@ impl Db {
             .prepare_cached("SELECT tx_hash FROM receipts WHERE block_hash = ?1")?
             .query_map([block.header.hash], |row| row.get(0))?
             .collect::<Result<Vec<Hash>, _>>()?;
+        tracing::trace!(
+            "db returned {} transaction hashes",
+            transaction_hashes.len()
+        );
         block.transactions = transaction_hashes;
         Ok(Some(block))
     }
@@ -562,14 +569,6 @@ impl Db {
         block_hash: &Hash,
     ) -> Result<Vec<TransactionReceipt>> {
         Ok(self.block_store.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
-    }
-
-    pub fn remove_transaction_receipts_in_block(&self, block_hash: &Hash) -> Result<()> {
-        self.block_store
-            .lock()
-            .unwrap()
-            .execute("DELETE FROM receipts WHERE block_hash = ?1", [block_hash])?;
-        Ok(())
     }
 }
 
