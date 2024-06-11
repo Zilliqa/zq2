@@ -233,7 +233,8 @@ struct OnlyStruct {
 #[derive(Args, Debug)]
 struct JoinStruct {
     /// Specify the ZQ2 chain you want join
-    chain_name: String,
+    #[clap(long = "chain")]
+    chain_name: validators::Chain,
 }
 
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
@@ -430,7 +431,7 @@ async fn main() -> Result<()> {
         },
         Commands::Join(ref args) => {
             let chain = validators::ChainConfig::new(&args.chain_name).await?;
-            println!("{:?}", chain);
+            validators::gen_validator_startup_script(&chain).await?;
             Ok(())
         }
     }
