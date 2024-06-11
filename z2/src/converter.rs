@@ -266,6 +266,7 @@ pub async fn convert_persistence(
                                     }))
                                 })
                                 .collect::<Result<_>>()?,
+                            transitions: vec![],
                             accepted: None,
                             errors: BTreeMap::new(),
                             exceptions: vec![],
@@ -328,6 +329,7 @@ pub async fn convert_persistence(
                                     }))
                                 })
                                 .collect::<Result<_>>()?,
+                            transitions: vec![],
                             accepted: None,
                             errors: BTreeMap::new(),
                             exceptions: vec![],

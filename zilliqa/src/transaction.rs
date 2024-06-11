@@ -24,7 +24,7 @@ use sha3::{
 
 use crate::{
     crypto,
-    exec::{ScillaError, ScillaException},
+    exec::{ScillaError, ScillaException, ScillaTransition},
     schnorr,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
@@ -730,6 +730,7 @@ pub struct TransactionReceipt {
     pub cumulative_gas_used: EvmGas,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
+    pub transitions: Vec<ScillaTransition>,
     pub accepted: Option<bool>,
     pub errors: BTreeMap<u64, Vec<ScillaError>>,
     pub exceptions: Vec<ScillaException>,
