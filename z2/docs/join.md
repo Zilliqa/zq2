@@ -51,5 +51,3 @@ chmod +x /path/to/zq2/start_validator.sh
 
 /path/to/zq2/start_validator.sh $PRIVATE_KEY
 ```
-
-

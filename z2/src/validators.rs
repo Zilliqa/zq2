@@ -18,7 +18,7 @@ pub struct ChainConfig {
 
 impl ChainConfig {
     pub async fn new(chain_name: &Chain) -> Result<Self> {
-        let spec = get_chain_spec_config(&chain_name.as_str().to_owned()).await?;
+        let spec = get_chain_spec_config(chain_name.as_str()).await?;
         let version = github::get_release_or_commit("zq2").await?;
 
         Ok(ChainConfig {
@@ -95,7 +95,7 @@ fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
 async fn get_chain_spec_config(chain_name: &str) -> Result<Value> {
     let contents = get_toml_contents(chain_name)?;
     let config: Value =
-        toml::from_str(&contents).map_err(|_| anyhow!("Unable to parse TOML".to_string()))?;
+        toml::from_str(contents).map_err(|_| anyhow!("Unable to parse TOML".to_string()))?;
     Ok(config)
 }
 
