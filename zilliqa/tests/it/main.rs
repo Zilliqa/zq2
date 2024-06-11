@@ -58,9 +58,11 @@ use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tracing::*;
 use zilliqa::{
     cfg::{
-        allowed_timestamp_skew_default, disable_rpc_default, eth_chain_id_default,
-        json_rcp_port_default, local_address_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_lib_dir_default, Amount, ConsensusConfig, NodeConfig,
+        allowed_timestamp_skew_default, block_request_batch_size_default,
+        block_request_limit_default, disable_rpc_default, eth_chain_id_default,
+        json_rcp_port_default, local_address_default, max_blocks_in_flight_default,
+        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
+        Amount, ConsensusConfig, NodeConfig,
     },
     crypto::{NodePublicKey, SecretKey},
     message::{ExternalMessage, InternalMessage},
@@ -262,6 +264,9 @@ impl Network {
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             disable_rpc: disable_rpc_default(),
             data_dir: None,
+            block_request_limit: block_request_limit_default(),
+            max_blocks_in_flight: max_blocks_in_flight_default(),
+            block_request_batch_size: block_request_batch_size_default(),
         };
 
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
@@ -350,6 +355,9 @@ impl Network {
                 scilla_address: scilla_address_default(),
                 scilla_lib_dir: scilla_lib_dir_default(),
             },
+            block_request_limit: block_request_limit_default(),
+            max_blocks_in_flight: max_blocks_in_flight_default(),
+            block_request_batch_size: block_request_batch_size_default(),
         };
         let (node, receiver, local_receiver) =
             node(config, secret_key, self.nodes.len(), None).unwrap();
@@ -437,6 +445,9 @@ impl Network {
                         scilla_address: scilla_address_default(),
                         scilla_lib_dir: scilla_lib_dir_default(),
                     },
+                    block_request_limit: block_request_limit_default(),
+                    max_blocks_in_flight: max_blocks_in_flight_default(),
+                    block_request_batch_size: block_request_batch_size_default(),
                 };
 
                 node(config, key, i, Some(new_data_dir)).unwrap()
@@ -973,22 +984,8 @@ fn format_message(
     message: &AnyMessage,
 ) -> String {
     let message = match message {
-        AnyMessage::External(message) => match message {
-            ExternalMessage::Proposal(proposal) => {
-                format!("{} [{}]", message.name(), proposal.header.number,)
-            }
-            ExternalMessage::BlockRequest(request) => {
-                format!("{} [{:?}]", message.name(), request.0)
-            }
-            ExternalMessage::BlockResponse(response) => {
-                format!("{} [{}]", message.name(), response.proposal.number())
-            }
-            _ => message.name().to_owned(),
-        },
-        #[allow(clippy::match_single_binding)]
-        AnyMessage::Internal(_source_shard, _destination_shard, message) => match message {
-            _ => message.name().to_owned(),
-        },
+        AnyMessage::External(message) => format!("{message}"),
+        AnyMessage::Internal(_source_shard, _destination_shard, message) => format!("{message}"),
     };
 
     let source_index = nodes.iter().find(|n| n.peer_id == source).unwrap().index;
@@ -998,9 +995,9 @@ fn format_message(
             .find(|n| n.peer_id == destination)
             .unwrap()
             .index;
-        format!("{source_index} -> {destination_index}: {}", message)
+        format!("{source_index} -> {destination_index}: {message}")
     } else {
-        format!("{source_index} -> *: {}", message)
+        format!("{source_index} -> *: {message}")
     }
 }
 

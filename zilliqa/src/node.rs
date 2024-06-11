@@ -26,8 +26,8 @@ use crate::{
     exec::TransactionApplyResult,
     inspector::{self, ScillaInspector},
     message::{
-        Block, BlockBatchRequest, BlockBatchResponse, BlockHeader, BlockNumber, BlockRequest,
-        BlockResponse, ExternalMessage, InternalMessage, IntershardCall, Proposal,
+        Block, BlockHeader, BlockNumber, BlockRequest, BlockResponse, ExternalMessage,
+        InternalMessage, IntershardCall, Proposal,
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     pool::TxPoolContent,
@@ -66,12 +66,7 @@ impl MessageSender {
 
     /// Send a message to a remote node of the same shard.
     pub fn send_external_message(&self, peer: PeerId, message: ExternalMessage) -> Result<()> {
-        debug!(
-            "sending {} from {} to {}",
-            message.name(),
-            self.our_peer_id,
-            peer
-        );
+        debug!("sending {message} from {} to {}", self.our_peer_id, peer);
         self.outbound_channel
             .send((Some(peer), self.our_shard, message))?;
         Ok(())
@@ -146,8 +141,7 @@ impl Node {
     pub fn handle_network_message(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         let to = self.peer_id;
         let to_self = from == to;
-        let message_name = message.name();
-        debug!(%from, %to, %message_name, "handling message");
+        debug!(%from, %to, %message, "handling message");
         match message {
             ExternalMessage::Proposal(m) => {
                 if let Some((to, message)) = self.consensus.proposal(m, false)? {
@@ -179,29 +173,11 @@ impl Node {
                 if !to_self {
                     self.handle_block_request(from, m)?;
                 } else {
-                    debug!("ignoring block request to self");
-                }
-            }
-            ExternalMessage::BlockResponse(m) => {
-                if !to_self {
-                    self.handle_block_response(from, m)?;
-                } else {
-                    debug!("ignoring block response to self");
-                }
-            }
-            ExternalMessage::BlockBatchRequest(m) => {
-                if !to_self {
-                    self.handle_block_batch_request(from, m)?;
-                } else {
                     debug!("ignoring blocks request to self");
                 }
             }
-            ExternalMessage::BlockBatchResponse(m) => {
-                if !to_self {
-                    self.handle_blocks_response(from, m)?;
-                } else {
-                    debug!("ignoring blocks response to self");
-                }
+            ExternalMessage::BlockResponse(m) => {
+                self.handle_block_response(from, m)?;
             }
             ExternalMessage::RequestResponse => {}
             ExternalMessage::NewTransaction(t) => {
@@ -219,8 +195,7 @@ impl Node {
 
     pub fn handle_internal_message(&mut self, from: u64, message: InternalMessage) -> Result<()> {
         let to = self.config.eth_chain_id;
-        let message_name = message.name();
-        tracing::debug!(%from, %to, %message_name, "handling message");
+        tracing::debug!(%from, %to, %message, "handling message");
         match message {
             InternalMessage::IntershardCall(intershard_call) => {
                 self.inject_intershard_transaction(intershard_call)?
@@ -812,33 +787,6 @@ impl Node {
         self.consensus.txpool_content()
     }
 
-    fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
-        let block = match request.0 {
-            crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
-            crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view), // todo: consider removing
-            crate::message::BlockRef::Number(number) => self.consensus.get_block_by_number(number),
-        }?;
-        let Some(block) = block else {
-            debug!("ignoring block request for unknown block: {:?}", request.0);
-            return Ok(());
-        };
-
-        self.message_sender.send_external_message(
-            source,
-            ExternalMessage::BlockResponse(BlockResponse {
-                proposal: self.block_to_proposal(block),
-            }),
-        )?;
-
-        Ok(())
-    }
-
-    fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
-        let _ = self.consensus.receive_block(response.proposal)?;
-
-        Ok(())
-    }
-
     /// Convenience function to convert a block to a proposal (add full txs)
     /// NOTE: Includes intershard transactions. Should only be used for syncing history,
     /// not for consensus messages regarding new blocks.
@@ -857,77 +805,39 @@ impl Node {
         Proposal::from_parts(block, txs)
     }
 
-    fn handle_block_batch_request(
-        &mut self,
-        source: PeerId,
-        request: BlockBatchRequest,
-    ) -> Result<()> {
-        let block = match request.0 {
-            crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
-            crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view),
-            crate::message::BlockRef::Number(number) => self.consensus.get_block_by_number(number),
-        }?;
+    fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
+        let proposals = (request.from_view..=request.to_view)
+            .take(self.config.block_request_limit)
+            .filter_map(|view| {
+                self.consensus
+                    .get_block_by_view(view)
+                    .transpose()
+                    .map(|block| Ok(self.block_to_proposal(block?)))
+            })
+            .collect::<Result<_>>()?;
 
-        let block = match block {
-            Some(block) => block,
-            None => {
-                debug!("ignoring blocks request for unknown block: {:?}", request.0);
-                return Ok(());
-            }
-        };
-
-        let mut proposal = self.block_to_proposal(block);
-        let block_number = proposal.header.number;
-        let mut proposals: Vec<Proposal> = Vec::new();
-
-        for i in block_number..block_number + 100 {
-            let block = self.consensus.get_block_by_number(i);
-            if let Ok(Some(block)) = block {
-                proposal = self.block_to_proposal(block);
-                proposals.push(proposal);
-            } else {
-                break;
-            }
-        }
-
-        trace!(
-            "Responding to new blocks request of {:?} starting {} with {} blocks",
-            request,
-            block_number,
-            proposals.len()
-        );
+        trace!("responding to new blocks request of {request:?}");
 
         self.message_sender.send_external_message(
             source,
-            ExternalMessage::BlockBatchResponse(BlockBatchResponse { proposals }),
+            ExternalMessage::BlockResponse(BlockResponse { proposals }),
         )?;
 
         Ok(())
     }
 
-    fn handle_blocks_response(&mut self, _: PeerId, response: BlockBatchResponse) -> Result<()> {
+    fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
         trace!(
             "Received blocks response of length {}",
             response.proposals.len()
         );
-        let mut was_new = false;
-        let length_recvd = response.proposals.len();
 
         for block in response.proposals {
-            let (new, proposal) = self.consensus.receive_block(block)?;
-            was_new = new;
+            let proposal = self.consensus.receive_block(block)?;
             if let Some(proposal) = proposal {
                 self.message_sender
                     .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
             }
-        }
-
-        if was_new && length_recvd > 1 {
-            trace!(
-                "Requesting additional blocks after successful block download. Start: {}",
-                self.consensus.head_block().header.number
-            );
-            self.consensus.download_blocks_up_to_head()?;
         }
 
         Ok(())
