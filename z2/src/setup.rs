@@ -6,7 +6,6 @@ use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use tokio::fs;
 use toml;
-use zilliqa::cfg::Amount;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::SecretKey;
@@ -15,7 +14,7 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, consensus_timeout_default, disable_rpc_default,
         empty_block_timeout_default, eth_chain_id_default, local_address_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default, ConsensusConfig,
+        minimum_time_left_for_empty_block_default, scilla_address_default, Amount, ConsensusConfig,
     },
     crypto::NodePublicKey,
     transaction::EvmGas,

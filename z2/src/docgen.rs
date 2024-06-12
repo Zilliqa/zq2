@@ -22,7 +22,10 @@ use tokio::{
 };
 use zilliqa::{
     cfg::{
-        allowed_timestamp_skew_default, consensus_timeout_default, disable_rpc_default, empty_block_timeout_default, eth_chain_id_default, json_rcp_port_default, local_address_default, minimum_time_left_for_empty_block_default, scilla_address_default, Amount, ConsensusConfig, NodeConfig
+        allowed_timestamp_skew_default, consensus_timeout_default, disable_rpc_default,
+        empty_block_timeout_default, eth_chain_id_default, json_rcp_port_default,
+        local_address_default, minimum_time_left_for_empty_block_default, scilla_address_default,
+        Amount, ConsensusConfig, NodeConfig,
     },
     crypto::SecretKey,
     node::{MessageSender, Node},
