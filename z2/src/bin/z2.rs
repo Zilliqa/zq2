@@ -227,7 +227,6 @@ struct OnlyStruct {
 
     #[clap(long = "docs", action = ArgAction::SetTrue)]
     docs: bool,
-
 }
 
 #[derive(Args, Debug)]
