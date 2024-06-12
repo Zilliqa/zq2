@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use std::{collections::HashSet, env, path::PathBuf, str::FromStr};
 
 use alloy_primitives::B256;
@@ -8,9 +9,10 @@ use zilliqa::crypto::SecretKey;
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
 
-use crate::{collector, deployer, perf, zq1};
-/// Code for all the z2 commands, so you can invoke it from your own programs.
-use crate::{components::Component, converter, docgen, setup};
+use crate::{
+    collector, components::Component, converter, deployer, deployer::NodeRole, docgen, otel,
+    otterscan, perf, setup, spout, zq1,
+};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_local_net(
@@ -81,11 +83,11 @@ pub async fn run_perf_file(_base_dir: &str, config_file: &str) -> Result<()> {
 
 pub async fn run_deployer_new(
     network_name: &str,
-    binary_bucket: &str,
-    gcp_project: &str,
+    project_id: &str,
+    roles: Vec<NodeRole>,
 ) -> Result<()> {
-    println!("🦆 Generating the deployer configuration file {network_name}.toml .. ");
-    deployer::new(network_name, gcp_project, binary_bucket).await?;
+    println!("🦆 Generating the deployer configuration file {network_name}.yaml .. ");
+    deployer::new(network_name, project_id, roles).await?;
     Ok(())
 }
 

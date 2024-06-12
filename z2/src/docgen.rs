@@ -25,7 +25,7 @@ use zilliqa::{
         allowed_timestamp_skew_default, consensus_timeout_default, disable_rpc_default,
         empty_block_timeout_default, eth_chain_id_default, json_rcp_port_default,
         local_address_default, minimum_time_left_for_empty_block_default, scilla_address_default,
-        ConsensusConfig, NodeConfig,
+        Amount, ConsensusConfig, NodeConfig,
     },
     crypto::SecretKey,
     node::{MessageSender, Node},
@@ -264,27 +264,27 @@ pub struct ApiCallStatus {
 pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus>> {
     let mut methods = HashMap::new();
     // Construct an empty node so we can check for the existence of RPC methods without constructing a full node.
-    let genesis_accounts: Vec<(Address, String)> = vec![
+    let genesis_accounts: Vec<(Address, Amount)> = vec![
         (
             address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"),
-            "5000000000000000000000".to_string(),
+            5000000000000000000000u128.into(),
         ),
         // privkey db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3
         (
             address!("cb57ec3f064a16cadb36c7c712f4c9fa62b77415"),
-            "5000000000000000000000".to_string(),
+            5000000000000000000000u128.into(),
         ),
     ];
 
     let config = NodeConfig {
         consensus: ConsensusConfig {
             genesis_accounts,
-            rewards_per_hour: 51_000_000_000_000_000_000_000u128,
+            rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
             blocks_per_hour: 3600,
             is_main: true,
             empty_block_timeout: empty_block_timeout_default(),
-            minimum_stake: 10_000_000_000_000_000_000_000_000u128,
-            gas_price: 4_761_904_800_000u128,
+            minimum_stake: 10_000_000_000_000_000_000_000_000u128.into(),
+            gas_price: 4_761_904_800_000u128.into(),
             eth_block_gas_limit: EvmGas(84000000),
             genesis_deposits: Vec::new(),
             consensus_timeout: consensus_timeout_default(),

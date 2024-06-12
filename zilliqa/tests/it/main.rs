@@ -60,7 +60,7 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, disable_rpc_default, eth_chain_id_default,
         json_rcp_port_default, local_address_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, ConsensusConfig, NodeConfig,
+        scilla_address_default, Amount, ConsensusConfig, NodeConfig,
     },
     crypto::{NodePublicKey, SecretKey},
     message::{ExternalMessage, InternalMessage},
@@ -157,7 +157,7 @@ struct TestNode {
 }
 
 struct Network {
-    pub genesis_deposits: Vec<(NodePublicKey, PeerId, String, Address)>,
+    pub genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)>,
     /// Child shards.
     pub children: HashMap<u64, Network>,
     pub shard_id: u64,
@@ -227,7 +227,7 @@ impl Network {
                 (
                     k.node_public_key(),
                     k.to_libp2p_keypair().public().to_peer_id(),
-                    stake.to_string(),
+                    stake.into(),
                     Address::random_with(rng.lock().unwrap().deref_mut()),
                 )
             })
@@ -246,11 +246,11 @@ impl Network {
                 empty_block_timeout: Duration::from_millis(25),
                 scilla_address: scilla_address.clone(),
                 local_address: "host.docker.internal".to_owned(),
-                rewards_per_hour: 204_000_000_000_000_000_000_000u128,
+                rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                 blocks_per_hour: 3600 * 40,
-                minimum_stake: 32_000_000_000_000_000_000u128,
+                minimum_stake: 32_000_000_000_000_000_000u128.into(),
                 eth_block_gas_limit: EvmGas(84000000),
-                gas_price: 4_761_904_800_000u128,
+                gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
             },
             json_rpc_port: json_rcp_port_default(),
@@ -301,13 +301,13 @@ impl Network {
         }
     }
 
-    fn genesis_accounts(genesis_key: &SigningKey) -> Vec<(Address, String)> {
+    fn genesis_accounts(genesis_key: &SigningKey) -> Vec<(Address, Amount)> {
         vec![(
             Address::new(secret_key_to_address(genesis_key).0),
             1_000_000_000u128
                 .checked_mul(10u128.pow(18))
                 .unwrap()
-                .to_string(),
+                .into(),
         )]
     }
 
@@ -348,11 +348,11 @@ impl Network {
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
                 local_address: "host.docker.internal".to_owned(),
-                rewards_per_hour: 204_000_000_000_000_000_000_000u128,
+                rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                 blocks_per_hour: 3600 * 40,
-                minimum_stake: 32_000_000_000_000_000_000u128,
+                minimum_stake: 32_000_000_000_000_000_000u128.into(),
                 eth_block_gas_limit: EvmGas(84000000),
-                gas_price: 4_761_904_800_000u128,
+                gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
                 minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                 scilla_address: scilla_address_default(),
@@ -391,7 +391,7 @@ impl Network {
                 (
                     k.node_public_key(),
                     k.to_libp2p_keypair().public().to_peer_id(),
-                    stake.to_string(),
+                    stake.into(),
                     Address::random_with(self.rng.lock().unwrap().deref_mut()),
                 )
             })
@@ -433,11 +433,11 @@ impl Network {
                         // Give a genesis account 1 billion ZIL.
                         genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                         empty_block_timeout: Duration::from_millis(25),
-                        rewards_per_hour: 204_000_000_000_000_000_000_000u128,
+                        rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                         blocks_per_hour: 3600 * 40,
-                        minimum_stake: 32_000_000_000_000_000_000u128,
+                        minimum_stake: 32_000_000_000_000_000_000u128.into(),
                         eth_block_gas_limit: EvmGas(84000000),
-                        gas_price: 4_761_904_800_000u128,
+                        gas_price: 4_761_904_800_000u128.into(),
                         local_address: local_address_default(),
                         main_shard_id: None,
                         minimum_time_left_for_empty_block:
