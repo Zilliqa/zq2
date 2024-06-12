@@ -51,3 +51,16 @@ chmod +x /path/to/zq2/start_validator.sh
 
 /path/to/zq2/start_validator.sh $PRIVATE_KEY
 ```
+
+# How-to use a custom docker image
+
+If you want to use a custom docker image you need to edit the generated `/path/to/zq2/start_validator.sh` changing the following variables:
+
+```bash
+ZQ_VERSION="e5f75649"
+ZQ2_IMAGE="zilliqa/zq2:${ZQ_VERSION}"
+```
+
+# How-to customize the node configuration file
+
+If you need to customize your node configuration you need to edit the generated `<chain-name>.toml` file.

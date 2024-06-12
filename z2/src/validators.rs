@@ -1,13 +1,14 @@
 /// Code to render the validator join configuration and startup script.
 use std::env;
 
-use crate::github;
 use anyhow::{anyhow, Context as _, Error, Result};
 use clap::ValueEnum;
 use serde::Deserialize;
 use tera::Tera;
 use tokio::{fs::File, io::AsyncWriteExt};
 use toml::Value;
+
+use crate::github;
 
 #[derive(Debug, Deserialize)]
 pub struct ChainConfig {
