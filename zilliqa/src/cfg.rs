@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::Duration};
+use std::{ops::Deref, str::FromStr, time::Duration};
 
 use alloy_primitives::Address;
 use libp2p::{Multiaddr, PeerId};
@@ -67,6 +67,47 @@ pub fn disable_rpc_default() -> bool {
     false
 }
 
+/// Wrapper for [u128] that (de)serializes with a string. `serde_toml` does not support `u128`s.
+#[derive(Copy, Clone, Debug)]
+pub struct Amount(pub u128);
+
+impl From<u128> for Amount {
+    fn from(value: u128) -> Self {
+        Amount(value)
+    }
+}
+
+impl Deref for Amount {
+    type Target = u128;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Serialize for Amount {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.to_string().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Amount {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut res = String::deserialize(deserializer)?;
+        // Remove underscores
+        res.retain(|c| c != '_');
+        Ok(Amount(
+            u128::from_str(&res).map_err(serde::de::Error::custom)?,
+        ))
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ConsensusConfig {
@@ -82,12 +123,12 @@ pub struct ConsensusConfig {
     /// The initially staked deposits in the deposit contract at genesis, composed of
     /// (public key, peerId, amount, reward address) tuples.
     #[serde(default)]
-    pub genesis_deposits: Vec<(NodePublicKey, PeerId, String, Address)>,
+    pub genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)>,
     #[serde(default)]
     pub genesis_hash: Option<Hash>,
     /// Accounts that will be pre-funded at genesis.
     #[serde(default)]
-    pub genesis_accounts: Vec<(Address, String)>,
+    pub genesis_accounts: Vec<(Address, Amount)>,
     /// Minimum time to wait for consensus to propose new block if there are no transactions.
     #[serde(default = "minimum_time_left_for_empty_block_default")]
     pub empty_block_timeout: Duration,
@@ -102,15 +143,11 @@ pub struct ConsensusConfig {
     /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
     #[serde(default = "local_address_default")]
     pub local_address: String,
-    // Keep the following fields as optionals - they don't have default values and have to be explicitly specified
-    #[serde(serialize_with = "u128_to_str", deserialize_with = "str_to_u128")]
-    pub rewards_per_hour: u128,
+    pub rewards_per_hour: Amount,
     pub blocks_per_hour: u64,
-    #[serde(serialize_with = "u128_to_str", deserialize_with = "str_to_u128")]
-    pub minimum_stake: u128,
+    pub minimum_stake: Amount,
     pub eth_block_gas_limit: EvmGas,
-    #[serde(serialize_with = "u128_to_str", deserialize_with = "str_to_u128")]
-    pub gas_price: u128,
+    pub gas_price: Amount,
 }
 
 pub fn consensus_timeout_default() -> Duration {
@@ -135,20 +172,4 @@ pub fn local_address_default() -> String {
 
 fn default_true() -> bool {
     true
-}
-
-fn u128_to_str<S>(u: &u128, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_str(&u.to_string())
-}
-
-fn str_to_u128<'de, D>(deserializer: D) -> Result<u128, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let res = String::deserialize(deserializer)?;
-    let res = res.replace('_', "");
-    Ok(u128::from_str(&res).unwrap())
 }

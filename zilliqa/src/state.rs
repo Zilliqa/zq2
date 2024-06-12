@@ -47,7 +47,7 @@ impl State {
             scilla_address: config.scilla_address.clone(),
             local_address: config.local_address.clone(),
             block_gas_limit: config.eth_block_gas_limit,
-            gas_price: config.gas_price,
+            gas_price: *config.gas_price,
         }
     }
 
@@ -89,13 +89,12 @@ impl State {
         }
 
         for (address, balance) in config.genesis_accounts {
-            let balance: u128 = balance.parse()?;
-            state.mutate_account(address, |a| a.balance = balance)?;
+            state.mutate_account(address, |a| a.balance = *balance)?;
         }
 
         let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
             contracts::deposit::BYTECODE.to_vec(),
-            &[Token::Uint(config.minimum_stake.into())],
+            &[Token::Uint((*config.minimum_stake).into())],
         )?;
 
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
@@ -105,7 +104,7 @@ impl State {
                 Token::Bytes(pub_key.as_bytes()),
                 Token::Bytes(peer_id.to_bytes()),
                 Token::Address(ethabi::Address::from(reward_address.into_array())),
-                Token::Uint(ethabi::Uint::from_dec_str(&stake)?),
+                Token::Uint((*stake).into()),
             ])?;
             let ResultAndState {
                 result,
@@ -113,7 +112,7 @@ impl State {
             } = state.apply_transaction_evm(
                 Address::ZERO,
                 Some(contract_addr::DEPOSIT),
-                config.gas_price,
+                *config.gas_price,
                 config.eth_block_gas_limit,
                 0,
                 data,

@@ -102,8 +102,8 @@ module "bootstrap_node" {
   allowed_timestamp_skew = { secs = 60, nanos = 0 }
   data_dir = "/data"
   consensus.consensus_timeout = { secs = 60, nanos = 0 }
-  consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
-  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "10000000000000000000000000", "${local.genesis_address}"] ]
+  consensus.genesis_accounts = [ ["${local.genesis_address}", "10_000_000_000_000_000_000_000_000"] ]
+  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "10_000_000_000_000_000_000_000_000", "${local.genesis_address}"] ]
 
   # Reward parameters
   consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
@@ -140,8 +140,8 @@ module "node" {
   allowed_timestamp_skew = { secs = 60, nanos = 0 }
   data_dir = "/data"
   consensus.consensus_timeout = { secs = 60, nanos = 0 }
-  consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
-  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "10000000000000000000000000", "${local.genesis_address}"] ]
+  consensus.genesis_accounts = [ ["${local.genesis_address}", "10_000_000_000_000_000_000_000_000"] ]
+  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "10_000_000_000_000_000_000_000_000", "${local.genesis_address}"] ]
 
   # Reward parameters
   consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
