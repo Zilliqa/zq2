@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use alloy_consensus::TxEip1559;
 use alloy_primitives::{Address, B256, U128, U256, U64};
 use serde::{
@@ -373,6 +375,12 @@ fn deserialize_data<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8
     })?;
 
     hex::decode(s).map_err(de::Error::custom)
+}
+
+#[derive(Clone, Serialize)]
+pub struct TxPoolContent {
+    pub pending: HashMap<Address, HashMap<u64, Transaction>>,
+    pub queued: HashMap<Address, HashMap<u64, Transaction>>,
 }
 
 #[cfg(test)]

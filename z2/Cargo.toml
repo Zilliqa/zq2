@@ -67,6 +67,7 @@ url = "2.5.0"
 zilliqa = { path = "../zilliqa" }
 zilliqa-rs = { version = "0.3.0" }
 zqutils = { git = "https://github.com/zilliqa/zq-base" }
+octocrab = "0.38.0"
 
 [build-dependencies]
 prost-build = "0.12.3"

@@ -29,7 +29,7 @@ use crate::{
         InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
     },
     node::{MessageSender, NetworkMessage},
-    pool::TransactionPool,
+    pool::{TransactionPool, TxPoolContent},
     state::State,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -304,11 +304,7 @@ impl Consensus {
             if let Some(genesis) = latest_block {
                 consensus.add_block(genesis.clone())?;
             }
-            consensus.save_highest_view(
-                latest_block_hash,
-                latest_block_view,
-                latest_block_number,
-            )?;
+            consensus.set_canonical_number(latest_block_hash, latest_block_number)?;
             // treat genesis as finalized
             consensus.finalize(latest_block_hash, latest_block_view)?;
         }
@@ -322,7 +318,6 @@ impl Consensus {
 
     pub fn head_block(&self) -> Block {
         let highest_block_number = self.db.get_highest_block_number().unwrap().unwrap();
-
         self.block_store
             .get_block_by_number(highest_block_number)
             .unwrap()
@@ -348,8 +343,7 @@ impl Consensus {
         let chosen = stakers
             .into_iter()
             .filter(|&v| v != my_public_key)
-            .choose(&mut self.rng)
-            .unwrap();
+            .choose(&mut self.rng)?;
 
         let Ok(peer_id) = self.state.get_peer_id(chosen) else {
             return None;
@@ -619,7 +613,7 @@ impl Consensus {
             let stakers = self.state.get_stakers()?;
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
-                info!(
+                trace!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     stakers.len()
                 );
@@ -658,7 +652,7 @@ impl Consensus {
         debug!("apply rewards in view {view}");
 
         let rewards_per_block =
-            self.config.consensus.rewards_per_hour / self.config.consensus.blocks_per_hour as u128;
+            *self.config.consensus.rewards_per_hour / self.config.consensus.blocks_per_hour as u128;
         let block = self.head_block();
         // Genesis is the earliest therefore let's not overflow with subtraction
         let parent_block = self
@@ -708,7 +702,9 @@ impl Consensus {
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
 
-        self.db.insert_transaction(&hash, &txn.tx)?;
+        if !self.db.contains_transaction(&txn.hash)? {
+            self.db.insert_transaction(&txn.hash, &txn.tx)?;
+        }
 
         let result = self.state.apply_transaction(
             txn.clone(),
@@ -758,8 +754,23 @@ impl Consensus {
             .collect()
     }
 
+    pub fn txpool_content(&self) -> TxPoolContent {
+        let mut content = self.transaction_pool.preview_content();
+        // Ignore txns having too low nonces
+        content.pending.retain(|txn| {
+            let account_nonce = self.state.must_get_account(txn.signer).nonce;
+            txn.tx.nonce().unwrap() >= account_nonce
+        });
+
+        content.queued.retain(|txn| {
+            let account_nonce = self.state.must_get_account(txn.signer).nonce;
+            txn.tx.nonce().unwrap() >= account_nonce
+        });
+        content
+    }
+
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
-        self.db.get_touched_addresses(address)
+        self.db.get_touched_transactions(address)
     }
 
     /// Clear up anything in memory that is no longer required. This is to avoid memory leaks.
@@ -1256,18 +1267,14 @@ impl Consensus {
         let Some(block_hash) = self.db.get_block_hash_reverse_index(hash)? else {
             return Ok(None);
         };
-        let block_receipts = self
-            .db
-            .get_transaction_receipts(&block_hash)?
-            .unwrap_or_default();
+        let block_receipts = self.db.get_transaction_receipts_in_block(&block_hash)?;
         Ok(block_receipts
             .into_iter()
             .find(|receipt| receipt.tx_hash == *hash))
     }
 
-    fn save_highest_view(&mut self, block_hash: Hash, number: u64, view: u64) -> Result<()> {
-        self.block_store.set_canonical(number, view, block_hash)?;
-        self.db.put_highest_block_number(number)?;
+    fn set_canonical_number(&mut self, block_hash: Hash, number: u64) -> Result<()> {
+        self.block_store.set_canonical(number, block_hash)?;
         Ok(())
     }
 
@@ -1451,11 +1458,11 @@ impl Consensus {
     /// Intended to be used with the oldest pending block, to move the
     /// finalized tip forward by one. Does not update view/height.
     pub fn finalize(&mut self, hash: Hash, view: u64) -> Result<()> {
-        trace!("Finalizing block {hash}");
+        trace!("Finalizing block {hash} at view {view}");
         self.finalized_view = view;
         self.db.put_latest_finalized_view(view)?;
 
-        let receipts = self.db.get_transaction_receipts(&hash)?.unwrap_or_default();
+        let receipts = self.db.get_transaction_receipts_in_block(&hash)?;
 
         for (destination_shard, intershard_call) in blockhooks::get_cross_shard_messages(&receipts)?
         {
@@ -1969,9 +1976,6 @@ impl Consensus {
             trace!("Reverting block {head_block:?}");
             // block store doesn't require anything, it will just hold blocks that may now be invalid
 
-            // TX receipts are indexed by block
-            self.db.remove_transaction_receipts(&head_block.hash())?;
-
             // State is easily set - must be to the parent block, though
             trace!(
                 "Setting state to: {} aka block: {parent_block:?}",
@@ -1992,21 +1996,20 @@ impl Consensus {
             // block transactions need to be removed from self.transactions and re-injected
             for tx_hash in &head_block.transactions {
                 let orig_tx = self.get_transaction_by_hash(*tx_hash).unwrap().unwrap();
-                self.db.remove_transaction(tx_hash)?;
 
-                // Insert this unwound transaction back into the transaction pool too.
+                // Insert this unwound transaction back into the transaction pool.
                 let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
                 self.transaction_pool
                     .insert_transaction(orig_tx, account_nonce);
-
-                // block hash reverse index, remove tx hash too
-                self.db.remove_block_hash_reverse_index(tx_hash)?;
             }
+            // then purge them all from the db, including receipts and indexes
+            self.db
+                .remove_transactions_executed_in_block(&head_block.hash())?;
 
-            // Persistence - only need to update head block pointer as it should be impossible
-            // to change finalized height
-            let new_highest = head_block.header.number.saturating_sub(1);
-            self.db.put_highest_block_number(new_highest)?;
+            // Persistence - since this block is no longer in the main chain, ensure it's not
+            // recorded as such in the height mappings
+            self.db
+                .revert_canonical_block_number(head_block.header.number)?;
         }
 
         // Now, we execute forward from the common ancestor to the new block parent which can
@@ -2055,7 +2058,7 @@ impl Consensus {
         committee: &[NodePublicKey],
     ) -> Result<()> {
         debug!("Executing block: {:?}", block.header.hash);
-        let mut block_receipts: Vec<TransactionReceipt> = Vec::new();
+
         let parent = self
             .get_block(&block.parent_hash())?
             .ok_or_else(|| anyhow!("missing parent block when executing block!"))?;
@@ -2082,16 +2085,15 @@ impl Consensus {
             }
         }
 
+        let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
-        for (txn_index, txn) in transactions.into_iter().enumerate() {
+        for (tx_index, txn) in transactions.into_iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = self
                 .apply_transaction(txn.clone(), parent.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
-            self.db
-                .insert_block_hash_reverse_index(&tx_hash, &block.hash())?;
             for address in inspector.touched {
                 self.db.add_touched_address(address, tx_hash)?;
             }
@@ -2100,13 +2102,15 @@ impl Consensus {
             let gas_used = result.gas_used();
             cumulative_gas_used += gas_used;
             let accepted = result.accepted();
-            let (logs, errors, exceptions) = result.into_parts();
+            let (logs, transitions, errors, exceptions) = result.into_parts();
             let receipt = TransactionReceipt {
                 block_hash: block.hash(),
                 tx_hash,
+                index: tx_index as u64,
                 success,
                 contract_address,
                 logs,
+                transitions,
                 gas_used,
                 cumulative_gas_used,
                 accepted,
@@ -2116,25 +2120,33 @@ impl Consensus {
             info!(?receipt, "applied transaction {:?}", receipt);
             // Avoid cloning the receipt if there are no subscriptions to send it to.
             if self.receipts.receiver_count() != 0 {
-                let _ = self.receipts.send((receipt.clone(), txn_index));
+                let _ = self.receipts.send((receipt.clone(), tx_index));
             }
             block_receipts.push(receipt);
         }
 
         self.apply_rewards(committee, block.view(), &block.qc.cosigned)?;
 
-        // If we were the proposer we would've already processed the transactions
-        if !self.db.contains_transaction_receipts(&block.hash())? {
-            self.db
-                .insert_transaction_receipts(&block.hash(), &block_receipts)?;
-        }
-
         // Important - only add blocks we are going to execute because they can potentially
         // overwrite the mapping of block height to block, which there should only be one of.
         // for example, this HAS to be after the deal with fork call
-        self.add_block(block.clone())?;
+        if !self.db.contains_block(&block.hash())? {
+            // If we were the proposer we would've already processed the block, hence the check
+            self.add_block(block.clone())?;
+        }
+        {
+            // helper scope to shadow db, to avoid moving it into the closure
+            // closure has to be move to take ownership of block_receipts
+            let db = &self.db;
+            self.db.with_sqlite_tx(move |sqlite_tx| {
+                for receipt in block_receipts {
+                    db.insert_transaction_receipt_with_db_tx(sqlite_tx, receipt)?;
+                }
+                Ok(())
+            })?;
+        }
 
-        self.save_highest_view(block.hash(), block.number(), block.view())?;
+        self.set_canonical_number(block.hash(), block.number())?;
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(

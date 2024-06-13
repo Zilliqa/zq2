@@ -20,15 +20,17 @@ pub trait ScillaInspector {
         let _ = creator;
         let _ = amount;
     }
-    fn transfer(&mut self, from: Address, to: Address, amount: u128) {
+    fn transfer(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
         let _ = amount;
         let _ = to;
         let _ = from;
+        let _ = depth;
     }
-    fn call(&mut self, from: Address, to: Address, amount: u128) {
+    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
         let _ = to;
         let _ = from;
         let _ = amount;
+        let _ = depth;
     }
 }
 
@@ -37,12 +39,12 @@ impl<T: ScillaInspector> ScillaInspector for &mut T {
         (*self).create(creator, contract_address, amount);
     }
 
-    fn transfer(&mut self, from: Address, to: Address, amount: u128) {
-        (*self).transfer(from, to, amount)
+    fn transfer(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
+        (*self).transfer(from, to, amount, depth)
     }
 
-    fn call(&mut self, from: Address, to: Address, amount: u128) {
-        (*self).call(from, to, amount)
+    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
+        (*self).call(from, to, amount, depth)
     }
 }
 
@@ -96,12 +98,12 @@ impl ScillaInspector for TouchedAddressInspector {
         self.touched.insert(contract_address);
     }
 
-    fn transfer(&mut self, from: Address, to: Address, _: u128) {
+    fn transfer(&mut self, from: Address, to: Address, _: u128, _: u64) {
         self.touched.insert(from);
         self.touched.insert(to);
     }
 
-    fn call(&mut self, from: Address, to: Address, _: u128) {
+    fn call(&mut self, from: Address, to: Address, _: u128, _: u64) {
         self.touched.insert(from);
         self.touched.insert(to);
     }
@@ -221,10 +223,10 @@ impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
 }
 
 impl ScillaInspector for OtterscanTraceInspector {
-    fn call(&mut self, from: Address, to: Address, amount: u128) {
+    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
         self.entries.push(TraceEntry {
             ty: TraceEntryType::Call,
-            depth: 0, // TODO: Track Scilla depth
+            depth,
             from,
             to,
             value: Some(amount),
@@ -243,10 +245,10 @@ impl ScillaInspector for OtterscanTraceInspector {
         })
     }
 
-    fn transfer(&mut self, from: Address, to: Address, amount: u128) {
+    fn transfer(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
         self.entries.push(TraceEntry {
             ty: TraceEntryType::Call,
-            depth: 0,
+            depth,
             from,
             to,
             value: Some(amount),
@@ -318,10 +320,9 @@ impl<DB: Database> Inspector<DB> for OtterscanOperationInspector {
     }
 }
 
-// TODO: Filter depth=0 Scilla calls once we can track the depth.
 impl ScillaInspector for OtterscanOperationInspector {
-    fn call(&mut self, from: Address, to: Address, amount: u128) {
-        if amount != 0 {
+    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
+        if depth != 0 && amount != 0 {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,
                 from,
@@ -331,17 +332,8 @@ impl ScillaInspector for OtterscanOperationInspector {
         }
     }
 
-    fn create(&mut self, creator: Address, contract_address: Address, amount: u128) {
-        self.entries.push(Operation {
-            ty: OperationType::Create,
-            from: creator,
-            to: contract_address,
-            value: amount,
-        });
-    }
-
-    fn transfer(&mut self, from: Address, to: Address, amount: u128) {
-        if amount != 0 {
+    fn transfer(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
+        if depth != 0 && amount != 0 {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,
                 from,
@@ -350,6 +342,8 @@ impl ScillaInspector for OtterscanOperationInspector {
             });
         }
     }
+
+    // Creates are always ignored because they are always at depth=0 for Scilla transactions.
 }
 
 impl ScillaInspector for TracingInspector {}

@@ -1,20 +1,25 @@
 use std::collections::BTreeMap;
 
+use alloy_consensus::SignableTransaction;
 use alloy_primitives::{Address, B256, B512};
+use anyhow::Result;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 
 use super::{hex, hex_no_prefix, option_hex_no_prefix};
 use crate::{
-    api::zil::{TRANSACTIONS_PER_PAGE, TX_BLOCKS_PER_DS_BLOCK},
+    api::{
+        to_hex::ToHex,
+        zil::{TRANSACTIONS_PER_PAGE, TX_BLOCKS_PER_DS_BLOCK},
+    },
     exec::{ScillaError, ScillaException},
     message::Block,
     schnorr,
     serde_util::num_as_str,
     time::SystemTime,
-    transaction,
     transaction::{
-        ScillaGas, ScillaLog, SignedTransaction, TransactionReceipt, VerifiedTransaction, ZilAmount,
+        self, ScillaGas, ScillaLog, SignedTransaction, TransactionReceipt, VerifiedTransaction,
+        ZilAmount,
     },
 };
 
@@ -111,12 +116,10 @@ pub struct GetTxResponse {
     nonce: u64,
     #[serde(serialize_with = "hex_no_prefix")]
     to_addr: Address,
-    #[serde(serialize_with = "schnorr_key")]
-    sender_pub_key: schnorr::PublicKey,
+    sender_pub_key: String,
     #[serde(with = "num_as_str")]
     amount: ZilAmount,
-    #[serde(serialize_with = "schnorr_sig")]
-    signature: schnorr::Signature,
+    signature: String,
     receipt: GetTxResponseReceipt,
     #[serde(with = "num_as_str")]
     gas_price: ZilAmount,
@@ -126,15 +129,6 @@ pub struct GetTxResponse {
     code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<String>,
-}
-
-fn schnorr_key<S: Serializer>(key: &schnorr::PublicKey, serializer: S) -> Result<S::Ok, S::Error> {
-    let key = key.to_encoded_point(true);
-    hex(key.as_bytes(), serializer)
-}
-
-fn schnorr_sig<S: Serializer>(sig: &schnorr::Signature, serializer: S) -> Result<S::Ok, S::Error> {
-    hex(<[u8; 64]>::from(sig.to_bytes()), serializer)
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -148,6 +142,24 @@ pub struct CreateTransactionResponse {
 }
 
 #[derive(Clone, Serialize, Debug)]
+struct Transition {
+    addr: Address,
+    depth: u64,
+    msg: TransitionMessage,
+}
+
+#[derive(Clone, Serialize, Debug)]
+struct TransitionMessage {
+    #[serde(rename = "_amount", with = "num_as_str")]
+    amount: ZilAmount,
+    #[serde(rename = "_recipient")]
+    recipient: Address,
+    #[serde(rename = "_tag")]
+    tag: String,
+    params: serde_json::Value,
+}
+
+#[derive(Clone, Serialize, Debug)]
 struct GetTxResponseReceipt {
     #[serde(skip_serializing_if = "Option::is_none")]
     accepted: Option<bool>,
@@ -155,6 +167,8 @@ struct GetTxResponseReceipt {
     cumulative_gas: ScillaGas,
     #[serde(with = "num_as_str")]
     epoch_num: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    transitions: Vec<Transition>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     event_logs: Vec<ScillaLog>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -169,54 +183,121 @@ impl GetTxResponse {
         tx: VerifiedTransaction,
         receipt: TransactionReceipt,
         block_number: u64,
-    ) -> Option<Self> {
-        let VerifiedTransaction { tx, hash, .. } = tx;
-        if let SignedTransaction::Zilliqa { tx, key, sig } = tx {
-            Some(GetTxResponse {
-                id: hash.into(),
-                version: ((tx.chain_id as u32) << 16) | 1,
-                nonce: tx.nonce,
-                to_addr: tx.to_addr,
-                sender_pub_key: key,
-                amount: tx.amount,
-                signature: sig,
-                receipt: GetTxResponseReceipt {
-                    cumulative_gas: receipt.cumulative_gas_used.into(),
-                    epoch_num: block_number,
-                    event_logs: receipt
-                        .logs
-                        .into_iter()
-                        .filter_map(|log| log.into_scilla()) // TODO: Expose EVM logs in Scilla API.
-                        .collect(),
-                    success: receipt.success,
-                    accepted: receipt.accepted,
-                    errors: receipt
-                        .errors
-                        .into_iter()
-                        .map(|(k, v)| {
-                            (
-                                k,
-                                v.into_iter()
-                                    .map(|err| match err {
-                                        ScillaError::CallFailed => 7,
-                                        ScillaError::CreateFailed => 8,
-                                        ScillaError::OutOfGas => 21,
-                                        ScillaError::InsufficientBalance => 22,
-                                    })
-                                    .collect(),
-                            )
+    ) -> Result<GetTxResponse> {
+        let nonce = tx.tx.nonce().unwrap_or_default();
+        let amount = tx.tx.zil_amount();
+        let gas_price = tx.tx.gas_price_per_scilla_gas();
+        let gas_limit = tx.tx.gas_limit_scilla();
+        let (version, to_addr, sender_pub_key, signature, code, data) = match tx.tx {
+            SignedTransaction::Zilliqa { tx, sig, key } => (
+                ((tx.chain_id as u32) << 16) | 1,
+                tx.to_addr,
+                key.to_encoded_point(true).as_bytes().to_hex(),
+                <[u8; 64]>::from(sig.to_bytes()).to_hex(),
+                (!tx.code.is_empty()).then_some(tx.code),
+                (!tx.data.is_empty()).then_some(tx.data),
+            ),
+            SignedTransaction::Legacy { tx, sig } => (
+                ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Eip2930 { tx, sig } => (
+                ((tx.chain_id as u32) << 16) | 3,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Eip1559 { tx, sig } => (
+                ((tx.chain_id as u32) << 16) | 4,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Intershard { tx, .. } => (
+                ((tx.chain_id as u32) << 16) | 20,
+                tx.to_addr.unwrap_or_default(),
+                String::new(),
+                String::new(),
+                tx.to_addr.is_none().then(|| hex::encode(&tx.payload)),
+                tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
+            ),
+        };
+
+        Ok(GetTxResponse {
+            id: tx.hash.into(),
+            version,
+            nonce,
+            to_addr,
+            sender_pub_key,
+            amount,
+            signature,
+            receipt: GetTxResponseReceipt {
+                cumulative_gas: receipt.cumulative_gas_used.into(),
+                epoch_num: block_number,
+                transitions: receipt
+                    .transitions
+                    .into_iter()
+                    .map(|t| {
+                        Ok(Transition {
+                            addr: t.from,
+                            // The depth of transitions from this API start counting from the first contract call, rather
+                            // than from the initial EOA. The initial call is not included as a transition, so this should
+                            // never underflow.
+                            depth: t.depth - 1,
+                            msg: TransitionMessage {
+                                amount: t.amount,
+                                recipient: t.to,
+                                tag: t.tag,
+                                params: serde_json::from_str(&t.params)?,
+                            },
                         })
-                        .collect(),
-                    exceptions: receipt.exceptions,
-                },
-                gas_price: tx.gas_price,
-                gas_limit: tx.gas_limit,
-                code: (!tx.code.is_empty()).then_some(tx.code),
-                data: (!tx.data.is_empty()).then_some(tx.data),
-            })
-        } else {
-            None
-        }
+                    })
+                    .collect::<Result<_>>()?,
+                event_logs: receipt
+                    .logs
+                    .into_iter()
+                    .filter_map(|log| log.into_scilla())
+                    .collect(),
+                success: receipt.success,
+                accepted: receipt.accepted,
+                errors: receipt
+                    .errors
+                    .into_iter()
+                    .map(|(k, v)| {
+                        (
+                            k,
+                            v.into_iter()
+                                .map(|err| match err {
+                                    ScillaError::CallFailed => 7,
+                                    ScillaError::CreateFailed => 8,
+                                    ScillaError::OutOfGas => 21,
+                                    ScillaError::InsufficientBalance => 22,
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+                exceptions: receipt.exceptions,
+            },
+            gas_price,
+            gas_limit,
+            code,
+            data,
+        })
     }
 }
 

@@ -1,6 +1,7 @@
 //! Interface to the Scilla intepreter
 
 use std::{
+    collections::BTreeMap,
     net::{Ipv4Addr, SocketAddr},
     str,
     sync::{
@@ -14,6 +15,7 @@ use std::{
 use alloy_primitives::Address;
 use anyhow::{anyhow, Result};
 use base64::Engine;
+use bytes::{BufMut, Bytes, BytesMut};
 use jsonrpsee::{
     core::{client::ClientT, params::ObjectParams, ClientError},
     http_client::HttpClientBuilder,
@@ -31,10 +33,9 @@ use tokio::runtime;
 use tracing::trace;
 
 use crate::{
-    exec::PendingState,
-    scilla_proto::{Map, ProtoScillaQuery, ProtoScillaVal, ValType},
+    exec::{PendingState, StorageValue},
+    scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
-    state::ScillaValue,
     transaction::{ScillaGas, ZilAmount},
 };
 
@@ -388,7 +389,7 @@ pub struct ScillaEvent {
 pub struct ParamValue {
     #[serde(rename = "vname")]
     pub name: String,
-    pub value: String,
+    pub value: Value,
     #[serde(rename = "type")]
     pub ty: String,
 }
@@ -397,8 +398,8 @@ pub struct ParamValue {
 pub struct Message {
     #[serde(rename = "_tag")]
     pub tag: String,
-    #[serde(rename = "_amount")]
-    pub amount: String,
+    #[serde(rename = "_amount", with = "num_as_str")]
+    pub amount: ZilAmount,
     #[serde(rename = "_recipient")]
     pub recipient: Address,
     pub params: Value,
@@ -583,21 +584,32 @@ impl StateServer {
     }
 }
 
-fn convert_scilla_value(value: &ScillaValue) -> ProtoScillaVal {
-    match value {
-        ScillaValue::Bytes(bytes) => ProtoScillaVal {
-            val_type: Some(ValType::Bval(bytes.clone())),
-        },
-        ScillaValue::Map(map) => {
-            let m = map
-                .iter()
-                .map(|(k, v)| (k.clone(), convert_scilla_value(v)))
-                .collect();
-            ProtoScillaVal {
-                val_type: Some(ValType::Mval(Map { m })),
-            }
-        }
+// Scilla values are stored on disk in a flattened structure. We concatenate the indices that locate a given value.
+// Each index is separated by a `0x1F` (ASCII unit separator) byte. This is currently safe, because this byte cannot
+// occur in Scilla values, but we include an assertion to make sure this remains true.
+
+// Separate each index with the ASCII unit separator byte.
+const SEPARATOR: u8 = 0x1F;
+
+pub fn storage_key(var_name: &str, indices: &[Vec<u8>]) -> Bytes {
+    let len = var_name.len() + indices.len() + indices.iter().map(|v| v.len()).sum::<usize>();
+    let mut bytes = BytesMut::with_capacity(len);
+    bytes.extend_from_slice(var_name.as_bytes());
+    for index in indices {
+        assert!(!index.contains(&SEPARATOR));
+        bytes.put_u8(SEPARATOR);
+        bytes.extend_from_slice(index.as_slice());
     }
+    bytes.freeze()
+}
+
+pub fn split_storage_key(key: impl AsRef<[u8]>) -> Result<(String, Vec<Vec<u8>>)> {
+    let mut parts = key.as_ref().split(|b| *b == SEPARATOR);
+    let var_name = parts.next().expect("split always returns one element");
+    let var_name = String::from_utf8(var_name.to_vec())?;
+    let indices = parts.map(|s| s.to_vec()).collect();
+
+    Ok((var_name, indices))
 }
 
 #[derive(Debug)]
@@ -613,29 +625,54 @@ impl ActiveCall {
         name: String,
         indices: Vec<Vec<u8>>,
     ) -> Result<Option<(ProtoScillaVal, String)>> {
-        let account = self.state.load_account(addr)?;
-        let storage = account
-            .contract
-            .scilla_storage()
-            .ok_or_else(|| anyhow!("not a scilla contract"))?;
+        let (ty, depth) = self.state.load_var_info(addr, &name)?;
+        let ty = ty.to_owned();
 
-        let Some((value, ty)) = storage.get(&name) else {
-            return Ok(None);
-        };
-        let mut value = value;
-
-        for index in &indices {
-            let index = str::from_utf8(index)?;
-            let Some(map) = value.as_map() else {
-                return Err(anyhow!("not a map"));
-            };
-            let Some(inner) = map.get(index) else {
-                return Ok(None);
-            };
-            value = inner;
+        if indices.len() > depth as usize {
+            return Err(anyhow!("too many indices"));
         }
 
-        Ok(Some((convert_scilla_value(value), ty.clone())))
+        let value = if depth as usize == indices.len() {
+            let value = self.state.load_storage(addr, &name, &indices)?.clone();
+            let Some(value) = value else {
+                return Ok(None);
+            };
+            ProtoScillaVal {
+                val_type: Some(ValType::Bval(value.to_vec())),
+            }
+        } else {
+            let value = self.state.load_storage_by_prefix(addr, &name, &indices)?;
+
+            fn convert(value: BTreeMap<Vec<u8>, StorageValue>) -> ProtoScillaVal {
+                ProtoScillaVal::map(
+                    value
+                        .into_iter()
+                        .filter_map(|(k, v)| {
+                            let k = serde_json::from_slice(&k).ok()?;
+                            Some((
+                                k,
+                                match v {
+                                    StorageValue::Map { map, complete } => {
+                                        assert!(complete);
+                                        convert(map)
+                                    }
+                                    StorageValue::Value(Some(value)) => {
+                                        ProtoScillaVal::bytes(value.into())
+                                    }
+                                    StorageValue::Value(None) => {
+                                        return None;
+                                    }
+                                },
+                            ))
+                        })
+                        .collect(),
+                )
+            }
+
+            convert(value)
+        };
+
+        Ok(Some((value, ty)))
     }
 
     fn fetch_state_value(
@@ -663,12 +700,12 @@ impl ActiveCall {
         let account = self.state.load_account(addr)?;
         match name.as_str() {
             "_balance" => {
-                let balance = ZilAmount::from_amount(account.balance);
+                let balance = ZilAmount::from_amount(account.account.balance);
                 let val = scilla_val(format!("\"{balance}\"").into_bytes());
                 Ok(Some((val, "Uint128".to_owned())))
             }
             "_nonce" => {
-                let val = scilla_val(format!("\"{}\"", account.nonce + 1).into_bytes());
+                let val = scilla_val(format!("\"{}\"", account.account.nonce + 1).into_bytes());
                 Ok(Some((val, "Uint64".to_owned())))
             }
             "_this_address" => {
@@ -678,7 +715,7 @@ impl ActiveCall {
             "_codehash" => {
                 todo!()
             }
-            _ => self.fetch_value_inner(addr, name, indices),
+            _ => self.fetch_value_inner(addr, name.clone(), indices.clone()),
         }
     }
 
@@ -689,67 +726,48 @@ impl ActiveCall {
         ignore_value: bool,
         value: ProtoScillaVal,
     ) -> Result<()> {
-        let account = self.state.load_account(self.sender)?;
-        let storage = account
-            .contract
-            .scilla_storage_mut()
-            .ok_or_else(|| anyhow!("not a scilla contract"))?;
-        let Some((storage_slot, _)) = storage.get_mut(&name) else {
-            return Ok(());
-        };
+        let (_, depth) = self.state.load_var_info(self.sender, &name)?;
+        let depth = depth as usize;
+
+        if indices.len() > depth {
+            return Err(anyhow!("too many indices"));
+        }
 
         if ignore_value {
-            if indices.is_empty() {
-                return Err(anyhow!("indices cannot be empty"));
-            }
-
-            let Some(mut map) = storage_slot.as_map_mut() else {
-                return Err(anyhow!("not a map"));
+            // We only supporting deleting a single value of a map.
+            assert_eq!(indices.len(), depth);
+            let storage_slot = self.state.load_storage(self.sender, &name, &indices)?;
+            *storage_slot = None;
+        } else if indices.len() == depth {
+            let Some(ValType::Bval(value)) = value.val_type else {
+                return Err(anyhow!("invalid value"));
             };
-
-            for index in &indices[..(indices.len() - 1)] {
-                let index = str::from_utf8(index)?;
-                let Some(inner) = map.get_mut(index) else {
-                    return Ok(());
-                };
-                let Some(inner) = inner.as_map_mut() else {
-                    return Err(anyhow!("not a map"));
-                };
-                map = inner;
-            }
-
-            let last = &indices[indices.len() - 1];
-            let last = str::from_utf8(last)?;
-            map.remove(last);
+            let storage_slot = self.state.load_storage(self.sender, &name, &indices)?;
+            *storage_slot = Some(value.into());
         } else {
-            let mut storage_slot = storage_slot;
-            for index in &indices {
-                let index = str::from_utf8(index)?;
-                let Some(map) = storage_slot.as_map_mut() else {
-                    return Err(anyhow!("not a map"));
+            fn convert(value: ProtoScillaVal) -> Result<StorageValue> {
+                let Some(value) = value.val_type else {
+                    return Err(anyhow!("missing val_type"));
                 };
-                let inner = map.entry(index.to_owned()).or_insert_with(ScillaValue::map);
-                storage_slot = inner;
+                match value {
+                    ValType::Bval(bytes) => Ok(StorageValue::Value(Some(bytes.into()))),
+                    ValType::Mval(scilla_proto::Map { m }) => {
+                        let map = m
+                            .into_iter()
+                            .map(|(k, v)| Ok((k.into_bytes(), convert(v)?)))
+                            .collect::<Result<_>>()?;
+                        Ok(StorageValue::Map {
+                            map,
+                            // Note that we mark the map as complete here. The field has been fully overridden and any
+                            // existing values should be deleted.
+                            complete: true,
+                        })
+                    }
+                }
             }
 
-            fn convert(v: ProtoScillaVal) -> Result<ScillaValue> {
-                let Some(val_type) = v.val_type else {
-                    return Err(anyhow!("no val_type"));
-                };
-                let value = match val_type {
-                    ValType::Bval(bytes) => ScillaValue::Bytes(bytes),
-                    ValType::Mval(Map { m }) => ScillaValue::Map(
-                        m.into_iter()
-                            .map(|(k, v)| Ok((k, convert(v)?)))
-                            .collect::<Result<_>>()?,
-                    ),
-                };
-                Ok(value)
-            }
-
-            let value = convert(value)?;
-
-            *storage_slot = value;
+            self.state
+                .set_storage(self.sender, &name, &indices, convert(value)?)?;
         }
 
         Ok(())

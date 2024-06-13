@@ -30,6 +30,7 @@ use crate::{
         BlockResponse, ExternalMessage, InternalMessage, IntershardCall, Proposal,
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
+    pool::TxPoolContent,
     state::{Account, State},
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
@@ -677,7 +678,7 @@ impl Node {
     }
 
     pub fn get_gas_price(&self) -> u128 {
-        self.config.consensus.gas_price
+        *self.config.consensus.gas_price
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -738,6 +739,11 @@ impl Node {
         self.consensus.head_block().header.number
     }
 
+    pub fn state_at(&self, block_number: BlockNumber) -> Result<State> {
+        self.consensus
+            .try_get_state_at(self.get_number(block_number))
+    }
+
     pub fn get_account(&self, address: Address, block_number: BlockNumber) -> Result<Account> {
         self.consensus
             .try_get_state_at(self.get_number(block_number))?
@@ -780,10 +786,7 @@ impl Node {
         &self,
         block_hash: Hash,
     ) -> Result<Vec<TransactionReceipt>> {
-        Ok(self
-            .db
-            .get_transaction_receipts(&block_hash)?
-            .unwrap_or_default())
+        self.db.get_transaction_receipts_in_block(&block_hash)
     }
 
     pub fn get_finalized_height(&self) -> u64 {
@@ -813,6 +816,10 @@ impl Node {
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
         self.consensus.get_transaction_by_hash(hash)
+    }
+
+    pub fn txpool_content(&self) -> TxPoolContent {
+        self.consensus.txpool_content()
     }
 
     fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {

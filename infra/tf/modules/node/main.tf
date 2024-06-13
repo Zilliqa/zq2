@@ -168,6 +168,7 @@ resource "google_compute_instance" "this" {
   metadata = {
     "enable-guest-attributes" = "TRUE"
     "enable-osconfig"         = "TRUE"
+    "genesis_key"             = base64encode(var.genesis_key)
   }
 
   metadata_startup_script = templatefile("${path.module}/scripts/node_provision.py.tpl",

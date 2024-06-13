@@ -1,234 +1,576 @@
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path, sync::Mutex, time::Duration};
 
 use alloy_primitives::Address;
 use anyhow::Result;
+use itertools::Either;
+use rusqlite::{
+    named_params,
+    types::{FromSql, FromSqlError, ToSqlOutput},
+    Connection, OptionalExtension, Row, ToSql,
+};
+use serde::{Deserialize, Serialize};
 use sled::{Batch, Tree};
 
 use crate::{
-    crypto::Hash,
-    message::{Block, BlockHeader, QuorumCertificate},
-    transaction::{SignedTransaction, TransactionReceipt},
+    crypto::{Hash, NodeSignature},
+    exec::{ScillaError, ScillaException, ScillaTransition},
+    message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
+    time::SystemTime,
+    transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt},
 };
 
 #[derive(Debug)]
 pub struct Db {
-    root: sled::Db,
-    block_header: Tree,
-    block: Tree,
-    canonical_block_number: Tree,
-    canonical_block_view: Tree,
-    /// Transactions that have been executed and included in a block, and their receipts.
-    transaction: Tree,
-    transaction_receipts: Tree,
-    /// Lookup of block hashes for transaction hashes.
-    block_hash_reverse_index: Tree,
-    touched_address: Tree,
+    state_root: sled::Db,
+    block_store: Mutex<Connection>,
 }
 
-macro_rules! get_and_insert_methods {
-    ($name: ident, $key: ty, $val: ty) => {
-        // Paste lets us concatenate identifiers to form the method names we want.
-        paste::paste! {
-            #[allow(dead_code)]
-            pub fn [<contains_ $name>](&self, key: &$key) -> Result<bool> {
-                Ok(self.$name.contains_key(key.as_bytes())?)
-            }
+const STATE_TRIE_TREE: &[u8] = b"state_trie";
 
-            #[allow(dead_code)]
-            pub fn [<insert_ $name>](&self, key: &$key, val: &$val) -> Result<()> {
-                self.$name.insert(key.as_bytes(), bincode::serialize(val)?)?;
-                Ok(())
+macro_rules! sqlify_with_bincode {
+    ($type: ty) => {
+        impl ToSql for $type {
+            fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+                Ok(ToSqlOutput::from(
+                    bincode::serialize(self)
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?,
+                ))
             }
-
-            #[allow(dead_code)]
-            pub fn [<remove_ $name>](&self, key: &$key) -> Result<()> {
-                self.$name.remove(key.as_bytes())?;
-                Ok(())
-            }
-
-            #[allow(dead_code)]
-            pub fn [<get_ $name>](&self, key: &$key) -> Result<Option<$val>> {
-                Ok(
-                    self.$name
-                        .get(key.as_bytes())?
-                        .map(|b| bincode::deserialize(&b))
-                        .transpose()?
-                )
-            }
-
-            #[allow(dead_code)]
-            pub fn [<insert_ $name _batch>](&self, items: &[($key, $val)]) -> Result<()> {
-                let mut batch = sled::Batch::default();
-                for (k, v) in items {
-                    batch.insert(k.as_bytes(), bincode::serialize(&v)?);
-                }
-                self.$name.apply_batch(batch)?;
-                Ok(())
+        }
+        impl FromSql for $type {
+            fn column_result(
+                value: rusqlite::types::ValueRef<'_>,
+            ) -> rusqlite::types::FromSqlResult<Self> {
+                bincode::deserialize(value.as_blob()?).map_err(|e| FromSqlError::Other(e))
             }
         }
     };
 }
 
-// database tree names
-/// Key: trie hash; value: trie node
-const STATE_TRIE_TREE: &[u8] = b"state_trie";
-/// Key: transaction hash; value: transaction data
-const TXS_TREE: &[u8] = b"txs_tree";
-/// Key: block hash; value: vector of transaction receipts in that block
-const RECEIPTS_TREE: &[u8] = b"receipts_tree";
-/// Key: tx_hash; value: corresponding block_hash
-const TX_BLOCK_INDEX: &[u8] = b"tx_block_index";
-/// Key: block hash; value: block header
-const BLOCK_HEADERS_TREE: &[u8] = b"block_headers_tree";
-/// Key: block number (on the current main branch); value: block hash
-const CANONICAL_BLOCK_NUMBERS_TREE: &[u8] = b"canonical_block_numbers_tree";
-/// Key: block view (on the current main branch); value: block hash
-const CANONICAL_BLOCK_VIEWS_TREE: &[u8] = b"canonical_block_views_tree";
-/// Key: block hash; value: entire block (with hashes for transactions)
-const BLOCKS_TREE: &[u8] = b"blocks_tree";
-/// Key: address; value: list of transactions which touched this address, in order of execution.
-const TOUCHED_ADDRESS_TREE: &[u8] = b"touched_address_tree";
+/// Creates a thin wrapper for a type with proper From traits. To ease implementing To/FromSql on
+/// foreign types.
+macro_rules! make_wrapper {
+    ($old: ty, $new: ident) => {
+        paste::paste! {
+            #[derive(Serialize, Deserialize)]
+            struct $new($old);
 
-// single keys stored in default tree in DB
-/// value: u64
-const LATEST_FINALIZED_VIEW: &[u8] = b"latest_finalized_view";
-/// The highest block number we have seen and stored. It is guaranteed that we have the block at this number in our
-/// block store.
-const HIGHEST_BLOCK_NUMBER: &[u8] = b"highest_block_number";
-const HIGH_QC: &[u8] = b"high_qc";
+            impl From<$old> for $new {
+                fn from(value: $old) -> Self {
+                    Self(value)
+                }
+            }
 
-// database tree names
+            impl From<$new> for $old {
+                fn from(value: $new) -> Self {
+                    value.0
+                }
+            }
+        }
+    };
+}
+
+sqlify_with_bincode!(AggregateQc);
+sqlify_with_bincode!(QuorumCertificate);
+sqlify_with_bincode!(NodeSignature);
+sqlify_with_bincode!(SignedTransaction);
+
+make_wrapper!(Vec<ScillaException>, VecScillaExceptionSqlable);
+sqlify_with_bincode!(VecScillaExceptionSqlable);
+make_wrapper!(BTreeMap<u64, Vec<ScillaError>>, MapScillaErrorSqlable);
+sqlify_with_bincode!(MapScillaErrorSqlable);
+
+make_wrapper!(Vec<Log>, VecLogSqlable);
+sqlify_with_bincode!(VecLogSqlable);
+
+make_wrapper!(Vec<ScillaTransition>, VecScillaTransitionSqlable);
+sqlify_with_bincode!(VecScillaTransitionSqlable);
+
+make_wrapper!(SystemTime, SystemTimeSqlable);
+impl ToSql for SystemTimeSqlable {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        // SQL can only store i64 as number - but for timestamps as seconds this should be
+        // perfectly fine to convert (otherwise it'd have to be stored as text or raw blob)
+        Ok(ToSqlOutput::from(
+            self.0
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        ))
+    }
+}
+impl FromSql for SystemTimeSqlable {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        Ok(SystemTimeSqlable(
+            SystemTime::UNIX_EPOCH + Duration::from_secs(u64::column_result(value)?),
+        ))
+    }
+}
+
+make_wrapper!(Address, AddressSqlable);
+impl ToSql for AddressSqlable {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.0.as_slice()))
+    }
+}
+impl FromSql for AddressSqlable {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        Ok(AddressSqlable(Address::from(<[u8; 20]>::column_result(
+            value,
+        )?)))
+    }
+}
+
+impl ToSql for Hash {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.0.to_vec()))
+    }
+}
+impl FromSql for Hash {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        Ok(Hash(<[u8; 32]>::column_result(value)?))
+    }
+}
+
+impl ToSql for EvmGas {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        self.0.to_sql()
+    }
+}
+
+impl FromSql for EvmGas {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        Ok(Self(u64::column_result(value)?))
+    }
+}
 
 impl Db {
     pub fn new<P>(data_dir: Option<P>, shard_id: u64) -> Result<Self>
     where
         P: AsRef<Path>,
     {
-        let db = match data_dir {
-            Some(path) => sled::open(path.as_ref().join(shard_id.to_string()))?,
-            None => sled::Config::new().temporary(true).open()?,
+        let (db, connection) = match data_dir {
+            Some(path) => {
+                let path = path.as_ref().join(shard_id.to_string());
+                (
+                    sled::open(path.join("state"))?,
+                    Connection::open(path.join("blockdata.db"))?,
+                )
+            }
+            None => (
+                sled::Config::new().temporary(true).open()?,
+                Connection::open_in_memory()?,
+            ),
         };
 
-        let block_header = db.open_tree(BLOCK_HEADERS_TREE)?;
-        let block = db.open_tree(BLOCKS_TREE)?;
-        let canonical_block_number = db.open_tree(CANONICAL_BLOCK_NUMBERS_TREE)?;
-        let canonical_block_view = db.open_tree(CANONICAL_BLOCK_VIEWS_TREE)?;
-        let transaction = db.open_tree(TXS_TREE)?;
-        let transaction_receipt = db.open_tree(RECEIPTS_TREE)?;
-        let block_hash_reverse_index = db.open_tree(TX_BLOCK_INDEX)?;
-        let touched_address = db.open_tree(TOUCHED_ADDRESS_TREE)?;
-
-        touched_address.set_merge_operator(|_, old, new| {
-            let mut old = old.map(|o| o.to_vec()).unwrap_or_default();
-            old.extend_from_slice(new);
-            Some(old)
-        });
+        Self::ensure_schema(&connection)?;
 
         Ok(Db {
-            root: db,
-            block_header,
-            block,
-            canonical_block_number,
-            canonical_block_view,
-            transaction,
-            transaction_receipts: transaction_receipt,
-            block_hash_reverse_index,
-            touched_address,
+            state_root: db,
+            block_store: Mutex::new(connection),
         })
     }
 
-    pub fn flush(&self) {
-        while self.root.flush().unwrap() > 0 {}
+    fn ensure_schema(connection: &Connection) -> Result<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS blocks (
+                block_hash BLOB NOT NULL PRIMARY KEY,
+                view INTEGER NOT NULL UNIQUE,
+                height INTEGER NOT NULL,
+                parent_hash BLOB NOT NULL,
+                signature BLOB NOT NULL,
+                state_root_hash BLOB NOT NULL,
+                timestamp NUMERIC NOT NULL,
+                gas_used INTEGER NOT NULL,
+                qc BLOB NOT NULL,
+                agg BLOB);
+            CREATE TABLE IF NOT EXISTS main_chain_canonical_blocks (
+                height INTEGER NOT NULL PRIMARY KEY,
+                block_hash TEXT NOT NULL REFERENCES blocks (block_hash));
+            CREATE TABLE IF NOT EXISTS transactions (
+                tx_hash BLOB NOT NULL PRIMARY KEY,
+                data BLOB NOT NULL);
+            CREATE TABLE IF NOT EXISTS receipts (
+                tx_hash BLOB NOT NULL PRIMARY KEY REFERENCES transactions (tx_hash) ON DELETE CASCADE,
+                block_hash BLOB NOT NULL REFERENCES blocks (block_hash), -- the touched_address_index needs to be updated for all the txs in the block, so delete txs first - thus no cascade here
+                tx_index INTEGER NOT NULL,
+                success INTEGER NOT NULL,
+                gas_used INTEGER NOT NULL,
+                cumulative_gas_used INTEGER NOT NULL,
+                contract_address BLOB,
+                logs BLOB,
+                transitions BLOB,
+                accepted INTEGER,
+                errors BLOB,
+                exceptions BLOB);
+            CREATE TABLE IF NOT EXISTS touched_address_index (
+                address BLOB,
+                tx_hash BLOB REFERENCES transactions (tx_hash) ON DELETE CASCADE,
+                PRIMARY KEY (address, tx_hash));
+            CREATE TABLE IF NOT EXISTS tip_info (
+                latest_finalized_view INTEGER,
+                high_qc BLOB,
+                _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0)); -- max 1 row
+            ",
+        )?;
+        Ok(())
+    }
+
+    pub fn flush_state(&self) {
+        while self.state_root.flush().unwrap() > 0 {}
     }
 
     pub fn state_trie(&self) -> Result<TrieStorage> {
-        Ok(TrieStorage::new(self.root.open_tree(STATE_TRIE_TREE)?))
+        Ok(TrieStorage::new(
+            self.state_root.open_tree(STATE_TRIE_TREE)?,
+        ))
+    }
+
+    pub fn with_sqlite_tx(&self, operations: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
+        let mut sqlite_tx = self.block_store.lock().unwrap();
+        let sqlite_tx = sqlite_tx.transaction()?;
+        operations(&sqlite_tx)?;
+        Ok(sqlite_tx.commit()?)
     }
 
     pub fn put_canonical_block_number(&self, number: u64, hash: Hash) -> Result<()> {
-        self.canonical_block_number
-            .insert(number.to_be_bytes(), hash.as_bytes())?;
+        self.block_store.lock().unwrap().execute("INSERT OR REPLACE INTO main_chain_canonical_blocks (height, block_hash) VALUES (?1, ?2)",
+            (number, hash))?;
         Ok(())
     }
 
     pub fn get_canonical_block_number(&self, number: u64) -> Result<Option<Hash>> {
-        self.canonical_block_number
-            .get(number.to_be_bytes())?
-            .map(Hash::from_bytes)
-            .transpose()
+        Ok(self
+            .block_store
+            .lock()
+            .unwrap()
+            .query_row_and_then(
+                "SELECT block_hash FROM main_chain_canonical_blocks WHERE height = ?1",
+                [number],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
-    pub fn put_canonical_block_view(&self, view: u64, hash: Hash) -> Result<()> {
-        self.canonical_block_view
-            .insert(view.to_be_bytes(), hash.as_bytes())?;
+    pub fn revert_canonical_block_number(&self, number: u64) -> Result<()> {
+        self.block_store.lock().unwrap().execute(
+            "DELETE FROM main_chain_canonical_blocks WHERE height = ?1",
+            [number],
+        )?;
         Ok(())
     }
 
-    pub fn get_canonical_block_view(&self, view: u64) -> Result<Option<Hash>> {
-        self.canonical_block_view
-            .get(view.to_be_bytes())?
-            .map(Hash::from_bytes)
-            .transpose()
+    pub fn get_block_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
+        Ok(self
+            .block_store
+            .lock()
+            .unwrap()
+            .query_row_and_then(
+                "SELECT block_hash FROM blocks WHERE view = ?1",
+                [view],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
     pub fn put_latest_finalized_view(&self, view: u64) -> Result<()> {
-        self.root
-            .insert(LATEST_FINALIZED_VIEW, &view.to_be_bytes())?;
+        self.block_store
+            .lock()
+            .unwrap()
+            .execute("INSERT INTO tip_info (latest_finalized_view) VALUES (?1) ON CONFLICT DO UPDATE SET latest_finalized_view = ?1",
+                     [view])?;
         Ok(())
     }
 
     pub fn get_latest_finalized_view(&self) -> Result<Option<u64>> {
-        self.root
-            .get(LATEST_FINALIZED_VIEW)?
-            .map(|b| Ok(u64::from_be_bytes(b.as_ref().try_into()?)))
-            .transpose()
-    }
-
-    pub fn put_highest_block_number(&self, number: u64) -> Result<()> {
-        self.root
-            .insert(HIGHEST_BLOCK_NUMBER, &number.to_be_bytes())?;
-        Ok(())
+        Ok(self
+            .block_store
+            .lock()
+            .unwrap()
+            .query_row("SELECT latest_finalized_view FROM tip_info", (), |row| {
+                row.get(0)
+            })
+            .optional()?)
     }
 
     pub fn get_highest_block_number(&self) -> Result<Option<u64>> {
-        self.root
-            .get(HIGHEST_BLOCK_NUMBER)?
-            .map(|b| Ok(u64::from_be_bytes(b.as_ref().try_into()?)))
-            .transpose()
+        Ok(self
+            .block_store
+            .lock()
+            .unwrap()
+            .query_row_and_then(
+                "SELECT height FROM main_chain_canonical_blocks ORDER BY height DESC LIMIT 1",
+                (),
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
     pub fn set_high_qc(&self, high_qc: QuorumCertificate) -> Result<()> {
-        self.root.insert(HIGH_QC, bincode::serialize(&high_qc)?)?;
-
+        self.block_store.lock().unwrap().execute(
+            "INSERT INTO tip_info (high_qc) VALUES (?1) ON CONFLICT DO UPDATE SET high_qc = ?1",
+            [high_qc],
+        )?;
         Ok(())
     }
 
     pub fn get_high_qc(&self) -> Result<Option<QuorumCertificate>> {
-        self.root
-            .get(HIGH_QC)?
-            .map(|qc| Ok(bincode::deserialize(&qc)?))
-            .transpose()
+        Ok(self
+            .block_store
+            .lock()
+            .unwrap()
+            .query_row("SELECT high_qc FROM tip_info", (), |row| row.get(0))
+            .optional()?)
     }
 
     pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {
-        self.touched_address.merge(address, txn_hash.as_bytes())?;
+        self.block_store.lock().unwrap().execute(
+            "INSERT INTO touched_address_index (address, tx_hash) VALUES (?1, ?2)",
+            (AddressSqlable(address), txn_hash),
+        )?;
         Ok(())
     }
 
-    pub fn get_touched_addresses(&self, address: Address) -> Result<Vec<Hash>> {
+    pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
+        // TODO: this is only ever used in one API, so keep an eye on performance - in case e.g.
+        // the index table might need to be denormalised to simplify this lookup
         Ok(self
-            .touched_address
-            .get(address)?
-            .map(|b| b.chunks_exact(Hash::LEN).map(Hash::from_bytes).collect())
-            .transpose()?
-            .unwrap_or_default())
+            .block_store
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT tx_hash FROM touched_address_index JOIN receipts USING (tx_hash) JOIN blocks USING (block_hash) WHERE address = ?1 ORDER BY blocks.height, receipts.tx_index")?
+            .query_map([AddressSqlable(address)], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?)
     }
 
-    get_and_insert_methods!(block_header, Hash, BlockHeader);
-    get_and_insert_methods!(block, Hash, Block);
-    get_and_insert_methods!(transaction, Hash, SignedTransaction);
-    get_and_insert_methods!(transaction_receipts, Hash, Vec<TransactionReceipt>);
-    get_and_insert_methods!(block_hash_reverse_index, Hash, Hash);
+    pub fn get_transaction(&self, txn_hash: &Hash) -> Result<Option<SignedTransaction>> {
+        Ok(self
+            .block_store
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT data FROM transactions WHERE tx_hash = ?1",
+                [txn_hash],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn contains_transaction(&self, hash: &Hash) -> Result<bool> {
+        Ok(self
+            .block_store
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT 1 FROM transactions WHERE tx_hash = ?1",
+                [hash],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    pub fn insert_transaction_with_db_tx(
+        &self,
+        sqlite_tx: &Connection,
+        hash: &Hash,
+        tx: &SignedTransaction,
+    ) -> Result<()> {
+        sqlite_tx.execute(
+            "INSERT INTO transactions (tx_hash, data) VALUES (?1, ?2)",
+            (hash, tx),
+        )?;
+        Ok(())
+    }
+
+    /// Insert a transaction whose hash was precalculated, to save a call to calculate_hash() if it
+    /// is already known
+    pub fn insert_transaction(&self, hash: &Hash, tx: &SignedTransaction) -> Result<()> {
+        self.insert_transaction_with_db_tx(&self.block_store.lock().unwrap(), hash, tx)
+    }
+
+    pub fn remove_transactions_executed_in_block(&self, block_hash: &Hash) -> Result<()> {
+        // foreign key triggers will take care of receipts and touched_address_index
+        self.block_store.lock().unwrap().execute(
+            "DELETE FROM transactions WHERE tx_hash IN (SELECT tx_hash FROM receipts WHERE block_hash = ?1)",
+            [block_hash],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_block_hash_reverse_index(&self, tx_hash: &Hash) -> Result<Option<Hash>> {
+        Ok(self
+            .block_store
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT block_hash FROM receipts WHERE tx_hash = ?1",
+                [tx_hash],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn insert_block_with_db_tx(&self, sqlite_tx: &Connection, block: &Block) -> Result<()> {
+        sqlite_tx.execute(
+            "INSERT INTO blocks
+                (block_hash, view, height, parent_hash, signature, state_root_hash, timestamp, gas_used, qc, agg)
+            VALUES (:block_hash, :view, :height, :parent_hash, :signature, :state_root_hash, :timestamp, :gas_used, :qc, :agg)",
+            named_params! {
+                ":block_hash": block.header.hash,
+                ":view": block.header.view,
+                ":height": block.header.number,
+                ":parent_hash": block.header.parent_hash,
+                ":signature": block.header.signature,
+                ":state_root_hash": block.header.state_root_hash,
+                ":timestamp": SystemTimeSqlable(block.header.timestamp),
+                ":gas_used": block.header.gas_used,
+                ":qc": block.qc,
+                ":agg": block.agg,
+            })?;
+        Ok(())
+    }
+
+    pub fn insert_block(&self, block: &Block) -> Result<()> {
+        self.insert_block_with_db_tx(&self.block_store.lock().unwrap(), block)
+    }
+
+    fn get_transactionless_block(&self, key: Either<&Hash, &u64>) -> Result<Option<Block>> {
+        fn make_block(row: &Row) -> rusqlite::Result<Block> {
+            Ok(Block {
+                header: BlockHeader {
+                    hash: row.get(0)?,
+                    view: row.get(1)?,
+                    number: row.get(2)?,
+                    parent_hash: row.get(3)?,
+                    signature: row.get(4)?,
+                    state_root_hash: row.get(5)?,
+                    timestamp: row.get::<_, SystemTimeSqlable>(6)?.into(),
+                    gas_used: row.get(7)?,
+                },
+                qc: row.get(8)?,
+                agg: row.get(9)?,
+                transactions: vec![],
+            })
+        }
+        macro_rules! query_block {
+            ($cond: tt, $key: tt) => {
+                self.block_store.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, parent_hash, signature, state_root_hash, timestamp, gas_used, qc, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
+            };
+        }
+        Ok(match key {
+            Either::Left(hash) => {
+                query_block!("block_hash = ?1", hash)
+            }
+            Either::Right(view) => {
+                query_block!("view = ?1", view)
+            }
+        })
+    }
+
+    pub fn get_block(&self, key: Either<&Hash, &u64>) -> Result<Option<Block>> {
+        let Some(mut block) = self.get_transactionless_block(key)? else {
+            return Ok(None);
+        };
+        let transaction_hashes = self
+            .block_store
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT tx_hash FROM receipts WHERE block_hash = ?1")?
+            .query_map([block.header.hash], |row| row.get(0))?
+            .collect::<Result<Vec<Hash>, _>>()?;
+        block.transactions = transaction_hashes;
+        Ok(Some(block))
+    }
+
+    pub fn get_block_by_hash(&self, block_hash: &Hash) -> Result<Option<Block>> {
+        self.get_block(Either::Left(block_hash))
+    }
+
+    pub fn get_block_by_view(&self, view: &u64) -> Result<Option<Block>> {
+        self.get_block(Either::Right(view))
+    }
+
+    pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {
+        Ok(self
+            .block_store
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT 1 FROM blocks WHERE block_hash = ?1",
+                [block_hash],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    fn make_receipt(row: &Row) -> rusqlite::Result<TransactionReceipt> {
+        Ok(TransactionReceipt {
+            tx_hash: row.get(0)?,
+            block_hash: row.get(1)?,
+            index: row.get(2)?,
+            success: row.get(3)?,
+            gas_used: row.get(4)?,
+            cumulative_gas_used: row.get(5)?,
+            contract_address: row.get::<_, Option<AddressSqlable>>(6)?.map(|a| a.into()),
+            logs: row.get::<_, VecLogSqlable>(7)?.into(),
+            transitions: row.get::<_, VecScillaTransitionSqlable>(8)?.into(),
+            accepted: row.get(9)?,
+            errors: row.get::<_, MapScillaErrorSqlable>(10)?.into(),
+            exceptions: row.get::<_, VecScillaExceptionSqlable>(11)?.into(),
+        })
+    }
+
+    pub fn insert_transaction_receipt_with_db_tx(
+        &self,
+        sqlite_tx: &Connection,
+        receipt: TransactionReceipt,
+    ) -> Result<()> {
+        sqlite_tx.execute(
+            "INSERT INTO receipts
+                (tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions)
+            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :cumulative_gas_used, :contract_address, :logs, :transitions, :accepted, :errors, :exceptions)",
+            named_params! {
+                ":tx_hash": receipt.tx_hash,
+                ":block_hash": receipt.block_hash,
+                ":tx_index": receipt.index,
+                ":success": receipt.success,
+                ":gas_used": receipt.gas_used,
+                ":cumulative_gas_used": receipt.cumulative_gas_used,
+                ":contract_address": receipt.contract_address.map(AddressSqlable),
+                ":logs": VecLogSqlable(receipt.logs),
+                ":transitions": VecScillaTransitionSqlable(receipt.transitions),
+                ":accepted": receipt.accepted,
+                ":errors": MapScillaErrorSqlable(receipt.errors),
+                ":exceptions": VecScillaExceptionSqlable(receipt.exceptions),
+            })?;
+
+        Ok(())
+    }
+
+    pub fn insert_transaction_receipt(&self, receipt: TransactionReceipt) -> Result<()> {
+        self.insert_transaction_receipt_with_db_tx(&self.block_store.lock().unwrap(), receipt)
+    }
+
+    pub fn get_transaction_receipt(&self, txn_hash: &Hash) -> Result<Option<TransactionReceipt>> {
+        Ok(self.block_store.lock().unwrap().query_row("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1", [txn_hash], Self::make_receipt).optional()?)
+    }
+
+    pub fn get_transaction_receipts_in_block(
+        &self,
+        block_hash: &Hash,
+    ) -> Result<Vec<TransactionReceipt>> {
+        Ok(self.block_store.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn remove_transaction_receipts_in_block(&self, block_hash: &Hash) -> Result<()> {
+        self.block_store
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM receipts WHERE block_hash = ?1", [block_hash])?;
+        Ok(())
+    }
 }
 
 /// An implementor of [eth_trie::DB] which uses a [sled::Tree] to persist data.

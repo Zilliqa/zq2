@@ -14,7 +14,7 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, consensus_timeout_default, disable_rpc_default,
         empty_block_timeout_default, eth_chain_id_default, local_address_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default, ConsensusConfig,
+        minimum_time_left_for_empty_block_default, scilla_address_default, Amount, ConsensusConfig,
     },
     crypto::NodePublicKey,
     transaction::EvmGas,
@@ -26,7 +26,7 @@ use crate::{
     otel, utils,
 };
 
-const GENESIS_DEPOSIT: &str = "10000000000000000000000000";
+const GENESIS_DEPOSIT: u128 = 10000000000000000000000000;
 const DATADIR_PREFIX: &str = "z2_node_";
 
 pub struct Setup {
@@ -147,7 +147,7 @@ impl Setup {
 
     pub async fn generate_config(&self) -> Result<()> {
         // The genesis deposits.
-        let mut genesis_deposits: Vec<(NodePublicKey, PeerId, String, Address)> = Vec::new();
+        let mut genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)> = Vec::new();
         for i in 0..self.how_many {
             genesis_deposits.push((
                 self.secret_keys[i].node_public_key(),
@@ -155,20 +155,20 @@ impl Setup {
                     .to_libp2p_keypair()
                     .public()
                     .to_peer_id(),
-                GENESIS_DEPOSIT.to_string(),
+                GENESIS_DEPOSIT.into(),
                 self.node_addresses[i],
             ))
         }
 
-        let genesis_accounts: Vec<(Address, String)> = vec![
+        let genesis_accounts: Vec<(Address, Amount)> = vec![
             (
                 address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"),
-                "5000000000000000000000".to_string(),
+                5000000000000000000000u128.into(),
             ),
             // privkey db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3
             (
                 address!("cb57ec3f064a16cadb36c7c712f4c9fa62b77415"),
-                "5000000000000000000000".to_string(),
+                5000000000000000000000u128.into(),
             ),
         ];
 
@@ -197,13 +197,13 @@ impl Setup {
                     consensus_timeout: consensus_timeout_default(),
                     genesis_deposits: Vec::new(),
                     eth_block_gas_limit: EvmGas(84000000),
-                    gas_price: 4_761_904_800_000u128,
-                    minimum_stake: 10_000_000_000_000_000_000_000_000u128,
+                    gas_price: 4_761_904_800_000u128.into(),
+                    minimum_stake: 10_000_000_000_000_000_000_000_000u128.into(),
                     empty_block_timeout: empty_block_timeout_default(),
                     genesis_accounts: Vec::new(),
                     is_main: true,
                     blocks_per_hour: 3600,
-                    rewards_per_hour: 51_000_000_000_000_000_000_000u128,
+                    rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
                 },
             };
             println!("Node {i} has RPC port {0}", node_config.json_rpc_port);

@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy};
+use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy, EMPTY_ROOT_HASH};
 use alloy_primitives::{Address, Parity, Signature, TxKind, B256, U256};
 use anyhow::{anyhow, Context, Result};
 use bitvec::bitvec;
@@ -33,7 +33,7 @@ use zilliqa::{
     inspector,
     message::{Block, BlockHeader, QuorumCertificate, Vote},
     schnorr,
-    state::{contract_addr, Account, Contract, State},
+    state::{contract_addr, Account, Code, State},
     time::SystemTime,
     transaction::{
         EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
@@ -95,14 +95,8 @@ pub async fn convert_persistence(
             let account = Account {
                 nonce: zq1_account.nonce,
                 balance: zq1_account.balance * 10u128.pow(6),
-                contract: Contract::Evm {
-                    code: zq1_account
-                        .contract
-                        .as_ref()
-                        .map(|_| zq1_db.get_contract_code(address).unwrap().unwrap())
-                        .unwrap_or_default(),
-                    storage_root: None,
-                },
+                code: Code::Evm(vec![]), // TODO: Convert contract code and state
+                storage_root: EMPTY_ROOT_HASH,
             };
 
             state.save_account(address, account)?;
@@ -135,7 +129,7 @@ pub async fn convert_persistence(
     ) = state.apply_transaction_evm(
         Address::ZERO,
         Some(contract_addr::DEPOSIT),
-        node_config.consensus.gas_price,
+        *node_config.consensus.gas_price,
         node_config.consensus.eth_block_gas_limit,
         0,
         data,
@@ -177,7 +171,6 @@ pub async fn convert_persistence(
     {
         let mut transactions = Vec::new();
         let mut receipts = Vec::new();
-        let mut block_headers = Vec::new();
         let mut blocks = Vec::new();
         let mut parent_hash = Hash::ZERO;
 
@@ -224,9 +217,7 @@ pub async fn convert_persistence(
                 ScillaGas(block.gas_used).into(),
             );
 
-            let mut block_receipts = Vec::new();
-
-            for txn_hash in &txn_hashes {
+            for (index, txn_hash) in txn_hashes.iter().enumerate() {
                 let Some(transaction) = zq1_db.get_tx_body(block_number, *txn_hash)? else {
                     warn!(?txn_hash, %block_number, "missing transaction");
                     continue;
@@ -259,6 +250,7 @@ pub async fn convert_persistence(
                         let receipt = TransactionReceipt {
                             block_hash: block.hash(),
                             tx_hash: Hash(txn_hash.0),
+                            index: index as u64,
                             success: transaction.receipt.success,
                             gas_used: EvmGas(transaction.receipt.cumulative_gas),
                             cumulative_gas_used: EvmGas(transaction.receipt.cumulative_gas),
@@ -277,6 +269,7 @@ pub async fn convert_persistence(
                                     }))
                                 })
                                 .collect::<Result<_>>()?,
+                            transitions: vec![],
                             accepted: None,
                             errors: BTreeMap::new(),
                             exceptions: vec![],
@@ -320,6 +313,7 @@ pub async fn convert_persistence(
                         let receipt = TransactionReceipt {
                             block_hash: block.hash(),
                             tx_hash: Hash(txn_hash.0),
+                            index: index as u64,
                             success: transaction.receipt.success,
                             gas_used: EvmGas(transaction.receipt.cumulative_gas),
                             cumulative_gas_used: EvmGas(transaction.receipt.cumulative_gas),
@@ -338,6 +332,7 @@ pub async fn convert_persistence(
                                     }))
                                 })
                                 .collect::<Result<_>>()?,
+                            transitions: vec![],
                             accepted: None,
                             errors: BTreeMap::new(),
                             exceptions: vec![],
@@ -361,29 +356,31 @@ pub async fn convert_persistence(
                 };
 
                 transactions.push((Hash(txn_hash.0), transaction));
-                block_receipts.push(receipt);
-                zq2_db.insert_block_hash_reverse_index(&Hash(txn_hash.0), &block.hash())?;
-
+                receipts.push(receipt);
                 //trace!(?txn_hash, "transaction inserted");
             }
 
-            receipts.push((block.hash(), block_receipts));
             zq2_db.put_canonical_block_number(block_number, block.hash())?;
-            zq2_db.put_canonical_block_view(block_number, block.hash())?;
-            block_headers.push((block.hash(), block.header));
             zq2_db.set_high_qc(block.qc.clone())?;
-            blocks.push((block.hash(), block.clone()));
+            blocks.push(block.clone());
             zq2_db.put_latest_finalized_view(block_number)?;
-            zq2_db.put_highest_block_number(block_number)?;
 
             trace!(%block_number, "block inserted");
             parent_hash = block.hash();
         }
 
-        zq2_db.insert_transaction_batch(&transactions)?;
-        zq2_db.insert_transaction_receipts_batch(&receipts)?;
-        zq2_db.insert_block_header_batch(&block_headers)?;
-        zq2_db.insert_block_batch(&blocks)?;
+        zq2_db.with_sqlite_tx(|sqlite_tx| {
+            for (hash, transaction) in &transactions {
+                zq2_db.insert_transaction_with_db_tx(sqlite_tx, hash, transaction)?;
+            }
+            for receipt in &receipts {
+                zq2_db.insert_transaction_receipt_with_db_tx(sqlite_tx, receipt.to_owned())?;
+            }
+            for block in &blocks {
+                zq2_db.insert_block_with_db_tx(sqlite_tx, block)?;
+            }
+            Ok(())
+        })?;
     }
 
     println!(

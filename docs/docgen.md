@@ -49,7 +49,7 @@ Sections expected in API documentation:
 | Arguments | Yes     | Table of arguments |
 | Status | No   |  See below |
 
-Note that some sections (specifically `cuurl are implicitly indented to 4 characters to make tabs work.
+Note that some sections (specifically `curl` are implicitly indented to 4 characters to make tabs work.
 
 When a section is made into a key, it is lowercased, so that you don't have problems with autocapitalisation in your editor - so the heading `TiTLE` will turn up as the Tera key `title` in your template.
 

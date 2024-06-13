@@ -11,7 +11,8 @@ use std::{
 
 use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Result};
-use eth_trie::Trie;
+use bytes::Bytes;
+use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
 use libp2p::PeerId;
 use revm::{
@@ -30,12 +31,13 @@ use tracing::{debug, info, trace, warn};
 use crate::{
     contracts,
     crypto::{Hash, NodePublicKey},
+    db::TrieStorage,
     eth_helpers::extract_revert_msg,
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
     precompiles::get_custom_precompiles,
-    scilla::{self, Scilla},
-    state::{contract_addr, Account, Contract, ScillaValue, State},
+    scilla::{self, split_storage_key, storage_key, Scilla},
+    state::{contract_addr, Account, Code, State},
     time::SystemTime,
     transaction::{
         total_scilla_gas_price, EvmGas, EvmLog, Log, ScillaGas, ScillaLog, ScillaParam,
@@ -43,7 +45,7 @@ use crate::{
     },
 };
 
-type ScillaResultAndState = (ScillaResult, HashMap<Address, Account>);
+type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
 
 /// Data returned after applying a [Transaction] to [State].
 pub enum TransactionApplyResult {
@@ -110,10 +112,12 @@ impl TransactionApplyResult {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn into_parts(
         self,
     ) -> (
         Vec<Log>,
+        Vec<ScillaTransition>,
         BTreeMap<u64, Vec<ScillaError>>,
         Vec<ScillaException>,
     ) {
@@ -131,12 +135,14 @@ impl TransactionApplyResult {
                         })
                     })
                     .collect(),
+                Vec::new(),
                 BTreeMap::new(),
                 Vec::new(),
             ),
             TransactionApplyResult::Scilla((
                 ScillaResult {
                     logs,
+                    transitions,
                     errors,
                     exceptions,
                     ..
@@ -144,11 +150,28 @@ impl TransactionApplyResult {
                 _,
             )) => (
                 logs.into_iter().map(Log::Scilla).collect(),
+                transitions,
                 errors,
                 exceptions,
             ),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScillaTransition {
+    /// The address of the Scilla contract which initiated the transition.
+    pub from: Address,
+    /// The recipient of the transition.
+    pub to: Address,
+    /// The call depth of the transition.
+    pub depth: u64,
+    /// The value passed with the transition.
+    pub amount: ZilAmount,
+    /// The tag of the transition. If the recipient is a Scilla contract, this is the method that will be called.
+    pub tag: String,
+    /// Any parameters passed with the transition.
+    pub params: String,
 }
 
 pub struct ScillaResult {
@@ -160,6 +183,8 @@ pub struct ScillaResult {
     pub logs: Vec<ScillaLog>,
     /// The gas paid by the transaction
     pub gas_used: EvmGas,
+    /// Scilla transitions executed by the transaction execution.
+    pub transitions: Vec<ScillaTransition>,
     /// If the transaction was a call to a Scilla contract, whether the called contract accepted the ZIL sent to it.
     pub accepted: Option<bool>,
     /// Errors from calls to Scilla contracts. Indexed by the call depth of erroring contract.
@@ -247,7 +272,7 @@ impl DatabaseRef for &State {
             nonce: account.nonce,
             code_hash: KECCAK_EMPTY,
             code: Some(Bytecode::new_raw(
-                account.contract.evm_code().unwrap_or_default().into(),
+                account.code.evm_code().unwrap_or_default().into(),
             )),
         };
 
@@ -413,12 +438,6 @@ impl State {
     ) -> Result<ScillaResultAndState> {
         let mut state = PendingState::new(self.try_clone()?);
 
-        let code = self
-            .get_account(txn.to_addr)?
-            .contract
-            .scilla_code()
-            .unwrap_or_default();
-
         let deposit = total_scilla_gas_price(txn.gas_limit, txn.gas_price);
         if let Some(result) = state.deduct_from_account(from_addr, deposit)? {
             return Ok((result, state.finalize()));
@@ -436,8 +455,6 @@ impl State {
                 current_block,
                 inspector,
             )
-        } else if code.is_empty() {
-            scilla_transfer_to_eoa(state, from_addr, txn, inspector)
         } else {
             scilla_call(state, self.scilla(), from_addr, txn, inspector)
         }?;
@@ -445,8 +462,8 @@ impl State {
         let from = state.load_account(from_addr)?;
         let refund =
             total_scilla_gas_price(gas_limit - ScillaGas::from(result.gas_used), gas_price);
-        from.balance += refund.get();
-        from.nonce += 1;
+        from.account.balance += refund.get();
+        from.account.nonce += 1;
 
         Ok((result, state.finalize()))
     }
@@ -495,9 +512,60 @@ impl State {
     }
 
     /// Applies a state delta from a Scilla execution to the state.
-    fn apply_delta_scilla(&mut self, state: &HashMap<Address, Account>) -> Result<()> {
+    fn apply_delta_scilla(&mut self, state: &HashMap<Address, PendingAccount>) -> Result<()> {
         for (&address, account) in state {
-            self.save_account(address, account.clone())?;
+            let mut storage = self.get_account_trie(address)?;
+
+            /// Recursively called internal function which assigns `value` at the correct key to `storage`.
+            fn handle(
+                storage: &mut EthTrie<TrieStorage>,
+                var: &str,
+                value: &StorageValue,
+                indices: &mut Vec<Vec<u8>>,
+            ) -> Result<()> {
+                match value {
+                    StorageValue::Map { map, complete } => {
+                        // If this is a complete view of the map, delete any existing values first.
+                        if *complete {
+                            storage.remove_by_prefix(&storage_key(var, indices))?;
+                        }
+
+                        // We will iterate over each key-value pair in this map and make a recursive call to this
+                        // function with the given value. Before each call, we need to make sure we update `inidices`
+                        // to include the key. To avoid changing the length of the `Vec` in each iteration, we first
+                        // add a dummy index (`vec![]`) and update it before each call.
+                        indices.push(vec![]);
+                        for (k, v) in map {
+                            indices.last_mut().unwrap().clone_from(k);
+                            handle(storage, var, v, indices)?;
+                        }
+                    }
+                    StorageValue::Value(Some(value)) => {
+                        let key = storage_key(var, indices);
+                        storage.insert(&key, value)?;
+                    }
+                    StorageValue::Value(None) => {
+                        let key = storage_key(var, indices);
+                        // A deletion may occur at any depth of the map. Therefore we remove all keys with the relevent
+                        // prefix.
+                        storage.remove_by_prefix(&key)?;
+                    }
+                }
+                Ok(())
+            }
+
+            for (var, value) in &account.storage {
+                handle(&mut storage, var, value, &mut vec![])?;
+            }
+
+            let account = Account {
+                nonce: account.account.nonce,
+                balance: account.account.balance,
+                code: account.account.code.clone(),
+                storage_root: storage.root_hash()?,
+            };
+
+            self.save_account(address, account)?;
         }
 
         Ok(())
@@ -522,19 +590,16 @@ impl State {
             let account = Account {
                 nonce: account.info.nonce,
                 balance: account.info.balance.try_into()?,
-                contract: Contract::Evm {
-                    code: account
+                code: Code::Evm(
+                    account
                         .info
                         .code
                         .as_ref()
-                        .map(|c| c.original_bytes().to_vec())
-                        .unwrap_or_default(),
-                    storage_root: if storage.iter().count() != 0 {
-                        Some(storage.root_hash()?)
-                    } else {
-                        None
-                    },
-                },
+                        .expect("code_by_hash is not used")
+                        .original_bytes()
+                        .to_vec(),
+                ),
+                storage_root: storage.root_hash()?,
             };
             trace!(?address, ?account, "update account");
             self.save_account(address, account)?;
@@ -820,7 +885,24 @@ pub fn zil_contract_address(sender: Address, nonce: u64) -> Address {
 #[derive(Debug)]
 pub struct PendingState {
     pre_state: State,
-    new_state: HashMap<Address, Account>,
+    new_state: HashMap<Address, PendingAccount>,
+}
+
+/// Private helper function for `PendingState::load_account`. The only difference is that the fields of `PendingState`
+/// are passed explicitly. This means the borrow-checker can see the reference we return only borrows from the
+/// `new_state` field and thus we can later use `pre_state` without an error.
+fn load_account<'a>(
+    pre_state: &State,
+    new_state: &'a mut HashMap<Address, PendingAccount>,
+    address: Address,
+) -> Result<&'a mut PendingAccount> {
+    match new_state.entry(address) {
+        Entry::Occupied(entry) => Ok(entry.into_mut()),
+        Entry::Vacant(vac) => {
+            let account = pre_state.get_account(address)?;
+            Ok(vac.insert(account.into()))
+        }
+    }
 }
 
 impl PendingState {
@@ -831,14 +913,187 @@ impl PendingState {
         }
     }
 
-    pub fn load_account(&mut self, address: Address) -> Result<&mut Account> {
-        match self.new_state.entry(address) {
-            Entry::Occupied(entry) => Ok(entry.into_mut()),
-            Entry::Vacant(vac) => {
-                let account = self.pre_state.get_account(address)?;
-                Ok(vac.insert(account))
-            }
+    pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
+        load_account(&self.pre_state, &mut self.new_state, address)
+    }
+
+    pub fn load_var_info(&mut self, address: Address, variable: &str) -> Result<(&str, u8)> {
+        let account = self.load_account(address)?;
+        let Code::Scilla { types, .. } = &account.account.code else {
+            return Err(anyhow!("not a scilla contract"));
+        };
+        let (ty, depth) = types
+            .get(variable)
+            .ok_or_else(|| anyhow!("missing type for variable: {variable}"))?;
+        Ok((ty, *depth))
+    }
+
+    /// Set the value of a given variable at the given indices. This can be used for setting map values, unlike
+    /// `load_storage`.
+    pub fn set_storage(
+        &mut self,
+        address: Address,
+        var_name: &str,
+        indices: &[Vec<u8>],
+        value: StorageValue,
+    ) -> Result<()> {
+        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+
+        let mut current = account
+            .storage
+            .entry(var_name.to_owned())
+            .or_insert_with(StorageValue::incomplete_map);
+        for key in indices {
+            let current_map = match current {
+                StorageValue::Map { map, .. } => map,
+                StorageValue::Value(Some(_)) => {
+                    return Err(anyhow!("expected a map"));
+                }
+                StorageValue::Value(None) => {
+                    // This branch is unreachable because `update_state_value` in `ActiveCall` asserts that a deletion
+                    // can only occur at the same depth as a variable.
+                    unreachable!("deletes of whole maps are unsupported")
+                }
+            };
+            let child = current_map
+                .entry(key.clone())
+                .or_insert_with(StorageValue::incomplete_map);
+            current = child;
         }
+
+        *current = value;
+
+        Ok(())
+    }
+
+    pub fn load_storage(
+        &mut self,
+        address: Address,
+        var_name: &str,
+        indices: &[Vec<u8>],
+    ) -> Result<&mut Option<Bytes>> {
+        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+
+        fn get_cached<'a>(
+            storage: &'a mut BTreeMap<String, StorageValue>,
+            var_name: &str,
+            indices: &[Vec<u8>],
+        ) -> Result<(&'a mut StorageValue, bool)> {
+            let mut cached = true;
+            let mut current = storage.entry(var_name.to_owned()).or_insert_with(|| {
+                cached = false;
+                StorageValue::incomplete_map()
+            });
+            for key in indices {
+                let current_map = match current {
+                    StorageValue::Map { map, .. } => map,
+                    StorageValue::Value(Some(_)) => {
+                        return Err(anyhow!("expected a map"));
+                    }
+                    StorageValue::Value(None) => {
+                        // This branch is unreachable because `update_state_value` in `ActiveCall` asserts that a deletion
+                        // can only occur at the same depth as a variable.
+                        unreachable!("deletes of whole maps are unsupported")
+                    }
+                };
+                let child = current_map.entry(key.clone()).or_insert_with(|| {
+                    cached = false;
+                    StorageValue::incomplete_map()
+                });
+                current = child;
+            }
+            Ok((current, cached))
+        }
+
+        let (value, cached) = get_cached(&mut account.storage, var_name, indices)?;
+
+        if !cached {
+            let value_from_disk = self
+                .pre_state
+                .get_account_trie(address)?
+                .get(&storage_key(var_name, indices))?
+                .map(Vec::<u8>::from);
+
+            *value = StorageValue::Value(value_from_disk.map(|b| b.into()));
+        }
+
+        match value {
+            StorageValue::Map { .. } => Err(anyhow!("expected bytes")),
+            StorageValue::Value(value) => Ok(value),
+        }
+    }
+
+    pub fn load_storage_by_prefix(
+        &mut self,
+        address: Address,
+        var_name: &str,
+        indices: &[Vec<u8>],
+    ) -> Result<BTreeMap<Vec<u8>, StorageValue>> {
+        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+
+        // Even if we have something cached for this prefix, we don't know if it is a full representation of the map.
+        // It might have been the case that only a few subfields were cached. Therefore, we need to retrieve the full
+        // map from disk and apply any cached (and potentially updated) values. In future, we should use the 'complete'
+        // flag on maps to avoid needing to read from disk unconditionally.
+
+        let values_from_disk: Vec<_> = self
+            .pre_state
+            .get_account_trie(address)?
+            .iter_by_prefix(&storage_key(var_name, indices))?
+            .collect();
+
+        let mut map = StorageValue::complete_map();
+        let cached = account.storage.get(var_name);
+
+        // Un-flatten the values from disk into their true representation.
+        for (k, v) in values_from_disk {
+            let (disk_var_name, disk_indices) = split_storage_key(&k)?;
+            assert_eq!(var_name, disk_var_name);
+            assert!(disk_indices.starts_with(indices));
+
+            let mut current_value = &mut map;
+            let mut current_cached = cached;
+
+            for index in disk_indices {
+                if let Some(c) = current_cached {
+                    match c {
+                        StorageValue::Map { map, .. } => {
+                            current_cached = map.get(&index);
+                        }
+                        // This branch can be hit in two cases:
+                        // * Firstly, we expect the final index to point to a value in the cache, rather than a map.
+                        // * Secondly, if a portion of the map has been deleted, then the cache can contain a `None`
+                        // value at a greater height than the depth of the map.
+                        StorageValue::Value(_) => {}
+                    }
+                }
+
+                let map = match current_value {
+                    StorageValue::Map { map, .. } => map,
+                    StorageValue::Value(_) => {
+                        return Err(anyhow!("expected map"));
+                    }
+                };
+                // Note that we insert 'complete' maps here, because we know we are going to add *ALL* values from
+                // with this prefix.
+                current_value = map.entry(index).or_insert_with(StorageValue::complete_map);
+            }
+
+            *current_value = if let Some(cached) = current_cached {
+                cached.clone()
+            } else {
+                StorageValue::Value(Some(v.into()))
+            };
+        }
+
+        let map = match map {
+            StorageValue::Map { map, .. } => map,
+            StorageValue::Value(_) => {
+                return Err(anyhow!("expected map"));
+            }
+        };
+
+        Ok(map)
     }
 
     #[track_caller]
@@ -849,13 +1104,14 @@ impl PendingState {
     ) -> Result<Option<ScillaResult>> {
         let caller = std::panic::Location::caller();
         let account = self.load_account(address)?;
-        let Some(balance) = account.balance.checked_sub(amount.get()) else {
+        let Some(balance) = account.account.balance.checked_sub(amount.get()) else {
             info!("insufficient balance: {caller}");
             return Ok(Some(ScillaResult {
                 success: false,
                 contract_address: None,
                 logs: vec![],
                 gas_used: ScillaGas(0).into(),
+                transitions: vec![],
                 accepted: None,
                 errors: [(0, vec![ScillaError::InsufficientBalance])]
                     .into_iter()
@@ -863,13 +1119,55 @@ impl PendingState {
                 exceptions: vec![],
             }));
         };
-        account.balance = balance;
+        account.account.balance = balance;
         Ok(None)
     }
 
     /// Return the changed state and resets the [PendingState] to its initial state in [PendingState::new].
-    pub fn finalize(&mut self) -> HashMap<Address, Account> {
+    pub fn finalize(&mut self) -> HashMap<Address, PendingAccount> {
         mem::take(&mut self.new_state)
+    }
+}
+
+#[derive(Debug)]
+pub struct PendingAccount {
+    pub account: Account,
+    /// Cached values of updated or deleted storage. Note that deletions can happen at any level of a map.
+    pub storage: BTreeMap<String, StorageValue>,
+}
+
+#[derive(Debug, Clone)]
+pub enum StorageValue {
+    Map {
+        map: BTreeMap<Vec<u8>, StorageValue>,
+        complete: bool,
+    },
+    /// A value can either be `Some(bytes)` to represent an updated value or `None` to represent a deleted value.
+    Value(Option<Bytes>),
+}
+
+impl StorageValue {
+    pub fn incomplete_map() -> StorageValue {
+        StorageValue::Map {
+            map: BTreeMap::new(),
+            complete: false,
+        }
+    }
+
+    pub fn complete_map() -> StorageValue {
+        StorageValue::Map {
+            map: BTreeMap::new(),
+            complete: true,
+        }
+    }
+}
+
+impl From<Account> for PendingAccount {
+    fn from(account: Account) -> PendingAccount {
+        PendingAccount {
+            account,
+            storage: BTreeMap::new(),
+        }
     }
 }
 
@@ -909,6 +1207,7 @@ fn scilla_create(
                 contract_address: Some(contract_address),
                 logs: vec![],
                 gas_used: (txn.gas_limit - gas).into(),
+                transitions: vec![],
                 accepted: Some(false),
                 errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
                 exceptions: vec![],
@@ -928,6 +1227,7 @@ fn scilla_create(
                     contract_address: Some(contract_address),
                     logs: vec![],
                     gas_used: (txn.gas_limit - gas).into(),
+                    transitions: vec![],
                     accepted: Some(false),
                     errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
                     exceptions: e.errors.into_iter().map(Into::into).collect(),
@@ -941,31 +1241,19 @@ fn scilla_create(
 
     let gas = gas.min(check_output.gas_remaining);
 
-    let storage = check_output
+    let types = check_output
         .contract_info
         .fields
         .into_iter()
-        .map(|p| {
-            (
-                p.name,
-                (
-                    if p.depth == 0 {
-                        ScillaValue::Bytes(Vec::new())
-                    } else {
-                        ScillaValue::map()
-                    },
-                    p.ty,
-                ),
-            )
-        })
+        .map(|p| (p.name, (p.ty, p.depth as u8)))
         .collect();
 
     let account = state.load_account(contract_address)?;
-    account.balance = txn.amount.get();
-    account.contract = Contract::Scilla {
+    account.account.balance = txn.amount.get();
+    account.account.code = Code::Scilla {
         code: txn.code.clone(),
         init_data: serde_json::to_string(&init_data)?,
-        storage,
+        types,
     };
 
     let Some(gas) = gas.checked_sub(SCILLA_INVOKE_RUNNER) else {
@@ -976,6 +1264,7 @@ fn scilla_create(
                 contract_address: Some(contract_address),
                 logs: vec![],
                 gas_used: (txn.gas_limit - gas).into(),
+                transitions: vec![],
                 accepted: Some(false),
                 errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
                 exceptions: vec![],
@@ -1003,6 +1292,7 @@ fn scilla_create(
                     contract_address: Some(contract_address),
                     logs: vec![],
                     gas_used: (txn.gas_limit - gas).into(),
+                    transitions: vec![],
                     accepted: Some(false),
                     errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
                     exceptions: e.errors.into_iter().map(Into::into).collect(),
@@ -1024,53 +1314,7 @@ fn scilla_create(
             contract_address: Some(contract_address),
             logs: vec![],
             gas_used: (txn.gas_limit - gas).into(),
-            accepted: None,
-            errors: BTreeMap::new(),
-            exceptions: vec![],
-        },
-        state,
-    ))
-}
-
-fn scilla_transfer_to_eoa(
-    mut state: PendingState,
-    from_addr: Address,
-    txn: TxZilliqa,
-    mut inspector: impl ScillaInspector,
-) -> Result<(ScillaResult, PendingState)> {
-    let gas = txn.gas_limit;
-
-    let Some(gas) = gas.checked_sub(SCILLA_TRANSFER) else {
-        warn!("not enough gas to make transfer");
-        return Ok((
-            ScillaResult {
-                success: false,
-                contract_address: None,
-                logs: vec![],
-                gas_used: (txn.gas_limit - gas).into(),
-                accepted: Some(false),
-                errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
-                exceptions: vec![],
-            },
-            state,
-        ));
-    };
-
-    if let Some(result) = state.deduct_from_account(from_addr, txn.amount)? {
-        return Ok((result, state));
-    }
-
-    let to = state.load_account(txn.to_addr)?;
-    to.balance += txn.amount.get();
-
-    inspector.transfer(from_addr, txn.to_addr, txn.amount.get());
-
-    Ok((
-        ScillaResult {
-            success: true,
-            contract_address: None,
-            logs: vec![],
-            gas_used: (txn.gas_limit - gas).into(),
+            transitions: vec![],
             accepted: None,
             errors: BTreeMap::new(),
             exceptions: vec![],
@@ -1080,110 +1324,224 @@ fn scilla_transfer_to_eoa(
 }
 
 fn scilla_call(
-    mut state: PendingState,
+    state: PendingState,
     scilla: MutexGuard<'_, Scilla>,
     from_addr: Address,
     txn: TxZilliqa,
     mut inspector: impl ScillaInspector,
 ) -> Result<(ScillaResult, PendingState)> {
-    // TODO: Interop
-    let Contract::Scilla {
-        ref code,
-        ref init_data,
-        storage: _,
-    } = state.load_account(txn.to_addr)?.contract
-    else {
-        return Err(anyhow!("Scilla call to a non-Scilla contract"));
-    };
-    let init_data: Vec<Value> = serde_json::from_str(init_data)?;
+    let mut gas = txn.gas_limit;
 
-    // TODO: Better parsing here
-    let mut message: Value = serde_json::from_str(&txn.data)?;
-    message["_amount"] = txn.amount.to_string().into();
-    message["_sender"] = format!("{from_addr:#x}").into();
-    message["_origin"] = format!("{from_addr:#x}").into();
-
-    let gas = txn.gas_limit;
-    let Some(gas) = gas.checked_sub(SCILLA_INVOKE_RUNNER) else {
-        warn!("not enough gas to invoke scilla runner");
-        return Ok((
-            ScillaResult {
-                success: false,
-                contract_address: None,
-                logs: vec![],
-                gas_used: (txn.gas_limit - gas).into(),
-                accepted: Some(false),
-                errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
-                exceptions: vec![],
-            },
-            state,
-        ));
+    let message = if !txn.data.is_empty() {
+        let mut m: Value = serde_json::from_str(&txn.data)?;
+        m["_amount"] = txn.amount.to_string().into();
+        m["_sender"] = format!("{from_addr:#x}").into();
+        m["_origin"] = format!("{from_addr:#x}").into();
+        Some(m)
+    } else {
+        None
     };
 
-    let code = code.clone();
-    let (output, mut state) = scilla.invoke_contract(
-        state,
-        txn.to_addr,
-        &code,
-        txn.gas_limit,
-        txn.amount,
-        &init_data,
-        &message,
-    )?;
-    let output = match output {
-        Ok(o) => o,
-        Err(e) => {
-            warn!(?e, "transaction failed");
-            let gas = gas.min(e.gas_remaining);
-            return Ok((
-                ScillaResult {
-                    success: false,
-                    contract_address: None,
-                    logs: vec![],
-                    gas_used: (txn.gas_limit - gas).into(),
-                    accepted: Some(false),
-                    errors: [(0, vec![ScillaError::CallFailed])].into_iter().collect(),
-                    exceptions: e.errors.into_iter().map(Into::into).collect(),
-                },
-                state,
-            ));
+    let mut call_stack = vec![(0, from_addr, txn.to_addr, txn.amount, message)];
+    let mut logs = vec![];
+    let mut transitions = vec![];
+    let mut root_contract_accepted = false;
+
+    let mut state = Some(state);
+
+    while let Some((depth, sender, to_addr, amount, message)) = call_stack.pop() {
+        let mut current_state = state.take().expect("missing state");
+
+        let code_and_data = match &current_state.load_account(to_addr)?.account.code {
+            // EOAs are currently represented by [Code::Evm] with no code.
+            Code::Evm(code) if code.is_empty() => None,
+            Code::Scilla {
+                code, init_data, ..
+            } => Some((code, init_data)),
+            // Calls to EVM contracts should fail.
+            Code::Evm(_) => {
+                return Ok((
+                    ScillaResult {
+                        success: false,
+                        contract_address: None,
+                        logs: vec![],
+                        gas_used: (txn.gas_limit - gas).into(),
+                        transitions: vec![],
+                        accepted: Some(false),
+                        errors: [(depth, vec![ScillaError::CallFailed])]
+                            .into_iter()
+                            .collect(),
+                        exceptions: vec![ScillaException {
+                            line: 0,
+                            message: "Scilla call to EVM contract".to_owned(),
+                        }],
+                    },
+                    current_state,
+                ));
+            }
+        };
+
+        if let Some((code, init_data)) = code_and_data {
+            // The `to_addr` is a Scilla contract, so we are going to invoke the Scilla interpreter.
+
+            let Some(g) = gas.checked_sub(SCILLA_INVOKE_RUNNER) else {
+                warn!("not enough gas to invoke scilla runner");
+                return Ok((
+                    ScillaResult {
+                        success: false,
+                        contract_address: None,
+                        logs: vec![],
+                        gas_used: (txn.gas_limit - gas).into(),
+                        transitions: vec![],
+                        accepted: Some(false),
+                        errors: [(depth, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                        exceptions: vec![],
+                    },
+                    current_state,
+                ));
+            };
+            gas = g;
+
+            let code = code.clone();
+            let init_data = serde_json::from_str::<Vec<_>>(init_data)?;
+
+            let (output, mut new_state) = scilla.invoke_contract(
+                current_state,
+                to_addr,
+                &code,
+                gas,
+                amount,
+                &init_data,
+                message
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("call to a Scilla contract without a message"))?,
+            )?;
+            inspector.call(sender, to_addr, amount.get(), depth);
+
+            let output = match output {
+                Ok(o) => o,
+                Err(e) => {
+                    warn!(?e, "transaction failed");
+                    let gas = gas.min(e.gas_remaining);
+                    return Ok((
+                        ScillaResult {
+                            success: false,
+                            contract_address: None,
+                            logs: vec![],
+                            gas_used: (txn.gas_limit - gas).into(),
+                            transitions: vec![],
+                            accepted: Some(false),
+                            errors: [(0, vec![ScillaError::CallFailed])].into_iter().collect(),
+                            exceptions: e.errors.into_iter().map(Into::into).collect(),
+                        },
+                        new_state,
+                    ));
+                }
+            };
+
+            info!(?output);
+
+            gas = gas.min(output.gas_remaining);
+
+            if output.accepted {
+                if let Some(result) = new_state.deduct_from_account(sender, amount)? {
+                    return Ok((result, new_state));
+                }
+
+                let to = new_state.load_account(to_addr)?;
+                to.account.balance += txn.amount.get();
+
+                if depth == 0 {
+                    root_contract_accepted = true;
+                }
+            }
+
+            transitions.reserve(output.messages.len());
+            call_stack.reserve(output.messages.len());
+            for message in output.messages {
+                transitions.push(ScillaTransition {
+                    from: to_addr,
+                    to: message.recipient,
+                    depth: depth + 1,
+                    amount: message.amount,
+                    tag: message.tag.clone(),
+                    params: serde_json::to_string(&message.params)?,
+                });
+
+                let next_message = json!({
+                    "_tag": message.tag,
+                    "_amount": message.amount.to_string(),
+                    "_sender": format!("{to_addr:#x}"),
+                    "_origin": format!("{from_addr:#x}"),
+                    "params": message.params,
+                });
+                call_stack.push((
+                    depth + 1,
+                    to_addr,
+                    message.recipient,
+                    message.amount,
+                    Some(next_message),
+                ));
+            }
+
+            logs.reserve(output.events.len());
+            for event in output.events {
+                let log = ScillaLog {
+                    address: to_addr,
+                    event_name: event.event_name,
+                    params: event
+                        .params
+                        .into_iter()
+                        .map(|p| {
+                            Ok(ScillaParam {
+                                ty: p.ty,
+                                // If the value is a JSON string, don't double encode it.
+                                value: if let Value::String(v) = p.value {
+                                    v
+                                } else {
+                                    serde_json::to_string(&p.value)?
+                                },
+                                name: p.name,
+                            })
+                        })
+                        .collect::<Result<_>>()?,
+                };
+                logs.push(log);
+            }
+
+            state = Some(new_state);
+        } else {
+            // The `to_addr` is an EOA.
+            let Some(g) = gas.checked_sub(SCILLA_TRANSFER) else {
+                warn!("not enough gas to make transfer");
+                return Ok((
+                    ScillaResult {
+                        success: false,
+                        contract_address: None,
+                        logs: vec![],
+                        gas_used: (txn.gas_limit - gas).into(),
+                        transitions: vec![],
+                        accepted: Some(false),
+                        errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                        exceptions: vec![],
+                    },
+                    current_state,
+                ));
+            };
+            gas = g;
+
+            if let Some(result) = current_state.deduct_from_account(from_addr, txn.amount)? {
+                return Ok((result, current_state));
+            }
+
+            let to = current_state.load_account(txn.to_addr)?;
+            to.account.balance += txn.amount.get();
+
+            inspector.transfer(from_addr, txn.to_addr, txn.amount.get(), depth);
+
+            state = Some(current_state);
         }
-    };
-
-    info!(?output);
-
-    let gas = gas.min(output.gas_remaining);
-
-    if output.accepted {
-        if let Some(result) = state.deduct_from_account(from_addr, txn.amount)? {
-            return Ok((result, state));
-        }
-
-        let to = state.load_account(txn.to_addr)?;
-        to.balance += txn.amount.get();
     }
-
-    // TODO: Handle `output.messages` for multi-contract calls.
-
-    let logs = output
-        .events
-        .into_iter()
-        .map(|e| ScillaLog {
-            address: txn.to_addr,
-            event_name: e.event_name,
-            params: e
-                .params
-                .into_iter()
-                .map(|p| ScillaParam {
-                    ty: p.ty,
-                    value: p.value,
-                    name: p.name,
-                })
-                .collect(),
-        })
-        .collect();
-
-    inspector.call(from_addr, txn.to_addr, txn.amount.get());
 
     Ok((
         ScillaResult {
@@ -1191,10 +1549,11 @@ fn scilla_call(
             contract_address: None,
             logs,
             gas_used: (txn.gas_limit - gas).into(),
-            accepted: Some(output.accepted),
+            transitions,
+            accepted: Some(root_contract_accepted),
             errors: BTreeMap::new(),
             exceptions: vec![],
         },
-        state,
+        state.take().expect("missing state"),
     ))
 }

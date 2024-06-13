@@ -19,21 +19,50 @@ templatefile() vars:
 - role, the node role: validator or apps
 - otterscan_image, the Otterscan docker image (incl. version)
 - spout_image, the Eth Spout docker image (incl. version)
+- subdomain, the ZQ2 network domain name
 """
 
 
 PERSISTENCE_URL="${persistence_url}"
 
+ZQ2_IMAGE="${docker_image}"
+OTTERSCAN_IMAGE="${otterscan_image}"
+SPOUT_IMAGE="${spout_image}"
+GENESIS_KEY="genesis_key"
+
+VERSIONS={
+    "zilliqa": ZQ2_IMAGE.split(":")[-1] if ZQ2_IMAGE.split(":")[-1] else "latest",
+    "otterscan": OTTERSCAN_IMAGE.split(":")[-1] if OTTERSCAN_IMAGE.split(":")[-1] else "latest",
+    "spout": SPOUT_IMAGE.split(":")[-1] if SPOUT_IMAGE.split(":")[-1] else "latest",
+}
+
+def query_metadata_key(key: str) -> str:
+    url = f"http://metadata.google.internal/computeMetadata/v1/instance/attributes/{key}"
+    r = requests.get(url, headers = {
+        "Metadata-Flavor" : "Google" })
+    return r.text
+
 
 ZQ2_SCRIPT="""#!/bin/bash
 echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
-ZQ2_IMAGE=${docker_image}
+ZQ2_IMAGE="${docker_image}"
 
-docker run -td -p 3333:3333 -p 4201:4201 \
-  -e RUST_LOG="zilliqa=debug" -e RUST_BACKTRACE=1 \
-  -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
-  $${ZQ2_IMAGE} $${1} --log-json
+start() {
+    docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
+    docker run -td -p 3333:3333 -p 4201:4201 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
+    -e RUST_LOG="zilliqa=debug" -e RUST_BACKTRACE=1 \
+    -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
+    $${ZQ2_IMAGE} $${1} --log-json
+}
+
+stop() {
+    docker stop zilliqa-""" + VERSIONS.get('zilliqa') + """
+}
+
+case $${1} in
+    start|stop) $${1} $${2};;
+esac
 
 exit 0
 """
@@ -43,8 +72,13 @@ ZQ2_SERVICE_DESC="""
 Description=Zilliqa Node
 
 [Service]
-Type=simple
-ExecStart=/usr/local/bin/zq2-start.sh ${secret_key}
+Type=forking
+ExecStart=/usr/local/bin/zq2.sh start ${secret_key}
+ExecStop=/usr/local/bin/zq2.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+
 Environment="RUST_LOG=zilliqa=debug"
 Environment="RUST_BACKTRACE=1"
 StandardOutput=append:/zilliqa.log
@@ -60,11 +94,22 @@ ${config}
 OTTERSCAN_SCRIPT="""#!/bin/bash
 echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
-OTTERSCAN_IMAGE=${otterscan_image}
+OTTERSCAN_IMAGE="${otterscan_image}"
 
-docker run -td -p 80:80 \
-    -e ERIGON_URL=https://api.${subdomain} \
-    $${OTTERSCAN_IMAGE}
+start() {
+     docker rm otterscan-""" + VERSIONS.get('otterscan') + """ &> /dev/null || echo 0
+    docker run -td -p 80:80 --name otterscan-""" + VERSIONS.get('otterscan') + """ \
+        -e ERIGON_URL=https://api.${subdomain} \
+        $${OTTERSCAN_IMAGE} &> /dev/null &
+}
+
+stop() {
+    docker stop otterscan-""" + VERSIONS.get('otterscan') + """
+}
+
+case $${1} in
+    start|stop) $${1} ;;
+esac
 
 exit 0
 """
@@ -74,8 +119,13 @@ OTTERSCAN_SERVICE_DESC="""
 Description=Otterscan app
 
 [Service]
-Type=simple
-ExecStart=/usr/local/bin/otterscan-start.sh
+Type=forking
+ExecStart=/usr/local/bin/otterscan.sh start
+ExecStop=/usr/local/bin/otterscan.sh start
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
 
 [Install]
 WantedBy=multi-user.target
@@ -84,17 +134,28 @@ WantedBy=multi-user.target
 SPOUT_SCRIPT="""#!/bin/bash
 echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
-SPOUT_IMAGE=${spout_image}
+SPOUT_IMAGE="${spout_image}"
 
-docker run -td -p 8080:80 \
-    -e RPC_URL=https://api.${subdomain} \
-    -e NATIVE_TOKEN_SYMBOL="ZIL" \
-    -e PRIVATE_KEY="${genesis_key}" \
-    -e ETH_AMOUNT=100 \
-    -e EXPLORER_URL="https://explorer.${subdomain}" \
-    -e MINIMUM_SECONDS_BETWEEN_REQUESTS=60 \
-    -e BECH32_HRP="zil" \
-    $${SPOUT_IMAGE}
+start() {
+    docker rm spout-""" + VERSIONS.get('spout') + """ &> /dev/null || echo 0
+    docker run -td -p 8080:80 --name spout-""" + VERSIONS.get('spout') + """ \
+        -e RPC_URL=https://api.${subdomain} \
+        -e NATIVE_TOKEN_SYMBOL="ZIL" \
+        -e PRIVATE_KEY="${genesis_key}" \
+        -e ETH_AMOUNT=100 \
+        -e EXPLORER_URL="https://explorer.${subdomain}" \
+        -e MINIMUM_SECONDS_BETWEEN_REQUESTS=60 \
+        -e BECH32_HRP="zil" \
+        $${SPOUT_IMAGE}
+}
+
+stop() {
+    docker stop spout-""" + VERSIONS.get('spout') + """
+}
+
+case $${1} in
+    start|stop) $${1} ;;
+esac
 
 exit 0
 """
@@ -104,8 +165,12 @@ SPOUT_SERVICE_DESC="""
 Description=Spout app
 
 [Service]
-Type=simple
-ExecStart=/usr/local/bin/spout-start.sh
+Type=forking
+ExecStart=/usr/local/bin/spout.sh start
+ExecStop=/usr/local/bin/spout.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
@@ -126,7 +191,7 @@ logging:
         - /var/lib/docker/containers/*/*.log
         - /zilliqa.log
   processors:
-    parse-log:
+    parse_log:
         type: parse_json
         field: log
     json:
@@ -144,7 +209,7 @@ logging:
     pipelines:
       zilliqa:
         receivers: [ zilliqa ]
-        processors: [ parse-log, json, move_fields ]
+        processors: [ parse_log, json, move_fields ]
 """
 
 LOGROTATE_CONFIG="""
@@ -307,11 +372,13 @@ def go(role):
         case "validator":
             log("Configuring a validator node")
             configure_logrotate()
+            stop_zq2()
             install_zilliqa()
             download_persistence()
             start_zq2()
         case "apps":
             log("Configuring the blockchain app node")
+            stop_apps()
             install_otterscan()
             install_spout()
             start_apps()
@@ -382,14 +449,17 @@ def install_gcloud():
 
 
 def create_zq2_start_script():
-    with open("/tmp/zq2-start.sh", "w") as f:
+    with open("/tmp/zq2.sh", "w") as f:
         f.write(ZQ2_SCRIPT)
-    run_or_die(["sudo", "cp", "/tmp/zq2-start.sh", "/usr/local/bin/zq2-start.sh"])
-    run_or_die(["sudo", "chmod", "+x", "/usr/local/bin/zq2-start.sh"])
+    run_or_die(["sudo", "cp", "/tmp/zq2.sh", f"/usr/local/bin/zq2-{VERSIONS.get('zilliqa')}.sh"])
+    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/zq2-{VERSIONS.get('zilliqa')}.sh"])
+    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/zq2-{VERSIONS.get('zilliqa')}.sh", "/usr/local/bin/zq2.sh"])
 
 def install_zilliqa():
     create_zq2_config()
     create_zq2_start_script()
+    if os.path.exists("/etc/systemd/system/zilliqa.service"):
+        return 0
     with open("/tmp/zilliqa.service", "w") as f:
         f.write(ZQ2_SERVICE_DESC)
     run_or_die(["sudo","cp","/tmp/zilliqa.service","/etc/systemd/system/zilliqa.service"])
@@ -398,10 +468,12 @@ def install_zilliqa():
     run_or_die(["sudo", "systemctl", "enable", "zilliqa.service"])
 
 def install_otterscan():
-    with open("/tmp/otterscan-start.sh", "w") as f:
+    with open(f"/tmp/otterscan.sh", "w") as f:
         f.write(OTTERSCAN_SCRIPT)
-    run_or_die(["sudo", "cp", "/tmp/otterscan-start.sh", "/usr/local/bin/otterscan-start.sh"])
-    run_or_die(["sudo", "chmod", "+x", "/usr/local/bin/otterscan-start.sh"])
+    run_or_die(["sudo", "cp", "/tmp/otterscan.sh", f"/usr/local/bin/otterscan-{VERSIONS.get('otterscan')}.sh"])
+    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/otterscan-{VERSIONS.get('otterscan')}.sh"])
+    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/otterscan-{VERSIONS.get('otterscan')}.sh", "/usr/local/bin/otterscan.sh"])
+
     with open("/tmp/otterscan.service", "w") as f:
         f.write(OTTERSCAN_SERVICE_DESC)
     run_or_die(["sudo","cp","/tmp/otterscan.service","/etc/systemd/system/otterscan.service"])
@@ -411,10 +483,12 @@ def install_otterscan():
 
 
 def install_spout():
-    with open("/tmp/spout-start.sh", "w") as f:
+    with open("/tmp/spout.sh", "w") as f:
         f.write(SPOUT_SCRIPT)
-    run_or_die(["sudo", "cp", "/tmp/spout-start.sh", "/usr/local/bin/spout-start.sh"])
-    run_or_die(["sudo", "chmod", "+x", "/usr/local/bin/spout-start.sh"])
+    run_or_die(["sudo", "cp", "/tmp/spout.sh", f"/usr/local/bin/spout-{VERSIONS.get('spout')}.sh"])
+    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/spout-{VERSIONS.get('spout')}.sh"])
+    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/spout-{VERSIONS.get('spout')}.sh", "/usr/local/bin/spout.sh"])
+
     with open("/tmp/spout.service", "w") as f:
         f.write(SPOUT_SERVICE_DESC)
     run_or_die(["sudo","cp","/tmp/spout.service","/etc/systemd/system/spout.service"])
@@ -427,6 +501,11 @@ def start_apps():
     run_or_die(["sudo", "systemctl", "start", "otterscan"])
     run_or_die(["sudo", "systemctl", "start", "spout"])
 
+def stop_apps():
+    for app in [ "otterscan", "spout"]:
+        if os.path.exists(f"/etc/systemd/system/{app}.service"):
+            run_or_die(["sudo", "systemctl", "stop", f"{app}"])
+    pass
 
 def configure_logrotate():
     with open("/etc/logrotate.d/zilliqa.conf", "w") as f:
@@ -434,12 +513,13 @@ def configure_logrotate():
 
 
 def create_zq2_config():
-    with open("/config.toml", "w") as f:
-        f.write(ZQ2_CONFIG)
+    if not os.path.exists("/config.toml"):
+        with open("/config.toml", "w") as f:
+            f.write(ZQ2_CONFIG)
 
 
 def download_persistence():
-    if PERSISTENCE_URL:
+    if PERSISTENCE_URL is not None and PERSISTENCE_URL != "${persistence_url}":
         PERSISTENCE_DIR="/data"
         PERSISTENCE_FILENAME = os.path.basename(urlparse(PERSISTENCE_URL).path)
         os.makedirs(PERSISTENCE_DIR, exist_ok=True)
@@ -453,6 +533,10 @@ def download_persistence():
 def start_zq2():
     run_or_die(["sudo", "systemctl", "start", "zilliqa"])
 
+def stop_zq2():
+    if os.path.exists("/etc/systemd/system/zilliqa.service"):
+        run_or_die(["sudo", "systemctl", "stop", "zilliqa"])
+    pass
 
 if __name__ == "__main__":
     go(role="${role}")

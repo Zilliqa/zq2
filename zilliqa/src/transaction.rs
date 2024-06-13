@@ -24,7 +24,7 @@ use sha3::{
 
 use crate::{
     crypto,
-    exec::{ScillaError, ScillaException},
+    exec::{ScillaError, ScillaException, ScillaTransition},
     schnorr,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
@@ -154,7 +154,7 @@ impl SignedTransaction {
         }
     }
 
-    pub fn gas_price(&self) -> u128 {
+    pub fn gas_price_per_evm_gas(&self) -> u128 {
         match self {
             SignedTransaction::Legacy { tx, .. } => tx.gas_price,
             SignedTransaction::Eip2930 { tx, .. } => tx.gas_price,
@@ -167,6 +167,29 @@ impl SignedTransaction {
         }
     }
 
+    // ZilAmount / EvmGas
+    // EvmGas / ScillaGas
+
+    pub fn gas_price_per_scilla_gas(&self) -> ZilAmount {
+        /// Convert a gas price in (10^-18) ZILs per [EvmGas] to [ZilAmount] ((10^-12) ZILs) per [ScillaGas].
+        fn convert(price: u128) -> ZilAmount {
+            // Units of `price`: u128 / EvmGas
+            let price = ZilAmount::from_amount(price);
+            // Units of `price`: ZilAmount / EvmGas
+            // Units of `EVM_GAS_PER_SCILLA_GAS`: EvmGas / ScillaGas
+            ZilAmount::from_raw(price.0 * (EVM_GAS_PER_SCILLA_GAS as u128))
+            // Units of returned value: ZilAmount / ScillaGas
+        }
+        match self {
+            SignedTransaction::Legacy { tx, .. } => convert(tx.gas_price),
+            SignedTransaction::Eip2930 { tx, .. } => convert(tx.gas_price),
+            // We ignore the priority fee and just use the maximum fee.
+            SignedTransaction::Eip1559 { tx, .. } => convert(tx.max_fee_per_gas),
+            SignedTransaction::Zilliqa { tx, .. } => tx.gas_price,
+            SignedTransaction::Intershard { tx, .. } => convert(tx.gas_price),
+        }
+    }
+
     pub fn gas_limit(&self) -> EvmGas {
         match self {
             SignedTransaction::Legacy { tx, .. } => EvmGas(tx.gas_limit as u64),
@@ -174,6 +197,26 @@ impl SignedTransaction {
             SignedTransaction::Eip1559 { tx, .. } => EvmGas(tx.gas_limit as u64),
             SignedTransaction::Zilliqa { tx, .. } => tx.gas_limit.into(),
             SignedTransaction::Intershard { tx, .. } => tx.gas_limit,
+        }
+    }
+
+    pub fn gas_limit_scilla(&self) -> ScillaGas {
+        match self {
+            SignedTransaction::Legacy { tx, .. } => EvmGas(tx.gas_limit as u64).into(),
+            SignedTransaction::Eip2930 { tx, .. } => EvmGas(tx.gas_limit as u64).into(),
+            SignedTransaction::Eip1559 { tx, .. } => EvmGas(tx.gas_limit as u64).into(),
+            SignedTransaction::Zilliqa { tx, .. } => tx.gas_limit,
+            SignedTransaction::Intershard { tx, .. } => tx.gas_limit.into(),
+        }
+    }
+
+    pub fn zil_amount(&self) -> ZilAmount {
+        match self {
+            SignedTransaction::Legacy { tx, .. } => ZilAmount::from_amount(tx.value.to()),
+            SignedTransaction::Eip2930 { tx, .. } => ZilAmount::from_amount(tx.value.to()),
+            SignedTransaction::Eip1559 { tx, .. } => ZilAmount::from_amount(tx.value.to()),
+            SignedTransaction::Zilliqa { tx, .. } => tx.amount,
+            SignedTransaction::Intershard { .. } => ZilAmount::from_raw(0),
         }
     }
 
@@ -680,12 +723,14 @@ pub struct ScillaParam {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionReceipt {
     pub block_hash: crypto::Hash,
+    pub index: u64,
     pub tx_hash: crypto::Hash,
     pub success: bool,
     pub gas_used: EvmGas,
     pub cumulative_gas_used: EvmGas,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
+    pub transitions: Vec<ScillaTransition>,
     pub accepted: Option<bool>,
     pub errors: BTreeMap<u64, Vec<ScillaError>>,
     pub exceptions: Vec<ScillaException>,
