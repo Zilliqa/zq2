@@ -11,6 +11,13 @@ state,contract,get,substate
 Returns the state (or a part specified) of a smart contract address, represented
 in JSON format.
 
+!!! note
+
+    The way that storage is encoded is different (and subject to
+    change) between Scilla and EVM contracts. Whilst `GetSmartContractSubState()`
+    may not fail if called on an address containing EVM code, it will
+    not return meaningful results.
+
 ## State Params
 
 | Parameter       | Type       | Required     | Description                                                           |
@@ -26,7 +33,7 @@ Example:
 
 !!! note
 
-    If Variable Name and Indices Array are both empty, the response would be same as `GetSmartContractState_`
+    If Variable Name and Indices Array are both empty, the response will be the same as `GetSmartContractState_`
 
 
 # Curl
