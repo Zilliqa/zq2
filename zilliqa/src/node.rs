@@ -590,7 +590,6 @@ impl Node {
                     }))
                 }
             },
-            // JS tracer is incompatible with
             GethDebugTracerType::JsTracer(js_code) => {
                 let config = tracer_config.into_json();
 
