@@ -48,6 +48,6 @@ Accepts a block number and tracer type and will replay the block that is already
 | `id`      | string | Required | `"1"`                           |
 | `jsonrpc` | string | Required | `"2.0"`                         |
 | `method`  | string | Required | `"debug_traceBlockByNumber"`    |
-| `params`  | array  | Requred  | `[block_number, tracerConfig ]` |
+| `params`  | array  | Required | `[block_number, tracerConfig ]` |
 
 For more details on tracerConfig see https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#traceconfig
