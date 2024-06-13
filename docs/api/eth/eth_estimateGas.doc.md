@@ -52,4 +52,4 @@ curl -d '{
 | `id`      | string | Required | `"1"`                                                      |
 | `jsonrpc` | string | Required | `"2.0"`                                                    |
 | `method`  | string | Required | `"DSBlockListing"`                                         |
-| `params`  | array  | Requred  | `[ transaction ]` or `[tranasction, block_number]`         |
+| `params`  | array  | Requred  | `[ transaction ]` or `[transaction, block_number]`         |

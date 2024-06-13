@@ -10,6 +10,14 @@ get,contract,state
 
 Returns the state (mutable) variables of a smart contract address in JSON format.
 
+!!! note
+
+    The way that storage is encoded is different (and subject to
+    change) between Scilla and EVM contracts. Whilst `GetSmartContractState()`
+    may not fail if called on an address containing EVM code, it will
+    not return meaningful results.
+
+
 # Curl
 
 ```shell

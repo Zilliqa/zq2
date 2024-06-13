@@ -219,6 +219,7 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let position: U256 = params.next()?;
     let position = B256::new(position.to_be_bytes());
     let block_number: BlockNumber = params.next()?;
+    expect_end_of_params(&mut params, 3, 3)?;
 
     let value = node
         .lock()
@@ -233,6 +234,7 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let block_number: BlockNumber = params.next()?;
+    expect_end_of_params(&mut params, 3, 3)?;
 
     trace!(
         "get_transaction_count resp: {:?}",
@@ -251,7 +253,8 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
         .to_hex())
 }
 
-fn get_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+fn get_gas_price(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    expect_end_of_params(&mut params.sequence(), 0, 0)?;
     Ok(node.lock().unwrap().get_gas_price().to_hex())
 }
 

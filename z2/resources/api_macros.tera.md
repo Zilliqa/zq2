@@ -52,3 +52,28 @@ The block number can be:
 
 If the block number is not provided, `latest` is assumed.
 
+# hydrated
+
+### Hydrated
+
+If this parameter is `true`, we return transaction objects. If `false`, we return a list of hashes.
+
+# returned_transaction
+
+### Transaction
+
+| Parameter       | Type   | Required | Description                                                                        |
+|-----------------|--------|----------|------------------------------------------------------------------------------------|
+| `baseFeePerGas` | string | required | Base fee in hex format (all ZQ2 blocks are treated as post-EIP-1559)               |
+| `difficulty`    | string | required | Difficulty, as hex. Always 0 (`"0x0"`)                                             |
+| `extraData`     | string | required | The extra data field of this block                                                 |
+| `gasLimit`      | string | required | Gas limit for this block as a hex number.                                          |
+| `gasUsed`       | string | required | Gas used in this block as a hex number.                                            |
+| `hash`          | string | required | Block hash as a hex number                                                         |
+| `logsBloom`
+| `from`          | string | required | The address of the sender of this message call                                     |
+| `to`            | string | optional | The recipient address                                                              |
+| `gas`           | string | optional | Gas to give this message call, as a hex number in a string                         |
+| `gas_price`     | string | optional | Gas price to give this message call as a hex number in a string                    |
+| `data`          | string | required | The calldata                                                                       |
+| `value`         | string | optional | Value to send with this call, as a hex number in a string. Assumed 0 if not given. |
