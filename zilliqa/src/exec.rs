@@ -18,7 +18,7 @@ use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
     primitives::{
-        AccountInfo, BlockEnv, Bytecode, ExecutionResult, HaltReason, HandlerCfg, Output,
+        AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg, Output,
         ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
     },
     Database, DatabaseRef, Evm, Inspector,
@@ -49,14 +49,14 @@ type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
 
 /// Data returned after applying a [Transaction] to [State].
 pub enum TransactionApplyResult {
-    Evm(ResultAndState),
+    Evm(ResultAndState, Box<Env>),
     Scilla(ScillaResultAndState),
 }
 
 impl TransactionApplyResult {
     pub fn output(&self) -> Option<&[u8]> {
         match self {
-            TransactionApplyResult::Evm(ResultAndState { result, .. }) => {
+            TransactionApplyResult::Evm(ResultAndState { result, .. }, ..) => {
                 result.output().map(|b| b.as_ref())
             }
             TransactionApplyResult::Scilla(_) => None,
@@ -65,18 +65,21 @@ impl TransactionApplyResult {
 
     pub fn success(&self) -> bool {
         match self {
-            TransactionApplyResult::Evm(ResultAndState { result, .. }) => result.is_success(),
+            TransactionApplyResult::Evm(ResultAndState { result, .. }, ..) => result.is_success(),
             TransactionApplyResult::Scilla((ScillaResult { success, .. }, _)) => *success,
         }
     }
 
     pub fn contract_address(&self) -> Option<Address> {
         match self {
-            TransactionApplyResult::Evm(ResultAndState {
-                result: ExecutionResult::Success { output, .. },
-                ..
-            }) => output.address().copied(),
-            TransactionApplyResult::Evm(_) => None,
+            TransactionApplyResult::Evm(
+                ResultAndState {
+                    result: ExecutionResult::Success { output, .. },
+                    ..
+                },
+                ..,
+            ) => output.address().copied(),
+            TransactionApplyResult::Evm(_, _) => None,
             TransactionApplyResult::Scilla((
                 ScillaResult {
                     contract_address, ..
@@ -88,21 +91,23 @@ impl TransactionApplyResult {
 
     pub fn gas_used(&self) -> EvmGas {
         match self {
-            TransactionApplyResult::Evm(ResultAndState { result, .. }) => EvmGas(result.gas_used()),
+            TransactionApplyResult::Evm(ResultAndState { result, .. }, ..) => {
+                EvmGas(result.gas_used())
+            }
             TransactionApplyResult::Scilla((ScillaResult { gas_used, .. }, _)) => *gas_used,
         }
     }
 
     pub fn accepted(&self) -> Option<bool> {
         match self {
-            TransactionApplyResult::Evm(_) => None,
+            TransactionApplyResult::Evm(_, _) => None,
             TransactionApplyResult::Scilla((ScillaResult { accepted, .. }, _)) => *accepted,
         }
     }
 
     pub fn exceptions(&self) -> &[ScillaException] {
         match self {
-            TransactionApplyResult::Evm(_) => &[],
+            TransactionApplyResult::Evm(_, _) => &[],
             TransactionApplyResult::Scilla((ScillaResult { exceptions, .. }, _)) => exceptions,
         }
     }
@@ -117,7 +122,7 @@ impl TransactionApplyResult {
         Vec<ScillaException>,
     ) {
         match self {
-            TransactionApplyResult::Evm(ResultAndState { result, .. }) => (
+            TransactionApplyResult::Evm(ResultAndState { result, .. }, ..) => (
                 result
                     .into_logs()
                     .into_iter()
@@ -309,7 +314,7 @@ impl State {
         creation_bytecode: Vec<u8>,
         override_address: Option<Address>,
     ) -> Result<Address> {
-        let ResultAndState { result, mut state } = self.apply_transaction_evm(
+        let (ResultAndState { result, mut state }, ..) = self.apply_transaction_evm(
             Address::ZERO,
             None,
             self.gas_price,
@@ -362,7 +367,7 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
         inspector: I,
-    ) -> Result<ResultAndState> {
+    ) -> Result<(ResultAndState, Box<Env>)> {
         let mut evm = Evm::builder()
             .with_db(self)
             .with_block_env(BlockEnv {
@@ -421,7 +426,7 @@ impl State {
             .build();
 
         let e = evm.transact()?;
-        Ok(e)
+        Ok((e, evm.context.evm.env.clone()))
     }
 
     fn apply_transaction_scilla(
@@ -484,7 +489,7 @@ impl State {
 
             Ok(TransactionApplyResult::Scilla((result, state)))
         } else {
-            let ResultAndState { result, state } = self.apply_transaction_evm(
+            let (ResultAndState { result, state }, env) = self.apply_transaction_evm(
                 from_addr,
                 txn.to_addr(),
                 txn.max_fee_per_gas(),
@@ -499,10 +504,10 @@ impl State {
 
             self.apply_delta_evm(&state)?;
 
-            Ok(TransactionApplyResult::Evm(ResultAndState {
-                result,
-                state,
-            }))
+            Ok(TransactionApplyResult::Evm(
+                ResultAndState { result, state },
+                env,
+            ))
         }
     }
 
@@ -765,7 +770,7 @@ impl State {
             }
             let mid = (min + max) / 2;
 
-            let ResultAndState { result, .. } = self.apply_transaction_evm(
+            let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
                 from_addr,
                 to_addr,
                 gas_price,
@@ -802,7 +807,7 @@ impl State {
         gas_price: u128,
         value: u128,
     ) -> Result<u64> {
-        let ResultAndState { result, .. } = self.apply_transaction_evm(
+        let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
             gas_price,
@@ -846,7 +851,7 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<Vec<u8>> {
-        let ResultAndState { result, .. } = self.apply_transaction_evm(
+        let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
             self.gas_price,
