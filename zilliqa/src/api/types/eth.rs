@@ -86,6 +86,8 @@ pub struct Header {
     pub gas_used: EvmGas,
     #[serde(serialize_with = "hex")]
     pub timestamp: u64,
+    #[serde(serialize_with = "hex")]
+    pub mix_hash: B256,
 }
 
 impl Header {
@@ -99,6 +101,7 @@ impl Header {
             number: header.number,
             hash: header.hash.into(),
             parent_hash: header.parent_hash.into(),
+            mix_hash: B256::ZERO,
             nonce: [0; 8],
             sha_3_uncles: B256::ZERO,
             logs_bloom: [0; 256],
