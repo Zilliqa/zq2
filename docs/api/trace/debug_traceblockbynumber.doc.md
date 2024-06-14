@@ -51,3 +51,4 @@ Accepts a block number and tracer type and will replay the block that is already
 | `params`  | array  | Required | `[block_number, tracerConfig ]` |
 
 For more details on tracerConfig see https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#traceconfig
+Currently supported tracers are: opcode logger (if no tracer is give), calltracer, 4bytetracer, muxtracer, prestatetracer and jstracer.
