@@ -14,12 +14,8 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, consensus_timeout_default, disable_rpc_default,
         empty_block_timeout_default, eth_chain_id_default, local_address_default,
-<<<<<<< HEAD
-        minimum_time_left_for_empty_block_default, scilla_address_default, Amount, ConsensusConfig,
-=======
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
-        ConsensusConfig,
->>>>>>> d906ad1 ((feat) Bit more documentation in README, etc.)
+        Amount, ConsensusConfig,
     },
     crypto::NodePublicKey,
     transaction::EvmGas,
