@@ -262,6 +262,7 @@ fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option
     let mut params = params.sequence();
     let block_number: BlockNumber = params.next()?;
     let full: bool = params.next()?;
+    expect_end_of_params(&mut params, 2, 2)?;
 
     let node = node.lock().unwrap();
     let block = node.get_block_by_blocknum(block_number)?;
@@ -275,6 +276,7 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
     let mut params = params.sequence();
     let hash: B256 = params.next()?;
     let full: bool = params.next()?;
+    expect_end_of_params(&mut params, 2, 2)?;
 
     let node = node.lock().unwrap();
     let block = node

@@ -1,18 +1,18 @@
 # Title
 
-eth_getBlockByNumber
+eth_getBlockByHash
 
 # Keywords
 
-block,get,number
+block,get,hash
 
 # Description
 
-Returns information about a block by block number.
+Returns information about a block by block hash
 
 ## Parameters
 
-{{ macro_blocknumber }}
+{{ macro_blockhash }}
 {{ macro_hydrated }}
 
 ## Results
@@ -31,14 +31,14 @@ If `hydrated` is `true`, blocks contain returned transactions.
 curl -d '{
     "id": "1",
     "jsonrpc": "2.0",
-    "method": "eth_getBlockByNumber",
-    "params": [ "0xb10", true ]}' -H "Content-Type: application/json" -X POST "{{ _api_url }}"
+    "method": "eth_getBlockByHash",
+    "params": [ "0x0cea164183f2d8409fe034fddd0d27016a0f49cf895d3b2a9bd92c7cca3c47c2", true ]}' -H "Content-Type: application/json" -X POST "{{ _api_url }}"
 ```
 
 # Response
 
 ```json
-{
+
   "jsonrpc": "2.0",
   "result": {
     "number": "0xb10",
@@ -91,6 +91,6 @@ curl -d '{
 |-----------|--------|----------|------------------------------|
 | `id`      | string | Required | `"1"`                        |
 | `jsonrpc` | string | Required | `"2.0"`                      |
-| `method`  | string | Required | `"eth_getBlockByNumber"`     |
-| `params`  | array  | Required  | `[ block_number, hydrated ]` |
+| `method`  | string | Required | `"eth_getBlockByHash"`     |
+| `params`  | array  | Required  | `[ block_hash, hydrated ]` |
 
