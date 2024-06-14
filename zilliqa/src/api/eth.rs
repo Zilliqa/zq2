@@ -28,6 +28,7 @@ use crate::{
     crypto::Hash,
     message::{Block, BlockNumber},
     node::Node,
+    state::Code,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction},
 };
@@ -190,15 +191,26 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let block_number: BlockNumber = params.next()?;
+    expect_end_of_params(&mut params, 2, 2)?;
 
-    Ok(node
+    // For compatibility with Zilliqa 1, eth_getCode also returns Scilla code if any is present.
+    let code = &node
         .lock()
         .unwrap()
         .get_account(address, block_number)?
-        .code
-        .evm_code()
-        .unwrap_or_default()
-        .to_hex())
+        .code;
+    // do it this way so the compiler will tell us when another option inevitably
+    // turns up and we have to deal with it ..
+    let return_code = if code.is_eoa() {
+        hex::encode(vec![])
+    } else {
+        match code {
+            Code::Evm(val) => val.to_hex(),
+            Code::Scilla { code, .. } => code.to_hex(),
+        }
+    };
+
+    Ok(return_code)
 }
 
 fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {

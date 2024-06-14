@@ -13,7 +13,7 @@ use zilliqa::crypto::SecretKey;
 
 use crate::{
     components::{Component, Requirements},
-    docs, mitmweb, otterscan, spout, zq2,
+    docs, mitmweb, otterscan, scilla, spout, zq2,
 };
 
 type Tx = mpsc::Sender<Message>;
@@ -28,6 +28,7 @@ pub enum Program {
     Spout,
     Mitmweb,
     Docs,
+    Scilla,
 }
 
 #[derive(PartialEq, Clone)]
@@ -139,8 +140,16 @@ impl Collector {
             Program::Spout => spout::Runner::requirements().await?,
             Program::Mitmweb => mitmweb::Runner::requirements().await?,
             Program::Docs => docs::Runner::requirements().await?,
+            Program::Scilla => scilla::Runner::requirements().await?,
         };
         Ok(r)
+    }
+
+    pub async fn start_scilla(&mut self, base_dir: &str, idx: usize, port: u16) -> Result<()> {
+        self.runners.push(Box::new(
+            scilla::Runner::spawn_scilla(base_dir, idx, port, &self.tx).await?,
+        ));
+        Ok(())
     }
 
     pub async fn start_zq2_node(

@@ -1,5 +1,7 @@
 # Zilliqa 2.0 - The next evolution of Zilliqa
 
+Further documentation can be found in the `docs/` directory.
+
 ## Running a Node
 
 To start a node you need to pass a private key as a command line parameter.
@@ -25,11 +27,16 @@ You may also want to set `RUST_LOG=zilliqa=trace` to see the most detailed level
 The `z2` program in this repository will run a small local Zilliqa network for you, for debugging. Do:
 
 ```bash
-cargo run --bin z2
+./scripts/z2 run /tmp/c
 ```
 
-for details.
+Where `/tmp/c` is a directory in which `z2` will place configuration files. You can run:
 
+```bash
+./scripts/z2
+```
+
+for help.
 
 ### Bootstrap with docker-compose
 
@@ -107,4 +114,3 @@ Of the currently undocumented APIs, the following are partially implemented:
   * `eth_getBlockByNumber` (issue #79)
   * `eth_syncing`
   * `net_peerCount`
-  

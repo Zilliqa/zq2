@@ -15,6 +15,7 @@ Note that:
  * This is likely to be an overestimate (perhaps a large one).
  * The transaction may run out of gas in any event - because the block at which it will be executed cannot be known when `eth_estimateGas()` is called.
  * The transaction may not succeed in any case - all we guarantee is that it won't run out of gas. It might revert or halt (due to eg. an invalid opcode).
+
 ## Parameters
 
 ### Transaction

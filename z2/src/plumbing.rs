@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 use std::{collections::HashSet, env, path::PathBuf, str::FromStr};
 
+use crate::utils;
 use alloy_primitives::B256;
 use anyhow::{anyhow, Result};
 use colored::Colorize;
@@ -108,19 +109,20 @@ pub async fn print_depends(_base_dir: &str) -> Result<()> {
 pub async fn update_depends(base_dir: &str, with_ssh: bool) -> Result<()> {
     for p in Component::all().iter() {
         let req = setup::Setup::describe_component(p).await?;
-        for repo in &req.repos {
-            // If it doesn't exit ..
+        for repo_spec in &req.repos {
+            // If it doesn't exist ..
+            let (repo, branch) = utils::split_repo_spec(repo_spec)?;
             let mut dest_dir = PathBuf::from(base_dir);
-            dest_dir.push(repo);
+            dest_dir.push(&repo);
             let repo_base = if with_ssh {
-                format!("git@github.com:zilliqa/{0}", repo)
+                format!("git@github.com:zilliqa/{0}", &repo)
             } else {
-                format!("https://github.com/zilliqa/{0}", repo)
+                format!("https://github.com/zilliqa/{0}", &repo)
             };
             if !dest_dir.exists() {
                 println!("🌱 Cloning {repo_base} for {p} in {base_dir}/{repo} .. ");
                 let mut cmd = Command::new("git");
-                cmd.args(["clone", &repo_base]);
+                cmd.args(["clone", "-b", &branch, &repo_base]);
                 cmd.current_dir(base_dir);
                 let result = cmd.spawn()?.wait().await?;
                 if !result.success() {

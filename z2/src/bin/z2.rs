@@ -187,6 +187,11 @@ struct RunStruct {
     docs: bool,
     #[clap(long = "docs", overrides_with = "docs")]
     _no_docs: bool,
+
+    #[clap(long="no-scilla",action=ArgAction::SetFalse)]
+    scilla: bool,
+    #[clap(long = "scilla", overrides_with = "scilla")]
+    _no_scilla: bool,
 }
 
 // See https://jwodder.github.io/kbits/posts/clap-bool-negate/
@@ -227,6 +232,9 @@ struct OnlyStruct {
 
     #[clap(long = "docs", action = ArgAction::SetTrue)]
     docs: bool,
+
+    #[clap(long = "scilla", action = ArgAction::SetTrue)]
+    scilla: bool,
 }
 
 #[derive(Args, Debug)]
@@ -297,6 +305,9 @@ async fn main() -> Result<()> {
             if arg.docs {
                 to_run.insert(Component::Docs);
             }
+            if arg.scilla {
+                to_run.insert(Component::Scilla);
+            }
 
             let keep_old_network = !arg.restart_network;
             plumbing::run_local_net(
@@ -332,6 +343,9 @@ async fn main() -> Result<()> {
             }
             if arg.docs {
                 to_run.insert(Component::Docs);
+            }
+            if arg.scilla {
+                to_run.insert(Component::Scilla);
             }
 
             let keep_old_network = !arg.restart_network;
