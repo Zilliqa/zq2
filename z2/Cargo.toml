@@ -39,7 +39,7 @@ hex = "0.4.3"
 home = "0.5.9"
 indicatif = "0.17.8"
 itertools = "0.13.0"
-jsonrpsee = { version ="0.22.4", features= [ "client" ] }
+jsonrpsee = { version ="0.23.1", features= [ "client" ] }
 k256 = "0.13.3"
 lazy_static = "1.4.0"
 libp2p = { version = "0.53.2", features = [ "identify" ] }
