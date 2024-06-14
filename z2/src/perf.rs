@@ -193,10 +193,10 @@ impl fmt::Display for TransactionResult {
             f,
             "{}",
             match self {
-                TransactionResult::Pending => "p",
-                TransactionResult::TimedOut => "T",
-                TransactionResult::Success { .. } => "S",
-                TransactionResult::Failure { .. } => "F",
+                TransactionResult::Pending => "⏳",
+                TransactionResult::TimedOut => "⏱️",
+                TransactionResult::Success { .. } => "✅",
+                TransactionResult::Failure { .. } => "❌",
             }
         )
     }
@@ -288,11 +288,11 @@ impl Perf {
 
     pub async fn run(&self, rng: &mut StdRng) -> Result<()> {
         // Run the steps, one by one.
-        for i in 0..self.config.steps.len() {
-            let step = &self.config.steps[i];
-            println!("🎄 running step {i}: {0} .. ", &step.name);
+        for (index, step) in self.config.steps.iter().enumerate() {
+            println!("🎄 running step {index}: {0} .. ", &step.name);
             self.step(rng, step).await?;
         }
+
         Ok(())
     }
 
@@ -302,13 +302,13 @@ impl Perf {
         // Construct the modules.
         for this_module in step.modules.iter() {
             match this_module {
-                ConfigModule::AsyncTransfer(async_transfer) => {
-                    if let Some(funds) = &self.source_of_funds {
+                ConfigModule::AsyncTransfer(async_transfer_config) => {
+                    if let Some(source_of_funds_account) = &self.source_of_funds {
                         let this_mod = perf_mod::async_transfer::AsyncTransfer::new(
                             self,
                             rng,
-                            funds,
-                            async_transfer,
+                            source_of_funds_account,
+                            async_transfer_config,
                         )
                         .await?;
                         modules.push(ModuleRecord {
@@ -503,12 +503,12 @@ impl Perf {
 
     /// Monitor a transaction until it either completes or fails.
     pub async fn monitor(&self, txns: &[String]) -> Result<Vec<TransactionResult>> {
-        let mut results: Vec<TransactionResult> = Vec::new();
         println!(" --- 👓 --- ");
         for (idx, item) in txns.iter().enumerate() {
             println!("{idx:<02}   {0}", item)
         }
-        results.resize(txns.len(), TransactionResult::Pending);
+
+        let mut results: Vec<TransactionResult> = vec![TransactionResult::Pending; txns.len()];
         for attempt in 0..self.config.attempts {
             let any_pending = results
                 .iter()
@@ -517,11 +517,11 @@ impl Perf {
             if !any_pending {
                 return Ok(results);
             }
-            for txn in 0..txns.len() {
-                let txn_hash = &txns[txn];
+
+            for (txn_index, txn_hash) in txns.iter().enumerate() {
                 // One day, there may be many of these.
                 #[allow(clippy::single_match)]
-                match results[txn] {
+                match results[txn_index] {
                     TransactionResult::Pending => {
                         let status = self
                             .provider
@@ -530,12 +530,12 @@ impl Perf {
                         match status {
                             Ok(val) => {
                                 if val.receipt.success {
-                                    results[txn] = TransactionResult::Success {
+                                    results[txn_index] = TransactionResult::Success {
                                         hash: txn_hash.to_string(),
                                         receipt: val.receipt,
                                     };
                                 } else {
-                                    results[txn] = TransactionResult::Failure {
+                                    results[txn_index] = TransactionResult::Failure {
                                         hash: txn_hash.to_string(),
                                         receipt: val.receipt,
                                     }
@@ -547,7 +547,7 @@ impl Perf {
                                         != (zilliqa_rs::providers::RPCErrorCode::RpcDatabaseError
                                             as i32)
                                     {
-                                        results[txn] = TransactionResult::TimedOut;
+                                        results[txn_index] = TransactionResult::TimedOut;
                                     }
                                 }
                             }
