@@ -94,3 +94,4 @@ curl -d '{
 | `method`  | string | Required | `"eth_getBlockByHash"`     |
 | `params`  | array  | Required  | `[ block_hash, hydrated ]` |
 
+
