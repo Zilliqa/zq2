@@ -14,7 +14,8 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, consensus_timeout_default, disable_rpc_default,
         empty_block_timeout_default, eth_chain_id_default, local_address_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default, Amount, ConsensusConfig,
+        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
+        Amount, ConsensusConfig,
     },
     crypto::NodePublicKey,
     transaction::EvmGas,
@@ -23,7 +24,7 @@ use zilliqa::{
 use crate::{
     collector::{self, Collector},
     components::{Component, Requirements},
-    otel, utils,
+    scilla, utils,
 };
 
 const GENESIS_DEPOSIT: u128 = 10000000000000000000000000;
@@ -48,6 +49,8 @@ pub struct Setup {
     pub base_port: u16,
     /// Restart an old network
     pub keep_old_network: bool,
+    /// Watch source
+    pub watch: bool,
 }
 
 impl Setup {
@@ -58,6 +61,7 @@ impl Setup {
         base_dir: &str,
         base_port: u16,
         keep_old_network: bool,
+        watch: bool,
     ) -> Result<Self> {
         let mut secret_keys = Vec::new();
         let mut node_addresses = Vec::new();
@@ -78,12 +82,17 @@ impl Setup {
             base_dir: base_dir.to_string(),
             base_port,
             keep_old_network,
+            watch,
         })
     }
 
     /// For historical reasons, this is 201.
     pub fn get_json_rpc_port(&self, index: u16, proxied: bool) -> u16 {
         index + 201 + self.base_port + if proxied { 1000 } else { 0 }
+    }
+
+    pub fn get_scilla_port(&self, index: u16) -> u16 {
+        index + self.base_port + 500
     }
 
     pub fn get_docs_port(&self) -> u16 {
@@ -121,6 +130,10 @@ impl Setup {
         result.push_str(&format!(
             "🦏  JSON-RPC ports are at {0}+<node_index>\n",
             self.get_json_rpc_port(0, false)
+        ));
+        result.push_str(&format!(
+            "🦏  Scilla ports are at {0}+<node_index>\n",
+            self.get_scilla_port(0)
         ));
         result.push_str(&format!(
             "🦏  Otterscan: http://localhost:{0}/\n",
@@ -191,6 +204,7 @@ impl Setup {
                 consensus: ConsensusConfig {
                     genesis_hash: None,
                     scilla_address: scilla_address_default(),
+                    scilla_lib_dir: scilla_lib_dir_default(),
                     minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                     main_shard_id: None,
                     local_address: local_address_default(),
@@ -235,6 +249,13 @@ impl Setup {
                 .consensus
                 .genesis_accounts
                 .clone_from(&genesis_accounts);
+            node_config.consensus.scilla_address = format!(
+                "http://localhost:{0}",
+                self.get_scilla_port(usize::try_into(i)?)
+            );
+            node_config.consensus.scilla_lib_dir =
+                scilla::Runner::get_scilla_lib_dir(&self.base_dir);
+
             cfg.nodes = Vec::new();
             cfg.nodes.push(node_config);
             cfg.p2p_port = 0;
@@ -252,11 +273,12 @@ impl Setup {
     pub async fn describe_component(component: &Component) -> Result<Requirements> {
         match component {
             Component::ZQ2 => crate::zq2::Runner::requirements().await,
-            Component::Otel => crate::otel::Otel::requirements().await,
+            Component::Otel => crate::otel::Runner::requirements().await,
             Component::Otterscan => crate::otterscan::Runner::requirements().await,
             Component::Spout => crate::spout::Runner::requirements().await,
             Component::Docs => crate::docs::Runner::requirements().await,
             Component::Mitmweb => crate::mitmweb::Runner::requirements().await,
+            Component::Scilla => crate::scilla::Runner::requirements().await,
         }
     }
 
@@ -266,6 +288,23 @@ impl Setup {
         collector: &mut Collector,
     ) -> Result<()> {
         match component {
+            Component::Scilla => {
+                // Generate a collector
+                self.generate_config().await?;
+                let config_files = (0..self.how_many)
+                    .map(|x| format!("{0}/{1}{2}/config.yaml", self.config_dir, DATADIR_PREFIX, x))
+                    .collect::<Vec<String>>();
+                for (idx, _) in config_files.iter().enumerate() {
+                    collector
+                        .start_scilla(
+                            &self.base_dir,
+                            idx,
+                            self.get_scilla_port(usize::try_into(idx)?),
+                        )
+                        .await?;
+                }
+                Ok(())
+            }
             Component::ZQ2 => {
                 // Generate a collector
                 self.generate_config().await?;
@@ -279,6 +318,7 @@ impl Setup {
                             idx,
                             &self.secret_keys[idx],
                             &config_files[idx],
+                            self.watch,
                         )
                         .await?;
                 }
@@ -286,11 +326,9 @@ impl Setup {
             }
             Component::Otel => {
                 println!("Setting up otel .. ");
-                let otel = otel::Otel::new(&self.config_dir)?;
-                println!("Write otel configuration .. ");
-                otel.write_files().await?;
-                println!("Start otel .. ");
-                otel.ensure_otel().await?;
+                collector
+                    .start_otel(&self.base_dir, &self.config_dir)
+                    .await?;
                 Ok(())
             }
             Component::Otterscan => {

@@ -1,3 +1,4 @@
+services:
   otel-collector:
     image: otel/opentelemetry-collector:latest
     command: ["--config=/etc/otel-collector-config.yaml"]
@@ -18,7 +19,6 @@
     ports:
       - "9009:9009"
 
-
   grafana:
     image: grafana/grafana-oss:latest
     environment:
@@ -26,4 +26,3 @@
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
     ports:
       - "9010:3000"
-

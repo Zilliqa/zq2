@@ -17,6 +17,16 @@ struct ChainIdResult {
     result: String,
 }
 
+pub fn split_repo_spec(repo_spec: &str) -> Result<(String, String)> {
+    let split = repo_spec.split(':').collect::<Vec<&str>>();
+    let branch = if let Some(val) = split.get(1) {
+        val.to_string()
+    } else {
+        "main".to_string()
+    };
+    Ok((split[0].to_string(), branch))
+}
+
 pub async fn get_chain_id(url: &str) -> Result<u64> {
     let client = reqwest::Client::new();
     let res = client
