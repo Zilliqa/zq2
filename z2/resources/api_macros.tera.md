@@ -125,3 +125,46 @@ We do not currently report:
 | `type`                 | string | required | Hex number; type of this transaction                                  |
 
 
+# filter
+
+### Filter
+
+| Parameter   | Type   | Required | Description                                                            |
+|-------------|--------|----------|------------------------------------------------------------------------|
+| `fromBlock` | string | optional | Starting block number, inclusive; if not present, `latest` is assumed  |
+| `toBlock`   | string | optional | Ending block number, inclusive; if not present, `latest` is assumed    |
+| `address`   | string | optional | Contract address or list of addresses from which logs should originate |
+| `topics`    | string | optional | Topic elements - see later                                             |
+| `blockHash` | string | optional | If present, we search the specific block matching this hash            |
+
+# topicspec
+
+### Topic specifications
+
+Topic elements represent an alternative that matches any of the contained topics.
+
+Examples (from Erigon):
+
+    * `[]`                          matches any topic list
+    * `[[A]]`                       matches topic A in first position
+    * `[[], [B]]` or `[None, [B]]`  matches any topic in first position AND B in second position
+    * `[[A], [B]]`                  matches topic A in first position AND B in second position
+    * `[[A, B], [C, D]]`            matches topic (A OR B) in first position AND (C OR D) in second position
+
+# logobject
+
+## Log object
+
+| Parameter          | Type   | Required | Description                                                                               |
+|--------------------|--------|----------|-------------------------------------------------------------------------------------------|
+| `removed`          | bool   | required | Always `false`                                                                            |
+| `logIndex`         | string | required | Hex string; the (0-based) index of this log within the current transaction receipt        |
+| `transactionIndex` | string | required | Hex string; the (0-based) index of this transaction within the current block              |
+| `transactionHash`  | string | required | Hash of the transaction that generated this log                                           |
+| `blockHash`        | string | required | Hash of the block in which the transaction that generated this log appears                |
+| `blockNumber`      | string | required | Hex string; the number of the block in which this transaction appears                     |
+| `address`          | string | required | The address from which this log was emitted                                               |
+| `data`             | string | required | Hex string; the data associated with this log entry                                       |
+| `topics`           | string | required | An array containing the topics associated with this log entry, as an array of hex strings |
+
+

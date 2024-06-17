@@ -320,7 +320,9 @@ fn get_block_transaction_count_by_hash(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<String>> {
-    let hash: B256 = params.one()?;
+    let mut params = params.sequence();
+    let hash: B256 = params.next()?;
+    expect_end_of_params(&mut params, 1, 1)?;
 
     let node = node.lock().unwrap();
     let block = node.get_block_by_hash(Hash(hash.0))?;
@@ -332,7 +334,10 @@ fn get_block_transaction_count_by_number(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<String>> {
-    let block_number: BlockNumber = params.one()?;
+    let mut params = params.sequence();
+    // The ethereum RPC spec says this is optional, but it is mandatory in geth and erigon.
+    let block_number: BlockNumber = params.next()?;
+    expect_end_of_params(&mut params, 1, 1)?;
 
     let node = node.lock().unwrap();
     let block = node.get_block_by_blocknum(block_number)?;
@@ -348,7 +353,7 @@ struct GetLogsParams {
     from_block: Option<BlockNumber>,
     to_block: Option<BlockNumber>,
     address: Option<OneOrMany<Address>>,
-    /// Topics matches a prefix of the list of topics from each log. An empty element slice matches any topic. Non-empty
+
     /// elements represent an alternative that matches any of the contained topics.
     ///
     /// Examples (from Erigon):
@@ -362,7 +367,9 @@ struct GetLogsParams {
 }
 
 fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
-    let params: GetLogsParams = params.one()?;
+    let mut seq = params.sequence();
+    let params: GetLogsParams = seq.next()?;
+    expect_end_of_params(&mut seq, 1, 1)?;
 
     let node = node.lock().unwrap();
 
