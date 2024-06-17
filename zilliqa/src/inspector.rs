@@ -7,7 +7,9 @@ use revm::{
     primitives::CreateScheme,
     Database, EvmContext, Inspector,
 };
-use revm_inspectors::tracing::TracingInspector;
+use revm_inspectors::tracing::{
+    js::JsInspector, FourByteInspector, MuxInspector, TracingInspector,
+};
 
 use crate::api::types::ots::{Operation, OperationType, TraceEntry, TraceEntryType};
 
@@ -51,6 +53,12 @@ pub fn noop() -> NoOpInspector {
 }
 
 impl ScillaInspector for NoOpInspector {}
+
+impl ScillaInspector for FourByteInspector {}
+
+impl ScillaInspector for MuxInspector {}
+
+impl ScillaInspector for JsInspector {}
 
 #[derive(Debug, Default)]
 pub struct TouchedAddressInspector {
