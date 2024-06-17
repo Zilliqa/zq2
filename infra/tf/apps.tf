@@ -83,6 +83,7 @@ module "apps" {
   secret_key            = ""
   persistence_url       = ""
   genesis_key           = var.genesis_key
+  node_type             = var.apps_node_type
 
   zq_network_name = var.network_name
 }

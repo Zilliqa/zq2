@@ -125,3 +125,9 @@ variable "distributed_validators" {
     error_message = "ERROR: num of vms and number of keys mismatch"
   }
 }
+
+variable "apps_node_type" {
+  type     = string
+  default  = "e2-standard-2"
+  nullable = false
+}
