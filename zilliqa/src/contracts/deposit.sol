@@ -26,20 +26,25 @@ contract Deposit {
         require(peerId.length == 38);
         // TODO: Verify signature as a proof-of-possession of the private key.
 
-        if (msg.value < _minimumStake) {
-            revert("stake less than minimum stake");
-        }
-
-        _stakersMap[blsPubKey].balance += msg.value;
-        totalStake += msg.value;
-        _stakersMap[blsPubKey].rewardAddress = rewardAddress;
-        _stakersMap[blsPubKey].peerId = peerId;
         uint256 keyIndex = _stakersMap[blsPubKey].keyIndex;
         if (keyIndex == 0) {
             // The staker will be at index `_stakerKeys.length`. We also need to add 1 to avoid the 0 sentinel value.
             _stakersMap[blsPubKey].keyIndex = _stakerKeys.length + 1;
             _stakerKeys.push(blsPubKey);
+        } else {
+            // TODO: Remove the following check once the verification of the BLS signature has been implemented.
+            require(msg.sender == _stakersMap[blsPubKey].rewardAddress);
         }
+
+        _stakersMap[blsPubKey].balance += msg.value;
+        totalStake += msg.value;
+
+        if (_stakersMap[blsPubKey].balance < _minimumStake) {
+            revert("stake less than minimum stake");
+        }
+
+        _stakersMap[blsPubKey].rewardAddress = rewardAddress;
+        _stakersMap[blsPubKey].peerId = peerId;
     }
 
     function setStake(bytes calldata blsPubKey, bytes calldata peerId, address rewardAddress, uint256 amount) public {
