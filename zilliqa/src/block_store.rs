@@ -109,12 +109,12 @@ impl BlockStore {
                     from_view: self.requested_view + 1,
                     to_view: self.requested_view + self.batch_size,
                 });
-                if let Some(random_peer) = random_peer {
-                    self.message_sender
-                        .send_external_message(random_peer, message)?;
-                } else {
-                    self.message_sender.broadcast_external_message(message)?;
-                }
+                //if let Some(random_peer) = random_peer {
+                //    self.message_sender
+                //        .send_external_message(random_peer, message)?;
+                //} else {
+                self.message_sender.broadcast_external_message(message)?;
+                //}
                 self.requested_view += self.batch_size;
             }
         }

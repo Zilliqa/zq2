@@ -294,6 +294,7 @@ impl P2pNode {
                             }, ..
                         })) => {
                             let source = source.expect("message should have a source");
+                            info!("message received: {}", String::from_utf8(data.clone()).unwrap());
                             let message = serde_json::from_slice::<ExternalMessage>(&data).unwrap();
                             let to = self.peer_id;
                             debug!(%source, %to, %message, "broadcast recieved");
