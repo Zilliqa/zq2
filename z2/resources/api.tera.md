@@ -43,7 +43,7 @@ keywords: {{ keywords }}
 {% else -%}
 {{ throw(message="No description section") }}
 {% endif -%}
-{% endif -%}
+{%- endif %}
 
 ### Example Request
 

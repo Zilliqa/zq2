@@ -34,7 +34,7 @@ Zilliqa 2 supports APIs from a number of sources:
    [geth](https://geth.ethereum.org/) and
    [erigon](https://erigon.tech/).  Some reference material is also
    taken from [quicknode](https://www.quicknode.com/docs/ethereum),
-   [infura](docs.infura.io) and
+   [infura](https://docs.infura.io/) and
    [alchemy](https://docs.alchemy.com/reference).
 
   * Zilliqa APIs are intended, as far as possible, to be compatible
