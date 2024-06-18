@@ -11,6 +11,7 @@ pub mod otterscan;
 pub mod perf;
 pub mod perf_mod;
 pub mod plumbing;
+pub mod scilla;
 pub mod setup;
 pub mod spout;
 pub mod utils;

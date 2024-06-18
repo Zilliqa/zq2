@@ -36,19 +36,34 @@ impl Runner {
         key: &str,
         config_file: &str,
         debug_spec: &Option<String>,
+        watch: bool,
         channel: &mpsc::Sender<collector::Message>,
     ) -> Result<Runner> {
-        let exe_name = format!("{base_dir}/zq2/target/debug/zilliqa");
-        let mut cmd = Command::new(&exe_name);
-        cmd.arg(key);
-        cmd.arg("--config-file");
-        cmd.arg(config_file);
+        let mut cmd = Command::new("cargo");
+        let mut args = Vec::<&str>::new();
+        let cargo_cmd = &[
+            "run",
+            "--bin",
+            "zilliqa",
+            "--",
+            key,
+            "--config-file",
+            config_file,
+        ];
+        let joined = cargo_cmd.join(" ").to_string();
+        if watch {
+            args.extend_from_slice(&["watch", "-x", &joined])
+        } else {
+            args.extend_from_slice(cargo_cmd);
+        }
+        cmd.args(args);
+        cmd.current_dir(&format!("{base_dir}/zq2"));
         if let Some(val) = debug_spec {
             cmd.env("RUST_LOG", val);
         }
         let join_handles = collector::spawn(
             &mut cmd,
-            &exe_name,
+            "zq2",
             &collector::Legend::new(Component::ZQ2, index)?,
             channel.clone(),
         )

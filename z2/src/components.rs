@@ -9,6 +9,7 @@ pub enum Component {
     Spout,
     Mitmweb,
     Docs,
+    Scilla,
 }
 
 #[derive(Default, Clone)]
@@ -23,6 +24,7 @@ impl Component {
     pub fn in_dependency_order() -> Vec<Component> {
         vec![
             Component::Otel,
+            Component::Scilla,
             Component::ZQ2,
             Component::Mitmweb,
             Component::Otterscan,
@@ -35,6 +37,7 @@ impl Component {
         // These must be listed in dependency order!
         HashSet::from([
             Component::Otel,
+            Component::Scilla,
             Component::ZQ2,
             Component::Mitmweb,
             Component::Otterscan,
@@ -54,6 +57,7 @@ impl fmt::Display for Component {
             Component::Mitmweb => write!(f, "mitmweb"),
             Component::Docs => write!(f, "docs"),
             Component::Otel => write!(f, "otel"),
+            Component::Scilla => write!(f, "scilla"),
         }
     }
 }
