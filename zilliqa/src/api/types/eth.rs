@@ -10,8 +10,10 @@ use sha3::{Digest, Keccak256};
 
 use super::{bool_as_int, hex, option_hex, vec_hex};
 use crate::{
+    api::types::ser_display,
     crypto::Hash,
     message,
+    message::BitVec,
     time::SystemTime,
     transaction::{self, EvmGas, EvmLog},
 };
@@ -24,6 +26,51 @@ pub enum HashOrTransaction {
     Transaction(Transaction),
 }
 
+#[derive(Clone, Serialize)]
+pub struct QuorumCertificate {
+    #[serde(serialize_with = "hex")]
+    pub signature: Vec<u8>,
+    #[serde(serialize_with = "ser_display")]
+    pub cosigned: BitVec,
+    #[serde(serialize_with = "hex")]
+    pub view: u64,
+    #[serde(serialize_with = "hex")]
+    pub block_hash: B256,
+}
+
+impl QuorumCertificate {
+    pub fn from_qc(qc: &message::QuorumCertificate) -> Self {
+        Self {
+            signature: qc.signature.to_bytes(),
+            cosigned: qc.cosigned.clone(),
+            view: qc.view,
+            block_hash: qc.block_hash.into(),
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub struct AggregateQc {
+    #[serde(serialize_with = "hex")]
+    pub signature: Vec<u8>,
+    #[serde(serialize_with = "ser_display")]
+    pub cosigned: BitVec,
+    #[serde(serialize_with = "hex")]
+    pub view: u64,
+    pub quorum_certificates: Vec<QuorumCertificate>,
+}
+
+impl AggregateQc {
+    pub fn from_agg(agg_qc: &Option<message::AggregateQc>) -> Option<Self> {
+        return agg_qc.as_ref().map(|agg_qc| Self {
+            signature: agg_qc.signature.to_bytes(),
+            cosigned: agg_qc.cosigned.clone(),
+            view: agg_qc.view,
+            quorum_certificates: agg_qc.qcs.iter().map(QuorumCertificate::from_qc).collect(),
+        });
+    }
+}
+
 /// A block object, returned by the Ethereum API.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,6 +81,9 @@ pub struct Block {
     pub size: u64,
     pub transactions: Vec<HashOrTransaction>,
     pub uncles: Vec<B256>,
+    pub quorum_certificate: QuorumCertificate,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate_quorum_certificate: Option<AggregateQc>,
 }
 
 impl Block {
@@ -47,6 +97,8 @@ impl Block {
                 .map(|h| HashOrTransaction::Hash((*h).into()))
                 .collect(),
             uncles: vec![],
+            quorum_certificate: QuorumCertificate::from_qc(&block.qc),
+            aggregate_quorum_certificate: AggregateQc::from_agg(&block.agg),
         }
     }
 }
@@ -56,6 +108,8 @@ impl Block {
 pub struct Header {
     #[serde(serialize_with = "hex")]
     pub number: u64,
+    #[serde(serialize_with = "hex")]
+    pub view: u64,
     #[serde(serialize_with = "hex")]
     pub hash: B256,
     #[serde(serialize_with = "hex")]
@@ -99,6 +153,7 @@ impl Header {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Header {
             number: header.number,
+            view: header.view,
             hash: header.hash.into(),
             parent_hash: header.parent_hash.into(),
             mix_hash: B256::ZERO,
