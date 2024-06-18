@@ -300,7 +300,7 @@ impl Perf {
         let source_of_funds = config_obj
             .source_of_funds
             .as_ref()
-            .map(|x| Account::try_from(x))
+            .map(Account::try_from)
             .transpose()?
             .ok_or(anyhow!("No source of funds provided."))?;
 
