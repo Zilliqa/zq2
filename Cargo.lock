@@ -8858,6 +8858,7 @@ dependencies = [
  "eth_trie",
  "ethabi",
  "ethereum",
+ "ethers",
  "futures",
  "git2",
  "hex",
@@ -9060,9 +9061,9 @@ dependencies = [
 
 [[package]]
 name = "zilliqa-rs"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a3fba6847bbe09a1b0dace4f356c38c9c04fe73c837a163ec22a86de0162361"
+checksum = "235cdca5900eef94aef07daab70f4706313a6dbdaa6862b116bf3cc8f4675b17"
 dependencies = [
  "anyhow",
  "async-trait",
