@@ -13,7 +13,7 @@ use std::{
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use clap::ValueEnum;
-use ethers::{middleware::Middleware as _, signers::Signer};
+use ethers::{middleware::Middleware as _, signers::Signer, types::U256};
 use lazy_static::lazy_static;
 use rand::{self, distributions::DistString as _, prelude::*};
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,7 @@ use crate::{perf_mod, utils};
 
 pub struct Perf {
     pub config: Config,
-    pub source_of_funds: Option<Account>,
+    pub source_of_funds: Account,
     pub provider: Provider<Http>,
     pub step: usize,
 }
@@ -178,7 +178,7 @@ impl Account {
     pub fn get_address(&self) -> Result<String> {
         Ok(match self.kind {
             AccountKind::Zil => self.get_zq_address()?.to_string(),
-            AccountKind::Eth => self.get_eth_address()?.to_string(),
+            AccountKind::Eth => hex::encode(self.get_eth_address()?),
         })
     }
 
@@ -297,11 +297,12 @@ impl Perf {
             fs::read_to_string(config_file).context("Cannot read configuration {config_file}")?;
         let config_obj: Config = serde_yaml::from_str(&file_contents)?;
         let provider = Provider::<Http>::try_from(config_obj.rpc_url.as_str())?;
-        let source_of_funds = if let Some(val) = &config_obj.source_of_funds {
-            Some(Account::try_from(val)?)
-        } else {
-            None
-        };
+        let source_of_funds = config_obj
+            .source_of_funds
+            .as_ref()
+            .map(|x| Account::try_from(x))
+            .transpose()?
+            .ok_or(anyhow!("No source of funds provided."))?;
 
         Ok(Perf {
             config: config_obj,
@@ -346,41 +347,34 @@ impl Perf {
         for this_module in step.modules.iter() {
             match this_module {
                 ConfigModule::AsyncTransfer(async_transfer_config) => {
-                    if let Some(source_of_funds_account) = &self.source_of_funds {
-                        let this_mod = perf_mod::async_transfer::AsyncTransfer::new(
-                            self,
-                            rng,
-                            source_of_funds_account,
-                            async_transfer_config,
-                        )
-                        .await?;
-                        modules.push(ModuleRecord {
-                            module: Box::new(this_mod),
-                            results: Vec::new(),
-                            txns: Vec::new(),
-                            offset: 0,
-                        });
-                    } else {
-                        return Err(anyhow!(
-                            "Cannot instantiate the AsyncTransfer module without a source of funds"
-                        ));
-                    }
+                    let this_mod = perf_mod::async_transfer::AsyncTransfer::new(
+                        self,
+                        rng,
+                        &self.source_of_funds,
+                        async_transfer_config,
+                    )
+                    .await?;
+                    modules.push(ModuleRecord {
+                        module: Box::new(this_mod),
+                        results: Vec::new(),
+                        txns: Vec::new(),
+                        offset: 0,
+                    });
                 }
                 ConfigModule::Conformance(conf_config) => {
-                    if let Some(funds) = &self.source_of_funds {
-                        let this_mod =
-                            perf_mod::conform::Conform::new(self, rng, funds, conf_config).await?;
-                        modules.push(ModuleRecord {
-                            module: Box::new(this_mod),
-                            results: Vec::new(),
-                            txns: Vec::new(),
-                            offset: 0,
-                        });
-                    } else {
-                        return Err(anyhow!(
-                            "Cannot instantiate Conformance module without a source of funds"
-                        ));
-                    }
+                    let this_mod = perf_mod::conform::Conform::new(
+                        self,
+                        rng,
+                        &self.source_of_funds,
+                        conf_config,
+                    )
+                    .await?;
+                    modules.push(ModuleRecord {
+                        module: Box::new(this_mod),
+                        results: Vec::new(),
+                        txns: Vec::new(),
+                        offset: 0,
+                    });
                 }
             }
         }
@@ -389,11 +383,7 @@ impl Perf {
             // Construct the list of txns to monitor
             let mut monitor = Vec::new();
             let mut continue_anyway = false;
-            let mut feeder_nonce = if let Some(feeder) = &self.source_of_funds {
-                self.get_balance(&feeder.get_zq_hex()?).await?.nonce
-            } else {
-                0
-            };
+            let mut feeder_nonce = self.get_nonce(&self.source_of_funds).await?;
             for this_mod in modules.iter_mut() {
                 {
                     let result = this_mod
@@ -665,6 +655,19 @@ impl Perf {
             }
         }
         None
+    }
+
+    pub async fn get_nonce(&self, account: &Account) -> Result<u64> {
+        match account.kind {
+            AccountKind::Zil => Ok(self.get_balance(&account.get_address()?).await?.nonce + 1),
+            AccountKind::Eth => {
+                let provider = self.make_eth_provider()?;
+                Ok(provider
+                    .get_transaction_count(account.get_eth_address()?, None)
+                    .await?
+                    .as_u64())
+            }
+        }
     }
 
     pub async fn get_balance(&self, address: &str) -> Result<Balance> {
