@@ -49,7 +49,7 @@ impl perf::PerfMod for AsyncTransfer {
                         &self.source_of_funds,
                         &self.feeder,
                         amount_required,
-                        Some(feeder_nonce + 1),
+                        Some(feeder_nonce),
                     )
                     .await?,
                 );
