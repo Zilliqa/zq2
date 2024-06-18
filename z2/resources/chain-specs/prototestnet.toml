@@ -1,5 +1,5 @@
 p2p_port = 3333
-bootstrap_address = [ "12D3KooWNYaasyfY1wFrSHga3WBdZkb7bGhQiUz9926bQvk4HQj2", "/dns/bootstrap.zq2-protestnet.zilliqa.com/tcp/3333" ]
+bootstrap_address = [ "12D3KooWNYaasyfY1wFrSHga3WBdZkb7bGhQiUz9926bQvk4HQj2", "/dns/bootstrap.zq2-prototestnet.zilliqa.com/tcp/3333" ]
                 
 [[nodes]]
 eth_chain_id = 33103
