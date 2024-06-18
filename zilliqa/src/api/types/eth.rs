@@ -10,8 +10,10 @@ use sha3::{Digest, Keccak256};
 
 use super::{bool_as_int, hex, option_hex, vec_hex};
 use crate::{
+    api::types::ser_display,
     crypto::Hash,
     message,
+    message::BitVec,
     time::SystemTime,
     transaction::{self, EvmGas, EvmLog},
 };
@@ -28,7 +30,8 @@ pub enum HashOrTransaction {
 pub struct QuorumCertificate {
     #[serde(serialize_with = "hex")]
     pub signature: Vec<u8>,
-    pub cosigned: String,
+    #[serde(serialize_with = "ser_display")]
+    pub cosigned: BitVec,
     #[serde(serialize_with = "hex")]
     pub view: u64,
     #[serde(serialize_with = "hex")]
@@ -39,14 +42,7 @@ impl QuorumCertificate {
     pub fn from_qc(qc: &message::QuorumCertificate) -> Self {
         Self {
             signature: qc.signature.to_bytes(),
-            cosigned: qc
-                .cosigned
-                .clone()
-                .iter()
-                .fold(String::new(), |mut acc, bit| {
-                    acc.push(if *bit { '1' } else { '0' });
-                    acc
-                }),
+            cosigned: qc.cosigned.clone(),
             view: qc.view,
             block_hash: qc.block_hash.into(),
         }
@@ -57,26 +53,20 @@ impl QuorumCertificate {
 pub struct AggregateQc {
     #[serde(serialize_with = "hex")]
     pub signature: Vec<u8>,
-    pub cosigned: String,
+    #[serde(serialize_with = "ser_display")]
+    pub cosigned: BitVec,
     #[serde(serialize_with = "hex")]
     pub view: u64,
-    pub qcs: Vec<QuorumCertificate>,
+    pub quorum_certificates: Vec<QuorumCertificate>,
 }
 
 impl AggregateQc {
     pub fn from_agg(agg_qc: &Option<message::AggregateQc>) -> Option<Self> {
         return agg_qc.as_ref().map(|agg_qc| Self {
             signature: agg_qc.signature.to_bytes(),
-            cosigned: agg_qc
-                .cosigned
-                .clone()
-                .iter()
-                .fold(String::new(), |mut acc, bit| {
-                    acc.push(if *bit { '1' } else { '0' });
-                    acc
-                }),
+            cosigned: agg_qc.cosigned.clone(),
             view: agg_qc.view,
-            qcs: agg_qc.qcs.iter().map(QuorumCertificate::from_qc).collect(),
+            quorum_certificates: agg_qc.qcs.iter().map(QuorumCertificate::from_qc).collect(),
         });
     }
 }
@@ -91,9 +81,9 @@ pub struct Block {
     pub size: u64,
     pub transactions: Vec<HashOrTransaction>,
     pub uncles: Vec<B256>,
-    pub qc: QuorumCertificate,
+    pub quorum_certificate: QuorumCertificate,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub agg_qc: Option<AggregateQc>,
+    pub aggregate_quorum_certificate: Option<AggregateQc>,
 }
 
 impl Block {
@@ -107,8 +97,8 @@ impl Block {
                 .map(|h| HashOrTransaction::Hash((*h).into()))
                 .collect(),
             uncles: vec![],
-            qc: QuorumCertificate::from_qc(&block.qc),
-            agg_qc: AggregateQc::from_agg(&block.agg),
+            quorum_certificate: QuorumCertificate::from_qc(&block.qc),
+            aggregate_quorum_certificate: AggregateQc::from_agg(&block.agg),
         }
     }
 }
