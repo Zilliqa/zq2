@@ -39,10 +39,10 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct MessageSender {
-    our_shard: u64,
-    our_peer_id: PeerId,
-    outbound_channel: UnboundedSender<OutboundMessageTuple>,
-    local_channel: UnboundedSender<LocalMessageTuple>,
+    pub our_shard: u64,
+    pub our_peer_id: PeerId,
+    pub outbound_channel: UnboundedSender<OutboundMessageTuple>,
+    pub local_channel: UnboundedSender<LocalMessageTuple>,
 }
 
 impl MessageSender {
