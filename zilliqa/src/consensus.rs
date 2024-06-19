@@ -210,7 +210,7 @@ impl Consensus {
             config.eth_chain_id
         );
 
-        let mut block_store = BlockStore::new(db.clone(), message_sender.clone())?;
+        let block_store = BlockStore::new(db.clone(), message_sender.clone())?;
 
         let latest_block = db
             .get_latest_finalized_view()?
@@ -233,25 +233,13 @@ impl Consensus {
             State::new_with_genesis(db.state_trie()?, config.consensus.clone())?
         };
 
-        let (latest_block, latest_block_view, latest_block_number, latest_block_hash) =
-            match latest_block {
-                Some(l) => (Some(l.clone()), l.view(), l.number(), l.hash()),
-                None => match config.consensus.genesis_hash {
-                    Some(hash) => {
-                        block_store.request_block(hash)?;
-                        (None, 0, 0, hash)
-                    }
-                    hash => {
-                        let genesis = Block::genesis(state.root_hash()?);
-                        if let Some(hash) = hash {
-                            if genesis.hash() != hash {
-                                return Err(anyhow!("Both genesis committee and genesis hash were specified, but the hashes do not match"));
-                            }
-                        }
-                        (Some(genesis.clone()), 0, 0, genesis.hash())
-                    }
-                },
-            };
+        let (latest_block, latest_block_view, latest_block_hash) = match latest_block {
+            Some(l) => (Some(l.clone()), l.view(), l.hash()),
+            None => {
+                let genesis = Block::genesis(state.root_hash()?);
+                (Some(genesis.clone()), 0, genesis.hash())
+            }
+        };
 
         let (start_view, high_qc) = {
             match db.get_high_qc()? {
@@ -304,7 +292,6 @@ impl Consensus {
             if let Some(genesis) = latest_block {
                 consensus.add_block(genesis.clone())?;
             }
-            consensus.set_canonical_number(latest_block_hash, latest_block_number)?;
             // treat genesis as finalized
             consensus.finalize(latest_block_hash, latest_block_view)?;
         }
@@ -1274,11 +1261,6 @@ impl Consensus {
             .find(|receipt| receipt.tx_hash == *hash))
     }
 
-    fn set_canonical_number(&mut self, block_hash: Hash, number: u64) -> Result<()> {
-        self.block_store.set_canonical(number, block_hash)?;
-        Ok(())
-    }
-
     fn update_high_qc_and_view(
         &mut self,
         from_agg: bool,
@@ -2147,7 +2129,8 @@ impl Consensus {
             })?;
         }
 
-        self.set_canonical_number(block.hash(), block.number())?;
+        self.block_store
+            .set_canonical(block.number(), block.hash())?;
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(

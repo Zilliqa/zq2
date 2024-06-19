@@ -202,7 +202,6 @@ impl Setup {
                 disable_rpc: disable_rpc_default(),
                 eth_chain_id: eth_chain_id_default(),
                 consensus: ConsensusConfig {
-                    genesis_hash: None,
                     scilla_address: scilla_address_default(),
                     scilla_lib_dir: scilla_lib_dir_default(),
                     minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),

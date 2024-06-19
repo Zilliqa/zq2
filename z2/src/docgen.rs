@@ -313,7 +313,6 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
             main_shard_id: None,
             minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
             scilla_address: scilla_address_default(),
-            genesis_hash: None,
         },
         data_dir: None,
         eth_chain_id: eth_chain_id_default(),

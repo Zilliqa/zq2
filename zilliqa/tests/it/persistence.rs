@@ -79,7 +79,6 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let dir = (|mut node: TestNode| node.dir.take())(node).unwrap(); // move dir out and drop the rest of node
     let config = NodeConfig {
         consensus: ConsensusConfig {
-            genesis_hash: None,
             is_main: true,
             genesis_accounts: Network::genesis_accounts(&network.genesis_key),
             empty_block_timeout: Duration::from_millis(25),
