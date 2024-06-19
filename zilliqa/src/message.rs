@@ -388,6 +388,8 @@ pub struct BlockHeader {
     pub parent_hash: Hash,
     pub signature: NodeSignature,
     pub state_root_hash: Hash,
+    pub transactions_root_hash: Hash,
+    pub receipts_root_hash: Hash,
     /// The time this block was mined at.
     pub timestamp: SystemTime,
     pub gas_used: EvmGas,
@@ -406,6 +408,8 @@ impl BlockHeader {
             parent_hash: Hash::ZERO,
             signature: NodeSignature::identity(),
             state_root_hash,
+            transactions_root_hash: Hash::ZERO,
+            receipts_root_hash: Hash::ZERO,
             timestamp: SystemTime::UNIX_EPOCH,
             gas_used: EvmGas(0),
         }
@@ -422,6 +426,8 @@ impl Default for BlockHeader {
             parent_hash: Hash::ZERO,
             signature: NodeSignature::identity(),
             state_root_hash: Hash(Keccak256::digest([alloy_rlp::EMPTY_STRING_CODE]).into()),
+            transactions_root_hash: Hash::ZERO,
+            receipts_root_hash: Hash::ZERO,
             timestamp: SystemTime::UNIX_EPOCH,
             gas_used: EvmGas(0),
         }
@@ -558,6 +564,8 @@ impl Block {
                 parent_hash,
                 signature: NodeSignature::identity(),
                 state_root_hash,
+                transactions_root_hash: Hash::ZERO,
+                receipts_root_hash: Hash::ZERO,
                 timestamp,
                 gas_used: EvmGas(0),
             },
@@ -581,6 +589,8 @@ impl Block {
                 agg.compute_hash().as_bytes(),
                 self.parent_hash().as_bytes(),
                 self.state_root_hash().as_bytes(),
+                self.transactions_root_hash().as_bytes(),
+                self.receipts_root_hash().as_bytes(),
                 &self.gas_used().0.to_be_bytes(),
             ])
         } else {
@@ -590,6 +600,8 @@ impl Block {
                 self.qc.compute_hash().as_bytes(),
                 self.parent_hash().as_bytes(),
                 self.state_root_hash().as_bytes(),
+                self.transactions_root_hash().as_bytes(),
+                self.receipts_root_hash().as_bytes(),
                 &self.gas_used().0.to_be_bytes(),
             ])
         };
@@ -609,6 +621,8 @@ impl Block {
         qc: QuorumCertificate,
         parent_hash: Hash,
         state_root_hash: Hash,
+        transactions_root_hash: Hash,
+        receipts_root_hash: Hash,
         transactions: Vec<Hash>,
         timestamp: SystemTime,
         gas_used: EvmGas,
@@ -620,6 +634,8 @@ impl Block {
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
             state_root_hash.as_bytes(),
+            transactions_root_hash.as_bytes(),
+            receipts_root_hash.as_bytes(),
             &gas_used.0.to_be_bytes(),
         ]);
         let signature = secret_key.sign(digest.as_bytes());
@@ -631,6 +647,8 @@ impl Block {
                 parent_hash,
                 signature,
                 state_root_hash,
+                transactions_root_hash,
+                receipts_root_hash,
                 timestamp,
                 gas_used,
             },
@@ -649,6 +667,8 @@ impl Block {
         agg: AggregateQc,
         parent_hash: Hash,
         state_root_hash: Hash,
+        transactions_root_hash: Hash,
+        receipts_root_hash: Hash,
         timestamp: SystemTime,
     ) -> Block {
         let digest = Hash::compute([
@@ -658,6 +678,8 @@ impl Block {
             agg.compute_hash().as_bytes(),
             parent_hash.as_bytes(),
             state_root_hash.as_bytes(),
+            transactions_root_hash.as_bytes(),
+            receipts_root_hash.as_bytes(),
             &EvmGas(0).0.to_be_bytes(),
         ]);
         let signature = secret_key.sign(digest.as_bytes());
@@ -669,6 +691,8 @@ impl Block {
                 parent_hash,
                 signature,
                 state_root_hash,
+                transactions_root_hash,
+                receipts_root_hash,
                 timestamp,
                 gas_used: EvmGas(0),
             },
@@ -706,6 +730,13 @@ impl Block {
         self.header.state_root_hash
     }
 
+    pub fn transactions_root_hash(&self) -> Hash {
+        self.header.transactions_root_hash
+    }
+
+    pub fn receipts_root_hash(&self) -> Hash {
+        self.header.receipts_root_hash
+    }
     pub fn timestamp(&self) -> SystemTime {
         self.header.timestamp
     }

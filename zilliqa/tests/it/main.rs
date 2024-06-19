@@ -59,8 +59,9 @@ use tracing::*;
 use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, disable_rpc_default, eth_chain_id_default,
-        json_rcp_port_default, local_address_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_lib_dir_default, Amount, ConsensusConfig, NodeConfig,
+        json_rcp_port_default, local_address_default, maximum_delay_for_received_block_default,
+        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
+        Amount, ConsensusConfig, NodeConfig,
     },
     crypto::{NodePublicKey, SecretKey},
     message::{ExternalMessage, InternalMessage},
@@ -246,6 +247,7 @@ impl Network {
                 is_main: send_to_parent.is_none(),
                 consensus_timeout: Duration::from_secs(1),
                 minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
+                maximum_delay_for_received_block: maximum_delay_for_received_block_default(),
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
@@ -362,6 +364,7 @@ impl Network {
                 gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
                 minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
+                maximum_delay_for_received_block: maximum_delay_for_received_block_default(),
                 scilla_address: scilla_address_default(),
                 scilla_lib_dir: scilla_lib_dir_default(),
             },
@@ -450,6 +453,8 @@ impl Network {
                         main_shard_id: None,
                         minimum_time_left_for_empty_block:
                             minimum_time_left_for_empty_block_default(),
+                        maximum_delay_for_received_block: maximum_delay_for_received_block_default(
+                        ),
                         scilla_address: scilla_address_default(),
                         scilla_lib_dir: scilla_lib_dir_default(),
                     },
