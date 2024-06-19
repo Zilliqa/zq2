@@ -9035,6 +9035,7 @@ dependencies = [
  "bs58",
  "bytes",
  "clap",
+ "criterion",
  "crypto-bigint",
  "eth_trie",
  "ethabi",
