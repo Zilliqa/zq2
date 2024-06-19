@@ -136,7 +136,7 @@ pub struct ConsensusConfig {
     #[serde(default = "empty_block_timeout_default")]
     pub minimum_time_left_for_empty_block: Duration,
     /// Maximum allowed difference between block creation time and receive time
-    /// #[serde(default = "maximum_delay_for_received_block_default")]
+    #[serde(default = "maximum_delay_for_received_block_default")]
     pub maximum_delay_for_received_block: Duration,
     /// Address of the Scilla server. Defaults to "http://localhost:3000".
     #[serde(default = "scilla_address_default")]
