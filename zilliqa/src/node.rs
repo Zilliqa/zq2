@@ -792,15 +792,6 @@ impl Node {
         self.consensus.finalized_view()
     }
 
-    pub fn get_genesis_hash(&self) -> Result<Hash> {
-        Ok(self
-            .consensus
-            .get_block_by_number(0)
-            .unwrap()
-            .unwrap()
-            .hash())
-    }
-
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
         self.consensus.get_block_by_view(view)
     }
