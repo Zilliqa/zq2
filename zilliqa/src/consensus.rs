@@ -575,6 +575,7 @@ impl Consensus {
             // Must make sure state root hash is set to the parent's state root hash before applying transactions
             if self.state.root_hash()? != parent.state_root_hash() {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}, head: {:?}", parent.state_root_hash(), self.state.root_hash()?, head_block);
+                self.state.set_to_root(parent.state_root_hash().into());
             }
             let stakers = self.state.get_stakers()?;
             self.execute_block(&block, transactions, &stakers)?;
