@@ -8891,6 +8891,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bitvec",
+ "bls-signatures",
  "clap",
  "colored",
  "eth_trie",
