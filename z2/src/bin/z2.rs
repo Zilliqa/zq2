@@ -34,6 +34,8 @@ enum Commands {
     Depends(DependsCommands),
     /// Join a ZQ2 network
     Join(JoinStruct),
+    /// Deposit stake amount to validators
+    Deposit(DepositStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -252,6 +254,28 @@ struct JoinStruct {
     chain_name: validators::Chain,
 }
 
+#[derive(Args, Debug)]
+struct DepositStruct {
+    /// Specify the ZQ2 deposit chain
+    #[clap(long = "chain")]
+    chain_name: validators::Chain,
+    /// Specify the Validator Public Key
+    #[clap(long)]
+    public_key: String,
+    /// Specify the Validator PeerId
+    #[clap(long)]
+    peer_id: String,
+    /// Specify the wallet address to fund the deposit
+    #[clap(long, short)]
+    wallet: String,
+    /// Specify the stake amount you want provide
+    #[clap(long, short)]
+    amount: u8,
+    /// Specify the staking reward address
+    #[clap(long, short)]
+    reward_address: String,
+}
+
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
 enum LogLevel {
     Warn,
@@ -457,5 +481,16 @@ async fn main() -> Result<()> {
             validators::gen_validator_startup_script(&chain).await?;
             Ok(())
         }
+        Commands::Deposit(ref args) => {
+            let node = validators::Validator::new(&args.peer_id, &args.public_key)?;
+            let stake = validators::StakeDeposit::new(
+                node,
+                args.amount,
+                args.chain_name.clone(),
+                &args.wallet,
+                &args.reward_address,
+            )?;
+            validators::deposit_stake(&stake).await
+        },
     }
 }

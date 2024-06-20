@@ -8908,6 +8908,7 @@ dependencies = [
  "lazy_static",
  "libp2p",
  "octocrab",
+ "primitive-types",
  "prost 0.12.6",
  "prost-build",
  "rand",
