@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use alloy_rpc_types_trace::{
     geth::{GethDebugTracingOptions, TraceResult},
@@ -11,7 +12,7 @@ use alloy_rpc_types_trace::{
 use anyhow::Result;
 use jsonrpsee::{types::Params, RpcModule};
 
-use crate::{crypto::Hash, message::BlockNumber, node::Node};
+use crate::{crypto::Hash, node::Node};
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
@@ -42,10 +43,10 @@ fn debug_trace_block_by_number(
     node: &Arc<Mutex<Node>>,
 ) -> Result<Vec<TraceResult>> {
     let mut params = params.sequence();
-    let block_number: BlockNumber = params.next()?;
+    let block_number: BlockNumberOrTag = params.next()?;
     let trace_type: Option<GethDebugTracingOptions> = params.next()?;
 
     node.lock()
         .unwrap()
-        .debug_trace_block_by_number(block_number, trace_type.unwrap_or_default())
+        .debug_trace_block(block_number, trace_type.unwrap_or_default())
 }

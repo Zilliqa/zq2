@@ -1,3 +1,4 @@
+use alloy_eips::BlockId;
 use ethers::{providers::Middleware, types::TransactionRequest};
 use primitive_types::H160;
 use tracing::*;
@@ -47,7 +48,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             |n| {
                 let block = n
                     .get_node(index)
-                    .get_latest_block()
+                    .get_block(BlockId::latest())
                     .unwrap()
                     .map_or(0, |b| b.number());
                 block >= 3
@@ -63,11 +64,8 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let last_number = inner.number() - 1;
     let receipt = inner.get_transaction_receipt(hash).unwrap().unwrap();
     let _finalized_number = inner.get_finalized_height();
-    let block_with_tx = inner
-        .get_block_by_hash(receipt.block_hash)
-        .unwrap()
-        .unwrap();
-    let last_block = inner.get_block_by_number(last_number).unwrap().unwrap();
+    let block_with_tx = inner.get_block(receipt.block_hash).unwrap().unwrap();
+    let last_block = inner.get_block(last_number).unwrap().unwrap();
     let tx = inner.get_transaction_by_hash(hash).unwrap().unwrap();
     // sanity check
     assert_eq!(tx.hash, hash);
@@ -118,15 +116,12 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let inner = newnode.inner.lock().unwrap();
 
     // ensure all blocks created were saved up till the last one
-    let loaded_last_block = inner.get_block_by_number(last_number).unwrap();
+    let loaded_last_block = inner.get_block(last_number).unwrap();
     assert!(loaded_last_block.is_some());
     assert_eq!(loaded_last_block.unwrap().hash(), last_block.hash());
 
     // ensure tx was saved, including its receipt
-    let loaded_tx_block = inner
-        .get_block_by_number(block_with_tx.number())
-        .unwrap()
-        .unwrap();
+    let loaded_tx_block = inner.get_block(block_with_tx.number()).unwrap().unwrap();
     assert_eq!(loaded_tx_block.hash(), block_with_tx.hash());
     assert_eq!(loaded_tx_block.transactions.len(), 1);
     assert!(inner.get_transaction_receipt(hash).unwrap().is_some());

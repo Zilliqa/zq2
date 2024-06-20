@@ -16,7 +16,7 @@ Balances are maintained in `Wei` in Zilliqa 2. Because 1 wei = 10^6 ZIL, this va
 
 {{ macro_address }}
 
-{{ macro_blocknumber }}
+{{ macro_blockid }}
 
 # Curl
 

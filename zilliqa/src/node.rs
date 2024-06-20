@@ -1,6 +1,7 @@
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashSet, fmt::Debug, sync::Arc, time::Duration};
 
-use alloy_primitives::{Address, B256};
+use alloy_eips::{BlockId, BlockNumberOrTag, RpcBlockHash};
+use alloy_primitives::Address;
 use alloy_rpc_types_trace::{
     geth::{
         FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
@@ -26,12 +27,12 @@ use crate::{
     exec::TransactionApplyResult,
     inspector::{self, ScillaInspector},
     message::{
-        Block, BlockBatchRequest, BlockBatchResponse, BlockHeader, BlockNumber, BlockRequest,
-        BlockResponse, ExternalMessage, InternalMessage, IntershardCall, Proposal,
+        Block, BlockBatchRequest, BlockBatchResponse, BlockHeader, BlockRequest, BlockResponse,
+        ExternalMessage, InternalMessage, IntershardCall, Proposal,
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     pool::TxPoolContent,
-    state::{Account, State},
+    state::State,
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
@@ -287,20 +288,42 @@ impl Node {
         self.consensus.head_block().header.number
     }
 
-    // todo: this doesn't respect two-chain finalization
-    pub fn get_number(&self, block_number: BlockNumber) -> u64 {
-        match block_number {
-            BlockNumber::Number(n) => n,
-            BlockNumber::Earliest => 0,
-            BlockNumber::Latest => self.get_chain_tip(),
-            BlockNumber::Pending => self.get_chain_tip(), // use latest for now
-            BlockNumber::Finalized => self.get_chain_tip().saturating_sub(2),
-            BlockNumber::Safe => self.get_chain_tip().saturating_sub(2), // same as finalized
+    pub fn resolve_block_number(&self, number: BlockNumberOrTag) -> u64 {
+        // TODO(#863): This doesn't respect two-chain finalization.
+        match number {
+            BlockNumberOrTag::Latest => self.get_chain_tip(),
+            BlockNumberOrTag::Finalized => self.get_chain_tip().saturating_sub(2),
+            BlockNumberOrTag::Safe => self.get_chain_tip().saturating_sub(2),
+            BlockNumberOrTag::Earliest => 0,
+            BlockNumberOrTag::Pending => self.get_chain_tip(),
+            BlockNumberOrTag::Number(n) => n,
         }
     }
 
-    pub fn peer_id(&self) -> PeerId {
-        self.peer_id
+    pub fn get_block(&self, block_id: impl Into<BlockId>) -> Result<Option<Block>> {
+        match block_id.into() {
+            BlockId::Hash(RpcBlockHash {
+                block_hash,
+                require_canonical: _,
+            }) => {
+                // TODO(#863): require_canonical
+                self.consensus.get_block(&block_hash.into())
+            }
+            BlockId::Number(number) => self
+                .consensus
+                .get_block_by_number(self.resolve_block_number(number)),
+        }
+    }
+
+    pub fn get_state(&self, block_id: impl Into<BlockId> + Copy + Debug) -> Result<State> {
+        let block = self
+            .get_block(block_id)?
+            .ok_or_else(|| anyhow!("missing block: {block_id:?}"))?;
+
+        Ok(self
+            .consensus
+            .state()
+            .at_root(block.state_root_hash().into()))
     }
 
     pub fn trace_evm_transaction(
@@ -316,10 +339,10 @@ impl Node {
             .ok_or_else(|| anyhow!("transaction not mined: {txn_hash}"))?;
 
         let block = self
-            .get_block_by_hash(receipt.block_hash)?
+            .get_block(receipt.block_hash)?
             .ok_or_else(|| anyhow!("missing block: {}", receipt.block_hash))?;
         let parent = self
-            .get_block_by_hash(block.parent_hash())?
+            .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
         let mut state = self
             .consensus
@@ -377,10 +400,10 @@ impl Node {
             .ok_or_else(|| anyhow!("transaction not mined: {txn_hash}"))?;
 
         let block = self
-            .get_block_by_hash(receipt.block_hash)?
+            .get_block(receipt.block_hash)?
             .ok_or_else(|| anyhow!("missing block: {}", receipt.block_hash))?;
         let parent = self
-            .get_block_by_hash(block.parent_hash())?
+            .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
         let mut state = self
             .consensus
@@ -409,16 +432,16 @@ impl Node {
         Err(anyhow!("transaction not found in block: {txn_hash}"))
     }
 
-    pub fn debug_trace_block_by_number(
+    pub fn debug_trace_block(
         &self,
-        block_number: BlockNumber,
+        block_number: BlockNumberOrTag,
         trace_opts: GethDebugTracingOptions,
     ) -> Result<Vec<TraceResult>> {
         let block = self
-            .get_block_by_blocknum(block_number)?
-            .ok_or_else(|| anyhow!("missing block: {}", block_number))?;
+            .get_block(block_number)?
+            .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
         let parent = self
-            .get_block_by_hash(block.parent_hash())?
+            .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
         let mut state = self
             .consensus
@@ -627,14 +650,14 @@ impl Node {
 
     pub fn call_contract(
         &mut self,
-        block_number: BlockNumber,
+        block_id: BlockId,
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
         amount: u128,
     ) -> Result<Vec<u8>> {
         let block = self
-            .get_block_by_number(self.get_number(block_number))?
+            .get_block(block_id)?
             .ok_or_else(|| anyhow!("block not found"))?;
 
         trace!("call_contract: block={:?}", block);
@@ -661,7 +684,7 @@ impl Node {
         }
 
         let parent = self
-            .get_block_by_hash(header.parent_hash)?
+            .get_block(header.parent_hash)?
             .ok_or_else(|| anyhow!("missing parent: {}", header.parent_hash))?;
         let proposer = self
             .consensus
@@ -683,7 +706,7 @@ impl Node {
     #[allow(clippy::too_many_arguments)]
     pub fn estimate_gas(
         &mut self,
-        block_number: BlockNumber,
+        block_number: BlockNumberOrTag,
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
@@ -691,15 +714,10 @@ impl Node {
         gas_price: Option<u128>,
         value: u128,
     ) -> Result<u64> {
-        // TODO: optimise this to get header directly once persistance is merged
-        // (which will provide a header index)
         let block = self
-            .get_block_by_number(self.get_number(block_number))?
-            .ok_or_else(|| anyhow!("block not found"))?;
-        let state = self
-            .consensus
-            .state()
-            .at_root(block.state_root_hash().into());
+            .get_block(block_number)?
+            .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
+        let state = self.get_state(block_number)?;
 
         state.estimate_gas(
             from_addr,
@@ -731,54 +749,11 @@ impl Node {
     }
 
     pub fn get_chain_id(&self) -> u64 {
-        self.config.eth_chain_id // using eth as a universal ID for now
+        self.config.eth_chain_id
     }
 
     pub fn get_chain_tip(&self) -> u64 {
         self.consensus.head_block().header.number
-    }
-
-    pub fn state_at(&self, block_number: BlockNumber) -> Result<State> {
-        self.consensus
-            .try_get_state_at(self.get_number(block_number))
-    }
-
-    pub fn get_account(&self, address: Address, block_number: BlockNumber) -> Result<Account> {
-        self.consensus
-            .try_get_state_at(self.get_number(block_number))?
-            .get_account(address)
-    }
-
-    pub fn get_account_storage(
-        &self,
-        address: Address,
-        index: B256,
-        block_number: BlockNumber,
-    ) -> Result<B256> {
-        self.consensus
-            .try_get_state_at(self.get_number(block_number))?
-            .get_account_storage(address, index)
-    }
-
-    pub fn get_native_balance(&self, address: Address, block_number: BlockNumber) -> Result<u128> {
-        Ok(self
-            .consensus
-            .try_get_state_at(self.get_number(block_number))?
-            .get_account(address)?
-            .balance)
-    }
-
-    pub fn get_latest_block(&self) -> Result<Option<Block>> {
-        self.get_block_by_number(self.get_chain_tip())
-    }
-
-    pub fn get_block_by_blocknum(&self, block_number: BlockNumber) -> Result<Option<Block>> {
-        let block_number = self.get_number(block_number);
-        self.consensus.get_block_by_number(block_number)
-    }
-
-    pub fn get_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
-        self.consensus.get_block_by_number(block_number)
     }
 
     pub fn get_transaction_receipts_in_block(
@@ -790,14 +765,6 @@ impl Node {
 
     pub fn get_finalized_height(&self) -> u64 {
         self.consensus.finalized_view()
-    }
-
-    pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        self.consensus.get_block_by_view(view)
-    }
-
-    pub fn get_block_by_hash(&self, hash: Hash) -> Result<Option<Block>> {
-        self.consensus.get_block(&hash)
     }
 
     pub fn get_transaction_receipt(&self, tx_hash: Hash) -> Result<Option<TransactionReceipt>> {

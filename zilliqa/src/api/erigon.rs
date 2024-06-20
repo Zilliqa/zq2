@@ -4,17 +4,17 @@ use anyhow::Result;
 use jsonrpsee::{types::Params, RpcModule};
 
 use super::types::eth;
-use crate::{message::BlockNumber, node::Node};
+use crate::node::Node;
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(node, [("erigon_getHeaderByNumber", get_header_by_number)])
 }
 
 fn get_header_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::Block>> {
-    let block: BlockNumber = params.one()?;
+    let block: u64 = params.one()?;
 
     // Erigon headers are a subset of the full block response. We choose to just return the full block.
-    let Some(ref block) = node.lock().unwrap().get_block_by_blocknum(block)? else {
+    let Some(ref block) = node.lock().unwrap().get_block(block)? else {
         return Ok(None);
     };
 
