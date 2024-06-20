@@ -491,6 +491,6 @@ async fn main() -> Result<()> {
                 &args.reward_address,
             )?;
             validators::deposit_stake(&stake).await
-        },
+        }
     }
 }

@@ -1,5 +1,6 @@
 /// Code to render the validator join configuration and startup script.
 use std::env;
+use std::str::FromStr;
 
 use crate::github;
 use anyhow::{anyhow, Context as _, Error, Result};
@@ -12,24 +13,26 @@ use ethers::{
     providers::{Http, Middleware, Provider},
     signers::{LocalWallet, Signer},
 };
+use libp2p::PeerId;
 use serde::Deserialize;
 use std::convert::TryFrom;
 use tera::Tera;
 use tokio::{fs::File, io::AsyncWriteExt};
 use toml::Value;
-use zilliqa::{contracts, state::contract_addr};
+use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
 
 #[derive(Debug)]
 pub struct Validator {
-    peer_id: String,
-    public_key: String,
+    peer_id: libp2p::PeerId,
+    public_key: zilliqa::crypto::NodePublicKey,
 }
 
 impl Validator {
     pub fn new(peer_id: &str, public_key: &str) -> Result<Self> {
         Ok(Self {
-            peer_id: peer_id.to_string(),
-            public_key: public_key.to_string(),
+            peer_id: PeerId::from_str(peer_id).unwrap(),
+            public_key: NodePublicKey::from_bytes(hex::decode(public_key).unwrap().as_slice())
+                .unwrap(),
         })
     }
 }
@@ -60,6 +63,7 @@ impl StakeDeposit {
         })
     }
 }
+
 #[derive(Debug, Deserialize)]
 pub struct ChainConfig {
     name: String,
@@ -222,26 +226,25 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
         .data(
             contracts::deposit::DEPOSIT
                 .encode_input(&[
-                    Token::Bytes(stake.validator.public_key.as_bytes().to_owned()),
-                    Token::Bytes(stake.validator.peer_id.as_bytes().to_owned()),
+                    Token::Bytes(stake.validator.public_key.as_bytes()),
+                    Token::Bytes(stake.validator.peer_id.to_bytes()),
                     Token::Bytes(vec![]),
                     Token::Address(stake.reward_address),
                 ])
                 .unwrap(),
         );
 
-    println!("{:?}", tx);
     // send it!
     let pending_tx = client.send_transaction(tx, None).await?;
 
     // get the mined tx
-    // let receipt = pending_tx
-    //     .await?
-    //     .ok_or_else(|| anyhow::anyhow!("tx dropped from mempool"))?;
-    // let tx = client.get_transaction(receipt.transaction_hash).await?;
+    let receipt = pending_tx
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("tx dropped from mempool"))?;
+    let tx = client.get_transaction(receipt.transaction_hash).await?;
 
-    // println!("Sent tx: {}\n", serde_json::to_string(&tx)?);
-    // println!("Tx receipt: {}", serde_json::to_string(&receipt)?);
+    println!("Sent tx: {}\n", serde_json::to_string(&tx)?);
+    println!("Tx receipt: {}", serde_json::to_string(&receipt)?);
 
     Ok(())
 }
