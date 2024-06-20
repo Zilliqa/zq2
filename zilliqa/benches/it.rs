@@ -14,6 +14,7 @@ use zilliqa::{
     time::SystemTime,
     transaction::EvmGas,
 };
+use zilliqa::crypto::Hash;
 
 pub fn process_blocks(c: &mut Criterion) {
     tracing_subscriber::fmt::init();
@@ -96,6 +97,8 @@ pub fn process_blocks(c: &mut Criterion) {
             qc,
             parent_hash,
             state.root_hash().unwrap(),
+            Hash::ZERO,
+            Hash::ZERO,
             vec![],
             SystemTime::UNIX_EPOCH,
             EvmGas(0),
