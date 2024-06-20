@@ -56,7 +56,7 @@ module "validators" {
   eth_chain_id = ${var.eth_chain_id}
   allowed_timestamp_skew = { secs = 60, nanos = 0 }
   data_dir = "/data"
-  consensus.genesis_accounts = [ ["${local.genesis_address}", "21_000_000_000_000_000_000_000_000_000"] ]
+  consensus.genesis_accounts = [ ["${local.genesis_address}", "10_000_000_000_000_000_000_000_000"] ]
   consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "10_000_000_000_000_000_000_000_000", "${local.genesis_address}"] ]
 
   # Reward parameters

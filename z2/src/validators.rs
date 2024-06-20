@@ -1,15 +1,65 @@
 /// Code to render the validator join configuration and startup script.
 use std::env;
 
+use crate::github;
 use anyhow::{anyhow, Context as _, Error, Result};
 use clap::ValueEnum;
+use ethabi::Token;
+use ethers::types::H160;
+use ethers::{
+    core::types::TransactionRequest,
+    middleware::SignerMiddleware,
+    providers::{Http, Middleware, Provider},
+    signers::{LocalWallet, Signer},
+};
 use serde::Deserialize;
+use std::convert::TryFrom;
 use tera::Tera;
 use tokio::{fs::File, io::AsyncWriteExt};
 use toml::Value;
+use zilliqa::{contracts, state::contract_addr};
 
-use crate::github;
+#[derive(Debug)]
+pub struct Validator {
+    peer_id: String,
+    public_key: String,
+}
 
+impl Validator {
+    pub fn new(peer_id: &str, public_key: &str) -> Result<Self> {
+        Ok(Self {
+            peer_id: peer_id.to_string(),
+            public_key: public_key.to_string(),
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct StakeDeposit {
+    validator: Validator,
+    amount: u8,
+    chain_name: Chain,
+    wallet: String,
+    reward_address: H160,
+}
+
+impl StakeDeposit {
+    pub fn new(
+        validator: Validator,
+        amount: u8,
+        chain_name: Chain,
+        wallet: &str,
+        reward_address: &str,
+    ) -> Result<Self> {
+        Ok(Self {
+            validator,
+            amount,
+            chain_name,
+            wallet: wallet.to_owned(),
+            reward_address: H160(hex_string_to_u8_20(reward_address).unwrap()),
+        })
+    }
+}
 #[derive(Debug, Deserialize)]
 pub struct ChainConfig {
     name: String,
@@ -93,6 +143,21 @@ fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
     }
 }
 
+fn hex_string_to_u8_20(hex_str: &str) -> Result<[u8; 20], &'static str> {
+    // Convert the hex string to a byte vector
+    let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))
+        .map_err(|_| "Invalid hex string")?;
+
+    if bytes.len() != 20 {
+        return Err("Invalid length after decoding");
+    }
+
+    let mut array = [0u8; 20];
+    array.copy_from_slice(&bytes);
+
+    Ok(array)
+}
+
 async fn get_chain_spec_config(chain_name: &str) -> Result<Value> {
     let contents = get_toml_contents(chain_name)?;
     let config: Value =
@@ -127,6 +192,56 @@ pub async fn gen_validator_startup_script(config: &ChainConfig) -> Result<()> {
     fh.write_all(script.as_bytes()).await?;
 
     println!("💾 Startup script: {}", file_path.to_string_lossy());
+
+    Ok(())
+}
+
+pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
+    println!(
+        "Deposit: add {} M $ZIL to {}",
+        stake.amount, stake.validator.peer_id
+    );
+
+    let network_api = stake.chain_name.get_endpoint().unwrap();
+    let provider = Provider::<Http>::try_from(network_api)?;
+
+    let chain_id = provider.get_chainid().await?;
+
+    let wallet: LocalWallet = stake
+        .wallet
+        .as_str()
+        .parse::<LocalWallet>()?
+        .with_chain_id(chain_id.as_u64());
+
+    let client = SignerMiddleware::new(provider, wallet);
+
+    // Stake the new validator's funds.
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .value(stake.amount as u128 * 1_000_000u128 * 10u128.pow(18))
+        .data(
+            contracts::deposit::DEPOSIT
+                .encode_input(&[
+                    Token::Bytes(stake.validator.public_key.as_bytes().to_owned()),
+                    Token::Bytes(stake.validator.peer_id.as_bytes().to_owned()),
+                    Token::Bytes(vec![]),
+                    Token::Address(stake.reward_address),
+                ])
+                .unwrap(),
+        );
+
+    println!("{:?}", tx);
+    // send it!
+    let pending_tx = client.send_transaction(tx, None).await?;
+
+    // get the mined tx
+    // let receipt = pending_tx
+    //     .await?
+    //     .ok_or_else(|| anyhow::anyhow!("tx dropped from mempool"))?;
+    // let tx = client.get_transaction(receipt.transaction_hash).await?;
+
+    // println!("Sent tx: {}\n", serde_json::to_string(&tx)?);
+    // println!("Tx receipt: {}", serde_json::to_string(&receipt)?);
 
     Ok(())
 }
