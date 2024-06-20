@@ -527,24 +527,13 @@ impl Consensus {
             return Ok(None);
         }
 
-        let now = SystemTime::now();
-        if !during_sync
-            && block.timestamp() + self.config.consensus.maximum_delay_for_received_block < now
+        if block.gas_limit() > self.config.consensus.eth_block_gas_limit
+            || block.gas_used() > block.gas_limit()
         {
-            let diff = now.duration_since(SystemTime::UNIX_EPOCH)?
-                - (block.timestamp().duration_since(SystemTime::UNIX_EPOCH)?
-                    + self.config.consensus.maximum_delay_for_received_block);
-            warn!(
-                "Rejecting block - It's too old, diff is {}ms",
-                diff.as_millis()
-            );
-            return Ok(None);
-        }
-
-        if block.gas_used() > self.config.consensus.eth_block_gas_limit {
             bail!(
-                "Given block gas limit in block is too high: {} vs max possible: {}",
+                "Block gas used/limit check failed. Used: {}, Limit: {}, config limit: {}",
                 block.gas_used(),
+                block.gas_limit(),
                 self.config.consensus.eth_block_gas_limit
             );
         }
@@ -1066,6 +1055,7 @@ impl Consensus {
             applied_transaction_hashes.clone(),
             SystemTime::max(SystemTime::now(), parent_header.timestamp),
             self.config.consensus.eth_block_gas_limit - gas_left,
+            self.config.consensus.eth_block_gas_limit,
         );
 
         self.state.set_to_root(previous_state_root_hash.into());
@@ -1284,7 +1274,6 @@ impl Consensus {
         }
 
         txn.tx.validate_gas_limit()?;
-        txn.tx.validate_input_size()?;
 
         let account_nonce = self.state.get_account(txn.signer)?.nonce;
         let txn_hash = txn.hash;
@@ -2156,6 +2145,10 @@ impl Consensus {
 
             let gas_used = result.gas_used();
             cumulative_gas_used += gas_used;
+
+            if cumulative_gas_used > block.gas_limit() {
+                bail!("Cumulative gas used by executing transactions exceeded block limit!");
+            }
 
             let receipt = Self::create_txn_receipt(result, tx_hash, tx_index, cumulative_gas_used);
 

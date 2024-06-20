@@ -301,6 +301,7 @@ pub async fn convert_persistence(
 
                         let receipt = TransactionReceipt {
                             tx_hash: Hash(txn_hash.0),
+                            // Block hash is not know at this point (we need to have all receipts to build receipt_root_hash which is needed for block_hash)
                             block_hash: Hash::ZERO,
                             index: index as u64,
                             success: transaction.receipt.success,
@@ -376,6 +377,7 @@ pub async fn convert_persistence(
                 txn_hashes.iter().map(|h| Hash(h.0)).collect(),
                 SystemTime::UNIX_EPOCH + Duration::from_micros(block.timestamp),
                 ScillaGas(block.gas_used).into(),
+                ScillaGas(block.gas_limit).into(),
             );
 
             // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash

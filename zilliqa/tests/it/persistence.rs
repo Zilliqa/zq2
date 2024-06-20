@@ -4,8 +4,8 @@ use tracing::*;
 use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, consensus_timeout_default, eth_chain_id_default,
-        json_rcp_port_default, maximum_delay_for_received_block_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
+        json_rcp_port_default, minimum_time_left_for_empty_block_default, scilla_address_default,
+        scilla_lib_dir_default,
     },
     crypto::{Hash, SecretKey},
     transaction::EvmGas,
@@ -93,7 +93,6 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             genesis_deposits: Vec::new(),
             main_shard_id: None,
             minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
-            maximum_delay_for_received_block: maximum_delay_for_received_block_default(),
             scilla_address: scilla_address_default(),
             scilla_lib_dir: scilla_lib_dir_default(),
         },

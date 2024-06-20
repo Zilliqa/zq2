@@ -184,6 +184,7 @@ impl Db {
                 receipts_root_hash BLOB NOT NULL,
                 timestamp NUMERIC NOT NULL,
                 gas_used INTEGER NOT NULL,
+                gas_limit INTEGER NOT NULL,
                 qc BLOB NOT NULL,
                 agg BLOB);
             CREATE TABLE IF NOT EXISTS main_chain_canonical_blocks (
@@ -416,8 +417,8 @@ impl Db {
     pub fn insert_block_with_db_tx(&self, sqlite_tx: &Connection, block: &Block) -> Result<()> {
         sqlite_tx.execute(
             "INSERT INTO blocks
-                (block_hash, view, height, parent_hash, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, qc, agg)
-            VALUES (:block_hash, :view, :height, :parent_hash, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :qc, :agg)",
+                (block_hash, view, height, parent_hash, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, qc, agg)
+            VALUES (:block_hash, :view, :height, :parent_hash, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :qc, :agg)",
             named_params! {
                 ":block_hash": block.header.hash,
                 ":view": block.header.view,
@@ -429,6 +430,7 @@ impl Db {
                 ":receipts_root_hash": block.header.receipts_root_hash,
                 ":timestamp": SystemTimeSqlable(block.header.timestamp),
                 ":gas_used": block.header.gas_used,
+                ":gas_limit": block.header.gas_limit,
                 ":qc": block.qc,
                 ":agg": block.agg,
             })?;
@@ -453,15 +455,16 @@ impl Db {
                     receipts_root_hash: row.get(7)?,
                     timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
                     gas_used: row.get(9)?,
+                    gas_limit: row.get(10)?,
                 },
-                qc: row.get(10)?,
-                agg: row.get(11)?,
+                qc: row.get(11)?,
+                agg: row.get(12)?,
                 transactions: vec![],
             })
         }
         macro_rules! query_block {
             ($cond: tt, $key: tt) => {
-                self.block_store.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, parent_hash, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, qc, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
+                self.block_store.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, parent_hash, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, qc, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
             };
         }
         Ok(match key {

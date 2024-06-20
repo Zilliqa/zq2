@@ -393,6 +393,7 @@ pub struct BlockHeader {
     /// The time this block was mined at.
     pub timestamp: SystemTime,
     pub gas_used: EvmGas,
+    pub gas_limit: EvmGas,
 }
 
 impl BlockHeader {
@@ -412,6 +413,7 @@ impl BlockHeader {
             receipts_root_hash: Hash::ZERO,
             timestamp: SystemTime::UNIX_EPOCH,
             gas_used: EvmGas(0),
+            gas_limit: EvmGas(0),
         }
     }
 }
@@ -430,6 +432,7 @@ impl Default for BlockHeader {
             receipts_root_hash: Hash::ZERO,
             timestamp: SystemTime::UNIX_EPOCH,
             gas_used: EvmGas(0),
+            gas_limit: EvmGas(0),
         }
     }
 }
@@ -568,6 +571,7 @@ impl Block {
                 receipts_root_hash: Hash::ZERO,
                 timestamp,
                 gas_used: EvmGas(0),
+                gas_limit: EvmGas(0),
             },
             qc: QuorumCertificate {
                 signature: NodeSignature::identity(),
@@ -592,6 +596,7 @@ impl Block {
                 self.transactions_root_hash().as_bytes(),
                 self.receipts_root_hash().as_bytes(),
                 &self.gas_used().0.to_be_bytes(),
+                &self.gas_limit().0.to_be_bytes(),
             ])
         } else {
             Hash::compute([
@@ -603,6 +608,7 @@ impl Block {
                 self.transactions_root_hash().as_bytes(),
                 self.receipts_root_hash().as_bytes(),
                 &self.gas_used().0.to_be_bytes(),
+                &self.gas_limit().0.to_be_bytes(),
             ])
         };
 
@@ -626,6 +632,7 @@ impl Block {
         transactions: Vec<Hash>,
         timestamp: SystemTime,
         gas_used: EvmGas,
+        gas_limit: EvmGas,
     ) -> Block {
         let digest = Hash::compute([
             &view.to_be_bytes(),
@@ -637,6 +644,7 @@ impl Block {
             transactions_root_hash.as_bytes(),
             receipts_root_hash.as_bytes(),
             &gas_used.0.to_be_bytes(),
+            &gas_limit.0.to_be_bytes(),
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {
@@ -651,6 +659,7 @@ impl Block {
                 receipts_root_hash,
                 timestamp,
                 gas_used,
+                gas_limit,
             },
             qc,
             agg: None,
@@ -681,6 +690,7 @@ impl Block {
             transactions_root_hash.as_bytes(),
             receipts_root_hash.as_bytes(),
             &EvmGas(0).0.to_be_bytes(),
+            &EvmGas(0).0.to_be_bytes(),
         ]);
         let signature = secret_key.sign(digest.as_bytes());
         Block {
@@ -695,6 +705,7 @@ impl Block {
                 receipts_root_hash,
                 timestamp,
                 gas_used: EvmGas(0),
+                gas_limit: EvmGas(0),
             },
             qc,
             agg: Some(agg),
@@ -743,5 +754,8 @@ impl Block {
 
     pub fn gas_used(&self) -> EvmGas {
         self.header.gas_used
+    }
+    pub fn gas_limit(&self) -> EvmGas {
+        self.header.gas_limit
     }
 }

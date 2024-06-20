@@ -24,6 +24,9 @@ use sha3::{
 };
 
 use crate::{
+    constants::{
+        MINIMUM_ETH_GAS, MINIMUM_ZIL_GAS,
+    },
     crypto,
     crypto::Hash,
     exec::{ScillaError, ScillaException, ScillaTransition},
@@ -308,7 +311,6 @@ impl SignedTransaction {
             SignedTransaction::Legacy { .. }
             | SignedTransaction::Eip2930 { .. }
             | SignedTransaction::Eip1559 { .. } => {
-                const MINIMUM_ETH_GAS: EvmGas = EvmGas(21_000);
                 if self.gas_limit() < MINIMUM_ETH_GAS {
                     bail!(
                         "Provided evm transaction gas limit is too low: {}",
@@ -318,7 +320,7 @@ impl SignedTransaction {
             }
             SignedTransaction::Zilliqa { ref tx, .. } => {
                 // Minimum gas needed for scilla run - contract invocation
-                const MINIMUM_ZIL_GAS: ScillaGas = ScillaGas(10);
+
                 if tx.gas_limit < MINIMUM_ZIL_GAS {
                     bail!(
                         "Provided scilla transaction gas limit is too low: {}",
@@ -327,30 +329,6 @@ impl SignedTransaction {
                 }
             }
             _ => {}
-        }
-        Ok(())
-    }
-
-    pub fn validate_input_size(&self) -> Result<()> {
-        // https://eips.ethereum.org/EIPS/eip-170
-        const MAX_EVM_CONTRACT_SIZE_BYTES: usize = 24576;
-        let status = match self {
-            SignedTransaction::Legacy { tx, .. } => tx.input.len() <= MAX_EVM_CONTRACT_SIZE_BYTES,
-
-            SignedTransaction::Eip2930 { tx, .. } => tx.input.len() <= MAX_EVM_CONTRACT_SIZE_BYTES,
-
-            SignedTransaction::Eip1559 { tx, .. } => tx.input.len() <= MAX_EVM_CONTRACT_SIZE_BYTES,
-
-            SignedTransaction::Zilliqa { ref tx, .. } => {
-                // Seems there was no limit in ZQ1 (let's have one)
-                const MAX_ZILLIQA_DATA_SIZE: usize = 32 * 1024;
-                tx.data.len() <= MAX_ZILLIQA_DATA_SIZE
-            }
-            _ => true,
-        };
-
-        if !status {
-            bail!("Transaction input exceeds maximum size");
         }
         Ok(())
     }
