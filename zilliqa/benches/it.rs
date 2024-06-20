@@ -99,6 +99,7 @@ pub fn process_blocks(c: &mut Criterion) {
             vec![],
             SystemTime::UNIX_EPOCH,
             EvmGas(0),
+            EvmGas(0),
         );
         parent_hash = block.hash();
 
