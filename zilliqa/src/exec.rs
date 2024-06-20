@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, MutexGuard},
 };
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{hex, Address, U256};
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use eth_trie::{EthTrie, Trie};
@@ -317,7 +317,7 @@ impl State {
         let (ResultAndState { result, mut state }, ..) = self.apply_transaction_evm(
             Address::ZERO,
             None,
-            self.gas_price,
+            0,
             self.block_gas_limit,
             0,
             creation_bytecode,
@@ -325,6 +325,7 @@ impl State {
             0,
             BlockHeader::genesis(Hash::ZERO),
             inspector::noop(),
+            true,
         )?;
 
         match result {
@@ -367,6 +368,7 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
         inspector: I,
+        skip_base_fee_check: bool,
     ) -> Result<(ResultAndState, Box<Env>)> {
         let mut evm = Evm::builder()
             .with_db(self)
@@ -391,11 +393,7 @@ impl State {
             .append_handler_register(inspector_handle_register)
             .modify_cfg_env(|c| {
                 c.chain_id = chain_id;
-                // We disable the balance check (which ensures the from account's balance is greater than the
-                // transaction's `gas_price * gas_limit`), because Scilla transactions are often submitted with
-                // overly high `gas_limit`s. This is probably because there is no gas estimation feature for Scilla
-                // transactions.
-                c.disable_balance_check = true;
+                c.disable_base_fee = skip_base_fee_check;
             })
             .with_tx_env(TxEnv {
                 caller: from_addr.0.into(),
@@ -480,6 +478,8 @@ impl State {
         let from_addr = txn.signer;
         info!(?hash, ?txn, "executing txn");
 
+        let blessed = BLESSED_TRANSACTIONS.contains(&hash);
+
         let txn = txn.tx.into_transaction();
         if let Transaction::Zilliqa(txn) = txn {
             let (result, state) =
@@ -500,6 +500,7 @@ impl State {
                 chain_id,
                 current_block,
                 inspector,
+                blessed,
             )?;
 
             self.apply_delta_evm(&state)?;
@@ -781,6 +782,7 @@ impl State {
                 chain_id,
                 current_block,
                 inspector::noop(),
+                false,
             )?;
 
             match result {
@@ -818,6 +820,7 @@ impl State {
             chain_id,
             current_block,
             inspector::noop(),
+            false,
         )?;
 
         match result {
@@ -854,7 +857,7 @@ impl State {
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
-            self.gas_price,
+            0,
             self.block_gas_limit,
             amount,
             data,
@@ -862,6 +865,7 @@ impl State {
             chain_id,
             current_block,
             inspector::noop(),
+            true,
         )?;
 
         match result {
@@ -1557,3 +1561,15 @@ fn scilla_call(
         state.take().expect("missing state"),
     ))
 }
+
+/// Blessed transactions bypass minimum gas price rules. These transactions have value to the network even at a lower
+/// gas price, so we accept them anyway.
+const BLESSED_TRANSACTIONS: [Hash; 1] = [
+    // Hash of the deployment transaction for the deterministic deployment proxy from
+    // https://github.com/Arachnid/deterministic-deployment-proxy. It is valuable to accept this transaction despite
+    // the low gas price, because it means the contract is deployed at the same address as other EVM-compatible chains.
+    // This means that contracts deployed using this proxy will be deployed to the same address as on other chains.
+    Hash(hex!(
+        "eddf9e61fb9d8f5111840daef55e5fde0041f5702856532cdbb5a02998033d26"
+    )),
+];

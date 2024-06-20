@@ -347,7 +347,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
     // Then fund the shard 1 wallet on shard 2
     let xfer_hash = shard_2_wallet
         .send_transaction(
-            TransactionRequest::pay(shard_1_wallet.address(), 100_000_000_000_000u64),
+            TransactionRequest::pay(shard_1_wallet.address(), 100_000_000_000_000_000_000u128),
             None,
         )
         .await

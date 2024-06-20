@@ -137,6 +137,7 @@ pub async fn convert_persistence(
         0,
         BlockHeader::default(),
         inspector::noop(),
+        true,
     )?;
     if !result.is_success() {
         return Err(anyhow!("setting stake failed: {result:?}"));

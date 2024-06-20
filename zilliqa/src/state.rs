@@ -118,7 +118,7 @@ impl State {
             ) = state.apply_transaction_evm(
                 Address::ZERO,
                 Some(contract_addr::DEPOSIT),
-                *config.gas_price,
+                0,
                 config.eth_block_gas_limit,
                 0,
                 data,
@@ -126,6 +126,7 @@ impl State {
                 0,
                 BlockHeader::default(),
                 inspector::noop(),
+                true,
             )?;
             if !result.is_success() {
                 return Err(anyhow!("setting stake failed: {result:?}"));
