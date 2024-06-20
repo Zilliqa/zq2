@@ -42,6 +42,9 @@ contract Deposit {
                 // The last element is now the element we want to delete.
                 _stakerKeys.pop();
 
+                // Reduce the total stake
+                totalStake -= stakerToDelete.balance;
+
                 // Delete the staker from `_stakersMap` too.
                 delete _stakersMap[blsPubKey];
 

@@ -42,7 +42,7 @@ pub fn process_blocks(c: &mut Criterion) {
                 consensus.rewards_per_hour = "1"
                 consensus.blocks_per_hour = 1
                 consensus.minimum_stake = "1"
-                consensus.eth_block_gas_limit = 1000000
+                consensus.eth_block_gas_limit = 1000000000
                 consensus.gas_price = "1"
                 consensus.genesis_accounts = [
                     [
