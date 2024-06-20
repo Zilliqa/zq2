@@ -24,9 +24,7 @@ use sha3::{
 };
 
 use crate::{
-    constants::{
-        MINIMUM_ETH_GAS, MINIMUM_ZIL_GAS,
-    },
+    constants::{MINIMUM_ETH_GAS, MINIMUM_ZIL_GAS},
     crypto,
     crypto::Hash,
     exec::{ScillaError, ScillaException, ScillaTransition},
