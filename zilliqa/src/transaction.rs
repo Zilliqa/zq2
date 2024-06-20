@@ -68,8 +68,10 @@ pub enum SignedTransaction {
 // alloy's transaction types contain annotations (such as `skip_serializing_if`) which cause issues when
 // (de)serializing with serde. Therefore, we serialize these transactions in their RLP form instead.
 mod ser_rlp {
+    use std::marker::PhantomData;
+
     use alloy_rlp::{Decodable, Encodable};
-    use serde::{de, Deserialize, Deserializer, Serializer};
+    use serde::{de, Deserializer, Serializer};
 
     pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -86,8 +88,24 @@ mod ser_rlp {
         T: Decodable,
         D: Deserializer<'de>,
     {
-        let buf = <Vec<u8>>::deserialize(deserializer)?;
-        T::decode(&mut buf.as_slice()).map_err(de::Error::custom)
+        struct Visitor<T>(PhantomData<T>);
+
+        impl<'de, T: Decodable> serde::de::Visitor<'de> for Visitor<T> {
+            type Value = T;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(formatter, "a byte array")
+            }
+
+            fn visit_bytes<E>(self, mut v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                T::decode(&mut v).map_err(de::Error::custom)
+            }
+        }
+
+        deserializer.deserialize_bytes(Visitor(PhantomData))
     }
 }
 

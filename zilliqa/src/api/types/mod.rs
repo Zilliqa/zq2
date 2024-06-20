@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use serde::{ser::SerializeSeq, Serializer};
 
 use super::to_hex::ToHex;
@@ -46,4 +48,12 @@ pub fn option_hex_no_prefix<S: Serializer, T: ToHex>(
     } else {
         serializer.serialize_none()
     }
+}
+
+fn ser_display<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+    T: Display,
+    S: Serializer,
+{
+    serializer.collect_str(value)
 }

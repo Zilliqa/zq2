@@ -4,10 +4,7 @@ use alloy_primitives::Address;
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{
-    crypto::{Hash, NodePublicKey},
-    transaction::EvmGas,
-};
+use crate::{crypto::NodePublicKey, transaction::EvmGas};
 
 // Note that z2 constructs instances of this to save as a configuration so it must be both
 // serializable and deserializable.
@@ -124,8 +121,6 @@ pub struct ConsensusConfig {
     /// (public key, peerId, amount, reward address) tuples.
     #[serde(default)]
     pub genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)>,
-    #[serde(default)]
-    pub genesis_hash: Option<Hash>,
     /// Accounts that will be pre-funded at genesis.
     #[serde(default)]
     pub genesis_accounts: Vec<(Address, Amount)>,

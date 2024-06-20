@@ -242,7 +242,6 @@ impl Network {
             eth_chain_id: shard_id,
             consensus: ConsensusConfig {
                 genesis_deposits: genesis_deposits.clone(),
-                genesis_hash: None,
                 is_main: send_to_parent.is_none(),
                 consensus_timeout: Duration::from_secs(1),
                 minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
@@ -318,29 +317,16 @@ impl Network {
         )]
     }
 
-    pub fn add_node(&mut self, genesis: bool) -> usize {
+    pub fn add_node(&mut self) -> usize {
         let secret_key = SecretKey::new_from_rng(self.rng.lock().unwrap().deref_mut()).unwrap();
-        self.add_node_with_key(genesis, secret_key)
+        self.add_node_with_key(secret_key)
     }
 
     pub fn is_main(&self) -> bool {
         self.send_to_parent.is_none()
     }
 
-    pub fn add_node_with_key(&mut self, genesis: bool, secret_key: SecretKey) -> usize {
-        let genesis_hash = if genesis {
-            None
-        } else {
-            Some(
-                self.nodes[0]
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .get_genesis_hash()
-                    .unwrap(),
-            )
-        };
-
+    pub fn add_node_with_key(&mut self, secret_key: SecretKey) -> usize {
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
             json_rpc_port: json_rcp_port_default(),
@@ -349,7 +335,6 @@ impl Network {
             disable_rpc: disable_rpc_default(),
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),
-                genesis_hash,
                 is_main: self.is_main(),
                 consensus_timeout: Duration::from_secs(1),
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
@@ -435,7 +420,6 @@ impl Network {
                     json_rpc_port: json_rcp_port_default(),
                     consensus: ConsensusConfig {
                         genesis_deposits: genesis_deposits.clone(),
-                        genesis_hash: None,
                         is_main: self.is_main(),
                         consensus_timeout: Duration::from_secs(1),
                         // Give a genesis account 1 billion ZIL.
@@ -718,7 +702,7 @@ impl Network {
                         if let Some(child_network) = self.children.get_mut(new_network_id) {
                             if child_network.find_node(source).is_none() {
                                 trace!("Launching shard node for {new_network_id} - adding new node to shard");
-                                child_network.add_node_with_key(true, secret_key);
+                                child_network.add_node_with_key(secret_key);
                             } else {
                                 trace!("Received messaged to launch new node in {new_network_id}, but node {source} already exists in that network");
                             }

@@ -105,7 +105,7 @@ async fn block_production(mut network: Network) {
         .unwrap();
 
     info!("Adding networked node.");
-    let index = network.add_node(true);
+    let index = network.add_node();
 
     network
         .run_until(
@@ -175,7 +175,7 @@ async fn create_shard(
     // * Add all new nodes to the parent network too -- all nodes must run main shard nodes
     let initial_main_shard_nodes = network.nodes.len();
     for key in shard_node_keys {
-        network.add_node_with_key(true, key);
+        network.add_node_with_key(key);
     }
 
     network.run_until_block(wallet, 10.into(), 100).await;

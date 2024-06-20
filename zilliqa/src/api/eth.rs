@@ -219,6 +219,7 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let position: U256 = params.next()?;
     let position = B256::new(position.to_be_bytes());
     let block_number: BlockNumber = params.next()?;
+    expect_end_of_params(&mut params, 3, 3)?;
 
     let value = node
         .lock()
@@ -233,6 +234,7 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let block_number: BlockNumber = params.next()?;
+    expect_end_of_params(&mut params, 3, 3)?;
 
     trace!(
         "get_transaction_count resp: {:?}",
@@ -251,7 +253,8 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
         .to_hex())
 }
 
-fn get_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+fn get_gas_price(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    expect_end_of_params(&mut params.sequence(), 0, 0)?;
     Ok(node.lock().unwrap().get_gas_price().to_hex())
 }
 
@@ -259,6 +262,7 @@ fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option
     let mut params = params.sequence();
     let block_number: BlockNumber = params.next()?;
     let full: bool = params.next()?;
+    expect_end_of_params(&mut params, 2, 2)?;
 
     let node = node.lock().unwrap();
     let block = node.get_block_by_blocknum(block_number)?;
@@ -272,6 +276,7 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
     let mut params = params.sequence();
     let hash: B256 = params.next()?;
     let full: bool = params.next()?;
+    expect_end_of_params(&mut params, 2, 2)?;
 
     let node = node.lock().unwrap();
     let block = node
@@ -315,7 +320,9 @@ fn get_block_transaction_count_by_hash(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<String>> {
-    let hash: B256 = params.one()?;
+    let mut params = params.sequence();
+    let hash: B256 = params.next()?;
+    expect_end_of_params(&mut params, 1, 1)?;
 
     let node = node.lock().unwrap();
     let block = node.get_block_by_hash(Hash(hash.0))?;
@@ -327,7 +334,10 @@ fn get_block_transaction_count_by_number(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<String>> {
-    let block_number: BlockNumber = params.one()?;
+    let mut params = params.sequence();
+    // The ethereum RPC spec says this is optional, but it is mandatory in geth and erigon.
+    let block_number: BlockNumber = params.next()?;
+    expect_end_of_params(&mut params, 1, 1)?;
 
     let node = node.lock().unwrap();
     let block = node.get_block_by_blocknum(block_number)?;
@@ -343,7 +353,7 @@ struct GetLogsParams {
     from_block: Option<BlockNumber>,
     to_block: Option<BlockNumber>,
     address: Option<OneOrMany<Address>>,
-    /// Topics matches a prefix of the list of topics from each log. An empty element slice matches any topic. Non-empty
+
     /// elements represent an alternative that matches any of the contained topics.
     ///
     /// Examples (from Erigon):
@@ -357,7 +367,9 @@ struct GetLogsParams {
 }
 
 fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
-    let params: GetLogsParams = params.one()?;
+    let mut seq = params.sequence();
+    let params: GetLogsParams = seq.next()?;
+    expect_end_of_params(&mut seq, 1, 1)?;
 
     let node = node.lock().unwrap();
 

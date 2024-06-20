@@ -149,7 +149,7 @@ impl Db {
     where
         P: AsRef<Path>,
     {
-        let (db, connection) = match data_dir {
+        let (db, mut connection) = match data_dir {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
                 (
@@ -162,6 +162,8 @@ impl Db {
                 Connection::open_in_memory()?,
             ),
         };
+
+        connection.trace(Some(|statement| tracing::trace!(statement, "sql executed")));
 
         Self::ensure_schema(&connection)?;
 

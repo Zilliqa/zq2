@@ -5,6 +5,7 @@ use std::{collections::HashMap, iter, time::Duration};
 use anyhow::{anyhow, Result};
 use libp2p::{
     core::upgrade,
+    dns,
     futures::StreamExt,
     gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
     identify,
@@ -90,6 +91,7 @@ impl P2pNode {
             .authenticate(noise::Config::new(&key_pair)?)
             .multiplex(yamux::Config::default())
             .boxed();
+        let transport = dns::tokio::Transport::system(transport)?.boxed();
 
         let behaviour = Behaviour {
             request_response: request_response::cbor::Behaviour::new(

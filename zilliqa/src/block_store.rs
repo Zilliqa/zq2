@@ -138,7 +138,6 @@ impl BlockStore {
     pub fn process_block(&mut self, block: Block) -> Result<()> {
         trace!(number = block.number(), hash = ?block.hash(), "insert block");
         self.db.insert_block(&block)?;
-        // TODO: Is this correct?
         self.set_canonical(block.number(), block.hash())?;
         Ok(())
     }
