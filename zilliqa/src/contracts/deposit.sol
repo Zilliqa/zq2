@@ -21,6 +21,39 @@ contract Deposit {
         _minimumStake = minimumStake;
     }
 
+    // Temporary function to manually remove a staker. Can be called by the reward address of any staker with more than
+    // 10% stake. Will be removed later in development.
+    function tempRemoveStaker(bytes calldata blsPubKey) public {
+        require(blsPubKey.length == 48);
+        
+        // Inefficient, but its fine because this is temporary.
+        for (uint256 i = 0; i < _stakerKeys.length; i++) {
+            bytes storage stakerKey = _stakerKeys[i];
+            Staker storage staker = _stakersMap[stakerKey];
+
+            // Check if the call is authorised.
+            if (msg.sender == staker.rewardAddress && staker.balance > (totalStake / 10)) {
+                // The call is authorised, so we can delete the specified staker.
+                Staker storage stakerToDelete = _stakersMap[blsPubKey];
+
+                // Delete this staker's key from `_stakerKeys`. Swap the last element in the array into the deleted
+                // elements position.
+                _stakerKeys[stakerToDelete.keyIndex - 1] = _stakerKeys[_stakerKeys.length - 1];
+                // The last element is now the element we want to delete.
+                _stakerKeys.pop();
+
+                // Reduce the total stake
+                totalStake -= stakerToDelete.balance;
+
+                // Delete the staker from `_stakersMap` too.
+                delete _stakersMap[blsPubKey];
+
+                return;
+            }
+        }
+        revert("call must come from a reward address corresponding to a staker with more than 10% stake");
+    }
+
     function deposit(bytes calldata blsPubKey, bytes calldata peerId, bytes calldata /* signature */, address rewardAddress) public payable {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
