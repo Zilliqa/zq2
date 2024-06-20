@@ -296,7 +296,7 @@ impl P2pNode {
                             }, ..
                         })) => {
                             let source = source.expect("message should have a source");
-                            let message = serde_json::from_slice::<ExternalMessage>(&data).unwrap();
+                            let message = cbor4ii::serde::from_slice::<ExternalMessage>(&data).unwrap();
                             let message_type = message.name();
                             let to = self.peer_id;
                             debug!(%source, %to, message_type, "broadcast recieved");
@@ -349,7 +349,7 @@ impl P2pNode {
                 message = self.outbound_message_receiver.next() => {
                     let (dest, shard_id, message) = message.expect("message stream should be infinite");
                     let message_type = message.name();
-                    let data = serde_json::to_vec(&message).unwrap();
+                    let data = cbor4ii::serde::to_vec(Vec::new(), &message).unwrap();
                     let from = self.peer_id;
 
                     let topic = Self::shard_id_to_topic(shard_id);
