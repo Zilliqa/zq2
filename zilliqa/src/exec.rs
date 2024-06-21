@@ -306,6 +306,13 @@ const SCILLA_INVOKE_RUNNER: ScillaGas = ScillaGas(300);
 
 const SPEC_ID: SpecId = SpecId::SHANGHAI;
 
+pub enum BaseFeeCheck {
+    /// Transaction gas price will be validated to be at least the block gas price.
+    Validate,
+    /// Transaction gas price will not be validated.
+    Ignore,
+}
+
 impl State {
     /// Used primarily during genesis to set up contracts for chain functionality.
     /// If override_address address is set, forces contract deployment to that addess.
@@ -325,7 +332,7 @@ impl State {
             0,
             BlockHeader::genesis(Hash::ZERO),
             inspector::noop(),
-            true,
+            BaseFeeCheck::Ignore,
         )?;
 
         match result {
@@ -368,7 +375,7 @@ impl State {
         chain_id: u64,
         current_block: BlockHeader,
         inspector: I,
-        skip_base_fee_check: bool,
+        base_fee_check: BaseFeeCheck,
     ) -> Result<(ResultAndState, Box<Env>)> {
         let mut evm = Evm::builder()
             .with_db(self)
@@ -393,7 +400,10 @@ impl State {
             .append_handler_register(inspector_handle_register)
             .modify_cfg_env(|c| {
                 c.chain_id = chain_id;
-                c.disable_base_fee = skip_base_fee_check;
+                c.disable_base_fee = match base_fee_check {
+                    BaseFeeCheck::Validate => false,
+                    BaseFeeCheck::Ignore => true,
+                };
             })
             .with_tx_env(TxEnv {
                 caller: from_addr.0.into(),
@@ -500,7 +510,11 @@ impl State {
                 chain_id,
                 current_block,
                 inspector,
-                blessed,
+                if blessed {
+                    BaseFeeCheck::Ignore
+                } else {
+                    BaseFeeCheck::Validate
+                },
             )?;
 
             self.apply_delta_evm(&state)?;
@@ -782,7 +796,7 @@ impl State {
                 chain_id,
                 current_block,
                 inspector::noop(),
-                false,
+                BaseFeeCheck::Validate,
             )?;
 
             match result {
@@ -820,7 +834,7 @@ impl State {
             chain_id,
             current_block,
             inspector::noop(),
-            false,
+            BaseFeeCheck::Validate,
         )?;
 
         match result {
@@ -865,7 +879,7 @@ impl State {
             chain_id,
             current_block,
             inspector::noop(),
-            true,
+            BaseFeeCheck::Ignore,
         )?;
 
         match result {
