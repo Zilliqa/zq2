@@ -7,14 +7,13 @@ use libp2p::PeerId;
 use tokio::sync::mpsc;
 use zilliqa::{
     consensus::Consensus,
-    crypto::SecretKey,
+    crypto::{Hash, SecretKey},
     db::Db,
     message::{Block, Proposal, QuorumCertificate, Vote},
     node::MessageSender,
     time::SystemTime,
     transaction::EvmGas,
 };
-use zilliqa::crypto::Hash;
 
 pub fn process_blocks(c: &mut Criterion) {
     tracing_subscriber::fmt::init();
