@@ -100,6 +100,21 @@ mod ser_rlp {
             {
                 T::decode(&mut v).map_err(de::Error::custom)
             }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                // Limit the length we preallocate.
+                let len = seq.size_hint().unwrap_or(0).min(4096);
+                let mut bytes = Vec::with_capacity(len);
+
+                while let Some(byte) = seq.next_element()? {
+                    bytes.push(byte);
+                }
+
+                T::decode(&mut bytes.as_slice()).map_err(de::Error::custom)
+            }
         }
 
         deserializer.deserialize_bytes(Visitor(PhantomData))
