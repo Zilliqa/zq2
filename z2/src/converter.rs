@@ -206,6 +206,10 @@ pub async fn convert_persistence(
 
             let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
 
+            // Block hash is built using receipt and transaction root hashes. This means we have to compute all receipts before creating a block.
+            // Since receipt also contains block hash it belongs too - at the time it's being built it uses a placeholder: Hash::ZERO. Once all transactions are processed,
+            // block hash can be calculated and each receipt is updated with final block hash (by replacing Hash::ZERO placeholder).
+
             for (index, txn_hash) in txn_hashes.iter().enumerate() {
                 let Some(transaction) = zq1_db.get_tx_body(block_number, *txn_hash)? else {
                     warn!(?txn_hash, %block_number, "missing transaction");
