@@ -9034,6 +9034,7 @@ dependencies = [
  "bls12_381",
  "bs58",
  "bytes",
+ "cbor4ii",
  "clap",
  "criterion",
  "crypto-bigint",
