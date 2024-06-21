@@ -287,15 +287,22 @@ impl Node {
         self.consensus.head_block().header.number
     }
 
-    // todo: this doesn't respect two-chain finalization
     pub fn get_number(&self, block_number: BlockNumber) -> u64 {
         match block_number {
             BlockNumber::Number(n) => n,
             BlockNumber::Earliest => 0,
             BlockNumber::Latest => self.get_chain_tip(),
             BlockNumber::Pending => self.get_chain_tip(), // use latest for now
-            BlockNumber::Finalized => self.get_chain_tip().saturating_sub(2),
-            BlockNumber::Safe => self.get_chain_tip().saturating_sub(2), // same as finalized
+            // Because block finality time is very low - we can assume that safe and finalized are almost the same
+            BlockNumber::Finalized | BlockNumber::Safe => {
+                let Ok(Some(view)) = self.db.get_latest_finalized_view() else {
+                    return 0u64;
+                };
+                let Ok(Some(block)) = self.db.get_block_by_view(&view) else {
+                    return 0u64;
+                };
+                block.number()
+            }
         }
     }
 
