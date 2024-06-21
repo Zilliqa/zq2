@@ -92,7 +92,7 @@ pub fn process_blocks(c: &mut Criterion) {
         );
 
         let mut empty_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let empty_root_hash = Hash(empty_trie.root_hash()?.into());
+        let empty_root_hash = Hash(empty_trie.root_hash().unwrap().into());
 
         let block = Block::from_qc(
             secret_key,
