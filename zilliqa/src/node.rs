@@ -294,7 +294,7 @@ impl Node {
             BlockNumber::Latest => self.get_chain_tip(),
             BlockNumber::Pending => self.get_chain_tip(), // use latest for now
             // Because block finality time is very low - we can assume that safe and finalized are almost the same
-            BlockNumber::Finalized | BlockNumber::Safe => {
+            BlockNumber::Finalized => {
                 let Ok(Some(view)) = self.db.get_latest_finalized_view() else {
                     return 0u64;
                 };
@@ -302,6 +302,15 @@ impl Node {
                     return 0u64;
                 };
                 block.number()
+            }
+            // From whitepaper: If the proposed block’s view number
+            // is one larger than its QC’s view number and
+            // is larger or equal to the validator’s local
+            // view number, the validator regards the
+            // proposed block as safe (which is then referenced as head_block())
+            BlockNumber::Safe => {
+                let head_block = self.consensus.head_block();
+                head_block.number()
             }
         }
     }
