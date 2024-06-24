@@ -13,7 +13,7 @@ Return the number of transactions sent from an address at a particular block. Th
 ## Parameters
 
 {{ macro_address }}
-{{ macro_blocknumber }}
+{{ macro_blockid }}
 
 # Curl
 
@@ -40,6 +40,3 @@ curl -d '{
 | `jsonrpc` | string | Required | `"2.0"`                     |
 | `method`  | string | Required | `"eth_getTransactionCount"` |
 | `params`  | array  | Requred  | `[ address, block_number]`  |
-
-
-

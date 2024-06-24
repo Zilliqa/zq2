@@ -1,3 +1,4 @@
+use alloy_eips::BlockId;
 use ethabi::Token;
 use ethers::{
     abi::FunctionExt, prelude::DeploymentTxFactory, providers::Middleware,
@@ -94,7 +95,7 @@ async fn block_production(mut network: Network) {
             |n| {
                 let index = n.random_index();
                 n.get_node(index)
-                    .get_latest_block()
+                    .get_block(BlockId::latest())
                     .unwrap()
                     .map_or(0, |b| b.number())
                     >= 5
@@ -111,7 +112,7 @@ async fn block_production(mut network: Network) {
         .run_until(
             |n| {
                 n.node_at(index)
-                    .get_latest_block()
+                    .get_block(BlockId::latest())
                     .unwrap()
                     .map_or(0, |b| b.number())
                     >= 10

@@ -14,7 +14,7 @@ Given a transaction and a block number, executes a new message call immediately,
 
 {{ macro_transaction }}
 
-{{ macro_blocknumber }}
+{{ macro_blockid }}
 
 # Curl
 
@@ -47,4 +47,3 @@ Given a transaction and a block number, executes a new message call immediately,
 | `jsonrpc` | string | Required | `"2.0"`                                            |
 | `method`  | string | Required | `"eth_call"`                                       |
 | `params`  | array  | Requred  | `[ transaction ]` or `[transaction, block_number]` |
-

@@ -26,7 +26,7 @@ Return the value of a storage location at a given address.
 
 A hex encoded 256-bit unsigned integer which determines the storage slot to inspect.
 
-{{ macro_blocknumber }}
+{{ macro_blockid }}
 
 # Curl
 
@@ -53,6 +53,3 @@ curl -d '{
 | `jsonrpc` | string | Required | `"2.0"`                   |
 | `method`  | string | Required | `"eth_getStorageAt"`              |
 | `params`  | array  | Required | `[address, storage_slot, block_number]` |
-
-
-

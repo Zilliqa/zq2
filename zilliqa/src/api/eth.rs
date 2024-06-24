@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy};
-use alloy_eips::eip2930::AccessList;
+use alloy_eips::{eip2930::AccessList, BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, Bytes, Parity, Signature, TxKind, B256, U256, U64};
 use alloy_rlp::{Decodable, Header};
 use alloy_rpc_types::{
@@ -26,7 +26,7 @@ use super::{
 };
 use crate::{
     crypto::Hash,
-    message::{Block, BlockNumber},
+    message::Block,
     node::Node,
     state::Code,
     time::SystemTime,
@@ -125,11 +125,11 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("call: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
-    let block_number: BlockNumber = params.optional_next()?.unwrap_or(BlockNumber::Latest);
+    let block_id: BlockId = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
     let ret = node.lock().unwrap().call_contract(
-        block_number,
+        block_id,
         call_params.from,
         call_params.to,
         call_params.data.clone(),
@@ -157,7 +157,7 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     trace!("estimate_gas: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
-    let block_number: BlockNumber = params.optional_next()?.unwrap_or(BlockNumber::Latest);
+    let block_number: BlockNumberOrTag = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
     let return_value = node.lock().unwrap().estimate_gas(
@@ -176,27 +176,30 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
-    let block_number: BlockNumber = params.next()?;
+    let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
     Ok(node
         .lock()
         .unwrap()
-        .get_native_balance(address, block_number)?
+        .get_state(block_id)?
+        .get_account(address)?
+        .balance
         .to_hex())
 }
 
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
-    let block_number: BlockNumber = params.next()?;
+    let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
     // For compatibility with Zilliqa 1, eth_getCode also returns Scilla code if any is present.
     let code = &node
         .lock()
         .unwrap()
-        .get_account(address, block_number)?
+        .get_state(block_id)?
+        .get_account(address)?
         .code;
     // do it this way so the compiler will tell us when another option inevitably
     // turns up and we have to deal with it ..
@@ -218,13 +221,14 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let address: Address = params.next()?;
     let position: U256 = params.next()?;
     let position = B256::new(position.to_be_bytes());
-    let block_number: BlockNumber = params.next()?;
+    let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 3, 3)?;
 
     let value = node
         .lock()
         .unwrap()
-        .get_account_storage(address, position, block_number)?;
+        .get_state(block_id)?
+        .get_account_storage(address, position)?;
 
     Ok(value.to_hex())
 }
@@ -233,22 +237,14 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     trace!("get_transaction_count: params: {:?}", params);
     let mut params = params.sequence();
     let address: Address = params.next()?;
-    let block_number: BlockNumber = params.next()?;
+    let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 3, 3)?;
-
-    trace!(
-        "get_transaction_count resp: {:?}",
-        node.lock()
-            .unwrap()
-            .get_account(address, block_number)?
-            .nonce
-            .to_hex()
-    );
 
     Ok(node
         .lock()
         .unwrap()
-        .get_account(address, block_number)?
+        .get_state(block_id)?
+        .get_account(address)?
         .nonce
         .to_hex())
 }
@@ -260,13 +256,12 @@ fn get_gas_price(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
 fn get_block_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::Block>> {
     let mut params = params.sequence();
-    let block_number: BlockNumber = params.next()?;
+    let block_number: BlockNumberOrTag = params.next()?;
     let full: bool = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
     let node = node.lock().unwrap();
-    let block = node.get_block_by_blocknum(block_number)?;
-
+    let block = node.get_block(block_number)?;
     let block = block.map(|b| convert_block(&node, &b, full)).transpose()?;
 
     Ok(block)
@@ -280,7 +275,7 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
 
     let node = node.lock().unwrap();
     let block = node
-        .get_block_by_hash(Hash(hash.0))?
+        .get_block(hash)?
         .map(|b| convert_block(&node, &b, full))
         .transpose()?;
 
@@ -325,7 +320,7 @@ fn get_block_transaction_count_by_hash(
     expect_end_of_params(&mut params, 1, 1)?;
 
     let node = node.lock().unwrap();
-    let block = node.get_block_by_hash(Hash(hash.0))?;
+    let block = node.get_block(hash)?;
 
     Ok(block.map(|b| b.transactions.len().to_hex()))
 }
@@ -336,11 +331,11 @@ fn get_block_transaction_count_by_number(
 ) -> Result<Option<String>> {
     let mut params = params.sequence();
     // The ethereum RPC spec says this is optional, but it is mandatory in geth and erigon.
-    let block_number: BlockNumber = params.next()?;
+    let block_number: BlockNumberOrTag = params.next()?;
     expect_end_of_params(&mut params, 1, 1)?;
 
     let node = node.lock().unwrap();
-    let block = node.get_block_by_blocknum(block_number)?;
+    let block = node.get_block(block_number)?;
 
     Ok(Some(
         block.map_or(0, |block| block.transactions.len()).to_hex(),
@@ -350,8 +345,8 @@ fn get_block_transaction_count_by_number(
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 struct GetLogsParams {
-    from_block: Option<BlockNumber>,
-    to_block: Option<BlockNumber>,
+    from_block: Option<BlockNumberOrTag>,
+    to_block: Option<BlockNumberOrTag>,
     address: Option<OneOrMany<Address>>,
 
     /// elements represent an alternative that matches any of the contained topics.
@@ -376,18 +371,18 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
     // Find the range of blocks we care about. This is an iterator of blocks.
     let blocks = match (params.block_hash, params.from_block, params.to_block) {
         (Some(block_hash), None, None) => Either::Left(std::iter::once(Ok(node
-            .get_block_by_hash(Hash(block_hash.0))?
+            .get_block(block_hash)?
             .ok_or_else(|| anyhow!("block not found"))?))),
         (None, from, to) => {
-            let from = node.get_number(from.unwrap_or(BlockNumber::Latest));
-            let to = node.get_number(to.unwrap_or(BlockNumber::Latest));
+            let from = node.resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest));
+            let to = node.resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest));
 
             if from > to {
                 return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
             }
 
             Either::Right((from..=to).map(|number| {
-                node.get_block_by_number(number)?
+                node.get_block(number)?
                     .ok_or_else(|| anyhow!("missing block: {number}"))
             }))
         }
@@ -472,7 +467,7 @@ fn get_transaction_by_block_hash_and_index(
 
     let node = node.lock().unwrap();
 
-    let Some(block) = node.get_block_by_hash(Hash(block_hash.0))? else {
+    let Some(block) = node.get_block(block_hash)? else {
         return Ok(None);
     };
     let Some(txn_hash) = block.transactions.get(index.to::<usize>()) else {
@@ -487,12 +482,12 @@ fn get_transaction_by_block_number_and_index(
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<eth::Transaction>> {
     let mut params = params.sequence();
-    let block_number: BlockNumber = params.next()?;
+    let block_number: BlockNumberOrTag = params.next()?;
     let index: U64 = params.next()?;
 
     let node = node.lock().unwrap();
 
-    let Some(block) = node.get_block_by_blocknum(block_number)? else {
+    let Some(block) = node.get_block(block_number)? else {
         return Ok(None);
     };
     let Some(txn_hash) = block.transactions.get(index.to::<usize>()) else {
@@ -524,7 +519,7 @@ pub(super) fn get_transaction_inner(
 
     // The block can either be null or some based on whether the tx exists
     let block = if let Some(receipt) = node.get_transaction_receipt(hash)? {
-        node.get_block_by_hash(receipt.block_hash)?
+        node.get_block(receipt.block_hash)?
     } else {
         // Even if it has not been mined, the tx may still be in the mempool and should return
         // a correct tx, with pending/null fields
@@ -554,7 +549,7 @@ pub(super) fn get_transaction_receipt_inner(
         hash, receipt
     );
 
-    let Some(block) = node.get_block_by_hash(receipt.block_hash)? else {
+    let Some(block) = node.get_block(receipt.block_hash)? else {
         warn!("Failed to get block when getting TX receipt! {}", hash);
         return Ok(None);
     };
@@ -833,7 +828,7 @@ async fn subscribe(
                     let block = node
                         .lock()
                         .unwrap()
-                        .get_block_by_hash(receipt.block_hash)?
+                        .get_block(receipt.block_hash)?
                         .ok_or_else(|| anyhow!("missing block"))?;
                     if !filter.filter_block_range(block.number()) {
                         continue 'outer;
