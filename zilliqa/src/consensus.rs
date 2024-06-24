@@ -601,7 +601,7 @@ impl Consensus {
             let stakers = self.state.get_stakers()?;
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
-                trace!(
+                debug!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     stakers.len()
                 );
