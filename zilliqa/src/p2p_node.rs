@@ -271,13 +271,13 @@ impl P2pNode {
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id })) => {
                             for addr in listen_addrs {
-                                // If the node is advertising a loopback address, ignore it.
-                                let is_loopback = addr.iter().any(|p| match p {
-                                    Protocol::Ip4(addr) => addr.is_loopback(),
+                                // If the node is advertising a non-global address, ignore it.
+                                let is_non_global = addr.iter().any(|p| match p {
+                                    Protocol::Ip4(addr) => addr.is_loopback() || addr.is_private(),
                                     Protocol::Ip6(addr) => addr.is_loopback(),
                                     _ => false,
                                 });
-                                if is_loopback {
+                                if is_non_global {
                                     continue;
                                 }
 
