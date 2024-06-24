@@ -19,7 +19,7 @@ use revm::{
     inspector_handle_register,
     primitives::{
         AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg, Output,
-        ResultAndState, SpecId, TransactTo, TxEnv, B256, KECCAK_EMPTY,
+        ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
     },
     Database, DatabaseRef, Evm, Inspector,
 };
@@ -409,9 +409,7 @@ impl State {
                 caller: from_addr.0.into(),
                 gas_limit: gas_limit.0,
                 gas_price: U256::from(gas_price),
-                transact_to: to_addr
-                    .map(|a| TransactTo::call(a.0.into()))
-                    .unwrap_or_else(TransactTo::create),
+                transact_to: to_addr.into(),
                 value: U256::from(amount),
                 data: payload.clone().into(),
                 nonce,
@@ -420,8 +418,6 @@ impl State {
                 gas_priority_fee: None,
                 blob_hashes: vec![],
                 max_fee_per_blob_gas: None,
-                eof_initcodes: vec![],
-                eof_initcodes_hashed: HashMap::new(),
             })
             .append_handler_register(|handler| {
                 let precompiles = handler.pre_execution.load_precompiles();
@@ -803,7 +799,7 @@ impl State {
                 ExecutionResult::Success { .. } => max = mid,
                 ExecutionResult::Revert { .. } => min = mid + 1,
                 ExecutionResult::Halt { reason, .. } => match reason {
-                    HaltReason::OutOfGas(_) | HaltReason::InvalidFEOpcode => min = mid + 1,
+                    HaltReason::OutOfGas(_) | HaltReason::InvalidEFOpcode => min = mid + 1,
                     _ => return Err(anyhow!("halted due to: {reason:?}")),
                 },
             }

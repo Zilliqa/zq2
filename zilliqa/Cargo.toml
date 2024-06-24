@@ -26,10 +26,10 @@ vergen = { version = "8.3.1", features = ["git", "git2"] }
 [dependencies]
 alloy-primitives = { version = "0.7.2", features = ["rlp", "serde"] }
 alloy-rlp = { version = "0.3.4", features = ["derive"] }
-alloy-consensus = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf", features = ["serde", "k256"] }
-alloy-eips = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf", features = ["serde"] }
-alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf" }
-alloy-rpc-types-trace = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf" }
+alloy-consensus = { version = "0.1.2", features = ["serde", "k256"]}
+alloy-eips = { version = "0.1.2", features = ["serde"]}
+alloy-rpc-types = "0.1.2"
+alloy-rpc-types-trace = "0.1.2"
 anyhow = { version = "1.0.86", features = ["backtrace"] }
 async-trait = "0.1.80"
 base64 = "0.22.1"
@@ -61,8 +61,8 @@ prost = "0.12.6"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rand_core = "0.6.4"
-revm = { version = "9.0.0", features = ["optional_no_base_fee"] }
-revm-inspectors = { git = "https://github.com/paradigmxyz/evm-inspectors.git", rev = "5c47bc8", features = ["js-tracer"] }
+revm = { version = "10.0.0", features = ["optional_no_base_fee"] }
+revm-inspectors = { version = "0.1.2", features = ["js-tracer"] }
 rusqlite = { version = "0.31.0", features = ["bundled", "trace"] }
 serde = { version = "1.0.203", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"
