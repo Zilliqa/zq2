@@ -65,7 +65,7 @@ tokio-stream = "0.1.15"
 toml = "0.8.12"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
-url = "2.5.0"
+url = "2.5.2"
 zilliqa = {path = "../zilliqa"}
 zilliqa-rs = "0.3.1"
 zqutils = {git = "https://github.com/zilliqa/zq-base"}
