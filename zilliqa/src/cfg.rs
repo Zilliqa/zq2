@@ -17,6 +17,12 @@ pub struct Config {
     /// The port to listen for P2P messages on. Optional - If not provided a random port will be used.
     #[serde(default)]
     pub p2p_port: u16,
+    /// External address for this node. This is the address at which it can be reached by other nodes. This should
+    /// include the P2P port. If this is not provided, we will trust other nodes to tell us our external address.
+    /// However, be warned that this is insecure and unreliable in real-world networks and we will remove this
+    /// behaviour at some point in the future (#1101).
+    #[serde(default)]
+    pub external_address: Option<Multiaddr>,
     /// The address of another node to dial when this node starts. To join the network, a node must know about at least
     /// one other existing node in the network.
     #[serde(default)]
