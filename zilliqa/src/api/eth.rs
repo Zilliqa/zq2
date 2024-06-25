@@ -519,7 +519,7 @@ fn get_transaction_by_block_hash_and_index(
     let mut params = params.sequence();
     let block_hash: B256 = params.next()?;
     let index: U64 = params.next()?;
-
+    expect_end_of_params(&mut params, 2, 2)?;
     let node = node.lock().unwrap();
 
     let Some(block) = node.get_block(block_hash)? else {
