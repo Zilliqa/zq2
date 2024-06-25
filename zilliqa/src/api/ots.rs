@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_eips::{BlockId, BlockNumberOrTag};
+use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use ethabi::Token;
