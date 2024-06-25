@@ -13,7 +13,7 @@ struct Staker {
 contract Deposit {
     bytes[] _stakerKeys;
     mapping(bytes => Staker) _stakersMap;
-    uint256 totalStake;
+    uint256 public totalStake;
 
     uint256 public _minimumStake;
 
@@ -36,13 +36,16 @@ contract Deposit {
                 // The call is authorised, so we can delete the specified staker.
                 Staker storage stakerToDelete = _stakersMap[blsPubKey];
 
-                // Delete this staker's key from `_stakerKeys`. Swap the last element in the array into the deleted
-                // elements position.
-                _stakerKeys[stakerToDelete.keyIndex - 1] = _stakerKeys[_stakerKeys.length - 1];
+                // Delete this staker's key from `_stakerKeys`. Swap the last element in the array into the deleted position.
+                bytes storage swappedStakerKey = _stakerKeys[_stakerKeys.length - 1];
+                Staker storage swappedStaker = _stakersMap[swappedStakerKey];
+                _stakerKeys[stakerToDelete.keyIndex - 1] = swappedStakerKey;
+                swappedStaker.keyIndex = stakerToDelete.keyIndex;
+
                 // The last element is now the element we want to delete.
                 _stakerKeys.pop();
 
-                // Reduce the total stake
+                // Reduce the total stake, but don't refund to the removed staker
                 totalStake -= stakerToDelete.balance;
 
                 // Delete the staker from `_stakersMap` too.
