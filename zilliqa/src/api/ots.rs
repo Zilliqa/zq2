@@ -51,7 +51,7 @@ pub fn get_otterscan_api_level(_: Params, _: &Arc<Mutex<Node>>) -> Result<u64> {
 }
 
 fn get_block_details(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<ots::BlockDetails>> {
-    let block_number: BlockNumberOrTag = params.one()?;
+    let block_number: u64 = params.one()?;
 
     let Some(ref block) = node.lock().unwrap().get_block(block_number)? else {
         return Ok(None);
@@ -95,7 +95,7 @@ fn get_block_transactions(
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<ots::BlockTransactions>> {
     let mut params = params.sequence();
-    let block_number: BlockNumberOrTag = params.next()?;
+    let block_number: u64 = params.next()?;
     let page_number: usize = params.next()?;
     let page_size: usize = params.next()?;
 
