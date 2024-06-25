@@ -6,9 +6,9 @@ use std::{
 };
 
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy};
-use alloy_primitives::{keccak256, Address, Signature, B256, U256};
+use alloy_primitives::{keccak256, Address, Signature, TxKind, B256, U256};
 use alloy_rlp::{Encodable, Header, EMPTY_STRING_CODE};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use bytes::{BufMut, BytesMut};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Serialize};
@@ -23,9 +23,11 @@ use sha3::{
 };
 
 use crate::{
+    constants::{EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, ZIL_MAX_TX_INPUT_SIZE},
     crypto,
     exec::{ScillaError, ScillaException, ScillaTransition},
     schnorr,
+    state::Account,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
 
@@ -331,6 +333,81 @@ impl SignedTransaction {
                 crypto::Hash(Keccak256::digest(buffer).into())
             }
         }
+    }
+
+    pub fn validate(&self, account: &Account, chain_id: u64) -> Result<()> {
+        self.validate_input_size()?;
+        self.validate_init_code_size()?;
+        self.validate_gas_limit()?;
+        self.validate_priority_fee_per_gas()?;
+        self.validate_chain_id(chain_id)?;
+        self.validate_intrinsic_gas()?;
+        self.validate_sender_account(account)
+    }
+
+    fn validate_input_size(&self) -> Result<()> {
+        if let SignedTransaction::Zilliqa { tx, .. } = self {
+            let input_size = tx.code.len() + tx.data.len();
+            if input_size >= ZIL_MAX_TX_INPUT_SIZE {
+                bail!("Zil transaction input size: {input_size} exceeds limit: {ZIL_MAX_TX_INPUT_SIZE}");
+            }
+            return Ok(());
+        }
+
+        let (input_size, tx_kind) = match self {
+            SignedTransaction::Legacy { tx, .. } => (tx.input.len(), tx.to),
+            SignedTransaction::Eip2930 { tx, .. } => (tx.input.len(), tx.to),
+            SignedTransaction::Eip1559 { tx, .. } => (tx.input.len(), tx.to),
+            _ => return Ok(()),
+        };
+
+        if input_size > EVM_MAX_TX_INPUT_SIZE {
+            bail!(
+                "Evm transaction input size: {input_size} exceeds limit: {EVM_MAX_TX_INPUT_SIZE}"
+            );
+        }
+
+        if tx_kind == TxKind::Create && input_size > EVM_MAX_INIT_CODE_SIZE {
+            bail!("Evm transaction initcode: {input_size} exceeds limit: {EVM_MAX_INIT_CODE_SIZE}");
+        }
+
+        Ok(())
+    }
+
+    fn validate_init_code_size(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn validate_gas_limit(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn validate_priority_fee_per_gas(&self) -> Result<()> {
+        // Todo: validate max and min priority fees
+        Ok(())
+    }
+
+    fn validate_chain_id(&self, chain_id: u64) -> Result<()> {
+        let txn_chain_id = self
+            .chain_id()
+            .ok_or(anyhow!("Unable to get chain_id from transaction!"))?;
+
+        if chain_id != txn_chain_id {
+            bail!(
+                "Chain_id provided in transaction: {} is different than node chain_id: {}",
+                txn_chain_id,
+                chain_id
+            );
+        }
+        Ok(())
+    }
+
+    fn validate_intrinsic_gas(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn validate_sender_account(&self, _account: &Account) -> Result<()> {
+        Ok(())
     }
 }
 

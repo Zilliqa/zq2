@@ -1221,9 +1221,13 @@ impl Consensus {
             return Ok(false);
         }
 
-        let account_nonce = self.state.get_account(txn.signer)?.nonce;
+        let account = self.state.get_account(txn.signer)?;
+        let chain_id = self.config.eth_chain_id;
+        txn.tx.validate(&account, chain_id)?;
+
         let txn_hash = txn.hash;
-        let new = self.transaction_pool.insert_transaction(txn, account_nonce);
+
+        let new = self.transaction_pool.insert_transaction(txn, account.nonce);
         if new {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
