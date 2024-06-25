@@ -13,13 +13,26 @@ use crate::{
     node::MessageSender,
 };
 
-/// Stores and manages the node's list of blocks. Also responsible for making requests for new blocks. In the future,
-/// this may become more complex with retries, batching, snapshots, etc.
+/// Stores and manages the node's list of blocks. Also responsible for making requests for new blocks.
+///
+/// # Syncing Algorithm
+///
+/// We rely on [crate::consensus::Consensus] informing us of newly received block proposals via:
+/// * [BlockStore::process_block] for blocks that can be part of our chain, because we already have their parent.
+/// * [BlockStore::buffer_proposal] for blocks that can't (yet) be part of our chain.
+///
+/// Both these code paths also call [BlockStore::request_missing_blocks]. This finds the greatest view of any proposal
+/// we've seen (whether its part of our chain or not). If we've seen a view greater than the view of our latest
+/// committed block, we want to send requests and attempt to download those missing blocks from other nodes.
+///
+/// We make requests for up to `max_blocks_in_flight` blocks at a time, in batches of `batch_size`.
+///
+/// TODO(#1096): Retries for blocks we request but never receive.
 #[derive(Debug)]
 pub struct BlockStore {
     db: Arc<Db>,
     block_cache: RefCell<LruCache<Hash, Block>>,
-    /// The maximum view of blocks we've seen.
+    /// The maximum view of any proposal we have received, even if it is not part of our chain yet.
     highest_known_view: u64,
     /// The maximum view of blocks we've sent a request for.
     requested_view: u64,
@@ -27,8 +40,12 @@ pub struct BlockStore {
     max_blocks_in_flight: u64,
     /// The maximum number of blocks to request at a time.
     batch_size: u64,
-    /// Buffered block proposals, indexed by their parent hash.
-    //buffered: HashMap<Hash, Proposal>,
+    /// Buffered block proposals, indexed by their parent hash. These are proposals we've received, whose parents we
+    /// haven't yet seen. We want to be careful about buffering too many proposals. There is no guarantee or proof that
+    /// any of them will eventually form our canonical chain. Therefore we limit the number of buffered proposals to
+    /// `max_blocks_in_flight + 100`. This number is chosen because it makes it probable we will always be able to
+    /// handle pending requests made by ourselves that arrive out-of-order, while also giving some extra space for
+    /// newly created blocks that arrive while we are syncing.
     buffered: LruCache<Hash, Proposal>,
     message_sender: MessageSender,
 }
@@ -57,11 +74,6 @@ impl BlockStore {
     ) -> Result<()> {
         let view = proposal.view();
 
-        // We want to be careful about buffering too many proposals. There is no guarantee or proof that any of them
-        // will eventually form our canonical chain. Therefore we limit the number of buffered proposals to
-        // `max_blocks_in_flight + 100`. This number is chosen because it guarantees we will always be able to handle
-        // pending requests made by ourselves that arrive out-of-order, while also giving some extra space for newly
-        // created blocks that arrive while we are syncing.
         self.buffered.push(proposal.header.parent_hash, proposal);
 
         // If this is the highest block we've seen, remember its view.
@@ -85,7 +97,7 @@ impl BlockStore {
             )?
             .ok_or_else(|| anyhow!("missing highest block"))?
             .view();
-        // We can consider all blocks we currently have committed to already be requested.
+        // We've already got any block we've previously committed, so don't request them again.
         if self.requested_view < current_view {
             self.requested_view = current_view;
         }
