@@ -132,7 +132,7 @@ module "node" {
 
   config          = <<-EOT
   p2p_port = 3333
-  bootstrap_address = [ "${local.bootstrap_peer_id}", "/ip4/${module.bootstrap_node.network_ip}/tcp/3333" ]
+  bootstrap_address = [ "${local.bootstrap_peer_id}", "/ip4/${data.google_compute_address.bootstrap.address}/tcp/3333" ]
 
   [[nodes]]
   eth_chain_id = ${var.eth_chain_id}

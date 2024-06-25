@@ -50,7 +50,7 @@ module "validators" {
 
   config          = <<-EOT
   p2p_port = 3333
-  bootstrap_address = [ "${local.bootstrap_peer_id}", "/dns/bootstrap.${var.subdomain}/tcp/3333" ]
+  bootstrap_address = [ "${local.bootstrap_peer_id}", "/ipv4/${data.google_compute_address.bootstrap.address}/tcp/3333" ]
 
   [[nodes]]
   eth_chain_id = ${var.eth_chain_id}
