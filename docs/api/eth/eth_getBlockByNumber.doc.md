@@ -17,7 +17,7 @@ Returns information about a block by block number.
 
 ## Results
 
-An array of blocks.
+A block structure, or `null` if no such block exists.
 
 {{ macro_returned_block }}
 
@@ -32,8 +32,9 @@ curl -d '{
     "id": "1",
     "jsonrpc": "2.0",
     "method": "eth_getBlockByNumber",
-    "params": [ "0xb10", true ]}' -H "Content-Type: application/json" -X POST "{{ _api_url }}"
-```
+    "params": [ "0x4f60", true
+ ]}' -H "Content-Type: application/json" -X POST "{{ _api_url }}"
+ ```
 
 # Response
 
@@ -41,28 +42,29 @@ curl -d '{
 {
   "jsonrpc": "2.0",
   "result": {
-    "number": "0xb10",
-    "hash": "0x0cea164183f2d8409fe034fddd0d27016a0f49cf895d3b2a9bd92c7cca3c47c2",
-    "parentHash": "0x328ade4282f75c0e241c6226206b857ee9b3a46cebef414ba8e71c58de9567ad",
+    "number": "0x4f60",
+    "view": "0x4f61",
+    "hash": "0x4d834e76f63b80eae3f4dedf675b04bbbf2d8f188f7023ca09f4ed346b6893c2",
+    "parentHash": "0x50b3b76c3a4f19ac20e498744d8e0ff9a110b9130acb3ba786c80c26738ee9ae",
     "nonce": "0x0000000000000000",
     "sha3Uncles": "0x0000000000000000000000000000000000000000000000000000000000000000",
     "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
     "transactionsRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
-    "stateRoot": "0x28556763de24be1a4579af01d482a690fb5f5529f03ffdc42e04498b3d37802c",
+    "stateRoot": "0x680b514e8fe0bf0cbc34173a7911b1d8c79a357830cb28d22c5ae53078ef8dfd",
     "receiptsRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
-    "miner": "0x6813eb9362372eef6200f3b1dbc3f819671cba69",
+    "miner": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
     "difficulty": "0x0",
     "totalDifficulty": "0x0",
     "extraData": "0x",
     "gasLimit": "0x501bd00",
     "gasUsed": "0x8484",
-    "timestamp": "0x666c1946",
+    "timestamp": "0x667aef3b",
     "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
     "size": "0x0",
     "transactions": [
       {
-        "blockHash": "0x0cea164183f2d8409fe034fddd0d27016a0f49cf895d3b2a9bd92c7cca3c47c2",
-        "blockNumber": "0xb10",
+        "blockHash": "0x4d834e76f63b80eae3f4dedf675b04bbbf2d8f188f7023ca09f4ed346b6893c2",
+        "blockNumber": "0x4f60",
         "from": "0xcb57ec3f064a16cadb36c7c712f4c9fa62b77415",
         "gas": "0xb709",
         "gasPrice": "0x454b7a4e100",
@@ -79,7 +81,13 @@ curl -d '{
         "type": "0x0"
       }
     ],
-    "uncles": []
+    "uncles": [],
+    "quorumCertificate": {
+      "signature": "0xb6b62fb4c527863d9e0d8f4335cd4beceace8ea2fa37dae18c62755d599dd59934a23a03ba66e4e876449e853b345697164b9e1b9c12676abf98111a59d449960d61b6155ab38b32556021832aef440fffa355503b01ee83cfa6ba62680f1fc5",
+      "cosigned": "[1, 0, 1, 1]",
+      "view": "0x4f60",
+      "block_hash": "0x50b3b76c3a4f19ac20e498744d8e0ff9a110b9130acb3ba786c80c26738ee9ae"
+    }
   },
   "id": "1"
 }
