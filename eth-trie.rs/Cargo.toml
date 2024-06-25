@@ -20,7 +20,7 @@ alloy-primitives = { version = "0.7.2", features = ["getrandom"] }
 rand = "0.8.5"
 hex = "0.4.3"
 criterion = "0.5.1"
-uuid = { version = "1.8.0", features = ["serde", "v4"] }
+uuid = { version = "1.9.0", features = ["serde", "v4"] }
 
 [[bench]]
 name = "trie"

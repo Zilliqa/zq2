@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    cfg::ConsensusConfig, contracts, crypto, db::TrieStorage, inspector, message::BlockHeader,
-    scilla::Scilla, transaction::EvmGas,
+    cfg::ConsensusConfig, contracts, crypto, db::TrieStorage, exec::BaseFeeCheck, inspector,
+    message::BlockHeader, scilla::Scilla, transaction::EvmGas,
 };
 
 #[derive(Debug)]
@@ -118,7 +118,7 @@ impl State {
             ) = state.apply_transaction_evm(
                 Address::ZERO,
                 Some(contract_addr::DEPOSIT),
-                *config.gas_price,
+                0,
                 config.eth_block_gas_limit,
                 0,
                 data,
@@ -126,6 +126,7 @@ impl State {
                 0,
                 BlockHeader::default(),
                 inspector::noop(),
+                BaseFeeCheck::Ignore,
             )?;
             if !result.is_success() {
                 return Err(anyhow!("setting stake failed: {result:?}"));

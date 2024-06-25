@@ -4,7 +4,8 @@ use ethabi::{encode, ParamType, Token};
 use revm::{
     precompile::PrecompileError,
     primitives::{
-        alloy_primitives::private::alloy_rlp::Encodable, Address, Bytes, PrecompileResult,
+        alloy_primitives::private::alloy_rlp::Encodable, Address, Bytes, PrecompileOutput,
+        PrecompileResult,
     },
     ContextPrecompile, ContextStatefulPrecompile, InnerEvmContext,
 };
@@ -28,33 +29,37 @@ impl ERC20Precompile {
         context: &mut InnerEvmContext<&State>,
     ) -> PrecompileResult {
         let Ok(decoded) = ethabi::decode(&[ParamType::Address], input) else {
-            return Err(PrecompileError::Other(
-                "Unable to decode provided account address".into(),
-            ));
+            return Err(
+                PrecompileError::Other("Unable to decode provided account address".into()).into(),
+            );
         };
 
         if decoded.is_empty() {
-            return Err(PrecompileError::Other(
-                "Decoded token vector has zero length!".into(),
-            ));
+            return Err(
+                PrecompileError::Other("Decoded token vector has zero length!".into()).into(),
+            );
         }
 
         let Token::Address(address) = decoded[0] else {
             return Err(PrecompileError::Other(
                 "Decoded value is not a proper address type!".into(),
-            ));
+            )
+            .into());
         };
         let address = Address::new(address.0);
 
         let Ok(account) = context.db.get_account(address) else {
-            return Ok((0u64, encode(&[Token::Uint(ethabi::Uint::from(0))]).into()));
+            return Ok(PrecompileOutput::new(
+                0,
+                encode(&[Token::Uint(ethabi::Uint::from(0))]).into(),
+            ));
         };
 
         let balance = ethabi::Uint::from(account.balance);
         let output = encode(&[Token::Uint(balance)]);
 
         // Don't charge gas
-        Ok((0u64, output.into()))
+        Ok(PrecompileOutput::new(0, output.into()))
     }
 }
 
@@ -75,7 +80,8 @@ impl ContextStatefulPrecompile<&State> for ERC20Precompile {
         if input.length() < 4 {
             return Err(PrecompileError::Other(
                 "Provided input must be at least 4-byte long".into(),
-            ));
+            )
+            .into());
         }
 
         let dispatch_table: [([u8; 4], _); 1] =
@@ -87,7 +93,8 @@ impl ContextStatefulPrecompile<&State> for ERC20Precompile {
         else {
             return Err(PrecompileError::Other(
                 "Unable to find handler with given selector".to_string(),
-            ));
+            )
+            .into());
         };
 
         handler.1(&input[4..], gas_price, context)
