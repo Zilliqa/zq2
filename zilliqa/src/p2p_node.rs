@@ -230,6 +230,9 @@ impl P2pNode {
         addr.push(Protocol::Tcp(self.config.p2p_port));
 
         self.swarm.listen_on(addr)?;
+        if let Some(external_address) = &self.config.external_address {
+            self.swarm.add_external_address(external_address.clone());
+        }
 
         if let Some((peer, address)) = &self.config.bootstrap_address {
             self.swarm.dial(
@@ -283,10 +286,11 @@ impl P2pNode {
 
                                 self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
                             }
-                            // Mark the address observed for us by the external peer as confirmed.
-                            // TODO: We shouldn't trust this, instead we should confirm our own address manually or using
-                            // `libp2p-autonat`.
-                            self.swarm.add_external_address(observed_addr);
+                            // Mark the address observed for us by the external peer as confirmed. Only do this if our
+                            // configuration hasn't already told us an external address.
+                            if self.config.external_address.is_none() {
+                                self.swarm.add_external_address(observed_addr);
+                            }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
                             message: gossipsub::Message {

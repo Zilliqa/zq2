@@ -194,6 +194,7 @@ impl Setup {
                 bootstrap_address: None,
                 nodes: Vec::new(),
                 p2p_port: 0,
+                external_address: None,
             };
             // @todo should pass this in!
             let mut node_config = cfg::NodeConfig {
