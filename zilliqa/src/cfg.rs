@@ -146,10 +146,10 @@ pub struct ConsensusConfig {
     #[serde(default)]
     pub genesis_accounts: Vec<(Address, Amount)>,
     /// Minimum time to wait for consensus to propose new block if there are no transactions.
-    #[serde(default = "minimum_time_left_for_empty_block_default")]
+    #[serde(default = "empty_block_timeout_default")]
     pub empty_block_timeout: Duration,
     /// Minimum remaining time allowing to wait for empty block proposal
-    #[serde(default = "empty_block_timeout_default")]
+    #[serde(default = "minimum_time_left_for_empty_block_default")]
     pub minimum_time_left_for_empty_block: Duration,
     /// Address of the Scilla server. Defaults to "http://localhost:3000".
     #[serde(default = "scilla_address_default")]
