@@ -263,14 +263,13 @@ impl Node {
         self.consensus.head_block().header.number
     }
 
-    pub fn get_number(&self, block_number: BlockNumberOrTag) -> u64 {
+    pub fn resolve_block_number(&self, block_number: BlockNumberOrTag) -> u64 {
         match block_number {
-            BlockNumber::Number(n) => n,
-            BlockNumber::Earliest => 0,
-            BlockNumber::Latest => self.get_chain_tip(),
-            BlockNumber::Pending => self.get_chain_tip(), // use latest for now
-            // Because block finality time is very low - we can assume that safe and finalized are almost the same
-            BlockNumber::Finalized => {
+            BlockNumberOrTag::Number(n) => n,
+            BlockNumberOrTag::Earliest => 0,
+            BlockNumberOrTag::Latest => self.get_chain_tip(),
+            BlockNumberOrTag::Pending => self.get_chain_tip(),
+            BlockNumberOrTag::Finalized => {
                 let Ok(Some(view)) = self.db.get_latest_finalized_view() else {
                     return 0u64;
                 };
@@ -283,8 +282,8 @@ impl Node {
             // is one larger than its QC’s view number and
             // is larger or equal to the validator’s local
             // view number, the validator regards the
-            // proposed block as safe (which is then referenced as head_block())
-            BlockNumber::Safe => {
+            // proposed block as safe (which, in the codebase, is referenced as head_block())
+            BlockNumberOrTag::Safe => {
                 let head_block = self.consensus.head_block();
                 head_block.number()
             }
@@ -295,10 +294,34 @@ impl Node {
         match block_id.into() {
             BlockId::Hash(RpcBlockHash {
                 block_hash,
-                require_canonical: _,
+                require_canonical,
             }) => {
-                // TODO(#863): require_canonical
-                self.consensus.get_block(&block_hash.into())
+                // See https://eips.ethereum.org/EIPS/eip-1898
+                let Ok(Some(block)) = self.consensus.get_block(&block_hash.into()) else {
+                    const RESOURCE_NOT_FOUND: i32 = -32001;
+                    let response = jsonrpsee::types::ErrorObjectOwned::owned(
+                        RESOURCE_NOT_FOUND,
+                        "Resource not found".to_string(),
+                        Option::<String>::None,
+                    );
+                    return Err(response.into());
+                };
+                // Get latest finalized block number
+                let finalized_block_num = self.resolve_block_number(BlockNumberOrTag::Finalized);
+                let require_canonical = require_canonical.unwrap_or(false);
+
+                // If the caller requests canonical block then it must be finalized
+                if require_canonical && block.number() > finalized_block_num {
+                    const INVALID_INPUT: i32 = -32000;
+                    let response = jsonrpsee::types::ErrorObjectOwned::owned(
+                        INVALID_INPUT,
+                        "Invalid input".to_string(),
+                        Option::<String>::None,
+                    );
+                    return Err(response.into());
+                }
+
+                Ok(Some(block))
             }
             BlockId::Number(number) => self
                 .consensus
