@@ -93,7 +93,7 @@ WantedBy=multi-user.target
 """
 
 ZQ2_CONFIG="""
-external_address = "/ipv4/""" + query_metadata_ext_ip + """/tcp/3333"
+external_address = "/ip4/""" + query_metadata_ext_ip() + """/tcp/3333"
 ${config}
 """
 
