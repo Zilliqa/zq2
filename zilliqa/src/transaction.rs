@@ -368,7 +368,7 @@ impl SignedTransaction {
         }
 
         if tx_kind == TxKind::Create && input_size > EVM_MAX_INIT_CODE_SIZE {
-            bail!("Evm transaction initcode: {input_size} exceeds limit: {EVM_MAX_INIT_CODE_SIZE}");
+            bail!("Evm transaction initcode size: {input_size} exceeds limit: {EVM_MAX_INIT_CODE_SIZE}");
         }
 
         Ok(())
