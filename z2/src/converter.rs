@@ -30,6 +30,7 @@ use zilliqa::{
     contracts,
     crypto::{Hash, SecretKey},
     db::Db,
+    exec::BaseFeeCheck,
     inspector,
     message::{Block, BlockHeader, QuorumCertificate, Vote},
     schnorr,
@@ -137,6 +138,7 @@ pub async fn convert_persistence(
         0,
         BlockHeader::default(),
         inspector::noop(),
+        BaseFeeCheck::Ignore,
     )?;
     if !result.is_success() {
         return Err(anyhow!("setting stake failed: {result:?}"));

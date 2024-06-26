@@ -58,6 +58,12 @@ The block number can be:
 
 If the block number is not provided, `latest` is assumed.
 
+# blockid
+
+### Block ID
+
+A block identifier, as specified by https://eips.ethereum.org/EIPS/eip-1898.
+
 # hydrated
 
 ### Hydrated
@@ -166,5 +172,3 @@ Examples (from Erigon):
 | `address`          | string | required | The address from which this log was emitted                                               |
 | `data`             | string | required | Hex string; the data associated with this log entry                                       |
 | `topics`           | string | required | An array containing the topics associated with this log entry, as an array of hex strings |
-
-

@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use ethabi::Token;
@@ -17,7 +18,6 @@ use crate::{
     api::to_hex::ToHex,
     crypto::Hash,
     inspector::{self, CreatorInspector, OtterscanOperationInspector, OtterscanTraceInspector},
-    message::BlockNumber,
     node::Node,
     time::SystemTime,
 };
@@ -51,9 +51,9 @@ pub fn get_otterscan_api_level(_: Params, _: &Arc<Mutex<Node>>) -> Result<u64> {
 }
 
 fn get_block_details(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<ots::BlockDetails>> {
-    let block: u64 = params.one()?;
+    let block_number: u64 = params.one()?;
 
-    let Some(ref block) = node.lock().unwrap().get_block_by_number(block)? else {
+    let Some(ref block) = node.lock().unwrap().get_block(block_number)? else {
         return Ok(None);
     };
     let miner = node
@@ -75,7 +75,7 @@ fn get_block_details_by_hash(
 ) -> Result<Option<ots::BlockDetails>> {
     let block_hash: B256 = params.one()?;
 
-    let Some(ref block) = node.lock().unwrap().get_block_by_hash(Hash(block_hash.0))? else {
+    let Some(ref block) = node.lock().unwrap().get_block(block_hash)? else {
         return Ok(None);
     };
     let miner = node
@@ -95,13 +95,13 @@ fn get_block_transactions(
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<ots::BlockTransactions>> {
     let mut params = params.sequence();
-    let block_num: u64 = params.next()?;
+    let block_number: u64 = params.next()?;
     let page_number: usize = params.next()?;
     let page_size: usize = params.next()?;
 
     let node = node.lock().unwrap();
 
-    let Some(block) = node.get_block_by_number(block_num)? else {
+    let Some(block) = node.get_block(block_number)? else {
         return Ok(None);
     };
     let miner = node.get_proposer_reward_address(block.header)?;
@@ -228,12 +228,13 @@ fn get_transaction_error(params: Params, node: &Arc<Mutex<Node>>) -> Result<Cow<
 fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
-    let block_number: BlockNumber = params.next()?;
+    let block_id: BlockId = params.optional_next()?.unwrap_or_default();
 
     let empty = node
         .lock()
         .unwrap()
-        .get_account(address, block_number)?
+        .get_state(block_id)?
+        .get_account(address)?
         .code
         .is_eoa();
 
@@ -291,7 +292,7 @@ fn search_transactions_inner(
         let timestamp = node
             .lock()
             .unwrap()
-            .get_block_by_hash(Hash(txn.block_hash.unwrap_or_default().0))?
+            .get_block(txn.block_hash.unwrap_or_default())?
             .unwrap()
             .timestamp();
 

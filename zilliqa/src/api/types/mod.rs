@@ -1,8 +1,11 @@
 use std::fmt::Display;
 
+use alloy_eips::BlockId;
+use alloy_primitives::B256;
 use serde::{ser::SerializeSeq, Serializer};
 
 use super::to_hex::ToHex;
+use crate::crypto;
 
 pub mod eth;
 pub mod ots;
@@ -56,4 +59,10 @@ where
     S: Serializer,
 {
     serializer.collect_str(value)
+}
+
+impl From<crypto::Hash> for BlockId {
+    fn from(hash: crypto::Hash) -> Self {
+        BlockId::from(B256::from(hash))
+    }
 }

@@ -271,13 +271,13 @@ impl P2pNode {
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id })) => {
                             for addr in listen_addrs {
-                                // If the node is advertising a loopback address, ignore it.
-                                let is_loopback = addr.iter().any(|p| match p {
-                                    Protocol::Ip4(addr) => addr.is_loopback(),
+                                // If the node is advertising a non-global address, ignore it.
+                                let is_non_global = addr.iter().any(|p| match p {
+                                    Protocol::Ip4(addr) => addr.is_loopback() || addr.is_private(),
                                     Protocol::Ip6(addr) => addr.is_loopback(),
                                     _ => false,
                                 });
-                                if is_loopback {
+                                if is_non_global {
                                     continue;
                                 }
 
@@ -297,9 +297,8 @@ impl P2pNode {
                         })) => {
                             let source = source.expect("message should have a source");
                             let message = cbor4ii::serde::from_slice::<ExternalMessage>(&data).unwrap();
-                            let message_type = message.name();
                             let to = self.peer_id;
-                            debug!(%source, %to, message_type, "broadcast recieved");
+                            debug!(%source, %to, %message, "broadcast recieved");
                             self.forward_external_message_to_node(&topic_hash, source, message)?;
                         }
 
@@ -308,8 +307,7 @@ impl P2pNode {
                                 request_response::Message::Request {request, channel, ..} => {
                                     let to = self.peer_id;
                                     let (shard_id, external_message) = request;
-                                    let message_type = external_message.name();
-                                    debug!(%source, %to, message_type, "message received");
+                                    debug!(%source, %to, %external_message, "message received");
                                     let topic = Self::shard_id_to_topic(shard_id);
                                     self.forward_external_message_to_node(&topic.hash(), source, external_message)?;
                                     let _ = self.swarm.behaviour_mut().request_response.send_response(channel, (shard_id, ExternalMessage::RequestResponse));
@@ -348,7 +346,6 @@ impl P2pNode {
                 },
                 message = self.outbound_message_receiver.next() => {
                     let (dest, shard_id, message) = message.expect("message stream should be infinite");
-                    let message_type = message.name();
                     let data = cbor4ii::serde::to_vec(Vec::new(), &message).unwrap();
                     let from = self.peer_id;
 
@@ -356,7 +353,7 @@ impl P2pNode {
 
                     match dest {
                         Some(dest) => {
-                            debug!(%from, %dest, message_type, "sending direct message");
+                            debug!(%from, %dest, %message, "sending direct message");
                             if from == dest {
                                 self.forward_external_message_to_node(&topic.hash(), from, message)?;
                             } else {
@@ -364,7 +361,7 @@ impl P2pNode {
                             }
                         },
                         None => {
-                            debug!(%from, message_type, "broadcasting");
+                            debug!(%from, %message, "broadcasting");
                             match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
                                 Ok(_) => {},
                                 Err(e) => {

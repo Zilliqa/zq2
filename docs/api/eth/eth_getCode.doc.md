@@ -16,7 +16,7 @@ Following the Zilliqa 1 behaviour, if you call `eth_getCode()` on a Scilla contr
 
 {{ macro_address }}
 
-{{ macro_blocknumber }}
+{{ macro_blockid }}
 
 # Curl
 
