@@ -46,6 +46,15 @@ pub struct NodeConfig {
     /// The location of persistence data. If not set, uses a temporary path.
     #[serde(default)]
     pub data_dir: Option<String>,
+    /// The maximum number of blocks we will send to another node in a single message.
+    #[serde(default = "block_request_limit_default")]
+    pub block_request_limit: usize,
+    /// The maximum number of blocks to have outstanding requests for at a time when syncing.
+    #[serde(default = "max_blocks_in_flight_default")]
+    pub max_blocks_in_flight: u64,
+    /// The maximum number of blocks to request in a single message when syncing.
+    #[serde(default = "block_request_batch_size_default")]
+    pub block_request_batch_size: u64,
 }
 
 pub fn allowed_timestamp_skew_default() -> Duration {
@@ -62,6 +71,18 @@ pub fn eth_chain_id_default() -> u64 {
 
 pub fn disable_rpc_default() -> bool {
     false
+}
+
+pub fn block_request_limit_default() -> usize {
+    100
+}
+
+pub fn max_blocks_in_flight_default() -> u64 {
+    1000
+}
+
+pub fn block_request_batch_size_default() -> u64 {
+    100
 }
 
 /// Wrapper for [u128] that (de)serializes with a string. `serde_toml` does not support `u128`s.
