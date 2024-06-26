@@ -278,14 +278,15 @@ impl Node {
                 };
                 block.number()
             }
-            // From whitepaper: If the proposed block’s view number
-            // is one larger than its QC’s view number and
-            // is larger or equal to the validator’s local
-            // view number, the validator regards the
-            // proposed block as safe (which, in the codebase, is referenced as head_block())
+            // Safe block tag in our consensus refers to the block that the node's highQC points to
+            // (high_qc means it's the latest = high, and it's a QC where 2/3 validators voted for it).
             BlockNumberOrTag::Safe => {
-                let head_block = self.consensus.head_block();
-                head_block.number()
+                let block_hash = self.consensus.high_qc.block_hash;
+
+                let Ok(Some(safe_block)) = self.consensus.get_block(&block_hash) else {
+                    return 0u64;
+                };
+                safe_block.number()
             }
         }
     }
