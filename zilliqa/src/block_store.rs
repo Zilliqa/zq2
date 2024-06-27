@@ -1,7 +1,6 @@
 use std::{cell::RefCell, num::NonZeroUsize, sync::Arc};
 
 use anyhow::{anyhow, Result};
-use libp2p::PeerId;
 use lru::LruCache;
 use tracing::*;
 
@@ -67,11 +66,7 @@ impl BlockStore {
     }
 
     /// Buffer a block proposal whose parent we don't yet know about.
-    pub fn buffer_proposal(
-        &mut self,
-        proposal: Proposal,
-        random_peer: Option<PeerId>,
-    ) -> Result<()> {
+    pub fn buffer_proposal(&mut self, proposal: Proposal) -> Result<()> {
         let view = proposal.view();
 
         self.buffered.push(proposal.header.parent_hash, proposal);
@@ -82,12 +77,12 @@ impl BlockStore {
             self.highest_known_view = view;
         }
 
-        self.request_missing_blocks(random_peer)?;
+        self.request_missing_blocks()?;
 
         Ok(())
     }
 
-    pub fn request_missing_blocks(&mut self, random_peer: Option<PeerId>) -> Result<()> {
+    pub fn request_missing_blocks(&mut self) -> Result<()> {
         // Get the highest view we currently have committed to our chain.
         let current_view = self
             .get_block_by_number(
@@ -121,12 +116,7 @@ impl BlockStore {
                     from_view: self.requested_view + 1,
                     to_view: self.requested_view + self.batch_size,
                 });
-                if let Some(random_peer) = random_peer {
-                    self.message_sender
-                        .send_external_message(random_peer, message)?;
-                } else {
-                    self.message_sender.broadcast_external_message(message)?;
-                }
+                self.message_sender.send_external_message_to_any(message)?;
                 self.requested_view += self.batch_size;
             }
         }

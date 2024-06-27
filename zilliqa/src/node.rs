@@ -30,7 +30,7 @@ use crate::{
         Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InternalMessage,
         IntershardCall, Proposal,
     },
-    p2p_node::{LocalMessageTuple, OutboundMessageTuple},
+    p2p_node::{LocalMessageTuple, OutboundMessage},
     pool::TxPoolContent,
     state::State,
     transaction::{
@@ -42,7 +42,7 @@ use crate::{
 pub struct MessageSender {
     pub our_shard: u64,
     pub our_peer_id: PeerId,
-    pub outbound_channel: UnboundedSender<OutboundMessageTuple>,
+    pub outbound_channel: UnboundedSender<OutboundMessage>,
     pub local_channel: UnboundedSender<LocalMessageTuple>,
 }
 
@@ -69,14 +69,21 @@ impl MessageSender {
     pub fn send_external_message(&self, peer: PeerId, message: ExternalMessage) -> Result<()> {
         debug!("sending {message} from {} to {}", self.our_peer_id, peer);
         self.outbound_channel
-            .send((Some(peer), self.our_shard, message))?;
+            .send(OutboundMessage::Direct(peer, self.our_shard, message))?;
+        Ok(())
+    }
+
+    pub fn send_external_message_to_any(&self, message: ExternalMessage) -> Result<()> {
+        debug!("sending {message} from {} to random peer", self.our_peer_id);
+        self.outbound_channel
+            .send(OutboundMessage::AnyPeer(self.our_shard, message))?;
         Ok(())
     }
 
     /// Broadcast to the entire network of this shard
     pub fn broadcast_external_message(&self, message: ExternalMessage) -> Result<()> {
         self.outbound_channel
-            .send((None, self.our_shard, message))?;
+            .send(OutboundMessage::Broadcast(self.our_shard, message))?;
         Ok(())
     }
 }
@@ -115,7 +122,7 @@ impl Node {
     pub fn new(
         config: NodeConfig,
         secret_key: SecretKey,
-        message_sender_channel: UnboundedSender<OutboundMessageTuple>,
+        message_sender_channel: UnboundedSender<OutboundMessage>,
         local_sender_channel: UnboundedSender<LocalMessageTuple>,
         reset_timeout: UnboundedSender<Duration>,
     ) -> Result<Node> {

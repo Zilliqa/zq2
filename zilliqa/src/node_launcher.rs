@@ -25,7 +25,7 @@ use crate::{
     health::HealthLayer,
     message::{ExternalMessage, InternalMessage},
     node,
-    p2p_node::{LocalMessageTuple, OutboundMessageTuple},
+    p2p_node::{LocalMessageTuple, OutboundMessage},
 };
 
 pub struct NodeLauncher {
@@ -51,7 +51,7 @@ impl NodeLauncher {
     pub async fn new(
         secret_key: SecretKey,
         config: NodeConfig,
-        outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
+        outbound_message_sender: UnboundedSender<OutboundMessage>,
         local_outbound_message_sender: UnboundedSender<LocalMessageTuple>,
     ) -> Result<Self> {
         let (inbound_message_sender, inbound_message_receiver) = mpsc::unbounded_channel();

@@ -17,6 +17,7 @@ use libp2p::{
     swarm::{self, dial_opts::DialOpts, NetworkBehaviour, SwarmEvent},
     tcp, yamux, PeerId, StreamProtocol, Swarm, Transport,
 };
+use rand::Rng;
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
@@ -46,8 +47,14 @@ struct Behaviour {
 }
 
 /// Messages circulating over the p2p network.
-/// (destination, shard_id, message)
-pub type OutboundMessageTuple = (Option<PeerId>, u64, ExternalMessage);
+pub enum OutboundMessage {
+    /// Send a broadcast to all peers. `(shard_id, message)`
+    Broadcast(u64, ExternalMessage),
+    /// Send a direct message to a given peer. `(destination, shard_id, message)`.
+    Direct(PeerId, u64, ExternalMessage),
+    /// Send a direct message to any connected peer. `(shard_id, message)`.
+    AnyPeer(u64, ExternalMessage),
+}
 
 /// Messages passed between local shard nodes.
 /// (source_shard, destination_shard, message)
@@ -66,11 +73,11 @@ pub struct P2pNode {
     peer_id: PeerId,
     swarm: Swarm<Behaviour>,
     /// Shard nodes get a copy of these senders to propagate messages.
-    outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
+    outbound_message_sender: UnboundedSender<OutboundMessage>,
     local_message_sender: UnboundedSender<LocalMessageTuple>,
     /// The p2p node keeps a handle to these receivers, to obtain messages from shards and propagate
     /// them as necessary.
-    outbound_message_receiver: UnboundedReceiverStream<OutboundMessageTuple>,
+    outbound_message_receiver: UnboundedReceiverStream<OutboundMessage>,
     local_message_receiver: UnboundedReceiverStream<LocalMessageTuple>,
 }
 
@@ -349,23 +356,14 @@ impl P2pNode {
                     }
                 },
                 message = self.outbound_message_receiver.next() => {
-                    let (dest, shard_id, message) = message.expect("message stream should be infinite");
-                    let data = cbor4ii::serde::to_vec(Vec::new(), &message).unwrap();
                     let from = self.peer_id;
+                    let message = message.expect("message stream should be infinite");
 
-                    let topic = Self::shard_id_to_topic(shard_id);
-
-                    match dest {
-                        Some(dest) => {
-                            debug!(%from, %dest, %message, "sending direct message");
-                            if from == dest {
-                                self.forward_external_message_to_node(&topic.hash(), from, message)?;
-                            } else {
-                                let _ = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
-                            }
-                        },
-                        None => {
+                    match message {
+                        OutboundMessage::Broadcast(shard_id, message) => {
                             debug!(%from, %message, "broadcasting");
+                            let topic = Self::shard_id_to_topic(shard_id);
+                            let data = cbor4ii::serde::to_vec(Vec::new(), &message).unwrap();
                             match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
                                 Ok(_) => {},
                                 Err(e) => {
@@ -374,6 +372,34 @@ impl P2pNode {
                             }
                             // Also broadcast the message to ourselves.
                             self.forward_external_message_to_node(&topic.hash(), from, message)?;
+                        },
+                        OutboundMessage::Direct(dest, shard_id, message) => {
+                            debug!(%from, %dest, %message, "sending direct message");
+                            let topic = Self::shard_id_to_topic(shard_id);
+                            if from == dest {
+                                self.forward_external_message_to_node(&topic.hash(), from, message)?;
+                            } else {
+                                let _ = self.swarm.behaviour_mut().request_response.send_request(
+                                    &dest,
+                                    (shard_id, message),
+                                );
+                            }
+                        },
+                        OutboundMessage::AnyPeer(shard_id, message) => {
+                            let num_peers = self.swarm.network_info().num_peers();
+                            // Ignore this message if we have no peers send messages to.
+                            if num_peers != 0 {
+                                let random_index = rand::thread_rng().gen_range(0..num_peers);
+                                let dest = *self.swarm.connected_peers().nth(random_index).unwrap();
+                                debug!(%from, %dest, %message, "sending message to random peer");
+
+                                let _ = self.swarm.behaviour_mut().request_response.send_request(
+                                    &dest,
+                                    (shard_id, message),
+                                );
+                            } else {
+                                debug!(%from, %message, "couldn't send message to peer because none are connected");
+                            }
                         },
                     }
                 },

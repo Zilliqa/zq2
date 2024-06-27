@@ -67,6 +67,7 @@ use zilliqa::{
     crypto::{NodePublicKey, SecretKey},
     message::{ExternalMessage, InternalMessage},
     node::Node,
+    p2p_node::OutboundMessage,
     transaction::EvmGas,
 };
 
@@ -80,7 +81,14 @@ enum AnyMessage {
 
 type Wallet = SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>;
 
-type StreamMessage = (PeerId, Option<PeerId>, AnyMessage);
+#[derive(Copy, Clone, Debug)]
+enum Dest {
+    Broadcast,
+    Random,
+    Peer(PeerId),
+}
+
+type StreamMessage = (PeerId, Dest, AnyMessage);
 
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
 // type
@@ -100,7 +108,15 @@ fn node(
     // Augment the `message_receiver` stream to include the sender's `PeerId`.
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
     let message_receiver = message_receiver
-        .map(move |(dest, _, message)| (peer_id, dest, AnyMessage::External(message)))
+        .map(move |msg| match msg {
+            OutboundMessage::Broadcast(_, msg) => {
+                (peer_id, Dest::Broadcast, AnyMessage::External(msg))
+            }
+            OutboundMessage::Direct(dest, _, msg) => {
+                (peer_id, Dest::Peer(dest), AnyMessage::External(msg))
+            }
+            OutboundMessage::AnyPeer(_, msg) => (peer_id, Dest::Random, AnyMessage::External(msg)),
+        })
         .boxed();
 
     let (local_message_sender, local_message_receiver) = mpsc::unbounded_channel();
@@ -110,7 +126,7 @@ fn node(
         .map(move |(src, dest, message)| {
             (
                 peer_id,
-                Some(peer_id),
+                Dest::Peer(peer_id),
                 AnyMessage::Internal(src, dest, message),
             )
         })
@@ -488,7 +504,7 @@ impl Network {
         }
     }
 
-    fn collect_messages(&mut self) -> Vec<(PeerId, Option<PeerId>, AnyMessage)> {
+    fn collect_messages(&mut self) -> Vec<StreamMessage> {
         let mut messages = vec![];
 
         // Poll the receiver with `unconstrained` to ensure it won't be pre-empted. This makes sure we always
@@ -560,10 +576,10 @@ impl Network {
             // Handle the removed proposes correctly for both cases of broadcast and single cast
             for (s, d, m) in removed_items {
                 // If specifically to a node, only allow node 0
-                if let Some(dest) = d {
+                if let Dest::Peer(dest) = d {
                     // We actually want to allow this message, put it back into the queue
                     if dest == self.nodes[0].peer_id {
-                        messages.push((s, Some(dest), m));
+                        messages.push((s, Dest::Peer(dest), m));
                         continue;
                     }
 
@@ -571,7 +587,7 @@ impl Network {
                     proposals_seen += 1;
                 } else {
                     // Broadcast seen! Push it back into the queue with specific destination of node 0
-                    messages.push((s, Some(self.nodes[0].peer_id), m));
+                    messages.push((s, Dest::Peer(self.nodes[0].peer_id), m));
 
                     broadcast_handled = true;
                     break;
@@ -703,7 +719,7 @@ impl Network {
         self.handle_message((source, destination, message))
     }
 
-    fn handle_message(&mut self, message: (PeerId, Option<PeerId>, AnyMessage)) {
+    fn handle_message(&mut self, message: StreamMessage) {
         let (source, destination, ref contents) = message;
         match contents {
             AnyMessage::Internal(source_shard, destination_shard, ref internal_message) => {
@@ -736,7 +752,9 @@ impl Network {
                     }
                     InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                         if *destination_shard == self.shard_id {
-                            let destination = destination.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
+                            let Dest::Peer(destination) = destination else {
+                                unreachable!("Local messages are intended to always have the node's own peerid as destination within in the test harness")
+                            };
                             let idx_node = self.find_node(destination);
                             if let Some((idx, node)) = idx_node {
                                 trace!("Handling intershard message {:?} from shard {}, in node {} of shard {}", internal_message, source_shard, idx, self.shard_id);
@@ -772,24 +790,42 @@ impl Network {
                 }
             }
             AnyMessage::External(external_message) => {
-                let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = destination {
-                    let (index, node) = self
+                let nodes = match destination {
+                    Dest::Broadcast => self
                         .nodes
                         .iter()
                         .enumerate()
-                        .find(|(_, n)| n.peer_id == destination)
-                        .unwrap();
-                    if self.disconnected.contains(&index) {
-                        vec![]
-                    } else {
-                        vec![(index, node)]
-                    }
-                } else {
-                    self.nodes
-                        .iter()
-                        .enumerate()
                         .filter(|(index, _)| !self.disconnected.contains(index))
-                        .collect()
+                        .collect(),
+                    Dest::Random => {
+                        let connected_nodes: Vec<_> = self
+                            .nodes
+                            .iter()
+                            .enumerate()
+                            .filter(|(index, _)| !self.disconnected.contains(index))
+                            .filter(|(_, node)| node.peer_id != source)
+                            .collect();
+                        if let Some(node) =
+                            connected_nodes.choose(self.rng.lock().unwrap().deref_mut())
+                        {
+                            vec![*node]
+                        } else {
+                            vec![]
+                        }
+                    }
+                    Dest::Peer(destination) => {
+                        let (index, node) = self
+                            .nodes
+                            .iter()
+                            .enumerate()
+                            .find(|(_, n)| n.peer_id == destination)
+                            .unwrap();
+                        if self.disconnected.contains(&index) {
+                            vec![]
+                        } else {
+                            vec![(index, node)]
+                        }
+                    }
                 };
                 let sender_node = self
                     .nodes
@@ -980,7 +1016,7 @@ impl Network {
 fn format_message(
     nodes: &[TestNode],
     source: PeerId,
-    destination: Option<PeerId>,
+    destination: Dest,
     message: &AnyMessage,
 ) -> String {
     let message = match message {
@@ -989,15 +1025,17 @@ fn format_message(
     };
 
     let source_index = nodes.iter().find(|n| n.peer_id == source).unwrap().index;
-    if let Some(destination) = destination {
-        let destination_index = nodes
-            .iter()
-            .find(|n| n.peer_id == destination)
-            .unwrap()
-            .index;
-        format!("{source_index} -> {destination_index}: {message}")
-    } else {
-        format!("{source_index} -> *: {message}")
+    match destination {
+        Dest::Peer(destination) => {
+            let destination_index = nodes
+                .iter()
+                .find(|n| n.peer_id == destination)
+                .unwrap()
+                .index;
+            format!("{source_index} -> {destination_index}: {message}")
+        }
+        Dest::Broadcast => format!("{source_index} -> *: {message}"),
+        Dest::Random => format!("{source_index} -> ?: {message}"),
     }
 }
 

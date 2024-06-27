@@ -4,11 +4,7 @@ use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Context as _, Result};
 use bitvec::bitvec;
 use libp2p::PeerId;
-use rand::{
-    distributions::{Distribution, WeightedIndex},
-    prelude::IteratorRandom,
-    rngs::SmallRng,
-};
+use rand::distributions::{Distribution, WeightedIndex};
 use rand_chacha::ChaCha8Rng;
 use rand_core::SeedableRng;
 use revm::Inspector;
@@ -143,8 +139,6 @@ pub struct Consensus {
     db: Arc<Db>,
     /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
-    // PRNG - non-cryptographically secure, but we don't need that here
-    rng: SmallRng,
     /// Flag indicating that block creation should be postponed due to empty mempool
     create_next_block_on_timeout: bool,
     pub new_blocks: broadcast::Sender<BlockHeader>,
@@ -274,12 +268,6 @@ impl Consensus {
             state,
             db,
             transaction_pool: Default::default(),
-            // Seed the rng with the node's public key
-            rng: <SmallRng as rand_core::SeedableRng>::seed_from_u64(u64::from_be_bytes(
-                secret_key.node_public_key().as_bytes()[..8]
-                    .try_into()
-                    .unwrap(),
-            )),
             create_next_block_on_timeout: false,
             new_blocks: broadcast::Sender::new(4),
             receipts: broadcast::Sender::new(128),
@@ -309,20 +297,6 @@ impl Consensus {
             .get_block_by_number(highest_block_number)
             .unwrap()
             .unwrap()
-    }
-
-    pub fn get_random_other_peer(&mut self) -> Option<PeerId> {
-        let stakers = self.state.get_stakers().unwrap();
-        let my_public_key = self.public_key();
-        let chosen = stakers
-            .into_iter()
-            .filter(|&v| v != my_public_key)
-            .choose(&mut self.rng)?;
-
-        let Ok(peer_id) = self.state.get_peer_id(chosen) else {
-            return None;
-        };
-        peer_id
     }
 
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
@@ -503,9 +477,8 @@ impl Consensus {
             Err((e, temporary)) => {
                 // If this block could become valid in the future, buffer it.
                 if temporary {
-                    let random_peer = self.get_random_other_peer();
-                    self.block_store.buffer_proposal(
-                        Proposal::from_parts_with_hashes(
+                    self.block_store
+                        .buffer_proposal(Proposal::from_parts_with_hashes(
                             block,
                             transactions
                                 .into_iter()
@@ -514,9 +487,7 @@ impl Consensus {
                                     (tx, hash)
                                 })
                                 .collect(),
-                        ),
-                        random_peer,
-                    )?;
+                        ))?;
                 }
                 warn!(?e, "invalid block proposal received!");
                 return Ok(None);
@@ -2127,8 +2098,7 @@ impl Consensus {
         }
 
         // Tell the block store to request more blocks if it can.
-        let random_peer = self.get_random_other_peer();
-        self.block_store.request_missing_blocks(random_peer)?;
+        self.block_store.request_missing_blocks()?;
 
         Ok(())
     }
