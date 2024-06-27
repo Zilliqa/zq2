@@ -620,6 +620,8 @@ impl Consensus {
         Ok(None)
     }
 
+    /// Note that the algorithm below is mentioned in cfg.rs - if you change the way
+    /// rewards are calculated, please change the comments in the configuration structure there.
     fn apply_rewards(
         &mut self,
         committee: &[NodePublicKey],

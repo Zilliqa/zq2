@@ -60,7 +60,7 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, disable_rpc_default, eth_chain_id_default,
-        json_rcp_port_default, local_address_default, max_blocks_in_flight_default,
+        json_rpc_port_default, local_address_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
         Amount, Checkpoint, ConsensusConfig, NodeConfig,
     },
@@ -280,7 +280,7 @@ impl Network {
                 blocks_per_epoch: 10,
                 epochs_per_checkpoint: 1,
             },
-            json_rpc_port: json_rcp_port_default(),
+            json_rpc_port: json_rpc_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             disable_rpc: disable_rpc_default(),
             data_dir: None,
@@ -360,7 +360,7 @@ impl Network {
 
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
-            json_rpc_port: json_rcp_port_default(),
+            json_rpc_port: json_rpc_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
             load_checkpoint: options.checkpoint,
@@ -457,7 +457,7 @@ impl Network {
                     load_checkpoint: None,
                     do_checkpoints: self.do_checkpoints,
                     disable_rpc: disable_rpc_default(),
-                    json_rpc_port: json_rcp_port_default(),
+                    json_rpc_port: json_rpc_port_default(),
                     consensus: ConsensusConfig {
                         genesis_deposits: genesis_deposits.clone(),
                         is_main: self.is_main(),
