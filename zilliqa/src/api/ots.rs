@@ -230,13 +230,11 @@ fn has_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
     let address: Address = params.next()?;
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
 
-    let empty = node
-        .lock()
-        .unwrap()
-        .get_state(block_id)?
-        .get_account(address)?
-        .code
-        .is_eoa();
+    let node = node.lock().unwrap();
+    let block = node
+        .get_block(block_id)?
+        .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
+    let empty = node.get_state(&block)?.get_account(address)?.code.is_eoa();
 
     Ok(!empty)
 }

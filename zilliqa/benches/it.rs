@@ -69,7 +69,7 @@ pub fn process_blocks(c: &mut Criterion) {
     .unwrap();
 
     let genesis = consensus.get_block_by_view(0).unwrap().unwrap();
-    let mut state = consensus.state().at_root(genesis.state_root_hash().into());
+    let state = consensus.state().at_root(genesis.state_root_hash().into());
     let mut parent_hash = genesis.hash();
     let mut proposals = (1..).map(|view| {
         let reward_address: Address = "0x0000000000000000000000000000000000000001"

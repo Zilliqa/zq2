@@ -56,7 +56,7 @@ pub async fn convert_persistence(
     .unwrap();
 
     let node_config = &zq2_config.nodes[0];
-    let mut state = State::new_with_genesis(zq2_db.state_trie()?, node_config.consensus.clone())?;
+    let state = State::new_with_genesis(zq2_db.state_trie()?, node_config.consensus.clone())?;
 
     if !skip_accounts {
         // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance

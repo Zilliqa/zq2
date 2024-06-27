@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    error::Error,
+    fmt::Display,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Context as _, Result};
@@ -129,7 +135,7 @@ pub struct Consensus {
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub block_store: BlockStore,
-    votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128, bool)>,
+    votes: BTreeMap<Hash, ReceivedVotes>,
     /// Votes for a block we don't have stored. They are retained in case we recieve the block later.
     // TODO(#719): Consider how to limit the size of this.
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
@@ -142,7 +148,7 @@ pub struct Consensus {
     /// The persistence database
     db: Arc<Db>,
     /// Actions that act on newly created blocks
-    transaction_pool: TransactionPool,
+    transaction_pool: Arc<Mutex<TransactionPool>>,
     // PRNG - non-cryptographically secure, but we don't need that here
     rng: SmallRng,
     /// Flag indicating that block creation should be postponed due to empty mempool
@@ -151,6 +157,25 @@ pub struct Consensus {
     pub receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
+}
+
+#[derive(Clone, Debug)]
+struct ReceivedVotes {
+    signatures: Vec<NodeSignature>,
+    cosigned: BitVec,
+    cosigned_weight: u128,
+    supermajority_reached: bool,
+}
+
+impl ReceivedVotes {
+    pub fn new(committee_size: usize) -> Self {
+        ReceivedVotes {
+            signatures: Vec::new(),
+            cosigned: bitvec![u8, bitvec::order::Msb0; 0; committee_size],
+            cosigned_weight: 0,
+            supermajority_reached: false,
+        }
+    }
 }
 
 // View in consensus should be have access monitored so last_timeout is always correct
@@ -221,7 +246,7 @@ impl Consensus {
             })
             .transpose()?;
 
-        let mut state = if let Some(latest_block) = &latest_block {
+        let state = if let Some(latest_block) = &latest_block {
             trace!("Loading state from latest block");
             State::new_at_root(
                 db.state_trie()?,
@@ -369,7 +394,7 @@ impl Consensus {
             let empty_block_timeout_ms =
                 self.config.consensus.empty_block_timeout.as_millis() as u64;
 
-            let transactions_count = self.transaction_pool.size();
+            let transactions_count = self.transaction_pool.lock().unwrap().size();
 
             // Check if enough time elapsed or there's something in mempool or we don't have enough
             // time but let's try at least until new view can happen
@@ -625,7 +650,7 @@ impl Consensus {
     }
 
     fn apply_rewards(
-        &mut self,
+        &self,
         committee: &[NodePublicKey],
         view: u64,
         cosigned: &BitSlice,
@@ -676,7 +701,7 @@ impl Consensus {
     }
 
     pub fn apply_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
-        &mut self,
+        &self,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
@@ -702,7 +727,7 @@ impl Consensus {
         };
 
         // Tell the transaction pool that the sender's nonce has been incremented.
-        self.transaction_pool.mark_executed(&txn);
+        self.transaction_pool.lock().unwrap().mark_executed(&txn);
 
         if !result.success() {
             info!("Transaction was a failure...");
@@ -713,7 +738,7 @@ impl Consensus {
 
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
-        std::iter::from_fn(|| self.transaction_pool.best_transaction())
+        std::iter::from_fn(|| self.transaction_pool.lock().unwrap().best_transaction())
             .filter(|txn| {
                 let account_nonce = self.state.must_get_account(txn.signer).nonce;
                 // Ignore this transaction if it is no longer valid.
@@ -736,7 +761,7 @@ impl Consensus {
     }
 
     pub fn txpool_content(&self) -> TxPoolContent {
-        let mut content = self.transaction_pool.preview_content();
+        let mut content = self.transaction_pool.lock().unwrap().preview_content(None);
         // Ignore txns having too low nonces
         content.pending.retain(|txn| {
             let account_nonce = self.state.must_get_account(txn.signer).nonce;
@@ -827,15 +852,16 @@ impl Consensus {
             return Ok(None);
         };
 
-        let (mut signatures, mut cosigned, mut cosigned_weight, mut supermajority_reached) =
-            self.votes.get(&block_hash).cloned().unwrap_or_else(|| {
-                (
-                    Vec::new(),
-                    bitvec![u8, bitvec::order::Msb0; 0; committee.len()],
-                    0,
-                    false,
-                )
-            });
+        let ReceivedVotes {
+            mut signatures,
+            mut cosigned,
+            mut cosigned_weight,
+            mut supermajority_reached,
+        } = self
+            .votes
+            .get(&block_hash)
+            .cloned()
+            .unwrap_or_else(|| ReceivedVotes::new(committee.len()));
 
         if supermajority_reached {
             trace!(
@@ -867,12 +893,12 @@ impl Consensus {
             );
             self.votes.insert(
                 block_hash,
-                (
-                    signatures.clone(),
-                    cosigned.clone(),
+                ReceivedVotes {
+                    signatures,
+                    cosigned,
                     cosigned_weight,
                     supermajority_reached,
-                ),
+                },
             );
             if supermajority_reached {
                 // if we are already in the round in which the vote counts and have reached supermajority
@@ -880,7 +906,7 @@ impl Consensus {
                     // We propose new block immediately if there's something in mempool or it's the first view
                     // Otherwise the block will be proposed on timeout
 
-                    let transactions_count = self.transaction_pool.size();
+                    let transactions_count = self.transaction_pool.lock().unwrap().size();
 
                     if (self.view.get_view() == 1)
                         || (block_view + 1 == self.view.get_view() && transactions_count > 0)
@@ -910,7 +936,12 @@ impl Consensus {
         } else {
             self.votes.insert(
                 block_hash,
-                (signatures, cosigned, cosigned_weight, supermajority_reached),
+                ReceivedVotes {
+                    signatures,
+                    cosigned,
+                    cosigned_weight,
+                    supermajority_reached,
+                },
             );
         }
 
@@ -930,28 +961,23 @@ impl Consensus {
         Ok(None)
     }
 
-    fn propose_block_inner(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        let num = self.db.get_highest_block_number().unwrap().unwrap();
-        let block = self.get_block_by_number(num).unwrap().unwrap();
+    fn propose_block_inner(
+        &self,
+        transactions: Vec<VerifiedTransaction>,
+        received_votes: &ReceivedVotes,
+        highest_block: &Block,
+        committee: &[NodePublicKey],
+    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+        let block_hash = highest_block.hash();
+        let block_view = highest_block.view();
 
-        let block_hash = block.hash();
-        let block_view = block.view();
+        let ReceivedVotes {
+            signatures,
+            cosigned,
+            ..
+        } = received_votes;
 
-        let committee = self.state.get_stakers_at_block(&block)?;
-
-        let committee_size = committee.len();
-
-        let (signatures, cosigned, cosigned_weight, supermajority_reached) =
-            self.votes.get(&block_hash).cloned().unwrap_or_else(|| {
-                (
-                    Vec::new(),
-                    bitvec![u8, bitvec::order::Msb0; 0; committee_size],
-                    0,
-                    false,
-                )
-            });
-
-        let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone(), block_view);
+        let qc = self.qc_from_bits(block_hash, signatures, cosigned.clone(), block_view);
         let parent_hash = qc.block_hash;
         let parent = self
             .get_block(&parent_hash)?
@@ -968,8 +994,6 @@ impl Consensus {
             );
             self.state.set_to_root(parent.state_root_hash().into());
         }
-
-        let transactions = self.get_txns_to_execute();
 
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
         let applied_transactions: Vec<_> = transactions
@@ -990,7 +1014,7 @@ impl Consensus {
         let applied_transaction_hashes: Vec<_> =
             applied_transactions.iter().map(|tx| tx.hash).collect();
 
-        self.apply_rewards(&committee, block_view + 1, &qc.cosigned)?;
+        self.apply_rewards(committee, block_view + 1, &qc.cosigned)?;
 
         let proposal = Block::from_qc(
             self.secret_key,
@@ -1006,18 +1030,30 @@ impl Consensus {
 
         self.state.set_to_root(previous_state_root_hash.into());
 
-        self.votes.insert(
-            block_hash,
-            (signatures, cosigned, cosigned_weight, supermajority_reached),
-        );
-
         Ok(Some((proposal, applied_transactions)))
     }
 
     fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+        let transactions = self.get_txns_to_execute();
+
+        let num = self.db.get_highest_block_number().unwrap().unwrap();
+        let block = self.get_block_by_number(num).unwrap().unwrap();
+
+        let block_hash = block.hash();
+
+        let committee = self.state.get_stakers_at_block(&block)?;
+
+        let received_votes = self
+            .votes
+            .get(&block_hash)
+            .cloned()
+            .unwrap_or_else(|| ReceivedVotes::new(committee.len()));
+
         let (proposal, applied_transactions) = self
-            .propose_block_inner()?
+            .propose_block_inner(transactions, &received_votes, &block, &committee)?
             .ok_or_else(|| anyhow!("Unable to propose new block!"))?;
+
+        self.votes.insert(block_hash, received_votes);
 
         // as a future improvement, process the proposal before broadcasting it
         trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
@@ -1030,30 +1066,38 @@ impl Consensus {
         // them into the pool - this is because upon broadcasting the proposal, we will
         // have to re-execute it ourselves (in order to vote on it) and thus will
         // need those transactions again
+        let mut tx_pool = self.transaction_pool.lock().unwrap();
         for tx in opaque_transactions {
             let account_nonce = self.state.get_account(tx.signer)?.nonce;
-            self.transaction_pool.insert_transaction(tx, account_nonce);
+            tx_pool.insert_transaction(tx, account_nonce);
         }
         Ok(Some((proposal, broadcasted_transactions)))
     }
 
-    pub fn propose_pending_block(&mut self) -> Result<Block> {
-        let (proposal, applied_transactions) = self
-            .propose_block_inner()?
+    pub fn propose_pending_block(&self) -> Result<Block> {
+        let transactions = self
+            .transaction_pool
+            .lock()
+            .unwrap()
+            .preview_content(Some(self.config.consensus.eth_block_gas_limit))
+            .pending;
+
+        let num = self.db.get_highest_block_number().unwrap().unwrap();
+        let block = self.get_block_by_number(num).unwrap().unwrap();
+
+        let block_hash = block.hash();
+
+        let committee = self.state.get_stakers_at_block(&block)?;
+
+        let received_votes = self
+            .votes
+            .get(&block_hash)
+            .cloned()
+            .unwrap_or_else(|| ReceivedVotes::new(committee.len()));
+
+        let (proposal, _) = self
+            .propose_block_inner(transactions, &received_votes, &block, &committee)?
             .ok_or_else(|| anyhow!("Unable to propose new block!"))?;
-
-        // Check if the votes entry is empty - if so - remove it
-        if let Some((signatures, ..)) = self.votes.get(&proposal.hash()) {
-            if signatures.is_empty() {
-                self.votes.remove(&proposal.hash());
-            }
-        }
-
-        // Re-insert all transactions that were executed during block proposal - they were removed from tx_pool and have to be re-added
-        for tx in applied_transactions {
-            let nonce = tx.tx.nonce().unwrap_or_default();
-            self.transaction_pool.insert_transaction(tx, nonce);
-        }
 
         Ok(proposal)
     }
@@ -1246,15 +1290,16 @@ impl Consensus {
 
         let account_nonce = self.state.get_account(txn.signer)?.nonce;
         let txn_hash = txn.hash;
-        let new = self.transaction_pool.insert_transaction(txn, account_nonce);
+
+        let mut tx_pool = self.transaction_pool.lock().unwrap();
+        let new = tx_pool.insert_transaction(txn, account_nonce);
         if new {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
             // Avoid cloning the transaction aren't any subscriptions to send it to.
             if self.new_transactions.receiver_count() != 0 {
                 // Clone the transaction from the pool, because we moved it in.
-                let txn = self
-                    .transaction_pool
+                let txn = tx_pool
                     .get_transaction(txn_hash)
                     .ok_or_else(|| anyhow!("transaction we just added is missing"))?
                     .clone();
@@ -1271,7 +1316,13 @@ impl Consensus {
             .get_transaction(&hash)?
             .map(|tx| tx.verify())
             .transpose()?
-            .or_else(|| self.transaction_pool.get_transaction(hash).cloned()))
+            .or_else(|| {
+                self.transaction_pool
+                    .lock()
+                    .unwrap()
+                    .get_transaction(hash)
+                    .cloned()
+            }))
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
@@ -1979,11 +2030,12 @@ impl Consensus {
 
             // Ensure the transaction pool is consistent by recreating it. This is moderately costly, but forks are
             // rare.
-            let existing_txns = self.transaction_pool.drain();
+            let existing_txns = self.transaction_pool.lock().unwrap().drain();
 
+            let mut tx_pool = self.transaction_pool.lock().unwrap();
             for txn in existing_txns {
                 let account_nonce = self.state.get_account(txn.signer)?.nonce;
-                self.transaction_pool.insert_transaction(txn, account_nonce);
+                tx_pool.insert_transaction(txn, account_nonce);
             }
 
             // block transactions need to be removed from self.transactions and re-injected
@@ -1992,8 +2044,7 @@ impl Consensus {
 
                 // Insert this unwound transaction back into the transaction pool.
                 let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
-                self.transaction_pool
-                    .insert_transaction(orig_tx, account_nonce);
+                tx_pool.insert_transaction(orig_tx, account_nonce);
             }
             // then purge them all from the db, including receipts and indexes
             self.db
@@ -2070,7 +2121,12 @@ impl Consensus {
             if transactions.get(idx).is_some_and(|tx| tx.hash == *tx_hash) {
                 // all good
             } else {
-                let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
+                let Some(local_tx) = self
+                    .transaction_pool
+                    .lock()
+                    .unwrap()
+                    .pop_transaction(*tx_hash)
+                else {
                     warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
                     return Ok(());
                 };

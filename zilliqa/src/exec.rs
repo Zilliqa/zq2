@@ -434,7 +434,7 @@ impl State {
     }
 
     fn apply_transaction_scilla(
-        &mut self,
+        &self,
         from_addr: Address,
         current_block: BlockHeader,
         txn: TxZilliqa,
@@ -474,7 +474,7 @@ impl State {
 
     /// Apply a transaction to the account state.
     pub fn apply_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
-        &mut self,
+        &self,
         txn: VerifiedTransaction,
         chain_id: u64,
         current_block: BlockHeader,
@@ -523,7 +523,7 @@ impl State {
     }
 
     /// Applies a state delta from a Scilla execution to the state.
-    fn apply_delta_scilla(&mut self, state: &HashMap<Address, PendingAccount>) -> Result<()> {
+    fn apply_delta_scilla(&self, state: &HashMap<Address, PendingAccount>) -> Result<()> {
         for (&address, account) in state {
             let mut storage = self.get_account_trie(address)?;
 
@@ -584,7 +584,7 @@ impl State {
 
     /// Applies a state delta from an EVM execution to the state.
     pub fn apply_delta_evm(
-        &mut self,
+        &self,
         state: &HashMap<Address, revm::primitives::Account>,
     ) -> Result<()> {
         for (&address, account) in state {
