@@ -88,7 +88,8 @@ pub fn process_blocks(c: &mut Criterion) {
             bitvec![u8, bitvec::order::Msb0; 1; 1],
             parent_hash,
             view - 1,
-        );
+        )
+        .unwrap();
         let block = Block::from_qc(
             secret_key,
             view,
