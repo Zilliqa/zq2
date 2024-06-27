@@ -170,11 +170,11 @@ pub struct ConsensusConfig {
 }
 
 pub fn consensus_timeout_default() -> Duration {
-    Duration::from_secs(5)
+    Duration::from_secs(1)
 }
 
 pub fn empty_block_timeout_default() -> Duration {
-    Duration::from_millis(1000)
+    Duration::from_millis(500)
 }
 
 pub fn minimum_time_left_for_empty_block_default() -> Duration {

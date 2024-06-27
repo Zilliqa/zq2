@@ -1089,11 +1089,21 @@ impl Consensus {
 
         let committee = self.state.get_stakers_at_block(&block)?;
 
-        let received_votes = self
+        let mut received_votes = self
             .votes
             .get(&block_hash)
             .cloned()
             .unwrap_or_else(|| ReceivedVotes::new(committee.len()));
+
+        if received_votes.signatures.is_empty() {
+            let my_vote = Vote::new(
+                self.secret_key,
+                block_hash,
+                self.public_key(),
+                self.view.get_view(),
+            );
+            received_votes.signatures.push(my_vote.signature());
+        }
 
         let (proposal, _) = self
             .propose_block_inner(transactions, &received_votes, &block, &committee)?
