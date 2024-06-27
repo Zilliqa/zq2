@@ -263,7 +263,10 @@ impl Node {
         self.consensus.head_block().header.number
     }
 
-    pub fn resolve_block_number(&self, block_number: BlockNumberOrTag) -> Result<(Option<Block>, u64)> {
+    pub fn resolve_block_number(
+        &self,
+        block_number: BlockNumberOrTag,
+    ) -> Result<(Option<Block>, u64)> {
         match block_number {
             BlockNumberOrTag::Number(n) => Ok((None, n)),
             BlockNumberOrTag::Earliest => Ok((None, 0)),
@@ -272,7 +275,7 @@ impl Node {
                 let pending_block = self.consensus.propose_pending_block()?;
                 let pending_block_num = pending_block.number();
                 Ok((Some(pending_block), pending_block_num))
-            },
+            }
             BlockNumberOrTag::Finalized => {
                 let Some(view) = self.db.get_latest_finalized_view()? else {
                     return Ok((None, 0u64));
@@ -308,7 +311,8 @@ impl Node {
                     return Ok(None);
                 };
                 // Get latest finalized block number
-                let (_, finalized_block_num) = self.resolve_block_number(BlockNumberOrTag::Finalized)?;
+                let (_, finalized_block_num) =
+                    self.resolve_block_number(BlockNumberOrTag::Finalized)?;
                 let require_canonical = require_canonical.unwrap_or(false);
 
                 // If the caller requests canonical block then it must be finalized
@@ -324,7 +328,7 @@ impl Node {
                     return self.consensus.get_block_by_number(resolved_num);
                 };
                 Ok(Some(resolved_block))
-            },
+            }
         }
     }
 

@@ -977,7 +977,7 @@ impl Consensus {
             ..
         } = received_votes;
 
-        let qc = self.qc_from_bits(block_hash, signatures, cosigned.clone(), block_view);
+        let qc = self.qc_from_bits(block_hash, signatures, cosigned.clone(), block_view)?;
         let parent_hash = qc.block_hash;
         let parent = self
             .get_block(&parent_hash)?
@@ -1399,7 +1399,7 @@ impl Consensus {
         signatures: &[NodeSignature],
         cosigned: BitVec,
         view: u64,
-    ) -> QuorumCertificate {
+    ) -> Result<QuorumCertificate> {
         // we've already verified the signatures upon receipt of the responses so there's no need to do it again
         QuorumCertificate::new(signatures, cosigned, block_hash, view)
     }
