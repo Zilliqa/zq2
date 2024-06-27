@@ -95,11 +95,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
 // See https://eips.ethereum.org/EIPS/eip-1898
 fn build_errored_response_for_missing_block(
     request: BlockId,
-    result: Result<Option<Block>>,
+    result: Option<Block>,
 ) -> Result<Block> {
-    // If there's been error already - return it
-    let result = result?;
-
     // Block has been found
     if let Some(block) = result {
         return Ok(block);
@@ -173,7 +170,7 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     expect_end_of_params(&mut params, 1, 2)?;
 
     let mut node = node.lock().unwrap();
-    let block = node.get_block(block_id);
+    let block = node.get_block(block_id)?;
 
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
@@ -229,7 +226,7 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     expect_end_of_params(&mut params, 2, 2)?;
 
     let node = node.lock().unwrap();
-    let block = node.get_block(block_id);
+    let block = node.get_block(block_id)?;
 
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
@@ -247,7 +244,7 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     expect_end_of_params(&mut params, 2, 2)?;
 
     let node = node.lock().unwrap();
-    let block = node.get_block(block_id);
+    let block = node.get_block(block_id)?;
 
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
@@ -277,7 +274,7 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     expect_end_of_params(&mut params, 3, 3)?;
 
     let node = node.lock().unwrap();
-    let block = node.get_block(block_id);
+    let block = node.get_block(block_id)?;
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
     let value = node
@@ -295,8 +292,7 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     expect_end_of_params(&mut params, 3, 3)?;
 
     let node = node.lock().unwrap();
-    let block = node.get_block(block_id);
-
+    let block = node.get_block(block_id)?;
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
     Ok(node.get_state(&block)?.get_account(address)?.nonce.to_hex())
@@ -427,8 +423,8 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             .get_block(block_hash)?
             .ok_or_else(|| anyhow!("block not found"))?))),
         (None, from, to) => {
-            let from = node.resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest))?;
-            let to = node.resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?;
+            let (_, from) = node.resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest))?;
+            let (_, to) = node.resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?;
 
             if from > to {
                 return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
