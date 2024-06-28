@@ -14,6 +14,10 @@ Returns a hex string representing the number of transactions in a block from a b
 
 {{ macro_blockhash }}
 
+## Result
+
+A count as a hex string, or `null` if the block with this hash is not known to this node.
+
 # Curl
 
 ```sh

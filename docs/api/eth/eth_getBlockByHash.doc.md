@@ -17,7 +17,7 @@ Returns information about a block by block hash
 
 ## Results
 
-A block, or `null` if no such block exists.
+A block, or `null` if no such block is known to this node.
 
 {{ macro_returned_block }}
 
