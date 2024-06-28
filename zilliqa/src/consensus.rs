@@ -659,10 +659,7 @@ impl Consensus {
         let rewards_per_block =
             self.config.consensus.rewards_per_hour / self.config.consensus.blocks_per_hour as u128;
 
-        let proposer = self
-            .leader_at_block(parent_block, view)
-            .unwrap()
-            .public_key;
+        let proposer = self.leader_at_block(parent_block, view).unwrap().public_key;
         if let Some(proposer_address) = self.state.get_reward_address(proposer)? {
             let reward = rewards_per_block / 2;
             self.state
@@ -1499,7 +1496,12 @@ impl Consensus {
                 == 0
             {
                 if let Some(snapshot_path) = self.db.create_checkpoint_path(block.number())? {
-                    let parent = self.db.get_block_by_hash(&block.parent_hash())?.ok_or(anyhow!("Trying to checkpoint block, but we don't have its parent"))?;
+                    let parent =
+                        self.db
+                            .get_block_by_hash(&block.parent_hash())?
+                            .ok_or(anyhow!(
+                                "Trying to checkpoint block, but we don't have its parent"
+                            ))?;
                     self.message_sender.send_message_to_coordinator(
                         InternalMessage::ExportBlockSnapshot(
                             Box::new(block),

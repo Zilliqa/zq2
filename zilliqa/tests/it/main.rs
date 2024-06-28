@@ -375,7 +375,9 @@ impl Network {
             json_rpc_port: json_rcp_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            checkpoint_file: options.snapshot_path.map(|path| path.to_str().unwrap().to_owned()),
+            checkpoint_file: options
+                .snapshot_path
+                .map(|path| path.to_str().unwrap().to_owned()),
             disable_rpc: disable_rpc_default(),
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),

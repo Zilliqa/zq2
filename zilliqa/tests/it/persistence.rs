@@ -1,4 +1,4 @@
-use std::{fs, io::Read};
+use std::fs;
 
 use ethabi::Token;
 use ethers::{providers::Middleware, types::TransactionRequest};
@@ -169,9 +169,14 @@ async fn checkpoints_test(mut network: Network) {
     let function = abi.function("set").unwrap();
     let mut address_buf = [0u8; 20];
     network.rng.lock().unwrap().fill(&mut address_buf);
-    let update_tx = TransactionRequest::new()
-        .to(contract_address)
-        .data(function.encode_input(&[Token::Address(address_buf.into()), Token::Uint(new_val.into())]).unwrap());
+    let update_tx = TransactionRequest::new().to(contract_address).data(
+        function
+            .encode_input(&[
+                Token::Address(address_buf.into()),
+                Token::Uint(new_val.into()),
+            ])
+            .unwrap(),
+    );
     let update_tx_hash = wallet
         .send_transaction(update_tx, None)
         .await
@@ -179,12 +184,24 @@ async fn checkpoints_test(mut network: Network) {
         .tx_hash();
     network.run_until_receipt(&wallet, update_tx_hash, 50).await;
 
-
     // wait 5 blocks for checkpoint to happen - then 3 more to finalize that block
     network.run_until_block(&wallet, 8.into(), 100).await;
 
     // Obtain checkpoint file(s)
-    let checkpoint_files = network.nodes.iter().map(|node| node.dir.as_ref().unwrap().path().join(network.shard_id.to_string()).join("snapshots").join("5").join("snapshot.txt")).collect::<Vec<_>>();
+    let checkpoint_files = network
+        .nodes
+        .iter()
+        .map(|node| {
+            node.dir
+                .as_ref()
+                .unwrap()
+                .path()
+                .join(network.shard_id.to_string())
+                .join("snapshots")
+                .join("5")
+                .join("snapshot.txt")
+        })
+        .collect::<Vec<_>>();
     let mut len_check = 0;
     for path in &checkpoint_files {
         let metadata = fs::metadata(path).unwrap();
@@ -207,17 +224,27 @@ async fn checkpoints_test(mut network: Network) {
 
     // check storage using it
     let storage_getter = abi.function("pos1").unwrap();
-    let check_storage_tx = TransactionRequest::new()
-        .to(contract_address)
-        .data(storage_getter.encode_input(&[Token::Address(address_buf.into())]).unwrap());
-    let storage = new_node_wallet.call(&check_storage_tx.into(), None).await.unwrap();
-    let val = storage_getter.decode_output(&storage.to_vec()).unwrap();
+    let check_storage_tx = TransactionRequest::new().to(contract_address).data(
+        storage_getter
+            .encode_input(&[Token::Address(address_buf.into())])
+            .unwrap(),
+    );
+    let storage = new_node_wallet
+        .call(&check_storage_tx.into(), None)
+        .await
+        .unwrap();
+    let val = storage_getter.decode_output(&storage).unwrap();
     assert_eq!(val[0], Token::Uint(new_val.into()));
 
     // check account nonce of old wallet
-    let nonce = new_node_wallet.get_transaction_count(wallet.address(), None).await.unwrap();
+    let nonce = new_node_wallet
+        .get_transaction_count(wallet.address(), None)
+        .await
+        .unwrap();
     assert_eq!(nonce, 2.into());
 
     // check the new node is catches up and keeps up with block production
-    network.run_until_block(&new_node_wallet, 10.into(), 100).await;
+    network
+        .run_until_block(&new_node_wallet, 10.into(), 100)
+        .await;
 }
