@@ -8,7 +8,7 @@ use std::{
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy};
 use alloy_primitives::{keccak256, Address, Signature, B256, U256};
 use alloy_rlp::{Encodable, Header, EMPTY_STRING_CODE};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
@@ -24,7 +24,6 @@ use sha3::{
 };
 
 use crate::{
-    constants::{MINIMUM_ETH_GAS, MINIMUM_ZIL_GAS},
     crypto,
     crypto::Hash,
     exec::{ScillaError, ScillaException, ScillaTransition},
@@ -319,34 +318,6 @@ impl SignedTransaction {
                 crypto::Hash(Keccak256::digest(buffer).into())
             }
         }
-    }
-
-    pub fn validate_gas_limit(&self) -> Result<()> {
-        // Verify minimum gas requirement
-        match self {
-            SignedTransaction::Legacy { .. }
-            | SignedTransaction::Eip2930 { .. }
-            | SignedTransaction::Eip1559 { .. } => {
-                if self.gas_limit() < MINIMUM_ETH_GAS {
-                    bail!(
-                        "Provided evm transaction gas limit is too low: {}",
-                        self.gas_limit()
-                    );
-                }
-            }
-            SignedTransaction::Zilliqa { ref tx, .. } => {
-                // Minimum gas needed for scilla run - contract invocation
-
-                if tx.gas_limit < MINIMUM_ZIL_GAS {
-                    bail!(
-                        "Provided scilla transaction gas limit is too low: {}",
-                        tx.gas_limit
-                    );
-                }
-            }
-            _ => {}
-        }
-        Ok(())
     }
 }
 

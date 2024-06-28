@@ -3,7 +3,6 @@ mod block_store;
 mod blockhooks;
 pub mod cfg;
 pub mod consensus;
-mod constants;
 pub mod contracts;
 pub mod crypto;
 pub mod db;

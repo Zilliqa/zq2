@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, U256};
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use bitvec::bitvec;
 use eth_trie::{MemoryDB, Trie};
 use libp2p::PeerId;
@@ -517,12 +517,13 @@ impl Consensus {
         if block.gas_limit() > self.config.consensus.eth_block_gas_limit
             || block.gas_used() > block.gas_limit()
         {
-            bail!(
+            warn!(
                 "Block gas used/limit check failed. Used: {}, Limit: {}, config limit: {}",
                 block.gas_used(),
                 block.gas_limit(),
                 self.config.consensus.eth_block_gas_limit
             );
+            return Ok(None);
         }
 
         match self.check_block(&block, during_sync) {
@@ -1259,8 +1260,6 @@ impl Consensus {
         if self.db.contains_transaction(&txn.hash)? {
             return Ok(false);
         }
-
-        txn.tx.validate_gas_limit()?;
 
         let account_nonce = self.state.get_account(txn.signer)?.nonce;
         let txn_hash = txn.hash;
@@ -2129,7 +2128,8 @@ impl Consensus {
             cumulative_gas_used += gas_used;
 
             if cumulative_gas_used > block.gas_limit() {
-                bail!("Cumulative gas used by executing transactions exceeded block limit!");
+                warn!("Cumulative gas used by executing transactions exceeded block limit!");
+                return Ok(());
             }
 
             let receipt = Self::create_txn_receipt(result, tx_hash, tx_index, cumulative_gas_used);
@@ -2148,25 +2148,26 @@ impl Consensus {
         }
 
         if cumulative_gas_used != block.gas_used() {
-            bail!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());
+            warn!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());
+            return Ok(());
         }
 
         let receipts_root_hash: Hash = receipts_trie.root_hash()?.into();
         if block.header.receipts_root_hash != receipts_root_hash {
-            bail!(
+            warn!(
                 "Receipt root mismatch. Specified in block: {} vs computed: {}",
-                block.header.receipts_root_hash,
-                receipts_root_hash
+                block.header.receipts_root_hash, receipts_root_hash
             );
+            return Ok(());
         }
 
         let transactions_root_hash: Hash = transactions_trie.root_hash()?.into();
         if block.header.transactions_root_hash != transactions_root_hash {
-            bail!(
+            warn!(
                 "Transactions root mismatch. Specified in block: {} vs computed: {}",
-                block.header.transactions_root_hash,
-                transactions_root_hash
+                block.header.transactions_root_hash, transactions_root_hash
             );
+            return Ok(());
         }
 
         for (receipt, tx_index) in &mut block_receipts {
