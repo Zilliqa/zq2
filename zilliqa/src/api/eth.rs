@@ -539,6 +539,7 @@ fn get_transaction_by_block_number_and_index(
     let mut params = params.sequence();
     let block_number: BlockNumberOrTag = params.next()?;
     let index: U64 = params.next()?;
+    expect_end_of_params(&mut params, 2, 2)?;
 
     let node = node.lock().unwrap();
 
