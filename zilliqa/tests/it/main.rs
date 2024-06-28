@@ -813,10 +813,6 @@ impl Network {
                     }
                     InternalMessage::ExportBlockSnapshot(block, parent, trie_storage, output) => {
                         if self.do_snapshots {
-                            println!(
-                                "Exporting state snapshot to path {}",
-                                output.to_string_lossy()
-                            );
                             trace!(
                                 "Exporting state snapshot to path {}",
                                 output.to_string_lossy()

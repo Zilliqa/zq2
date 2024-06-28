@@ -179,46 +179,14 @@ async fn checkpoints_test(mut network: Network) {
         .tx_hash();
     network.run_until_receipt(&wallet, update_tx_hash, 50).await;
 
-    // fn recurse_files(path: &impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
-    //     let mut buf = vec![];
-    //     let entries = read_dir(path)?;
-
-    //     for entry in entries {
-    //         let entry = entry?;
-    //         let meta = entry.metadata()?;
-
-    //         if meta.is_dir() {
-    //             let mut subdir = recurse_files(&entry.path())?;
-    //             buf.append(&mut subdir);
-    //         }
-
-    //         if meta.is_file() {
-    //             buf.push(entry.path());
-    //         }
-    //     }
-
-    //     Ok(buf)
-    // }
 
     // wait 5 blocks for checkpoint to happen - then 3 more to finalize that block
     network.run_until_block(&wallet, 8.into(), 100).await;
 
     // Obtain checkpoint file(s)
     let checkpoint_files = network.nodes.iter().map(|node| node.dir.as_ref().unwrap().path().join(network.shard_id.to_string()).join("snapshots").join("5").join("snapshot.txt")).collect::<Vec<_>>();
-    // let data_dirs = network.nodes.iter().map(|node| node.dir.as_ref().unwrap().path()).collect::<Vec<_>>();
-    // println!("{data_dirs:?}");
-    // for dir in data_dirs {
-    //     println!("Datadir {dir:?}");
-    //     let paths = recurse_files(&dir).unwrap();
-    //     println!("Listing all paths inside...");
-    //     for path in paths {
-    //         println!("Contains: {path:?}");
-    //     }
-    //     println!();
-    // }
     let mut len_check = 0;
     for path in &checkpoint_files {
-        // println!("Checking metadata for file {path:?}");
         let metadata = fs::metadata(path).unwrap();
         assert!(metadata.is_file());
         let file_len = metadata.len();
@@ -226,11 +194,6 @@ async fn checkpoints_test(mut network: Network) {
         assert!(len_check == 0 || len_check == file_len); // len_check = 0 on first loop iteration
         len_check = file_len;
     }
-
-    let mut cp_file = std::fs::File::open(checkpoint_files[0].clone()).unwrap();
-    let mut data = String::new();
-    cp_file.read_to_string(&mut data).unwrap();
-    println!("{data}");
 
     // Create new node and pass it one of those checkpoint files
     let new_node_idx = network.add_node_with_options(NewNodeOptions {
@@ -254,13 +217,6 @@ async fn checkpoints_test(mut network: Network) {
     // check account nonce of old wallet
     let nonce = new_node_wallet.get_transaction_count(wallet.address(), None).await.unwrap();
     assert_eq!(nonce, 2.into());
-
-    println!("Checking balance of zero account...");
-    let balance = new_node_wallet.get_balance(H160::zero(), None).await.unwrap();
-    println!("{balance}");
-    println!("{}", network.get_node(new_node_idx).consensus.state.root_hash().unwrap());
-
-    println!("Asserts passed, trying to run network and have new node catch up...");
 
     // check the new node is catches up and keeps up with block production
     network.run_until_block(&new_node_wallet, 10.into(), 100).await;

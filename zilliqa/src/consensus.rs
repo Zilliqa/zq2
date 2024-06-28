@@ -212,12 +212,8 @@ impl Consensus {
 
         let mut block_store = BlockStore::new(db.clone(), message_sender.clone())?;
         if let Some(checkpoint_file) = &config.checkpoint_file {
-            println!("Loading checkpoint...");
             db.load_trusted_checkpoint(checkpoint_file, config.eth_chain_id)?;
-            println!("Loaded checkpoint!");
         }
-
-        println!("About to construct consensus with finalized_view {:?}...", db.get_latest_finalized_view()?);
 
         let latest_block = db
             .get_latest_finalized_view()?
@@ -227,8 +223,6 @@ impl Consensus {
                     .ok_or_else(|| anyhow!("no header found at view {view}"))
             })
             .transpose()?;
-
-        println!("Found latest_block: {latest_block:?}");
 
         let mut state = if let Some(latest_block) = &latest_block {
             trace!("Loading state from latest block");
@@ -1905,7 +1899,6 @@ impl Consensus {
     }
 
     pub fn leader_at_block(&self, block: &Block, view: u64) -> Option<Validator> {
-        println!("Getting leader_at_block for block number {}, view {}", block.number(), view);
         let Ok(state_at) = self.try_get_state_at(block.number()) else {
             return None;
         };
@@ -2090,7 +2083,6 @@ impl Consensus {
         committee: &[NodePublicKey],
     ) -> Result<()> {
         debug!("Executing block: {:?}", block.header.hash);
-        println!("Executing block {}", block.number());
 
         let parent = self
             .get_block(&block.parent_hash())?
@@ -2157,9 +2149,6 @@ impl Consensus {
             block_receipts.push(receipt);
         }
 
-        println!("State root hash after executing txs in new block: {}", self.state.root_hash().unwrap());
-
-        println!("Applying rewards at block {}", block.number());
         self.apply_rewards(committee, &parent, block.view(), &block.qc.cosigned)?;
 
         // Important - only add blocks we are going to execute because they can potentially

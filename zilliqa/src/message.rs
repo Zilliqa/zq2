@@ -245,6 +245,7 @@ pub enum InternalMessage {
     IntershardCall(IntershardCall),
     /// Trigger a snapshot export of the given block, including the state at its root hash as read
     /// from the given trie
+    /// (Snapshot block, parent block, reference to our trie DB, output path)
     ExportBlockSnapshot(Box<Block>, Box<Block>, Arc<TrieStorage>, Box<Path>),
 }
 

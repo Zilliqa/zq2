@@ -291,15 +291,11 @@ impl Db {
                     "Invalid checkpoint: account trie root hash mismatch, at line {idx}: calculated {}, checkpoint file contained {}", hex::encode(account_trie.root_hash()?.as_slice()), hex::encode(&account_trie_root)
                 ));
             }
-            if account_hash == "5380c7b7ae81a58eb98d9c78de4a1fd7fd9535fc953ed2be602daaa41767312a" {
-                println!("Deserializing ZERO account! Got account: {:?}", bincode::deserialize::<Account>(&serialized_account).unwrap());
-            }
             state_trie.insert(&hex::decode(account_hash)?, &serialized_account)?;
         }
         if state_trie.root_hash()? != block.state_root_hash().0 {
             return Err(anyhow!("Invalid checkpoint: state root hash mismatch"));
         }
-        println!("Deserialized state! Validated state root hash: {}", block.state_root_hash());
 
         let block_ref = &block; // for moving into the closure
         self.with_sqlite_tx(move |tx| {
@@ -718,10 +714,6 @@ pub fn snapshot_block_with_state<P: AsRef<Path> + Debug>(
     for (key, val) in accounts.iter() {
         let account_storage =
             account_storage.at_root(bincode::deserialize::<Account>(&val)?.storage_root);
-
-        if key == deposit_storage_key.to_vec() {
-            println!("\nExporting ZERO account!");
-        }
 
         // export the account itself
         hex::encode_to_slice(key, &mut account_key_buf)?;

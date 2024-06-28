@@ -397,7 +397,7 @@ impl State {
             })
             .build();
 
-        let e = evm.transact().unwrap();
+        let e = evm.transact()?;
         Ok(e)
     }
 

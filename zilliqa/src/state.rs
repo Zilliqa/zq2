@@ -226,18 +226,6 @@ impl State {
 
     /// Returns an error if there are any issues accessing the storage trie
     pub fn has_account(&self, address: Address) -> Result<bool> {
-        // if address == Address::ZERO {
-        //     let key = Self::account_key(address);
-        //     println!("Getting zero address {address} for some reason... Hash is {}, and account at zero address is: {:?}", hex::encode(&key.0), self.get_account(address)?);
-        // }
-        if let Err(e) = self.accounts.contains(&Self::account_key(address).0) {
-            println!("Error getting account {address} (key {}): {e:?}. Trie's root hash: {}", hex::encode(&Self::account_key(address).0), hex::encode(&self.accounts.root_hash.0));
-            println!("Available accounts at current root:");
-            for (account_key, serialized_account) in self.accounts.iter() {
-                println!("key: {}, account: {:?}", hex::encode(&account_key), bincode::deserialize::<Account>(&serialized_account).unwrap());
-            }
-        }
-
         Ok(self.accounts.contains(&Self::account_key(address).0)?)
     }
 
