@@ -20,7 +20,7 @@ A zero-based index, as a hex string - eg. `0x0`
 
 ## Returns
 
-A transaction, or `null` if no such transaction exists.
+A transaction, or `null` if no such transaction is known to this node.
 
 {{ macro_returned_transaction }}
 

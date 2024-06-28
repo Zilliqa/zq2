@@ -1,24 +1,22 @@
 # Title
 
-eth_getTransactionByBlockNumberAndIndex
+eth_getTransactionByHash
 
 # Keywords
 
-get,eth,transaction,number,block
+transaction,get,hash
 
 # Description
 
-Returns a transaction by index into a block, given by a block number.
+Retrieve a transaction by its hash, or return `null`.
 
 ## Parameters
 
-{{ macro_blocknumber }}
+### Hash
 
-### Index
+A transaction hash
 
-A zero-based index, as a hex string - eg. `0x0`
-
-## Returns
+### Returns
 
 A transaction, or `null` if no such transaction is known to this node.
 
@@ -27,18 +25,17 @@ A transaction, or `null` if no such transaction is known to this node.
 # Curl
 
 ```sh
- curl -d '{
+curl -d '{
     "id": "1",
     "jsonrpc": "2.0",
-    "method": "eth_getTransactionByBlockNumberAndIndex",
-    "params": [ "0x235", "0x0"
+    "method": "eth_getTransactionByHash",
+    "params": [ "0xf4818804242f4a1f5c8f9d255a51b80bd1e21c0047affffd5f480636ac2a9773"
  ]}' -H "Content-Type: application/json" -X POST "{{ _api_url }}"
-
 ```
 
 # Response
 
-```json
+```sh
 {
   "jsonrpc": "2.0",
   "result": {
@@ -70,5 +67,5 @@ A transaction, or `null` if no such transaction is known to this node.
 | `id`      | string | Required | `"1"`                                     |
 | `jsonrpc` | string | Required | `"2.0"`                                   |
 | `method`  | string | Required | `"eth_getTransactionByBlockHashAndIndex"` |
-| `params`  | array  | Requred  | `[ block_number, index]`                  |
+| `params`  | array  | Requred  | `[ block_hash ]`                          |
 
