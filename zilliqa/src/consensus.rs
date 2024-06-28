@@ -211,6 +211,13 @@ impl Consensus {
         );
 
         let mut block_store = BlockStore::new(db.clone(), message_sender.clone())?;
+        if let Some(checkpoint_file) = &config.checkpoint_file {
+            println!("Loading checkpoint...");
+            db.load_trusted_checkpoint(checkpoint_file, config.eth_chain_id)?;
+            println!("Loaded checkpoint!");
+        }
+
+        println!("About to construct consensus with finalized_view {:?}...", db.get_latest_finalized_view()?);
 
         let latest_block = db
             .get_latest_finalized_view()?
@@ -220,6 +227,8 @@ impl Consensus {
                     .ok_or_else(|| anyhow!("no header found at view {view}"))
             })
             .transpose()?;
+
+        println!("Found latest_block: {latest_block:?}");
 
         let mut state = if let Some(latest_block) = &latest_block {
             trace!("Loading state from latest block");
@@ -306,7 +315,7 @@ impl Consensus {
             }
             consensus.set_canonical_number(latest_block_hash, latest_block_number)?;
             // treat genesis as finalized
-            consensus.finalize(latest_block_hash, latest_block_view)?;
+            consensus.finalize_view(latest_block_view)?;
         }
 
         Ok(consensus)
@@ -647,6 +656,7 @@ impl Consensus {
     fn apply_rewards(
         &mut self,
         committee: &[NodePublicKey],
+        parent_block: &Block,
         view: u64,
         cosigned: &BitSlice,
     ) -> Result<()> {
@@ -654,14 +664,9 @@ impl Consensus {
 
         let rewards_per_block =
             self.config.consensus.rewards_per_hour / self.config.consensus.blocks_per_hour as u128;
-        let block = self.head_block();
-        // Genesis is the earliest therefore let's not overflow with subtraction
-        let parent_block = self
-            .get_block_by_number(block.number().saturating_sub(1))?
-            .unwrap();
 
         let proposer = self
-            .leader_at_block(&parent_block, view)
+            .leader_at_block(parent_block, view)
             .unwrap()
             .public_key;
         if let Some(proposer_address) = self.state.get_reward_address(proposer)? {
@@ -1010,7 +1015,7 @@ impl Consensus {
         let applied_transaction_hashes: Vec<_> =
             applied_transactions.iter().map(|tx| tx.hash).collect();
 
-        self.apply_rewards(&committee, block_view + 1, &qc.cosigned)?;
+        self.apply_rewards(&committee, &parent, block_view + 1, &qc.cosigned)?;
 
         let proposal = Block::from_qc(
             self.secret_key,
@@ -1186,7 +1191,7 @@ impl Consensus {
                         self.state.set_to_root(parent.state_root_hash().into());
                     }
 
-                    self.apply_rewards(&committee, new_view.view, &high_qc.cosigned)?;
+                    self.apply_rewards(&committee, &parent, new_view.view, &high_qc.cosigned)?;
 
                     // why does this have no txn?
                     let proposal = Block::from_agg(
@@ -1431,6 +1436,7 @@ impl Consensus {
         };
 
         // At genesis it could be fine not to have a qc block, so don't error.
+        // TODO: this should be an explicit check for genesis
         let Some(qc_parent) = self.get_block(&qc_block.parent_hash())? else {
             warn!("missing qc parent block when checking whether to finalize!");
             return Ok(());
@@ -1443,7 +1449,7 @@ impl Consensus {
         };
 
         if qc_parent.view() + 1 == qc_child.view() && qc_parent.view() + 2 == proposal.view() {
-            self.finalize(qc_parent.hash(), qc_parent.view())?;
+            self.finalize_block(qc_parent)?;
         } else {
             warn!(
                 "Failed to finalize block! Not finalizing QC block {} with view {} and number {}",
@@ -1456,14 +1462,17 @@ impl Consensus {
         Ok(())
     }
 
-    /// Intended to be used with the oldest pending block, to move the
-    /// finalized tip forward by one. Does not update view/height.
-    pub fn finalize(&mut self, hash: Hash, view: u64) -> Result<()> {
-        trace!("Finalizing block {hash} at view {view}");
+    fn finalize_view(&mut self, view: u64) -> Result<()> {
         self.finalized_view = view;
-        self.db.put_latest_finalized_view(view)?;
+        self.db.set_latest_finalized_view(view)
+    }
 
-        let receipts = self.db.get_transaction_receipts_in_block(&hash)?;
+    /// Saves the finalized tip view, and runs all hooks for the newly finalized block
+    fn finalize_block(&mut self, block: Block) -> Result<()> {
+        trace!("Finalizing block {} at view {}", block.hash(), block.view());
+        self.finalize_view(block.view())?;
+
+        let receipts = self.db.get_transaction_receipts_in_block(&block.hash())?;
 
         for (destination_shard, intershard_call) in blockhooks::get_cross_shard_messages(&receipts)?
         {
@@ -1485,6 +1494,27 @@ impl Consensus {
             for (from, to) in blockhooks::get_link_creation_messages(&receipts)? {
                 self.message_sender
                     .send_message_to_shard(to, InternalMessage::LaunchLink(from))?;
+            }
+        }
+
+        if block.number() % self.config.consensus.blocks_per_epoch == 0 && block.number() != 0 {
+            // TODO: handle epochs
+            if block.number()
+                % (self.config.consensus.blocks_per_epoch
+                    * self.config.consensus.epochs_per_checkpoint)
+                == 0
+            {
+                if let Some(snapshot_path) = self.db.create_checkpoint_path(block.number())? {
+                    let parent = self.db.get_block_by_hash(&block.parent_hash())?.ok_or(anyhow!("Trying to checkpoint block, but we don't have its parent"))?;
+                    self.message_sender.send_message_to_coordinator(
+                        InternalMessage::ExportBlockSnapshot(
+                            Box::new(block),
+                            Box::new(parent),
+                            Arc::new(self.db.state_trie()?),
+                            snapshot_path,
+                        ),
+                    )?;
+                }
             }
         }
 
@@ -1875,6 +1905,7 @@ impl Consensus {
     }
 
     pub fn leader_at_block(&self, block: &Block, view: u64) -> Option<Validator> {
+        println!("Getting leader_at_block for block number {}, view {}", block.number(), view);
         let Ok(state_at) = self.try_get_state_at(block.number()) else {
             return None;
         };
@@ -2059,6 +2090,7 @@ impl Consensus {
         committee: &[NodePublicKey],
     ) -> Result<()> {
         debug!("Executing block: {:?}", block.header.hash);
+        println!("Executing block {}", block.number());
 
         let parent = self
             .get_block(&block.parent_hash())?
@@ -2125,7 +2157,10 @@ impl Consensus {
             block_receipts.push(receipt);
         }
 
-        self.apply_rewards(committee, block.view(), &block.qc.cosigned)?;
+        println!("State root hash after executing txs in new block: {}", self.state.root_hash().unwrap());
+
+        println!("Applying rewards at block {}", block.number());
+        self.apply_rewards(committee, &parent, block.view(), &block.qc.cosigned)?;
 
         // Important - only add blocks we are going to execute because they can potentially
         // overwrite the mapping of block height to block, which there should only be one of.

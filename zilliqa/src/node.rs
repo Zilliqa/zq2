@@ -101,7 +101,7 @@ pub struct Node {
     peer_id: PeerId,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
-    consensus: Consensus,
+    pub consensus: Consensus,
 }
 
 const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
@@ -220,8 +220,11 @@ impl Node {
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::LaunchShard(source))?;
             }
-            InternalMessage::LaunchShard(_) => {
-                warn!("LaunchShard messages should be handled by the coordinator, not forwarded to a node.");
+            InternalMessage::LaunchShard(..) | InternalMessage::ExportBlockSnapshot(..) => {
+                warn!(
+                    "{} messages should be handled by the coordinator, not forwarded to a node.",
+                    message.name()
+                );
             }
         }
         Ok(())

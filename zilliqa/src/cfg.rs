@@ -49,6 +49,9 @@ pub struct NodeConfig {
     /// The location of persistence data. If not set, uses a temporary path.
     #[serde(default)]
     pub data_dir: Option<String>,
+    /// Persistence checkpoint to load.
+    #[serde(default)]
+    pub checkpoint_file: Option<String>,
 }
 
 pub fn allowed_timestamp_skew_default() -> Duration {
@@ -111,6 +114,10 @@ pub struct ConsensusConfig {
     pub eth_block_gas_limit: EvmGas,
     #[serde(serialize_with = "u128_to_str", deserialize_with = "str_to_u128")]
     pub gas_price: u128,
+    #[serde(default = "blocks_per_epoch_default")]
+    pub blocks_per_epoch: u64,
+    #[serde(default = "epochs_per_checkpoint_default")]
+    pub epochs_per_checkpoint: u64,
 }
 
 pub fn consensus_timeout_default() -> Duration {
@@ -131,6 +138,14 @@ pub fn scilla_address_default() -> String {
 
 pub fn local_address_default() -> String {
     String::from("localhost")
+}
+
+pub fn blocks_per_epoch_default() -> u64 {
+    3600
+}
+
+pub fn epochs_per_checkpoint_default() -> u64 {
+    24
 }
 
 fn default_true() -> bool {

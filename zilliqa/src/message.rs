@@ -1,8 +1,9 @@
 use std::{
     collections::HashSet,
-    fmt,
-    fmt::{Display, Formatter},
+    fmt::{self, Display, Formatter},
+    path::Path,
     str::FromStr,
+    sync::Arc,
 };
 
 use alloy_primitives::Address;
@@ -13,6 +14,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
+    db::TrieStorage,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
 };
@@ -233,7 +235,7 @@ impl ExternalMessage {
 
 /// A message intended only for local communication between shard nodes and/or the parent p2p node,
 /// but not sent over the network.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum InternalMessage {
     /// Notifies the coordinator process to spawn a node of the given shard
     LaunchShard(u64),
@@ -241,6 +243,9 @@ pub enum InternalMessage {
     LaunchLink(u64),
     /// Routes intershard call information between two locally running, bridged, shard processes
     IntershardCall(IntershardCall),
+    /// Trigger a snapshot export of the given block, including the state at its root hash as read
+    /// from the given trie
+    ExportBlockSnapshot(Box<Block>, Box<Block>, Arc<TrieStorage>, Box<Path>),
 }
 
 impl ExternalMessage {
@@ -265,6 +270,7 @@ impl InternalMessage {
             InternalMessage::LaunchShard(_) => "LaunchShard",
             InternalMessage::LaunchLink(_) => "LaunchLink",
             InternalMessage::IntershardCall(_) => "IntershardCall",
+            InternalMessage::ExportBlockSnapshot(..) => "ExportSnapshot",
         }
     }
 }
@@ -540,6 +546,7 @@ impl Block {
         };
         let parent_hash = Hash::ZERO;
         let timestamp = SystemTime::UNIX_EPOCH;
+        let gas_used = EvmGas(0);
 
         let digest = Hash::compute([
             &view.to_be_bytes(),
@@ -548,6 +555,7 @@ impl Block {
             // hash of agg missing here intentionally
             parent_hash.as_bytes(),
             state_root_hash.as_bytes(),
+            &gas_used.0.to_be_bytes(),
         ]);
 
         Block {
@@ -559,7 +567,7 @@ impl Block {
                 signature: NodeSignature::identity(),
                 state_root_hash,
                 timestamp,
-                gas_used: EvmGas(0),
+                gas_used,
             },
             qc: QuorumCertificate {
                 signature: NodeSignature::identity(),

@@ -186,6 +186,7 @@ impl Setup {
                 json_rpc_port: self.get_json_rpc_port(usize::try_into(i)?, false),
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
+                checkpoint_file: None,
                 disable_rpc: disable_rpc_default(),
                 eth_chain_id: eth_chain_id_default(),
                 consensus: ConsensusConfig {
@@ -204,6 +205,8 @@ impl Setup {
                     is_main: true,
                     blocks_per_hour: 3600,
                     rewards_per_hour: 51_000_000_000_000_000_000_000u128,
+                    blocks_per_epoch: 3600,
+                    epochs_per_checkpoint: 24,
                 },
             };
             println!("Node {i} has RPC port {0}", node_config.json_rpc_port);

@@ -1,17 +1,52 @@
-use proc_macro2::{Ident, Span, TokenStream, TokenTree};
+use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
+use syn::parse::Parser;
 use syn::ItemFn;
 
 // Much of this code is adapted from https://github.com/tokio-rs/tokio/blob/910a1e2fcf8ebafd41c2841144c3a1037af7dc40/tokio-macros/src/lib.rs.
 
 pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
-    let restrict_concurrency = args.into_iter().any(|t| {
-        if let TokenTree::Ident(i) = t {
-            i == "restrict_concurrency"
-        } else {
-            false
+    let mut restrict_concurrency = false;
+    let mut do_snapshots = false;
+
+    let parsed_args =
+        match syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
+            .parse2(args.clone())
+        {
+            Ok(it) => it,
+            Err(e) => return token_stream_with_error(args, e),
+        };
+    for arg in parsed_args {
+        match arg {
+            syn::Meta::Path(p) => {
+                let Some(name) = p.get_ident() else {
+                    return token_stream_with_error(
+                        args,
+                        syn::Error::new_spanned(p, "Attribute parameter must be ident"),
+                    );
+                };
+                match name.to_string().as_str() {
+                    "restrict_concurrency" => restrict_concurrency = true,
+                    "do_snapshots" => do_snapshots = true,
+                    _ => {
+                        return token_stream_with_error(
+                            args,
+                            syn::Error::new_spanned(p, "Unknown attribute"),
+                        )
+                    }
+                }
+            }
+            // Can match syn::Meta::Namevalue(a) here for args with params, e.g. to set node_count
+            // in the future
+            other => {
+                return token_stream_with_error(
+                    args,
+                    syn::Error::new_spanned(other, "Unknown attribute"),
+                )
+            }
         }
-    });
+    }
+
     let mut input: ItemFn = match syn::parse2(item.clone()) {
         Ok(it) => it,
         Err(e) => return token_stream_with_error(item, e),
@@ -161,7 +196,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
 
                     async move {
                         let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
-                        let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed, format!("http://{addr}"));
+                        let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed, format!("http://{addr}"), #do_snapshots);
 
                         // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
                         let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(

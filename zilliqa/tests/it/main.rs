@@ -20,6 +20,7 @@ use std::{
     fmt::Debug,
     fs,
     ops::DerefMut,
+    path::Path,
     pin::Pin,
     rc::Rc,
     sync::{
@@ -51,7 +52,7 @@ use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
 use rand::{seq::SliceRandom, Rng};
 use rand_chacha::ChaCha8Rng;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
@@ -63,13 +64,37 @@ use zilliqa::{
         scilla_address_default, ConsensusConfig, NodeConfig,
     },
     crypto::{NodePublicKey, SecretKey},
+    db,
     message::{ExternalMessage, InternalMessage},
     node::Node,
     transaction::EvmGas,
 };
 
+/// Helper struct for network.add_node()
+pub struct NewNodeOptions {
+    genesis: bool,
+    secret_key: Option<SecretKey>,
+    snapshot_path: Option<Box<Path>>,
+}
+
+impl Default for NewNodeOptions {
+    fn default() -> Self {
+        Self {
+            genesis: true, // can't derive because of this
+            secret_key: None,
+            snapshot_path: None,
+        }
+    }
+}
+
+impl NewNodeOptions {
+    fn random_key(rng: Arc<Mutex<ChaCha8Rng>>) -> SecretKey {
+        SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap()
+    }
+}
+
 /// (source, destination, message) for both
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 enum AnyMessage {
     External(ExternalMessage),
@@ -178,15 +203,17 @@ struct Network {
     seed: u64,
     pub genesis_key: SigningKey,
     scilla_address: String,
+    do_snapshots: bool,
 }
 
 impl Network {
-    /// Create a main shard network.
+    /// Create a main shard network with reasonable defaults.
     pub fn new(
         rng: Arc<Mutex<ChaCha8Rng>>,
         nodes: usize,
         seed: u64,
         scilla_address: String,
+        do_snapshots: bool,
     ) -> Network {
         Self::new_shard(
             rng,
@@ -196,9 +223,11 @@ impl Network {
             seed,
             None,
             scilla_address,
+            do_snapshots,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_shard(
         rng: Arc<Mutex<ChaCha8Rng>>,
         nodes: usize,
@@ -207,6 +236,7 @@ impl Network {
         seed: u64,
         keys: Option<Vec<SecretKey>>,
         scilla_address: String,
+        do_snapshots: bool,
     ) -> Network {
         let mut keys = keys.unwrap_or_else(|| {
             (0..nodes)
@@ -252,11 +282,14 @@ impl Network {
                 eth_block_gas_limit: EvmGas(84000000),
                 gas_price: 4_761_904_800_000u128,
                 main_shard_id: None,
+                blocks_per_epoch: 5,
+                epochs_per_checkpoint: 1,
             },
             json_rpc_port: json_rcp_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             disable_rpc: disable_rpc_default(),
             data_dir: None,
+            checkpoint_file: None,
         };
 
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
@@ -298,6 +331,7 @@ impl Network {
             children: HashMap::new(),
             genesis_key,
             scilla_address,
+            do_snapshots,
         }
     }
 
@@ -311,17 +345,19 @@ impl Network {
         )]
     }
 
-    pub fn add_node(&mut self, genesis: bool) -> usize {
-        let secret_key = SecretKey::new_from_rng(self.rng.lock().unwrap().deref_mut()).unwrap();
-        self.add_node_with_key(genesis, secret_key)
-    }
-
     pub fn is_main(&self) -> bool {
         self.send_to_parent.is_none()
     }
 
-    pub fn add_node_with_key(&mut self, genesis: bool, secret_key: SecretKey) -> usize {
-        let genesis_hash = if genesis {
+    pub fn add_node(&mut self) -> usize {
+        self.add_node_with_options(Default::default())
+    }
+
+    pub fn add_node_with_options(&mut self, options: NewNodeOptions) -> usize {
+        let secret_key = options
+            .secret_key
+            .unwrap_or_else(|| NewNodeOptions::random_key(self.rng.clone()));
+        let genesis_hash = if options.genesis {
             None
         } else {
             Some(
@@ -339,6 +375,7 @@ impl Network {
             json_rpc_port: json_rcp_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
+            checkpoint_file: options.snapshot_path.map(|path| path.to_str().unwrap().to_owned()),
             disable_rpc: disable_rpc_default(),
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),
@@ -356,6 +393,8 @@ impl Network {
                 main_shard_id: None,
                 minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                 scilla_address: scilla_address_default(),
+                blocks_per_epoch: 5,
+                epochs_per_checkpoint: 1,
             },
         };
         let (node, receiver, local_receiver) =
@@ -423,6 +462,7 @@ impl Network {
                     eth_chain_id: self.shard_id,
                     allowed_timestamp_skew: allowed_timestamp_skew_default(),
                     data_dir: None,
+                    checkpoint_file: None,
                     disable_rpc: disable_rpc_default(),
                     json_rpc_port: json_rcp_port_default(),
                     consensus: ConsensusConfig {
@@ -443,6 +483,8 @@ impl Network {
                         minimum_time_left_for_empty_block:
                             minimum_time_left_for_empty_block_default(),
                         scilla_address: scilla_address_default(),
+                        blocks_per_epoch: 5,
+                        epochs_per_checkpoint: 1,
                     },
                 };
 
@@ -703,13 +745,17 @@ impl Network {
         let (source, destination, ref contents) = message;
         match contents {
             AnyMessage::Internal(source_shard, destination_shard, ref internal_message) => {
+                trace!("Handling internal message from node in shard {source_shard}, targetting {destination_shard}");
                 match internal_message {
                     InternalMessage::LaunchShard(new_network_id) => {
                         let secret_key = self.find_node(source).unwrap().1.secret_key;
                         if let Some(child_network) = self.children.get_mut(new_network_id) {
                             if child_network.find_node(source).is_none() {
                                 trace!("Launching shard node for {new_network_id} - adding new node to shard");
-                                child_network.add_node_with_key(true, secret_key);
+                                child_network.add_node_with_options(NewNodeOptions {
+                                    secret_key: Some(secret_key),
+                                    ..Default::default()
+                                });
                             } else {
                                 trace!("Received messaged to launch new node in {new_network_id}, but node {source} already exists in that network");
                             }
@@ -725,6 +771,7 @@ impl Network {
                                     self.seed,
                                     Some(vec![secret_key]),
                                     self.scilla_address.clone(),
+                                    self.do_snapshots,
                                 ),
                             );
                         }
@@ -762,6 +809,28 @@ impl Network {
                         } else {
                             warn!("Dropping intershard message for shard that does not exist");
                             trace!(?message);
+                        }
+                    }
+                    InternalMessage::ExportBlockSnapshot(block, parent, trie_storage, output) => {
+                        if self.do_snapshots {
+                            println!(
+                                "Exporting state snapshot to path {}",
+                                output.to_string_lossy()
+                            );
+                            trace!(
+                                "Exporting state snapshot to path {}",
+                                output.to_string_lossy()
+                            );
+                            db::snapshot_block_with_state(
+                                *block.clone(),
+                                *parent.clone(),
+                                trie_storage.clone(),
+                                *source_shard,
+                                output,
+                            )
+                            .unwrap();
+                        } else {
+                            trace!("Requested export of snapshot to {}. Skipping as it's not intended to be tested.", output.to_string_lossy());
                         }
                     }
                 }

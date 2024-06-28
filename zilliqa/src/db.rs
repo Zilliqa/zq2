@@ -1,7 +1,10 @@
-use std::{collections::BTreeMap, path::Path, sync::Mutex, time::Duration};
+use std::{
+    collections::BTreeMap, fmt::Debug, fs::{self, File}, io::{BufRead, BufReader, BufWriter, Write}, path::Path, sync::{Arc, Mutex}, time::Duration
+};
 
 use alloy_primitives::Address;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use eth_trie::{EthTrie, Trie};
 use itertools::Either;
 use rusqlite::{
     named_params,
@@ -15,17 +18,10 @@ use crate::{
     crypto::{Hash, NodeSignature},
     exec::{ScillaError, ScillaException},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
+    state::{Account, State},
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt},
 };
-
-#[derive(Debug)]
-pub struct Db {
-    state_root: sled::Db,
-    block_store: Mutex<Connection>,
-}
-
-const STATE_TRIE_TREE: &[u8] = b"state_trie";
 
 macro_rules! sqlify_with_bincode {
     ($type: ty) => {
@@ -141,22 +137,33 @@ impl FromSql for EvmGas {
     }
 }
 
+const STATE_TRIE_TREE: &[u8] = b"state_trie";
+
+#[derive(Debug)]
+pub struct Db {
+    state_root: sled::Db,
+    block_store: Mutex<Connection>,
+    path: Option<Box<Path>>,
+}
+
 impl Db {
     pub fn new<P>(data_dir: Option<P>, shard_id: u64) -> Result<Self>
     where
         P: AsRef<Path>,
     {
-        let (db, connection) = match data_dir {
+        let (db, connection, path) = match data_dir {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
                 (
                     sled::open(path.join("state"))?,
                     Connection::open(path.join("blockdata.db"))?,
+                    Some(path.into_boxed_path()),
                 )
             }
             None => (
                 sled::Config::new().temporary(true).open()?,
                 Connection::open_in_memory()?,
+                None,
             ),
         };
 
@@ -165,6 +172,7 @@ impl Db {
         Ok(Db {
             state_root: db,
             block_store: Mutex::new(connection),
+            path,
         })
     }
 
@@ -212,6 +220,101 @@ impl Db {
         Ok(())
     }
 
+    pub fn create_checkpoint_path(&self, height: u64) -> Result<Option<Box<Path>>> {
+        let Some(base_path) = &self.path else {
+            // If we don't have on-disk persistency, disable checkpoints too
+            return Ok(None);
+        };
+        let snapshot_path = base_path.join("snapshots").join(height.to_string());
+        fs::create_dir_all(&snapshot_path)?;
+        Ok(Some(snapshot_path.into_boxed_path()))
+    }
+
+    pub fn load_trusted_checkpoint<P: AsRef<Path>>(&self, path: P, our_shard_id: u64) -> Result<Block> {
+        let input = File::open(path)?;
+        let reader = BufReader::with_capacity(8192 * 1024, input); // 8 MiB read chunks
+        let trie_storage = Arc::new(self.state_trie()?); // TODO: what should we do if the trie DB already contains values?
+        let mut state_trie = EthTrie::new(trie_storage.clone());
+
+        let mut lines = reader.lines();
+        // decode blocks
+        let block = lines.next().ok_or(anyhow!(
+            "Invalid checkpoint file: missing block info on line 1"
+        ))??;
+        let block: Block = bincode::deserialize(&hex::decode(block.as_bytes())?)?;
+
+        let parent = lines.next().ok_or(anyhow!(
+            "Invalid checkpoint file: missing parent info on line 2"
+        ))??;
+        let parent: Block = bincode::deserialize(&hex::decode(parent.as_bytes())?)?;
+
+        if block.parent_hash() != parent.hash() {
+            return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
+        }
+
+        let shard_number: u64 = lines.next().ok_or(anyhow!("Invalid checkpoint file: missing shard id on line 3"))??.parse()?;
+        if shard_number != our_shard_id {
+            return Err(anyhow!("Invalid snapshot: chain ID mismatch. Snapshot ID: {shard_number}, our chain_id: {our_shard_id}"));
+        }
+
+        block.verify_hash()?;
+
+        let our_max_view = self.get_latest_finalized_view()?.unwrap_or(0);
+        if block.view() <= our_max_view {
+            return Err(anyhow!("Snapshow is lower than our finalized view: snapshot is at {}, we are already at {}", block.view(), our_max_view));
+        }
+
+        // then decode state
+        for (idx, line) in lines.enumerate() {
+            let idx = idx + 2; // +1 because first line is just serialised block, +1 for 1-indexing
+            let line = line?;
+            let (account, trie) = line
+                .split_once(';')
+                .ok_or(anyhow!("Invalid checkpoint file at line {idx}"))?;
+            let (account_hash, serialized_account) = account.split_once(':').ok_or(anyhow!(
+                "Invalid checkpoint account information at line {idx}"
+            ))?;
+            let serialized_account = hex::decode(serialized_account)?;
+            let mut account_trie = EthTrie::new(trie_storage.clone());
+            for (storage_idx, storage_entry) in trie.split(',').enumerate() {
+                if storage_entry.len() == 0 {
+                    continue;
+                }
+                let (key, val) = storage_entry.split_once(':').ok_or(anyhow!(
+                    "Invalid storage entry at line {idx}, index {storage_idx}",
+                ))?;
+                account_trie.insert(&hex::decode(key)?, &hex::decode(val)?)?;
+            }
+            let account_trie_root = bincode::deserialize::<Account>(&serialized_account)?.storage_root;
+            if account_trie.root_hash()?.as_slice() != account_trie_root {
+                return Err(anyhow!(
+                    "Invalid checkpoint: account trie root hash mismatch, at line {idx}: calculated {}, checkpoint file contained {}", hex::encode(account_trie.root_hash()?.as_slice()), hex::encode(&account_trie_root)
+                ));
+            }
+            if account_hash == "5380c7b7ae81a58eb98d9c78de4a1fd7fd9535fc953ed2be602daaa41767312a" {
+                println!("Deserializing ZERO account! Got account: {:?}", bincode::deserialize::<Account>(&serialized_account).unwrap());
+            }
+            state_trie.insert(&hex::decode(account_hash)?, &serialized_account)?;
+        }
+        if state_trie.root_hash()? != block.state_root_hash().0 {
+            return Err(anyhow!("Invalid checkpoint: state root hash mismatch"));
+        }
+        println!("Deserialized state! Validated state root hash: {}", block.state_root_hash());
+
+        let block_ref = &block; // for moving into the closure
+        self.with_sqlite_tx(move |tx| {
+            self.insert_block_with_db_tx(tx, block_ref)?;
+            self.insert_block_with_db_tx(tx, &parent)?;
+            self.set_latest_finalized_view_with_db_tx(tx, block_ref.view())?;
+            self.set_high_qc_with_db_tx(tx, block_ref.qc.clone())?;
+            self.set_canonical_block_number_with_db_tx(tx, block_ref.number(), block_ref.hash())?;
+            self.set_canonical_block_number_with_db_tx(tx, parent.number(), parent.hash())?;
+            Ok(())
+        })?;
+
+        Ok(block)
+    }
+
     pub fn flush_state(&self) {
         while self.state_root.flush().unwrap() > 0 {}
     }
@@ -229,10 +332,14 @@ impl Db {
         Ok(sqlite_tx.commit()?)
     }
 
-    pub fn put_canonical_block_number(&self, number: u64, hash: Hash) -> Result<()> {
-        self.block_store.lock().unwrap().execute("INSERT OR REPLACE INTO main_chain_canonical_blocks (height, block_hash) VALUES (?1, ?2)",
+    pub fn set_canonical_block_number_with_db_tx(&self, sqlite_tx: &Connection, number: u64, hash: Hash) -> Result<()> {
+        sqlite_tx.execute("INSERT OR REPLACE INTO main_chain_canonical_blocks (height, block_hash) VALUES (?1, ?2)",
             (number, hash))?;
         Ok(())
+    }
+
+    pub fn set_canonical_block_number(&self, number: u64, hash: Hash) -> Result<()> {
+        self.set_canonical_block_number_with_db_tx(&self.block_store.lock().unwrap(), number, hash)
     }
 
     pub fn get_canonical_block_number(&self, number: u64) -> Result<Option<Hash>> {
@@ -268,14 +375,18 @@ impl Db {
             )
             .optional()?)
     }
-
-    pub fn put_latest_finalized_view(&self, view: u64) -> Result<()> {
-        self.block_store
-            .lock()
-            .unwrap()
+    
+    pub fn set_latest_finalized_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<()> {
+        sqlite_tx
             .execute("INSERT INTO tip_info (latest_finalized_view) VALUES (?1) ON CONFLICT DO UPDATE SET latest_finalized_view = ?1",
                      [view])?;
         Ok(())
+    }
+
+    pub fn set_latest_finalized_view(&self, view: u64) -> Result<()> {
+        self.set_latest_finalized_view_with_db_tx(&self.block_store
+            .lock()
+            .unwrap(), view)
     }
 
     pub fn get_latest_finalized_view(&self) -> Result<Option<u64>> {
@@ -302,12 +413,16 @@ impl Db {
             .optional()?)
     }
 
-    pub fn set_high_qc(&self, high_qc: QuorumCertificate) -> Result<()> {
-        self.block_store.lock().unwrap().execute(
+    pub fn set_high_qc_with_db_tx(&self, sqlite_tx: &Connection, high_qc: QuorumCertificate) -> Result<()> {
+        sqlite_tx.execute(
             "INSERT INTO tip_info (high_qc) VALUES (?1) ON CONFLICT DO UPDATE SET high_qc = ?1",
             [high_qc],
         )?;
         Ok(())
+    }
+
+    pub fn set_high_qc(&self, high_qc: QuorumCertificate) -> Result<()> {
+        self.set_high_qc_with_db_tx(&self.block_store.lock().unwrap(), high_qc)
     }
 
     pub fn get_high_qc(&self) -> Result<Option<QuorumCertificate>> {
@@ -567,6 +682,67 @@ impl Db {
     }
 }
 
+pub fn snapshot_block_with_state<P: AsRef<Path> + Debug>(
+    block: Block,
+    parent: Block,
+    state_trie_storage: Arc<TrieStorage>,
+    shard_id: u64,
+    output: P,
+) -> Result<()> {
+    // quick sanity check
+    if block.parent_hash() != parent.hash() {
+        return Err(anyhow!("Parent block parameter must match the snapshot block's parent hash"));
+    }
+
+    // Consider if we need better error handling here, esp. what to do if the file already exists?
+    let outfile = File::create_new(output.as_ref().join("snapshot.txt"))?;
+    let mut writer = BufWriter::with_capacity(8192 * 1024, outfile); // 8 MiB chunks
+
+    // write the block...
+    writer.write_all(hex::encode(bincode::serialize(&block)?).as_bytes())?; // TODO: better serialization (#1007)
+    writer.write_all(b"\n")?;
+    // and its parent, to keep the qc tracked
+    writer.write_all(hex::encode(bincode::serialize(&parent)?).as_bytes())?; // TODO: better serialization (#1007)
+    writer.write_all(b"\n")?;
+    // write our shard id, for sanity checking
+    writer.write_all(shard_id.to_string().as_bytes())?;
+    writer.write_all(b"\n")?;
+
+    // then write state
+    let accounts = EthTrie::new(state_trie_storage.clone()).at_root(block.state_root_hash().into());
+    let account_storage = EthTrie::new(state_trie_storage);
+    let mut account_key_buf = [0u8; 64]; // save a few allocations, since account keys are fixed length
+
+    let deposit_storage_key = State::account_key(Address::ZERO);
+
+    for (key, val) in accounts.iter() {
+        let account_storage =
+            account_storage.at_root(bincode::deserialize::<Account>(&val)?.storage_root);
+
+        if key == deposit_storage_key.to_vec() {
+            println!("\nExporting ZERO account!");
+        }
+
+        // export the account itself
+        hex::encode_to_slice(key, &mut account_key_buf)?;
+        writer.write_all(&account_key_buf)?;
+        writer.write_all(b":")?;
+        writer.write_all(hex::encode(val).as_bytes())?;
+        writer.write_all(b";")?;
+
+        // now the account storage
+        for (storage_key, storage_val) in account_storage.iter() {
+            writer.write_all(hex::encode(storage_key).as_bytes())?;
+            writer.write_all(b":")?;
+            writer.write_all(hex::encode(storage_val).as_bytes())?;
+            writer.write_all(b",")?;
+        }
+        writer.write_all(b"\n")?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
 /// An implementor of [eth_trie::DB] which uses a [sled::Tree] to persist data.
 #[derive(Debug, Clone)]
 pub struct TrieStorage {
@@ -615,5 +791,74 @@ impl eth_trie::DB for TrieStorage {
     /// We delegate this to Sled and implement flush() as a no-op.
     fn flush(&self) -> Result<(), Self::Error> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ops::Deref;
+
+    use rand::{
+        distributions::{Distribution, Uniform},
+        Rng, SeedableRng,
+    };
+    use rand_chacha::ChaCha8Rng;
+    use tempfile::tempdir;
+
+    use crate::{crypto::SecretKey, state::State};
+
+    use super::*;
+
+    #[test]
+    fn checkpoint_export_import() {
+        let test_db = sled::Config::new().temporary(true).open().unwrap();
+        let checkpoint_path = tempdir().unwrap();
+        let checkpoint_path = checkpoint_path.path();
+
+        let trie_db = Arc::new(TrieStorage::new(test_db.deref().to_owned()));
+
+        // Seed db with data
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        let distribution = Uniform::new(1, 50);
+        let mut root_trie = EthTrie::new(trie_db.clone());
+        for _ in 0..100 {
+            let account_address: [u8; 20] = rng.gen();
+            let mut account_trie = EthTrie::new(trie_db.clone());
+            let mut key = Vec::<u8>::with_capacity(50);
+            let mut value = Vec::<u8>::with_capacity(50);
+            for _ in 0..distribution.sample(&mut rng) {
+                for _ in 0..distribution.sample(&mut rng) {
+                    key.push(rng.gen());
+                }
+                for _ in 0..distribution.sample(&mut rng) {
+                    value.push(rng.gen());
+                }
+                account_trie.insert(&key, &value).unwrap();
+            }
+            let account = Account {
+                storage_root: account_trie.root_hash().unwrap(),
+                ..Default::default()
+            };
+            root_trie
+                .insert(
+                    &State::account_key(account_address.into()).0,
+                    &bincode::serialize(&account).unwrap(),
+                )
+                .unwrap();
+        }
+
+        let state_hash = root_trie.root_hash().unwrap();
+        let parent_block = Block::genesis(state_hash.into());
+        // bit of a hack to generate a successor block
+        let mut qc2 = QuorumCertificate::genesis(0);
+        qc2.block_hash = parent_block.hash();
+        qc2.view = 1;
+        let snapshot_block = Block::from_qc(SecretKey::new().unwrap(), 1, 1, qc2, parent_block.hash(), state_hash.into(), vec![], SystemTime::now(), EvmGas(0));
+
+        snapshot_block_with_state(snapshot_block, parent_block, trie_db, 1, &checkpoint_path).unwrap();
+
+        // now parse the checkpoint
+        let db = Db::new::<&str>(None, 0).unwrap();
+        db.load_trusted_checkpoint(&checkpoint_path.join("snapshot.txt"), 1).unwrap();
     }
 }

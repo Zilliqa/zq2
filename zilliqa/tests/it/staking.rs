@@ -134,7 +134,7 @@ async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
 async fn validators_can_join_and_become_proposer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    let index = network.add_node(true);
+    let index = network.add_node();
     let new_validator_key = network.get_node_raw(index).secret_key;
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
 
@@ -183,7 +183,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
 
     let wallet = network.genesis_wallet().await;
 
-    let index = network.add_node(true);
+    let index = network.add_node();
     let new_validator_key = network.get_node_raw(index).secret_key;
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
 

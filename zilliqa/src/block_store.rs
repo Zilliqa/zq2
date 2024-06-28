@@ -131,7 +131,7 @@ impl BlockStore {
     }
 
     pub fn set_canonical(&mut self, number: u64, hash: Hash) -> Result<()> {
-        self.db.put_canonical_block_number(number, hash)?;
+        self.db.set_canonical_block_number(number, hash)?;
         Ok(())
     }
 

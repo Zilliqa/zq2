@@ -397,7 +397,7 @@ impl State {
             })
             .build();
 
-        let e = evm.transact()?;
+        let e = evm.transact().unwrap();
         Ok(e)
     }
 
@@ -563,7 +563,10 @@ impl State {
                 let value = B256::new(value.present_value().to_be_bytes());
                 trace!(?address, ?index, ?value, "update storage");
 
-                storage.insert(&Self::account_storage_key(address, index), value.as_slice())?;
+                storage.insert(
+                    &Self::account_storage_key(address, index).0,
+                    value.as_slice(),
+                )?;
             }
 
             let account = Account {
