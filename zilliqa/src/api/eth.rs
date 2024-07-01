@@ -425,8 +425,8 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             .get_block(block_hash)?
             .ok_or_else(|| anyhow!("block not found"))?))),
         (None, from, to) => {
-            let from = node.resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest));
-            let to = node.resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest));
+            let from = node.resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest))?;
+            let to = node.resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?;
 
             if from > to {
                 return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
