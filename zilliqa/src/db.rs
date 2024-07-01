@@ -196,8 +196,11 @@ impl Db {
                 parent_hash BLOB NOT NULL,
                 signature BLOB NOT NULL,
                 state_root_hash BLOB NOT NULL,
+                transactions_root_hash BLOB NOT NULL,
+                receipts_root_hash BLOB NOT NULL,
                 timestamp NUMERIC NOT NULL,
                 gas_used INTEGER NOT NULL,
+                gas_limit INTEGER NOT NULL,
                 qc BLOB NOT NULL,
                 agg BLOB);
             CREATE TABLE IF NOT EXISTS main_chain_canonical_blocks (
@@ -262,11 +265,13 @@ impl Db {
         if block.hash() != *hash {
             return Err(anyhow!("Checkpoint does not match trusted hash"));
         }
+        block.verify_hash()?;
 
         let parent = lines.next().ok_or(anyhow!(
             "Invalid checkpoint file: missing parent info on line 2"
         ))??;
         let parent: Block = bincode::deserialize(&hex::decode(parent.as_bytes())?)?;
+        parent.verify_hash()?;
 
         if block.parent_hash() != parent.hash() {
             return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
@@ -281,8 +286,6 @@ impl Db {
         if shard_number != our_shard_id {
             return Err(anyhow!("Invalid snapshot: chain ID mismatch. Snapshot ID: {shard_number}, our chain_id: {our_shard_id}"));
         }
-
-        block.verify_hash()?;
 
         let our_max_view = self.get_latest_finalized_view()?.unwrap_or(0);
         if block.view() <= our_max_view {
@@ -558,8 +561,8 @@ impl Db {
     pub fn insert_block_with_db_tx(&self, sqlite_tx: &Connection, block: &Block) -> Result<()> {
         sqlite_tx.execute(
             "INSERT INTO blocks
-                (block_hash, view, height, parent_hash, signature, state_root_hash, timestamp, gas_used, qc, agg)
-            VALUES (:block_hash, :view, :height, :parent_hash, :signature, :state_root_hash, :timestamp, :gas_used, :qc, :agg)",
+                (block_hash, view, height, parent_hash, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, qc, agg)
+            VALUES (:block_hash, :view, :height, :parent_hash, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :qc, :agg)",
             named_params! {
                 ":block_hash": block.header.hash,
                 ":view": block.header.view,
@@ -567,8 +570,11 @@ impl Db {
                 ":parent_hash": block.header.parent_hash,
                 ":signature": block.header.signature,
                 ":state_root_hash": block.header.state_root_hash,
+                ":transactions_root_hash": block.header.transactions_root_hash,
+                ":receipts_root_hash": block.header.receipts_root_hash,
                 ":timestamp": SystemTimeSqlable(block.header.timestamp),
                 ":gas_used": block.header.gas_used,
+                ":gas_limit": block.header.gas_limit,
                 ":qc": block.qc,
                 ":agg": block.agg,
             })?;
@@ -589,17 +595,20 @@ impl Db {
                     parent_hash: row.get(3)?,
                     signature: row.get(4)?,
                     state_root_hash: row.get(5)?,
-                    timestamp: row.get::<_, SystemTimeSqlable>(6)?.into(),
-                    gas_used: row.get(7)?,
+                    transactions_root_hash: row.get(6)?,
+                    receipts_root_hash: row.get(7)?,
+                    timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
+                    gas_used: row.get(9)?,
+                    gas_limit: row.get(10)?,
                 },
-                qc: row.get(8)?,
-                agg: row.get(9)?,
+                qc: row.get(11)?,
+                agg: row.get(12)?,
                 transactions: vec![],
             })
         }
         macro_rules! query_block {
             ($cond: tt, $key: tt) => {
-                self.block_store.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, parent_hash, signature, state_root_hash, timestamp, gas_used, qc, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
+                self.block_store.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, parent_hash, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, qc, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
             };
         }
         Ok(match key {
@@ -829,6 +838,7 @@ impl eth_trie::DB for TrieStorage {
 mod tests {
     use std::ops::Deref;
 
+    use alloy_consensus::EMPTY_ROOT_HASH;
     use rand::{
         distributions::{Distribution, Uniform},
         Rng, SeedableRng,
@@ -890,8 +900,11 @@ mod tests {
             qc2,
             parent_block.hash(),
             state_hash.into(),
+            EMPTY_ROOT_HASH.into(),
+            EMPTY_ROOT_HASH.into(),
             vec![],
             SystemTime::now(),
+            EvmGas(0),
             EvmGas(0),
         );
 
