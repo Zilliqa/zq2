@@ -38,9 +38,9 @@ The block number can be:
  * A block hash as a string eg. `"0xf77e76c25038b0be1fbd12a4f3e404173802bf0c9a9e62deef7949201d59ebfb`
  * `"earliest"` for the earliest block
  * `"latest"` for the latest block
- * `"safe"` for the last block known to be safe.
- * `"finalized"` for the latest finalized block - in Zilliqa 2 this is the same as the `safe` block.
- * `"pending"` is a synonym for `latest`.
+ * `"safe"` for the block that the node's high quorum certificate points to
+ * `"finalized"` for the latest finalized block.
+ * `"pending"` is the block that is about to be created.
 
 # blocknumber_optional
 

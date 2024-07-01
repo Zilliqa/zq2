@@ -268,7 +268,7 @@ impl Node {
             BlockNumberOrTag::Number(n) => n,
             BlockNumberOrTag::Earliest => 0,
             BlockNumberOrTag::Latest => self.get_chain_tip(),
-            BlockNumberOrTag::Pending => self.get_chain_tip(),
+            BlockNumberOrTag::Pending => todo!(),
             BlockNumberOrTag::Finalized => {
                 let Ok(Some(view)) = self.db.get_latest_finalized_view() else {
                     return 0u64;
@@ -330,11 +330,7 @@ impl Node {
         }
     }
 
-    pub fn get_state(&self, block_id: impl Into<BlockId> + Copy + Debug) -> Result<State> {
-        let block = self
-            .get_block(block_id)?
-            .ok_or_else(|| anyhow!("missing block: {block_id:?}"))?;
-
+    pub fn get_state(&self, block: &Block) -> Result<State> {
         Ok(self
             .consensus
             .state()
@@ -665,16 +661,12 @@ impl Node {
 
     pub fn call_contract(
         &mut self,
-        block_id: BlockId,
+        block: &Block,
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
         amount: u128,
     ) -> Result<Vec<u8>> {
-        let block = self
-            .get_block(block_id)?
-            .ok_or_else(|| anyhow!("block not found"))?;
-
         trace!("call_contract: block={:?}", block);
 
         let state = self
@@ -732,7 +724,7 @@ impl Node {
         let block = self
             .get_block(block_number)?
             .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
-        let state = self.get_state(block_number)?;
+        let state = self.get_state(&block)?;
 
         state.estimate_gas(
             from_addr,

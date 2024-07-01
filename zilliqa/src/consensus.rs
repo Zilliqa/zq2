@@ -930,7 +930,7 @@ impl Consensus {
         Ok(None)
     }
 
-    fn propose_block_inner(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         let num = self.db.get_highest_block_number().unwrap().unwrap();
         let block = self.get_block_by_number(num).unwrap().unwrap();
 
@@ -1010,15 +1010,6 @@ impl Consensus {
             block_hash,
             (signatures, cosigned, cosigned_weight, supermajority_reached),
         );
-
-        Ok(Some((proposal, applied_transactions)))
-    }
-
-    fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        let (proposal, applied_transactions) = self
-            .propose_block_inner()?
-            .ok_or_else(|| anyhow!("Unable to propose new block!"))?;
-
         // as a future improvement, process the proposal before broadcasting it
         trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### vote successful, we are proposing block");
         // intershard transactions are not meant to be broadcast
@@ -1035,27 +1026,6 @@ impl Consensus {
             self.transaction_pool.insert_transaction(tx, account_nonce);
         }
         Ok(Some((proposal, broadcasted_transactions)))
-    }
-
-    pub fn propose_pending_block(&mut self) -> Result<Block> {
-        let (proposal, applied_transactions) = self
-            .propose_block_inner()?
-            .ok_or_else(|| anyhow!("Unable to propose new block!"))?;
-
-        // Check if the votes entry is empty - if so - remove it
-        if let Some((signatures, ..)) = self.votes.get(&proposal.hash()) {
-            if signatures.is_empty() {
-                self.votes.remove(&proposal.hash());
-            }
-        }
-
-        // Re-insert all transactions that were executed during block proposal - they were removed from tx_pool and have to be re-added
-        for tx in applied_transactions {
-            let nonce = tx.tx.nonce().unwrap_or_default();
-            self.transaction_pool.insert_transaction(tx, nonce);
-        }
-
-        Ok(proposal)
     }
 
     fn are_we_leader_for_view(&mut self, parent_hash: Hash, view: u64) -> bool {

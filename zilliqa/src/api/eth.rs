@@ -3,14 +3,14 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy};
-use alloy_eips::{eip2930::AccessList, BlockId, BlockNumberOrTag};
+use alloy_eips::{eip2930::AccessList, BlockId, BlockNumberOrTag, RpcBlockHash};
 use alloy_primitives::{Address, Bytes, Parity, Signature, TxKind, B256, U256, U64};
 use alloy_rlp::{Decodable, Header};
 use alloy_rpc_types::{
     pubsub::{self, SubscriptionKind},
     FilteredParams,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use itertools::{Either, Itertools};
 use jsonrpsee::{
     core::StringError,
@@ -93,6 +93,48 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     module
 }
 
+// See https://eips.ethereum.org/EIPS/eip-1898
+fn build_errored_response_for_missing_block(
+    request: BlockId,
+    result: Option<Block>,
+) -> Result<Block> {
+    // Block has been found
+    if let Some(block) = result {
+        return Ok(block);
+    }
+
+    // There's no specific error for requests not having block_hash and optional canonical parameter
+    let BlockId::Hash(RpcBlockHash {
+        require_canonical, ..
+    }) = request
+    else {
+        bail!("Unable to find a block with given id!");
+    };
+
+    let require_canonical = require_canonical.unwrap_or_default();
+
+    match require_canonical {
+        true => {
+            const INVALID_INPUT: i32 = -32000;
+            let response = ErrorObjectOwned::owned(
+                INVALID_INPUT,
+                "Invalid input".to_string(),
+                Option::<String>::None,
+            );
+            Err(response.into())
+        }
+        false => {
+            const RESOURCE_NOT_FOUND: i32 = -32001;
+            let response = ErrorObjectOwned::owned(
+                RESOURCE_NOT_FOUND,
+                "Resource not found".to_string(),
+                Option::<String>::None,
+            );
+            Err(response.into())
+        }
+    }
+}
+
 fn expect_end_of_params(seq: &mut ParamsSequence, min: u32, max: u32) -> Result<()> {
     // Styled after the geth error message.
     let msg = if min != max {
@@ -128,8 +170,13 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
-    let ret = node.lock().unwrap().call_contract(
-        block_id,
+    let mut node = node.lock().unwrap();
+    let block = node.get_block(block_id)?;
+
+    let block = build_errored_response_for_missing_block(block_id, block)?;
+
+    let ret = node.call_contract(
+        &block,
         call_params.from,
         call_params.to,
         call_params.data.clone(),
@@ -179,10 +226,13 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
+    let node = node.lock().unwrap();
+    let block = node.get_block(block_id)?;
+
+    let block = build_errored_response_for_missing_block(block_id, block)?;
+
     Ok(node
-        .lock()
-        .unwrap()
-        .get_state(block_id)?
+        .get_state(&block)?
         .get_account(address)?
         .balance
         .to_hex())
@@ -194,13 +244,14 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
+    let node = node.lock().unwrap();
+    let block = node.get_block(block_id)?;
+
+    let block = build_errored_response_for_missing_block(block_id, block)?;
+
     // For compatibility with Zilliqa 1, eth_getCode also returns Scilla code if any is present.
-    let code = &node
-        .lock()
-        .unwrap()
-        .get_state(block_id)?
-        .get_account(address)?
-        .code;
+    let code = node.get_state(&block)?.get_account(address)?.code;
+
     // do it this way so the compiler will tell us when another option inevitably
     // turns up and we have to deal with it ..
     let return_code = if code.is_eoa() {
@@ -224,10 +275,12 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 3, 3)?;
 
+    let node = node.lock().unwrap();
+    let block = node.get_block(block_id)?;
+    let block = build_errored_response_for_missing_block(block_id, block)?;
+
     let value = node
-        .lock()
-        .unwrap()
-        .get_state(block_id)?
+        .get_state(&block)?
         .get_account_storage(address, position)?;
 
     Ok(value.to_hex())
@@ -240,13 +293,11 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 3, 3)?;
 
-    Ok(node
-        .lock()
-        .unwrap()
-        .get_state(block_id)?
-        .get_account(address)?
-        .nonce
-        .to_hex())
+    let node = node.lock().unwrap();
+    let block = node.get_block(block_id)?;
+    let block = build_errored_response_for_missing_block(block_id, block)?;
+
+    Ok(node.get_state(&block)?.get_account(address)?.nonce.to_hex())
 }
 
 fn get_gas_price(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
