@@ -2,14 +2,13 @@ use std::{
     collections::HashSet,
     fmt::{self, Display, Formatter},
     path::Path,
-    str::FromStr,
     sync::Arc,
 };
 
 use alloy_primitives::Address;
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
@@ -92,6 +91,10 @@ impl Proposal {
             },
             self.transactions,
         )
+    }
+
+    pub fn hash(&self) -> Hash {
+        self.header.hash
     }
 
     pub fn number(&self) -> u64 {
@@ -185,17 +188,13 @@ impl NewView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockRequest(pub BlockRef);
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockBatchRequest(pub BlockRef);
+pub struct BlockRequest {
+    pub from_view: u64,
+    pub to_view: u64,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
-    pub proposal: Proposal,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockBatchResponse {
     pub proposals: Vec<Proposal>,
 }
 
@@ -218,8 +217,6 @@ pub enum ExternalMessage {
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
-    BlockBatchRequest(BlockBatchRequest),
-    BlockBatchResponse(BlockBatchResponse),
     NewTransaction(SignedTransaction),
     RequestResponse,
 }
@@ -229,6 +226,35 @@ impl ExternalMessage {
         match self {
             ExternalMessage::Proposal(p) => Some(p),
             _ => None,
+        }
+    }
+}
+
+/// Returns a terse, human-readable summary of a message.
+impl Display for ExternalMessage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            ExternalMessage::Proposal(p) => write!(f, "Proposal({})", p.view()),
+            ExternalMessage::Vote(_) => write!(f, "Vote"),
+            ExternalMessage::NewView(_) => write!(f, "NewView"),
+            ExternalMessage::BlockRequest(r) => {
+                write!(f, "BlockRequest({}..={})", r.from_view, r.to_view)
+            }
+            ExternalMessage::BlockResponse(r) => {
+                let mut views = r.proposals.iter().map(|p| p.view());
+                let first = views.next();
+                let last = views.last();
+                match (first, last) {
+                    (None, None) => write!(f, "BlockResponse([])"),
+                    (Some(first), None) => write!(f, "BlockResponse([{first}])"),
+                    (Some(first), Some(last)) => {
+                        write!(f, "BlockResponse([{first}, ..., {last}])")
+                    }
+                    (None, Some(_)) => unreachable!(),
+                }
+            }
+            ExternalMessage::NewTransaction(_) => write!(f, "NewTransaction"),
+            ExternalMessage::RequestResponse => write!(f, "RequestResponse"),
         }
     }
 }
@@ -249,29 +275,16 @@ pub enum InternalMessage {
     ExportBlockSnapshot(Box<Block>, Box<Block>, Arc<TrieStorage>, Box<Path>),
 }
 
-impl ExternalMessage {
-    pub fn name(&self) -> &'static str {
+/// Returns a terse, human-readable summary of a message.
+impl Display for InternalMessage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            ExternalMessage::Proposal(_) => "Proposal",
-            ExternalMessage::Vote(_) => "Vote",
-            ExternalMessage::NewView(_) => "NewView",
-            ExternalMessage::BlockRequest(_) => "BlockRequest",
-            ExternalMessage::BlockResponse(_) => "BlockResponse",
-            ExternalMessage::BlockBatchRequest(_) => "BlockBatchRequest",
-            ExternalMessage::BlockBatchResponse(_) => "BlockBatchResponse",
-            ExternalMessage::NewTransaction(_) => "NewTransaction",
-            ExternalMessage::RequestResponse => "RequestResponse",
-        }
-    }
-}
-
-impl InternalMessage {
-    pub fn name(&self) -> &'static str {
-        match self {
-            InternalMessage::LaunchShard(_) => "LaunchShard",
-            InternalMessage::LaunchLink(_) => "LaunchLink",
-            InternalMessage::IntershardCall(_) => "IntershardCall",
-            InternalMessage::ExportBlockSnapshot(..) => "ExportSnapshot",
+            InternalMessage::LaunchShard(id) => write!(f, "LaunchShard({id})"),
+            InternalMessage::LaunchLink(dest) => write!(f, "LaunchLink({dest})"),
+            InternalMessage::IntershardCall(_) => write!(f, "IntershardCall"),
+            InternalMessage::ExportBlockSnapshot(block, ..) => {
+                write!(f, "ExportSnapshot({})", block.number())
+            }
         }
     }
 }
@@ -431,94 +444,6 @@ impl Default for BlockHeader {
             state_root_hash: Hash(Keccak256::digest([alloy_rlp::EMPTY_STRING_CODE]).into()),
             timestamp: SystemTime::UNIX_EPOCH,
             gas_used: EvmGas(0),
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum BlockNumber {
-    Number(u64),
-    Earliest,
-    Latest,
-    Safe,
-    Finalized,
-    Pending,
-}
-
-impl Display for BlockNumber {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Number(num) => num.to_string(),
-                Self::Earliest => "earliest".to_string(),
-                Self::Latest => "latest".to_string(),
-                Self::Safe => "safe".to_string(),
-                Self::Finalized => "finalized".to_string(),
-                Self::Pending => "pending".to_string(),
-            }
-        )
-    }
-}
-
-impl From<u64> for BlockNumber {
-    fn from(num: u64) -> Self {
-        Self::Number(num)
-    }
-}
-
-impl<'de> Deserialize<'de> for BlockNumber {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct Visitor;
-
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = BlockNumber;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(formatter, "a non-negative integer or a string")
-            }
-
-            fn visit_u64<E>(self, val: u64) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(BlockNumber::Number(val))
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                v.parse().map_err(serde::de::Error::custom)
-            }
-        }
-
-        deserializer.deserialize_any(Visitor)
-    }
-}
-
-impl FromStr for BlockNumber {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "earliest" => Ok(BlockNumber::Earliest),
-            "latest" => Ok(BlockNumber::Latest),
-            "safe" => Ok(BlockNumber::Safe),
-            "finalized" => Ok(BlockNumber::Finalized),
-            "pending" => Ok(BlockNumber::Pending),
-            number => {
-                if let Some(number) = number.strip_prefix("0x") {
-                    let number = u64::from_str_radix(number, 16)?;
-                    Ok(BlockNumber::Number(number))
-                } else {
-                    Err(anyhow!("invalid block number: {s}"))
-                }
-            }
         }
     }
 }

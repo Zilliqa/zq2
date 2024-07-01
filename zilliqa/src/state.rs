@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    cfg::ConsensusConfig, contracts, crypto, db::TrieStorage, inspector, message::BlockHeader,
-    scilla::Scilla, transaction::EvmGas,
+    cfg::ConsensusConfig, contracts, crypto, db::TrieStorage, exec::BaseFeeCheck, inspector,
+    message::BlockHeader, scilla::Scilla, transaction::EvmGas,
 };
 
 #[derive(Debug)]
@@ -33,6 +33,7 @@ pub struct State {
     scilla: Arc<OnceLock<Mutex<Scilla>>>,
     scilla_address: String,
     local_address: String,
+    scilla_lib_dir: String,
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
 }
@@ -46,8 +47,9 @@ impl State {
             scilla: Arc::new(OnceLock::new()),
             scilla_address: config.scilla_address.clone(),
             local_address: config.local_address.clone(),
+            scilla_lib_dir: config.scilla_lib_dir.clone(),
             block_gas_limit: config.eth_block_gas_limit,
-            gas_price: config.gas_price,
+            gas_price: *config.gas_price,
         }
     }
 
@@ -57,6 +59,7 @@ impl State {
                 Mutex::new(Scilla::new(
                     self.scilla_address.clone(),
                     self.local_address.clone(),
+                    self.scilla_lib_dir.clone(),
                 ))
             })
             .lock()
@@ -89,13 +92,12 @@ impl State {
         }
 
         for (address, balance) in config.genesis_accounts {
-            let balance: u128 = balance.parse()?;
-            state.mutate_account(address, |a| a.balance = balance)?;
+            state.mutate_account(address, |a| a.balance = *balance)?;
         }
 
         let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
             contracts::deposit::BYTECODE.to_vec(),
-            &[Token::Uint(config.minimum_stake.into())],
+            &[Token::Uint((*config.minimum_stake).into())],
         )?;
 
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
@@ -105,15 +107,18 @@ impl State {
                 Token::Bytes(pub_key.as_bytes()),
                 Token::Bytes(peer_id.to_bytes()),
                 Token::Address(ethabi::Address::from(reward_address.into_array())),
-                Token::Uint(ethabi::Uint::from_dec_str(&stake)?),
+                Token::Uint((*stake).into()),
             ])?;
-            let ResultAndState {
-                result,
-                state: result_state,
-            } = state.apply_transaction_evm(
+            let (
+                ResultAndState {
+                    result,
+                    state: result_state,
+                },
+                ..,
+            ) = state.apply_transaction_evm(
                 Address::ZERO,
                 Some(contract_addr::DEPOSIT),
-                config.gas_price,
+                0,
                 config.eth_block_gas_limit,
                 0,
                 data,
@@ -121,6 +126,7 @@ impl State {
                 0,
                 BlockHeader::default(),
                 inspector::noop(),
+                BaseFeeCheck::Ignore,
             )?;
             if !result.is_success() {
                 return Err(anyhow!("setting stake failed: {result:?}"));
@@ -138,6 +144,7 @@ impl State {
             scilla: self.scilla.clone(),
             scilla_address: self.scilla_address.clone(),
             local_address: self.local_address.clone(),
+            scilla_lib_dir: self.scilla_lib_dir.clone(),
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
         }

@@ -50,16 +50,23 @@ module "validators" {
 
   config          = <<-EOT
   p2p_port = 3333
-  bootstrap_address = [ "${local.bootstrap_peer_id}", "/dns/bootstrap.${var.subdomain}/tcp/3333" ]
+  bootstrap_address = [ "${local.bootstrap_peer_id}", "/ipv4/${data.google_compute_address.bootstrap.address}/tcp/3333" ]
 
   [[nodes]]
   eth_chain_id = ${var.eth_chain_id}
   allowed_timestamp_skew = { secs = 60, nanos = 0 }
   data_dir = "/data"
-  consensus.consensus_timeout = { secs = 60, nanos = 0 }
-  consensus.genesis_accounts = [ ["${local.genesis_address}", "1000000000000000000000000"] ]
-  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "32000000000000000000", "${local.genesis_address}"] ]
+  consensus.genesis_accounts = [ ["${local.genesis_address}", "21_000_000_000_000_000_000_000_000_000"] ]
+  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "10_000_000_000_000_000_000_000_000", "${local.genesis_address}"] ]
 
+  # Reward parameters
+  consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
+  consensus.blocks_per_hour = 3600
+  consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
+  # Gas parameters
+  consensus.eth_block_gas_limit = 84000000
+  consensus.gas_price = "4_761_904_800_000"
+  
   EOT
   secret_key      = each.value.node_keys[each.key]
   zq_network_name = var.network_name

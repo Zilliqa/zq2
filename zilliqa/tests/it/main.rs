@@ -59,9 +59,11 @@ use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tracing::*;
 use zilliqa::{
     cfg::{
-        allowed_timestamp_skew_default, disable_rpc_default, eth_chain_id_default,
-        json_rcp_port_default, local_address_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, ConsensusConfig, NodeConfig,
+        allowed_timestamp_skew_default, block_request_batch_size_default,
+        block_request_limit_default, disable_rpc_default, eth_chain_id_default,
+        json_rcp_port_default, local_address_default, max_blocks_in_flight_default,
+        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
+        Amount, ConsensusConfig, NodeConfig,
     },
     crypto::{NodePublicKey, SecretKey},
     db,
@@ -71,20 +73,10 @@ use zilliqa::{
 };
 
 /// Helper struct for network.add_node()
+#[derive(Default)]
 pub struct NewNodeOptions {
-    genesis: bool,
     secret_key: Option<SecretKey>,
     snapshot_path: Option<Box<Path>>,
-}
-
-impl Default for NewNodeOptions {
-    fn default() -> Self {
-        Self {
-            genesis: true, // can't derive because of this
-            secret_key: None,
-            snapshot_path: None,
-        }
-    }
 }
 
 impl NewNodeOptions {
@@ -182,7 +174,7 @@ struct TestNode {
 }
 
 struct Network {
-    pub genesis_deposits: Vec<(NodePublicKey, PeerId, String, Address)>,
+    pub genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)>,
     /// Child shards.
     pub children: HashMap<u64, Network>,
     pub shard_id: u64,
@@ -203,6 +195,7 @@ struct Network {
     seed: u64,
     pub genesis_key: SigningKey,
     scilla_address: String,
+    scilla_lib_dir: String,
     do_snapshots: bool,
 }
 
@@ -213,6 +206,7 @@ impl Network {
         nodes: usize,
         seed: u64,
         scilla_address: String,
+        scilla_lib_dir: String,
         do_snapshots: bool,
     ) -> Network {
         Self::new_shard(
@@ -223,6 +217,7 @@ impl Network {
             seed,
             None,
             scilla_address,
+            scilla_lib_dir,
             do_snapshots,
         )
     }
@@ -236,6 +231,7 @@ impl Network {
         seed: u64,
         keys: Option<Vec<SecretKey>>,
         scilla_address: String,
+        scilla_lib_dir: String,
         do_snapshots: bool,
     ) -> Network {
         let mut keys = keys.unwrap_or_else(|| {
@@ -257,7 +253,7 @@ impl Network {
                 (
                     k.node_public_key(),
                     k.to_libp2p_keypair().public().to_peer_id(),
-                    stake.to_string(),
+                    stake.into(),
                     Address::random_with(rng.lock().unwrap().deref_mut()),
                 )
             })
@@ -267,7 +263,6 @@ impl Network {
             eth_chain_id: shard_id,
             consensus: ConsensusConfig {
                 genesis_deposits: genesis_deposits.clone(),
-                genesis_hash: None,
                 is_main: send_to_parent.is_none(),
                 consensus_timeout: Duration::from_secs(1),
                 minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
@@ -275,12 +270,13 @@ impl Network {
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
                 scilla_address: scilla_address.clone(),
+                scilla_lib_dir: scilla_lib_dir.clone(),
                 local_address: "host.docker.internal".to_owned(),
-                rewards_per_hour: 204_000_000_000_000_000_000_000u128,
+                rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                 blocks_per_hour: 3600 * 40,
-                minimum_stake: 32_000_000_000_000_000_000u128,
+                minimum_stake: 32_000_000_000_000_000_000u128.into(),
                 eth_block_gas_limit: EvmGas(84000000),
-                gas_price: 4_761_904_800_000u128,
+                gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
                 blocks_per_epoch: 5,
                 epochs_per_checkpoint: 1,
@@ -290,6 +286,9 @@ impl Network {
             disable_rpc: disable_rpc_default(),
             data_dir: None,
             checkpoint_file: None,
+            block_request_limit: block_request_limit_default(),
+            max_blocks_in_flight: max_blocks_in_flight_default(),
+            block_request_batch_size: block_request_batch_size_default(),
         };
 
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
@@ -332,16 +331,17 @@ impl Network {
             genesis_key,
             scilla_address,
             do_snapshots,
+            scilla_lib_dir,
         }
     }
 
-    fn genesis_accounts(genesis_key: &SigningKey) -> Vec<(Address, String)> {
+    fn genesis_accounts(genesis_key: &SigningKey) -> Vec<(Address, Amount)> {
         vec![(
             Address::new(secret_key_to_address(genesis_key).0),
             1_000_000_000u128
                 .checked_mul(10u128.pow(18))
                 .unwrap()
-                .to_string(),
+                .into(),
         )]
     }
 
@@ -357,18 +357,6 @@ impl Network {
         let secret_key = options
             .secret_key
             .unwrap_or_else(|| NewNodeOptions::random_key(self.rng.clone()));
-        let genesis_hash = if options.genesis {
-            None
-        } else {
-            Some(
-                self.nodes[0]
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .get_genesis_hash()
-                    .unwrap(),
-            )
-        };
 
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
@@ -381,23 +369,26 @@ impl Network {
             disable_rpc: disable_rpc_default(),
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),
-                genesis_hash,
                 is_main: self.is_main(),
                 consensus_timeout: Duration::from_secs(1),
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
                 local_address: "host.docker.internal".to_owned(),
-                rewards_per_hour: 204_000_000_000_000_000_000_000u128,
+                rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                 blocks_per_hour: 3600 * 40,
-                minimum_stake: 32_000_000_000_000_000_000u128,
+                minimum_stake: 32_000_000_000_000_000_000u128.into(),
                 eth_block_gas_limit: EvmGas(84000000),
-                gas_price: 4_761_904_800_000u128,
+                gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
                 minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                 scilla_address: scilla_address_default(),
                 blocks_per_epoch: 5,
                 epochs_per_checkpoint: 1,
+                scilla_lib_dir: scilla_lib_dir_default(),
             },
+            block_request_limit: block_request_limit_default(),
+            max_blocks_in_flight: max_blocks_in_flight_default(),
+            block_request_batch_size: block_request_batch_size_default(),
         };
         let (node, receiver, local_receiver) =
             node(config, secret_key, self.nodes.len(), None).unwrap();
@@ -432,7 +423,7 @@ impl Network {
                 (
                     k.node_public_key(),
                     k.to_libp2p_keypair().public().to_peer_id(),
-                    stake.to_string(),
+                    stake.into(),
                     Address::random_with(self.rng.lock().unwrap().deref_mut()),
                 )
             })
@@ -469,17 +460,16 @@ impl Network {
                     json_rpc_port: json_rcp_port_default(),
                     consensus: ConsensusConfig {
                         genesis_deposits: genesis_deposits.clone(),
-                        genesis_hash: None,
                         is_main: self.is_main(),
                         consensus_timeout: Duration::from_secs(1),
                         // Give a genesis account 1 billion ZIL.
                         genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                         empty_block_timeout: Duration::from_millis(25),
-                        rewards_per_hour: 204_000_000_000_000_000_000_000u128,
+                        rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                         blocks_per_hour: 3600 * 40,
-                        minimum_stake: 32_000_000_000_000_000_000u128,
+                        minimum_stake: 32_000_000_000_000_000_000u128.into(),
                         eth_block_gas_limit: EvmGas(84000000),
-                        gas_price: 4_761_904_800_000u128,
+                        gas_price: 4_761_904_800_000u128.into(),
                         local_address: local_address_default(),
                         main_shard_id: None,
                         minimum_time_left_for_empty_block:
@@ -487,7 +477,11 @@ impl Network {
                         scilla_address: scilla_address_default(),
                         blocks_per_epoch: 5,
                         epochs_per_checkpoint: 1,
+                        scilla_lib_dir: scilla_lib_dir_default(),
                     },
+                    block_request_limit: block_request_limit_default(),
+                    max_blocks_in_flight: max_blocks_in_flight_default(),
+                    block_request_batch_size: block_request_batch_size_default(),
                 };
 
                 node(config, key, i, Some(new_data_dir)).unwrap()
@@ -773,6 +767,7 @@ impl Network {
                                     self.seed,
                                     Some(vec![secret_key]),
                                     self.scilla_address.clone(),
+                                    self.scilla_lib_dir.clone(),
                                     self.do_snapshots,
                                 ),
                             );
@@ -1002,6 +997,14 @@ impl Network {
         self.nodes[index].inner.lock().unwrap()
     }
 
+    pub async fn rpc_client(&mut self, index: usize) -> Result<LocalRpcClient> {
+        Ok(LocalRpcClient {
+            id: Arc::new(AtomicU64::new(0)),
+            rpc_module: self.nodes[index].rpc_module.clone(),
+            subscriptions: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+
     pub async fn wallet_from_key(&mut self, key: SigningKey) -> Wallet {
         let wallet: LocalWallet = key.into();
         let node = self
@@ -1038,22 +1041,8 @@ fn format_message(
     message: &AnyMessage,
 ) -> String {
     let message = match message {
-        AnyMessage::External(message) => match message {
-            ExternalMessage::Proposal(proposal) => {
-                format!("{} [{}]", message.name(), proposal.header.number,)
-            }
-            ExternalMessage::BlockRequest(request) => {
-                format!("{} [{:?}]", message.name(), request.0)
-            }
-            ExternalMessage::BlockResponse(response) => {
-                format!("{} [{}]", message.name(), response.proposal.number())
-            }
-            _ => message.name().to_owned(),
-        },
-        #[allow(clippy::match_single_binding)]
-        AnyMessage::Internal(_source_shard, _destination_shard, message) => match message {
-            _ => message.name().to_owned(),
-        },
+        AnyMessage::External(message) => format!("{message}"),
+        AnyMessage::Internal(_source_shard, _destination_shard, message) => format!("{message}"),
     };
 
     let source_index = nodes.iter().find(|n| n.peer_id == source).unwrap().index;
@@ -1063,9 +1052,9 @@ fn format_message(
             .find(|n| n.peer_id == destination)
             .unwrap()
             .index;
-        format!("{source_index} -> {destination_index}: {}", message)
+        format!("{source_index} -> {destination_index}: {message}")
     } else {
-        format!("{source_index} -> *: {}", message)
+        format!("{source_index} -> *: {message}")
     }
 }
 
@@ -1177,40 +1166,14 @@ pub struct LocalRpcClient {
     subscriptions: Arc<Mutex<HashMap<u64, mpsc::Receiver<String>>>>,
 }
 
-#[async_trait]
-impl PubsubClient for LocalRpcClient {
-    type NotificationStream = Pin<Box<dyn Stream<Item = Box<RawValue>> + Send + Sync + 'static>>;
-
-    fn subscribe<T: Into<U256>>(&self, id: T) -> Result<Self::NotificationStream, Self::Error> {
-        let id: U256 = id.into();
-        let rx = self
-            .subscriptions
-            .lock()
-            .unwrap()
-            .remove(&id.as_u64())
-            .unwrap();
-        Ok(Box::pin(ReceiverStream::new(rx).map(|s| {
-            serde_json::value::to_raw_value(
-                &serde_json::from_str::<Notification<Value>>(&s)
-                    .unwrap()
-                    .params["result"],
-            )
-            .unwrap()
-        })))
-    }
-
-    fn unsubscribe<T: Into<U256>>(&self, id: T) -> Result<(), Self::Error> {
-        let id: U256 = id.into();
-        self.subscriptions.lock().unwrap().remove(&id.as_u64());
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl JsonRpcClient for LocalRpcClient {
-    type Error = HttpClientError;
-
-    async fn request<T, R>(&self, method: &str, params: T) -> Result<R, Self::Error>
+impl LocalRpcClient {
+    /// A version of request that allows the params to be optional, so we can test behaviour under
+    /// those circumstances.
+    async fn request_optional<T, R>(
+        &self,
+        method: &str,
+        params: Option<T>,
+    ) -> Result<R, <LocalRpcClient as JsonRpcClient>::Error>
     where
         T: Debug + Serialize + Send + Sync,
         R: DeserializeOwned + Send,
@@ -1220,16 +1183,18 @@ impl JsonRpcClient for LocalRpcClient {
         // produces integers and `ethers-rs` expects hex-encoded integers. Our hacks convert to this encoding.
 
         let next_id = self.id.fetch_add(1, Ordering::SeqCst);
-        let mut params: Value = serde_json::to_value(&params).unwrap();
+        let mut params: Option<Value> = params.map(|p| serde_json::to_value(&p).unwrap());
         if method == "eth_unsubscribe" {
-            let id = params.as_array_mut().unwrap().get_mut(0).unwrap();
-            let str_id = id.as_str().unwrap().strip_prefix("0x").unwrap();
-            *id = u64::from_str_radix(str_id, 16).unwrap().into();
+            params.iter_mut().for_each(|p| {
+                let id = p.as_array_mut().unwrap().get_mut(0).unwrap();
+                let str_id = id.as_str().unwrap().strip_prefix("0x").unwrap();
+                *id = u64::from_str_radix(str_id, 16).unwrap().into();
+            });
         }
         let payload = RequestSer::owned(
             Id::Number(next_id),
             method,
-            Some(serde_json::value::to_raw_value(&params).unwrap()),
+            params.map(|x| serde_json::value::to_raw_value(&x).unwrap()),
         );
         let request = serde_json::to_string(&payload).unwrap();
 
@@ -1269,5 +1234,47 @@ impl JsonRpcClient for LocalRpcClient {
 
         let r = Rc::try_unwrap(r.into_owned()).unwrap_or_else(|_| panic!());
         Ok(r)
+    }
+}
+
+#[async_trait]
+impl PubsubClient for LocalRpcClient {
+    type NotificationStream = Pin<Box<dyn Stream<Item = Box<RawValue>> + Send + Sync + 'static>>;
+
+    fn subscribe<T: Into<U256>>(&self, id: T) -> Result<Self::NotificationStream, Self::Error> {
+        let id: U256 = id.into();
+        let rx = self
+            .subscriptions
+            .lock()
+            .unwrap()
+            .remove(&id.as_u64())
+            .unwrap();
+        Ok(Box::pin(ReceiverStream::new(rx).map(|s| {
+            serde_json::value::to_raw_value(
+                &serde_json::from_str::<Notification<Value>>(&s)
+                    .unwrap()
+                    .params["result"],
+            )
+            .unwrap()
+        })))
+    }
+
+    fn unsubscribe<T: Into<U256>>(&self, id: T) -> Result<(), Self::Error> {
+        let id: U256 = id.into();
+        self.subscriptions.lock().unwrap().remove(&id.as_u64());
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl JsonRpcClient for LocalRpcClient {
+    type Error = HttpClientError;
+
+    async fn request<T, R>(&self, method: &str, params: T) -> Result<R, Self::Error>
+    where
+        T: Debug + Serialize + Send + Sync,
+        R: DeserializeOwned + Send,
+    {
+        self.request_optional(method, Some(params)).await
     }
 }

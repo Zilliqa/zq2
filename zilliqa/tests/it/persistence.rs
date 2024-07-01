@@ -1,5 +1,6 @@
 use std::fs;
 
+use alloy_eips::BlockId;
 use ethabi::Token;
 use ethers::{providers::Middleware, types::TransactionRequest};
 use primitive_types::H160;
@@ -7,8 +8,10 @@ use rand::Rng;
 use tracing::*;
 use zilliqa::{
     cfg::{
-        allowed_timestamp_skew_default, consensus_timeout_default, eth_chain_id_default,
-        json_rcp_port_default, minimum_time_left_for_empty_block_default, scilla_address_default,
+        allowed_timestamp_skew_default, block_request_batch_size_default,
+        block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
+        json_rcp_port_default, max_blocks_in_flight_default,
+        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
     },
     crypto::{Hash, SecretKey},
     transaction::EvmGas,
@@ -50,7 +53,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             |n| {
                 let block = n
                     .get_node(index)
-                    .get_latest_block()
+                    .get_block(BlockId::latest())
                     .unwrap()
                     .map_or(0, |b| b.number());
                 block >= 3
@@ -66,11 +69,8 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let last_number = inner.number() - 1;
     let receipt = inner.get_transaction_receipt(hash).unwrap().unwrap();
     let _finalized_number = inner.get_finalized_height();
-    let block_with_tx = inner
-        .get_block_by_hash(receipt.block_hash)
-        .unwrap()
-        .unwrap();
-    let last_block = inner.get_block_by_number(last_number).unwrap().unwrap();
+    let block_with_tx = inner.get_block(receipt.block_hash).unwrap().unwrap();
+    let last_block = inner.get_block(last_number).unwrap().unwrap();
     let tx = inner.get_transaction_by_hash(hash).unwrap().unwrap();
     // sanity check
     assert_eq!(tx.hash, hash);
@@ -82,16 +82,15 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let dir = (|mut node: TestNode| node.dir.take())(node).unwrap(); // move dir out and drop the rest of node
     let config = NodeConfig {
         consensus: ConsensusConfig {
-            genesis_hash: None,
             is_main: true,
             genesis_accounts: Network::genesis_accounts(&network.genesis_key),
             empty_block_timeout: Duration::from_millis(25),
             local_address: "host.docker.internal".to_owned(),
-            rewards_per_hour: 204_000_000_000_000_000_000_000u128,
+            rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
             blocks_per_hour: 3600 * 40,
-            minimum_stake: 32_000_000_000_000_000_000u128,
+            minimum_stake: 32_000_000_000_000_000_000u128.into(),
             eth_block_gas_limit: EvmGas(84000000),
-            gas_price: 4_761_904_800_000u128,
+            gas_price: 4_761_904_800_000u128.into(),
             consensus_timeout: consensus_timeout_default(),
             genesis_deposits: Vec::new(),
             main_shard_id: None,
@@ -99,6 +98,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             scilla_address: scilla_address_default(),
             blocks_per_epoch: 10,
             epochs_per_checkpoint: 1,
+            scilla_lib_dir: scilla_lib_dir_default(),
         },
         allowed_timestamp_skew: allowed_timestamp_skew_default(),
         data_dir: None,
@@ -106,6 +106,9 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         disable_rpc: false,
         json_rpc_port: json_rcp_port_default(),
         eth_chain_id: eth_chain_id_default(),
+        block_request_limit: block_request_limit_default(),
+        max_blocks_in_flight: max_blocks_in_flight_default(),
+        block_request_batch_size: block_request_batch_size_default(),
     };
     let result = crate::node(config, SecretKey::new().unwrap(), 0, Some(dir));
 
@@ -124,15 +127,12 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let inner = newnode.inner.lock().unwrap();
 
     // ensure all blocks created were saved up till the last one
-    let loaded_last_block = inner.get_block_by_number(last_number).unwrap();
+    let loaded_last_block = inner.get_block(last_number).unwrap();
     assert!(loaded_last_block.is_some());
     assert_eq!(loaded_last_block.unwrap().hash(), last_block.hash());
 
     // ensure tx was saved, including its receipt
-    let loaded_tx_block = inner
-        .get_block_by_number(block_with_tx.number())
-        .unwrap()
-        .unwrap();
+    let loaded_tx_block = inner.get_block(block_with_tx.number()).unwrap().unwrap();
     assert_eq!(loaded_tx_block.hash(), block_with_tx.hash());
     assert_eq!(loaded_tx_block.transactions.len(), 1);
     assert!(inner.get_transaction_receipt(hash).unwrap().is_some());

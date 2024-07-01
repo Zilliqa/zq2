@@ -142,6 +142,24 @@ pub struct CreateTransactionResponse {
 }
 
 #[derive(Clone, Serialize, Debug)]
+struct Transition {
+    addr: Address,
+    depth: u64,
+    msg: TransitionMessage,
+}
+
+#[derive(Clone, Serialize, Debug)]
+struct TransitionMessage {
+    #[serde(rename = "_amount", with = "num_as_str")]
+    amount: ZilAmount,
+    #[serde(rename = "_recipient")]
+    recipient: Address,
+    #[serde(rename = "_tag")]
+    tag: String,
+    params: serde_json::Value,
+}
+
+#[derive(Clone, Serialize, Debug)]
 struct GetTxResponseReceipt {
     #[serde(skip_serializing_if = "Option::is_none")]
     accepted: Option<bool>,
@@ -149,6 +167,8 @@ struct GetTxResponseReceipt {
     cumulative_gas: ScillaGas,
     #[serde(with = "num_as_str")]
     epoch_num: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    transitions: Vec<Transition>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     event_logs: Vec<ScillaLog>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -228,6 +248,25 @@ impl GetTxResponse {
             receipt: GetTxResponseReceipt {
                 cumulative_gas: receipt.cumulative_gas_used.into(),
                 epoch_num: block_number,
+                transitions: receipt
+                    .transitions
+                    .into_iter()
+                    .map(|t| {
+                        Ok(Transition {
+                            addr: t.from,
+                            // The depth of transitions from this API start counting from the first contract call, rather
+                            // than from the initial EOA. The initial call is not included as a transition, so this should
+                            // never underflow.
+                            depth: t.depth - 1,
+                            msg: TransitionMessage {
+                                amount: t.amount,
+                                recipient: t.to,
+                                tag: t.tag,
+                                params: serde_json::from_str(&t.params)?,
+                            },
+                        })
+                    })
+                    .collect::<Result<_>>()?,
                 event_logs: receipt
                     .logs
                     .into_iter()

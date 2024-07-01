@@ -30,6 +30,7 @@ use zilliqa::{
     contracts,
     crypto::{Hash, SecretKey},
     db::Db,
+    exec::BaseFeeCheck,
     inspector,
     message::{Block, BlockHeader, QuorumCertificate, Vote},
     schnorr,
@@ -120,13 +121,16 @@ pub async fn convert_persistence(
         Token::Address(ethabi::Address::from_low_u64_be(1)),
         Token::Uint((64 * 10u128.pow(18)).into()),
     ])?;
-    let ResultAndState {
-        result,
-        state: result_state,
-    } = state.apply_transaction_evm(
+    let (
+        ResultAndState {
+            result,
+            state: result_state,
+        },
+        ..,
+    ) = state.apply_transaction_evm(
         Address::ZERO,
         Some(contract_addr::DEPOSIT),
-        node_config.consensus.gas_price,
+        *node_config.consensus.gas_price,
         node_config.consensus.eth_block_gas_limit,
         0,
         data,
@@ -134,6 +138,7 @@ pub async fn convert_persistence(
         0,
         BlockHeader::default(),
         inspector::noop(),
+        BaseFeeCheck::Ignore,
     )?;
     if !result.is_success() {
         return Err(anyhow!("setting stake failed: {result:?}"));
@@ -266,6 +271,7 @@ pub async fn convert_persistence(
                                     }))
                                 })
                                 .collect::<Result<_>>()?,
+                            transitions: vec![],
                             accepted: None,
                             errors: BTreeMap::new(),
                             exceptions: vec![],
@@ -328,6 +334,7 @@ pub async fn convert_persistence(
                                     }))
                                 })
                                 .collect::<Result<_>>()?,
+                            transitions: vec![],
                             accepted: None,
                             errors: BTreeMap::new(),
                             exceptions: vec![],

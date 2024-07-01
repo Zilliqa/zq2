@@ -22,10 +22,12 @@ use tokio::{
 };
 use zilliqa::{
     cfg::{
-        allowed_timestamp_skew_default, consensus_timeout_default, disable_rpc_default,
+        allowed_timestamp_skew_default, block_request_batch_size_default,
+        block_request_limit_default, consensus_timeout_default, disable_rpc_default,
         empty_block_timeout_default, eth_chain_id_default, json_rcp_port_default,
-        local_address_default, minimum_time_left_for_empty_block_default, scilla_address_default,
-        ConsensusConfig, NodeConfig,
+        local_address_default, max_blocks_in_flight_default,
+        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
+        Amount, ConsensusConfig, NodeConfig,
     },
     crypto::SecretKey,
     node::{MessageSender, Node},
@@ -83,6 +85,12 @@ pub struct GeneratedFile {
     pub api_name: ApiMethod,
     /// Page status.
     pub page_status: PageStatus,
+}
+
+// Mostly so I don't have to retype the hashtable everywhere, but also
+// useful in future for collecting fields related to macros.
+pub struct Macros {
+    pub macros: HashMap<String, String>,
 }
 
 pub struct Docs {
@@ -161,7 +169,18 @@ fn remove_key(
     }
 }
 
-fn insert_key(val: &mut serde_yaml::Value, components: &Vec<String>, idx: usize, value: &str) {
+pub enum Position {
+    Beginning,
+    End,
+}
+
+fn insert_key(
+    val: &mut serde_yaml::Value,
+    components: &Vec<String>,
+    idx: usize,
+    value: &str,
+    position: &Option<Position>,
+) {
     let k = &components[idx];
     if idx == components.len() - 1 {
         // We're here .
@@ -178,7 +197,10 @@ fn insert_key(val: &mut serde_yaml::Value, components: &Vec<String>, idx: usize,
                     serde_yaml::Value::String(k.clone()),
                     serde_yaml::Value::String(value.to_string()),
                 );
-                seq.push(serde_yaml::Value::Mapping(new_map));
+                match position.as_ref().unwrap_or(&Position::End) {
+                    Position::Beginning => seq.insert(0, serde_yaml::Value::Mapping(new_map)),
+                    Position::End => seq.push(serde_yaml::Value::Mapping(new_map)),
+                }
             }
             _ => (),
         }
@@ -187,11 +209,11 @@ fn insert_key(val: &mut serde_yaml::Value, components: &Vec<String>, idx: usize,
         match val {
             serde_yaml::Value::Mapping(ref mut map) => match map.get_mut(k) {
                 Some(ref mut seq) => {
-                    insert_key(seq, components, idx + 1, value);
+                    insert_key(seq, components, idx + 1, value, position);
                 }
                 None => {
                     let mut seq = serde_yaml::Value::Sequence(serde_yaml::Sequence::new());
-                    insert_key(&mut seq, components, idx + 1, value);
+                    insert_key(&mut seq, components, idx + 1, value, position);
                     map.insert(serde_yaml::Value::String(k.clone()), seq);
                 }
             },
@@ -203,7 +225,7 @@ fn insert_key(val: &mut serde_yaml::Value, components: &Vec<String>, idx: usize,
                         match map.get_mut(k) {
                             None => (),
                             Some(v) => {
-                                insert_key(v, components, idx + 1, value);
+                                insert_key(v, components, idx + 1, value, position);
                                 found = true;
                             }
                         }
@@ -211,7 +233,7 @@ fn insert_key(val: &mut serde_yaml::Value, components: &Vec<String>, idx: usize,
                 }
                 if !found {
                     let mut map = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
-                    insert_key(&mut map, components, idx, value);
+                    insert_key(&mut map, components, idx, value, position);
                     seq.push(map);
                 }
             }
@@ -264,35 +286,35 @@ pub struct ApiCallStatus {
 pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus>> {
     let mut methods = HashMap::new();
     // Construct an empty node so we can check for the existence of RPC methods without constructing a full node.
-    let genesis_accounts: Vec<(Address, String)> = vec![
+    let genesis_accounts: Vec<(Address, Amount)> = vec![
         (
             address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"),
-            "5000000000000000000000".to_string(),
+            5000000000000000000000u128.into(),
         ),
         // privkey db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3
         (
             address!("cb57ec3f064a16cadb36c7c712f4c9fa62b77415"),
-            "5000000000000000000000".to_string(),
+            5000000000000000000000u128.into(),
         ),
     ];
 
     let config = NodeConfig {
         consensus: ConsensusConfig {
             genesis_accounts,
-            rewards_per_hour: 51_000_000_000_000_000_000_000u128,
+            rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
             blocks_per_hour: 3600,
             is_main: true,
             empty_block_timeout: empty_block_timeout_default(),
-            minimum_stake: 10_000_000_000_000_000_000_000_000u128,
-            gas_price: 4_761_904_800_000u128,
+            minimum_stake: 10_000_000_000_000_000_000_000_000u128.into(),
+            gas_price: 4_761_904_800_000u128.into(),
             eth_block_gas_limit: EvmGas(84000000),
             genesis_deposits: Vec::new(),
             consensus_timeout: consensus_timeout_default(),
             local_address: local_address_default(),
+            scilla_lib_dir: scilla_lib_dir_default(),
             main_shard_id: None,
             minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
             scilla_address: scilla_address_default(),
-            genesis_hash: None,
             blocks_per_epoch: 3600,
             epochs_per_checkpoint: 24,
         },
@@ -302,6 +324,9 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
         disable_rpc: disable_rpc_default(),
         allowed_timestamp_skew: allowed_timestamp_skew_default(),
         json_rpc_port: json_rcp_port_default(),
+        block_request_limit: block_request_limit_default(),
+        max_blocks_in_flight: max_blocks_in_flight_default(),
+        block_request_batch_size: block_request_batch_size_default(),
     };
     let secret_key = SecretKey::new()?;
     let (s1, _) = tokio::sync::mpsc::unbounded_channel();
@@ -321,6 +346,15 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
         );
     }
     Ok(methods)
+}
+
+impl Macros {
+    pub fn inject_into(&self, context: &mut tera::Context) -> Result<()> {
+        for (k, v) in self.macros.iter() {
+            context.insert(format!("macro_{}", k), v);
+        }
+        Ok(())
+    }
 }
 
 impl Docs {
@@ -344,8 +378,20 @@ impl Docs {
         })
     }
 
+    pub async fn read_macros(&self) -> Result<Macros> {
+        let macro_source = include_str!("../resources/api_macros.tera.md");
+        let parsed = self.parse_input_sections(macro_source).await?;
+        println!("Macros {:?}", &parsed.sections);
+        Ok(Macros {
+            macros: parsed.sections,
+        })
+    }
+
     pub async fn generate_all(&self) -> Result<HashMap<ApiMethod, PageStatus>> {
-        let result = self.generate_dir(&PathBuf::from(&self.source_dir)).await?;
+        let macros = self.read_macros().await?;
+        let result = self
+            .generate_dir(&PathBuf::from(&self.source_dir), &macros)
+            .await?;
         Ok(result)
     }
 
@@ -369,7 +415,11 @@ impl Docs {
     // Recursively generate documentation.
     // Because of the weird rules around recursive async, this is done iteratively.
     // @return A vector of the APIs documented
-    pub async fn generate_dir(&self, dir: &Path) -> Result<HashMap<ApiMethod, PageStatus>> {
+    pub async fn generate_dir(
+        &self,
+        dir: &Path,
+        macros: &Macros,
+    ) -> Result<HashMap<ApiMethod, PageStatus>> {
         #[derive(PartialEq, Debug, Clone)]
         struct Entry {
             abs: PathBuf,
@@ -437,7 +487,9 @@ impl Docs {
         to_generate.sort_by(|a, b| a.rel.cmp(&b.rel));
         for path_entry in to_generate.iter() {
             println!("File: {:?} rel {:?}", &path_entry.abs, &path_entry.rel);
-            let generated = self.generate_file(&path_entry.abs, &path_entry.rel).await?;
+            let generated = self
+                .generate_file(&path_entry.abs, &path_entry.rel, macros)
+                .await?;
             let the_iter = key_prefix_components
                 .iter()
                 .chain(generated.id_components.iter());
@@ -446,6 +498,7 @@ impl Docs {
                 &the_iter.map(|m| m.to_string()).collect(),
                 0,
                 &generated.mkdocs_filename,
+                &Some(Position::End),
             );
             documented_apis.insert(generated.api_name, generated.page_status);
         }
@@ -482,6 +535,8 @@ impl Docs {
         let mut list_tera: Tera = Default::default();
         let mut context = tera::Context::new();
 
+        let macros = self.read_macros().await?;
+
         // Find some paths for later ..
         let mut desc_path: PathBuf = PathBuf::new();
         desc_path.push(&self.target_dir);
@@ -512,6 +567,7 @@ impl Docs {
         context.insert("apis", &all_apis);
         let prefixed_id = zqutils::utils::string_from_path(&id_path)?;
         context.insert("_id", &prefixed_id);
+        macros.inject_into(&mut context)?;
 
         list_tera.add_raw_template(
             "api_calls",
@@ -530,7 +586,13 @@ impl Docs {
             base_key.push(SUPPORTED_APIS_PAGE_NAME.to_string());
             let mut contents_map = remove_key(&contents_map, &base_key, 0)
                 .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-            insert_key(&mut contents_map, &base_key, 0, &mkdocs_filename);
+            insert_key(
+                &mut contents_map,
+                &base_key,
+                0,
+                &mkdocs_filename,
+                &Some(Position::Beginning),
+            );
             fs::write(val, &serde_yaml::to_string(&contents_map)?).await?;
         }
         Ok(all_apis)
@@ -592,7 +654,12 @@ impl Docs {
     // which tells us how to generate the documentation - this is a resource for now, but
     // one day it might be programmable.
     // @return A vector of the components we will use to index this page in mkdocs.yaml
-    pub async fn generate_file(&self, src: &Path, rel: &Path) -> Result<GeneratedFile> {
+    pub async fn generate_file(
+        &self,
+        src: &Path,
+        rel: &Path,
+        macros: &Macros,
+    ) -> Result<GeneratedFile> {
         fn indent4(
             v: &tera::Value,
             _args: &HashMap<String, tera::Value>,
@@ -630,8 +697,9 @@ impl Docs {
         // otherwise, each section gets Tera-substituted with the library. We can do this all at once ..
         let mut section_tera: Tera = Default::default();
         let mut context = tera::Context::new();
-        // Keep rust happy.
         context.insert("_api_url", &self.api_url);
+        macros.inject_into(&mut context)?;
+
         // Add context keys here when we have some.
         let mut page_status = PageStatus::Implemented;
         for (k, v) in &parsed.sections {
@@ -639,8 +707,10 @@ impl Docs {
         }
 
         let mut final_context = tera::Context::new();
+        println!("---------------------------");
         for k in parsed.sections.keys() {
             let rendered = section_tera.render(k, &context)?;
+            println!("** {k} *** \n {rendered}");
             if k == "status" {
                 page_status = rendered.trim().try_into()?;
             } else {
@@ -668,7 +738,7 @@ impl Docs {
             page_status = PageStatus::NotYetImplemented;
         }
         final_context.insert("status", &page_status.to_string());
-
+        macros.inject_into(&mut final_context)?;
         let mut nearly_id: Vec<String> = PathBuf::from(rel)
             .iter()
             .map(|x| x.to_str().unwrap_or("").to_string())

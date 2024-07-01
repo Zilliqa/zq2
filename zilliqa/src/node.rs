@@ -1,11 +1,21 @@
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashSet, fmt::Debug, sync::Arc, time::Duration};
 
-use alloy_primitives::{Address, B256};
-use alloy_rpc_types_trace::parity::{TraceResults, TraceType};
+use alloy_eips::{BlockId, BlockNumberOrTag, RpcBlockHash};
+use alloy_primitives::Address;
+use alloy_rpc_types_trace::{
+    geth::{
+        FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
+        GethTrace, NoopFrame, TraceResult,
+    },
+    parity::{TraceResults, TraceType},
+};
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use revm::Inspector;
-use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
+use revm_inspectors::tracing::{
+    js::{JsInspector, TransactionContext},
+    FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
+};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
@@ -17,12 +27,12 @@ use crate::{
     exec::TransactionApplyResult,
     inspector::{self, ScillaInspector},
     message::{
-        Block, BlockBatchRequest, BlockBatchResponse, BlockHeader, BlockNumber, BlockRequest,
-        BlockResponse, ExternalMessage, InternalMessage, IntershardCall, Proposal,
+        Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InternalMessage,
+        IntershardCall, Proposal,
     },
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     pool::TxPoolContent,
-    state::{Account, State},
+    state::State,
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
@@ -30,10 +40,10 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct MessageSender {
-    our_shard: u64,
-    our_peer_id: PeerId,
-    outbound_channel: UnboundedSender<OutboundMessageTuple>,
-    local_channel: UnboundedSender<LocalMessageTuple>,
+    pub our_shard: u64,
+    pub our_peer_id: PeerId,
+    pub outbound_channel: UnboundedSender<OutboundMessageTuple>,
+    pub local_channel: UnboundedSender<LocalMessageTuple>,
 }
 
 impl MessageSender {
@@ -57,12 +67,7 @@ impl MessageSender {
 
     /// Send a message to a remote node of the same shard.
     pub fn send_external_message(&self, peer: PeerId, message: ExternalMessage) -> Result<()> {
-        debug!(
-            "sending {} from {} to {}",
-            message.name(),
-            self.our_peer_id,
-            peer
-        );
+        debug!("sending {message} from {} to {}", self.our_peer_id, peer);
         self.outbound_channel
             .send((Some(peer), self.our_shard, message))?;
         Ok(())
@@ -137,8 +142,7 @@ impl Node {
     pub fn handle_network_message(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         let to = self.peer_id;
         let to_self = from == to;
-        let message_name = message.name();
-        debug!(%from, %to, %message_name, "handling message");
+        debug!(%from, %to, %message, "handling message");
         match message {
             ExternalMessage::Proposal(m) => {
                 if let Some((to, message)) = self.consensus.proposal(m, false)? {
@@ -170,29 +174,11 @@ impl Node {
                 if !to_self {
                     self.handle_block_request(from, m)?;
                 } else {
-                    debug!("ignoring block request to self");
-                }
-            }
-            ExternalMessage::BlockResponse(m) => {
-                if !to_self {
-                    self.handle_block_response(from, m)?;
-                } else {
-                    debug!("ignoring block response to self");
-                }
-            }
-            ExternalMessage::BlockBatchRequest(m) => {
-                if !to_self {
-                    self.handle_block_batch_request(from, m)?;
-                } else {
                     debug!("ignoring blocks request to self");
                 }
             }
-            ExternalMessage::BlockBatchResponse(m) => {
-                if !to_self {
-                    self.handle_blocks_response(from, m)?;
-                } else {
-                    debug!("ignoring blocks response to self");
-                }
+            ExternalMessage::BlockResponse(m) => {
+                self.handle_block_response(from, m)?;
             }
             ExternalMessage::RequestResponse => {}
             ExternalMessage::NewTransaction(t) => {
@@ -210,8 +196,7 @@ impl Node {
 
     pub fn handle_internal_message(&mut self, from: u64, message: InternalMessage) -> Result<()> {
         let to = self.config.eth_chain_id;
-        let message_name = message.name();
-        tracing::debug!(%from, %to, %message_name, "handling message");
+        tracing::debug!(%from, %to, %message, "handling message");
         match message {
             InternalMessage::IntershardCall(intershard_call) => {
                 self.inject_intershard_transaction(intershard_call)?
@@ -222,8 +207,7 @@ impl Node {
             }
             InternalMessage::LaunchShard(..) | InternalMessage::ExportBlockSnapshot(..) => {
                 warn!(
-                    "{} messages should be handled by the coordinator, not forwarded to a node.",
-                    message.name()
+                    "{message} type messages should be handled by the coordinator, not forwarded to a node.",
                 );
             }
         }
@@ -281,20 +265,42 @@ impl Node {
         self.consensus.head_block().header.number
     }
 
-    // todo: this doesn't respect two-chain finalization
-    pub fn get_number(&self, block_number: BlockNumber) -> u64 {
-        match block_number {
-            BlockNumber::Number(n) => n,
-            BlockNumber::Earliest => 0,
-            BlockNumber::Latest => self.get_chain_tip(),
-            BlockNumber::Pending => self.get_chain_tip(), // use latest for now
-            BlockNumber::Finalized => self.get_chain_tip().saturating_sub(2),
-            BlockNumber::Safe => self.get_chain_tip().saturating_sub(2), // same as finalized
+    pub fn resolve_block_number(&self, number: BlockNumberOrTag) -> u64 {
+        // TODO(#863): This doesn't respect two-chain finalization.
+        match number {
+            BlockNumberOrTag::Latest => self.get_chain_tip(),
+            BlockNumberOrTag::Finalized => self.get_chain_tip().saturating_sub(2),
+            BlockNumberOrTag::Safe => self.get_chain_tip().saturating_sub(2),
+            BlockNumberOrTag::Earliest => 0,
+            BlockNumberOrTag::Pending => self.get_chain_tip(),
+            BlockNumberOrTag::Number(n) => n,
         }
     }
 
-    pub fn peer_id(&self) -> PeerId {
-        self.peer_id
+    pub fn get_block(&self, block_id: impl Into<BlockId>) -> Result<Option<Block>> {
+        match block_id.into() {
+            BlockId::Hash(RpcBlockHash {
+                block_hash,
+                require_canonical: _,
+            }) => {
+                // TODO(#863): require_canonical
+                self.consensus.get_block(&block_hash.into())
+            }
+            BlockId::Number(number) => self
+                .consensus
+                .get_block_by_number(self.resolve_block_number(number)),
+        }
+    }
+
+    pub fn get_state(&self, block_id: impl Into<BlockId> + Copy + Debug) -> Result<State> {
+        let block = self
+            .get_block(block_id)?
+            .ok_or_else(|| anyhow!("missing block: {block_id:?}"))?;
+
+        Ok(self
+            .consensus
+            .state()
+            .at_root(block.state_root_hash().into()))
     }
 
     pub fn trace_evm_transaction(
@@ -310,10 +316,10 @@ impl Node {
             .ok_or_else(|| anyhow!("transaction not mined: {txn_hash}"))?;
 
         let block = self
-            .get_block_by_hash(receipt.block_hash)?
+            .get_block(receipt.block_hash)?
             .ok_or_else(|| anyhow!("missing block: {}", receipt.block_hash))?;
         let parent = self
-            .get_block_by_hash(block.parent_hash())?
+            .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
         let mut state = self
             .consensus
@@ -343,7 +349,7 @@ impl Node {
                     &mut inspector,
                 )?;
 
-                let TransactionApplyResult::Evm(result) = result else {
+                let TransactionApplyResult::Evm(result, ..) = result else {
                     return Err(anyhow!("not an EVM transaction"));
                 };
 
@@ -371,10 +377,10 @@ impl Node {
             .ok_or_else(|| anyhow!("transaction not mined: {txn_hash}"))?;
 
         let block = self
-            .get_block_by_hash(receipt.block_hash)?
+            .get_block(receipt.block_hash)?
             .ok_or_else(|| anyhow!("missing block: {}", receipt.block_hash))?;
         let parent = self
-            .get_block_by_hash(block.parent_hash())?
+            .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
         let mut state = self
             .consensus
@@ -403,16 +409,232 @@ impl Node {
         Err(anyhow!("transaction not found in block: {txn_hash}"))
     }
 
+    pub fn debug_trace_block(
+        &self,
+        block_number: BlockNumberOrTag,
+        trace_opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>> {
+        let block = self
+            .get_block(block_number)?
+            .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
+        let parent = self
+            .get_block(block.parent_hash())?
+            .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
+        let mut state = self
+            .consensus
+            .state()
+            .at_root(parent.state_root_hash().into());
+
+        let mut traces: Vec<TraceResult> = Vec::new();
+
+        for (index, &txn_hash) in block.transactions.iter().enumerate() {
+            if let Ok(Some(trace)) = self.debug_trace_transaction(
+                &mut state,
+                txn_hash,
+                index,
+                &block,
+                &parent,
+                trace_opts.clone(),
+            ) {
+                traces.push(trace);
+            }
+        }
+
+        Ok(traces)
+    }
+
+    fn debug_trace_transaction(
+        &self,
+        state: &mut State,
+        txn_hash: Hash,
+        txn_index: usize,
+        block: &Block,
+        parent_block: &Block,
+        trace_opts: GethDebugTracingOptions,
+    ) -> Result<Option<TraceResult>> {
+        let GethDebugTracingOptions {
+            config,
+            tracer,
+            tracer_config,
+            ..
+        } = trace_opts;
+
+        let txn = self
+            .get_transaction_by_hash(txn_hash)?
+            .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
+
+        let Some(tracer) = tracer else {
+            let inspector_config = TracingInspectorConfig::from_geth_config(&config);
+            let mut inspector = TracingInspector::new(inspector_config);
+
+            let result = state.apply_transaction(
+                txn,
+                self.get_chain_id(),
+                parent_block.header,
+                &mut inspector,
+            )?;
+
+            let TransactionApplyResult::Evm(result, ..) = result else {
+                return Ok(None);
+            };
+
+            let builder = inspector.into_geth_builder();
+            let trace = builder.geth_traces(
+                result.result.gas_used(),
+                result.result.into_output().unwrap_or_default(),
+                config,
+            );
+            return Ok(Some(TraceResult::Success {
+                result: trace.into(),
+                tx_hash: Some(txn_hash.0.into()),
+            }));
+        };
+
+        match tracer {
+            GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
+                GethDebugBuiltInTracerType::CallTracer => {
+                    let call_config = tracer_config.into_call_config()?;
+                    let mut inspector = TracingInspector::new(
+                        TracingInspectorConfig::from_geth_call_config(&call_config),
+                    );
+
+                    let result = state.apply_transaction(
+                        txn,
+                        self.get_chain_id(),
+                        parent_block.header,
+                        &mut inspector,
+                    )?;
+
+                    let TransactionApplyResult::Evm(result, ..) = result else {
+                        return Ok(None);
+                    };
+
+                    let trace = inspector
+                        .into_geth_builder()
+                        .geth_call_traces(call_config, result.result.gas_used());
+
+                    Ok(Some(TraceResult::Success {
+                        result: trace.into(),
+                        tx_hash: Some(txn_hash.0.into()),
+                    }))
+                }
+                GethDebugBuiltInTracerType::FourByteTracer => {
+                    let mut inspector = FourByteInspector::default();
+                    let result = state.apply_transaction(
+                        txn,
+                        self.get_chain_id(),
+                        parent_block.header,
+                        &mut inspector,
+                    )?;
+
+                    let TransactionApplyResult::Evm(_, _) = result else {
+                        return Ok(None);
+                    };
+
+                    Ok(Some(TraceResult::Success {
+                        result: FourByteFrame::from(inspector).into(),
+                        tx_hash: Some(txn_hash.0.into()),
+                    }))
+                }
+                GethDebugBuiltInTracerType::MuxTracer => {
+                    let mux_config = tracer_config.into_mux_config()?;
+
+                    let mut inspector = MuxInspector::try_from_config(mux_config)?;
+                    let result = state.apply_transaction(
+                        txn,
+                        self.get_chain_id(),
+                        parent_block.header,
+                        &mut inspector,
+                    )?;
+
+                    let TransactionApplyResult::Evm(result, ..) = result else {
+                        return Ok(None);
+                    };
+                    let state_ref = &(*state);
+                    let trace = inspector.try_into_mux_frame(&result, &state_ref)?;
+                    Ok(Some(TraceResult::Success {
+                        result: trace.into(),
+                        tx_hash: Some(txn_hash.0.into()),
+                    }))
+                }
+                GethDebugBuiltInTracerType::NoopTracer => Ok(Some(TraceResult::Success {
+                    result: NoopFrame::default().into(),
+                    tx_hash: Some(txn_hash.0.into()),
+                })),
+                GethDebugBuiltInTracerType::PreStateTracer => {
+                    let prestate_config = tracer_config.into_pre_state_config()?;
+
+                    let mut inspector = TracingInspector::new(
+                        TracingInspectorConfig::from_geth_prestate_config(&prestate_config),
+                    );
+                    let result = state.apply_transaction(
+                        txn,
+                        self.get_chain_id(),
+                        parent_block.header,
+                        &mut inspector,
+                    )?;
+
+                    let TransactionApplyResult::Evm(result, ..) = result else {
+                        return Ok(None);
+                    };
+                    let state_ref = &(*state);
+                    let trace = inspector.into_geth_builder().geth_prestate_traces(
+                        &result,
+                        prestate_config,
+                        state_ref,
+                    )?;
+
+                    Ok(Some(TraceResult::Success {
+                        result: trace.into(),
+                        tx_hash: Some(txn_hash.0.into()),
+                    }))
+                }
+            },
+            GethDebugTracerType::JsTracer(js_code) => {
+                let config = tracer_config.into_json();
+
+                let transaction_context = TransactionContext {
+                    block_hash: Some(block.hash().0.into()),
+                    tx_hash: Some(txn_hash.0.into()),
+                    tx_index: txn_index.into(),
+                };
+                let mut inspector =
+                    JsInspector::with_transaction_context(js_code, config, transaction_context)
+                        .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
+
+                let result = state.apply_transaction(
+                    txn,
+                    self.get_chain_id(),
+                    parent_block.header,
+                    &mut inspector,
+                )?;
+
+                let TransactionApplyResult::Evm(result, env) = result else {
+                    return Ok(None);
+                };
+                let state_ref = &(*state);
+                let result = inspector
+                    .json_result(result, &env, &state_ref)
+                    .map_err(|e| anyhow!("Unable to create json result: {e}"))?;
+
+                Ok(Some(TraceResult::Success {
+                    result: GethTrace::JS(result),
+                    tx_hash: Some(txn_hash.0.into()),
+                }))
+            }
+        }
+    }
+
     pub fn call_contract(
         &mut self,
-        block_number: BlockNumber,
+        block_id: BlockId,
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
         amount: u128,
     ) -> Result<Vec<u8>> {
         let block = self
-            .get_block_by_number(self.get_number(block_number))?
+            .get_block(block_id)?
             .ok_or_else(|| anyhow!("block not found"))?;
 
         trace!("call_contract: block={:?}", block);
@@ -439,7 +661,7 @@ impl Node {
         }
 
         let parent = self
-            .get_block_by_hash(header.parent_hash)?
+            .get_block(header.parent_hash)?
             .ok_or_else(|| anyhow!("missing parent: {}", header.parent_hash))?;
         let proposer = self
             .consensus
@@ -455,13 +677,13 @@ impl Node {
     }
 
     pub fn get_gas_price(&self) -> u128 {
-        self.config.consensus.gas_price
+        *self.config.consensus.gas_price
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn estimate_gas(
         &mut self,
-        block_number: BlockNumber,
+        block_number: BlockNumberOrTag,
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
@@ -469,15 +691,10 @@ impl Node {
         gas_price: Option<u128>,
         value: u128,
     ) -> Result<u64> {
-        // TODO: optimise this to get header directly once persistance is merged
-        // (which will provide a header index)
         let block = self
-            .get_block_by_number(self.get_number(block_number))?
-            .ok_or_else(|| anyhow!("block not found"))?;
-        let state = self
-            .consensus
-            .state()
-            .at_root(block.state_root_hash().into());
+            .get_block(block_number)?
+            .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
+        let state = self.get_state(block_number)?;
 
         state.estimate_gas(
             from_addr,
@@ -509,54 +726,11 @@ impl Node {
     }
 
     pub fn get_chain_id(&self) -> u64 {
-        self.config.eth_chain_id // using eth as a universal ID for now
+        self.config.eth_chain_id
     }
 
     pub fn get_chain_tip(&self) -> u64 {
         self.consensus.head_block().header.number
-    }
-
-    pub fn state_at(&self, block_number: BlockNumber) -> Result<State> {
-        self.consensus
-            .try_get_state_at(self.get_number(block_number))
-    }
-
-    pub fn get_account(&self, address: Address, block_number: BlockNumber) -> Result<Account> {
-        self.consensus
-            .try_get_state_at(self.get_number(block_number))?
-            .get_account(address)
-    }
-
-    pub fn get_account_storage(
-        &self,
-        address: Address,
-        index: B256,
-        block_number: BlockNumber,
-    ) -> Result<B256> {
-        self.consensus
-            .try_get_state_at(self.get_number(block_number))?
-            .get_account_storage(address, index)
-    }
-
-    pub fn get_native_balance(&self, address: Address, block_number: BlockNumber) -> Result<u128> {
-        Ok(self
-            .consensus
-            .try_get_state_at(self.get_number(block_number))?
-            .get_account(address)?
-            .balance)
-    }
-
-    pub fn get_latest_block(&self) -> Result<Option<Block>> {
-        self.get_block_by_number(self.get_chain_tip())
-    }
-
-    pub fn get_block_by_blocknum(&self, block_number: BlockNumber) -> Result<Option<Block>> {
-        let block_number = self.get_number(block_number);
-        self.consensus.get_block_by_number(block_number)
-    }
-
-    pub fn get_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
-        self.consensus.get_block_by_number(block_number)
     }
 
     pub fn get_transaction_receipts_in_block(
@@ -570,23 +744,6 @@ impl Node {
         self.consensus.finalized_view()
     }
 
-    pub fn get_genesis_hash(&self) -> Result<Hash> {
-        Ok(self
-            .consensus
-            .get_block_by_number(0)
-            .unwrap()
-            .unwrap()
-            .hash())
-    }
-
-    pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        self.consensus.get_block_by_view(view)
-    }
-
-    pub fn get_block_by_hash(&self, hash: Hash) -> Result<Option<Block>> {
-        self.consensus.get_block(&hash)
-    }
-
     pub fn get_transaction_receipt(&self, tx_hash: Hash) -> Result<Option<TransactionReceipt>> {
         self.consensus.get_transaction_receipt(&tx_hash)
     }
@@ -597,33 +754,6 @@ impl Node {
 
     pub fn txpool_content(&self) -> TxPoolContent {
         self.consensus.txpool_content()
-    }
-
-    fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
-        let block = match request.0 {
-            crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
-            crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view), // todo: consider removing
-            crate::message::BlockRef::Number(number) => self.consensus.get_block_by_number(number),
-        }?;
-        let Some(block) = block else {
-            debug!("ignoring block request for unknown block: {:?}", request.0);
-            return Ok(());
-        };
-
-        self.message_sender.send_external_message(
-            source,
-            ExternalMessage::BlockResponse(BlockResponse {
-                proposal: self.block_to_proposal(block),
-            }),
-        )?;
-
-        Ok(())
-    }
-
-    fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
-        let _ = self.consensus.receive_block(response.proposal)?;
-
-        Ok(())
     }
 
     /// Convenience function to convert a block to a proposal (add full txs)
@@ -644,77 +774,39 @@ impl Node {
         Proposal::from_parts(block, txs)
     }
 
-    fn handle_block_batch_request(
-        &mut self,
-        source: PeerId,
-        request: BlockBatchRequest,
-    ) -> Result<()> {
-        let block = match request.0 {
-            crate::message::BlockRef::Hash(hash) => self.consensus.get_block(&hash),
-            crate::message::BlockRef::View(view) => self.consensus.get_block_by_view(view),
-            crate::message::BlockRef::Number(number) => self.consensus.get_block_by_number(number),
-        }?;
+    fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
+        let proposals = (request.from_view..=request.to_view)
+            .take(self.config.block_request_limit)
+            .filter_map(|view| {
+                self.consensus
+                    .get_block_by_view(view)
+                    .transpose()
+                    .map(|block| Ok(self.block_to_proposal(block?)))
+            })
+            .collect::<Result<_>>()?;
 
-        let block = match block {
-            Some(block) => block,
-            None => {
-                debug!("ignoring blocks request for unknown block: {:?}", request.0);
-                return Ok(());
-            }
-        };
-
-        let mut proposal = self.block_to_proposal(block);
-        let block_number = proposal.header.number;
-        let mut proposals: Vec<Proposal> = Vec::new();
-
-        for i in block_number..block_number + 100 {
-            let block = self.consensus.get_block_by_number(i);
-            if let Ok(Some(block)) = block {
-                proposal = self.block_to_proposal(block);
-                proposals.push(proposal);
-            } else {
-                break;
-            }
-        }
-
-        trace!(
-            "Responding to new blocks request of {:?} starting {} with {} blocks",
-            request,
-            block_number,
-            proposals.len()
-        );
+        trace!("responding to new blocks request of {request:?}");
 
         self.message_sender.send_external_message(
             source,
-            ExternalMessage::BlockBatchResponse(BlockBatchResponse { proposals }),
+            ExternalMessage::BlockResponse(BlockResponse { proposals }),
         )?;
 
         Ok(())
     }
 
-    fn handle_blocks_response(&mut self, _: PeerId, response: BlockBatchResponse) -> Result<()> {
+    fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
         trace!(
             "Received blocks response of length {}",
             response.proposals.len()
         );
-        let mut was_new = false;
-        let length_recvd = response.proposals.len();
 
         for block in response.proposals {
-            let (new, proposal) = self.consensus.receive_block(block)?;
-            was_new = new;
+            let proposal = self.consensus.receive_block(block)?;
             if let Some(proposal) = proposal {
                 self.message_sender
                     .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
             }
-        }
-
-        if was_new && length_recvd > 1 {
-            trace!(
-                "Requesting additional blocks after successful block download. Start: {}",
-                self.consensus.head_block().header.number
-            );
-            self.consensus.download_blocks_up_to_head()?;
         }
 
         Ok(())

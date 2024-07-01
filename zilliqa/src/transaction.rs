@@ -24,7 +24,7 @@ use sha3::{
 
 use crate::{
     crypto,
-    exec::{ScillaError, ScillaException},
+    exec::{ScillaError, ScillaException, ScillaTransition},
     schnorr,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
@@ -65,8 +65,10 @@ pub enum SignedTransaction {
 // alloy's transaction types contain annotations (such as `skip_serializing_if`) which cause issues when
 // (de)serializing with serde. Therefore, we serialize these transactions in their RLP form instead.
 mod ser_rlp {
+    use std::marker::PhantomData;
+
     use alloy_rlp::{Decodable, Encodable};
-    use serde::{de, Deserialize, Deserializer, Serializer};
+    use serde::{de, Deserializer, Serializer};
 
     pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -83,8 +85,39 @@ mod ser_rlp {
         T: Decodable,
         D: Deserializer<'de>,
     {
-        let buf = <Vec<u8>>::deserialize(deserializer)?;
-        T::decode(&mut buf.as_slice()).map_err(de::Error::custom)
+        struct Visitor<T>(PhantomData<T>);
+
+        impl<'de, T: Decodable> serde::de::Visitor<'de> for Visitor<T> {
+            type Value = T;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(formatter, "a byte array")
+            }
+
+            fn visit_bytes<E>(self, mut v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                T::decode(&mut v).map_err(de::Error::custom)
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                // Limit the length we preallocate.
+                let len = seq.size_hint().unwrap_or(0).min(4096);
+                let mut bytes = Vec::with_capacity(len);
+
+                while let Some(byte) = seq.next_element()? {
+                    bytes.push(byte);
+                }
+
+                T::decode(&mut bytes.as_slice()).map_err(de::Error::custom)
+            }
+        }
+
+        deserializer.deserialize_bytes(Visitor(PhantomData))
     }
 }
 
@@ -730,6 +763,7 @@ pub struct TransactionReceipt {
     pub cumulative_gas_used: EvmGas,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
+    pub transitions: Vec<ScillaTransition>,
     pub accepted: Option<bool>,
     pub errors: BTreeMap<u64, Vec<ScillaError>>,
     pub exceptions: Vec<ScillaException>,

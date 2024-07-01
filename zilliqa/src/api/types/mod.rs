@@ -1,6 +1,11 @@
+use std::fmt::Display;
+
+use alloy_eips::BlockId;
+use alloy_primitives::B256;
 use serde::{ser::SerializeSeq, Serializer};
 
 use super::to_hex::ToHex;
+use crate::crypto;
 
 pub mod eth;
 pub mod ots;
@@ -45,5 +50,19 @@ pub fn option_hex_no_prefix<S: Serializer, T: ToHex>(
         serializer.serialize_some(&data.to_hex_no_prefix())
     } else {
         serializer.serialize_none()
+    }
+}
+
+fn ser_display<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+    T: Display,
+    S: Serializer,
+{
+    serializer.collect_str(value)
+}
+
+impl From<crypto::Hash> for BlockId {
+    fn from(hash: crypto::Hash) -> Self {
+        BlockId::from(B256::from(hash))
     }
 }

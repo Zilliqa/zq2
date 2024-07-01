@@ -3,7 +3,7 @@ use std::{collections::HashSet, env, fmt};
 use alloy_primitives::B256;
 use anyhow::{anyhow, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
-use z2lib::{components::Component, plumbing};
+use z2lib::{components::Component, deployer, plumbing, validators};
 use zilliqa::crypto::SecretKey;
 
 #[derive(Parser, Debug)]
@@ -17,6 +17,8 @@ struct Cli {
 enum Commands {
     /// Run a copy of Zilliqa 2
     Run(RunStruct),
+    /// Run only some components of Zilliqa 2
+    Only(OnlyStruct),
     /// Test
     Perf(PerfStruct),
     #[clap(subcommand)]
@@ -30,6 +32,8 @@ enum Commands {
     /// Print the list of sibling repositories for z2 start
     #[clap(subcommand)]
     Depends(DependsCommands),
+    /// Join a ZQ2 network
+    Join(JoinStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -50,20 +54,28 @@ pub struct DependsUpdateOptions {
 #[derive(Subcommand, Debug)]
 enum DeployerCommands {
     /// Generate the deployer config file
-    New(DeployerConfigStruct),
+    New(DeployerNewArgs),
     /// Perfom the network upgrade
-    Upgrade(DeployerConfigStruct),
+    Upgrade(DeployerUpgradeArgs),
 }
 
 #[derive(Args, Debug)]
-pub struct DeployerConfigStruct {
+pub struct DeployerNewArgs {
+    #[clap(long)]
+    /// ZQ2 network name
     network_name: Option<String>,
-    gcp_project: Option<String>,
-    binary_bucket: Option<String>,
-    bootstrap_pk: Option<String>,
-    config_file: Option<String>,
+    #[clap(long)]
+    /// GCP project-id where the network is running
+    project_id: Option<String>,
+    #[clap(long, value_enum, value_delimiter = ',')]
+    /// Virtual Machine roles
+    roles: Option<Vec<deployer::NodeRole>>,
 }
 
+#[derive(Args, Debug)]
+pub struct DeployerUpgradeArgs {
+    config_file: Option<String>,
+}
 #[derive(Subcommand, Debug)]
 enum ConverterCommands {
     /// Convert Zilliqa 1 to Zilliqa 2 persistence format.
@@ -143,6 +155,10 @@ struct RunStruct {
     #[clap(long, default_value = "4000")]
     base_port: u16,
 
+    /// If --watch is specified, we will auto-reload Zilliqa 2 (but not other programs!) when the source changes.
+    #[clap(long, action=ArgAction::SetTrue)]
+    watch: bool,
+
     #[clap(long = "restart-network")]
     restart_network: bool,
 
@@ -175,6 +191,65 @@ struct RunStruct {
     docs: bool,
     #[clap(long = "docs", overrides_with = "docs")]
     _no_docs: bool,
+
+    #[clap(long="no-scilla",action=ArgAction::SetFalse)]
+    scilla: bool,
+    #[clap(long = "scilla", overrides_with = "scilla")]
+    _no_scilla: bool,
+}
+
+// See https://jwodder.github.io/kbits/posts/clap-bool-negate/
+#[derive(Args, Debug)]
+struct OnlyStruct {
+    config_dir: String,
+
+    #[clap(long)]
+    #[clap(default_value = "warn")]
+    log_level: LogLevel,
+
+    #[clap(long)]
+    debug_modules: Vec<String>,
+
+    #[clap(long)]
+    trace_modules: Vec<String>,
+
+    #[clap(long, default_value = "4000")]
+    base_port: u16,
+
+    /// If --watch is specified, we will auto-reload Zilliqa 2 (but not other programs!) when the source changes.
+    #[clap(long, action=ArgAction::SetTrue)]
+    watch: bool,
+
+    #[clap(long = "restart-network")]
+    restart_network: bool,
+
+    #[clap(long = "otterscan", action =ArgAction::SetTrue)]
+    otterscan: bool,
+
+    #[clap(long = "otel", action = ArgAction::SetTrue)]
+    otel: bool,
+
+    #[clap(long = "zq2", action = ArgAction::SetTrue)]
+    zq2: bool,
+
+    #[clap(long = "spout", action = ArgAction::SetTrue)]
+    spout: bool,
+
+    #[clap(long = "mitmweb", action = ArgAction::SetTrue)]
+    mitmweb: bool,
+
+    #[clap(long = "docs", action = ArgAction::SetTrue)]
+    docs: bool,
+
+    #[clap(long = "scilla", action = ArgAction::SetTrue)]
+    scilla: bool,
+}
+
+#[derive(Args, Debug)]
+struct JoinStruct {
+    /// Specify the ZQ2 chain you want join
+    #[clap(long = "chain")]
+    chain_name: validators::Chain,
 }
 
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
@@ -217,6 +292,46 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
+        Commands::Only(ref arg) => {
+            let mut to_run: HashSet<Component> = HashSet::new();
+
+            if arg.otterscan {
+                to_run.insert(Component::Otterscan);
+            }
+            if arg.otel {
+                to_run.insert(Component::Otel);
+            }
+            if arg.zq2 {
+                to_run.insert(Component::ZQ2);
+            }
+            if arg.spout {
+                to_run.insert(Component::Spout);
+            }
+            if arg.mitmweb {
+                to_run.insert(Component::Mitmweb);
+            }
+            if arg.docs {
+                to_run.insert(Component::Docs);
+            }
+            if arg.scilla {
+                to_run.insert(Component::Scilla);
+            }
+
+            let keep_old_network = !arg.restart_network;
+            plumbing::run_local_net(
+                &base_dir,
+                arg.base_port,
+                &arg.config_dir,
+                &arg.log_level.to_string(),
+                &arg.debug_modules,
+                &arg.trace_modules,
+                &to_run,
+                keep_old_network,
+                arg.watch,
+            )
+            .await?;
+            Ok(())
+        }
         Commands::Run(ref arg) => {
             let mut to_run: HashSet<Component> = HashSet::new();
 
@@ -238,6 +353,9 @@ async fn main() -> Result<()> {
             if arg.docs {
                 to_run.insert(Component::Docs);
             }
+            if arg.scilla {
+                to_run.insert(Component::Scilla);
+            }
 
             let keep_old_network = !arg.restart_network;
             plumbing::run_local_net(
@@ -249,6 +367,7 @@ async fn main() -> Result<()> {
                 &arg.trace_modules,
                 &to_run,
                 keep_old_network,
+                arg.watch,
             )
             .await?;
             Ok(())
@@ -262,17 +381,17 @@ async fn main() -> Result<()> {
                 let network_name = arg
                     .network_name
                     .clone()
-                    .ok_or_else(|| anyhow::anyhow!("network_name is a mandatory argument"))?;
-                let binary_bucket = arg
-                    .binary_bucket
+                    .ok_or_else(|| anyhow::anyhow!("--network-name is a mandatory argument"))?;
+                let project_id = arg
+                    .project_id
                     .clone()
-                    .ok_or_else(|| anyhow::anyhow!("binary_bucket is a mandatory argument"))?;
-                let gcp_project = arg
-                    .gcp_project
+                    .ok_or_else(|| anyhow::anyhow!("--project-id is a mandatory argument"))?;
+                let roles = arg
+                    .roles
                     .clone()
-                    .ok_or_else(|| anyhow::anyhow!("gcp_project is a mandatory argument"))?;
+                    .ok_or_else(|| anyhow::anyhow!("--roles is a mandatory argument"))?;
 
-                plumbing::run_deployer_new(&network_name, &binary_bucket, &gcp_project)
+                plumbing::run_deployer_new(&network_name, &project_id, roles)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer new command: {}", err)
@@ -280,10 +399,11 @@ async fn main() -> Result<()> {
                 Ok(())
             }
             DeployerCommands::Upgrade(ref arg) => {
-                let config_file = arg
-                    .config_file
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("config_file is a mandatory argument"))?;
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
                 plumbing::run_deployer_upgrade(&config_file)
                     .await
                     .map_err(|err| {
@@ -332,5 +452,10 @@ async fn main() -> Result<()> {
                 plumbing::update_depends(&base_dir, opts.with_ssh).await
             }
         },
+        Commands::Join(ref args) => {
+            let chain = validators::ChainConfig::new(&args.chain_name).await?;
+            validators::gen_validator_startup_script(&chain).await?;
+            Ok(())
+        }
     }
 }

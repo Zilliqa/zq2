@@ -1,8 +1,10 @@
 use std::{fmt::Debug, ops::DerefMut};
 
+use alloy_primitives::{hex, Address};
 use ethabi::{ethereum_types::U64, Token};
 use ethers::{
     abi::FunctionExt,
+    core::types::Signature,
     providers::{Middleware, Provider},
     types::{
         transaction::{
@@ -1119,4 +1121,76 @@ async fn new_transaction_subscription(mut network: Network) {
 
     assert!(txn_stream.unsubscribe().await.unwrap());
     assert!(hash_stream.unsubscribe().await.unwrap());
+}
+
+#[zilliqa_macros::test]
+async fn get_accounts_with_nonexistent_params(mut network: Network) {
+    let client = network.rpc_client(0).await.unwrap();
+    // Attempt to call eth_accounts (as a random example) with no parameters at all and check that the
+    // call succeeds and the result is empty.
+    let result = client
+        .request_optional::<(), Vec<Address>>("eth_accounts", None)
+        .await
+        .unwrap();
+
+    assert!(result.is_empty());
+}
+
+#[zilliqa_macros::test]
+async fn get_accounts_with_extra_args(mut network: Network) {
+    let client = network.rpc_client(0).await.unwrap();
+    // Attempt to call eth_accounts (as a random example) with no parameters at all and check that the
+    // call succeeds and the result is empty.
+    let result = client
+        .request_optional::<Vec<&str>, Vec<Address>>("eth_accounts", Some(vec!["extra"]))
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[zilliqa_macros::test]
+async fn deploy_deterministic_deployment_proxy(mut network: Network) {
+    let wallet = network.random_wallet().await;
+    let provider = wallet.inner();
+
+    let signer: H160 = "0x3fab184622dc19b6109349b94811493bf2a45362"
+        .parse()
+        .unwrap();
+
+    let gas_price = 100000000000u128;
+    let gas = 100000u128;
+
+    // Send the signer enough money to cover the deployment.
+    let tx = TransactionRequest::pay(signer, gas_price * gas);
+    send_transaction(&mut network, tx.into()).await;
+
+    // Transaction from https://github.com/Arachnid/deterministic-deployment-proxy.
+    let tx = TransactionRequest::new()
+        .nonce(0)
+        .gas_price(gas_price)
+        .gas(gas)
+        .value(0)
+        .data(hex!("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"));
+    let tx = TypedTransaction::Legacy(tx);
+    let signature = Signature {
+        r: hex!("2222222222222222222222222222222222222222222222222222222222222222").into(),
+        s: hex!("2222222222222222222222222222222222222222222222222222222222222222").into(),
+        v: 27,
+    };
+    let raw_tx = tx.rlp_signed(&signature);
+    let hash = provider
+        .send_raw_transaction(raw_tx)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    let receipt = network.run_until_receipt(&wallet, hash, 100).await;
+
+    assert_eq!(receipt.from, signer);
+    assert_eq!(
+        receipt.contract_address.unwrap(),
+        "0x4e59b44847b379578588920ca78fbf26c0b4956c"
+            .parse()
+            .unwrap()
+    );
 }

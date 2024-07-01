@@ -17,6 +17,8 @@ balance,zilliqa,get,account
 
 If the account does not exist, returns error code -5.
 
+Note that in Zilliqa 2, balances are maintained in Wei and divided by 1_000_000 to get `Qa`.
+
 # Curl
 
 ```shell

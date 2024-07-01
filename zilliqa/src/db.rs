@@ -22,7 +22,7 @@ use sled::{Batch, Tree};
 
 use crate::{
     crypto::{Hash, NodeSignature},
-    exec::{ScillaError, ScillaException},
+    exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
     state::Account,
     time::SystemTime,
@@ -84,6 +84,9 @@ sqlify_with_bincode!(MapScillaErrorSqlable);
 
 make_wrapper!(Vec<Log>, VecLogSqlable);
 sqlify_with_bincode!(VecLogSqlable);
+
+make_wrapper!(Vec<ScillaTransition>, VecScillaTransitionSqlable);
+sqlify_with_bincode!(VecScillaTransitionSqlable);
 
 make_wrapper!(SystemTime, SystemTimeSqlable);
 impl ToSql for SystemTimeSqlable {
@@ -157,7 +160,7 @@ impl Db {
     where
         P: AsRef<Path>,
     {
-        let (db, connection, path) = match data_dir {
+        let (db, mut connection, path) = match data_dir {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
                 (
@@ -172,6 +175,8 @@ impl Db {
                 None,
             ),
         };
+
+        connection.trace(Some(|statement| tracing::trace!(statement, "sql executed")));
 
         Self::ensure_schema(&connection)?;
 
@@ -210,6 +215,7 @@ impl Db {
                 cumulative_gas_used INTEGER NOT NULL,
                 contract_address BLOB,
                 logs BLOB,
+                transitions BLOB,
                 accepted INTEGER,
                 errors BLOB,
                 exceptions BLOB);
@@ -649,9 +655,10 @@ impl Db {
             cumulative_gas_used: row.get(5)?,
             contract_address: row.get::<_, Option<AddressSqlable>>(6)?.map(|a| a.into()),
             logs: row.get::<_, VecLogSqlable>(7)?.into(),
-            accepted: row.get(8)?,
-            errors: row.get::<_, MapScillaErrorSqlable>(9)?.into(),
-            exceptions: row.get::<_, VecScillaExceptionSqlable>(10)?.into(),
+            transitions: row.get::<_, VecScillaTransitionSqlable>(8)?.into(),
+            accepted: row.get(9)?,
+            errors: row.get::<_, MapScillaErrorSqlable>(10)?.into(),
+            exceptions: row.get::<_, VecScillaExceptionSqlable>(11)?.into(),
         })
     }
 
@@ -662,8 +669,8 @@ impl Db {
     ) -> Result<()> {
         sqlite_tx.execute(
             "INSERT INTO receipts
-                (tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, accepted, errors, exceptions)
-            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :cumulative_gas_used, :contract_address, :logs, :accepted, :errors, :exceptions)",
+                (tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions)
+            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :cumulative_gas_used, :contract_address, :logs, :transitions, :accepted, :errors, :exceptions)",
             named_params! {
                 ":tx_hash": receipt.tx_hash,
                 ":block_hash": receipt.block_hash,
@@ -673,6 +680,7 @@ impl Db {
                 ":cumulative_gas_used": receipt.cumulative_gas_used,
                 ":contract_address": receipt.contract_address.map(AddressSqlable),
                 ":logs": VecLogSqlable(receipt.logs),
+                ":transitions": VecScillaTransitionSqlable(receipt.transitions),
                 ":accepted": receipt.accepted,
                 ":errors": MapScillaErrorSqlable(receipt.errors),
                 ":exceptions": VecScillaExceptionSqlable(receipt.exceptions),
@@ -686,14 +694,14 @@ impl Db {
     }
 
     pub fn get_transaction_receipt(&self, txn_hash: &Hash) -> Result<Option<TransactionReceipt>> {
-        Ok(self.block_store.lock().unwrap().query_row("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1", [txn_hash], Self::make_receipt).optional()?)
+        Ok(self.block_store.lock().unwrap().query_row("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1", [txn_hash], Self::make_receipt).optional()?)
     }
 
     pub fn get_transaction_receipts_in_block(
         &self,
         block_hash: &Hash,
     ) -> Result<Vec<TransactionReceipt>> {
-        Ok(self.block_store.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
+        Ok(self.block_store.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
     }
 
     pub fn remove_transaction_receipts_in_block(&self, block_hash: &Hash) -> Result<()> {

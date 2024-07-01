@@ -1,9 +1,9 @@
 [package]
-name = "z2"
-version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
+name = "z2"
+version.workspace = true
 
 # This is a bit dodgy and should really be a top-level member of the workspace, but
 # it's not big enough yet - we should promote it if it ever gets large enough
@@ -21,52 +21,54 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy-primitives = { version = "0.7.2", features = ["rlp", "serde"] }
-alloy-consensus = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf", features = ["serde", "k256"] }
-alloy-eips = { git = "https://github.com/alloy-rs/alloy.git", rev = "07611cf", features = ["serde"] }
+alloy-consensus = { version = "0.1.2", features = ["serde", "k256"]}
+alloy-eips = { version = "0.1.2", features = ["serde"]}
+alloy-primitives = {version = "0.7.2", features = ["rlp", "serde"]}
 anyhow = "1.0.86"
 async-trait = "0.1.80"
 base64 = "0.22.0"
 bitvec = "1.0.1"
-clap = { version = "4.5.4", features = ["derive"] }
+clap = {version = "4.5.4", features = ["derive"]}
 colored = "2.1.0"
-eth_trie = { version = "0.1.0", path = "../eth-trie.rs" }
+eth_trie = {version = "0.1.0", path = "../eth-trie.rs"}
 ethabi = "18.0.0"
 ethereum = "0.15.0"
+ethers = "2.0.14"
 futures = "0.3.30"
 git2 = "0.18.3"
 hex = "0.4.3"
 home = "0.5.9"
 indicatif = "0.17.8"
 itertools = "0.13.0"
-jsonrpsee = { version ="0.22.4", features= [ "client" ] }
+jsonrpsee = {version = "0.22.4", features = ["client"]}
 k256 = "0.13.3"
-lazy_static = "1.4.0"
-libp2p = { version = "0.53.2", features = [ "identify" ] }
+lazy_static = "1.5.0"
+libp2p = {version = "0.53.2", features = ["identify"]}
+octocrab = "0.38.0"
 prost = "0.12.6"
 rand = "0.8.5"
 rand_core = "0.6.4"
 regex = "1.10.4"
-reqwest = { version = "0.12.3", features = [ "json", "rustls-tls", "http2", "charset" ], default-features=false}
-revm = { version = "9.0.0", features = ["optional_balance_check"] }
+reqwest = {version = "0.12.3", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
+revm = {version = "10.0.0", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
-serde = { version = "1.0.203", features = ["derive"] }
+serde = {version = "1.0.203", features = ["derive"]}
 serde_json = "1.0.117"
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 tempfile = "3.9.0"
-thiserror = "1.0.61"
 tera = "1.19.1"
-tokio = { version = "1.38.0", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"] }
+thiserror = "1.0.61"
+tokio = {version = "1.38.0", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
 tokio-stream = "0.1.15"
 toml = "0.8.12"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
-url = "2.5.0"
-zilliqa = { path = "../zilliqa" }
-zilliqa-rs = { version = "0.3.0" }
-zqutils = { git = "https://github.com/zilliqa/zq-base" }
+url = "2.5.2"
+zilliqa = {path = "../zilliqa"}
+zilliqa-rs = "0.3.1"
+zqutils = {git = "https://github.com/zilliqa/zq-base"}
 
 [build-dependencies]
 prost-build = "0.12.3"

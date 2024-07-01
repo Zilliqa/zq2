@@ -29,6 +29,19 @@ implicitly change its status to `NotYetImplemented`.
 One day we could (and should!) generate boilerplate for undocumented methods.
 For now, it's hard to tell which section these should go in and so we skip this.
 
+## Macros
+
+Throughout the documentation (in pages, in the summary page, and
+elsewhere), various macros are available.
+
+These are defined in `z2/resources/api_macros.tera.md` and contain
+things like defintions of what constitutes a block specification,
+which would otherwise be repetitive and difficult to update if they
+were repeated in the documentation.
+
+Please be careful not to unnecessarily complicate these - I thought
+hard about providing them at all!
+
 
 ## Sections expected in API documentation
 

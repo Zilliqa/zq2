@@ -6,6 +6,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
@@ -20,7 +21,6 @@ use crate::{
     api::types::zil::{CreateTransactionResponse, GetTxResponse, RPCErrorCode},
     crypto::Hash,
     exec::zil_contract_address,
-    message::BlockNumber,
     node::Node,
     schnorr,
     scilla::split_storage_key,
@@ -189,7 +189,7 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<GetTxRespo
     let block = node
         .lock()
         .unwrap()
-        .get_block_by_hash(receipt.block_hash)?
+        .get_block(receipt.block_hash)?
         .ok_or_else(|| anyhow!("block does not exist"))?;
 
     GetTxResponse::new(tx, receipt, block.number())
@@ -199,14 +199,11 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let address: Address = params.one()?;
 
     let node = node.lock().unwrap();
-
-    let balance = node.get_native_balance(address, BlockNumber::Latest)?;
+    let account = node.get_state(BlockId::latest())?.get_account(address)?;
     // We need to scale the balance from units of (10^-18) ZIL to (10^-12) ZIL. The value is truncated in this process.
-    let balance = balance / 10u128.pow(6);
-    let balance = balance.to_string();
-    let nonce = node.get_account(address, BlockNumber::Latest)?.nonce;
+    let balance = account.balance / 10u128.pow(6);
 
-    Ok(json!({"balance": balance, "nonce": nonce}))
+    Ok(json!({"balance": balance.to_string(), "nonce": account.nonce}))
 }
 
 fn get_current_mini_epoch(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -216,7 +213,7 @@ fn get_current_mini_epoch(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> 
 fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBlock> {
     let node = node.lock().unwrap();
     let block = node
-        .get_block_by_number(node.get_number(BlockNumber::Latest))?
+        .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("no blocks"))?;
 
     Ok((&block).into())
@@ -283,7 +280,8 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
     let node = node.lock().unwrap();
 
     // First get the account and check that its a scilla account
-    let account = node.get_account(address, BlockNumber::Latest)?;
+    let state = node.get_state(BlockId::latest())?;
+    let account = state.get_account(address)?;
 
     let result = json!({
         "_balance": ZilAmount::from_amount(account.balance).to_string(),
@@ -294,7 +292,6 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
 
     let is_scilla = account.code.scilla_code_and_init_data().is_some();
     if is_scilla {
-        let state = node.state_at(BlockNumber::Latest)?;
         let trie = state.get_account_trie(address)?;
         for (k, v) in trie.iter() {
             let (var_name, indices) = split_storage_key(&k)?;
@@ -317,7 +314,9 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
 fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let smart_contract_address: Address = params.one()?;
     let node = node.lock().unwrap();
-    let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
+    let account = node
+        .get_state(BlockId::latest())?
+        .get_account(smart_contract_address)?;
 
     let Some((code, _)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address not contract address"));
@@ -329,7 +328,9 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
 fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let smart_contract_address: Address = params.one()?;
     let node = node.lock().unwrap();
-    let account = node.get_account(smart_contract_address, BlockNumber::Latest)?;
+    let account = node
+        .get_state(BlockId::latest())?
+        .get_account(smart_contract_address)?;
 
     let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address not contract address"));
@@ -346,7 +347,7 @@ fn get_transactions_for_tx_block(
     let block_number: u64 = block_number.parse()?;
 
     let node = node.lock().unwrap();
-    let Some(block) = node.get_block_by_number(block_number)? else {
+    let Some(block) = node.get_block(block_number)? else {
         return Err(anyhow!("Tx Block does not exist"));
     };
     if block.transactions.is_empty() {
@@ -372,7 +373,7 @@ fn get_tx_block(
     let block_number: u64 = block_number.parse()?;
 
     let node = node.lock().unwrap();
-    let Some(block) = node.get_block_by_number(block_number)? else {
+    let Some(block) = node.get_block(block_number)? else {
         return Ok(None);
     };
     let mut block: zil::TxBlock = (&block).into();
@@ -395,7 +396,8 @@ fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Sm
     let nonce = node
         .lock()
         .unwrap()
-        .get_account(address, BlockNumber::Latest)?
+        .get_state(BlockId::latest())?
+        .get_account(address)?
         .nonce;
 
     let mut contracts = vec![];
@@ -406,7 +408,8 @@ fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Sm
         let is_scilla = node
             .lock()
             .unwrap()
-            .get_account(contract_address, BlockNumber::Latest)?
+            .get_state(BlockId::latest())?
+            .get_account(contract_address)?
             .code
             .scilla_code_and_init_data()
             .is_some();

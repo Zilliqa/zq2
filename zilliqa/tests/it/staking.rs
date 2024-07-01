@@ -108,7 +108,7 @@ async fn minimum_stake_is_properly_set(mut network: Network) {
     let deposit = get_minimum_deposit(&wallet).await;
     assert_eq!(
         deposit,
-        network.nodes[0]
+        *network.nodes[0]
             .inner
             .lock()
             .unwrap()
