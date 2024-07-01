@@ -268,7 +268,7 @@ impl Node {
             BlockNumberOrTag::Number(n) => Ok(n),
             BlockNumberOrTag::Earliest => Ok(0),
             BlockNumberOrTag::Latest => Ok(self.get_chain_tip()),
-            BlockNumberOrTag::Pending => todo!(),
+            BlockNumberOrTag::Pending => Ok(self.get_chain_tip()),
             BlockNumberOrTag::Finalized => {
                 let Some(view) = self.db.get_latest_finalized_view()? else {
                     return Ok(0u64);
