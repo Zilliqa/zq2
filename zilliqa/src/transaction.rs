@@ -1,4 +1,5 @@
 use std::{
+    cmp::{Ordering, PartialOrd},
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
     ops::{Add, AddAssign, Mul, Sub},
@@ -6,9 +7,9 @@ use std::{
 };
 
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy};
-use alloy_primitives::{keccak256, Address, Signature, TxKind, B256, U128, U256};
+use alloy_primitives::{keccak256, Address, Signature, TxKind, B256, U256};
 use alloy_rlp::{Encodable, Header, EMPTY_STRING_CODE};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use bytes::{BufMut, BytesMut};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Serialize};
@@ -21,9 +22,12 @@ use sha3::{
     },
     Digest, Keccak256,
 };
+use tracing::warn;
 
 use crate::{
-    constants::{EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, ZIL_MAX_TX_INPUT_SIZE},
+    constants::{
+        EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, ZIL_MAX_TX_INPUT_SIZE, ZIL_MIN_GAS_UNITS,
+    },
     crypto,
     exec::{ScillaError, ScillaException, ScillaTransition},
     schnorr,
@@ -258,27 +262,22 @@ impl SignedTransaction {
     fn cost(&self) -> Result<ZilAmount> {
         match self {
             SignedTransaction::Legacy { tx, .. } => {
-                let result = U128::try_from(tx.gas_limit)? * U128::try_from(tx.gas_price)?
-                    + U128::try_from(tx.value)?;
-                Ok(ZilAmount::from_amount(u128::try_from(result)?))
+                let result = tx.gas_limit * tx.gas_price + u128::try_from(tx.value)?;
+                Ok(ZilAmount::from_amount(result))
             }
-            SignedTransaction::Eip2930 { tx, .. } => ZilAmount::from_amount(
-                (U128::try_from(tx.gas_limit) * U128::try_from(tx.gas_price)
-                    + U128::try_from(tx.value))
-                .to(),
-            ),
-            SignedTransaction::Eip1559 { tx, .. } => ZilAmount::from_amount(
-                (U128::try_from(tx.gas_limit) * U128::try_from(tx.max_fee_per_gas)
-                    + U128::try_from(tx.value))
-                .to(),
-            ),
+            SignedTransaction::Eip2930 { tx, .. } => {
+                let result = tx.gas_limit * tx.gas_price + u128::try_from(tx.value)?;
+                Ok(ZilAmount::from_amount(result))
+            }
+            SignedTransaction::Eip1559 { tx, .. } => {
+                let result = tx.gas_limit * tx.max_fee_per_gas + u128::try_from(tx.value)?;
+                Ok(ZilAmount::from_amount(result))
+            }
             SignedTransaction::Zilliqa { tx, .. } => {
-                ZilAmount::from_amount(tx.gas_limit.0 as u128) * tx.gas_price + tx.amount
+                Ok(ZilAmount::from_amount(tx.gas_limit.0.into()) * tx.gas_price + tx.amount)
             }
-            SignedTransaction::Intershard { tx, .. } => {
-                ZilAmount::from_amount(tx.gas_price)
-                    * ZilAmount::from_amount(tx.gas_limit.0 as u128)
-            }
+            SignedTransaction::Intershard { tx, .. } => Ok(ZilAmount::from_amount(tx.gas_price)
+                * ZilAmount::from_amount(tx.gas_limit.0.into())),
         }
     }
 
@@ -367,66 +366,90 @@ impl SignedTransaction {
         account: &Account,
         block_gas_limit: EvmGas,
         chain_id: u64,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         self.validate_input_size()?;
         self.validate_gas_limit(block_gas_limit)?;
         self.validate_chain_id(chain_id)?;
         self.validate_sender_account(account)
     }
 
-    fn validate_input_size(&self) -> Result<()> {
+    fn validate_input_size(&self) -> Result<bool> {
         if let SignedTransaction::Zilliqa { tx, .. } = self {
             let input_size = tx.code.len() + tx.data.len();
             if input_size >= ZIL_MAX_TX_INPUT_SIZE {
-                bail!("Zil transaction input size: {input_size} exceeds limit: {ZIL_MAX_TX_INPUT_SIZE}");
+                warn!("Zil transaction input size: {input_size} exceeds limit: {ZIL_MAX_TX_INPUT_SIZE}");
+                return Ok(false);
             }
-            return Ok(());
+            return Ok(true);
         }
 
         let (input_size, tx_kind) = match self {
             SignedTransaction::Legacy { tx, .. } => (tx.input.len(), tx.to),
             SignedTransaction::Eip2930 { tx, .. } => (tx.input.len(), tx.to),
             SignedTransaction::Eip1559 { tx, .. } => (tx.input.len(), tx.to),
-            _ => return Ok(()),
+            _ => return Ok(true),
         };
 
         if input_size > EVM_MAX_TX_INPUT_SIZE {
-            bail!(
+            warn!(
                 "Evm transaction input size: {input_size} exceeds limit: {EVM_MAX_TX_INPUT_SIZE}"
             );
+            return Ok(false);
         }
 
         if tx_kind == TxKind::Create && input_size > EVM_MAX_INIT_CODE_SIZE {
-            bail!("Evm transaction initcode size: {input_size} exceeds limit: {EVM_MAX_INIT_CODE_SIZE}");
+            warn!("Evm transaction initcode size: {input_size} exceeds limit: {EVM_MAX_INIT_CODE_SIZE}");
+            return Ok(false);
         }
 
-        Ok(())
+        Ok(true)
     }
 
-    fn validate_gas_limit(&self, block_gas_limit: EvmGas) -> Result<()> {
+    fn validate_gas_limit(&self, block_gas_limit: EvmGas) -> Result<bool> {
         if self.gas_limit() > block_gas_limit {
-            bail!("Transaction gas limit exceeds block gas limit!");
+            warn!("Transaction gas limit exceeds block gas limit!");
+            return Ok(false);
         }
-        Ok(())
+
+        if let SignedTransaction::Zilliqa { tx, .. } = self {
+            if tx.gas_limit < ZIL_MIN_GAS_UNITS {
+                warn!("Insufficient gas give for zil transaction!");
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
-    fn validate_chain_id(&self, chain_id: u64) -> Result<()> {
+    fn validate_chain_id(&self, chain_id: u64) -> Result<bool> {
         let txn_chain_id = self
             .chain_id()
             .ok_or(anyhow!("Unable to get chain_id from transaction!"))?;
 
         if chain_id != txn_chain_id {
-            bail!(
+            warn!(
                 "Chain_id provided in transaction: {} is different than node chain_id: {}",
-                txn_chain_id,
-                chain_id
+                txn_chain_id, chain_id
             );
+            return Ok(false);
         }
-        Ok(())
+        Ok(true)
     }
 
-    fn validate_sender_account(&self, _account: &Account) -> Result<()> {
-        Ok(())
+    fn validate_sender_account(&self, account: &Account) -> Result<bool> {
+        let txn_cost = self.cost()?;
+        if txn_cost > ZilAmount(account.balance) {
+            warn!("Insufficient funds!");
+            return Ok(false);
+        }
+
+        let Some(nonce) = self.nonce() else {
+            return Ok(true);
+        };
+        if nonce < account.nonce {
+            warn!("Nonce is too low");
+            return Ok(false);
+        }
+        Ok(true)
     }
 }
 
@@ -673,6 +696,12 @@ impl Mul for ZilAmount {
 
     fn mul(self, rhs: Self) -> Self::Output {
         ZilAmount(self.0.checked_mul(rhs.0).expect("amount overflow"))
+    }
+}
+
+impl PartialOrd for ZilAmount {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.0.cmp(&other.0))
     }
 }
 
