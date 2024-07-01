@@ -836,9 +836,8 @@ mod tests {
     use rand_chacha::ChaCha8Rng;
     use tempfile::tempdir;
 
-    use crate::{crypto::SecretKey, state::State};
-
     use super::*;
+    use crate::{crypto::SecretKey, state::State};
 
     #[test]
     fn checkpoint_export_import() {
