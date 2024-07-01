@@ -42,6 +42,11 @@ def query_metadata_key(key: str) -> str:
         "Metadata-Flavor" : "Google" })
     return r.text
 
+def query_metadata_ext_ip() -> str:
+    url = f"http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip"
+    r = requests.get(url, headers = {
+        "Metadata-Flavor" : "Google" })
+    return r.text
 
 ZQ2_SCRIPT="""#!/bin/bash
 echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
@@ -88,6 +93,7 @@ WantedBy=multi-user.target
 """
 
 ZQ2_CONFIG="""
+external_address = "/ip4/""" + query_metadata_ext_ip() + """/tcp/3333"
 ${config}
 """
 

@@ -91,6 +91,10 @@ impl Proposal {
         )
     }
 
+    pub fn hash(&self) -> Hash {
+        self.header.hash
+    }
+
     pub fn number(&self) -> u64 {
         self.header.number
     }
@@ -182,17 +186,13 @@ impl NewView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockRequest(pub BlockRef);
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockBatchRequest(pub BlockRef);
+pub struct BlockRequest {
+    pub from_view: u64,
+    pub to_view: u64,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
-    pub proposal: Proposal,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockBatchResponse {
     pub proposals: Vec<Proposal>,
 }
 
@@ -215,8 +215,6 @@ pub enum ExternalMessage {
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
-    BlockBatchRequest(BlockBatchRequest),
-    BlockBatchResponse(BlockBatchResponse),
     NewTransaction(SignedTransaction),
     RequestResponse,
 }
@@ -226,6 +224,35 @@ impl ExternalMessage {
         match self {
             ExternalMessage::Proposal(p) => Some(p),
             _ => None,
+        }
+    }
+}
+
+/// Returns a terse, human-readable summary of a message.
+impl Display for ExternalMessage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            ExternalMessage::Proposal(p) => write!(f, "Proposal({})", p.view()),
+            ExternalMessage::Vote(_) => write!(f, "Vote"),
+            ExternalMessage::NewView(_) => write!(f, "NewView"),
+            ExternalMessage::BlockRequest(r) => {
+                write!(f, "BlockRequest({}..={})", r.from_view, r.to_view)
+            }
+            ExternalMessage::BlockResponse(r) => {
+                let mut views = r.proposals.iter().map(|p| p.view());
+                let first = views.next();
+                let last = views.last();
+                match (first, last) {
+                    (None, None) => write!(f, "BlockResponse([])"),
+                    (Some(first), None) => write!(f, "BlockResponse([{first}])"),
+                    (Some(first), Some(last)) => {
+                        write!(f, "BlockResponse([{first}, ..., {last}])")
+                    }
+                    (None, Some(_)) => unreachable!(),
+                }
+            }
+            ExternalMessage::NewTransaction(_) => write!(f, "NewTransaction"),
+            ExternalMessage::RequestResponse => write!(f, "RequestResponse"),
         }
     }
 }
@@ -242,28 +269,13 @@ pub enum InternalMessage {
     IntershardCall(IntershardCall),
 }
 
-impl ExternalMessage {
-    pub fn name(&self) -> &'static str {
+/// Returns a terse, human-readable summary of a message.
+impl Display for InternalMessage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            ExternalMessage::Proposal(_) => "Proposal",
-            ExternalMessage::Vote(_) => "Vote",
-            ExternalMessage::NewView(_) => "NewView",
-            ExternalMessage::BlockRequest(_) => "BlockRequest",
-            ExternalMessage::BlockResponse(_) => "BlockResponse",
-            ExternalMessage::BlockBatchRequest(_) => "BlockBatchRequest",
-            ExternalMessage::BlockBatchResponse(_) => "BlockBatchResponse",
-            ExternalMessage::NewTransaction(_) => "NewTransaction",
-            ExternalMessage::RequestResponse => "RequestResponse",
-        }
-    }
-}
-
-impl InternalMessage {
-    pub fn name(&self) -> &'static str {
-        match self {
-            InternalMessage::LaunchShard(_) => "LaunchShard",
-            InternalMessage::LaunchLink(_) => "LaunchLink",
-            InternalMessage::IntershardCall(_) => "IntershardCall",
+            InternalMessage::LaunchShard(_) => write!(f, "LaunchShard"),
+            InternalMessage::LaunchLink(_) => write!(f, "LaunchLink"),
+            InternalMessage::IntershardCall(_) => write!(f, "IntershardCall"),
         }
     }
 }
