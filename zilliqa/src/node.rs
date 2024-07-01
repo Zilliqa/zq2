@@ -318,9 +318,7 @@ impl Node {
 
                 Ok(Some(block))
             }
-            BlockId::Number(number) => {
-                Ok(Some(self.resolve_block_number(number)?))
-            }
+            BlockId::Number(number) => Ok(Some(self.resolve_block_number(number)?)),
         }
     }
 
