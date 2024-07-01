@@ -245,6 +245,7 @@ impl Db {
     pub fn load_trusted_checkpoint<P: AsRef<Path>>(
         &self,
         path: P,
+        hash: &Hash,
         our_shard_id: u64,
     ) -> Result<Block> {
         let input = File::open(path)?;
@@ -258,6 +259,9 @@ impl Db {
             "Invalid checkpoint file: missing block info on line 1"
         ))??;
         let block: Block = bincode::deserialize(&hex::decode(block.as_bytes())?)?;
+        if block.hash() != *hash {
+            return Err(anyhow!("Checkpoint does not match trusted hash"));
+        }
 
         let parent = lines.next().ok_or(anyhow!(
             "Invalid checkpoint file: missing parent info on line 2"
@@ -293,7 +297,7 @@ impl Db {
                 .split_once(';')
                 .ok_or(anyhow!("Invalid checkpoint file at line {idx}"))?;
             let (account_hash, serialized_account) = account.split_once(':').ok_or(anyhow!(
-                "Invalid checkpoint account information at line {idx}"
+                "Invalid checkpoint file: invalid state account information at line {idx}"
             ))?;
             let serialized_account = hex::decode(serialized_account)?;
             let mut account_trie = EthTrie::new(trie_storage.clone());
@@ -302,7 +306,7 @@ impl Db {
                     continue;
                 }
                 let (key, val) = storage_entry.split_once(':').ok_or(anyhow!(
-                    "Invalid storage entry at line {idx}, index {storage_idx}",
+                    "Invalid checkpoint file: invalid storage entry at line {idx}, index {storage_idx}",
                 ))?;
                 account_trie.insert(&hex::decode(key)?, &hex::decode(val)?)?;
             }
@@ -310,13 +314,13 @@ impl Db {
                 bincode::deserialize::<Account>(&serialized_account)?.storage_root;
             if account_trie.root_hash()?.as_slice() != account_trie_root {
                 return Err(anyhow!(
-                    "Invalid checkpoint: account trie root hash mismatch, at line {idx}: calculated {}, checkpoint file contained {}", hex::encode(account_trie.root_hash()?.as_slice()), hex::encode(account_trie_root)
+                    "Invalid checkpoint file: account trie root hash mismatch, at line {idx}: calculated {}, checkpoint file contained {}", hex::encode(account_trie.root_hash()?.as_slice()), hex::encode(account_trie_root)
                 ));
             }
             state_trie.insert(&hex::decode(account_hash)?, &serialized_account)?;
         }
         if state_trie.root_hash()? != block.state_root_hash().0 {
-            return Err(anyhow!("Invalid checkpoint: state root hash mismatch"));
+            return Err(anyhow!("Invalid checkpoint file: state root hash mismatch"));
         }
 
         let block_ref = &block; // for moving into the closure
@@ -714,8 +718,8 @@ impl Db {
 }
 
 pub fn snapshot_block_with_state<P: AsRef<Path> + Debug>(
-    block: Block,
-    parent: Block,
+    block: &Block,
+    parent: &Block,
     state_trie_storage: Arc<TrieStorage>,
     shard_id: u64,
     output: P,
@@ -892,12 +896,16 @@ mod tests {
             EvmGas(0),
         );
 
-        snapshot_block_with_state(snapshot_block, parent_block, trie_db, 1, checkpoint_path)
+        snapshot_block_with_state(&snapshot_block, &parent_block, trie_db, 1, checkpoint_path)
             .unwrap();
 
         // now parse the checkpoint
         let db = Db::new::<&str>(None, 0).unwrap();
-        db.load_trusted_checkpoint(checkpoint_path.join("snapshot.txt"), 1)
-            .unwrap();
+        db.load_trusted_checkpoint(
+            checkpoint_path.join("snapshot.txt"),
+            &snapshot_block.hash(),
+            1,
+        )
+        .unwrap();
     }
 }

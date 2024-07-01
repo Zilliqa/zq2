@@ -12,6 +12,7 @@ use zilliqa::{
         block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
         json_rcp_port_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
+        Checkpoint,
     },
     crypto::{Hash, SecretKey},
     transaction::EvmGas,
@@ -102,7 +103,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         },
         allowed_timestamp_skew: allowed_timestamp_skew_default(),
         data_dir: None,
-        checkpoint_file: None,
+        load_checkpoint: None,
         do_snapshots: false,
         disable_rpc: false,
         json_rpc_port: json_rcp_port_default(),
@@ -214,8 +215,13 @@ async fn checkpoints_test(mut network: Network) {
     }
 
     // Create new node and pass it one of those checkpoint files
+    let checkpoint_path = checkpoint_files[0].to_str().unwrap().to_owned();
+    let checkpoint_hash = wallet.get_block(5).await.unwrap().unwrap().hash.unwrap();
     let new_node_idx = network.add_node_with_options(NewNodeOptions {
-        snapshot_path: Some(checkpoint_files[0].clone().into_boxed_path()),
+        snapshot: Some(Checkpoint {
+            file: checkpoint_path,
+            hash: Hash(checkpoint_hash.0),
+        }),
         ..Default::default()
     });
 

@@ -211,8 +211,8 @@ impl Consensus {
         );
 
         let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
-        if let Some(checkpoint_file) = &config.checkpoint_file {
-            db.load_trusted_checkpoint(checkpoint_file, config.eth_chain_id)?;
+        if let Some(checkpoint) = &config.load_checkpoint {
+            db.load_trusted_checkpoint(&checkpoint.file, &checkpoint.hash, config.eth_chain_id)?;
         }
 
         let latest_block = db

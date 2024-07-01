@@ -201,7 +201,7 @@ impl Setup {
                 json_rpc_port: self.get_json_rpc_port(usize::try_into(i)?, false),
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
-                checkpoint_file: None,
+                load_checkpoint: None,
                 do_snapshots: false,
                 disable_rpc: disable_rpc_default(),
                 eth_chain_id: eth_chain_id_default(),

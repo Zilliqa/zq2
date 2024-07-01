@@ -350,7 +350,7 @@ impl P2pNode {
                             self.forward_local_message_to_shard(&Self::shard_id_to_topic(destination).hash(), source, message)?;
                         }
                         InternalMessage::ExportBlockSnapshot(block, parent, trie_storage, path) => {
-                            self.task_threads.spawn(async move { db::snapshot_block_with_state(*block, *parent, trie_storage, source, path) });
+                            self.task_threads.spawn(async move { db::snapshot_block_with_state(&block, &parent, trie_storage, source, path) });
                         }
                     }
                 },

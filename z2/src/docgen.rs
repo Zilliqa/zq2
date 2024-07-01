@@ -319,7 +319,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
             epochs_per_checkpoint: 24,
         },
         data_dir: None,
-        checkpoint_file: None,
+        load_checkpoint: None,
         do_snapshots: false,
         eth_chain_id: eth_chain_id_default(),
         disable_rpc: disable_rpc_default(),

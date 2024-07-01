@@ -20,7 +20,6 @@ use std::{
     fmt::Debug,
     fs,
     ops::DerefMut,
-    path::Path,
     pin::Pin,
     rc::Rc,
     sync::{
@@ -63,7 +62,7 @@ use zilliqa::{
         block_request_limit_default, disable_rpc_default, eth_chain_id_default,
         json_rcp_port_default, local_address_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
-        Amount, ConsensusConfig, NodeConfig,
+        Amount, Checkpoint, ConsensusConfig, NodeConfig,
     },
     crypto::{NodePublicKey, SecretKey},
     db,
@@ -76,7 +75,7 @@ use zilliqa::{
 #[derive(Default)]
 pub struct NewNodeOptions {
     secret_key: Option<SecretKey>,
-    snapshot_path: Option<Box<Path>>,
+    snapshot: Option<Checkpoint>,
 }
 
 impl NewNodeOptions {
@@ -285,7 +284,7 @@ impl Network {
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             disable_rpc: disable_rpc_default(),
             data_dir: None,
-            checkpoint_file: None,
+            load_checkpoint: None,
             do_snapshots,
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -364,9 +363,7 @@ impl Network {
             json_rpc_port: json_rcp_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            checkpoint_file: options
-                .snapshot_path
-                .map(|path| path.to_str().unwrap().to_owned()),
+            load_checkpoint: options.snapshot,
             do_snapshots: self.do_snapshots,
             disable_rpc: disable_rpc_default(),
             consensus: ConsensusConfig {
@@ -457,7 +454,7 @@ impl Network {
                     eth_chain_id: self.shard_id,
                     allowed_timestamp_skew: allowed_timestamp_skew_default(),
                     data_dir: None,
-                    checkpoint_file: None,
+                    load_checkpoint: None,
                     do_snapshots: self.do_snapshots,
                     disable_rpc: disable_rpc_default(),
                     json_rpc_port: json_rcp_port_default(),
@@ -818,8 +815,8 @@ impl Network {
                             output.to_string_lossy()
                         );
                         db::snapshot_block_with_state(
-                            *block.clone(),
-                            *parent.clone(),
+                            block,
+                            parent,
                             trie_storage.clone(),
                             *source_shard,
                             output,

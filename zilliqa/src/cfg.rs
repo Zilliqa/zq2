@@ -4,7 +4,10 @@ use alloy_primitives::Address;
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{crypto::NodePublicKey, transaction::EvmGas};
+use crate::{
+    crypto::{Hash, NodePublicKey},
+    transaction::EvmGas,
+};
 
 // Note that z2 constructs instances of this to save as a configuration so it must be both
 // serializable and deserializable.
@@ -54,7 +57,7 @@ pub struct NodeConfig {
     pub data_dir: Option<String>,
     /// Persistence checkpoint to load.
     #[serde(default)]
-    pub checkpoint_file: Option<String>,
+    pub load_checkpoint: Option<Checkpoint>,
     /// Whether to enable exporting checkpoint state snapshot files.
     #[serde(default)]
     pub do_snapshots: bool,
@@ -67,6 +70,15 @@ pub struct NodeConfig {
     /// The maximum number of blocks to request in a single message when syncing.
     #[serde(default = "block_request_batch_size_default")]
     pub block_request_batch_size: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Checkpoint {
+    /// Location of the checkpoint
+    pub file: String,
+    /// Trusted hash of the checkpoint block
+    pub hash: Hash,
 }
 
 pub fn allowed_timestamp_skew_default() -> Duration {
