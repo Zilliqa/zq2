@@ -10,7 +10,7 @@ use alloy_rpc_types::{
     pubsub::{self, SubscriptionKind},
     FilteredParams,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use itertools::{Either, Itertools};
 use jsonrpsee::{
     core::StringError,
@@ -103,12 +103,18 @@ fn build_errored_response_for_missing_block(
         return Ok(block);
     }
 
-    // There's no specific error for requests not having block_hash and optional canonical parameter
+    const INVALID_INPUT: i32 = -32000;
+    let resource_not_found = ErrorObjectOwned::owned(
+        INVALID_INPUT,
+        "Invalid input".to_string(),
+        Option::<String>::None,
+    );
+
     let BlockId::Hash(RpcBlockHash {
         require_canonical, ..
     }) = request
     else {
-        bail!("Unable to find a block with given id!");
+        return Err(resource_not_found.into());
     };
 
     let require_canonical = require_canonical.unwrap_or_default();
@@ -123,15 +129,7 @@ fn build_errored_response_for_missing_block(
             );
             Err(response.into())
         }
-        false => {
-            const RESOURCE_NOT_FOUND: i32 = -32001;
-            let response = ErrorObjectOwned::owned(
-                RESOURCE_NOT_FOUND,
-                "Resource not found".to_string(),
-                Option::<String>::None,
-            );
-            Err(response.into())
-        }
+        false => Err(resource_not_found.into()),
     }
 }
 
@@ -425,8 +423,12 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             .get_block(block_hash)?
             .ok_or_else(|| anyhow!("block not found"))?))),
         (None, from, to) => {
-            let from = node.resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest))?;
-            let to = node.resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?;
+            let from = node
+                .resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest))?
+                .number();
+            let to = node
+                .resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?
+                .number();
 
             if from > to {
                 return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
