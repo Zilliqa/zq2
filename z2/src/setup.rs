@@ -202,6 +202,7 @@ impl Setup {
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
                 checkpoint_file: None,
+                do_snapshots: false,
                 disable_rpc: disable_rpc_default(),
                 eth_chain_id: eth_chain_id_default(),
                 consensus: ConsensusConfig {

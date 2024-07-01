@@ -1465,10 +1465,11 @@ impl Consensus {
 
         if block.number() % self.config.consensus.blocks_per_epoch == 0 && block.number() != 0 {
             // TODO: handle epochs
-            if block.number()
-                % (self.config.consensus.blocks_per_epoch
-                    * self.config.consensus.epochs_per_checkpoint)
-                == 0
+            if self.config.do_snapshots
+                && block.number()
+                    % (self.config.consensus.blocks_per_epoch
+                        * self.config.consensus.epochs_per_checkpoint)
+                    == 0
             {
                 if let Some(snapshot_path) = self.db.create_checkpoint_path(block.number())? {
                     let parent =

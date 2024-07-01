@@ -103,6 +103,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         allowed_timestamp_skew: allowed_timestamp_skew_default(),
         data_dir: None,
         checkpoint_file: None,
+        do_snapshots: false,
         disable_rpc: false,
         json_rpc_port: json_rcp_port_default(),
         eth_chain_id: eth_chain_id_default(),

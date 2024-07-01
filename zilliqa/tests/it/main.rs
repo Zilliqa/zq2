@@ -286,6 +286,7 @@ impl Network {
             disable_rpc: disable_rpc_default(),
             data_dir: None,
             checkpoint_file: None,
+            do_snapshots,
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
@@ -366,6 +367,7 @@ impl Network {
             checkpoint_file: options
                 .snapshot_path
                 .map(|path| path.to_str().unwrap().to_owned()),
+            do_snapshots: self.do_snapshots,
             disable_rpc: disable_rpc_default(),
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),
@@ -456,6 +458,7 @@ impl Network {
                     allowed_timestamp_skew: allowed_timestamp_skew_default(),
                     data_dir: None,
                     checkpoint_file: None,
+                    do_snapshots: self.do_snapshots,
                     disable_rpc: disable_rpc_default(),
                     json_rpc_port: json_rcp_port_default(),
                     consensus: ConsensusConfig {
@@ -809,22 +812,19 @@ impl Network {
                         }
                     }
                     InternalMessage::ExportBlockSnapshot(block, parent, trie_storage, output) => {
-                        if self.do_snapshots {
-                            trace!(
-                                "Exporting state snapshot to path {}",
-                                output.to_string_lossy()
-                            );
-                            db::snapshot_block_with_state(
-                                *block.clone(),
-                                *parent.clone(),
-                                trie_storage.clone(),
-                                *source_shard,
-                                output,
-                            )
-                            .unwrap();
-                        } else {
-                            trace!("Requested export of snapshot to {}. Skipping as it's not intended to be tested.", output.to_string_lossy());
-                        }
+                        assert!(self.do_snapshots, "Node requested a checkpoint snapshot export to {}, despite snapshots beind disabled in the config", output.to_string_lossy());
+                        trace!(
+                            "Exporting state snapshot to path {}",
+                            output.to_string_lossy()
+                        );
+                        db::snapshot_block_with_state(
+                            *block.clone(),
+                            *parent.clone(),
+                            trie_storage.clone(),
+                            *source_shard,
+                            output,
+                        )
+                        .unwrap();
                     }
                 }
             }
