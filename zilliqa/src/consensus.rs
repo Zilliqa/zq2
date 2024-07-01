@@ -1216,7 +1216,11 @@ impl Consensus {
 
         let account = self.state.get_account(txn.signer)?;
         let chain_id = self.config.eth_chain_id;
-        txn.tx.validate(&account, chain_id)?;
+        txn.tx.validate(
+            &account,
+            self.config.consensus.eth_block_gas_limit,
+            chain_id,
+        )?;
 
         let txn_hash = txn.hash;
 

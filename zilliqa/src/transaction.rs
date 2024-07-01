@@ -1,12 +1,12 @@
 use std::{
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
-    ops::{Add, AddAssign, Sub},
+    ops::{Add, AddAssign, Mul, Sub},
     str::FromStr,
 };
 
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy};
-use alloy_primitives::{keccak256, Address, Signature, TxKind, B256, U256};
+use alloy_primitives::{keccak256, Address, Signature, TxKind, B256, U128, U256};
 use alloy_rlp::{Encodable, Header, EMPTY_STRING_CODE};
 use anyhow::{anyhow, bail, Result};
 use bytes::{BufMut, BytesMut};
@@ -255,6 +255,33 @@ impl SignedTransaction {
         }
     }
 
+    fn cost(&self) -> Result<ZilAmount> {
+        match self {
+            SignedTransaction::Legacy { tx, .. } => {
+                let result = U128::try_from(tx.gas_limit)? * U128::try_from(tx.gas_price)?
+                    + U128::try_from(tx.value)?;
+                Ok(ZilAmount::from_amount(u128::try_from(result)?))
+            }
+            SignedTransaction::Eip2930 { tx, .. } => ZilAmount::from_amount(
+                (U128::try_from(tx.gas_limit) * U128::try_from(tx.gas_price)
+                    + U128::try_from(tx.value))
+                .to(),
+            ),
+            SignedTransaction::Eip1559 { tx, .. } => ZilAmount::from_amount(
+                (U128::try_from(tx.gas_limit) * U128::try_from(tx.max_fee_per_gas)
+                    + U128::try_from(tx.value))
+                .to(),
+            ),
+            SignedTransaction::Zilliqa { tx, .. } => {
+                ZilAmount::from_amount(tx.gas_limit.0 as u128) * tx.gas_price + tx.amount
+            }
+            SignedTransaction::Intershard { tx, .. } => {
+                ZilAmount::from_amount(tx.gas_price)
+                    * ZilAmount::from_amount(tx.gas_limit.0 as u128)
+            }
+        }
+    }
+
     pub fn verify(self) -> Result<VerifiedTransaction> {
         let (tx, signer, hash) = match self {
             SignedTransaction::Legacy { tx, sig } => {
@@ -335,13 +362,15 @@ impl SignedTransaction {
         }
     }
 
-    pub fn validate(&self, account: &Account, chain_id: u64) -> Result<()> {
+    pub fn validate(
+        &self,
+        account: &Account,
+        block_gas_limit: EvmGas,
+        chain_id: u64,
+    ) -> Result<()> {
         self.validate_input_size()?;
-        self.validate_init_code_size()?;
-        self.validate_gas_limit()?;
-        self.validate_priority_fee_per_gas()?;
+        self.validate_gas_limit(block_gas_limit)?;
         self.validate_chain_id(chain_id)?;
-        self.validate_intrinsic_gas()?;
         self.validate_sender_account(account)
     }
 
@@ -374,16 +403,10 @@ impl SignedTransaction {
         Ok(())
     }
 
-    fn validate_init_code_size(&self) -> Result<()> {
-        Ok(())
-    }
-
-    fn validate_gas_limit(&self) -> Result<()> {
-        Ok(())
-    }
-
-    fn validate_priority_fee_per_gas(&self) -> Result<()> {
-        // Todo: validate max and min priority fees
+    fn validate_gas_limit(&self, block_gas_limit: EvmGas) -> Result<()> {
+        if self.gas_limit() > block_gas_limit {
+            bail!("Transaction gas limit exceeds block gas limit!");
+        }
         Ok(())
     }
 
@@ -399,10 +422,6 @@ impl SignedTransaction {
                 chain_id
             );
         }
-        Ok(())
-    }
-
-    fn validate_intrinsic_gas(&self) -> Result<()> {
         Ok(())
     }
 
@@ -646,6 +665,14 @@ impl Add for ZilAmount {
 
     fn add(self, rhs: Self) -> Self::Output {
         ZilAmount(self.0.checked_add(rhs.0).expect("amount overflow"))
+    }
+}
+
+impl Mul for ZilAmount {
+    type Output = ZilAmount;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        ZilAmount(self.0.checked_mul(rhs.0).expect("amount overflow"))
     }
 }
 
