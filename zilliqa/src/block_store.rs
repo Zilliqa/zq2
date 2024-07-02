@@ -1,4 +1,4 @@
-use std::{cell::RefCell, num::NonZeroUsize, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, num::NonZeroUsize, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
@@ -34,6 +34,8 @@ pub struct BlockStore {
     block_cache: RefCell<LruCache<Hash, Block>>,
     /// The maximum view of any proposal we have received, even if it is not part of our chain yet.
     highest_known_view: u64,
+    /// Information we keep about our peers' state.
+    peers: HashMap<PeerId, PeerInfo>,
     /// The maximum view of blocks we've sent a request for.
     requested_view: u64,
     /// The maximum number of blocks to send requests for at a time.
@@ -50,12 +52,19 @@ pub struct BlockStore {
     message_sender: MessageSender,
 }
 
+#[derive(Clone, Debug, Default)]
+struct PeerInfo {
+    highest_known_view: u64,
+    requested_blocks: u64,
+}
+
 impl BlockStore {
     pub fn new(config: &NodeConfig, db: Arc<Db>, message_sender: MessageSender) -> Result<Self> {
         Ok(BlockStore {
             db,
             block_cache: RefCell::new(LruCache::new(NonZeroUsize::new(5).unwrap())),
             highest_known_view: 0,
+            peers: HashMap::new(),
             requested_view: 0,
             max_blocks_in_flight: config.max_blocks_in_flight,
             batch_size: config.block_request_batch_size,
@@ -67,11 +76,7 @@ impl BlockStore {
     }
 
     /// Buffer a block proposal whose parent we don't yet know about.
-    pub fn buffer_proposal(
-        &mut self,
-        proposal: Proposal,
-        random_peer: Option<PeerId>,
-    ) -> Result<()> {
+    pub fn buffer_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
         let view = proposal.view();
 
         self.buffered.push(proposal.header.parent_hash, proposal);
@@ -82,12 +87,27 @@ impl BlockStore {
             self.highest_known_view = view;
         }
 
-        self.request_missing_blocks(random_peer)?;
+        let peer = self.peers.entry(from).or_default();
+        if view > peer.highest_known_view {
+            trace!(%from, view, "new highest known view for peer");
+            peer.highest_known_view = view;
+        }
+
+        self.request_missing_blocks()?;
 
         Ok(())
     }
 
-    pub fn request_missing_blocks(&mut self, random_peer: Option<PeerId>) -> Result<()> {
+    pub fn best_peer(&self, view: u64) -> Option<PeerId> {
+        let (best, _) = self
+            .peers
+            .iter()
+            .filter(|(_, peer)| peer.highest_known_view >= view)
+            .min_by_key(|(_, peer)| peer.requested_blocks)?;
+        Some(*best)
+    }
+
+    pub fn request_missing_blocks(&mut self) -> Result<()> {
         // Get the highest view we currently have committed to our chain.
         let current_view = self
             .get_block_by_number(
@@ -112,22 +132,22 @@ impl BlockStore {
                 && (self.requested_view - current_view)
                     <= (self.max_blocks_in_flight - self.batch_size)
             {
-                trace!(
-                    from = self.requested_view + 1,
-                    to = self.requested_view + self.batch_size,
-                    "requesting blocks"
-                );
+                let from = self.requested_view + 1;
+                let to = (self.requested_view + self.batch_size).max(self.highest_known_view);
+                trace!(from, to, "requesting blocks");
                 let message = ExternalMessage::BlockRequest(BlockRequest {
-                    from_view: self.requested_view + 1,
-                    to_view: self.requested_view + self.batch_size,
+                    from_view: from,
+                    to_view: to,
                 });
-                if let Some(random_peer) = random_peer {
-                    self.message_sender
-                        .send_external_message(random_peer, message)?;
-                } else {
-                    self.message_sender.broadcast_external_message(message)?;
-                }
-                self.requested_view += self.batch_size;
+                let Some(peer) = self.best_peer(from) else {
+                    warn!(from, "no peers to download missing blocks from");
+                    return Ok(());
+                };
+                self.message_sender.send_external_message(peer, message)?;
+
+                let requested_blocks = to - from + 1;
+                self.peers.entry(peer).or_default().requested_blocks += requested_blocks;
+                self.requested_view += requested_blocks;
             }
         }
 
@@ -164,11 +184,24 @@ impl BlockStore {
         self.get_block(hash)
     }
 
-    pub fn process_block(&mut self, block: Block) -> Result<Option<Proposal>> {
-        trace!(number = block.number(), hash = ?block.hash(), "insert block");
+    pub fn process_block(
+        &mut self,
+        from: Option<PeerId>,
+        block: Block,
+    ) -> Result<Option<Proposal>> {
+        trace!(?from, number = block.number(), hash = ?block.hash(), "insert block");
         self.db.insert_block(&block)?;
         self.db
             .put_canonical_block_number(block.number(), block.hash())?;
+
+        if let Some(from) = from {
+            let peer = self.peers.entry(from).or_default();
+            peer.requested_blocks -= 1;
+            if block.view() > peer.highest_known_view {
+                trace!(%from, view = block.view(), "new highest known view for peer");
+                peer.highest_known_view = block.view();
+            }
+        }
 
         if let Some(child) = self.buffered.pop(&block.hash()) {
             return Ok(Some(child));
