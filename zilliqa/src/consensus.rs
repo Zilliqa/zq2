@@ -9,6 +9,7 @@ use std::{
 use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Context as _, Result};
 use bitvec::bitvec;
+use eth_trie::{MemoryDB, Trie};
 use libp2p::PeerId;
 use rand::{
     distributions::{Distribution, WeightedIndex},
@@ -523,6 +524,18 @@ impl Consensus {
             return Ok(None);
         }
 
+        if block.gas_limit() > self.config.consensus.eth_block_gas_limit
+            || block.gas_used() > block.gas_limit()
+        {
+            warn!(
+                "Block gas used/limit check failed. Used: {}, Limit: {}, config limit: {}",
+                block.gas_used(),
+                block.gas_limit(),
+                self.config.consensus.eth_block_gas_limit
+            );
+            return Ok(None);
+        }
+
         match self.check_block(&block, during_sync) {
             Ok(()) => {}
             Err((e, temporary)) => {
@@ -996,9 +1009,18 @@ impl Consensus {
         }
 
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
+
+        let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+
         let applied_transactions: Vec<_> = transactions
             .into_iter()
-            .filter_map(|tx| {
+            .enumerate()
+            .filter_map(|(idx, tx)| {
+                transactions_trie
+                    .insert(tx.hash.as_bytes(), tx.hash.as_bytes())
+                    .ok()?;
+
                 self.apply_transaction(tx.clone(), parent_header, inspector::noop())
                     .transpose()
                     .map(|r| {
@@ -1006,13 +1028,23 @@ impl Consensus {
                             gas_left = gas_left
                                 .checked_sub(result.gas_used())
                                 .ok_or_else(|| anyhow!("too much gas used"))?;
-                            Ok(tx)
+
+                            let receipt = Self::create_txn_receipt(
+                                result.clone(),
+                                tx.hash,
+                                idx,
+                                self.config.consensus.eth_block_gas_limit - gas_left,
+                            );
+                            let receipt_hash = receipt.hash();
+                            receipts_trie
+                                .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
+                            Ok((tx, result))
                         })
                     })
             })
             .collect::<Result<_>>()?;
         let applied_transaction_hashes: Vec<_> =
-            applied_transactions.iter().map(|tx| tx.hash).collect();
+            applied_transactions.iter().map(|(tx, _)| tx.hash).collect();
 
         self.apply_rewards(committee, block_view + 1, &qc.cosigned)?;
 
@@ -1023,9 +1055,12 @@ impl Consensus {
             qc,
             parent_hash,
             self.state.root_hash()?,
+            Hash(transactions_trie.root_hash()?.into()),
+            Hash(receipts_trie.root_hash()?.into()),
             applied_transaction_hashes.clone(),
             SystemTime::max(SystemTime::now(), parent_header.timestamp),
             self.config.consensus.eth_block_gas_limit - gas_left,
+            self.config.consensus.eth_block_gas_limit,
         );
 
         self.state.set_to_root(previous_state_root_hash.into());
@@ -1061,6 +1096,7 @@ impl Consensus {
         let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
             applied_transactions
                 .into_iter()
+                .map(|(tx, _)| tx)
                 .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
         // however, for the transactions that we are NOT broadcasting, we re-insert
         // them into the pool - this is because upon broadcasting the proposal, we will
@@ -1252,6 +1288,8 @@ impl Consensus {
 
                     self.apply_rewards(&committee, new_view.view, &high_qc.cosigned)?;
 
+                    let mut empty_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+                    let empty_root_hash = Hash(empty_trie.root_hash()?.into());
                     // why does this have no txn?
                     let proposal = Block::from_agg(
                         self.secret_key,
@@ -1261,6 +1299,8 @@ impl Consensus {
                         agg,
                         parent_hash,
                         self.state.root_hash()?,
+                        empty_root_hash,
+                        empty_root_hash,
                         SystemTime::max(SystemTime::now(), parent.timestamp()),
                     );
 
@@ -2146,6 +2186,9 @@ impl Consensus {
 
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
+        let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+
         for (tx_index, txn) in transactions.into_iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
@@ -2156,32 +2199,59 @@ impl Consensus {
             for address in inspector.touched {
                 self.db.add_touched_address(address, tx_hash)?;
             }
-            let success = result.success();
-            let contract_address = result.contract_address();
+
             let gas_used = result.gas_used();
             cumulative_gas_used += gas_used;
-            let accepted = result.accepted();
-            let (logs, transitions, errors, exceptions) = result.into_parts();
-            let receipt = TransactionReceipt {
-                block_hash: block.hash(),
-                tx_hash,
-                index: tx_index as u64,
-                success,
-                contract_address,
-                logs,
-                transitions,
-                gas_used,
-                cumulative_gas_used,
-                accepted,
-                errors,
-                exceptions,
-            };
+
+            if cumulative_gas_used > block.gas_limit() {
+                warn!("Cumulative gas used by executing transactions exceeded block limit!");
+                return Ok(());
+            }
+
+            let receipt = Self::create_txn_receipt(result, tx_hash, tx_index, cumulative_gas_used);
+
+            let receipt_hash = receipt.hash();
+            receipts_trie
+                .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())
+                .unwrap();
+
+            transactions_trie
+                .insert(tx_hash.as_bytes(), tx_hash.as_bytes())
+                .unwrap();
+
             info!(?receipt, "applied transaction {:?}", receipt);
+            block_receipts.push((receipt, tx_index));
+        }
+
+        if cumulative_gas_used != block.gas_used() {
+            warn!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());
+            return Ok(());
+        }
+
+        let receipts_root_hash: Hash = receipts_trie.root_hash()?.into();
+        if block.header.receipts_root_hash != receipts_root_hash {
+            warn!(
+                "Receipt root mismatch. Specified in block: {} vs computed: {}",
+                block.header.receipts_root_hash, receipts_root_hash
+            );
+            return Ok(());
+        }
+
+        let transactions_root_hash: Hash = transactions_trie.root_hash()?.into();
+        if block.header.transactions_root_hash != transactions_root_hash {
+            warn!(
+                "Transactions root mismatch. Specified in block: {} vs computed: {}",
+                block.header.transactions_root_hash, transactions_root_hash
+            );
+            return Ok(());
+        }
+
+        for (receipt, tx_index) in &mut block_receipts {
+            receipt.block_hash = block.hash();
             // Avoid cloning the receipt if there are no subscriptions to send it to.
             if self.receipts.receiver_count() != 0 {
-                let _ = self.receipts.send((receipt.clone(), tx_index));
+                let _ = self.receipts.send((receipt.clone(), *tx_index));
             }
-            block_receipts.push(receipt);
         }
 
         self.apply_rewards(committee, block.view(), &block.qc.cosigned)?;
@@ -2198,7 +2268,7 @@ impl Consensus {
             // closure has to be move to take ownership of block_receipts
             let db = &self.db;
             self.db.with_sqlite_tx(move |sqlite_tx| {
-                for receipt in block_receipts {
+                for (receipt, _) in block_receipts {
                     db.insert_transaction_receipt_with_db_tx(sqlite_tx, receipt)?;
                 }
                 Ok(())
@@ -2227,5 +2297,33 @@ impl Consensus {
         self.block_store.request_missing_blocks(random_peer)?;
 
         Ok(())
+    }
+
+    fn create_txn_receipt(
+        apply_result: TransactionApplyResult,
+        tx_hash: Hash,
+        tx_index: usize,
+        cumulative_gas_used: EvmGas,
+    ) -> TransactionReceipt {
+        let success = apply_result.success();
+        let contract_address = apply_result.contract_address();
+        let gas_used = apply_result.gas_used();
+        let accepted = apply_result.accepted();
+        let (logs, transitions, errors, exceptions) = apply_result.into_parts();
+
+        TransactionReceipt {
+            tx_hash,
+            block_hash: Hash::ZERO,
+            index: tx_index as u64,
+            success,
+            contract_address,
+            logs,
+            transitions,
+            gas_used,
+            cumulative_gas_used,
+            accepted,
+            errors,
+            exceptions,
+        }
     }
 }

@@ -285,7 +285,8 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
     // First get the account and check that its a scilla account
     let block = node
         .get_block(BlockId::latest())?
-        .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
+        .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
+
     let state = node.get_state(&block)?;
     let account = state.get_account(address)?;
 

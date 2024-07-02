@@ -263,28 +263,21 @@ impl Node {
         self.consensus.head_block().header.number
     }
 
-    pub fn resolve_block_number(
-        &self,
-        block_number: BlockNumberOrTag,
-    ) -> Result<(Option<Block>, u64)> {
+    pub fn resolve_block_number(&self, block_number: BlockNumberOrTag) -> Result<Option<Block>> {
         match block_number {
-            BlockNumberOrTag::Number(n) => Ok((None, n)),
-            BlockNumberOrTag::Earliest => Ok((None, 0)),
-            BlockNumberOrTag::Latest => Ok((None, self.get_chain_tip())),
-            BlockNumberOrTag::Pending => {
-                let pending_block = self.consensus.propose_pending_block()?;
-                let pending_block_num = pending_block.number();
-                Ok((Some(pending_block), pending_block_num))
-            }
+            BlockNumberOrTag::Number(n) => self.consensus.get_block_by_number(n),
+
+            BlockNumberOrTag::Earliest => self.consensus.get_block_by_number(0),
+            BlockNumberOrTag::Latest => Ok(Some(self.consensus.head_block())),
+            BlockNumberOrTag::Pending => Ok(Some(self.consensus.head_block())),
             BlockNumberOrTag::Finalized => {
                 let Some(view) = self.db.get_latest_finalized_view()? else {
-                    return Ok((None, 0u64));
+                    return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
                 let Some(block) = self.db.get_block_by_view(&view)? else {
-                    return Ok((None, 0u64));
+                    return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
-                let block_num = block.number();
-                Ok((Some(block), block_num))
+                Ok(Some(block))
             }
             // Safe block tag in our consensus refers to the block that the node's highQC points to
             // (high_qc means it's the latest = high, and it's a QC where 2/3 validators voted for it).
@@ -292,10 +285,9 @@ impl Node {
                 let block_hash = self.consensus.high_qc.block_hash;
 
                 let Some(safe_block) = self.consensus.get_block(&block_hash)? else {
-                    return Ok((None, 0u64));
+                    return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
-                let block_num = safe_block.number();
-                Ok((Some(safe_block), block_num))
+                Ok(Some(safe_block))
             }
         }
     }
@@ -307,28 +299,23 @@ impl Node {
                 require_canonical,
             }) => {
                 // See https://eips.ethereum.org/EIPS/eip-1898
-                let Ok(Some(block)) = self.consensus.get_block(&block_hash.into()) else {
+                let Some(block) = self.consensus.get_block(&block_hash.into())? else {
                     return Ok(None);
                 };
                 // Get latest finalized block number
-                let (_, finalized_block_num) =
-                    self.resolve_block_number(BlockNumberOrTag::Finalized)?;
+                let finalized_block = self
+                    .resolve_block_number(BlockNumberOrTag::Finalized)?
+                    .ok_or_else(|| anyhow!("Unable to retrieve finalized block!"))?;
                 let require_canonical = require_canonical.unwrap_or(false);
 
                 // If the caller requests canonical block then it must be finalized
-                if require_canonical && block.number() > finalized_block_num {
+                if require_canonical && block.number() > finalized_block.number() {
                     return Ok(None);
                 }
 
                 Ok(Some(block))
             }
-            BlockId::Number(number) => {
-                let (resolved_block, resolved_num) = self.resolve_block_number(number)?;
-                let Some(resolved_block) = resolved_block else {
-                    return self.consensus.get_block_by_number(resolved_num);
-                };
-                Ok(Some(resolved_block))
-            }
+            BlockId::Number(number) => self.resolve_block_number(number),
         }
     }
 

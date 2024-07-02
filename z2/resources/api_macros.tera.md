@@ -38,9 +38,9 @@ The block number can be:
  * A block hash as a string eg. `"0xf77e76c25038b0be1fbd12a4f3e404173802bf0c9a9e62deef7949201d59ebfb`
  * `"earliest"` for the earliest block
  * `"latest"` for the latest block
- * `"safe"` for the last block known to be safe.
- * `"finalized"` for the latest finalized block - in Zilliqa 2 this is the same as the `safe` block.
- * `"pending"` is a synonym for `latest`.
+ * `"safe"` for the block that the node's high quorum certificate points to
+ * `"finalized"` for the latest finalized block.
+ * `"pending"` is the block that is about to be created.
 
 # blocknumber_optional
 
@@ -74,28 +74,48 @@ If this parameter is `true`, we return transaction objects. If `false`, we retur
 
 ### Block
 
-| Parameter          | Type   | Required | Description                                                                              |
-|--------------------|--------|----------|------------------------------------------------------------------------------------------|
-| `hash`             | string | required | Block hash as a hex number                                                               |
-| `parentHash`       | string | required | Hash of the parent of this block                                                         |
-| `sha3Uncles`       | string | required | Since zq2 has no uncles, this field is always 0x0                                        |
-| `miner`            | string | required | Set to the address that received the reward for generating this block                    |
-| `stateRoot`        | string | required | The state root hash for this block                                                       |
-| `transactionsRoot` | string | required | Always 0x0                                                                               |
-| `receiptsRoot`     | string | required | Always 0x0                                                                               |
-| `logsBloom`        | string | required | Always 0x0                                                                               |
-| `difficulty`       | number | required | 0                                                                                        |
-| `number`           | string | required | Block number in hex                                                                      |
-| `gasLimit`         | string | required | Gas limit for this block, in hex                                                         |
-| `gasUsed`          | string | required | Gas used in this block, in hex                                                           |
-| `timestamp`        | string | required | Hex value of the number of seconds between the UNIX epoch and the creation of this block |
-| `extraData`        | string | required | Hex value of extra data for this block; currently always 0x0                             |
-| `mixHash`          | string | required | hex number, always 0x0                                                                   |
-| `nonce`            | string | required | hex number, always 0x0                                                                   |
-| `totalDifficulty`  | number | required | 0                                                                                        |
-| `size`             | number | required | Always 0                                                                                 |
-| `transactions`     | array  | required | An array of either transaction hashes or returned transaction objects                    |
-| `uncles`           | array  | required | Always empty                                                                             |
+| Parameter                      | Type   | Required | Description                                                                              |
+|--------------------------------|--------|----------|------------------------------------------------------------------------------------------|
+| `hash`                         | string | required | Block hash as a hex number                                                               |
+| `parentHash`                   | string | required | Hash of the parent of this block                                                         |
+| `sha3Uncles`                   | string | required | Since zq2 has no uncles, this field is always 0x0                                        |
+| `miner`                        | string | required | Set to the address that received the reward for generating this block                    |
+| `stateRoot`                    | string | required | The state root hash for this block                                                       |
+| `transactionsRoot`             | string | required | Always 0x0                                                                               |
+| `receiptsRoot`                 | string | required | Always 0x0                                                                               |
+| `logsBloom`                    | string | required | Always 0x0                                                                               |
+| `difficulty`                   | number | required | 0                                                                                        |
+| `number`                       | string | required | Block number in hex                                                                      |
+| `gasLimit`                     | string | required | Gas limit for this block, in hex                                                         |
+| `gasUsed`                      | string | required | Gas used in this block, in hex                                                           |
+| `timestamp`                    | string | required | Hex value of the number of seconds between the UNIX epoch and the creation of this block |
+| `extraData`                    | string | required | Hex value of extra data for this block; currently always 0x0                             |
+| `mixHash`                      | string | required | hex number, always 0x0                                                                   |
+| `nonce`                        | string | required | hex number, always 0x0                                                                   |
+| `totalDifficulty`              | number | required | 0                                                                                        |
+| `size`                         | number | required | Always 0                                                                                 |
+| `transactions`                 | array  | required | An array of either transaction hashes or returned transaction objects                    |
+| `uncles`                       | array  | required | Always empty                                                                             |
+| `quorum_certificate`           | object | required | zq2-specific quorum certificate                                                          |
+| `aggregate_quorum_certificate` | object | optional | An aggregate quorum certificate, if one was attached to this block                       |
+
+The `quorum_certificate` contains:
+
+| Parameter   | Type   | Required | Description                                            |
+|-------------|--------|----------|--------------------------------------------------------|
+| `signature` | string | required | Hex string; the BLS aggregate signature of the block hash in this view |
+| `cosigned`  | array |  required | An array of integers; `1` means this committee member participated in the signature, `0` that they did not |
+| `view`      | string | required | Hex string; the view number for this QC |
+| `block_hash` | string | rquired | Hex string; the block hash |
+
+Sometimes, a quorum certificate cannot be established for a proposal due to validator failure or some other cause. When this happens, an `aggregate_quorum_certificate` appears in the next block, with the `quorum_certificate` providing a copy of the highest QC within this aggregate.
+
+| Parameter   | Type   | Required | Description                                            |
+|-------------|--------|----------|--------------------------------------------------------|
+| `qcs`       | array | required | A vector of `quorum_certificate`s. |
+| `signature` | string | required | Hex string; the BLS aggregate signature of the qcs in this aggregate |
+| `cosigned`  | array |  required | An array of integers; `1` means this committee member participated in the signature, `0` that they did not |
+| `view`      | string | required | Hex string; the view number for this QC |
 
 We do not currently report:
 

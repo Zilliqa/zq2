@@ -5,6 +5,7 @@ use std::{
     fs,
     path::PathBuf,
     process::{self, Stdio},
+    sync::Arc,
     time::Duration,
 };
 
@@ -13,6 +14,7 @@ use alloy_primitives::{Address, Parity, Signature, TxKind, B256, U256};
 use anyhow::{anyhow, Context, Result};
 use bitvec::bitvec;
 use clap::{Parser, Subcommand};
+use eth_trie::{MemoryDB, Trie};
 use ethabi::Token;
 use git2::Repository;
 use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
@@ -27,7 +29,7 @@ use tracing::{trace, warn};
 use zilliqa::{
     cfg::Config,
     consensus::Validator,
-    contracts,
+    contracts, crypto,
     crypto::{Hash, SecretKey},
     db::Db,
     exec::BaseFeeCheck,
@@ -201,23 +203,14 @@ pub async fn convert_persistence(
                 secret_key.node_public_key(),
                 block.block_num - 1,
             );
-            let qc = QuorumCertificate::new(
-                &[vote.signature()],
-                bitvec![u8, bitvec::order::Msb0; 1; 1],
-                parent_hash,
-                block.block_num - 1,
-            )?;
-            let block = Block::from_qc(
-                secret_key,
-                block.block_num,
-                block.block_num,
-                qc,
-                parent_hash,
-                state.root_hash()?,
-                txn_hashes.iter().map(|h| Hash(h.0)).collect(),
-                SystemTime::UNIX_EPOCH + Duration::from_micros(block.timestamp),
-                ScillaGas(block.gas_used).into(),
-            );
+
+            let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+
+            let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+
+            // Block hash is built using receipt and transaction root hashes. This means we have to compute all receipts before creating a block.
+            // Since receipt also contains block hash it belongs too - at the time it's being built it uses a placeholder: Hash::ZERO. Once all transactions are processed,
+            // block hash can be calculated and each receipt is updated with final block hash (by replacing Hash::ZERO placeholder).
 
             for (index, txn_hash) in txn_hashes.iter().enumerate() {
                 let Some(transaction) = zq1_db.get_tx_body(block_number, *txn_hash)? else {
@@ -250,8 +243,8 @@ pub async fn convert_persistence(
                         });
 
                         let receipt = TransactionReceipt {
-                            block_hash: block.hash(),
                             tx_hash: Hash(txn_hash.0),
+                            block_hash: Hash::ZERO,
                             index: index as u64,
                             success: transaction.receipt.success,
                             gas_used: EvmGas(transaction.receipt.cumulative_gas),
@@ -313,8 +306,9 @@ pub async fn convert_persistence(
                             .then(|| from_addr.create(transaction.nonce - 1));
 
                         let receipt = TransactionReceipt {
-                            block_hash: block.hash(),
                             tx_hash: Hash(txn_hash.0),
+                            // Block hash is not know at this point (we need to have all receipts to build receipt_root_hash which is needed for block_hash)
+                            block_hash: Hash::ZERO,
                             index: index as u64,
                             success: transaction.receipt.success,
                             gas_used: EvmGas(transaction.receipt.cumulative_gas),
@@ -357,9 +351,44 @@ pub async fn convert_persistence(
                     }
                 };
 
+                transactions_trie
+                    .insert(txn_hash.as_slice(), transaction.calculate_hash().as_bytes())
+                    .unwrap();
+
+                let receipt_hash = receipt.hash();
+                receipts_trie
+                    .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())
+                    .unwrap();
+
                 transactions.push((Hash(txn_hash.0), transaction));
                 receipts.push(receipt);
                 //trace!(?txn_hash, "transaction inserted");
+            }
+
+            let qc = QuorumCertificate::new(
+                &[vote.signature()],
+                bitvec![u8, bitvec::order::Msb0; 1; 1],
+                parent_hash,
+                block.block_num - 1,
+            );
+            let block = Block::from_qc(
+                secret_key,
+                block.block_num,
+                block.block_num,
+                qc,
+                parent_hash,
+                state.root_hash()?,
+                Hash(transactions_trie.root_hash()?.into()),
+                Hash(receipts_trie.root_hash()?.into()),
+                txn_hashes.iter().map(|h| Hash(h.0)).collect(),
+                SystemTime::UNIX_EPOCH + Duration::from_micros(block.timestamp),
+                ScillaGas(block.gas_used).into(),
+                ScillaGas(block.gas_limit).into(),
+            );
+
+            // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash
+            for receipt in &mut receipts {
+                receipt.block_hash = block.hash();
             }
 
             zq2_db.put_canonical_block_number(block_number, block.hash())?;

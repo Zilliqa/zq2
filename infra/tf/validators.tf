@@ -50,14 +50,13 @@ module "validators" {
 
   config          = <<-EOT
   p2p_port = 3333
-  bootstrap_address = [ "${local.bootstrap_peer_id}", "/dns/bootstrap.${var.subdomain}/tcp/3333" ]
+  bootstrap_address = [ "${local.bootstrap_peer_id}", "/ipv4/${data.google_compute_address.bootstrap.address}/tcp/3333" ]
 
   [[nodes]]
   eth_chain_id = ${var.eth_chain_id}
   allowed_timestamp_skew = { secs = 60, nanos = 0 }
   data_dir = "/data"
-  consensus.consensus_timeout = { secs = 60, nanos = 0 }
-  consensus.genesis_accounts = [ ["${local.genesis_address}", "10_000_000_000_000_000_000_000_000"] ]
+  consensus.genesis_accounts = [ ["${local.genesis_address}", "21_000_000_000_000_000_000_000_000_000"] ]
   consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "10_000_000_000_000_000_000_000_000", "${local.genesis_address}"] ]
 
   # Reward parameters

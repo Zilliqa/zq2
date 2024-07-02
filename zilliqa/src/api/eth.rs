@@ -10,7 +10,7 @@ use alloy_rpc_types::{
     pubsub::{self, SubscriptionKind},
     FilteredParams,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use itertools::{Either, Itertools};
 use jsonrpsee::{
     core::StringError,
@@ -92,6 +92,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
 
     module
 }
+
 // See https://eips.ethereum.org/EIPS/eip-1898
 fn build_errored_response_for_missing_block(
     request: BlockId,
@@ -102,12 +103,18 @@ fn build_errored_response_for_missing_block(
         return Ok(block);
     }
 
-    // There's no specific error for requests not having block_hash and optional canonical parameter
+    const INVALID_INPUT: i32 = -32000;
+    let resource_not_found = ErrorObjectOwned::owned(
+        INVALID_INPUT,
+        "Invalid input".to_string(),
+        Option::<String>::None,
+    );
+
     let BlockId::Hash(RpcBlockHash {
         require_canonical, ..
     }) = request
     else {
-        bail!("Unable to find a block with given id!");
+        return Err(resource_not_found.into());
     };
 
     let require_canonical = require_canonical.unwrap_or_default();
@@ -122,15 +129,7 @@ fn build_errored_response_for_missing_block(
             );
             Err(response.into())
         }
-        false => {
-            const RESOURCE_NOT_FOUND: i32 = -32001;
-            let response = ErrorObjectOwned::owned(
-                RESOURCE_NOT_FOUND,
-                "Resource not found".to_string(),
-                Option::<String>::None,
-            );
-            Err(response.into())
-        }
+        false => Err(resource_not_found.into()),
     }
 }
 
@@ -250,6 +249,7 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     // For compatibility with Zilliqa 1, eth_getCode also returns Scilla code if any is present.
     let code = node.get_state(&block)?.get_account(address)?.code;
+
     // do it this way so the compiler will tell us when another option inevitably
     // turns up and we have to deal with it ..
     let return_code = if code.is_eoa() {
@@ -423,8 +423,14 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             .get_block(block_hash)?
             .ok_or_else(|| anyhow!("block not found"))?))),
         (None, from, to) => {
-            let (_, from) = node.resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest))?;
-            let (_, to) = node.resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?;
+            let from = node
+                .resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest))?
+                .unwrap()
+                .number();
+            let to = node
+                .resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?
+                .unwrap()
+                .number();
 
             if from > to {
                 return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
