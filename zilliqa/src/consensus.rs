@@ -450,7 +450,7 @@ impl Consensus {
             .expect("last timeout seems to be in the future...")
             .as_millis() as u64;
         let view_difference = self.view.get_view().saturating_sub(self.high_qc.view);
-        let exponential_backoff_timeout = consensus_timeout_ms * 2u64.pow(view_difference as u32);
+        let exponential_backoff_timeout = consensus_timeout_ms * 2u64.pow((view_difference as u32).saturating_sub(2));
 
         let minimum_time_left_for_empty_block = self
             .config
