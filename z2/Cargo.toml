@@ -28,7 +28,7 @@ anyhow = "1.0.86"
 async-trait = "0.1.80"
 base64 = "0.22.0"
 bitvec = "1.0.1"
-clap = {version = "4.5.4", features = ["derive"]}
+clap = {version = "4.5.8", features = ["derive"]}
 colored = "2.1.0"
 eth_trie = {version = "0.1.0", path = "../eth-trie.rs"}
 ethabi = "18.0.0"
