@@ -135,7 +135,7 @@ pub struct Consensus {
     // TODO(#719): Consider how to limit the size of this.
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
     new_views: BTreeMap<u64, NewViewVote>,
-    high_qc: QuorumCertificate,
+    pub high_qc: QuorumCertificate,
     view: View,
     finalized_view: u64,
     /// The account store.
