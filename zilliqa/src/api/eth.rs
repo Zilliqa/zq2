@@ -425,9 +425,11 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
         (None, from, to) => {
             let from = node
                 .resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest))?
+                .unwrap()
                 .number();
             let to = node
                 .resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?
+                .unwrap()
                 .number();
 
             if from > to {

@@ -263,18 +263,13 @@ impl Node {
         self.consensus.head_block().header.number
     }
 
-    pub fn resolve_block_number(&self, block_number: BlockNumberOrTag) -> Result<Block> {
+    pub fn resolve_block_number(&self, block_number: BlockNumberOrTag) -> Result<Option<Block>> {
         match block_number {
-            BlockNumberOrTag::Number(n) => self
-                .consensus
-                .get_block_by_number(n)?
-                .ok_or_else(|| anyhow!("Can't find block with given number: {n}")),
-            BlockNumberOrTag::Earliest => self
-                .consensus
-                .get_block_by_number(0)?
-                .ok_or_else(|| anyhow!("Can't find genesis block")),
-            BlockNumberOrTag::Latest => Ok(self.consensus.head_block()),
-            BlockNumberOrTag::Pending => Ok(self.consensus.head_block()),
+            BlockNumberOrTag::Number(n) => self.consensus.get_block_by_number(n),
+
+            BlockNumberOrTag::Earliest => self.consensus.get_block_by_number(0),
+            BlockNumberOrTag::Latest => Ok(Some(self.consensus.head_block())),
+            BlockNumberOrTag::Pending => Ok(Some(self.consensus.head_block())),
             BlockNumberOrTag::Finalized => {
                 let Some(view) = self.db.get_latest_finalized_view()? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
@@ -282,7 +277,7 @@ impl Node {
                 let Some(block) = self.db.get_block_by_view(&view)? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
-                Ok(block)
+                Ok(Some(block))
             }
             // Safe block tag in our consensus refers to the block that the node's highQC points to
             // (high_qc means it's the latest = high, and it's a QC where 2/3 validators voted for it).
@@ -292,7 +287,7 @@ impl Node {
                 let Some(safe_block) = self.consensus.get_block(&block_hash)? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
-                Ok(safe_block)
+                Ok(Some(safe_block))
             }
         }
     }
@@ -308,7 +303,9 @@ impl Node {
                     return Ok(None);
                 };
                 // Get latest finalized block number
-                let finalized_block = self.resolve_block_number(BlockNumberOrTag::Finalized)?;
+                let finalized_block = self
+                    .resolve_block_number(BlockNumberOrTag::Finalized)?
+                    .ok_or_else(|| anyhow!("Unable to retrieve finalized block!"))?;
                 let require_canonical = require_canonical.unwrap_or(false);
 
                 // If the caller requests canonical block then it must be finalized
@@ -318,7 +315,7 @@ impl Node {
 
                 Ok(Some(block))
             }
-            BlockId::Number(number) => Ok(Some(self.resolve_block_number(number)?)),
+            BlockId::Number(number) => self.resolve_block_number(number),
         }
     }
 
