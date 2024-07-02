@@ -164,16 +164,16 @@ impl State {
     }
 
     /// Canonical method to obtain trie key for an account node
-    fn account_key(address: Address) -> Vec<u8> {
-        Keccak256::digest(address).to_vec()
+    pub fn account_key(address: Address) -> B256 {
+        <[u8; 32]>::from(Keccak256::digest(address)).into()
     }
 
     /// Canonical method to obtain trie key for an account's storage trie's storage node
-    pub fn account_storage_key(address: Address, index: B256) -> Vec<u8> {
+    pub fn account_storage_key(address: Address, index: B256) -> B256 {
         let mut h = Keccak256::new();
         h.update(address);
         h.update(index);
-        h.finalize().to_vec()
+        <[u8; 32]>::from(h.finalize()).into()
     }
 
     /// Fetch an Account struct.
@@ -184,7 +184,7 @@ impl State {
     pub fn get_account(&self, address: Address) -> Result<Account> {
         Ok(self
             .accounts
-            .get(&Self::account_key(address))?
+            .get(&Self::account_key(address).0)?
             .map(|bytes| bincode::deserialize::<Account>(&bytes))
             .unwrap_or(Ok(Account::default()))?)
     }
@@ -215,7 +215,7 @@ impl State {
 
     /// Returns an error if there are any issues fetching the account from the state trie
     pub fn get_account_storage(&self, address: Address, index: B256) -> Result<B256> {
-        match self.get_account_trie(address)?.get(&Self::account_storage_key(address, index)) {
+        match self.get_account_trie(address)?.get(&Self::account_storage_key(address, index).0) {
             // from_slice will only panic if vec.len != B256::len_bytes, i.e. 32
             Ok(Some(vec)) if vec.len() == 32 => Ok(B256::from_slice(&vec)),
             // empty storage location
@@ -233,13 +233,14 @@ impl State {
 
     /// Returns an error if there are any issues accessing the storage trie
     pub fn has_account(&self, address: Address) -> Result<bool> {
-        Ok(self.accounts.contains(&Self::account_key(address))?)
+        Ok(self.accounts.contains(&Self::account_key(address).0)?)
     }
 
     pub fn save_account(&mut self, address: Address, account: Account) -> Result<()> {
-        Ok(self
-            .accounts
-            .insert(&Self::account_key(address), &bincode::serialize(&account)?)?)
+        Ok(self.accounts.insert(
+            &Self::account_key(address).0,
+            &bincode::serialize(&account)?,
+        )?)
     }
 }
 

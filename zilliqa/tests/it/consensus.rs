@@ -9,7 +9,9 @@ use tokio::sync::Mutex;
 use tracing::*;
 use zilliqa::{contracts, crypto::Hash, state::contract_addr};
 
-use crate::{compile_contract, deploy_contract, deploy_contract_with_args, Network, Wallet};
+use crate::{
+    compile_contract, deploy_contract, deploy_contract_with_args, Network, NewNodeOptions, Wallet,
+};
 
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)
@@ -146,6 +148,7 @@ async fn create_shard(
         None,
         network.scilla_address.clone(),
         network.scilla_lib_dir.clone(),
+        false,
     );
     let shard_wallet = shard_network.genesis_wallet().await;
 
@@ -176,7 +179,10 @@ async fn create_shard(
     // * Add all new nodes to the parent network too -- all nodes must run main shard nodes
     let initial_main_shard_nodes = network.nodes.len();
     for key in shard_node_keys {
-        network.add_node_with_key(key);
+        network.add_node_with_options(NewNodeOptions {
+            secret_key: Some(key),
+            ..Default::default()
+        });
     }
 
     network.run_until_block(wallet, 10.into(), 100).await;

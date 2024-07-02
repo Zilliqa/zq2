@@ -168,7 +168,7 @@ impl BlockStore {
         trace!(number = block.number(), hash = ?block.hash(), "insert block");
         self.db.insert_block(&block)?;
         self.db
-            .put_canonical_block_number(block.number(), block.hash())?;
+            .set_canonical_block_number(block.number(), block.hash())?;
 
         if let Some(child) = self.buffered.pop(&block.hash()) {
             return Ok(Some(child));

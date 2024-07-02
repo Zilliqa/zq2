@@ -391,10 +391,10 @@ pub async fn convert_persistence(
                 receipt.block_hash = block.hash();
             }
 
-            zq2_db.put_canonical_block_number(block_number, block.hash())?;
+            zq2_db.set_canonical_block_number(block_number, block.hash())?;
             zq2_db.set_high_qc(block.qc.clone())?;
             blocks.push(block.clone());
-            zq2_db.put_latest_finalized_view(block_number)?;
+            zq2_db.set_latest_finalized_view(block_number)?;
 
             trace!(%block_number, "block inserted");
             parent_hash = block.hash();
