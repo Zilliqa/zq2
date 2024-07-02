@@ -25,7 +25,7 @@ vergen = { version = "8.3.1", features = ["git", "git2"] }
 
 [dependencies]
 alloy-primitives = { version = "0.7.2", features = ["rlp", "serde"] }
-alloy-rlp = { version = "0.3.4", features = ["derive"] }
+alloy-rlp = { version = "0.3.7", features = ["derive"] }
 alloy-consensus = { version = "0.1.2", features = ["serde", "k256"]}
 alloy-eips = { version = "0.1.2", features = ["serde"]}
 alloy-rpc-types = "0.1.2"
