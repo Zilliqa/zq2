@@ -344,7 +344,7 @@ impl Node {
         let parent = self
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
-        let mut state = self
+        let state = self
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());
@@ -405,7 +405,7 @@ impl Node {
         let parent = self
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
-        let mut state = self
+        let state = self
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());

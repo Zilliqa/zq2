@@ -7,7 +7,7 @@ use alloy_primitives::Address;
 
 use crate::{
     crypto::Hash,
-    transaction::{SignedTransaction, VerifiedTransaction},
+    transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -133,12 +133,14 @@ impl TransactionPool {
         }
     }
 
-    pub fn preview_content(&self) -> TxPoolContent {
+    pub fn preview_content(&self, block_gas_limit: Option<EvmGas>) -> TxPoolContent {
         // First make a copy of 'ready' transactions
         let mut ready = self.ready.clone();
 
         let mut pending = Vec::new();
         let mut pending_set = HashSet::new();
+
+        let block_gas_limit = block_gas_limit.unwrap_or(EvmGas(u64::MAX));
 
         // Find all transactions that are pending for inclusion in the next block
         while let Some(ReadyItem { tx_index, .. }) = ready.pop() {
@@ -157,6 +159,10 @@ impl TransactionPool {
 
             if pending_set.contains(&txn.hash) {
                 continue;
+            }
+
+            if block_gas_limit.checked_sub(txn.tx.gas_limit()).is_none() {
+                break;
             }
 
             pending.push(txn.clone());
@@ -423,7 +429,7 @@ mod tests {
         pool.insert_transaction(transaction(from, 2, 1), 2);
         pool.insert_transaction(transaction(from, 10, 1), 3);
 
-        let content = pool.preview_content();
+        let content = pool.preview_content(None);
 
         assert_eq!(content.pending.len(), 3);
         assert_eq!(content.pending[0].tx.nonce().unwrap(), 0);

@@ -304,13 +304,13 @@ impl QuorumCertificate {
         cosigned: BitVec,
         block_hash: Hash,
         view: u64,
-    ) -> Self {
-        QuorumCertificate {
-            signature: NodeSignature::aggregate(signatures).unwrap(),
+    ) -> Result<Self> {
+        Ok(QuorumCertificate {
+            signature: NodeSignature::aggregate(signatures)?,
             cosigned,
             block_hash,
             view,
-        }
+        })
     }
 
     // Verifying an aggregated signature is a case of verifying the aggregated public key
