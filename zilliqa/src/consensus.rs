@@ -1038,13 +1038,13 @@ impl Consensus {
                             let receipt_hash = receipt.hash();
                             receipts_trie
                                 .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
-                            Ok((tx, result))
+                            Ok(tx)
                         })
                     })
             })
             .collect::<Result<_>>()?;
         let applied_transaction_hashes: Vec<_> =
-            applied_transactions.iter().map(|(tx, _)| tx.hash).collect();
+            applied_transactions.iter().map(|tx| tx.hash).collect();
 
         self.apply_rewards(committee, block_view + 1, &qc.cosigned)?;
 
@@ -1096,7 +1096,6 @@ impl Consensus {
         let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
             applied_transactions
                 .into_iter()
-                .map(|(tx, _)| tx)
                 .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
         // however, for the transactions that we are NOT broadcasting, we re-insert
         // them into the pool - this is because upon broadcasting the proposal, we will

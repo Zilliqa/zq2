@@ -370,7 +370,7 @@ pub async fn convert_persistence(
                 bitvec![u8, bitvec::order::Msb0; 1; 1],
                 parent_hash,
                 block.block_num - 1,
-            );
+            )?;
             let block = Block::from_qc(
                 secret_key,
                 block.block_num,
