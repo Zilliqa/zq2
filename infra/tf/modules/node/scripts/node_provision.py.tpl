@@ -199,6 +199,8 @@ logging:
   processors:
     parse_log:
         type: parse_json
+    parse_log_with_field:
+        type: parse_json
         field: log
     json:
       type: parse_json
@@ -215,7 +217,7 @@ logging:
     pipelines:
       zilliqa:
         receivers: [ zilliqa ]
-        processors: [ parse_log, json, move_fields ]
+        processors: [ parse_log, parse_log_with_field, json, move_fields ]
 """
 
 LOGROTATE_CONFIG="""
