@@ -76,7 +76,8 @@ services:
   otterscan:
     environment:
       ERIGON_URL: http://localhost:4201
-    image: otterscan/otterscan:develop
+    image: zilliqa/otterscan:develop
+    pull_policy: always
     ports:
       - "5100:80"
   faucet:
