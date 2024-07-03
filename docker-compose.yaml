@@ -83,7 +83,7 @@ services:
   faucet:
     depends_on:
       - node0
-    image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa/eth-spout:89eb40d3
+    image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa/eth-spout:v1.3.72
     environment:
       RPC_URL: http://node0:4201
       NATIVE_TOKEN_SYMBOL: ZIL
