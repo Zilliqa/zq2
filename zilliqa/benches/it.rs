@@ -117,7 +117,9 @@ pub fn process_blocks(c: &mut Criterion) {
         b.iter(|| {
             let proposal = proposals.next().unwrap();
             let view = proposal.view();
-            consensus.receive_block(black_box(proposal)).unwrap();
+            consensus
+                .receive_block(PeerId::random(), black_box(proposal))
+                .unwrap();
             consensus
                 .get_block_by_view(black_box(view))
                 .unwrap()
