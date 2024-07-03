@@ -475,7 +475,11 @@ impl Consensus {
             .expect("last timeout seems to be in the future...")
             .as_millis() as u64;
         let view_difference = self.view.get_view().saturating_sub(self.high_qc.view);
-        let exponential_backoff_timeout = consensus_timeout_ms * 2u64.pow(view_difference as u32);
+        // in view N our highQC is the one we obtained in view N-1 (or before) and its view is N-2 (or lower)
+        // in other words, the current view is always at least 2 views ahead of the highQC's view
+        // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
+        let exponential_backoff_timeout =
+            consensus_timeout_ms * 2u64.pow((view_difference as u32).saturating_sub(2));
 
         let minimum_time_left_for_empty_block = self
             .config
