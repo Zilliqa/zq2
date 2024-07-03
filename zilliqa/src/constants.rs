@@ -15,8 +15,5 @@ pub const EVM_MAX_INIT_CODE_SIZE: usize = 2 * EVM_MAX_CODE_SIZE;
 // Minimum gas required for EVM transaction (without input data)
 pub const EVM_MIN_GAS_UNITS: EvmGas = EvmGas(21000);
 
-// There was no limit on input size of zil-type txn in ZQ1 (however the payload was limited on the network level by 5 MB)
-pub const ZIL_MAX_TX_INPUT_SIZE: usize = 5 * 1024 * 1024;
-
 // Minimum amount of gas needed for zilliqa txn (aka CONTRACT_INVOKE_GAS in ZQ1)
 pub const ZIL_MIN_GAS_UNITS: ScillaGas = ScillaGas(10);

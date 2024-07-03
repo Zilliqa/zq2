@@ -27,8 +27,7 @@ use tracing::warn;
 
 use crate::{
     constants::{
-        EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, EVM_MIN_GAS_UNITS, ZIL_MAX_TX_INPUT_SIZE,
-        ZIL_MIN_GAS_UNITS,
+        EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, EVM_MIN_GAS_UNITS, ZIL_MIN_GAS_UNITS,
     },
     crypto,
     crypto::Hash,
@@ -377,15 +376,6 @@ impl SignedTransaction {
     }
 
     fn validate_input_size(&self) -> Result<bool> {
-        if let SignedTransaction::Zilliqa { tx, .. } = self {
-            let input_size = tx.code.len() + tx.data.len();
-            if input_size >= ZIL_MAX_TX_INPUT_SIZE {
-                warn!("Zil transaction input size: {input_size} exceeds limit: {ZIL_MAX_TX_INPUT_SIZE}");
-                return Ok(false);
-            }
-            return Ok(true);
-        }
-
         let (input_size, tx_kind) = match self {
             SignedTransaction::Legacy { tx, .. } => (tx.input.len(), tx.to),
             SignedTransaction::Eip2930 { tx, .. } => (tx.input.len(), tx.to),
