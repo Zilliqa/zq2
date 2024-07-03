@@ -256,6 +256,27 @@ impl TransactionPool {
     pub fn size(&self) -> usize {
         self.transactions.len()
     }
+
+    pub fn has_txn_for_next_block(&self) -> bool {
+        let mut ready = self.ready.clone();
+        while let Some(ReadyItem { tx_index, .. }) = ready.pop() {
+            // We don't include nonceless txns because the way we present results on API level requires having proper nonce
+            if let TxIndex::Intershard(_, _) = tx_index {
+                continue;
+            }
+
+            // A transaction might have been ready, but it might have gotten popped
+            // or the sender's nonce might have increased, making it invalid. In this case,
+            // we will have a stale reference would still exist in the heap.
+            //
+            let Some(_) = self.transactions.get(&tx_index) else {
+                continue;
+            };
+
+            return true;
+        }
+        false
+    }
 }
 
 #[cfg(test)]
