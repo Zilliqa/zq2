@@ -48,6 +48,8 @@ use crate::{
 type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
 
 /// Data returned after applying a [Transaction] to [State].
+
+#[derive(Clone)]
 pub enum TransactionApplyResult {
     Evm(ResultAndState, Box<Env>),
     Scilla(ScillaResultAndState),
@@ -174,6 +176,20 @@ pub struct ScillaTransition {
     pub params: String,
 }
 
+impl ScillaTransition {
+    pub fn hash(&self) -> Hash {
+        Hash::compute([
+            self.from.0.as_slice(),
+            self.to.0.as_slice(),
+            &self.depth.to_be_bytes(),
+            &self.amount.to_be_bytes(),
+            self.tag.as_bytes(),
+            self.params.as_bytes(),
+        ])
+    }
+}
+
+#[derive(Clone)]
 pub struct ScillaResult {
     /// Whether the transaction succeeded and the resulting state changes were persisted.
     pub success: bool,
@@ -205,6 +221,12 @@ pub enum ScillaError {
 pub struct ScillaException {
     pub line: u64,
     pub message: String,
+}
+
+impl ScillaException {
+    pub fn hash(&self) -> Hash {
+        Hash::compute([&self.line.to_be_bytes(), self.message.as_bytes()])
+    }
 }
 
 impl From<scilla::Error> for ScillaException {
@@ -1143,7 +1165,7 @@ impl PendingState {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PendingAccount {
     pub account: Account,
     /// Cached values of updated or deleted storage. Note that deletions can happen at any level of a map.

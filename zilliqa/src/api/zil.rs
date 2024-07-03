@@ -199,7 +199,10 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let address: Address = params.one()?;
 
     let node = node.lock().unwrap();
-    let account = node.get_state(BlockId::latest())?.get_account(address)?;
+    let block = node
+        .get_block(BlockId::latest())?
+        .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
+    let account = node.get_state(&block)?.get_account(address)?;
     // We need to scale the balance from units of (10^-18) ZIL to (10^-12) ZIL. The value is truncated in this process.
     let balance = account.balance / 10u128.pow(6);
 
@@ -280,7 +283,11 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
     let node = node.lock().unwrap();
 
     // First get the account and check that its a scilla account
-    let state = node.get_state(BlockId::latest())?;
+    let block = node
+        .get_block(BlockId::latest())?
+        .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
+
+    let state = node.get_state(&block)?;
     let account = state.get_account(address)?;
 
     let result = json!({
@@ -314,8 +321,11 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
 fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let smart_contract_address: Address = params.one()?;
     let node = node.lock().unwrap();
+    let block = node
+        .get_block(BlockId::latest())?
+        .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
     let account = node
-        .get_state(BlockId::latest())?
+        .get_state(&block)?
         .get_account(smart_contract_address)?;
 
     let Some((code, _)) = account.code.scilla_code_and_init_data() else {
@@ -328,8 +338,11 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
 fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let smart_contract_address: Address = params.one()?;
     let node = node.lock().unwrap();
+    let block = node
+        .get_block(BlockId::latest())?
+        .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
     let account = node
-        .get_state(BlockId::latest())?
+        .get_state(&block)?
         .get_account(smart_contract_address)?;
 
     let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
@@ -393,10 +406,16 @@ fn get_tx_block(
 fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<SmartContract>> {
     let address: Address = params.one()?;
 
+    let block = node
+        .lock()
+        .unwrap()
+        .get_block(BlockId::latest())?
+        .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
+
     let nonce = node
         .lock()
         .unwrap()
-        .get_state(BlockId::latest())?
+        .get_state(&block)?
         .get_account(address)?
         .nonce;
 
@@ -408,7 +427,7 @@ fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Sm
         let is_scilla = node
             .lock()
             .unwrap()
-            .get_state(BlockId::latest())?
+            .get_state(&block)?
             .get_account(contract_address)?
             .code
             .scilla_code_and_init_data()
