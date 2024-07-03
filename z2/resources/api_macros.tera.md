@@ -192,3 +192,23 @@ Examples (from Erigon):
 | `address`          | string | required | The address from which this log was emitted                                               |
 | `data`             | string | required | Hex string; the data associated with this log entry                                       |
 | `topics`           | string | required | An array containing the topics associated with this log entry, as an array of hex strings |
+|
+
+# transaction_receipt
+
+## Transaction Receipt
+
+| Parameter | Type   | Required | Description |
+|-----------|--------|----------|-------------|
+| `transactionHash` | string | required | Hash of the transaction for which this is a receipt |
+| `transactionIndex` | string | required | Hex number; index of this transaction in the block in which it appears |
+| `blockHash` | string | required | Hash of the block in which this transaction appears |
+| `blockNumber` | string | required | Hex number; the block number in which this receipt appears |
+| `from` | string | Address of the sender of this transaction |
+| `to` | string | Address of the recipient of this transaction |
+| `cumulativeGasUsed` | string | Hex number; cumulative gas used by all transactions in this block up to and including this one |
+| `effectiveGasPrice` | string | Hex number; actual gas price deducted from the sender's account (or otherwise paid) |
+| `gasUsed` | string | Hex number; number of gas units used by this transaction |
+| `contractAddress` | string | If this transaction was a contract creation, the address of the resulting contract. Otherwise `null` |
+| `logs` | array | An array of logs - see below |
+| `logsBloom` | array | 
