@@ -202,10 +202,6 @@ logging:
     parse_log_with_field:
         type: parse_json
         field: log
-    json:
-      type: parse_json
-      time_key: timestamp
-      time_format: "%Y-%m-%dT%H:%M:%S.%LZ"
     move_fields:
       type: modify_fields
       fields:
@@ -213,11 +209,15 @@ logging:
           move_from: jsonPayload.level
         jsonPayload."logging.googleapis.com/sourceLocation".function:
           move_from: jsonPayload.target
+        sourceLocation.line:
+          move_from: jsonPayload.line_number
+        jsonPayload.timestamp:
+          move_from: jsonPayload.time
   service:
     pipelines:
       zilliqa:
         receivers: [ zilliqa ]
-        processors: [ parse_log, parse_log_with_field, json, move_fields ]
+        processors: [ parse_log, parse_log_with_field, move_fields ]
 """
 
 LOGROTATE_CONFIG="""
