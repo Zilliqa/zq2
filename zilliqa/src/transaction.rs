@@ -26,7 +26,8 @@ use tracing::warn;
 
 use crate::{
     constants::{
-        EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, ZIL_MAX_TX_INPUT_SIZE, ZIL_MIN_GAS_UNITS,
+        EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, EVM_MIN_GAS_UNITS, ZIL_MAX_TX_INPUT_SIZE,
+        ZIL_MIN_GAS_UNITS,
     },
     crypto,
     exec::{ScillaError, ScillaException, ScillaTransition},
@@ -413,24 +414,30 @@ impl SignedTransaction {
 
         if let SignedTransaction::Zilliqa { tx, .. } = self {
             if tx.gas_limit < ZIL_MIN_GAS_UNITS {
-                warn!("Insufficient gas give for zil transaction!");
+                warn!("Insufficient gas give for zil transaction, given: {}, required: {ZIL_MIN_GAS_UNITS}!", tx.gas_limit);
                 return Ok(false);
             }
         }
+
+        let gas_limit = self.gas_limit();
+
+        if gas_limit < EVM_MIN_GAS_UNITS {
+            warn!("Insufficient gas give for evm transaction, given: {gas_limit}, required: {EVM_MIN_GAS_UNITS}!");
+            return Ok(false);
+        }
+
         Ok(true)
     }
 
     fn validate_chain_id(&self, chain_id: u64) -> Result<bool> {
-        let txn_chain_id = self
-            .chain_id()
-            .ok_or(anyhow!("Unable to get chain_id from transaction!"))?;
-
-        if chain_id != txn_chain_id {
-            warn!(
-                "Chain_id provided in transaction: {} is different than node chain_id: {}",
-                txn_chain_id, chain_id
-            );
-            return Ok(false);
+        if let Some(txn_chain_id) = self.chain_id() {
+            if chain_id != txn_chain_id {
+                warn!(
+                    "Chain_id provided in transaction: {} is different than node chain_id: {}",
+                    txn_chain_id, chain_id
+                );
+                return Ok(false);
+            }
         }
         Ok(true)
     }
