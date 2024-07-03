@@ -3,11 +3,12 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use alloy_primitives::Address;
 use bitvec::bitvec;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use eth_trie::{MemoryDB, Trie};
 use libp2p::PeerId;
 use tokio::sync::mpsc;
 use zilliqa::{
     consensus::Consensus,
-    crypto::SecretKey,
+    crypto::{Hash, SecretKey},
     db::Db,
     message::{Block, Proposal, QuorumCertificate, Vote},
     node::MessageSender,
@@ -89,6 +90,10 @@ pub fn process_blocks(c: &mut Criterion) {
             parent_hash,
             view - 1,
         );
+
+        let mut empty_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let empty_root_hash = Hash(empty_trie.root_hash().unwrap().into());
+
         let block = Block::from_qc(
             secret_key,
             view,
@@ -96,8 +101,11 @@ pub fn process_blocks(c: &mut Criterion) {
             qc,
             parent_hash,
             state.root_hash().unwrap(),
+            empty_root_hash,
+            empty_root_hash,
             vec![],
             SystemTime::UNIX_EPOCH,
+            EvmGas(0),
             EvmGas(0),
         );
         parent_hash = block.hash();

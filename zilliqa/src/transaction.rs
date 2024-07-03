@@ -11,6 +11,7 @@ use alloy_primitives::{keccak256, Address, Signature, TxKind, B256, U256};
 use alloy_rlp::{Encodable, Header, EMPTY_STRING_CODE};
 use anyhow::{anyhow, Result};
 use bytes::{BufMut, BytesMut};
+use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -30,6 +31,7 @@ use crate::{
         ZIL_MIN_GAS_UNITS,
     },
     crypto,
+    crypto::Hash,
     exec::{ScillaError, ScillaException, ScillaTransition},
     schnorr,
     state::Account,
@@ -881,6 +883,25 @@ impl Log {
             _ => None,
         }
     }
+
+    pub fn hash(&self) -> Hash {
+        match self {
+            Log::Scilla(log) => Hash::compute([
+                log.event_name.as_bytes(),
+                &log.params
+                    .iter()
+                    .map(|param| param.hash())
+                    .map(|hash| hash.as_bytes().to_vec())
+                    .concat(),
+                log.address.as_slice(),
+            ]),
+            Log::Evm(log) => Hash::compute([
+                log.address.as_slice(),
+                &log.data,
+                &log.topics.iter().map(|topic| topic.to_vec()).concat(),
+            ]),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -890,6 +911,16 @@ pub struct ScillaParam {
     pub value: String,
     #[serde(rename = "vname")]
     pub name: String,
+}
+
+impl ScillaParam {
+    pub fn hash(&self) -> Hash {
+        Hash::compute([
+            self.ty.as_bytes(),
+            self.value.as_bytes(),
+            self.name.as_bytes(),
+        ])
+    }
 }
 
 /// A transaction receipt stores data about the execution of a transaction.
@@ -907,6 +938,40 @@ pub struct TransactionReceipt {
     pub accepted: Option<bool>,
     pub errors: BTreeMap<u64, Vec<ScillaError>>,
     pub exceptions: Vec<ScillaException>,
+}
+
+impl TransactionReceipt {
+    pub fn hash(&self) -> Hash {
+        let success = [u8::from(self.success); 1];
+        let accepted = [u8::from(self.accepted.unwrap_or_default()); 1];
+        Hash::compute([
+            &self.index.to_be_bytes(),
+            self.tx_hash.as_bytes(),
+            success.as_slice(),
+            &self.gas_used.0.to_be_bytes(),
+            &self.cumulative_gas_used.0.to_be_bytes(),
+            self.contract_address
+                .unwrap_or_default()
+                .to_vec()
+                .as_slice(),
+            &self
+                .logs
+                .iter()
+                .map(|log| log.hash().as_bytes().to_vec())
+                .concat(),
+            &self
+                .transitions
+                .iter()
+                .map(|transition| transition.hash().as_bytes().to_vec())
+                .concat(),
+            accepted.as_slice(),
+            &self
+                .exceptions
+                .iter()
+                .map(|exception| exception.hash().as_bytes().to_vec())
+                .concat(),
+        ])
+    }
 }
 
 /// RLP-encode an `Option<Address>`.
