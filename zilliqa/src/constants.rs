@@ -1,4 +1,4 @@
-use crate::transaction::{EvmGas, ScillaGas};
+use crate::transaction::EvmGas;
 
 // How big data slot a transaction can use
 pub const EVM_TX_SLOT_IN_BYTES: usize = 32 * 1024;
@@ -15,5 +15,14 @@ pub const EVM_MAX_INIT_CODE_SIZE: usize = 2 * EVM_MAX_CODE_SIZE;
 // Minimum gas required for EVM transaction (without input data)
 pub const EVM_MIN_GAS_UNITS: EvmGas = EvmGas(21000);
 
-// Minimum amount of gas needed for zilliqa txn (aka CONTRACT_INVOKE_GAS in ZQ1)
-pub const ZIL_MIN_GAS_UNITS: ScillaGas = ScillaGas(10);
+// Maximum code size allowed for zil transactions (imported from ZQ1)
+pub const ZIL_MAX_CODE_SIZE: usize = 76800;
+
+// Gas needed for invoking scilla contract
+pub const ZIL_CONTRACT_INVOKE_GAS: usize = 10;
+
+// Gas needed for creating scilla contract
+pub const ZIL_CONTRACT_CREATE_GAS: usize = 50;
+
+// Gas needed for making transfer using ZIL transaction
+pub const ZIL_NORMAL_TXN_GAS: usize = 50;

@@ -1,5 +1,5 @@
 use std::{
-    cmp::{Ordering, PartialOrd},
+    cmp::{max, Ordering, PartialOrd},
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
     ops::{Add, AddAssign, Mul, Sub},
@@ -27,7 +27,8 @@ use tracing::warn;
 
 use crate::{
     constants::{
-        EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, EVM_MIN_GAS_UNITS, ZIL_MIN_GAS_UNITS,
+        EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, EVM_MIN_GAS_UNITS, ZIL_CONTRACT_CREATE_GAS,
+        ZIL_CONTRACT_INVOKE_GAS, ZIL_MAX_CODE_SIZE, ZIL_NORMAL_TXN_GAS,
     },
     crypto,
     crypto::Hash,
@@ -261,25 +262,21 @@ impl SignedTransaction {
         }
     }
 
-    fn cost(&self) -> Result<ZilAmount> {
+    fn maximum_cost(&self) -> Result<u128> {
         match self {
             SignedTransaction::Legacy { tx, .. } => {
-                let result = tx.gas_limit * tx.gas_price + u128::try_from(tx.value)?;
-                Ok(ZilAmount::from_amount(result))
+                Ok(tx.gas_limit * tx.gas_price + u128::try_from(tx.value)?)
             }
             SignedTransaction::Eip2930 { tx, .. } => {
-                let result = tx.gas_limit * tx.gas_price + u128::try_from(tx.value)?;
-                Ok(ZilAmount::from_amount(result))
+                Ok(tx.gas_limit * tx.gas_price + u128::try_from(tx.value)?)
             }
             SignedTransaction::Eip1559 { tx, .. } => {
-                let result = tx.gas_limit * tx.max_fee_per_gas + u128::try_from(tx.value)?;
-                Ok(ZilAmount::from_amount(result))
+                Ok(tx.gas_limit * tx.max_fee_per_gas + u128::try_from(tx.value)?)
             }
             SignedTransaction::Zilliqa { tx, .. } => {
-                Ok(ZilAmount::from_amount(tx.gas_limit.0.into()) * tx.gas_price + tx.amount)
+                Ok(total_scilla_gas_price(tx.gas_limit, tx.gas_price).0)
             }
-            SignedTransaction::Intershard { tx, .. } => Ok(ZilAmount::from_amount(tx.gas_price)
-                * ZilAmount::from_amount(tx.gas_limit.0.into())),
+            SignedTransaction::Intershard { tx, .. } => Ok(tx.gas_price * tx.gas_limit.0 as u128),
         }
     }
 
@@ -376,6 +373,17 @@ impl SignedTransaction {
     }
 
     fn validate_input_size(&self) -> Result<bool> {
+        if let SignedTransaction::Zilliqa { tx, .. } = self {
+            if tx.code.len() > ZIL_MAX_CODE_SIZE {
+                warn!(
+                    "Zil transaction input size: {} exceeds limit: {ZIL_MAX_CODE_SIZE}",
+                    tx.code.len()
+                );
+                return Ok(false);
+            }
+            return Ok(true);
+        };
+
         let (input_size, tx_kind) = match self {
             SignedTransaction::Legacy { tx, .. } => (tx.input.len(), tx.to),
             SignedTransaction::Eip2930 { tx, .. } => (tx.input.len(), tx.to),
@@ -404,11 +412,33 @@ impl SignedTransaction {
             return Ok(false);
         }
 
+        // The following logic is taken from ZQ1
         if let SignedTransaction::Zilliqa { tx, .. } = self {
-            if tx.gas_limit < ZIL_MIN_GAS_UNITS {
-                warn!("Insufficient gas give for zil transaction, given: {}, required: {ZIL_MIN_GAS_UNITS}!", tx.gas_limit);
+            let required_gas: ScillaGas = {
+                // Contract call
+                if !tx.to_addr.is_zero() && !tx.data.is_empty() && tx.code.is_empty() {
+                    ScillaGas(max(ZIL_CONTRACT_INVOKE_GAS, tx.data.len()).try_into()?)
+                }
+                // Contract creation
+                else if tx.to_addr.is_zero() && !tx.code.is_empty() {
+                    ScillaGas(
+                        max(ZIL_CONTRACT_CREATE_GAS, tx.data.len() + tx.code.len()).try_into()?,
+                    )
+                }
+                // Transfer
+                else if !tx.to_addr.is_zero() && tx.data.is_empty() && tx.code.is_empty() {
+                    ScillaGas(ZIL_NORMAL_TXN_GAS.try_into()?)
+                } else {
+                    warn!("Given transaction is none of: contract invocation, contract creation, transfer");
+                    return Ok(false);
+                }
+            };
+
+            if tx.gas_limit < required_gas {
+                warn!("Insufficient gas give for zil transaction, given: {}, required: {required_gas}!", tx.gas_limit);
                 return Ok(false);
             }
+            return Ok(true);
         }
 
         let gas_limit = self.gas_limit();
@@ -435,8 +465,8 @@ impl SignedTransaction {
     }
 
     fn validate_sender_account(&self, account: &Account) -> Result<bool> {
-        let txn_cost = self.cost()?;
-        if txn_cost > ZilAmount(account.balance) {
+        let txn_cost = self.maximum_cost()?;
+        if txn_cost > account.balance {
             warn!("Insufficient funds!");
             return Ok(false);
         }
