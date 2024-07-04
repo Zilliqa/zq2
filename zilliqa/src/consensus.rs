@@ -1510,7 +1510,7 @@ impl Consensus {
             if self.config.do_checkpoints
                 && self.epoch_is_checkpoint(self.epoch_number(block.number()))
             {
-                if let Some(checkpoint_path) = self.db.create_checkpoint_path(block.number())? {
+                if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
                     let parent =
                         self.db
                             .get_block_by_hash(&block.parent_hash())?

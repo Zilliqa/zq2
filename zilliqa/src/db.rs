@@ -236,16 +236,13 @@ impl Db {
         Ok(())
     }
 
-    pub fn create_checkpoint_path(&self, height: u64) -> Result<Option<Box<Path>>> {
+    pub fn get_checkpoint_dir(&self) -> Result<Option<Box<Path>>> {
         let Some(base_path) = &self.path else {
             // If we don't have on-disk persistency, disable checkpoints too
             warn!("Attempting to create checkpoint, but no persistence directory has been configured");
             return Ok(None);
         };
-        let checkpoint_dir = base_path.join("checkpoints");
-        fs::create_dir_all(&checkpoint_dir)?;
-        let checkpoint_path = checkpoint_dir.join(height.to_string());
-        Ok(Some(checkpoint_path.into_boxed_path()))
+        Ok(Some(base_path.join("checkpoints").into_boxed_path()))
     }
 
     pub fn load_trusted_checkpoint<P: AsRef<Path>>(
@@ -744,8 +741,10 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     parent: &Block,
     state_trie_storage: TrieStorage,
     shard_id: u64,
-    output: P,
+    output_dir: P,
 ) -> Result<()> {
+    fs::create_dir_all(&output_dir)?;
+
     let state_trie_storage = Arc::new(state_trie_storage);
     // quick sanity check
     if block.parent_hash() != parent.hash() {
@@ -755,8 +754,9 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     }
 
     // Note: we ignore any existing file
-    let temp_path = output.as_ref().with_file_name(".part");
-    let outfile_temp = File::create_new(&temp_path)?;
+    let output_filename = output_dir.as_ref().join(block.number().to_string());
+    let temp_filename = output_filename.with_extension(".part");
+    let outfile_temp = File::create_new(&temp_filename)?;
     let mut writer = BufWriter::with_capacity(8192 * 1024, outfile_temp); // 8 MiB chunks
 
     // write the block...
@@ -796,7 +796,26 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     }
     writer.flush()?;
 
-    fs::rename(temp_path, output)?;
+    fs::rename(temp_filename, &output_filename)?;
+
+    fn cleanup_dir(dir: impl AsRef<Path>, keep_file: impl AsRef<Path>) -> Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let Ok(entry) = entry else {
+                continue;
+            };
+            if entry.path() == keep_file.as_ref() {
+                continue;
+            }
+            if entry.metadata()?.is_file() {
+                fs::remove_file(entry.path())?
+            }
+        }
+        Ok(())
+    }
+    match cleanup_dir(&output_dir, &output_filename) {
+        Err(e) => warn!("Error cleaning old files from the snapshot directory: {e}"),
+        _ => (),
+    }
 
     Ok(())
 }
@@ -927,26 +946,7 @@ mod tests {
             EvmGas(0),
         );
 
-        let checkpoint_path = db.create_checkpoint_path(checkpoint_block.number()).unwrap().unwrap();
-
-        fn recurse_files(path: impl AsRef<Path>) -> std::io::Result<Vec<std::path::PathBuf>> {
-            let mut buf = vec![];
-            let entries = std::fs::read_dir(path)?;
-            for entry in entries {
-                let entry = entry?;
-                let meta = entry.metadata()?;
-                if meta.is_dir() {
-                    let mut subdir = recurse_files(entry.path())?;
-                    buf.append(&mut subdir);
-                }
-                if meta.is_file() {
-                    buf.push(entry.path());
-                }
-            }
-            Ok(buf)
-        }
-
-        println!("{:?}", recurse_files(&checkpoint_path.parent().unwrap()).unwrap());
+        let checkpoint_path = db.get_checkpoint_dir().unwrap().unwrap();
 
         const SHARD_ID: u64 = 5000;
 
@@ -955,7 +955,7 @@ mod tests {
 
         // now parse the checkpoint
         db.load_trusted_checkpoint(
-            &checkpoint_path,
+            &checkpoint_path.join(checkpoint_block.number().to_string()),
             &checkpoint_block.hash(),
             SHARD_ID,
         )

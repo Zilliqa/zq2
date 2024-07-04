@@ -266,7 +266,6 @@ impl SecretKey {
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(transparent)]
 pub struct Hash(pub [u8; 32]);
 
 impl Hash {
