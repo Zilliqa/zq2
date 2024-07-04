@@ -68,7 +68,7 @@ use zilliqa::{
     crypto::{NodePublicKey, SecretKey},
     db,
     message::{ExternalMessage, InternalMessage},
-    node::Node,
+    node::{Node, RequestId},
     transaction::EvmGas,
 };
 
@@ -95,7 +95,7 @@ enum AnyMessage {
 
 type Wallet = SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>;
 
-type StreamMessage = (PeerId, Option<PeerId>, AnyMessage);
+type StreamMessage = (PeerId, Option<(PeerId, RequestId)>, AnyMessage);
 
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
 // type
@@ -125,7 +125,7 @@ fn node(
         .map(move |(src, dest, message)| {
             (
                 peer_id,
-                Some(peer_id),
+                Some((peer_id, RequestId::default())),
                 AnyMessage::Internal(src, dest, message),
             )
         })
@@ -523,7 +523,7 @@ impl Network {
         }
     }
 
-    fn collect_messages(&mut self) -> Vec<(PeerId, Option<PeerId>, AnyMessage)> {
+    fn collect_messages(&mut self) -> Vec<StreamMessage> {
         let mut messages = vec![];
 
         // Poll the receiver with `unconstrained` to ensure it won't be pre-empted. This makes sure we always
@@ -595,10 +595,10 @@ impl Network {
             // Handle the removed proposes correctly for both cases of broadcast and single cast
             for (s, d, m) in removed_items {
                 // If specifically to a node, only allow node 0
-                if let Some(dest) = d {
+                if let Some((dest, id)) = d {
                     // We actually want to allow this message, put it back into the queue
                     if dest == self.nodes[0].peer_id {
-                        messages.push((s, Some(dest), m));
+                        messages.push((s, Some((dest, id)), m));
                         continue;
                     }
 
@@ -606,7 +606,7 @@ impl Network {
                     proposals_seen += 1;
                 } else {
                     // Broadcast seen! Push it back into the queue with specific destination of node 0
-                    messages.push((s, Some(self.nodes[0].peer_id), m));
+                    messages.push((s, Some((self.nodes[0].peer_id, RequestId::default())), m));
 
                     broadcast_handled = true;
                     break;
@@ -748,7 +748,7 @@ impl Network {
         self.handle_message((source, destination, message))
     }
 
-    fn handle_message(&mut self, message: (PeerId, Option<PeerId>, AnyMessage)) {
+    fn handle_message(&mut self, message: StreamMessage) {
         let (source, destination, ref contents) = message;
         match contents {
             AnyMessage::Internal(source_shard, destination_shard, ref internal_message) => {
@@ -786,7 +786,7 @@ impl Network {
                     }
                     InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                         if *destination_shard == self.shard_id {
-                            let destination = destination.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
+                            let (destination, _) = destination.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
                             let idx_node = self.find_node(destination);
                             if let Some((idx, node)) = idx_node {
                                 trace!("Handling intershard message {:?} from shard {}, in node {} of shard {}", internal_message, source_shard, idx, self.shard_id);
@@ -834,7 +834,7 @@ impl Network {
                 }
             }
             AnyMessage::External(external_message) => {
-                let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = destination {
+                let nodes: Vec<(usize, &TestNode)> = if let Some((destination, _)) = destination {
                     let (index, node) = self
                         .nodes
                         .iter()
@@ -867,7 +867,7 @@ impl Network {
                         // Send broadcast to nodes only in the same shard (having same chain_id)
                         if inner.config.eth_chain_id == sender_chain_id {
                             inner
-                                .handle_network_message(source, external_message.clone())
+                                .handle_network_message(source, Ok(external_message.clone()))
                                 .unwrap();
                         }
                     });
@@ -1042,7 +1042,7 @@ impl Network {
 fn format_message(
     nodes: &[TestNode],
     source: PeerId,
-    destination: Option<PeerId>,
+    destination: Option<(PeerId, RequestId)>,
     message: &AnyMessage,
 ) -> String {
     let message = match message {
@@ -1051,7 +1051,7 @@ fn format_message(
     };
 
     let source_index = nodes.iter().find(|n| n.peer_id == source).unwrap().index;
-    if let Some(destination) = destination {
+    if let Some((destination, _)) = destination {
         let destination_index = nodes
             .iter()
             .find(|n| n.peer_id == destination)

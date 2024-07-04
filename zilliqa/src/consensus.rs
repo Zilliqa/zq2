@@ -24,7 +24,7 @@ use crate::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, BlockResponse,
         ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
     },
-    node::{MessageSender, NetworkMessage},
+    node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxPoolContent},
     state::State,
     time::SystemTime,
@@ -513,8 +513,9 @@ impl Consensus {
                                 .collect(),
                         ),
                     )?;
+                } else {
+                    warn!(?e, "invalid block proposal received!");
                 }
-                warn!(?e, "invalid block proposal received!");
                 return Ok(None);
             }
         }
@@ -2321,5 +2322,12 @@ impl Consensus {
             errors,
             exceptions,
         }
+    }
+
+    pub fn report_outgoing_message_failure(
+        &mut self,
+        failure: OutgoingMessageFailure,
+    ) -> Result<()> {
+        self.block_store.report_outgoing_message_failure(failure)
     }
 }
