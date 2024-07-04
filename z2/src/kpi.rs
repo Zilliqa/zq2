@@ -15,7 +15,9 @@ pub enum KpiResult {
 #[derive(Debug, Serialize)]
 pub struct TxnLatencyResult {
     latency: f64,
+    throughput: f64,
     success_rate: f32,
+    gas_throughput: f64,
 }
 
 trait KpiAgent {
