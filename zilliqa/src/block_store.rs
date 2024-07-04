@@ -196,7 +196,7 @@ impl BlockStore {
 
         if let Some(from) = from {
             let peer = self.peers.entry(from).or_default();
-            peer.requested_blocks -= 1;
+            peer.requested_blocks = peer.requested_blocks.saturating_sub(1);
             if block.view() > peer.highest_known_view {
                 trace!(%from, view = block.view(), "new highest known view for peer");
                 peer.highest_known_view = block.view();
