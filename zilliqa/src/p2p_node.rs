@@ -349,8 +349,8 @@ impl P2pNode {
                         InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                             self.forward_local_message_to_shard(&Self::shard_id_to_topic(destination).hash(), source, message)?;
                         }
-                        InternalMessage::ExportBlockSnapshot(block, parent, trie_storage, path) => {
-                            self.task_threads.spawn(async move { db::snapshot_block_with_state(&block, &parent, trie_storage, source, path) });
+                        InternalMessage::ExportBlockCheckpoint(block, parent, trie_storage, path) => {
+                            self.task_threads.spawn(async move { db::checkpoint_block_with_state(&block, &parent, trie_storage, source, path) });
                         }
                     }
                 },
@@ -385,7 +385,7 @@ impl P2pNode {
                 },
                 Some(res) = self.task_threads.join_next() => {
                     if let Err(e) = res {
-                        // One-shot task (i.e. snapshot export) failed. Log it and carry on.
+                        // One-shot task (i.e. checkpoint export) failed. Log it and carry on.
                         error!(%e);
                     }
                 }

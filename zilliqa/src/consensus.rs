@@ -1425,6 +1425,8 @@ impl Consensus {
         }
     }
 
+    /// Check if a new proposal allows an older block to become finalized.
+    /// Errors iff the proposal's parent is not known.
     fn check_and_commit(&mut self, proposal: &Block) -> Result<()> {
         // The condition for a block to be finalized is if there is a direct two-chain. From the paper:
         // Once a replica is convinced, it checks
@@ -1441,8 +1443,7 @@ impl Consensus {
             return Err(MissingBlockError::from(proposal.qc.block_hash).into());
         };
 
-        // At genesis it could be fine not to have a qc block, so don't error.
-        // TODO: this should be an explicit check for genesis
+        // If we don't have the parent (e.g. genesis, or pruned node), we can't finalize, so just exit
         let Some(qc_parent) = self.get_block(&qc_block.parent_hash())? else {
             warn!("missing qc parent block when checking whether to finalize!");
             return Ok(());
@@ -1503,15 +1504,13 @@ impl Consensus {
             }
         }
 
-        if block.number() % self.config.consensus.blocks_per_epoch == 0 && block.number() != 0 {
-            // TODO: handle epochs
-            if self.config.do_snapshots
-                && block.number()
-                    % (self.config.consensus.blocks_per_epoch
-                        * self.config.consensus.epochs_per_checkpoint)
-                    == 0
+        if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
+            // TODO: handle epochs (#1140)
+
+            if self.config.do_checkpoints
+                && self.epoch_is_checkpoint(self.epoch_number(block.number()))
             {
-                if let Some(snapshot_path) = self.db.create_checkpoint_path(block.number())? {
+                if let Some(checkpoint_path) = self.db.create_checkpoint_path(block.number())? {
                     let parent =
                         self.db
                             .get_block_by_hash(&block.parent_hash())?
@@ -1519,11 +1518,11 @@ impl Consensus {
                                 "Trying to checkpoint block, but we don't have its parent"
                             ))?;
                     self.message_sender.send_message_to_coordinator(
-                        InternalMessage::ExportBlockSnapshot(
+                        InternalMessage::ExportBlockCheckpoint(
                             Box::new(block),
                             Box::new(parent),
-                            Arc::new(self.db.state_trie()?),
-                            snapshot_path,
+                            self.db.state_trie()?.clone(),
+                            checkpoint_path,
                         ),
                     )?;
                 }
@@ -1536,7 +1535,7 @@ impl Consensus {
     /// Check the validity of a block. Returns `Err(_, true)` if this block could become valid in the future and
     /// `Err(_, false)` if this block could never be valid.
     fn check_block(
-        &mut self,
+        &self,
         block: &Block,
         during_sync: bool,
     ) -> Result<(), (anyhow::Error, bool)> {
@@ -1729,6 +1728,19 @@ impl Consensus {
             )?;
         }
         Ok(())
+    }
+
+    fn block_is_first_in_epoch(&self, number: u64) -> bool {
+        number % self.config.consensus.blocks_per_epoch == 0
+    }
+
+    fn epoch_number(&self, block_number: u64) -> u64 {
+        // This will need additonal tracking if we ever allow blocks_per_epoch to be changed
+        block_number & self.config.consensus.blocks_per_epoch
+    }
+
+    fn epoch_is_checkpoint(&self, epoch_number: u64) -> bool {
+        epoch_number % self.config.consensus.epochs_per_checkpoint == 0
     }
 
     fn vote_from_block(&self, block: &Block) -> Vote {

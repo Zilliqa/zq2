@@ -19,6 +19,7 @@ use rusqlite::{
 };
 use serde::{Deserialize, Serialize};
 use sled::{Batch, Tree};
+use tracing::warn;
 
 use crate::{
     crypto::{Hash, NodeSignature},
@@ -238,11 +239,13 @@ impl Db {
     pub fn create_checkpoint_path(&self, height: u64) -> Result<Option<Box<Path>>> {
         let Some(base_path) = &self.path else {
             // If we don't have on-disk persistency, disable checkpoints too
+            warn!("Attempting to create checkpoint, but no persistence directory has been configured");
             return Ok(None);
         };
-        let snapshot_path = base_path.join("snapshots").join(height.to_string());
-        fs::create_dir_all(&snapshot_path)?;
-        Ok(Some(snapshot_path.into_boxed_path()))
+        let checkpoint_dir = base_path.join("checkpoints");
+        fs::create_dir_all(&checkpoint_dir)?;
+        let checkpoint_path = checkpoint_dir.join(height.to_string());
+        Ok(Some(checkpoint_path.into_boxed_path()))
     }
 
     pub fn load_trusted_checkpoint<P: AsRef<Path>>(
@@ -253,7 +256,17 @@ impl Db {
     ) -> Result<Block> {
         let input = File::open(path)?;
         let reader = BufReader::with_capacity(8192 * 1024, input); // 8 MiB read chunks
-        let trie_storage = Arc::new(self.state_trie()?); // TODO: what should we do if the trie DB already contains values?
+        let trie_storage = Arc::new(self.state_trie()?);
+        if !trie_storage.db.is_empty() || self.get_highest_block_number()?.is_some() {
+            // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
+            // values not part of any state trie of any known block. With some effort, this could
+            // even be supported.
+            // However, without such explicit support, having old blocks MAY in fact cause
+            // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
+            // a node that already contains previous state, until (and unless) there's ever a
+            // usecase for going through the effort to support it and ensure it works as expected.
+            return Err(anyhow!("Node state must be empty when loading a checkpoint."));
+        }
         let mut state_trie = EthTrie::new(trie_storage.clone());
 
         let mut lines = reader.lines();
@@ -284,12 +297,12 @@ impl Db {
             ))??
             .parse()?;
         if shard_number != our_shard_id {
-            return Err(anyhow!("Invalid snapshot: chain ID mismatch. Snapshot ID: {shard_number}, our chain_id: {our_shard_id}"));
+            return Err(anyhow!("Invalid checkpoint: chain ID mismatch. Checkpoint ID: {shard_number}, our chain_id: {our_shard_id}"));
         }
 
         let our_max_view = self.get_latest_finalized_view()?.unwrap_or(0);
         if block.view() <= our_max_view {
-            return Err(anyhow!("Snapshow is lower than our finalized view: snapshot is at {}, we are already at {}", block.view(), our_max_view));
+            return Err(anyhow!("Snapshow is lower than our finalized view: checkpoint is at {}, we are already at {}", block.view(), our_max_view));
         }
 
         // then decode state
@@ -726,23 +739,25 @@ impl Db {
     }
 }
 
-pub fn snapshot_block_with_state<P: AsRef<Path> + Debug>(
+pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     block: &Block,
     parent: &Block,
-    state_trie_storage: Arc<TrieStorage>,
+    state_trie_storage: TrieStorage,
     shard_id: u64,
     output: P,
 ) -> Result<()> {
+    let state_trie_storage = Arc::new(state_trie_storage);
     // quick sanity check
     if block.parent_hash() != parent.hash() {
         return Err(anyhow!(
-            "Parent block parameter must match the snapshot block's parent hash"
+            "Parent block parameter must match the checkpoint block's parent hash"
         ));
     }
 
-    // Consider if we need better error handling here, esp. what to do if the file already exists?
-    let outfile = File::create_new(output.as_ref().join("snapshot.txt"))?;
-    let mut writer = BufWriter::with_capacity(8192 * 1024, outfile); // 8 MiB chunks
+    // Note: we ignore any existing file
+    let temp_path = output.as_ref().with_file_name(".part");
+    let outfile_temp = File::create_new(&temp_path)?;
+    let mut writer = BufWriter::with_capacity(8192 * 1024, outfile_temp); // 8 MiB chunks
 
     // write the block...
     writer.write_all(hex::encode(bincode::serialize(&block)?).as_bytes())?; // TODO: better serialization (#1007)
@@ -780,6 +795,9 @@ pub fn snapshot_block_with_state<P: AsRef<Path> + Debug>(
         writer.write_all(b"\n")?;
     }
     writer.flush()?;
+
+    fs::rename(temp_path, output)?;
+
     Ok(())
 }
 
@@ -852,8 +870,9 @@ mod tests {
     #[test]
     fn checkpoint_export_import() {
         let test_db = sled::Config::new().temporary(true).open().unwrap();
-        let checkpoint_path = tempdir().unwrap();
-        let checkpoint_path = checkpoint_path.path();
+        let base_path = tempdir().unwrap();
+        let base_path = base_path.path();
+        let db = Db::new(Some(base_path), 0).unwrap();
 
         let trie_db = Arc::new(TrieStorage::new(test_db.deref().to_owned()));
 
@@ -893,7 +912,7 @@ mod tests {
         let mut qc2 = QuorumCertificate::genesis(0);
         qc2.block_hash = parent_block.hash();
         qc2.view = 1;
-        let snapshot_block = Block::from_qc(
+        let checkpoint_block = Block::from_qc(
             SecretKey::new().unwrap(),
             1,
             1,
@@ -908,15 +927,37 @@ mod tests {
             EvmGas(0),
         );
 
-        snapshot_block_with_state(&snapshot_block, &parent_block, trie_db, 1, checkpoint_path)
+        let checkpoint_path = db.create_checkpoint_path(checkpoint_block.number()).unwrap().unwrap();
+
+        fn recurse_files(path: impl AsRef<Path>) -> std::io::Result<Vec<std::path::PathBuf>> {
+            let mut buf = vec![];
+            let entries = std::fs::read_dir(path)?;
+            for entry in entries {
+                let entry = entry?;
+                let meta = entry.metadata()?;
+                if meta.is_dir() {
+                    let mut subdir = recurse_files(entry.path())?;
+                    buf.append(&mut subdir);
+                }
+                if meta.is_file() {
+                    buf.push(entry.path());
+                }
+            }
+            Ok(buf)
+        }
+
+        println!("{:?}", recurse_files(&checkpoint_path.parent().unwrap()).unwrap());
+
+        const SHARD_ID: u64 = 5000;
+
+        checkpoint_block_with_state(&checkpoint_block, &parent_block, trie_db.deref().clone(), SHARD_ID, &checkpoint_path)
             .unwrap();
 
         // now parse the checkpoint
-        let db = Db::new::<&str>(None, 0).unwrap();
         db.load_trusted_checkpoint(
-            checkpoint_path.join("snapshot.txt"),
-            &snapshot_block.hash(),
-            1,
+            &checkpoint_path,
+            &checkpoint_block.hash(),
+            SHARD_ID,
         )
         .unwrap();
     }

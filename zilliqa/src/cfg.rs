@@ -58,9 +58,9 @@ pub struct NodeConfig {
     /// Persistence checkpoint to load.
     #[serde(default)]
     pub load_checkpoint: Option<Checkpoint>,
-    /// Whether to enable exporting checkpoint state snapshot files.
+    /// Whether to enable exporting checkpoint state checkpoint files.
     #[serde(default)]
-    pub do_snapshots: bool,
+    pub do_checkpoints: bool,
     /// The maximum number of blocks we will send to another node in a single message.
     #[serde(default = "block_request_limit_default")]
     pub block_request_limit: usize,

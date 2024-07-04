@@ -75,7 +75,7 @@ use zilliqa::{
 #[derive(Default)]
 pub struct NewNodeOptions {
     secret_key: Option<SecretKey>,
-    snapshot: Option<Checkpoint>,
+    checkpoint: Option<Checkpoint>,
 }
 
 impl NewNodeOptions {
@@ -195,7 +195,7 @@ struct Network {
     pub genesis_key: SigningKey,
     scilla_address: String,
     scilla_lib_dir: String,
-    do_snapshots: bool,
+    do_checkpoints: bool,
 }
 
 impl Network {
@@ -206,7 +206,7 @@ impl Network {
         seed: u64,
         scilla_address: String,
         scilla_lib_dir: String,
-        do_snapshots: bool,
+        do_checkpoints: bool,
     ) -> Network {
         Self::new_shard(
             rng,
@@ -217,7 +217,7 @@ impl Network {
             None,
             scilla_address,
             scilla_lib_dir,
-            do_snapshots,
+            do_checkpoints,
         )
     }
 
@@ -231,7 +231,7 @@ impl Network {
         keys: Option<Vec<SecretKey>>,
         scilla_address: String,
         scilla_lib_dir: String,
-        do_snapshots: bool,
+        do_checkpoints: bool,
     ) -> Network {
         let mut keys = keys.unwrap_or_else(|| {
             (0..nodes)
@@ -285,7 +285,7 @@ impl Network {
             disable_rpc: disable_rpc_default(),
             data_dir: None,
             load_checkpoint: None,
-            do_snapshots,
+            do_checkpoints,
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
@@ -330,7 +330,7 @@ impl Network {
             children: HashMap::new(),
             genesis_key,
             scilla_address,
-            do_snapshots,
+            do_checkpoints,
             scilla_lib_dir,
         }
     }
@@ -363,8 +363,8 @@ impl Network {
             json_rpc_port: json_rcp_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            load_checkpoint: options.snapshot,
-            do_snapshots: self.do_snapshots,
+            load_checkpoint: options.checkpoint,
+            do_checkpoints: self.do_checkpoints,
             disable_rpc: disable_rpc_default(),
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),
@@ -455,7 +455,7 @@ impl Network {
                     allowed_timestamp_skew: allowed_timestamp_skew_default(),
                     data_dir: None,
                     load_checkpoint: None,
-                    do_snapshots: self.do_snapshots,
+                    do_checkpoints: self.do_checkpoints,
                     disable_rpc: disable_rpc_default(),
                     json_rpc_port: json_rcp_port_default(),
                     consensus: ConsensusConfig {
@@ -768,7 +768,7 @@ impl Network {
                                     Some(vec![secret_key]),
                                     self.scilla_address.clone(),
                                     self.scilla_lib_dir.clone(),
-                                    self.do_snapshots,
+                                    self.do_checkpoints,
                                 ),
                             );
                         }
@@ -808,13 +808,13 @@ impl Network {
                             trace!(?message);
                         }
                     }
-                    InternalMessage::ExportBlockSnapshot(block, parent, trie_storage, output) => {
-                        assert!(self.do_snapshots, "Node requested a checkpoint snapshot export to {}, despite snapshots beind disabled in the config", output.to_string_lossy());
+                    InternalMessage::ExportBlockCheckpoint(block, parent, trie_storage, output) => {
+                        assert!(self.do_checkpoints, "Node requested a checkpoint checkpoint export to {}, despite checkpoints beind disabled in the config", output.to_string_lossy());
                         trace!(
-                            "Exporting state snapshot to path {}",
+                            "Exporting checkpoint to path {}",
                             output.to_string_lossy()
                         );
-                        db::snapshot_block_with_state(
+                        db::checkpoint_block_with_state(
                             block,
                             parent,
                             trie_storage.clone(),

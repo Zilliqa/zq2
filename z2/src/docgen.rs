@@ -320,7 +320,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
         },
         data_dir: None,
         load_checkpoint: None,
-        do_snapshots: false,
+        do_checkpoints: false,
         eth_chain_id: eth_chain_id_default(),
         disable_rpc: disable_rpc_default(),
         allowed_timestamp_skew: allowed_timestamp_skew_default(),

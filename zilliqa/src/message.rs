@@ -2,7 +2,6 @@ use std::{
     collections::HashSet,
     fmt::{self, Display, Formatter},
     path::Path,
-    sync::Arc,
 };
 
 use alloy_primitives::Address;
@@ -269,10 +268,10 @@ pub enum InternalMessage {
     LaunchLink(u64),
     /// Routes intershard call information between two locally running, bridged, shard processes
     IntershardCall(IntershardCall),
-    /// Trigger a snapshot export of the given block, including the state at its root hash as read
+    /// Trigger a checkpoint export of the given block, including the state at its root hash as read
     /// from the given trie
-    /// (Snapshot block, parent block, reference to our trie DB, output path)
-    ExportBlockSnapshot(Box<Block>, Box<Block>, Arc<TrieStorage>, Box<Path>),
+    /// (checkpoint block, parent block, reference to our trie DB, output path)
+    ExportBlockCheckpoint(Box<Block>, Box<Block>, TrieStorage, Box<Path>),
 }
 
 /// Returns a terse, human-readable summary of a message.
@@ -282,8 +281,8 @@ impl Display for InternalMessage {
             InternalMessage::LaunchShard(id) => write!(f, "LaunchShard({id})"),
             InternalMessage::LaunchLink(dest) => write!(f, "LaunchLink({dest})"),
             InternalMessage::IntershardCall(_) => write!(f, "IntershardCall"),
-            InternalMessage::ExportBlockSnapshot(block, ..) => {
-                write!(f, "ExportSnapshot({})", block.number())
+            InternalMessage::ExportBlockCheckpoint(block, ..) => {
+                write!(f, "ExportCheckpoint({})", block.number())
             }
         }
     }
@@ -661,6 +660,10 @@ impl Block {
 
     pub fn number(&self) -> u64 {
         self.header.number
+    }
+
+    pub fn is_genesis(&self) -> bool {
+        self.number() == 0
     }
 
     pub fn hash(&self) -> Hash {

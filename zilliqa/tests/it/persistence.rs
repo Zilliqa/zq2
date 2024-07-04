@@ -104,7 +104,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         allowed_timestamp_skew: allowed_timestamp_skew_default(),
         data_dir: None,
         load_checkpoint: None,
-        do_snapshots: false,
+        do_checkpoints: false,
         disable_rpc: false,
         json_rpc_port: json_rcp_port_default(),
         eth_chain_id: eth_chain_id_default(),
@@ -150,7 +150,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     );
 }
 
-#[zilliqa_macros::test(do_snapshots)]
+#[zilliqa_macros::test(do_checkpoints)]
 async fn checkpoints_test(mut network: Network) {
     // Populate network with transactions
     let wallet = network.genesis_wallet().await;
@@ -199,9 +199,8 @@ async fn checkpoints_test(mut network: Network) {
                 .unwrap()
                 .path()
                 .join(network.shard_id.to_string())
-                .join("snapshots")
+                .join("checkpoints")
                 .join("5")
-                .join("snapshot.txt")
         })
         .collect::<Vec<_>>();
     let mut len_check = 0;
@@ -218,7 +217,7 @@ async fn checkpoints_test(mut network: Network) {
     let checkpoint_path = checkpoint_files[0].to_str().unwrap().to_owned();
     let checkpoint_hash = wallet.get_block(5).await.unwrap().unwrap().hash.unwrap();
     let new_node_idx = network.add_node_with_options(NewNodeOptions {
-        snapshot: Some(Checkpoint {
+        checkpoint: Some(Checkpoint {
             file: checkpoint_path,
             hash: Hash(checkpoint_hash.0),
         }),

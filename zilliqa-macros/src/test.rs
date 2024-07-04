@@ -6,7 +6,7 @@ use syn::{parse::Parser, ItemFn};
 
 pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut restrict_concurrency = false;
-    let mut do_snapshots = false;
+    let mut do_checkpoints = false;
 
     let parsed_args =
         match syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
@@ -26,7 +26,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                 };
                 match name.to_string().as_str() {
                     "restrict_concurrency" => restrict_concurrency = true,
-                    "do_snapshots" => do_snapshots = true,
+                    "do_checkpoints" => do_checkpoints = true,
                     _ => {
                         return token_stream_with_error(
                             args,
@@ -197,7 +197,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                     async move {
                         let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
                         let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed, format!("http://{addr}"),
-                                                          scilla_lib_dir.to_string(), #do_snapshots);
+                                                          scilla_lib_dir.to_string(), #do_checkpoints);
 
                         // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
                         let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
