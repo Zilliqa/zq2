@@ -1534,11 +1534,7 @@ impl Consensus {
 
     /// Check the validity of a block. Returns `Err(_, true)` if this block could become valid in the future and
     /// `Err(_, false)` if this block could never be valid.
-    fn check_block(
-        &self,
-        block: &Block,
-        during_sync: bool,
-    ) -> Result<(), (anyhow::Error, bool)> {
+    fn check_block(&self, block: &Block, during_sync: bool) -> Result<(), (anyhow::Error, bool)> {
         block.verify_hash().map_err(|e| (e, false))?;
 
         if block.view() == 0 {

@@ -239,7 +239,9 @@ impl Db {
     pub fn get_checkpoint_dir(&self) -> Result<Option<Box<Path>>> {
         let Some(base_path) = &self.path else {
             // If we don't have on-disk persistency, disable checkpoints too
-            warn!("Attempting to create checkpoint, but no persistence directory has been configured");
+            warn!(
+                "Attempting to create checkpoint, but no persistence directory has been configured"
+            );
             return Ok(None);
         };
         Ok(Some(base_path.join("checkpoints").into_boxed_path()))
@@ -262,7 +264,9 @@ impl Db {
             // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
             // a node that already contains previous state, until (and unless) there's ever a
             // usecase for going through the effort to support it and ensure it works as expected.
-            return Err(anyhow!("Node state must be empty when loading a checkpoint."));
+            return Err(anyhow!(
+                "Node state must be empty when loading a checkpoint."
+            ));
         }
         let mut state_trie = EthTrie::new(trie_storage.clone());
 
@@ -812,9 +816,8 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
         }
         Ok(())
     }
-    match cleanup_dir(&output_dir, &output_filename) {
-        Err(e) => warn!("Error cleaning old files from the snapshot directory: {e}"),
-        _ => (),
+    if let Err(e) = cleanup_dir(&output_dir, &output_filename) {
+        warn!("Error cleaning old files from the snapshot directory: {e}")
     }
 
     Ok(())
@@ -950,12 +953,18 @@ mod tests {
 
         const SHARD_ID: u64 = 5000;
 
-        checkpoint_block_with_state(&checkpoint_block, &parent_block, trie_db.deref().clone(), SHARD_ID, &checkpoint_path)
-            .unwrap();
+        checkpoint_block_with_state(
+            &checkpoint_block,
+            &parent_block,
+            trie_db.deref().clone(),
+            SHARD_ID,
+            &checkpoint_path,
+        )
+        .unwrap();
 
         // now parse the checkpoint
         db.load_trusted_checkpoint(
-            &checkpoint_path.join(checkpoint_block.number().to_string()),
+            checkpoint_path.join(checkpoint_block.number().to_string()),
             &checkpoint_block.hash(),
             SHARD_ID,
         )

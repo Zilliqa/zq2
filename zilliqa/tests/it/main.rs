@@ -810,10 +810,7 @@ impl Network {
                     }
                     InternalMessage::ExportBlockCheckpoint(block, parent, trie_storage, output) => {
                         assert!(self.do_checkpoints, "Node requested a checkpoint checkpoint export to {}, despite checkpoints beind disabled in the config", output.to_string_lossy());
-                        trace!(
-                            "Exporting checkpoint to path {}",
-                            output.to_string_lossy()
-                        );
+                        trace!("Exporting checkpoint to path {}", output.to_string_lossy());
                         db::checkpoint_block_with_state(
                             block,
                             parent,

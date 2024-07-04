@@ -292,20 +292,23 @@ impl Hash {
 
 impl Serialize for Hash {
     fn serialize<S>(&self, serializer: S) -> std::prelude::v1::Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer {
-                hex::encode(self.0).serialize(serializer)
+    where
+        S: serde::Serializer,
+    {
+        hex::encode(self.0).serialize(serializer)
     }
 }
 
 impl<'de> Deserialize<'de> for Hash {
     fn deserialize<D>(deserializer: D) -> std::prelude::v1::Result<Self, D::Error>
-        where
-            D: de::Deserializer<'de> {
+    where
+        D: de::Deserializer<'de>,
+    {
         let s = <String>::deserialize(deserializer)?;
         let bytes = hex::decode(s).unwrap();
-        Self::try_from(bytes.as_slice()).
-            map_err(|_| de::Error::invalid_value(Unexpected::Bytes(&bytes), &"a 32-byte hex value"))
+        Self::try_from(bytes.as_slice()).map_err(|_| {
+            de::Error::invalid_value(Unexpected::Bytes(&bytes), &"a 32-byte hex value")
+        })
     }
 }
 
