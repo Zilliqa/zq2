@@ -145,7 +145,7 @@ impl Node {
         debug!(%from, %to, %message, "handling message");
         match message {
             ExternalMessage::Proposal(m) => {
-                if let Some((to, message)) = self.consensus.proposal(m, false)? {
+                if let Some((to, message)) = self.consensus.proposal(from, m, false)? {
                     self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
                     if let Some(to) = to {
                         self.message_sender.send_external_message(to, message)?;
@@ -814,14 +814,14 @@ impl Node {
         Ok(())
     }
 
-    fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
+    fn handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
         trace!(
             "Received blocks response of length {}",
             response.proposals.len()
         );
 
         for block in response.proposals {
-            let proposal = self.consensus.receive_block(block)?;
+            let proposal = self.consensus.receive_block(from, block)?;
             if let Some(proposal) = proposal {
                 self.message_sender
                     .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
