@@ -2,7 +2,7 @@ use std::{
     cmp::{max, Ordering, PartialOrd},
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
-    ops::{Add, AddAssign, Mul, Sub},
+    ops::{Add, AddAssign, Sub},
     str::FromStr,
 };
 
@@ -717,14 +717,6 @@ impl Add for ZilAmount {
 
     fn add(self, rhs: Self) -> Self::Output {
         ZilAmount(self.0.checked_add(rhs.0).expect("amount overflow"))
-    }
-}
-
-impl Mul for ZilAmount {
-    type Output = ZilAmount;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        ZilAmount(self.0.checked_mul(rhs.0).expect("amount overflow"))
     }
 }
 
