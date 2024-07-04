@@ -27,7 +27,7 @@ impl KpiAgent for TxnLatency {
 
         let num_transactions = self.iterations;
         let mut futures = Vec::new();
-        let all_start = Instant::now();
+        let total_start = Instant::now();
         for _ in 0..num_transactions {
             let provider = config.get_provider()?.with_signer(wallet.clone());
             let tx = tx.clone();
@@ -66,18 +66,16 @@ impl KpiAgent for TxnLatency {
             .into_iter()
             .filter_map(Result::ok)
             .collect::<Result<_, _>>()?;
-        let all_duration = all_start.elapsed().as_secs_f64();
-        let total_duration: f64 = results.iter().map(|r| r.0).sum();
-        let total_success = results.iter().filter(|r| r.1).count();
+        let total_duration = total_start.elapsed().as_secs_f64();
+        let latency = results.iter().map(|r| r.0).sum::<f64>() / num_transactions as f64;
+        let success_rate = results.iter().filter(|r| r.1).count() as f32 / self.iterations as f32;
         let total_gas: u64 = results.iter().map(|r| r.2).sum();
 
-        let average_latency = total_duration / num_transactions as f64;
-
         Ok(KpiResult::TxnLatency(TxnLatencyResult {
-            latency: average_latency,
-            success_rate: (total_success as f32 / self.iterations as f32) * 100.0,
-            gas_throughput: total_gas as f64 / all_duration,
-            throughput: self.iterations as f64 / all_duration,
+            latency,
+            success_rate,
+            gas_throughput: total_gas as f64 / total_duration,
+            throughput: self.iterations as f64 / total_duration,
         }))
     }
 }
