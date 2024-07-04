@@ -7,7 +7,7 @@ use colored::Colorize;
 use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
 
-use crate::utils;
+use crate::{kpi, utils};
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
 
@@ -82,6 +82,12 @@ pub async fn run_perf_file(_base_dir: &str, config_file: &str) -> Result<()> {
     let mut rng = perf.make_rng()?;
     println!("🦆 Running {config_file} .. ");
     perf.run(&mut rng).await?;
+    Ok(())
+}
+
+pub async fn run_kpi_collector(config_file: &str) -> Result<()> {
+    println!("🦆 Running {config_file} .. ");
+    kpi::Kpi::run(&kpi::Config::load(config_file)?).await;
     Ok(())
 }
 

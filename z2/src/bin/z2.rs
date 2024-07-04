@@ -34,6 +34,7 @@ enum Commands {
     Depends(DependsCommands),
     /// Join a ZQ2 network
     Join(JoinStruct),
+    Kpi(KpiStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -109,6 +110,11 @@ struct PerfStruct {
     config_dir: String,
 
     perf_file: String,
+}
+
+#[derive(Args, Debug)]
+struct KpiStruct {
+    config_file: String,
 }
 
 #[derive(Args, Debug)]
@@ -374,6 +380,10 @@ async fn main() -> Result<()> {
         }
         Commands::Perf(ref arg) => {
             plumbing::run_perf_file(&arg.config_dir, &arg.perf_file).await?;
+            Ok(())
+        }
+        Commands::Kpi(ref arg) => {
+            plumbing::run_kpi_collector(&arg.config_file).await?;
             Ok(())
         }
         Commands::Deployer(deployer_command) => match &deployer_command {

@@ -1,0 +1,92 @@
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::fs::File;
+use std::io::Read;
+use zilliqa_rs::{
+    providers::{Http, Provider},
+    signers::LocalWallet,
+};
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyPerformanceIndicator {
+    ReadLatency(ReadLatency),
+    TxnLatency(TxnLatency),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Config {
+    pub blockchain: Blockchain,
+    pub source_of_funds: SourceOfFunds,
+    pub key_performance_indicators: Vec<KeyPerformanceIndicator>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputType {
+    Json,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Output {
+    pub r#type: OutputType,
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReadLatency {
+    pub iterations: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TxnLatency {
+    pub iterations: u32,
+    pub attempts_to_confirm: u32,
+    pub sleep_ms_before_next_try: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Blockchain {
+    pub rpc_url: String,
+    pub chainid: u16,
+    pub gas_price: u128,
+    pub gas_limit: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SourceOfFunds {
+    pub kind: String,
+    pub private_key: String,
+}
+
+impl Config {
+    pub fn load(path: &str) -> Result<Config> {
+        let mut file = File::open(path)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+
+        let mut config: Config = serde_yaml::from_str(&contents)?;
+
+        const PRIV_KEY_ENV_VAR: &str = "PRIV_KEY";
+        let priv_key_placeholder = format!("${{{PRIV_KEY_ENV_VAR}}}");
+        if config.source_of_funds.private_key == priv_key_placeholder {
+            let private_key = env::var(PRIV_KEY_ENV_VAR)?;
+            config.source_of_funds.private_key = private_key;
+        }
+
+        Ok(config)
+    }
+
+    pub fn get_provider(&self) -> Result<Provider<Http>> {
+        Ok(
+            Provider::<Http>::try_from(self.blockchain.rpc_url.as_ref())?
+                .with_chain_id(self.blockchain.chainid),
+        )
+    }
+
+    pub fn get_signer(&self) -> Result<LocalWallet> {
+        // TODO: Consider funding account type
+        Ok(self.source_of_funds.private_key.parse()?)
+    }
+}

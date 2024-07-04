@@ -5,6 +5,7 @@ pub mod deployer;
 pub mod docgen;
 pub mod docs;
 mod github;
+pub mod kpi;
 pub mod mitmweb;
 pub mod otel;
 pub mod otterscan;
