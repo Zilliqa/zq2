@@ -113,6 +113,10 @@ fn node(
     let message_receiver = UnboundedReceiverStream::new(message_receiver);
     // Augment the `message_receiver` stream to include the sender's `PeerId`.
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+    println!(
+        "Creating new node with peer id {peer_id} and datadir = {:?}",
+        datadir.as_ref().map(|d| d.path())
+    );
     let message_receiver = message_receiver
         .map(move |(dest, _, message)| (peer_id, dest, AnyMessage::External(message)))
         .boxed();
@@ -811,6 +815,7 @@ impl Network {
                     InternalMessage::ExportBlockCheckpoint(block, parent, trie_storage, output) => {
                         assert!(self.do_checkpoints, "Node requested a checkpoint checkpoint export to {}, despite checkpoints beind disabled in the config", output.to_string_lossy());
                         trace!("Exporting checkpoint to path {}", output.to_string_lossy());
+                        println!("Exporting checkpoint to path {}", output.to_string_lossy());
                         db::checkpoint_block_with_state(
                             block,
                             parent,
@@ -819,6 +824,10 @@ impl Network {
                             output,
                         )
                         .unwrap();
+                        println!(
+                            "Finished export of checkpoint to path {}",
+                            output.to_string_lossy()
+                        );
                     }
                 }
             }

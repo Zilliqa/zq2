@@ -187,7 +187,7 @@ async fn checkpoints_test(mut network: Network) {
     network.run_until_receipt(&wallet, update_tx_hash, 50).await;
 
     // wait 5 blocks for checkpoint to happen - then 3 more to finalize that block
-    network.run_until_block(&wallet, 11.into(), 100).await;
+    network.run_until_block(&wallet, 8.into(), 100).await;
 
     let checkpoint_files = network
         .nodes
@@ -205,6 +205,10 @@ async fn checkpoints_test(mut network: Network) {
 
     let mut len_check = 0;
     for path in &checkpoint_files {
+        println!(
+            "Checking metadata of checkpoint file at {}...",
+            path.to_string_lossy()
+        );
         let metadata = fs::metadata(path).unwrap();
         assert!(metadata.is_file());
         let file_len = metadata.len();
