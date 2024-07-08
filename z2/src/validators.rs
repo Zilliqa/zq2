@@ -1,25 +1,25 @@
 /// Code to render the validator join configuration and startup script.
 use std::env;
-use std::str::FromStr;
+use std::{convert::TryFrom, str::FromStr};
 
-use crate::github;
 use anyhow::{anyhow, Context as _, Error, Result};
 use clap::ValueEnum;
 use ethabi::Token;
-use ethers::types::H160;
 use ethers::{
     core::types::TransactionRequest,
     middleware::SignerMiddleware,
     providers::{Http, Middleware, Provider},
     signers::{LocalWallet, Signer},
+    types::H160,
 };
 use libp2p::PeerId;
 use serde::Deserialize;
-use std::convert::TryFrom;
 use tera::Tera;
 use tokio::{fs::File, io::AsyncWriteExt};
 use toml::Value;
 use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
+
+use crate::github;
 
 #[derive(Debug)]
 pub struct Validator {
