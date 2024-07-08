@@ -19,7 +19,7 @@ use rusqlite::{
 };
 use serde::{Deserialize, Serialize};
 use sled::{Batch, Tree};
-use tracing::warn;
+use tracing::{warn, info};
 
 use crate::{
     crypto::{Hash, NodeSignature},
@@ -802,13 +802,6 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
 
     fs::rename(&temp_filename, &output_filename)?;
 
-    println!(
-        "Wrote checkpoint to {}, after using temp file {}. Now cleaning up parent directory {}.",
-        output_filename.to_string_lossy(),
-        temp_filename.to_string_lossy(),
-        output_dir.as_ref().to_string_lossy()
-    );
-
     fn cleanup_dir(dir: impl AsRef<Path>, keep_file: impl AsRef<Path>) -> Result<()> {
         for entry in fs::read_dir(dir)? {
             let Ok(entry) = entry else {
@@ -818,7 +811,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
                 continue;
             }
             if entry.metadata()?.is_file() {
-                println!("Deleting file {}", entry.path().to_string_lossy());
+                info!("Deleting file {}", entry.path().to_string_lossy());
                 fs::remove_file(entry.path())?
             }
         }

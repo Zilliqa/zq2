@@ -205,10 +205,6 @@ async fn checkpoints_test(mut network: Network) {
 
     let mut len_check = 0;
     for path in &checkpoint_files {
-        println!(
-            "Checking metadata of checkpoint file at {}...",
-            path.to_string_lossy()
-        );
         let metadata = fs::metadata(path).unwrap();
         assert!(metadata.is_file());
         let file_len = metadata.len();

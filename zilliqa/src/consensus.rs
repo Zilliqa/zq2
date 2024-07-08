@@ -1507,19 +1507,10 @@ impl Consensus {
         if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
             // TODO: handle epochs (#1140)
 
-            println!(
-                "We are node {} and we just saw a new epoch...",
-                self.peer_id()
-            );
             if self.config.do_checkpoints
                 && self.epoch_is_checkpoint(self.epoch_number(block.number()))
             {
                 if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
-                    println!(
-                        "Node {} triggering checkpoint export at {}",
-                        self.peer_id(),
-                        checkpoint_path.to_string_lossy(),
-                    );
                     let parent =
                         self.db
                             .get_block_by_hash(&block.parent_hash())?
