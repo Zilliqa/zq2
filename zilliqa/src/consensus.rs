@@ -1517,8 +1517,8 @@ impl Consensus {
                 if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
                     println!(
                         "Node {} triggering checkpoint export at {}",
+                        self.peer_id(),
                         checkpoint_path.to_string_lossy(),
-                        self.peer_id()
                     );
                     let parent =
                         self.db
@@ -2132,6 +2132,8 @@ impl Consensus {
             }
         }
 
+        self.apply_rewards(committee, &parent, block.view(), &block.qc.cosigned)?;
+
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
@@ -2201,8 +2203,6 @@ impl Consensus {
                 let _ = self.receipts.send((receipt.clone(), *tx_index));
             }
         }
-
-        self.apply_rewards(committee, &parent, block.view(), &block.qc.cosigned)?;
 
         // Important - only add blocks we are going to execute because they can potentially
         // overwrite the mapping of block height to block, which there should only be one of.

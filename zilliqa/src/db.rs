@@ -759,7 +759,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
 
     // Note: we ignore any existing file
     let output_filename = output_dir.as_ref().join(block.number().to_string());
-    let temp_filename = output_filename.with_extension(".part");
+    let temp_filename = output_filename.with_extension("part");
     let outfile_temp = File::create_new(&temp_filename)?;
     let mut writer = BufWriter::with_capacity(8192 * 1024, outfile_temp); // 8 MiB chunks
 

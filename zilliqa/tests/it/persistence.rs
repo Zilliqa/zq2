@@ -203,6 +203,19 @@ async fn checkpoints_test(mut network: Network) {
         })
         .collect::<Vec<_>>();
 
+    // check we've actually processes all the exports
+    network
+        .run_until(
+            |_| {
+                checkpoint_files
+                    .iter()
+                    .fold(false, |acc, file| acc && file.try_exists().unwrap())
+            },
+            100,
+        )
+        .await
+        .unwrap();
+
     let mut len_check = 0;
     for path in &checkpoint_files {
         println!(
