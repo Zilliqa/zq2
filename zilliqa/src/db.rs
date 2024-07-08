@@ -19,7 +19,7 @@ use rusqlite::{
 };
 use serde::{Deserialize, Serialize};
 use sled::{Batch, Tree};
-use tracing::{warn, info};
+use tracing::{info, warn};
 
 use crate::{
     crypto::{Hash, NodeSignature},
