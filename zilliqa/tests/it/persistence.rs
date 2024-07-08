@@ -186,8 +186,8 @@ async fn checkpoints_test(mut network: Network) {
         .tx_hash();
     network.run_until_receipt(&wallet, update_tx_hash, 50).await;
 
-    // wait 5 blocks for checkpoint to happen - then 3 more to finalize that block
-    network.run_until_block(&wallet, 8.into(), 100).await;
+    // wait 10 blocks for checkpoint to happen - then 3 more to finalize that block
+    network.run_until_block(&wallet, 13.into(), 200).await;
 
     let checkpoint_files = network
         .nodes
@@ -199,22 +199,9 @@ async fn checkpoints_test(mut network: Network) {
                 .path()
                 .join(network.shard_id.to_string())
                 .join("checkpoints")
-                .join("5")
+                .join("10")
         })
         .collect::<Vec<_>>();
-
-    // sanity check we've actually processes all the exports
-    network
-        .run_until(
-            |_| {
-                checkpoint_files
-                    .iter()
-                    .fold(false, |acc, file| acc && file.try_exists().unwrap())
-            },
-            50,
-        )
-        .await
-        .unwrap();
 
     let mut len_check = 0;
     for path in &checkpoint_files {
@@ -232,7 +219,7 @@ async fn checkpoints_test(mut network: Network) {
 
     // Create new node and pass it one of those checkpoint files
     let checkpoint_path = checkpoint_files[0].to_str().unwrap().to_owned();
-    let checkpoint_hash = wallet.get_block(5).await.unwrap().unwrap().hash.unwrap();
+    let checkpoint_hash = wallet.get_block(10).await.unwrap().unwrap().hash.unwrap();
     let new_node_idx = network.add_node_with_options(NewNodeOptions {
         checkpoint: Some(Checkpoint {
             file: checkpoint_path,
@@ -243,7 +230,7 @@ async fn checkpoints_test(mut network: Network) {
 
     let new_node_wallet = network.wallet_of_node(new_node_idx).await;
     let latest_block = new_node_wallet.get_block_number().await.unwrap();
-    assert_eq!(latest_block, 5.into());
+    assert_eq!(latest_block, 10.into());
 
     // check storage using it
     let storage_getter = abi.function("pos1").unwrap();
@@ -268,6 +255,6 @@ async fn checkpoints_test(mut network: Network) {
 
     // check the new node is catches up and keeps up with block production
     network
-        .run_until_block(&new_node_wallet, 10.into(), 100)
+        .run_until_block(&new_node_wallet, 20.into(), 200)
         .await;
 }
