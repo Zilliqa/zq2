@@ -698,7 +698,15 @@ impl Network {
             return;
         }
 
-        // Immediately forward any IntershardCall or LaunchLink messages to children - the child network will randomize them
+        // Immediately handle most InternalMessages:
+        //  - any IntershardCall messages to children - forward them (through handle_message) and the child network will handle them
+        //  - any LaunchLink messages: just launch the link
+        //  - any ExportBlockCheckpoint messages: just run the export
+        //  - any LaunchShard messages to the parent - just forward them (through send_to_parent) and the parent network will handle them
+        //
+        //  Being internal, these messages don't really depend on network conditions or other
+        //  nodes, and randomising them would needlessly complicate related tests without being
+        //  useful.
         messages.retain(|m| match m.2 {
             AnyMessage::Internal(_, destination, InternalMessage::IntershardCall(_))
                 if self.shard_id != destination =>
@@ -710,20 +718,34 @@ impl Network {
                 self.handle_message(m.clone());
                 false
             }
+            AnyMessage::Internal(_, _, InternalMessage::ExportBlockCheckpoint(..)) => {
+                self.handle_message(m.clone());
+                false
+            }
+            AnyMessage::Internal(_, _, InternalMessage::LaunchShard(new_network_id)) => {
+                // if-let guards are experimental so we nest the check...
+                if let Some(send_to_parent) = self.send_to_parent.as_ref() {
+                    trace!("Child network {} got LaunchShard({new_network_id}) message; forwarding to parent to handle", self.shard_id);
+                    send_to_parent.send(m.clone()).unwrap();
+                    false
+                } else {
+                    true
+                }
+            }
             _ => true,
         });
         // This is rather hacky, but probably the best way to get it working: IFF we're a child
         // network, immediately forward all LaunchShard messages to the parent who will handle them
-        if let Some(send_to_parent) = self.send_to_parent.as_ref() {
-            messages.retain(|m| {
-                if let AnyMessage::Internal(_, _, InternalMessage::LaunchShard(new_network_id)) = m.2 {
-                    trace!("Child network {} got LaunchShard({new_network_id}) message; forwarding to parent to handle", self.shard_id);
-                    send_to_parent.send(m.clone()).unwrap();
-                    return false;
-                }
-                true
-            });
-        }
+        // if let Some(send_to_parent) = self.send_to_parent.as_ref() {
+        //     messages.retain(|m| {
+        //         if let AnyMessage::Internal(_, _, InternalMessage::LaunchShard(new_network_id)) = m.2 {
+        //             trace!("Child network {} got LaunchShard({new_network_id}) message; forwarding to parent to handle", self.shard_id);
+        //             send_to_parent.send(m.clone()).unwrap();
+        //             return false;
+        //         }
+        //         true
+        //     });
+        // }
 
         // Pick a random message
         let index = self.rng.lock().unwrap().gen_range(0..messages.len());

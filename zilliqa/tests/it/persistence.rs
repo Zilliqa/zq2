@@ -203,7 +203,7 @@ async fn checkpoints_test(mut network: Network) {
         })
         .collect::<Vec<_>>();
 
-    // check we've actually processes all the exports
+    // sanity check we've actually processes all the exports
     network
         .run_until(
             |_| {
@@ -211,7 +211,7 @@ async fn checkpoints_test(mut network: Network) {
                     .iter()
                     .fold(false, |acc, file| acc && file.try_exists().unwrap())
             },
-            100,
+            50,
         )
         .await
         .unwrap();
