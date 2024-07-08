@@ -145,7 +145,7 @@ impl Node {
         debug!(%from, %to, %message, "handling message");
         match message {
             ExternalMessage::Proposal(m) => {
-                if let Some((to, message)) = self.consensus.proposal(m, false)? {
+                if let Some((to, message)) = self.consensus.proposal(from, m, false)? {
                     self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
                     if let Some(to) = to {
                         self.message_sender.send_external_message(to, message)?;
@@ -265,15 +265,32 @@ impl Node {
         self.consensus.head_block().header.number
     }
 
-    pub fn resolve_block_number(&self, number: BlockNumberOrTag) -> u64 {
-        // TODO(#863): This doesn't respect two-chain finalization.
-        match number {
-            BlockNumberOrTag::Latest => self.get_chain_tip(),
-            BlockNumberOrTag::Finalized => self.get_chain_tip().saturating_sub(2),
-            BlockNumberOrTag::Safe => self.get_chain_tip().saturating_sub(2),
-            BlockNumberOrTag::Earliest => 0,
-            BlockNumberOrTag::Pending => self.get_chain_tip(),
-            BlockNumberOrTag::Number(n) => n,
+    pub fn resolve_block_number(&self, block_number: BlockNumberOrTag) -> Result<Option<Block>> {
+        match block_number {
+            BlockNumberOrTag::Number(n) => self.consensus.get_block_by_number(n),
+
+            BlockNumberOrTag::Earliest => self.consensus.get_block_by_number(0),
+            BlockNumberOrTag::Latest => Ok(Some(self.consensus.head_block())),
+            BlockNumberOrTag::Pending => Ok(Some(self.consensus.head_block())),
+            BlockNumberOrTag::Finalized => {
+                let Some(view) = self.db.get_latest_finalized_view()? else {
+                    return self.resolve_block_number(BlockNumberOrTag::Earliest);
+                };
+                let Some(block) = self.db.get_block_by_view(&view)? else {
+                    return self.resolve_block_number(BlockNumberOrTag::Earliest);
+                };
+                Ok(Some(block))
+            }
+            // Safe block tag in our consensus refers to the block that the node's highQC points to
+            // (high_qc means it's the latest = high, and it's a QC where 2/3 validators voted for it).
+            BlockNumberOrTag::Safe => {
+                let block_hash = self.consensus.high_qc.block_hash;
+
+                let Some(safe_block) = self.consensus.get_block(&block_hash)? else {
+                    return self.resolve_block_number(BlockNumberOrTag::Earliest);
+                };
+                Ok(Some(safe_block))
+            }
         }
     }
 
@@ -281,22 +298,30 @@ impl Node {
         match block_id.into() {
             BlockId::Hash(RpcBlockHash {
                 block_hash,
-                require_canonical: _,
+                require_canonical,
             }) => {
-                // TODO(#863): require_canonical
-                self.consensus.get_block(&block_hash.into())
+                // See https://eips.ethereum.org/EIPS/eip-1898
+                let Some(block) = self.consensus.get_block(&block_hash.into())? else {
+                    return Ok(None);
+                };
+                // Get latest finalized block number
+                let finalized_block = self
+                    .resolve_block_number(BlockNumberOrTag::Finalized)?
+                    .ok_or_else(|| anyhow!("Unable to retrieve finalized block!"))?;
+                let require_canonical = require_canonical.unwrap_or(false);
+
+                // If the caller requests canonical block then it must be finalized
+                if require_canonical && block.number() > finalized_block.number() {
+                    return Ok(None);
+                }
+
+                Ok(Some(block))
             }
-            BlockId::Number(number) => self
-                .consensus
-                .get_block_by_number(self.resolve_block_number(number)),
+            BlockId::Number(number) => self.resolve_block_number(number),
         }
     }
 
-    pub fn get_state(&self, block_id: impl Into<BlockId> + Copy + Debug) -> Result<State> {
-        let block = self
-            .get_block(block_id)?
-            .ok_or_else(|| anyhow!("missing block: {block_id:?}"))?;
-
+    pub fn get_state(&self, block: &Block) -> Result<State> {
         Ok(self
             .consensus
             .state()
@@ -627,16 +652,12 @@ impl Node {
 
     pub fn call_contract(
         &mut self,
-        block_id: BlockId,
+        block: &Block,
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
         amount: u128,
     ) -> Result<Vec<u8>> {
-        let block = self
-            .get_block(block_id)?
-            .ok_or_else(|| anyhow!("block not found"))?;
-
         trace!("call_contract: block={:?}", block);
 
         let state = self
@@ -694,7 +715,7 @@ impl Node {
         let block = self
             .get_block(block_number)?
             .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
-        let state = self.get_state(block_number)?;
+        let state = self.get_state(&block)?;
 
         state.estimate_gas(
             from_addr,
@@ -795,14 +816,14 @@ impl Node {
         Ok(())
     }
 
-    fn handle_block_response(&mut self, _: PeerId, response: BlockResponse) -> Result<()> {
+    fn handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
         trace!(
             "Received blocks response of length {}",
             response.proposals.len()
         );
 
         for block in response.proposals {
-            let proposal = self.consensus.receive_block(block)?;
+            let proposal = self.consensus.receive_block(from, block)?;
             if let Some(proposal) = proposal {
                 self.message_sender
                     .broadcast_external_message(ExternalMessage::Proposal(proposal))?;

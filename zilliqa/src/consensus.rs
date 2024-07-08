@@ -5,11 +5,7 @@ use anyhow::{anyhow, Context as _, Result};
 use bitvec::bitvec;
 use eth_trie::{MemoryDB, Trie};
 use libp2p::PeerId;
-use rand::{
-    distributions::{Distribution, WeightedIndex},
-    prelude::IteratorRandom,
-    rngs::SmallRng,
-};
+use rand::distributions::{Distribution, WeightedIndex};
 use rand_chacha::ChaCha8Rng;
 use rand_core::SeedableRng;
 use revm::Inspector;
@@ -135,7 +131,7 @@ pub struct Consensus {
     // TODO(#719): Consider how to limit the size of this.
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
     new_views: BTreeMap<u64, NewViewVote>,
-    high_qc: QuorumCertificate,
+    pub high_qc: QuorumCertificate,
     view: View,
     finalized_view: u64,
     /// The account store.
@@ -144,8 +140,6 @@ pub struct Consensus {
     db: Arc<Db>,
     /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
-    // PRNG - non-cryptographically secure, but we don't need that here
-    rng: SmallRng,
     /// Flag indicating that block creation should be postponed due to empty mempool
     create_next_block_on_timeout: bool,
     pub new_blocks: broadcast::Sender<BlockHeader>,
@@ -278,12 +272,6 @@ impl Consensus {
             state,
             db,
             transaction_pool: Default::default(),
-            // Seed the rng with the node's public key
-            rng: <SmallRng as rand_core::SeedableRng>::seed_from_u64(u64::from_be_bytes(
-                secret_key.node_public_key().as_bytes()[..8]
-                    .try_into()
-                    .unwrap(),
-            )),
             create_next_block_on_timeout: false,
             new_blocks: broadcast::Sender::new(4),
             receipts: broadcast::Sender::new(128),
@@ -294,7 +282,7 @@ impl Consensus {
         // If we're at genesis, add the genesis block.
         if latest_block_view == 0 {
             if let Some(genesis) = latest_block {
-                consensus.add_block(genesis.clone())?;
+                consensus.add_block(None, genesis.clone())?;
             }
             // treat genesis as finalized
             consensus.finalize_view(latest_block_view)?;
@@ -313,20 +301,6 @@ impl Consensus {
             .get_block_by_number(highest_block_number)
             .unwrap()
             .unwrap()
-    }
-
-    pub fn get_random_other_peer(&mut self) -> Option<PeerId> {
-        let stakers = self.state.get_stakers().unwrap();
-        let my_public_key = self.public_key();
-        let chosen = stakers
-            .into_iter()
-            .filter(|&v| v != my_public_key)
-            .choose(&mut self.rng)?;
-
-        let Ok(peer_id) = self.state.get_peer_id(chosen) else {
-            return None;
-        };
-        peer_id
     }
 
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
@@ -453,7 +427,11 @@ impl Consensus {
             .expect("last timeout seems to be in the future...")
             .as_millis() as u64;
         let view_difference = self.view.get_view().saturating_sub(self.high_qc.view);
-        let exponential_backoff_timeout = consensus_timeout_ms * 2u64.pow(view_difference as u32);
+        // in view N our highQC is the one we obtained in view N-1 (or before) and its view is N-2 (or lower)
+        // in other words, the current view is always at least 2 views ahead of the highQC's view
+        // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
+        let exponential_backoff_timeout =
+            consensus_timeout_ms * 2u64.pow((view_difference as u32).saturating_sub(2));
 
         let minimum_time_left_for_empty_block = self
             .config
@@ -474,6 +452,7 @@ impl Consensus {
 
     pub fn proposal(
         &mut self,
+        from: PeerId,
         proposal: Proposal,
         during_sync: bool,
     ) -> Result<Option<NetworkMessage>> {
@@ -519,8 +498,8 @@ impl Consensus {
             Err((e, temporary)) => {
                 // If this block could become valid in the future, buffer it.
                 if temporary {
-                    let random_peer = self.get_random_other_peer();
                     self.block_store.buffer_proposal(
+                        from,
                         Proposal::from_parts_with_hashes(
                             block,
                             transactions
@@ -531,7 +510,6 @@ impl Consensus {
                                 })
                                 .collect(),
                         ),
-                        random_peer,
                     )?;
                 }
                 warn!(?e, "invalid block proposal received!");
@@ -574,7 +552,9 @@ impl Consensus {
                 self.state.set_to_root(parent.state_root_hash().into());
             }
             let stakers = self.state.get_stakers()?;
-            self.execute_block(&block, transactions, &stakers)?;
+            // Only tell the block store where this block came from if it wasn't from ourselves.
+            let from = (self.peer_id() != from).then_some(from);
+            self.execute_block(from, &block, transactions, &stakers)?;
 
             if self.view.get_view() != proposal_view + 1 {
                 self.view.set_view(proposal_view + 1);
@@ -1692,7 +1672,7 @@ impl Consensus {
     // Optionally returns a proposal that should be sent as the result of this newly received block. This occurs when
     // the node has buffered votes for a block it doesn't know about and later receives that block, resulting in a new
     // block proposal.
-    pub fn receive_block(&mut self, proposal: Proposal) -> Result<Option<Proposal>> {
+    pub fn receive_block(&mut self, from: PeerId, proposal: Proposal) -> Result<Option<Proposal>> {
         trace!(
             "received block: {} number: {}, view: {}",
             proposal.hash(),
@@ -1700,7 +1680,7 @@ impl Consensus {
             proposal.view()
         );
 
-        let result = self.proposal(proposal, true)?;
+        let result = self.proposal(from, proposal, true)?;
         // Processing the received block can either result in:
         // * A `Proposal`, if we have buffered votes for this block which form a supermajority, meaning we can
         // propose the next block.
@@ -1711,11 +1691,11 @@ impl Consensus {
         Ok(result.and_then(|(_, message)| message.into_proposal()))
     }
 
-    fn add_block(&mut self, block: Block) -> Result<()> {
+    fn add_block(&mut self, from: Option<PeerId>, block: Block) -> Result<()> {
         let hash = block.hash();
-        debug!(?hash, ?block.header.view, ?block.header.number, "added block");
+        debug!(?from, ?hash, ?block.header.view, ?block.header.number, "added block");
         let _ = self.new_blocks.send(block.header);
-        if let Some(child_proposal) = self.block_store.process_block(block)? {
+        if let Some(child_proposal) = self.block_store.process_block(from, block)? {
             self.message_sender.send_external_message(
                 self.peer_id(),
                 ExternalMessage::BlockResponse(BlockResponse {
@@ -2083,7 +2063,7 @@ impl Consensus {
                 .map(|tx_hash| self.get_transaction_by_hash(*tx_hash).unwrap().unwrap().tx)
                 .collect();
             let committee = self.state.get_stakers_at_block(&block_pointer)?;
-            self.execute_block(&block_pointer, transactions, &committee)?;
+            self.execute_block(None, &block_pointer, transactions, &committee)?;
         }
 
         Ok(())
@@ -2091,6 +2071,7 @@ impl Consensus {
 
     fn execute_block(
         &mut self,
+        from: Option<PeerId>,
         block: &Block,
         transactions: Vec<SignedTransaction>,
         committee: &[NodePublicKey],
@@ -2200,7 +2181,7 @@ impl Consensus {
         // for example, this HAS to be after the deal with fork call
         if !self.db.contains_block(&block.hash())? {
             // If we were the proposer we would've already processed the block, hence the check
-            self.add_block(block.clone())?;
+            self.add_block(from, block.clone())?;
         }
         {
             // helper scope to shadow db, to avoid moving it into the closure
@@ -2232,8 +2213,7 @@ impl Consensus {
         }
 
         // Tell the block store to request more blocks if it can.
-        let random_peer = self.get_random_other_peer();
-        self.block_store.request_missing_blocks(random_peer)?;
+        self.block_store.request_missing_blocks()?;
 
         Ok(())
     }
