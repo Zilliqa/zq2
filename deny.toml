@@ -38,3 +38,6 @@ license-files = [
 
 [sources.allow-org]
 github = [ "zilliqa" ]
+
+[advisories]
+ignore = ["RUSTSEC-2024-0346"]
