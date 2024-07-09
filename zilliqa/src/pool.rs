@@ -125,9 +125,10 @@ impl TransactionPool {
             };
 
             // If we've popped a nonced transaction, that may have made a subsequent one valid
-            if let Some(next) = tx_index.next().and_then(|idx| self.transactions.get(&idx)) {
-                self.ready.push(next.into());
-            }
+            // TODO
+            //if let Some(next) = tx_index.next().and_then(|idx| self.transactions.get(&idx)) {
+            //    self.ready.push(next.into());
+            //}
 
             return Some(transaction);
         }
@@ -232,6 +233,12 @@ impl TransactionPool {
         self.transactions.remove(&tx_index)
     }
 
+    pub fn return_transaction(&mut self, txn: VerifiedTransaction) {
+        self.ready.push((&txn).into());
+        self.hash_to_index.insert(txn.hash, txn.mempool_index());
+        self.transactions.insert(txn.mempool_index(), txn);
+    }
+
     /// Update the pool after a transaction has been executed.
     ///
     /// It is important to call this for all executed transactions, otherwise permanently invalidated transactions
@@ -262,6 +269,7 @@ impl TransactionPool {
 mod tests {
     use alloy_consensus::TxLegacy;
     use alloy_primitives::{Address, Bytes, Parity, Signature, TxKind, U256};
+    use rand::{seq::SliceRandom, thread_rng};
 
     use super::TransactionPool;
     use crate::{
@@ -324,12 +332,48 @@ mod tests {
             .unwrap();
 
         pool.insert_transaction(transaction(from, 1, 1), 0);
+
+        let tx = pool.best_transaction();
+        assert_eq!(tx, None);
+
         pool.insert_transaction(transaction(from, 2, 2), 0);
         pool.insert_transaction(transaction(from, 0, 0), 0);
 
-        assert_eq!(pool.best_transaction().unwrap().tx.nonce().unwrap(), 0);
-        assert_eq!(pool.best_transaction().unwrap().tx.nonce().unwrap(), 1);
-        assert_eq!(pool.best_transaction().unwrap().tx.nonce().unwrap(), 2);
+        let tx = pool.best_transaction().unwrap();
+        assert_eq!(tx.tx.nonce().unwrap(), 0);
+        pool.mark_executed(&tx);
+
+        let tx = pool.best_transaction().unwrap();
+        assert_eq!(tx.tx.nonce().unwrap(), 1);
+        pool.mark_executed(&tx);
+
+        let tx = pool.best_transaction().unwrap();
+        assert_eq!(tx.tx.nonce().unwrap(), 2);
+        pool.mark_executed(&tx);
+    }
+
+    #[test]
+    fn nonces_returned_in_order_same_gas() {
+        let mut pool = TransactionPool::default();
+        let from = "0x0000000000000000000000000000000000001234"
+            .parse()
+            .unwrap();
+
+        const COUNT: u64 = 100;
+
+        let mut nonces = (0..COUNT).into_iter().collect::<Vec<_>>();
+        let mut rng = thread_rng();
+        nonces.shuffle(&mut rng);
+
+        for i in 0..COUNT {
+            pool.insert_transaction(transaction(from, nonces[i as usize] as u8, 3), 0);
+        }
+
+        for i in 0..COUNT {
+            let tx = pool.best_transaction().unwrap();
+            assert_eq!(tx.tx.nonce().unwrap(), i);
+            pool.mark_executed(&tx);
+        }
     }
 
     #[test]
