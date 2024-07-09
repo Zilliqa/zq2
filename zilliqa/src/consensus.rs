@@ -1230,9 +1230,20 @@ impl Consensus {
             return Ok(false);
         }
 
-        let account_nonce = self.state.get_account(txn.signer)?.nonce;
+        let account = self.state.get_account(txn.signer)?;
+        let chain_id = self.config.eth_chain_id;
+
+        if !txn.tx.validate(
+            &account,
+            self.config.consensus.eth_block_gas_limit,
+            chain_id,
+        )? {
+            return Ok(false);
+        }
+
         let txn_hash = txn.hash;
-        let new = self.transaction_pool.insert_transaction(txn, account_nonce);
+
+        let new = self.transaction_pool.insert_transaction(txn, account.nonce);
         if new {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
