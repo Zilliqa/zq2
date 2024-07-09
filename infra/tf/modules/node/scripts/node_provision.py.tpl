@@ -56,7 +56,7 @@ ZQ2_IMAGE="${docker_image}"
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
     docker run -td -p 3333:3333 -p 4201:4201 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
-    -e RUST_LOG="zilliqa=debug" -e RUST_BACKTRACE=1 \
+    -e RUST_LOG="zilliqa=trace,libp2p=trace" -e RUST_BACKTRACE=1 \
     -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
     $${ZQ2_IMAGE} $${1} --log-json
 }
@@ -199,11 +199,9 @@ logging:
   processors:
     parse_log:
         type: parse_json
+    parse_log_with_field:
+        type: parse_json
         field: log
-    json:
-      type: parse_json
-      time_key: timestamp
-      time_format: "%Y-%m-%dT%H:%M:%S.%LZ"
     move_fields:
       type: modify_fields
       fields:
@@ -211,11 +209,15 @@ logging:
           move_from: jsonPayload.level
         jsonPayload."logging.googleapis.com/sourceLocation".function:
           move_from: jsonPayload.target
+        sourceLocation.line:
+          move_from: jsonPayload.line_number
+        jsonPayload.timestamp:
+          move_from: jsonPayload.time
   service:
     pipelines:
       zilliqa:
         receivers: [ zilliqa ]
-        processors: [ parse_log, json, move_fields ]
+        processors: [ parse_log, parse_log_with_field, move_fields ]
 """
 
 LOGROTATE_CONFIG="""
