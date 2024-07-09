@@ -2,7 +2,7 @@ use std::{ops::Deref, str::FromStr, time::Duration};
 
 use alloy_primitives::Address;
 use libp2p::{Multiaddr, PeerId};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, de, Serialize, Serializer};
 
 use crate::{
     crypto::{Hash, NodePublicKey},
@@ -78,8 +78,28 @@ pub struct Checkpoint {
     /// Location of the checkpoint
     pub file: String,
     /// Trusted hash of the checkpoint block
+    #[serde(serialize_with="serialize_hash_hex", deserialize_with="deserialize_hash_hex")]
     pub hash: Hash,
 }
+
+fn serialize_hash_hex<S>(hash: &Hash, serializer: S) -> Result<S::Ok, S::Error>
+where
+S: serde::Serializer,
+{
+    hex::encode(hash.0).serialize(serializer)
+}
+
+fn deserialize_hash_hex<'de, D>(deserializer: D) -> Result<Hash, D::Error>
+where
+D: de::Deserializer<'de>,
+{
+    let s = <String>::deserialize(deserializer)?;
+    let bytes = hex::decode(s).unwrap();
+    Hash::try_from(bytes.as_slice()).map_err(|_| {
+        de::Error::invalid_value(de::Unexpected::Bytes(&bytes), &"a 32-byte hex value")
+    })
+}
+
 
 pub fn allowed_timestamp_skew_default() -> Duration {
     Duration::from_secs(10)

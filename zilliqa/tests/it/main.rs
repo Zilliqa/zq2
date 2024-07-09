@@ -730,18 +730,6 @@ impl Network {
             }
             _ => true,
         });
-        // This is rather hacky, but probably the best way to get it working: IFF we're a child
-        // network, immediately forward all LaunchShard messages to the parent who will handle them
-        // if let Some(send_to_parent) = self.send_to_parent.as_ref() {
-        //     messages.retain(|m| {
-        //         if let AnyMessage::Internal(_, _, InternalMessage::LaunchShard(new_network_id)) = m.2 {
-        //             trace!("Child network {} got LaunchShard({new_network_id}) message; forwarding to parent to handle", self.shard_id);
-        //             send_to_parent.send(m.clone()).unwrap();
-        //             return false;
-        //         }
-        //         true
-        //     });
-        // }
 
         // Pick a random message
         let index = self.rng.lock().unwrap().gen_range(0..messages.len());

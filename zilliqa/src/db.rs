@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     fmt::Debug,
     fs::{self, File},
-    io::{BufRead, BufReader, BufWriter, Write},
+    io::{BufRead, BufReader, BufWriter, Read, Write},
     path::Path,
     sync::{Arc, Mutex},
     time::Duration,
@@ -19,7 +19,7 @@ use rusqlite::{
 };
 use serde::{Deserialize, Serialize};
 use sled::{Batch, Tree};
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::{
     crypto::{Hash, NodeSignature},
@@ -149,6 +149,8 @@ impl FromSql for EvmGas {
 
 const STATE_TRIE_TREE: &[u8] = b"state_trie";
 
+const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
+
 #[derive(Debug)]
 pub struct Db {
     state_root: sled::Db,
@@ -253,8 +255,11 @@ impl Db {
         hash: &Hash,
         our_shard_id: u64,
     ) -> Result<Block> {
+        // For now, only support a single version: you want to load the latest checkpoint, anyway.
+        const SUPPORTED_VERSION: u32 = 1;
+
         let input = File::open(path)?;
-        let reader = BufReader::with_capacity(8192 * 1024, input); // 8 MiB read chunks
+        let mut reader = BufReader::with_capacity(8192 * 1024, input); // 8 MiB read chunks
         let trie_storage = Arc::new(self.state_trie()?);
         if !trie_storage.db.is_empty() || self.get_highest_block_number()?.is_some() {
             // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
@@ -270,8 +275,28 @@ impl Db {
         }
         let mut state_trie = EthTrie::new(trie_storage.clone());
 
-        let mut lines = reader.lines();
-        // decode blocks
+        // Decode and validate header
+        let mut header: [u8; 21] = [0u8; 21];
+        reader.read_exact(&mut header)?;
+        let header = header;
+        if
+            header[0..8] != CHECKPOINT_HEADER_BYTES // magic bytes
+            || header[20] != b'\n' // header must end in newline
+        {
+            return Err(anyhow!("Invalid checkpoint file: invalid header"));
+        }
+        let version = u32::from_be_bytes(header[8..12].try_into()?);
+        // Only support a single version right now.
+        if version != SUPPORTED_VERSION {
+            return Err(anyhow!("Invalid checkpoint file: unsupported version."));
+        }
+        let shard_id = u64::from_be_bytes(header[12..20].try_into()?);
+        if shard_id != our_shard_id {
+            return Err(anyhow!("Invalid checkpoint file: wrong shard ID."));
+        }
+
+        // Decode checkpoint block and parent block, and validate
+        let mut lines = reader.lines(); // V1 uses a plaintext, line-based format
         let block = lines.next().ok_or(anyhow!(
             "Invalid checkpoint file: missing block info on line 1"
         ))??;
@@ -289,21 +314,6 @@ impl Db {
 
         if block.parent_hash() != parent.hash() {
             return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
-        }
-
-        let shard_number: u64 = lines
-            .next()
-            .ok_or(anyhow!(
-                "Invalid checkpoint file: missing shard id on line 3"
-            ))??
-            .parse()?;
-        if shard_number != our_shard_id {
-            return Err(anyhow!("Invalid checkpoint: chain ID mismatch. Checkpoint ID: {shard_number}, our chain_id: {our_shard_id}"));
-        }
-
-        let our_max_view = self.get_latest_finalized_view()?.unwrap_or(0);
-        if block.view() <= our_max_view {
-            return Err(anyhow!("Snapshow is lower than our finalized view: checkpoint is at {}, we are already at {}", block.view(), our_max_view));
         }
 
         // then decode state
@@ -747,6 +757,8 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     shard_id: u64,
     output_dir: P,
 ) -> Result<()> {
+    const VERSION: u32 = 1;
+
     fs::create_dir_all(&output_dir)?;
 
     let state_trie_storage = Arc::new(state_trie_storage);
@@ -763,14 +775,17 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     let outfile_temp = File::create_new(&temp_filename)?;
     let mut writer = BufWriter::with_capacity(8192 * 1024, outfile_temp); // 8 MiB chunks
 
+    // write the header:
+    writer.write_all(&CHECKPOINT_HEADER_BYTES)?; // file identifier
+    writer.write_all(&VERSION.to_be_bytes())?; // 4 BE bytes for version
+    writer.write_all(&shard_id.to_be_bytes())?; // 8 BE bytes for shard ID
+    writer.write_all(b"\n")?;
+
     // write the block...
     writer.write_all(hex::encode(bincode::serialize(&block)?).as_bytes())?; // TODO: better serialization (#1007)
     writer.write_all(b"\n")?;
     // and its parent, to keep the qc tracked
     writer.write_all(hex::encode(bincode::serialize(&parent)?).as_bytes())?; // TODO: better serialization (#1007)
-    writer.write_all(b"\n")?;
-    // write our shard id, for sanity checking
-    writer.write_all(shard_id.to_string().as_bytes())?;
     writer.write_all(b"\n")?;
 
     // then write state
@@ -801,25 +816,6 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     writer.flush()?;
 
     fs::rename(&temp_filename, &output_filename)?;
-
-    fn cleanup_dir(dir: impl AsRef<Path>, keep_file: impl AsRef<Path>) -> Result<()> {
-        for entry in fs::read_dir(dir)? {
-            let Ok(entry) = entry else {
-                continue;
-            };
-            if entry.path() == keep_file.as_ref() {
-                continue;
-            }
-            if entry.metadata()?.is_file() {
-                info!("Deleting file {}", entry.path().to_string_lossy());
-                fs::remove_file(entry.path())?
-            }
-        }
-        Ok(())
-    }
-    if let Err(e) = cleanup_dir(&output_dir, &output_filename) {
-        warn!("Error cleaning old files from the snapshot directory: {e}")
-    }
 
     Ok(())
 }
