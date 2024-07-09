@@ -675,14 +675,7 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
         .strip_prefix("0x")
         .ok_or_else(|| anyhow!("no 0x prefix"))?;
     let transaction = hex::decode(transaction)?;
-    let chain_id = node.lock().unwrap().config.eth_chain_id;
     let transaction = parse_transaction(&transaction)?;
-
-    if let Some(c) = transaction.chain_id() {
-        if c != chain_id {
-            return Err(anyhow!("invalid chain ID, expected: {chain_id}, got: {c}"));
-        }
-    }
 
     let transaction_hash = B256::from(node.lock().unwrap().create_transaction(transaction)?);
 
