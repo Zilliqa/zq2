@@ -279,9 +279,9 @@ impl Db {
         let mut header: [u8; 21] = [0u8; 21];
         reader.read_exact(&mut header)?;
         let header = header;
-        if
-            header[0..8] != CHECKPOINT_HEADER_BYTES // magic bytes
-            || header[20] != b'\n' // header must end in newline
+        if header[0..8] != CHECKPOINT_HEADER_BYTES // magic bytes
+            || header[20] != b'\n'
+        // header must end in newline
         {
             return Err(anyhow!("Invalid checkpoint file: invalid header"));
         }
