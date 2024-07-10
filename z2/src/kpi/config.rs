@@ -64,8 +64,8 @@ pub enum CallTransactionsType {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SendTransactions {
-    pub iterations: u32,
-    pub attempts_to_confirm: u32,
+    pub iterations: usize,
+    pub attempts_to_confirm: usize,
     pub sleep_ms_before_next_try: u64,
     pub r#type: CallTransactionsType,
 }
