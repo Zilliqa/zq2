@@ -2,9 +2,12 @@ use anyhow::Result;
 pub use config::Config;
 use serde::Serialize;
 
+mod account;
 pub mod config;
 mod read;
 mod txn;
+
+use account::Account;
 
 #[derive(Debug, Serialize)]
 pub enum KpiResult {
@@ -25,7 +28,7 @@ pub struct CallReadOnlyMethodsResult {
     latency: f64,
 }
 
-trait KpiAgent {
+trait ScenarioAgent {
     async fn run(&self, config: &Config) -> Result<KpiResult>;
 }
 

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use ethers::signers::Signer;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs::File;
@@ -7,6 +8,8 @@ use zilliqa_rs::{
     providers::{Http, Provider},
     signers::LocalWallet,
 };
+
+use super::Account;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -18,7 +21,7 @@ pub enum ScenarioStep {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub blockchain: Blockchain,
-    pub source_of_funds: SourceOfFunds,
+    pub source_of_funds: Account,
     pub scenario: Vec<ScenarioStep>,
 }
 
@@ -74,13 +77,6 @@ pub struct Blockchain {
     pub gas_price: u128,
     pub gas_limit: u64,
 }
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SourceOfFunds {
-    pub kind: String,
-    pub private_key: String,
-}
-
 impl Config {
     pub fn load(path: &str) -> Result<Config> {
         let mut file = File::open(path)?;
@@ -109,5 +105,35 @@ impl Config {
     pub fn get_signer(&self) -> Result<LocalWallet> {
         // TODO: Consider funding account type
         Ok(self.source_of_funds.private_key.parse()?)
+    }
+
+    pub fn make_eth_provider(
+        &self,
+    ) -> Result<ethers::providers::Provider<ethers::providers::Http>> {
+        Ok(
+            ethers::providers::Provider::<ethers::providers::Http>::try_from(
+                self.blockchain.rpc_url.as_str(),
+            )?,
+        )
+    }
+
+    pub fn eth_chainid(&self) -> u64 {
+        u64::from(self.blockchain.chainid | 0x8000)
+    }
+
+    pub async fn get_eth_middleware(
+        &self,
+        from: &Account,
+    ) -> Result<
+        ethers::middleware::signer::SignerMiddleware<
+            ethers::providers::Provider<ethers::providers::Http>,
+            ethers::signers::LocalWallet,
+        >,
+    > {
+        let provider = self.make_eth_provider()?;
+        Ok(ethers::middleware::SignerMiddleware::new(
+            provider,
+            from.get_eth_wallet()?.with_chain_id(self.eth_chainid()),
+        ))
     }
 }

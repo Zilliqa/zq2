@@ -5,10 +5,10 @@ use zilliqa_rs::{middlewares::Middleware, signers::LocalWallet};
 
 use super::{
     config::{CallReadOnlyMethods, Config},
-    CallReadOnlyMethodsResult, KpiAgent, KpiResult,
+    CallReadOnlyMethodsResult, KpiResult, ScenarioAgent,
 };
 
-impl KpiAgent for CallReadOnlyMethods {
+impl ScenarioAgent for CallReadOnlyMethods {
     async fn run(&self, config: &Config) -> Result<KpiResult> {
         let provider = config.get_provider()?;
         let mut total_latency = 0.0;
