@@ -1,9 +1,8 @@
+use std::{env, fs::File, io::Read};
+
 use anyhow::Result;
 use ethers::signers::Signer;
 use serde::{Deserialize, Serialize};
-use std::env;
-use std::fs::File;
-use std::io::Read;
 use zilliqa_rs::{
     providers::{Http, Provider},
     signers::LocalWallet,

@@ -1,11 +1,11 @@
-use anyhow::Result;
-use futures::future::join_all;
 use std::time::Instant;
 
+use anyhow::Result;
 use ethers::{
     providers::Middleware,
     signers::{Signer, Wallet},
 };
+use futures::future::join_all;
 use k256::SecretKey;
 use rand::thread_rng;
 

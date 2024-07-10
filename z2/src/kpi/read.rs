@@ -1,6 +1,6 @@
-use anyhow::Result;
 use std::time::Instant;
 
+use anyhow::Result;
 use zilliqa_rs::{middlewares::Middleware, signers::LocalWallet};
 
 use super::{
