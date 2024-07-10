@@ -192,7 +192,7 @@ impl BlockStore {
         trace!(?from, number = block.number(), hash = ?block.hash(), "insert block");
         self.db.insert_block(&block)?;
         self.db
-            .put_canonical_block_number(block.number(), block.hash())?;
+            .set_canonical_block_number(block.number(), block.hash())?;
 
         if let Some(from) = from {
             let peer = self.peers.entry(from).or_default();
