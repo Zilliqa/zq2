@@ -1,6 +1,10 @@
+use std::fs;
+
 use alloy_eips::BlockId;
+use ethabi::Token;
 use ethers::{providers::Middleware, types::TransactionRequest};
 use primitive_types::H160;
+use rand::Rng;
 use tracing::*;
 use zilliqa::{
     cfg::{
@@ -8,12 +12,13 @@ use zilliqa::{
         block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
         json_rcp_port_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
+        Checkpoint,
     },
     crypto::{Hash, SecretKey},
     transaction::EvmGas,
 };
 
-use crate::{ConsensusConfig, Network, NodeConfig, TestNode};
+use crate::{deploy_contract, ConsensusConfig, Network, NewNodeOptions, NodeConfig, TestNode};
 
 #[zilliqa_macros::test]
 async fn block_and_tx_data_persistence(mut network: Network) {
@@ -92,10 +97,14 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             main_shard_id: None,
             minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
             scilla_address: scilla_address_default(),
+            blocks_per_epoch: 10,
+            epochs_per_checkpoint: 1,
             scilla_lib_dir: scilla_lib_dir_default(),
         },
         allowed_timestamp_skew: allowed_timestamp_skew_default(),
         data_dir: None,
+        load_checkpoint: None,
+        do_checkpoints: false,
         disable_rpc: false,
         json_rpc_port: json_rcp_port_default(),
         eth_chain_id: eth_chain_id_default(),
@@ -139,4 +148,109 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             .payload(),
         tx.tx.into_transaction().payload()
     );
+}
+
+#[zilliqa_macros::test(do_checkpoints)]
+async fn checkpoints_test(mut network: Network) {
+    // Populate network with transactions
+    let wallet = network.genesis_wallet().await;
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/Storage.sol",
+        "Storage",
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+
+    let new_val = 3281u64;
+
+    // set some storage items with transactions
+    let function = abi.function("set").unwrap();
+    let mut address_buf = [0u8; 20];
+    network.rng.lock().unwrap().fill(&mut address_buf);
+    let update_tx = TransactionRequest::new().to(contract_address).data(
+        function
+            .encode_input(&[
+                Token::Address(address_buf.into()),
+                Token::Uint(new_val.into()),
+            ])
+            .unwrap(),
+    );
+    let update_tx_hash = wallet
+        .send_transaction(update_tx, None)
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, update_tx_hash, 50).await;
+
+    // wait 10 blocks for checkpoint to happen - then 3 more to finalize that block
+    network.run_until_block(&wallet, 13.into(), 200).await;
+
+    let checkpoint_files = network
+        .nodes
+        .iter()
+        .map(|node| {
+            node.dir
+                .as_ref()
+                .unwrap()
+                .path()
+                .join(network.shard_id.to_string())
+                .join("checkpoints")
+                .join("10")
+        })
+        .collect::<Vec<_>>();
+
+    let mut len_check = 0;
+    for path in &checkpoint_files {
+        let metadata = fs::metadata(path).unwrap();
+        assert!(metadata.is_file());
+        let file_len = metadata.len();
+        assert!(file_len != 0);
+        assert!(len_check == 0 || len_check == file_len); // len_check = 0 on first loop iteration
+        len_check = file_len;
+    }
+
+    // Create new node and pass it one of those checkpoint files
+    let checkpoint_path = checkpoint_files[0].to_str().unwrap().to_owned();
+    let checkpoint_hash = wallet.get_block(10).await.unwrap().unwrap().hash.unwrap();
+    let new_node_idx = network.add_node_with_options(NewNodeOptions {
+        checkpoint: Some(Checkpoint {
+            file: checkpoint_path,
+            hash: Hash(checkpoint_hash.0),
+        }),
+        ..Default::default()
+    });
+
+    let new_node_wallet = network.wallet_of_node(new_node_idx).await;
+    let latest_block = new_node_wallet.get_block_number().await.unwrap();
+    assert_eq!(latest_block, 10.into());
+
+    // check storage using it
+    let storage_getter = abi.function("pos1").unwrap();
+    let check_storage_tx = TransactionRequest::new().to(contract_address).data(
+        storage_getter
+            .encode_input(&[Token::Address(address_buf.into())])
+            .unwrap(),
+    );
+    let storage = new_node_wallet
+        .call(&check_storage_tx.into(), None)
+        .await
+        .unwrap();
+    let val = storage_getter.decode_output(&storage).unwrap();
+    assert_eq!(val[0], Token::Uint(new_val.into()));
+
+    // check account nonce of old wallet
+    let nonce = new_node_wallet
+        .get_transaction_count(wallet.address(), None)
+        .await
+        .unwrap();
+    assert_eq!(nonce, 2.into());
+
+    // check the new node is catches up and keeps up with block production
+    network
+        .run_until_block(&new_node_wallet, 20.into(), 200)
+        .await;
 }
