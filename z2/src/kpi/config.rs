@@ -22,6 +22,7 @@ pub struct Config {
     pub blockchain: Blockchain,
     pub source_of_funds: Account,
     pub scenario: Vec<ScenarioStep>,
+    pub output: Output,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

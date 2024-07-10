@@ -49,6 +49,11 @@ impl Kpi {
 
         let output = serde_json::to_string_pretty(&results).unwrap();
 
-        println!("{output}")
+        if config.output.path == "stdout" {
+            println!("{output}")
+        } else {
+            std::fs::write(&config.output.path, output)
+                .expect("Failed to write KPI result to file.");
+        }
     }
 }
