@@ -10,16 +10,16 @@ use zilliqa_rs::{
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum KeyPerformanceIndicator {
-    ReadLatency(ReadLatency),
-    TxnLatency(TxnLatency),
+pub enum ScenarioStep {
+    CallReadOnlyMethods(CallReadOnlyMethods),
+    SendTransactions(SendTransactions),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub blockchain: Blockchain,
     pub source_of_funds: SourceOfFunds,
-    pub key_performance_indicators: Vec<KeyPerformanceIndicator>,
+    pub scenario: Vec<ScenarioStep>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,12 +35,12 @@ pub struct Output {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ReadLatency {
+pub struct CallReadOnlyMethods {
     pub iterations: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TxnLatency {
+pub struct SendTransactions {
     pub iterations: u32,
     pub attempts_to_confirm: u32,
     pub sleep_ms_before_next_try: u64,

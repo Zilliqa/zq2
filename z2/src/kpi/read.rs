@@ -4,11 +4,11 @@ use std::time::Instant;
 use zilliqa_rs::{middlewares::Middleware, signers::LocalWallet};
 
 use super::{
-    config::{Config, ReadLatency},
+    config::{CallReadOnlyMethods, Config},
     KpiAgent, KpiResult,
 };
 
-impl KpiAgent for ReadLatency {
+impl KpiAgent for CallReadOnlyMethods {
     async fn run(&self, config: &Config) -> Result<KpiResult> {
         let provider = config.get_provider()?;
         let mut total_latency = 0.0;
@@ -23,6 +23,6 @@ impl KpiAgent for ReadLatency {
         }
 
         let average_latency = total_latency / num_requests as f64;
-        Ok(KpiResult::ReadLatency(average_latency))
+        Ok(KpiResult::CallReadOnlyMethods(average_latency))
     }
 }

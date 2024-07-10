@@ -10,11 +10,11 @@ use zilliqa_rs::{
 };
 
 use super::{
-    config::{Config, TxnLatency},
-    KpiAgent, KpiResult, TxnLatencyResult,
+    config::{Config, SendTransactions},
+    CallTransactionResult, KpiAgent, KpiResult,
 };
 
-impl KpiAgent for TxnLatency {
+impl KpiAgent for SendTransactions {
     async fn run(&self, config: &Config) -> Result<KpiResult> {
         let wallet = config.get_signer()?;
         let receiver = LocalWallet::create_random()?;
@@ -71,7 +71,7 @@ impl KpiAgent for TxnLatency {
         let success_rate = results.iter().filter(|r| r.1).count() as f32 / self.iterations as f32;
         let total_gas: u64 = results.iter().map(|r| r.2).sum();
 
-        Ok(KpiResult::TxnLatency(TxnLatencyResult {
+        Ok(KpiResult::SendTransaction(CallTransactionResult {
             latency,
             success_rate,
             gas_throughput: total_gas as f64 / total_duration,
