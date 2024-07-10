@@ -8,7 +8,7 @@ mod txn;
 
 #[derive(Debug, Serialize)]
 pub enum KpiResult {
-    CallReadOnlyMethods(f64),
+    CallReadOnlyMethods(CallReadOnlyMethodsResult),
     SendTransaction(CallTransactionResult),
 }
 
@@ -18,6 +18,11 @@ pub struct CallTransactionResult {
     throughput: f64,
     success_rate: f32,
     gas_throughput: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CallReadOnlyMethodsResult {
+    latency: f64,
 }
 
 trait KpiAgent {

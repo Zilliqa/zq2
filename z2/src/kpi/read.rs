@@ -5,7 +5,7 @@ use zilliqa_rs::{middlewares::Middleware, signers::LocalWallet};
 
 use super::{
     config::{CallReadOnlyMethods, Config},
-    KpiAgent, KpiResult,
+    CallReadOnlyMethodsResult, KpiAgent, KpiResult,
 };
 
 impl KpiAgent for CallReadOnlyMethods {
@@ -23,6 +23,8 @@ impl KpiAgent for CallReadOnlyMethods {
         }
 
         let average_latency = total_latency / num_requests as f64;
-        Ok(KpiResult::CallReadOnlyMethods(average_latency))
+        Ok(KpiResult::CallReadOnlyMethods(CallReadOnlyMethodsResult {
+            latency: average_latency,
+        }))
     }
 }

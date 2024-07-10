@@ -35,8 +35,28 @@ pub struct Output {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallReadOnlyMethodsType {
+    GetBalance,
+    QueryContractSubState,
+    EvmContractViewFunction,
+    Mixed,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CallReadOnlyMethods {
     pub iterations: u32,
+    pub r#type: CallReadOnlyMethodsType,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallTransactionsType {
+    ZilTransfer,
+    EthTransfer,
+    EvmContractCall,
+    ScillaContractCall,
+    Mixed,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -44,6 +64,7 @@ pub struct SendTransactions {
     pub iterations: u32,
     pub attempts_to_confirm: u32,
     pub sleep_ms_before_next_try: u64,
+    pub r#type: CallTransactionsType,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
