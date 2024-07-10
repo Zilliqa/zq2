@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 mod eth_transfer;
+mod scilla_transition_call;
 mod zil_transfer;
 
 use super::{
@@ -28,7 +29,10 @@ impl ScenarioAgent for SendTransactions {
                 eth_transfer.run(config).await
             }
             config::CallTransactionsType::EvmContractCall => todo!(),
-            config::CallTransactionsType::ScillaContractCall => todo!(),
+            config::CallTransactionsType::ScillaTransitionCall => {
+                let scilla_transition_call = scilla_transition_call::ScillaTransitionCall;
+                scilla_transition_call.run(config).await
+            }
             config::CallTransactionsType::Mixed => todo!(),
         }
     }

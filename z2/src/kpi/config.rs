@@ -57,7 +57,7 @@ pub enum CallTransactionsType {
     ZilTransfer,
     EthTransfer,
     EvmContractCall,
-    ScillaContractCall,
+    ScillaTransitionCall,
     Mixed,
 }
 
