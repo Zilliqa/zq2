@@ -651,6 +651,13 @@ impl State {
         state.get_stakers()
     }
 
+    pub fn get_stakers_at_block_bytes(&self, block: &Block) -> Result<Vec<Vec<u8>>> {
+        let block_root_hash = block.state_root_hash();
+
+        let state = self.at_root(block_root_hash.into());
+        state.get_stakers_bytes()
+    }
+
     pub fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
         let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
 
@@ -678,9 +685,43 @@ impl State {
             .collect())
     }
 
+    pub fn get_stakers_bytes(&self) -> Result<Vec<Vec<u8>>> {
+        let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
+
+        let stakers = self.call_contract(
+            Address::ZERO,
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // dummy values.
+            0,
+            BlockHeader::default(),
+        )?;
+
+        let stakers = contracts::deposit::GET_STAKERS
+            .decode_output(&stakers)
+            .unwrap()[0]
+            .clone()
+            .into_array()
+            .unwrap();
+
+        Ok(stakers
+            .into_iter()
+            .map(|k| k.into_bytes().unwrap())
+            .collect())
+    }
+
     pub fn get_stake(&self, public_key: NodePublicKey) -> Result<Option<NonZeroU128>> {
+        self.get_stake_from_public_key_bytes(public_key.as_bytes())
+    }
+
+    pub fn get_stake_from_public_key_bytes(
+        &self,
+        public_key: Vec<u8>,
+    ) -> Result<Option<NonZeroU128>> {
         let data =
-            contracts::deposit::GET_STAKE.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
+            contracts::deposit::GET_STAKE.encode_input(&[Token::Bytes(public_key.clone())])?;
 
         let stake = self.call_contract(
             Address::ZERO,
@@ -693,12 +734,21 @@ impl State {
             BlockHeader::default(),
         )?;
 
-        Ok(NonZeroU128::new(U256::from_be_slice(&stake).to()))
+        let stake = NonZeroU128::new(U256::from_be_slice(&stake).to());
+
+        Ok(stake)
     }
 
     pub fn get_reward_address(&self, public_key: NodePublicKey) -> Result<Option<Address>> {
-        let data = contracts::deposit::GET_REWARD_ADDRESS
-            .encode_input(&[Token::Bytes(public_key.as_bytes())])?;
+        self.get_reward_address_from_public_key_bytes(public_key.as_bytes())
+    }
+
+    pub fn get_reward_address_from_public_key_bytes(
+        &self,
+        public_key: Vec<u8>,
+    ) -> Result<Option<Address>> {
+        let data =
+            contracts::deposit::GET_REWARD_ADDRESS.encode_input(&[Token::Bytes(public_key)])?;
 
         let return_value = self.call_contract(
             Address::ZERO,
@@ -721,8 +771,11 @@ impl State {
     }
 
     pub fn get_peer_id(&self, public_key: NodePublicKey) -> Result<Option<PeerId>> {
-        let data =
-            contracts::deposit::GET_PEER_ID.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
+        self.get_peer_id_from_public_key_bytes(public_key.as_bytes())
+    }
+
+    pub fn get_peer_id_from_public_key_bytes(&self, public_key: Vec<u8>) -> Result<Option<PeerId>> {
+        let data = contracts::deposit::GET_PEER_ID.encode_input(&[Token::Bytes(public_key)])?;
 
         let return_value = self.call_contract(
             Address::ZERO,
