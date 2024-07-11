@@ -633,6 +633,21 @@ impl Consensus {
 
     fn apply_rewards(
         &mut self,
+        committee: &[NodePublicKey],
+        parent_block: &Block,
+        view: u64,
+        cosigned: &BitSlice,
+    ) -> Result<()> {
+        self.apply_rewards_from_committee_bytes(
+            &committee.iter().map(|k| k.as_bytes()).collect::<Vec<_>>(),
+            parent_block,
+            view,
+            cosigned,
+        )
+    }
+
+    fn apply_rewards_from_committee_bytes(
+        &mut self,
         committee: &[Vec<u8>],
         parent_block: &Block,
         view: u64,
@@ -1020,7 +1035,7 @@ impl Consensus {
         let applied_transaction_hashes: Vec<_> =
             applied_transactions.iter().map(|(tx, _)| tx.hash).collect();
 
-        self.apply_rewards(&committee, &parent, block_view + 1, &qc.cosigned)?;
+        self.apply_rewards_from_committee_bytes(&committee, &parent, block_view + 1, &qc.cosigned)?;
 
         let proposal = Block::from_qc(
             self.secret_key,
@@ -1200,12 +1215,7 @@ impl Consensus {
                         self.state.set_to_root(parent.state_root_hash().into());
                     }
 
-                    self.apply_rewards(
-                        &committee.iter().map(|k| k.as_bytes()).collect::<Vec<_>>(),
-                        &parent,
-                        new_view.view,
-                        &high_qc.cosigned,
-                    )?;
+                    self.apply_rewards(&committee, &parent, new_view.view, &high_qc.cosigned)?;
 
                     let mut empty_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
                     let empty_root_hash = Hash(empty_trie.root_hash()?.into());
@@ -2198,7 +2208,12 @@ impl Consensus {
             }
         }
 
-        self.apply_rewards(committee, &parent, block.view(), &block.qc.cosigned)?;
+        self.apply_rewards_from_committee_bytes(
+            committee,
+            &parent,
+            block.view(),
+            &block.qc.cosigned,
+        )?;
 
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
