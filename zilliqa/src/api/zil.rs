@@ -298,7 +298,13 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
         .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
 
     let state = node.get_state(&block)?;
-    let account = state.get_account_or_default(address)?;
+    let account = state.get_account(address)?.ok_or_else(|| {
+        jsonrpsee::types::ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "Address does not exist",
+            None::<()>,
+        )
+    })?;
 
     let result = json!({
         "_balance": ZilAmount::from_amount(account.balance).to_string(),
@@ -336,7 +342,14 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
     let account = node
         .get_state(&block)?
-        .get_account_or_default(smart_contract_address)?;
+        .get_account(smart_contract_address)?
+        .ok_or_else(|| {
+            jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcInvalidAddressOrKey as i32,
+                "Address does not exist",
+                None::<()>,
+            )
+        })?;
 
     let Some((code, _)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address not contract address"));
@@ -353,7 +366,14 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
     let account = node
         .get_state(&block)?
-        .get_account_or_default(smart_contract_address)?;
+        .get_account(smart_contract_address)?
+        .ok_or_else(|| {
+            jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcInvalidAddressOrKey as i32,
+                "Address does not exist",
+                None::<()>,
+            )
+        })?;
 
     let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address not contract address"));
@@ -426,7 +446,14 @@ fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Sm
         .lock()
         .unwrap()
         .get_state(&block)?
-        .get_account_or_default(address)?
+        .get_account(address)?
+        .ok_or_else(|| {
+            jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcInvalidAddressOrKey as i32,
+                "Address does not exist",
+                None::<()>,
+            )
+        })?
         .nonce;
 
     let mut contracts = vec![];
@@ -434,14 +461,16 @@ fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Sm
     for i in 0..nonce {
         let contract_address = zil_contract_address(address, i);
 
-        let is_scilla = node
+        let Some(scilla_code) = node
             .lock()
             .unwrap()
             .get_state(&block)?
-            .get_account_or_default(contract_address)?
-            .code
-            .scilla_code_and_init_data()
-            .is_some();
+            .get_account(contract_address)?
+        else {
+            continue;
+        };
+
+        let is_scilla = scilla_code.code.scilla_code_and_init_data().is_some();
 
         // Note that we only expose created Scilla contracts in this API.
         if is_scilla {
