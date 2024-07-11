@@ -1493,6 +1493,40 @@ mod tests {
     }
 
     #[test]
+    fn iterator_clone_trie() {
+        let root: B256;
+        let mut contents = HashMap::new();
+        {
+            let mut test_values = HashMap::new();
+            test_values.insert(b"test".to_vec(), b"test".to_vec());
+            test_values.insert(b"test1".to_vec(), b"test1".to_vec());
+            test_values.insert(b"test11".to_vec(), b"test2".to_vec());
+            test_values.insert(b"test14".to_vec(), b"test3".to_vec());
+            test_values.insert(b"test16".to_vec(), b"test4".to_vec());
+            test_values.insert(b"test18".to_vec(), b"test5".to_vec());
+            test_values.insert(b"test2".to_vec(), b"test6".to_vec());
+            test_values.insert(b"test23".to_vec(), b"test7".to_vec());
+            test_values.insert(b"test9".to_vec(), b"test8".to_vec());
+            let mut trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
+            for (k, v) in &test_values {
+                trie.insert(k, v).unwrap();
+            }
+            root = trie.root_hash().unwrap();
+            for (k, v) in trie.iter() {
+                contents.insert(k, v);
+            }
+        }
+
+        {
+            let mut trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
+            for (k, v) in &contents {
+                trie.insert(k, v).unwrap();
+            }
+            assert_eq!(trie.root_hash().unwrap(), root);
+        }
+    }
+
+    #[test]
     fn prefix_iterator_trie() {
         let memdb = Arc::new(MemoryDB::new(true));
         let mut kv = HashMap::new();

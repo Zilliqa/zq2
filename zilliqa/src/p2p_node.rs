@@ -29,6 +29,7 @@ use tracing::*;
 use crate::{
     cfg::{Config, ConsensusConfig, NodeConfig},
     crypto::SecretKey,
+    db,
     message::{ExternalMessage, InternalMessage},
     node_launcher::NodeLauncher,
 };
@@ -61,6 +62,7 @@ struct NodeInputChannels {
 pub struct P2pNode {
     shard_nodes: HashMap<TopicHash, NodeInputChannels>,
     shard_threads: JoinSet<Result<()>>,
+    task_threads: JoinSet<Result<()>>,
     secret_key: SecretKey,
     config: Config,
     peer_id: PeerId,
@@ -128,6 +130,7 @@ impl P2pNode {
             config,
             swarm,
             shard_threads: JoinSet::new(),
+            task_threads: JoinSet::new(),
             outbound_message_sender,
             local_message_sender,
             outbound_message_receiver,
@@ -346,6 +349,9 @@ impl P2pNode {
                         InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                             self.forward_local_message_to_shard(&Self::shard_id_to_topic(destination).hash(), source, message)?;
                         }
+                        InternalMessage::ExportBlockCheckpoint(block, parent, trie_storage, path) => {
+                            self.task_threads.spawn(async move { db::checkpoint_block_with_state(&block, &parent, trie_storage, source, path) });
+                        }
                     }
                 },
                 message = self.outbound_message_receiver.next() => {
@@ -377,6 +383,12 @@ impl P2pNode {
                         },
                     }
                 },
+                Some(res) = self.task_threads.join_next() => {
+                    if let Err(e) = res {
+                        // One-shot task (i.e. checkpoint export) failed. Log it and carry on.
+                        error!(%e);
+                    }
+                }
                 Some(res) = self.shard_threads.join_next() => {
                     if let Err(e) = res {
                         // Currently, abort everything should a single shard fail.

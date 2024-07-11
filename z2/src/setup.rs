@@ -201,6 +201,8 @@ impl Setup {
                 json_rpc_port: self.get_json_rpc_port(usize::try_into(i)?, false),
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
+                load_checkpoint: None,
+                do_checkpoints: false,
                 disable_rpc: disable_rpc_default(),
                 eth_chain_id: eth_chain_id_default(),
                 consensus: ConsensusConfig {
@@ -218,6 +220,8 @@ impl Setup {
                     genesis_accounts: Vec::new(),
                     is_main: true,
                     blocks_per_hour: 3600,
+                    blocks_per_epoch: 3600,
+                    epochs_per_checkpoint: 24,
                     rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
                 },
                 block_request_limit: block_request_limit_default(),
