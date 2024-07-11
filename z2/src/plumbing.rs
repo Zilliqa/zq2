@@ -86,7 +86,7 @@ pub async fn run_perf_file(_base_dir: &str, config_file: &str) -> Result<()> {
 }
 
 pub async fn run_kpi_collector(config_file: &str) -> Result<()> {
-    println!("🦆 Running {config_file} .. ");
+    println!("🦆 Running KPI collector with {config_file} config file...");
     kpi::Kpi::run(&kpi::Config::load(config_file)?).await;
     Ok(())
 }

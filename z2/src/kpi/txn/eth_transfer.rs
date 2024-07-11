@@ -41,8 +41,6 @@ impl ScenarioAgent for EthTransfer {
                 tokio::spawn(async move {
                     let start = Instant::now();
                     let txn_sent = mware.send_transaction(txn, None).await?;
-                    let duration = start.elapsed();
-
                     let txn_hash = hex::encode(txn_sent.tx_hash());
 
                     for _ in 0..attempts {
@@ -55,7 +53,7 @@ impl ScenarioAgent for EthTransfer {
                             Ok(r) => {
                                 let total_gas_used = r.receipt.cumulative_gas.parse::<u64>()?;
                                 return Ok((
-                                    duration.as_secs_f64(),
+                                    start.elapsed().as_secs_f64(),
                                     r.receipt.success,
                                     total_gas_used,
                                 ));
@@ -66,7 +64,7 @@ impl ScenarioAgent for EthTransfer {
                         tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms)).await;
                     }
 
-                    Ok((duration.as_secs_f64(), false, 0))
+                    Ok((start.elapsed().as_secs_f64(), false, 0))
                 });
             futures.push(future);
         }

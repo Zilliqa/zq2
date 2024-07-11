@@ -30,7 +30,11 @@ impl ScenarioAgent for SendTransactions {
             }
             config::CallTransactionsType::EvmContractCall => todo!(),
             config::CallTransactionsType::ScillaTransitionCall => {
-                let scilla_transition_call = scilla_transition_call::ScillaTransitionCall;
+                let scilla_transition_call = scilla_transition_call::ScillaTransitionCall {
+                    iterations: self.iterations,
+                    attempts_to_confirm: self.attempts_to_confirm,
+                    sleep_ms_before_next_try: self.sleep_ms_before_next_try,
+                };
                 scilla_transition_call.run(config).await
             }
             config::CallTransactionsType::Mixed => todo!(),

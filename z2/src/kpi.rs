@@ -18,6 +18,7 @@ use tokio::task::JoinHandle;
 enum KpiResult {
     CallReadOnlyMethods(CallReadOnlyMethodsResult),
     SendTransaction(CallTransactionResult),
+    CallScillaTransitions(CallTransactionResult),
     BlockInfo(Vec<BlockInfo>),
 }
 
