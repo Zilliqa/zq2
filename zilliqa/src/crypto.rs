@@ -265,8 +265,7 @@ impl SecretKey {
     }
 }
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Hash(pub [u8; 32]);
 
 impl Hash {

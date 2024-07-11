@@ -206,6 +206,9 @@ impl Consensus {
         );
 
         let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
+        if let Some(checkpoint) = &config.load_checkpoint {
+            db.load_trusted_checkpoint(&checkpoint.file, &checkpoint.hash, config.eth_chain_id)?;
+        }
 
         let latest_block = db
             .get_latest_finalized_view()?
@@ -228,11 +231,11 @@ impl Consensus {
             State::new_with_genesis(db.state_trie()?, config.consensus.clone())?
         };
 
-        let (latest_block, latest_block_view, latest_block_hash) = match latest_block {
-            Some(l) => (Some(l.clone()), l.view(), l.hash()),
+        let (latest_block, latest_block_view) = match latest_block {
+            Some(l) => (Some(l.clone()), l.view()),
             None => {
                 let genesis = Block::genesis(state.root_hash()?);
-                (Some(genesis.clone()), 0, genesis.hash())
+                (Some(genesis.clone()), 0)
             }
         };
 
@@ -282,7 +285,7 @@ impl Consensus {
                 consensus.add_block(None, genesis.clone())?;
             }
             // treat genesis as finalized
-            consensus.finalize(latest_block_hash, latest_block_view)?;
+            consensus.finalize_view(latest_block_view)?;
         }
 
         Ok(consensus)
@@ -620,6 +623,7 @@ impl Consensus {
     fn apply_rewards(
         &mut self,
         committee: &[NodePublicKey],
+        parent_block: &Block,
         view: u64,
         cosigned: &BitSlice,
     ) -> Result<()> {
@@ -627,16 +631,8 @@ impl Consensus {
 
         let rewards_per_block =
             *self.config.consensus.rewards_per_hour / self.config.consensus.blocks_per_hour as u128;
-        let block = self.head_block();
-        // Genesis is the earliest therefore let's not overflow with subtraction
-        let parent_block = self
-            .get_block_by_number(block.number().saturating_sub(1))?
-            .unwrap();
 
-        let proposer = self
-            .leader_at_block(&parent_block, view)
-            .unwrap()
-            .public_key;
+        let proposer = self.leader_at_block(parent_block, view).unwrap().public_key;
         if let Some(proposer_address) = self.state.get_reward_address(proposer)? {
             let reward = rewards_per_block / 2;
             self.state
@@ -1024,7 +1020,7 @@ impl Consensus {
         let applied_transaction_hashes: Vec<_> =
             applied_transactions.iter().map(|tx| tx.hash).collect();
 
-        self.apply_rewards(&committee, block_view + 1, &qc.cosigned)?;
+        self.apply_rewards(&committee, &parent, block_view + 1, &qc.cosigned)?;
 
         let proposal = Block::from_qc(
             self.secret_key,
@@ -1204,7 +1200,7 @@ impl Consensus {
                         self.state.set_to_root(parent.state_root_hash().into());
                     }
 
-                    self.apply_rewards(&committee, new_view.view, &high_qc.cosigned)?;
+                    self.apply_rewards(&committee, &parent, new_view.view, &high_qc.cosigned)?;
 
                     let mut empty_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
                     let empty_root_hash = Hash(empty_trie.root_hash()?.into());
@@ -1256,9 +1252,20 @@ impl Consensus {
             return Ok(false);
         }
 
-        let account_nonce = self.state.get_account(txn.signer)?.nonce;
+        let account = self.state.get_account(txn.signer)?;
+        let chain_id = self.config.eth_chain_id;
+
+        if !txn.tx.validate(
+            &account,
+            self.config.consensus.eth_block_gas_limit,
+            chain_id,
+        )? {
+            return Ok(false);
+        }
+
         let txn_hash = txn.hash;
-        let new = self.transaction_pool.insert_transaction(txn, account_nonce);
+
+        let new = self.transaction_pool.insert_transaction(txn, account.nonce);
         if new {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
@@ -1431,6 +1438,8 @@ impl Consensus {
         }
     }
 
+    /// Check if a new proposal allows an older block to become finalized.
+    /// Errors iff the proposal's parent is not known.
     fn check_and_commit(&mut self, proposal: &Block) -> Result<()> {
         // The condition for a block to be finalized is if there is a direct two-chain. From the paper:
         // Once a replica is convinced, it checks
@@ -1447,7 +1456,7 @@ impl Consensus {
             return Err(MissingBlockError::from(proposal.qc.block_hash).into());
         };
 
-        // At genesis it could be fine not to have a qc block, so don't error.
+        // If we don't have the parent (e.g. genesis, or pruned node), we can't finalize, so just exit
         let Some(qc_parent) = self.get_block(&qc_block.parent_hash())? else {
             warn!("missing qc parent block when checking whether to finalize!");
             return Ok(());
@@ -1460,7 +1469,7 @@ impl Consensus {
         };
 
         if qc_parent.view() + 1 == qc_child.view() && qc_parent.view() + 2 == proposal.view() {
-            self.finalize(qc_parent.hash(), qc_parent.view())?;
+            self.finalize_block(qc_parent)?;
         } else {
             warn!(
                 "Failed to finalize block! Not finalizing QC block {} with view {} and number {}",
@@ -1473,14 +1482,17 @@ impl Consensus {
         Ok(())
     }
 
-    /// Intended to be used with the oldest pending block, to move the
-    /// finalized tip forward by one. Does not update view/height.
-    pub fn finalize(&mut self, hash: Hash, view: u64) -> Result<()> {
-        trace!("Finalizing block {hash} at view {view}");
+    fn finalize_view(&mut self, view: u64) -> Result<()> {
         self.finalized_view = view;
-        self.db.put_latest_finalized_view(view)?;
+        self.db.set_latest_finalized_view(view)
+    }
 
-        let receipts = self.db.get_transaction_receipts_in_block(&hash)?;
+    /// Saves the finalized tip view, and runs all hooks for the newly finalized block
+    fn finalize_block(&mut self, block: Block) -> Result<()> {
+        trace!("Finalizing block {} at view {}", block.hash(), block.view());
+        self.finalize_view(block.view())?;
+
+        let receipts = self.db.get_transaction_receipts_in_block(&block.hash())?;
 
         for (destination_shard, intershard_call) in blockhooks::get_cross_shard_messages(&receipts)?
         {
@@ -1505,16 +1517,37 @@ impl Consensus {
             }
         }
 
+        if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
+            // TODO: handle epochs (#1140)
+
+            if self.config.do_checkpoints
+                && self.epoch_is_checkpoint(self.epoch_number(block.number()))
+            {
+                if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
+                    let parent =
+                        self.db
+                            .get_block_by_hash(&block.parent_hash())?
+                            .ok_or(anyhow!(
+                                "Trying to checkpoint block, but we don't have its parent"
+                            ))?;
+                    self.message_sender.send_message_to_coordinator(
+                        InternalMessage::ExportBlockCheckpoint(
+                            Box::new(block),
+                            Box::new(parent),
+                            self.db.state_trie()?.clone(),
+                            checkpoint_path,
+                        ),
+                    )?;
+                }
+            }
+        }
+
         Ok(())
     }
 
     /// Check the validity of a block. Returns `Err(_, true)` if this block could become valid in the future and
     /// `Err(_, false)` if this block could never be valid.
-    fn check_block(
-        &mut self,
-        block: &Block,
-        during_sync: bool,
-    ) -> Result<(), (anyhow::Error, bool)> {
+    fn check_block(&self, block: &Block, during_sync: bool) -> Result<(), (anyhow::Error, bool)> {
         block.verify_hash().map_err(|e| (e, false))?;
 
         if block.view() == 0 {
@@ -1704,6 +1737,19 @@ impl Consensus {
             )?;
         }
         Ok(())
+    }
+
+    fn block_is_first_in_epoch(&self, number: u64) -> bool {
+        number % self.config.consensus.blocks_per_epoch == 0
+    }
+
+    fn epoch_number(&self, block_number: u64) -> u64 {
+        // This will need additonal tracking if we ever allow blocks_per_epoch to be changed
+        block_number & self.config.consensus.blocks_per_epoch
+    }
+
+    fn epoch_is_checkpoint(&self, epoch_number: u64) -> bool {
+        epoch_number % self.config.consensus.epochs_per_checkpoint == 0
     }
 
     fn vote_from_block(&self, block: &Block) -> Vote {
@@ -2091,6 +2137,8 @@ impl Consensus {
             }
         }
 
+        self.apply_rewards(committee, &parent, block.view(), &block.qc.cosigned)?;
+
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
@@ -2162,8 +2210,6 @@ impl Consensus {
             }
         }
 
-        self.apply_rewards(committee, block.view(), &block.qc.cosigned)?;
-
         // Important - only add blocks we are going to execute because they can potentially
         // overwrite the mapping of block height to block, which there should only be one of.
         // for example, this HAS to be after the deal with fork call
@@ -2184,7 +2230,7 @@ impl Consensus {
         }
 
         self.db
-            .put_canonical_block_number(block.number(), block.hash())?;
+            .set_canonical_block_number(block.number(), block.hash())?;
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(

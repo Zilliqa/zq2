@@ -2,9 +2,12 @@ use std::{ops::Deref, str::FromStr, time::Duration};
 
 use alloy_primitives::Address;
 use libp2p::{Multiaddr, PeerId};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{crypto::NodePublicKey, transaction::EvmGas};
+use crate::{
+    crypto::{Hash, NodePublicKey},
+    transaction::EvmGas,
+};
 
 // Note that z2 constructs instances of this to save as a configuration so it must be both
 // serializable and deserializable.
@@ -52,6 +55,12 @@ pub struct NodeConfig {
     /// The location of persistence data. If not set, uses a temporary path.
     #[serde(default)]
     pub data_dir: Option<String>,
+    /// Persistence checkpoint to load.
+    #[serde(default)]
+    pub load_checkpoint: Option<Checkpoint>,
+    /// Whether to enable exporting checkpoint state checkpoint files.
+    #[serde(default)]
+    pub do_checkpoints: bool,
     /// The maximum number of blocks we will send to another node in a single message.
     #[serde(default = "block_request_limit_default")]
     pub block_request_limit: usize,
@@ -61,6 +70,37 @@ pub struct NodeConfig {
     /// The maximum number of blocks to request in a single message when syncing.
     #[serde(default = "block_request_batch_size_default")]
     pub block_request_batch_size: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Checkpoint {
+    /// Location of the checkpoint
+    pub file: String,
+    /// Trusted hash of the checkpoint block
+    #[serde(
+        serialize_with = "serialize_hash_hex",
+        deserialize_with = "deserialize_hash_hex"
+    )]
+    pub hash: Hash,
+}
+
+fn serialize_hash_hex<S>(hash: &Hash, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    hex::encode(hash.0).serialize(serializer)
+}
+
+fn deserialize_hash_hex<'de, D>(deserializer: D) -> Result<Hash, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let s = <String>::deserialize(deserializer)?;
+    let bytes = hex::decode(s).unwrap();
+    Hash::try_from(bytes.as_slice()).map_err(|_| {
+        de::Error::invalid_value(de::Unexpected::Bytes(&bytes), &"a 32-byte hex value")
+    })
 }
 
 pub fn allowed_timestamp_skew_default() -> Duration {
@@ -172,6 +212,10 @@ pub struct ConsensusConfig {
     pub blocks_per_hour: u64,
     pub minimum_stake: Amount,
     pub eth_block_gas_limit: EvmGas,
+    #[serde(default = "blocks_per_epoch_default")]
+    pub blocks_per_epoch: u64,
+    #[serde(default = "epochs_per_checkpoint_default")]
+    pub epochs_per_checkpoint: u64,
     pub gas_price: Amount,
 }
 
@@ -197,6 +241,14 @@ pub fn scilla_lib_dir_default() -> String {
 
 pub fn local_address_default() -> String {
     String::from("localhost")
+}
+
+pub fn blocks_per_epoch_default() -> u64 {
+    3600
+}
+
+pub fn epochs_per_checkpoint_default() -> u64 {
+    24
 }
 
 fn default_true() -> bool {
