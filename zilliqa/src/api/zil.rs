@@ -202,7 +202,16 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let block = node
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
-    let account = node.get_state(&block)?.get_account_or_default(address)?;
+    let account = node
+        .get_state(&block)?
+        .get_account(address)?
+        .ok_or_else(|| {
+            jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcInvalidAddressOrKey as i32,
+                "Account is not created",
+                None::<()>,
+            )
+        })?;
 
     // We need to scale the balance from units of (10^-18) ZIL to (10^-12) ZIL. The value is truncated in this process.
     let balance = account.balance / 10u128.pow(6);
