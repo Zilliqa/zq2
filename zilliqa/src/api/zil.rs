@@ -313,22 +313,28 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
         unreachable!()
     };
 
-    let is_scilla = account.code.scilla_code_and_init_data().is_some();
-    if is_scilla {
-        let trie = state.get_account_trie(address)?;
-        for (k, v) in trie.iter() {
-            let (var_name, indices) = split_storage_key(&k)?;
-            let mut var = result.entry(var_name);
-            for index in indices {
-                let next = var.or_insert_with(|| Value::Object(Default::default()));
-                let Value::Object(next) = next else {
-                    unreachable!()
-                };
-                let key: String = serde_json::from_slice(&index)?;
-                var = next.entry(key);
-            }
-            var.or_insert(serde_json::from_slice(&v)?);
+    if account.code.scilla_code_and_init_data().is_none() {
+        return Err(jsonrpsee::types::ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "Address not contract address",
+            None::<()>,
+        )
+        .into());
+    };
+
+    let trie = state.get_account_trie(address)?;
+    for (k, v) in trie.iter() {
+        let (var_name, indices) = split_storage_key(&k)?;
+        let mut var = result.entry(var_name);
+        for index in indices {
+            let next = var.or_insert_with(|| Value::Object(Default::default()));
+            let Value::Object(next) = next else {
+                unreachable!()
+            };
+            let key: String = serde_json::from_slice(&index)?;
+            var = next.entry(key);
         }
+        var.or_insert(serde_json::from_slice(&v)?);
     }
 
     Ok(result.into())
@@ -352,7 +358,12 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
         })?;
 
     let Some((code, _)) = account.code.scilla_code_and_init_data() else {
-        return Err(anyhow!("Address not contract address"));
+        return Err(jsonrpsee::types::ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "Address not contract address",
+            None::<()>,
+        )
+        .into());
     };
 
     Ok(json!({ "code": code }))
@@ -376,7 +387,12 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
         })?;
 
     let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
-        return Err(anyhow!("Address not contract address"));
+        return Err(jsonrpsee::types::ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "Address not contract address",
+            None::<()>,
+        )
+        .into());
     };
 
     Ok(serde_json::from_str(&init_data)?)
