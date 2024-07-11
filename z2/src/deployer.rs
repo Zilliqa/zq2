@@ -1,8 +1,9 @@
 #![allow(unused_imports)]
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt::{self, Display},
+    io::Write,
     path::PathBuf,
     process::{self, Stdio},
     str::FromStr,
@@ -16,14 +17,15 @@ use regex::Regex;
 use revm::handler::validation;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use tempfile::TempDir;
+use tempfile::{NamedTempFile, TempDir};
+use tera::{Context, Tera};
 use tokio::{
     fs::{self, File},
     io::AsyncWriteExt,
 };
 use zilliqa::node::Node;
 
-use crate::github::{self, get_release_or_commit};
+use crate::{github::{self, get_release_or_commit}, validators};
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Components {
@@ -86,13 +88,18 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, ValueEnum)]
+#[serde(rename_all = "snake_case")]
 pub enum NodeRole {
-    #[serde(rename = "validator")]
     /// Virtual machine validator
     Validator,
-    #[serde(rename = "apps")]
     /// Virtual machine apps
     Apps,
+    /// Virtual machine bootstrap
+    Bootstrap,
+    /// Virtual machine sentry
+    Sentry,
+    /// Virtual machine checkpoint
+    Checkpoint,
 }
 
 impl FromStr for NodeRole {
@@ -101,6 +108,9 @@ impl FromStr for NodeRole {
         match s.to_lowercase().as_str() {
             "validator" => Ok(NodeRole::Validator),
             "apps" => Ok(NodeRole::Apps),
+            "bootstrap" => Ok(NodeRole::Bootstrap),
+            "sentry" => Ok(NodeRole::Sentry),
+            "checkpoint" => Ok(NodeRole::Checkpoint),
             _ => Err(anyhow!("Node role not supported")),
         }
     }
@@ -111,6 +121,9 @@ impl fmt::Display for NodeRole {
         match *self {
             NodeRole::Apps => write!(f, "apps"),
             NodeRole::Validator => write!(f, "validator"),
+            NodeRole::Bootstrap => write!(f, "bootstrap"),
+            NodeRole::Sentry => write!(f, "sentry"),
+            NodeRole::Checkpoint => write!(f, "checkpoint"),
         }
     }
 }
@@ -148,34 +161,36 @@ pub struct Machine {
     pub project_id: String,
     pub zone: String,
     pub name: String,
+    pub labels: BTreeMap<String, String>,
 }
 
 impl Machine {
     pub async fn copy_to(&self, file_from: &str, file_to: &str) -> Result<()> {
         let tgt_spec = format!("{0}:{file_to}", &self.name);
+        let args = &[
+            "compute",
+            "scp",
+            "--project",
+            &self.project_id,
+            "--zone",
+            &self.zone,
+            "--tunnel-through-iap",
+            "--strict-host-key-checking=no",
+            "--scp-flag=-r",
+            file_from,
+            &tgt_spec,
+        ];
+        println!("gcloud {}", args.join(" "));
         zqutils::commands::CommandBuilder::new()
             .silent()
-            .cmd(
-                "gcloud",
-                &[
-                    "compute",
-                    "scp",
-                    "--project",
-                    &self.project_id,
-                    "--zone",
-                    &self.zone,
-                    "--tunnel-through-iap",
-                    "--scp-flag=-r",
-                    file_from,
-                    &tgt_spec,
-                ],
-            )
+            .cmd("gcloud", args)
             .run()
             .await?;
         Ok(())
     }
 
     pub async fn run(&self, cmd: &str) -> Result<zqutils::commands::CommandOutput> {
+        println!("Running command '{}' in {}", cmd, self.name);
         let output: zqutils::commands::CommandOutput = zqutils::commands::CommandBuilder::new()
             .silent()
             .cmd(
@@ -189,6 +204,7 @@ impl Machine {
                     &self.zone,
                     &self.name,
                     "--tunnel-through-iap",
+                    "--strict-host-key-checking=no",
                     "--ssh-flag=",
                     "--command",
                     cmd,
@@ -199,6 +215,7 @@ impl Machine {
         Ok(output)
     }
 }
+
 async fn get_local_block_number(instance: &Machine) -> Result<u64> {
     let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
     let output = instance.run(inner_command).await?;
@@ -226,7 +243,9 @@ pub async fn new(network_name: &str, project_id: &str, roles: Vec<NodeRole>) -> 
     let config =
         NetworkConfig::new(network_name.to_string(), project_id.to_string(), roles).await?;
     let content = serde_yaml::to_string(&config)?;
-    fs::write(format!("{network_name}.yaml"), content).await?;
+    let mut file_path = std::env::current_dir()?;
+    file_path.push(format!("{network_name}.yaml"));
+    fs::write(file_path, content).await?;
     Ok(())
 }
 
@@ -236,77 +255,63 @@ pub async fn create_provisioning_script(
     role: &str,
     config: &NetworkConfig,
 ) -> Result<()> {
-    let mut result: Vec<String> = Vec::new();
     // horrific implementation of a rendering engine for the provisioning script used
     // for both first install and upgrade of the ZQ2 network instances.
     // After the proto-testnet launch we can split the provisioning of the infra from the
     // deployment and the configuration of the apps and validator so, we can move it to a proper
     // tera template and remove this.
-    for line in provisioning_script.split('\n') {
-        if line.contains("$${") {
-            result.push(line.replace("$${", "${"));
-        } else if line.starts_with("ZQ2_IMAGE") {
-            println!("Found ZQ2 image");
-            result.push(format!(
-                "ZQ2_IMAGE='{}'",
-                docker_image(
-                    "zq2",
-                    config.versions.get("zq2").unwrap_or(&"latest".to_string())
-                )?
-            ));
-        } else if line.starts_with("OTTERSCAN_IMAGE") {
-            println!("Found Otterscan image");
-            result.push(format!(
-                "OTTERSCAN_IMAGE='{}'",
-                docker_image(
-                    "otterscan",
-                    config
-                        .versions
-                        .get("otterscan")
-                        .unwrap_or(&"latest".to_string())
-                )?
-            ));
-        } else if line.starts_with("SPOUT_IMAGE") {
-            println!("Found Spout image");
-            result.push(format!(
-                "SPOUT_IMAGE='{}'",
-                docker_image(
-                    "spout",
-                    config
-                        .versions
-                        .get("spout")
-                        .unwrap_or(&"latest".to_string())
-                )?
-            ));
-        } else if line.contains("${genesis_key}") {
-            result.push(line.replace(
-                "${genesis_key}",
-                "\"\" + base64.b64decode(query_metadata_key(GENESIS_KEY)).decode('utf-8') + \"\"",
-            ));
-        } else if line.contains("go(role=\"${role}\")") {
-            result.push(line.replace("go(role=\"${role}\")", &format!("go(role=\"{}\")", role)));
-        } else {
-            result.push(line.to_string())
-        }
-    }
-    let resulting_code = result.join("\n");
+
+    let z2_image = &docker_image(
+        "zq2",
+        config.versions.get("zq2").unwrap_or(&"latest".to_string()),
+    )?;
+
+    let otterscan_image = &docker_image(
+        "otterscan",
+        config
+            .versions
+            .get("otterscan")
+            .unwrap_or(&"latest".to_string()),
+    )?;
+
+    let spout_image = &docker_image(
+        "spout",
+        config
+            .versions
+            .get("spout")
+            .unwrap_or(&"latest".to_string()),
+    )?;
+
+    let mut var_map = BTreeMap::<&str, &str>::new();
+    var_map.insert("role", role);
+    var_map.insert("docker_image", z2_image);
+    var_map.insert("otterscan_image", otterscan_image);
+    var_map.insert("spout_image", spout_image);
+
+    let ctx = Context::from_serialize(var_map)?;
+    let rendered_template = Tera::one_off(provisioning_script, &ctx, false)?;
+    let provisioning_script = rendered_template.as_str();
+
     let mut fh = File::create(file_name).await?;
-    fh.write_all(resulting_code.as_bytes()).await?;
+    fh.write_all(provisioning_script.as_bytes()).await?;
     println!("Provisioning file created: {file_name}");
     Ok(())
 }
 
-pub async fn upgrade(config_file: &str) -> Result<()> {
+pub async fn install_or_upgrade(config_file: &str, is_upgrade: bool) -> Result<()> {
     let config = fs::read_to_string(config_file).await?;
     let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
 
+    let mut bootstraps: Vec<Machine> = Vec::new();
     let mut validators: Vec<Machine> = Vec::new();
     let mut apps: Vec<Machine> = Vec::new();
+    let mut sentries: Vec<Machine>;
+    let mut checkpoints: Vec<Machine>;
     for r in config.roles.clone() {
         let r_name = r.to_string();
         let file_name = &format!("provision_{}.py", r_name);
         create_provisioning_script(
-            include_str!("../../infra/tf/modules/node/scripts/node_provision.py.tpl"),
+            include_str!("../resources/node_provision.tera.py"),
             file_name,
             &r.to_string(),
             &config,
@@ -327,8 +332,6 @@ pub async fn upgrade(config_file: &str) -> Result<()> {
                     "instances",
                     "list",
                     "--format=json",
-                    &format!("--filter=labels.zq2-network={}", config.name),
-                    &format!("--filter=labels.role={}", r_name),
                 ],
             )
             .run()
@@ -355,55 +358,152 @@ pub async fn upgrade(config_file: &str) -> Result<()> {
                     .get("zone")
                     .and_then(|z| z.as_str())
                     .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
+                let labels: BTreeMap<String, String> = i
+                    .get("labels")
+                    .and_then(|z| serde_json::from_value(z.clone()).unwrap_or_default())
+                    .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
                 let project_id = &config.project_id;
                 Ok(Machine {
                     project_id: project_id.to_string(),
                     zone: zone.to_string(),
                     name: name.to_string(),
+                    labels,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
 
-        if r_name == "validator" {
+        let role_instances: Vec<Machine> = role_instances
+            .into_iter()
+            .filter(|m| {
+                m.labels.get("zq2-network") == Some(&config.name)
+                    && m.labels.get("role") == Some(&r_name)
+            })
+            .collect();
+
+        if r_name == NodeRole::Validator.to_string() {
             validators = role_instances
-        } else if r_name == "apps" {
+        } else if r_name == NodeRole::Apps.to_string() {
             apps = role_instances;
             if apps.is_empty() {
                 println!("No apps instances found");
+            }
+        } else if r_name == NodeRole::Bootstrap.to_string() {
+            bootstraps = role_instances;
+            if bootstraps.is_empty() {
+                println!("No bootstraps instances found");
+            }
+        } else if r_name == NodeRole::Sentry.to_string() {
+            sentries = role_instances;
+            if sentries.is_empty() {
+                println!("No sentries instances found");
+            }
+        } else if r_name == NodeRole::Checkpoint.to_string() {
+            checkpoints = role_instances;
+            if checkpoints.is_empty() {
+                println!("No checkpoints instances found");
+            }
+        }
+    }
+
+    let node_config = validators::get_chain_spec_config(&config.name).await?;
+    let mut bootstrap_config = node_config.clone();
+    bootstrap_config
+        .as_table_mut()
+        .unwrap()
+        .remove("external_address");
+    bootstrap_config
+        .as_table_mut()
+        .unwrap()
+        .remove("bootstrap_address");
+
+    let mut node_config_path = NamedTempFile::new()?;
+    write!(node_config_path, "{}", toml::to_string(&node_config)?)?;
+
+    let mut bootstrap_config_path = NamedTempFile::new()?;
+    write!(
+        bootstrap_config_path,
+        "{}",
+        toml::to_string(&bootstrap_config)?
+    )?;
+
+    for bootstrap in bootstraps {
+        println!("Upgrading bootstrap instance {}", bootstrap.name);
+        bootstrap
+            .copy_to("./provision_bootstrap.py", "/tmp/provision_node.py")
+            .await?;
+        bootstrap
+            .copy_to(
+                bootstrap_config_path.path().as_os_str().to_str().unwrap(),
+                "/tmp/config.toml",
+            )
+            .await?;
+        let cmd = "sudo python3 /tmp/provision_node.py";
+        let output = bootstrap.run(cmd).await?;
+        if !output.success {
+            println!("{:?}", output.stderr);
+            return Err(anyhow!("upgrade failed"));
+        }
+
+        // Check the node is making progress
+        if is_upgrade {
+            let first_block_number = get_local_block_number(&bootstrap).await?;
+            loop {
+                let next_block_number = get_local_block_number(&bootstrap).await?;
+                println!(
+                    "Polled block number at {next_block_number}, waiting for {} more blocks",
+                    (first_block_number + 10).saturating_sub(next_block_number)
+                );
+                if next_block_number >= first_block_number + 10 {
+                    break;
+                }
             }
         }
     }
 
     for validator in validators {
-        println!("Upgrading instance {}", validator.name);
+        println!("Upgrading validator instance {}", validator.name);
         validator
-            .copy_to("./provision_validator.py", "/tmp/provision_validator.py")
+            .copy_to("./provision_validator.py", "/tmp/provision_node.py")
             .await?;
-        let cmd = "sudo python3 /tmp/provision_validator.py";
+        validator
+            .copy_to(
+                node_config_path.path().as_os_str().to_str().unwrap(),
+                "/tmp/config.toml",
+            )
+            .await?;
+        let cmd = "sudo python3 /tmp/provision_node.py";
         let output = validator.run(cmd).await?;
         if !output.success {
             println!("{:?}", output.stderr);
             return Err(anyhow!("upgrade failed"));
         }
+
         // Check the node is making progress
-        let first_block_number = get_local_block_number(&validator).await?;
-        loop {
-            let next_block_number = get_local_block_number(&validator).await?;
-            println!(
-                "Polled block number at {next_block_number}, waiting for {} more blocks",
-                (first_block_number + 10).saturating_sub(next_block_number)
-            );
-            if next_block_number >= first_block_number + 10 {
-                break;
+        if is_upgrade {
+            let first_block_number = get_local_block_number(&validator).await?;
+            loop {
+                let next_block_number = get_local_block_number(&validator).await?;
+                println!(
+                    "Polled block number at {next_block_number}, waiting for {} more blocks",
+                    (first_block_number + 10).saturating_sub(next_block_number)
+                );
+                if next_block_number >= first_block_number + 10 {
+                    break;
+                }
             }
         }
     }
 
     for app in apps {
-        println!("Upgrading instance {}", app.name);
-        app.copy_to("./provision_apps.py", "/tmp/provision_apps.py")
+        println!("Upgrading app instance {}", app.name);
+        app.copy_to("./provision_apps.py", "/tmp/provision_node.py")
             .await?;
-        let cmd = "sudo python3 /tmp/provision_apps.py";
+        app.copy_to(
+            node_config_path.path().as_os_str().to_str().unwrap(),
+            "/tmp/config.toml",
+        )
+        .await?;
+        let cmd = "sudo python3 /tmp/provision_node.py";
         let output = app.run(cmd).await?;
         if !output.success {
             println!("{:?}", output.stderr);

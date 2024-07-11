@@ -79,7 +79,6 @@ module "apps" {
   otterscan_image       = var.otterscan_image
   spout_image           = var.spout_image
   subdomain             = var.subdomain
-  config                = ""
   secret_key            = ""
   persistence_url       = ""
   genesis_key           = var.genesis_key
