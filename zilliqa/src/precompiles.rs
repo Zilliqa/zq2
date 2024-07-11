@@ -48,7 +48,7 @@ impl ERC20Precompile {
         };
         let address = Address::new(address.0);
 
-        let Ok(account) = context.db.get_account(address) else {
+        let Ok(account) = context.db.get_account_or_default(address) else {
             return Ok(PrecompileOutput::new(
                 0,
                 encode(&[Token::Uint(ethabi::Uint::from(0))]).into(),

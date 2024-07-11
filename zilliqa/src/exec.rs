@@ -288,7 +288,7 @@ impl DatabaseRef for &State {
             return Ok(None);
         }
 
-        let account = self.get_account(address)?;
+        let account = self.get_account_or_default(address)?;
         let account_info = AccountInfo {
             balance: U256::from(account.balance),
             nonce: account.nonce,
@@ -938,7 +938,7 @@ fn load_account<'a>(
     match new_state.entry(address) {
         Entry::Occupied(entry) => Ok(entry.into_mut()),
         Entry::Vacant(vac) => {
-            let account = pre_state.get_account(address)?;
+            let account = pre_state.get_account_or_default(address)?;
             Ok(vac.insert(account.into()))
         }
     }

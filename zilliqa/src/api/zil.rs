@@ -202,7 +202,8 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let block = node
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
-    let account = node.get_state(&block)?.get_account(address)?;
+    let account = node.get_state(&block)?.get_account_or_default(address)?;
+
     // We need to scale the balance from units of (10^-18) ZIL to (10^-12) ZIL. The value is truncated in this process.
     let balance = account.balance / 10u128.pow(6);
 
@@ -288,7 +289,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
         .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
 
     let state = node.get_state(&block)?;
-    let account = state.get_account(address)?;
+    let account = state.get_account_or_default(address)?;
 
     let result = json!({
         "_balance": ZilAmount::from_amount(account.balance).to_string(),
@@ -326,7 +327,7 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
     let account = node
         .get_state(&block)?
-        .get_account(smart_contract_address)?;
+        .get_account_or_default(smart_contract_address)?;
 
     let Some((code, _)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address not contract address"));
@@ -343,7 +344,7 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
     let account = node
         .get_state(&block)?
-        .get_account(smart_contract_address)?;
+        .get_account_or_default(smart_contract_address)?;
 
     let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address not contract address"));
@@ -416,7 +417,7 @@ fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Sm
         .lock()
         .unwrap()
         .get_state(&block)?
-        .get_account(address)?
+        .get_account_or_default(address)?
         .nonce;
 
     let mut contracts = vec![];
@@ -428,7 +429,7 @@ fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Sm
             .lock()
             .unwrap()
             .get_state(&block)?
-            .get_account(contract_address)?
+            .get_account_or_default(contract_address)?
             .code
             .scilla_code_and_init_data()
             .is_some();

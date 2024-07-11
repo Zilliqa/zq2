@@ -1034,7 +1034,7 @@ impl Consensus {
         // have to re-execute it ourselves (in order to vote on it) and thus will
         // need those transactions again
         for tx in opaque_transactions {
-            let account_nonce = self.state.get_account(tx.signer)?.nonce;
+            let account_nonce = self.state.get_account_or_default(tx.signer)?.nonce;
             self.transaction_pool.insert_transaction(tx, account_nonce);
         }
         Ok(Some((proposal, broadcasted_transactions)))
@@ -1230,7 +1230,7 @@ impl Consensus {
             return Ok(false);
         }
 
-        let account = self.state.get_account(txn.signer)?;
+        let account = self.state.get_account_or_default(txn.signer)?;
         let chain_id = self.config.eth_chain_id;
 
         if !txn.tx.validate(
@@ -2018,7 +2018,7 @@ impl Consensus {
             let existing_txns = self.transaction_pool.drain();
 
             for txn in existing_txns {
-                let account_nonce = self.state.get_account(txn.signer)?.nonce;
+                let account_nonce = self.state.get_account_or_default(txn.signer)?.nonce;
                 self.transaction_pool.insert_transaction(txn, account_nonce);
             }
 
@@ -2027,7 +2027,7 @@ impl Consensus {
                 let orig_tx = self.get_transaction_by_hash(*tx_hash).unwrap().unwrap();
 
                 // Insert this unwound transaction back into the transaction pool.
-                let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
+                let account_nonce = self.state.get_account_or_default(orig_tx.signer)?.nonce;
                 self.transaction_pool
                     .insert_transaction(orig_tx, account_nonce);
             }

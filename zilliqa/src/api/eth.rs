@@ -231,7 +231,7 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     Ok(node
         .get_state(&block)?
-        .get_account(address)?
+        .get_account_or_default(address)?
         .balance
         .to_hex())
 }
@@ -248,7 +248,10 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
     // For compatibility with Zilliqa 1, eth_getCode also returns Scilla code if any is present.
-    let code = node.get_state(&block)?.get_account(address)?.code;
+    let code = node
+        .get_state(&block)?
+        .get_account_or_default(address)?
+        .code;
 
     // do it this way so the compiler will tell us when another option inevitably
     // turns up and we have to deal with it ..
@@ -295,7 +298,11 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     let block = node.get_block(block_id)?;
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
-    Ok(node.get_state(&block)?.get_account(address)?.nonce.to_hex())
+    Ok(node
+        .get_state(&block)?
+        .get_account_or_default(address)?
+        .nonce
+        .to_hex())
 }
 
 fn get_gas_price(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
