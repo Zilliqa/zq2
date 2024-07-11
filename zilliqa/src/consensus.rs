@@ -1058,7 +1058,6 @@ impl Consensus {
             let account_nonce = self.state.get_account(tx.signer)?.nonce;
             self.transaction_pool.insert_transaction(tx, account_nonce);
         }
-        info!("Proposing new block with number: {}", proposal.number());
         Ok(Some((proposal, broadcasted_transactions)))
     }
 

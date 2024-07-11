@@ -124,12 +124,6 @@ impl TransactionPool {
                 continue;
             };
 
-            // If we've popped a nonced transaction, that may have made a subsequent one valid
-            // TODO
-            //if let Some(next) = tx_index.next().and_then(|idx| self.transactions.get(&idx)) {
-            //    self.ready.push(next.into());
-            //}
-
             return Some(transaction);
         }
     }
