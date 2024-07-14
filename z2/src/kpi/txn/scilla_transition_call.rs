@@ -1,3 +1,4 @@
+use anyhow::Result;
 use futures::future::join_all;
 use serde_json::json;
 use tokio::time::Instant;
@@ -12,7 +13,6 @@ use zilliqa_rs::{
 };
 
 use crate::kpi::{CallTransactionResult, Config, KpiResult, ScenarioAgent};
-use anyhow::Result;
 
 pub struct ScillaTransitionCall {
     pub iterations: usize,
