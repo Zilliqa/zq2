@@ -257,12 +257,12 @@ impl TransactionPool {
         self.transactions.len()
     }
 
-    pub fn has_txn_for_next_block(&self) -> bool {
+    pub fn has_txn_ready(&self) -> bool {
         let mut ready = self.ready.clone();
         while let Some(ReadyItem { tx_index, .. }) = ready.pop() {
             // We don't include nonceless txns because the way we present results on API level requires having proper nonce
             if let TxIndex::Intershard(_, _) = tx_index {
-                continue;
+                return true;
             }
 
             // A transaction might have been ready, but it might have gotten popped

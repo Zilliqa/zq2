@@ -907,6 +907,8 @@ impl Consensus {
     }
 
     pub fn try_to_propose_new_block(&mut self) -> Result<Option<NetworkMessage>> {
+        // We try to propose next block here iff this action has already been postponed and there's any txn in the mempool
+        // that will be included in the next block
         if self.create_next_block_on_timeout && self.transaction_pool.has_txn_for_next_block() {
             if let Ok(Some((block, transactions))) = self.propose_new_block() {
                 self.create_next_block_on_timeout = false;
