@@ -2,9 +2,20 @@ use alloy_provider::{Provider, ProviderBuilder, WsConnect};
 use alloy_rpc_types::{BlockNumberOrTag, Filter};
 use anyhow::Result;
 use clap::Parser;
+use ethers::{
+    middleware::MiddlewareBuilder,
+    providers::{Middleware, Ws},
+    signers::{LocalWallet, Signer},
+    types::{TransactionRequest, H160},
+};
 use futures_util::stream::StreamExt;
-use std::path::PathBuf;
-use zilliqa::{crypto::SecretKey, state::contract_addr, uccb::cfg::ZQ2Config};
+use std::{path::PathBuf, str::FromStr};
+use zilliqa::{
+    contracts,
+    crypto::{NodePublicKey, SecretKey},
+    state::contract_addr,
+    uccb::cfg::ZQ2Config,
+};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -44,11 +55,38 @@ async fn listen_to_staker_updates(zq2_config: &ZQ2Config) -> Result<()> {
     Ok(())
 }
 
+async fn get_stakers(zq2_config: &ZQ2Config, secret_key: &SecretKey) -> Result<Vec<NodePublicKey>> {
+    let ws = Ws::connect(&zq2_config.rpc_url).await?;
+    let provider = ethers::providers::Provider::<Ws>::new(ws);
+    let chain_id = provider.get_chainid().await?;
+    let wallet = LocalWallet::from_str(secret_key.to_hex().as_str())?;
+    let client = provider
+        .with_signer(wallet.clone().with_chain_id(chain_id.as_u64()))
+        .nonce_manager(wallet.address());
+
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .data(contracts::deposit::GET_STAKERS.encode_input(&[])?);
+    let output = client.call(&tx.into(), None).await.unwrap();
+    let stakers = contracts::deposit::GET_STAKERS
+        .decode_output(&output)
+        .unwrap()[0]
+        .clone()
+        .into_array()
+        .unwrap();
+
+    Ok(stakers
+        .into_iter()
+        .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
+        .collect())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
     let config = zilliqa::uccb::read_config(&args)?;
-    let zq2_config = &config.zq2;
 
+    let stakers = get_stakers(&config.zq2, &args.secret_key).await?;
+    println!("Stakers: {}\n", serde_json::to_string(&stakers)?);
     listen_to_staker_updates(&config.zq2).await
 }
