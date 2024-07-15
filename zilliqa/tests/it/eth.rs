@@ -169,6 +169,60 @@ async fn get_block_transaction_count(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
+async fn get_transaction_count_pending(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    async fn get_count<T: Debug + Serialize + Send + Sync>(
+        address: H160,
+        provider: &Provider<LocalRpcClient>,
+        number: T,
+    ) -> u64 {
+        provider
+            .request::<_, U64>("eth_getTransactionCount", (address, number))
+            .await
+            .unwrap()
+            .as_u64()
+    }
+
+    let count = get_count(wallet.address(), provider, "pending").await;
+    assert_eq!(count, 0);
+
+    // Send a transaction.
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    let count = get_count(wallet.address(), provider, "pending").await;
+    assert_eq!(count, 1);
+    let count = get_count(wallet.address(), provider, "latest").await;
+    assert_eq!(count, 0);
+
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    let count = get_count(wallet.address(), provider, "pending").await;
+    assert_eq!(count, 0);
+    let count = get_count(wallet.address(), provider, "latest").await;
+    assert_eq!(count, 1);
+
+    panic!("This needs to fail");
+}
+
+#[zilliqa_macros::test]
 async fn get_account_transaction_count(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let provider = wallet.provider();

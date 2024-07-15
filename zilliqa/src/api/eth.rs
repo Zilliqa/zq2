@@ -292,6 +292,11 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     expect_end_of_params(&mut params, 3, 3)?;
 
     let node = node.lock().unwrap();
+
+    if matches!(block_id, BlockId::Number(BlockNumberOrTag::Pending)) {
+        return Ok(node.txpool_content().pending.len().to_hex());
+    }
+
     let block = node.get_block(block_id)?;
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
