@@ -424,7 +424,7 @@ impl Consensus {
         let consensus_timeout_ms = self.config.consensus.consensus_timeout.as_millis() as u64;
         let time_since_last_view_change = SystemTime::now()
             .duration_since(self.view.last_timeout())
-            .expect("last timeout seems to be in the future...")
+            .unwrap_or_default()
             .as_millis() as u64;
         let view_difference = self.view.get_view().saturating_sub(self.high_qc.view);
         // in view N our highQC is the one we obtained in view N-1 (or before) and its view is N-2 (or lower)
@@ -689,9 +689,6 @@ impl Consensus {
                 return Ok(None);
             }
         };
-
-        // Tell the transaction pool that the sender's nonce has been incremented.
-        self.transaction_pool.mark_executed(&txn);
 
         if !result.success() {
             info!("Transaction was a failure...");
@@ -960,45 +957,69 @@ impl Consensus {
             self.state.set_to_root(parent.state_root_hash().into());
         }
 
-        let transactions = self.get_txns_to_execute();
-
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
 
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
 
-        let applied_transactions: Vec<_> = transactions
-            .into_iter()
-            .enumerate()
-            .filter_map(|(idx, tx)| {
-                transactions_trie
-                    .insert(tx.hash.as_bytes(), tx.hash.as_bytes())
-                    .ok()?;
+        let mut updated_root_hash = self.state.root_hash()?;
+        let mut tx_index_in_block = 0;
+        let mut applied_transactions = Vec::new();
 
-                self.apply_transaction(tx.clone(), parent_header, inspector::noop())
-                    .transpose()
-                    .map(|r| {
-                        r.and_then(|result| {
-                            gas_left = gas_left
-                                .checked_sub(result.gas_used())
-                                .ok_or_else(|| anyhow!("too much gas used"))?;
+        while let Some(tx) = self.transaction_pool.best_transaction() {
+            let result = self.apply_transaction(tx.clone(), parent_header, inspector::noop())?;
 
-                            let receipt = Self::create_txn_receipt(
-                                result.clone(),
-                                tx.hash,
-                                idx,
-                                self.config.consensus.eth_block_gas_limit - gas_left,
-                            );
-                            let receipt_hash = receipt.hash();
-                            receipts_trie
-                                .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
-                            Ok((tx, result))
-                        })
-                    })
-            })
-            .collect::<Result<_>>()?;
+            // Skip transactions whose execution resulted in an error and don't re-insert them into the pool.
+            let Some(result) = result else {
+                continue;
+            };
+
+            gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
+                g
+            } else {
+                info!(
+                    nonce = tx.tx.nonce(),
+                    "gas limit reached, returning final transaction to pool",
+                );
+                self.transaction_pool.insert_ready_transaction(tx);
+                self.state.set_to_root(updated_root_hash.into());
+                break;
+            };
+
+            self.transaction_pool.mark_executed(&tx);
+
+            let receipt = Self::create_txn_receipt(
+                result.clone(),
+                tx.hash,
+                tx_index_in_block,
+                self.config.consensus.eth_block_gas_limit - gas_left,
+            );
+
+            transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
+
+            let receipt_hash = receipt.hash();
+            receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
+
+            tx_index_in_block += 1;
+            updated_root_hash = self.state.root_hash()?;
+            applied_transactions.push(tx);
+
+            // Lastly - check how much time we have left for processing txns and break the loop to give enough time for block propagation
+            let (
+                time_since_last_view_change,
+                exponential_backoff_timeout,
+                minimum_time_left_for_empty_block,
+            ) = self.get_consensus_timeout_params();
+
+            if time_since_last_view_change + minimum_time_left_for_empty_block
+                >= exponential_backoff_timeout
+            {
+                break;
+            }
+        }
+
         let applied_transaction_hashes: Vec<_> =
-            applied_transactions.iter().map(|(tx, _)| tx.hash).collect();
+            applied_transactions.iter().map(|tx| tx.hash).collect();
 
         self.apply_rewards(&committee, &parent, block_view + 1, &qc.cosigned)?;
 
@@ -1029,7 +1050,6 @@ impl Consensus {
         let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
             applied_transactions
                 .into_iter()
-                .map(|(tx, _)| tx)
                 .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
         // however, for the transactions that we are NOT broadcasting, we re-insert
         // them into the pool - this is because upon broadcasting the proposal, we will
@@ -2131,6 +2151,7 @@ impl Consensus {
             let result = self
                 .apply_transaction(txn.clone(), parent.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
+            self.transaction_pool.mark_executed(&txn);
             for address in inspector.touched {
                 self.db.add_touched_address(address, tx_hash)?;
             }
