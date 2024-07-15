@@ -13,6 +13,10 @@ path = "src/lib.rs"
 name = "zilliqa"
 path = "src/bin/zilliqa.rs"
 
+[[bin]]
+name = "validator_oracle"
+path = "src/bin/validator_oracle.rs"
+
 [features]
 # Enable tests which assert contract bytecode is correct and reproducible. Enabled in CI.
 test_contract_bytecode = []
