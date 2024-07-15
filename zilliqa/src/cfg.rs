@@ -70,6 +70,9 @@ pub struct NodeConfig {
     /// The maximum number of blocks to request in a single message when syncing.
     #[serde(default = "block_request_batch_size_default")]
     pub block_request_batch_size: u64,
+    /// The maximum size of data returned be GetSmartContract(Sub)State RPC (in KiB) set to 0 for no limit.
+    #[serde(default = "max_smart_contract_rpc_response_size_default")]
+    pub max_smart_contract_rpc_response_size: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +132,10 @@ pub fn max_blocks_in_flight_default() -> u64 {
 
 pub fn block_request_batch_size_default() -> u64 {
     100
+}
+
+pub fn max_smart_contract_rpc_response_size_default() -> u64 {
+    1024
 }
 
 /// Wrapper for [u128] that (de)serializes with a string. `serde_toml` does not support `u128`s.

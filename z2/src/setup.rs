@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use tokio::fs;
 use toml;
+use zilliqa::cfg::max_smart_contract_rpc_response_size_default;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::SecretKey;
@@ -227,6 +228,8 @@ impl Setup {
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),
                 block_request_batch_size: block_request_batch_size_default(),
+                max_smart_contract_rpc_response_size: max_smart_contract_rpc_response_size_default(
+                ),
             };
             println!("Node {i} has RPC port {0}", node_config.json_rpc_port);
             let data_dir_name = format!("{0}{1}", DATADIR_PREFIX, i);
