@@ -5859,6 +5859,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "prost"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e13db3d3fde688c61e2446b4d843bc27a7e8af269a69440c0308021dc92333cc"
+dependencies = [
+ "bytes",
+ "prost-derive 0.13.1",
+]
+
+[[package]]
 name = "prost-build"
 version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5900,6 +5910,19 @@ checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
  "itertools 0.12.1",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.71",
+]
+
+[[package]]
+name = "prost-derive"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18bec9b0adc4eba778b33684b7ba3e7137789434769ee3ce3930463ef904cfca"
+dependencies = [
+ "anyhow",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.71",
@@ -8910,7 +8933,7 @@ dependencies = [
  "libp2p",
  "octocrab",
  "primitive-types",
- "prost 0.12.6",
+ "prost 0.13.1",
  "prost-build",
  "rand",
  "rand_core",
@@ -9064,7 +9087,7 @@ dependencies = [
  "opentelemetry_sdk",
  "paste",
  "primitive-types",
- "prost 0.12.6",
+ "prost 0.13.1",
  "rand",
  "rand_chacha",
  "rand_core",
