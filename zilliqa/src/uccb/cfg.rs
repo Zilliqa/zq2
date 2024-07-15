@@ -35,4 +35,3 @@ pub struct Config {
     pub zq2: ZQ2Config,
     pub chain_configs: Vec<ChainConfig>,
 }
-
