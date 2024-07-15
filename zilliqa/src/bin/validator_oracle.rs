@@ -35,50 +35,71 @@ impl zilliqa::uccb::Args for Args {
     }
 }
 
-async fn listen_to_staker_updates(zq2_config: &ZQ2Config) -> Result<()> {
-    let filter = Filter::new()
-        .address(contract_addr::DEPOSIT)
-        // Must be the same signature as the event in deposit.sol
-        .event("StakerAdded(bytes)")
-        .from_block(BlockNumberOrTag::Latest);
-
-    let ws = WsConnect::new(&zq2_config.rpc_url);
-    let provider = ProviderBuilder::new().on_ws(ws).await?;
-
-    let subscription = provider.subscribe_logs(&filter).await?;
-    let mut stream = subscription.into_stream();
-    while let Some(log) = stream.next().await {
-        // TODO: update validator manager(s) only if leader
-        println!("Subscription log: {log:?}");
-    }
-
-    Ok(())
+struct ValidatorOracle {
+    secret_key: SecretKey,
+    zq2_config: ZQ2Config,
 }
 
-async fn get_stakers(zq2_config: &ZQ2Config, secret_key: &SecretKey) -> Result<Vec<NodePublicKey>> {
-    let ws = Ws::connect(&zq2_config.rpc_url).await?;
-    let provider = ethers::providers::Provider::<Ws>::new(ws);
-    let chain_id = provider.get_chainid().await?;
-    let wallet = LocalWallet::from_str(secret_key.to_hex().as_str())?;
-    let client = provider
-        .with_signer(wallet.clone().with_chain_id(chain_id.as_u64()))
-        .nonce_manager(wallet.address());
+impl ValidatorOracle {
+    pub fn new(secret_key: SecretKey, zq2_config: ZQ2Config) -> Self {
+        Self {
+            secret_key,
+            zq2_config,
+        }
+    }
 
-    let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
-        .data(contracts::deposit::GET_STAKERS.encode_input(&[])?);
-    let output = client.call(&tx.into(), None).await.unwrap();
-    let stakers = contracts::deposit::GET_STAKERS
-        .decode_output(&output)
-        .unwrap()[0]
-        .clone()
-        .into_array()
-        .unwrap();
+    pub async fn start(&self) -> Result<()> {
+        let _ = self.get_stakers().await?;
+        // println!("Stakers: {}\n", serde_json::to_string(&stakers)?);
 
-    Ok(stakers
-        .into_iter()
-        .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
-        .collect())
+        self.listen_to_staker_updates().await
+    }
+
+    async fn listen_to_staker_updates(&self) -> Result<()> {
+        let filter = Filter::new()
+            .address(contract_addr::DEPOSIT)
+            // Must be the same signature as the event in deposit.sol
+            .event("StakerAdded(bytes)")
+            .from_block(BlockNumberOrTag::Latest);
+
+        let ws = WsConnect::new(&self.zq2_config.rpc_url);
+        let provider = ProviderBuilder::new().on_ws(ws).await?;
+
+        let subscription = provider.subscribe_logs(&filter).await?;
+        let mut stream = subscription.into_stream();
+        while let Some(log) = stream.next().await {
+            // TODO: update validator manager(s) only if leader
+            println!("Subscription log: {log:?}");
+        }
+
+        Ok(())
+    }
+
+    async fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
+        let ws = Ws::connect(&self.zq2_config.rpc_url).await?;
+        let provider = ethers::providers::Provider::<Ws>::new(ws);
+        let chain_id = provider.get_chainid().await?;
+        let wallet = LocalWallet::from_str(self.secret_key.to_hex().as_str())?;
+        let client = provider
+            .with_signer(wallet.clone().with_chain_id(chain_id.as_u64()))
+            .nonce_manager(wallet.address());
+
+        let tx = TransactionRequest::new()
+            .to(H160(contract_addr::DEPOSIT.into_array()))
+            .data(contracts::deposit::GET_STAKERS.encode_input(&[])?);
+        let output = client.call(&tx.into(), None).await.unwrap();
+        let stakers = contracts::deposit::GET_STAKERS
+            .decode_output(&output)
+            .unwrap()[0]
+            .clone()
+            .into_array()
+            .unwrap();
+
+        Ok(stakers
+            .into_iter()
+            .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
+            .collect())
+    }
 }
 
 #[tokio::main]
@@ -86,7 +107,6 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let config = zilliqa::uccb::read_config(&args)?;
 
-    let stakers = get_stakers(&config.zq2, &args.secret_key).await?;
-    println!("Stakers: {}\n", serde_json::to_string(&stakers)?);
-    listen_to_staker_updates(&config.zq2).await
+    let validator_oracle = ValidatorOracle::new(args.secret_key, config.zq2);
+    validator_oracle.start().await
 }
