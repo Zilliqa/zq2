@@ -179,22 +179,9 @@ impl State {
     /// Fetch an Account struct.
     /// Note: use get_account_storage to obtain a specific storage value.
     /// If modifying a raw account, ensure you call save_account afterwards.
-    /// Returns an error on failures to access the state tree, or decode the account; or none
-    /// if the account doesn't exist yet
-    pub fn get_account(&self, address: Address) -> Result<Option<Account>> {
-        Ok(self
-            .accounts
-            .get(&Self::account_key(address).0)?
-            .map(|bytes| bincode::deserialize::<Account>(&bytes))
-            .transpose()?)
-    }
-
-    /// Fetch an Account struct.
-    /// Note: use get_account_storage to obtain a specific storage value.
-    /// If modifying a raw account, ensure you call save_account afterwards.
     /// Returns an error on failures to access the state tree, or decode the account; or an empty
     /// account if one didn't exist yet
-    pub fn get_account_or_default(&self, address: Address) -> Result<Account> {
+    pub fn get_account(&self, address: Address) -> Result<Account> {
         Ok(self
             .accounts
             .get(&Self::account_key(address).0)?
@@ -204,7 +191,7 @@ impl State {
 
     /// As get_account, but panics if account cannot be read.
     pub fn must_get_account(&self, address: Address) -> Account {
-        self.get_account_or_default(address).unwrap_or_else(|e| {
+        self.get_account(address).unwrap_or_else(|e| {
             panic!("Failed to read account {address:?} from state storage: {e:?}")
         })
     }
@@ -214,7 +201,7 @@ impl State {
         address: Address,
         mutation: F,
     ) -> Result<R> {
-        let mut account = self.get_account_or_default(address)?;
+        let mut account = self.get_account(address)?;
         let result = mutation(&mut account);
         self.save_account(address, account)?;
         Ok(result)
@@ -222,7 +209,7 @@ impl State {
 
     /// If using this to modify the account, ensure save_account gets called
     pub fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
-        let account = self.get_account_or_default(address)?;
+        let account = self.get_account(address)?;
         Ok(PatriciaTrie::new(self.db.clone()).at_root(account.storage_root))
     }
 
