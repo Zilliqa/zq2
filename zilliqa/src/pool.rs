@@ -111,6 +111,9 @@ impl TransactionPool {
     ///
     /// Ready means that the transaction has a nonce equal to the sender's current nonce or it has a nonce that is
     /// consecutive with a previously returned transaction, from the same sender.
+    ///
+    /// If the returned transaction is executed, the caller must call [TransactionPool::mark_executed] to inform the
+    /// pool that the account's nonce has been updated and further transactions from this signer may now be ready.
     pub fn best_transaction(&mut self) -> Option<VerifiedTransaction> {
         loop {
             let ReadyItem { tx_index, .. } = self.ready.pop()?;
@@ -217,6 +220,15 @@ impl TransactionPool {
         true
     }
 
+    /// Insert a transaction which the caller guarantees is ready to be mined. Breaking this guarantee will cause
+    /// problems. It is likely that the only way to be sure of this guarantee is that you just obtained this
+    /// transaction from `best_transaction` and have the same account state as when you made that call.
+    pub fn insert_ready_transaction(&mut self, txn: VerifiedTransaction) {
+        self.ready.push((&txn).into());
+        self.hash_to_index.insert(txn.hash, txn.mempool_index());
+        self.transactions.insert(txn.mempool_index(), txn);
+    }
+
     pub fn get_transaction(&self, hash: Hash) -> Option<&VerifiedTransaction> {
         let tx_index = self.hash_to_index.get(&hash)?;
         self.transactions.get(tx_index)
@@ -225,12 +237,6 @@ impl TransactionPool {
     pub fn pop_transaction(&mut self, hash: Hash) -> Option<VerifiedTransaction> {
         let tx_index = self.hash_to_index.remove(&hash)?;
         self.transactions.remove(&tx_index)
-    }
-
-    pub fn return_transaction(&mut self, txn: VerifiedTransaction) {
-        self.ready.push((&txn).into());
-        self.hash_to_index.insert(txn.hash, txn.mempool_index());
-        self.transactions.insert(txn.mempool_index(), txn);
     }
 
     /// Update the pool after a transaction has been executed.
@@ -355,7 +361,7 @@ mod tests {
 
         const COUNT: u64 = 100;
 
-        let mut nonces = (0..COUNT).into_iter().collect::<Vec<_>>();
+        let mut nonces = (0..COUNT).collect::<Vec<_>>();
         let mut rng = thread_rng();
         nonces.shuffle(&mut rng);
 

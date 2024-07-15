@@ -424,7 +424,7 @@ impl Consensus {
         let consensus_timeout_ms = self.config.consensus.consensus_timeout.as_millis() as u64;
         let time_since_last_view_change = SystemTime::now()
             .duration_since(self.view.last_timeout())
-            .unwrap_or(Duration::from_millis(0))
+            .unwrap_or_default()
             .as_millis() as u64;
         let view_difference = self.view.get_view().saturating_sub(self.high_qc.view);
         // in view N our highQC is the one we obtained in view N-1 (or before) and its view is N-2 (or lower)
@@ -965,25 +965,24 @@ impl Consensus {
         let mut applied_transactions = Vec::new();
 
         while let Some(tx) = self.transaction_pool.best_transaction() {
-            let apply_result =
-                self.apply_transaction(tx.clone(), parent_header, inspector::noop())?;
+            let result = self.apply_transaction(tx.clone(), parent_header, inspector::noop())?;
 
-            let Some(result) = apply_result else {
+            // Skip transactions whose execution resulted in an error and don't re-insert them into the pool.
+            let Some(result) = result else {
                 continue;
             };
 
-            if gas_left < result.gas_used() {
+            gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
+                g
+            } else {
                 info!(
-                    "Gas usage exceeded, putting back tx with nonce: {:?}",
-                    tx.tx.nonce()
+                    nonce = tx.tx.nonce(),
+                    "gas limit reached, returning final transaction to pool",
                 );
-                self.transaction_pool.return_transaction(tx);
+                self.transaction_pool.insert_ready_transaction(tx);
                 self.state.set_to_root(updated_root_hash.into());
                 break;
-            }
-
-            // It's safe to unwrap since the condition is checked above
-            gas_left = gas_left.checked_sub(result.gas_used()).unwrap();
+            };
 
             self.transaction_pool.mark_executed(&tx);
 
