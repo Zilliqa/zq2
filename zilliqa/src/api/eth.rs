@@ -294,7 +294,13 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     let node = node.lock().unwrap();
 
     if matches!(block_id, BlockId::Number(BlockNumberOrTag::Pending)) {
-        return Ok(node.txpool_content().pending.len().to_hex());
+        return Ok(node
+            .txpool_content()
+            .pending
+            .iter()
+            .filter(|tx| tx.signer == address)
+            .count()
+            .to_hex());
     }
 
     let block = node.get_block(block_id)?;
