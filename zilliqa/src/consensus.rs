@@ -347,7 +347,7 @@ impl Consensus {
             let empty_block_timeout_ms =
                 self.config.consensus.empty_block_timeout.as_millis() as u64;
 
-            let has_txns_for_next_block = self.transaction_pool.has_txn_for_next_block();
+            let has_txns_for_next_block = self.transaction_pool.has_txn_ready();
 
             // Check if enough time elapsed or there's something in mempool or we don't have enough
             // time but let's try at least until new view can happen
@@ -909,7 +909,7 @@ impl Consensus {
     pub fn try_to_propose_new_block(&mut self) -> Result<Option<NetworkMessage>> {
         // We try to propose next block here iff this action has already been postponed and there's any txn in the mempool
         // that will be included in the next block
-        if self.create_next_block_on_timeout && self.transaction_pool.has_txn_for_next_block() {
+        if self.create_next_block_on_timeout && self.transaction_pool.has_txn_ready() {
             if let Ok(Some((block, transactions))) = self.propose_new_block() {
                 self.create_next_block_on_timeout = false;
                 return Ok(Some((
