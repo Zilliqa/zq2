@@ -48,7 +48,7 @@ hex = { version = "0.4.3", features = ["serde"] }
 http = "0.2.11"
 hyper = "0.14.27"
 itertools = "0.13.0"
-jsonrpsee = { version = "0.22.3", features = ["jsonrpsee-http-client", "server"] }
+jsonrpsee = { version = "0.24.0", features = ["jsonrpsee-http-client", "server"] }
 k256 = {version = "0.13.3", features = ["serde", "pem"] }
 libp2p = { version = "0.53.2", features = ["cbor", "dns", "gossipsub", "macros", "tcp", "tokio", "noise", "mdns", "request-response", "kad", "identify", "serde", "yamux"] }
 lru = "0.12"
