@@ -25,4 +25,5 @@ pub mod serde_util;
 pub mod state;
 pub mod time;
 pub mod transaction;
+pub mod uccb;
 pub mod zq1_proto;
