@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
 use crate::crypto::SecretKey;
+use anyhow::Result;
 use std::{fs, path::PathBuf};
 
 pub mod cfg;
@@ -12,11 +12,9 @@ pub fn read_config<T: Args>(args: &T) -> Result<cfg::Config> {
     let config_file = &args.config_file();
     let config_content = if config_file.exists() {
         fs::read_to_string(&config_file)?
-    }
-    else {
+    } else {
         panic!("Please specify a config file");
     };
 
     Ok(toml::from_str(&config_content)?)
 }
-
