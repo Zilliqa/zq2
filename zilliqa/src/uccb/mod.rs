@@ -3,6 +3,7 @@ use anyhow::Result;
 use std::{fs, path::PathBuf};
 
 pub mod cfg;
+pub mod client;
 
 pub trait Args {
     fn secret_key(&self) -> &SecretKey;
