@@ -16,10 +16,12 @@ interface IValidatorManager {
 
     function validatorsSize() external view returns (uint);
 
+    /*
     function validateMessageWithSupermajority(
         bytes32 ethSignedMessageHash,
         bytes[] calldata signatures
     ) external view;
+    */
 }
 
 contract ValidatorManager is Ownable2Step {
@@ -83,15 +85,15 @@ contract ValidatorManager is Ownable2Step {
         return _validators.length();
     }
 
+      /*
     function validateMessageWithSupermajority(
         bytes32 ethSignedMessageHash,
         bytes[] calldata signatures
     ) external view {
-      /*
         _validators.validateSignaturesWithSupermajority(
             ethSignedMessageHash,
             signatures
         );
-      */
     }
+      */
 }
