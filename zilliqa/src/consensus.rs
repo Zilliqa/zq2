@@ -1461,7 +1461,7 @@ impl Consensus {
             return Ok(());
         };
 
-        // If we have a one-direct chain, we can finalize the parent regardless of the proposal's view number 
+        // If we have a one-direct chain, we can finalize the parent regardless of the proposal's view number
         if qc_parent.view() + 1 == qc_block.view() {
             self.finalize_block(qc_parent)?;
         } else {
