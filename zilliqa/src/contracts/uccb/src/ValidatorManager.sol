@@ -59,14 +59,9 @@ contract ValidatorManager is Ownable2Step {
     }
 
     function setValidators(address[] calldata users) external onlyOwner {
-      // Clear the set first
-      uint256 length = _validators.length();
-      for (uint256 i = 0; i < length; ++i) {
-        address element = _validators.at(i);
-        _validators.remove(element);
-      }
-      
-      length = users.length;
+      clearValidators();
+
+      uint256 length = users.length;
       for (uint256 i = 0; i < length; ++i) {
         _validators.add(users[i]);
       }
@@ -85,6 +80,12 @@ contract ValidatorManager is Ownable2Step {
         return _validators.length();
     }
 
+    function clearValidators() private {
+        uint256 length = _validators.length();
+        for (uint256 i = length; i > 0; i--) {
+            _validators.remove(_validators.at(i - 1));
+        }
+    }
       /*
     function validateMessageWithSupermajority(
         bytes32 ethSignedMessageHash,

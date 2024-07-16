@@ -14,6 +14,7 @@ pub type Client = NonceManagerMiddleware<SignerMiddleware<Provider<Ws>, LocalWal
 
 #[derive(Debug, Clone)]
 pub struct ChainClient {
+    pub rpc_url: String,
     pub client: Arc<Client>,
     pub validator_manager_address: Address,
     // pub chain_gateway_address: Address,
@@ -47,6 +48,7 @@ impl ChainClient {
         // let validator_manager_address: Address = chain_gateway.validator_manager().call().await?;
 
         Ok(ChainClient {
+            rpc_url: config.rpc_url.clone(),
             client,
             validator_manager_address,
             // chain_gateway_address,
