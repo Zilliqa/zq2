@@ -170,7 +170,6 @@ impl View {
     pub fn set_view(&mut self, view: u64) {
         match view.cmp(&self.view) {
             std::cmp::Ordering::Less => {
-                // todo: this can happen if agg is true - how to handle?
                 warn!(
                     "Tried to set view {} to lower view {} - this is incorrect",
                     self.view, view
@@ -1337,7 +1336,9 @@ impl Consensus {
                 );
                 self.db.set_high_qc(new_high_qc.clone())?;
                 self.high_qc = new_high_qc;
-                self.view.set_view(new_high_qc_block_view + 1);
+                if new_high_qc_block_view >= self.view.get_view() {
+                    self.view.set_view(new_high_qc_block_view + 1);
+                }
             }
         }
 
@@ -1448,8 +1449,6 @@ impl Consensus {
         // formed has to be a one-direct chain in case of pipelined Fast-
         // HotStuff). Then a replica can safely commit the parent of the
         // block pointed by the highQC.
-        // So, in short, look up parent of QC, and finalize it iff the two subsequent blocks
-        // have views N+1, N+2 (the final one being proposal block).
 
         let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else {
             warn!("missing qc block when checking whether to finalize!");
@@ -1462,17 +1461,15 @@ impl Consensus {
             return Ok(());
         };
 
-        // Likewise, block + 1 doesn't have to exist neccessarily
-        let Some(qc_child) = self.get_block_by_number(qc_parent.number() + 1)? else {
-            warn!("missing qc child when checking whether to finalize!");
-            return Ok(());
-        };
-
-        if qc_parent.view() + 1 == qc_child.view() && qc_parent.view() + 2 == proposal.view() {
+        // If we have a one-direct chain, we can finalize the parent regardless of the proposal's view number 
+        if qc_parent.view() + 1 == qc_block.view() {
             self.finalize_block(qc_parent)?;
         } else {
             warn!(
-                "Failed to finalize block! Not finalizing QC block {} with view {} and number {}",
+                "Cannot finalize block {} with view {} and number {} because of child {} with view {} and number {}",
+                qc_parent.hash(),
+                qc_parent.view(),
+                qc_parent.number(),
                 qc_block.hash(),
                 qc_block.view(),
                 qc_block.number()
