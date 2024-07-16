@@ -6,7 +6,6 @@ use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use tokio::fs;
 use toml;
-use zilliqa::cfg::max_smart_contract_rpc_response_size_default;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::SecretKey;
@@ -16,8 +15,9 @@ use zilliqa::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, consensus_timeout_default, disable_rpc_default,
         empty_block_timeout_default, eth_chain_id_default, local_address_default,
-        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_lib_dir_default, Amount, ConsensusConfig,
+        max_blocks_in_flight_default, max_smart_contract_rpc_response_size_default,
+        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
+        Amount, ConsensusConfig,
     },
     crypto::NodePublicKey,
     transaction::EvmGas,
