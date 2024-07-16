@@ -245,9 +245,9 @@ async fn get_transaction_count_pending(mut network: Network) {
         .unwrap();
 
     // Wallet 1 should no longer have any pending transactions, and should have 2 transactions in the
-    // latest block.
+    // latest block, leading to 2 returned for both "pending" and "latest".
     let count = get_count(wallet_1.address(), provider, "pending").await;
-    assert_eq!(count, 0);
+    assert_eq!(count, 2);
     let count = get_count(wallet_1.address(), provider, "latest").await;
     assert_eq!(count, 2);
 }

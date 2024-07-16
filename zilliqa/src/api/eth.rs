@@ -293,20 +293,23 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
 
     let node = node.lock().unwrap();
 
+    let block = node.get_block(block_id)?;
+    let block = build_errored_response_for_missing_block(block_id, block)?;
+
+    let nonce = node.get_state(&block)?.get_account(address)?.nonce;
+
     if matches!(block_id, BlockId::Number(BlockNumberOrTag::Pending)) {
-        return Ok(node
+        let pending_transaction_count = node
             .txpool_content()
             .pending
             .iter()
             .filter(|tx| tx.signer == address)
-            .count()
-            .to_hex());
+            .count() as u64;
+
+        Ok((nonce + pending_transaction_count).to_hex())
+    } else {
+        Ok(nonce.to_hex())
     }
-
-    let block = node.get_block(block_id)?;
-    let block = build_errored_response_for_missing_block(block_id, block)?;
-
-    Ok(node.get_state(&block)?.get_account(address)?.nonce.to_hex())
 }
 
 fn get_gas_price(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
