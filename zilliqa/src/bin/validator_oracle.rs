@@ -10,6 +10,7 @@ use ethers::{
 };
 use futures_util::stream::StreamExt;
 use std::{path::PathBuf, str::FromStr};
+use tokio::sync::watch;
 use zilliqa::{
     contracts,
     crypto::{NodePublicKey, SecretKey},
@@ -38,6 +39,7 @@ impl zilliqa::uccb::Args for Args {
 struct ValidatorOracle {
     secret_key: SecretKey,
     zq2_config: ZQ2Config,
+    validators: Vec<NodePublicKey>,
 }
 
 impl ValidatorOracle {
@@ -45,17 +47,23 @@ impl ValidatorOracle {
         Self {
             secret_key,
             zq2_config,
+            validators: vec![],
         }
     }
 
-    pub async fn start(&self) -> Result<()> {
-        let _ = self.get_stakers().await?;
+    pub async fn start(&mut self) -> Result<()> {
+        self.validators = self.get_stakers().await?;
         // println!("Stakers: {}\n", serde_json::to_string(&stakers)?);
 
-        self.listen_to_staker_updates().await
+        let (sender, mut receiver) = watch::channel(self.validators.clone());
+
+        self.listen_to_staker_updates(sender).await
     }
 
-    async fn listen_to_staker_updates(&self) -> Result<()> {
+    async fn listen_to_staker_updates(
+        &self,
+        sender: watch::Sender<Vec<NodePublicKey>>,
+    ) -> Result<()> {
         let filter = Filter::new()
             .address(contract_addr::DEPOSIT)
             // Must be the same signature as the event in deposit.sol
@@ -68,8 +76,10 @@ impl ValidatorOracle {
         let subscription = provider.subscribe_logs(&filter).await?;
         let mut stream = subscription.into_stream();
         while let Some(log) = stream.next().await {
-            // TODO: update validator manager(s) only if leader
+            // TODO: infer if staker added or removed
             println!("Subscription log: {log:?}");
+
+            sender.send(self.validators.clone());
         }
 
         Ok(())
@@ -107,6 +117,6 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let config = zilliqa::uccb::read_config(&args)?;
 
-    let validator_oracle = ValidatorOracle::new(args.secret_key, config.zq2);
+    let mut validator_oracle = ValidatorOracle::new(args.secret_key, config.zq2);
     validator_oracle.start().await
 }
