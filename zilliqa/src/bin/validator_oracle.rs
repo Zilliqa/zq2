@@ -4,14 +4,15 @@ use anyhow::Result;
 use clap::Parser;
 use ethers::{
     contract::abigen,
-    middleware::MiddlewareBuilder,
-    providers::{Middleware, Ws},
+    providers::Middleware,
     signers::{LocalWallet, Signer},
     types::{TransactionRequest, H160},
 };
 use futures_util::stream::StreamExt;
 use std::{path::PathBuf, str::FromStr};
 use tokio::sync::watch;
+use tracing::{debug, error, info};
+use tracing_subscriber::EnvFilter;
 use zilliqa::{
     contracts,
     crypto::{NodePublicKey, SecretKey},
@@ -77,12 +78,15 @@ impl ValidatorOracle {
     }
 
     pub async fn start(&mut self) -> Result<()> {
+        info!(
+            "Starting validator oracle with wallet address {}",
+            self.wallet.address()
+        );
+
         self.validators = self.get_stakers().await?;
-        println!("Validators: {}\n", serde_json::to_string(&self.validators)?);
+        info!("Validators: {}\n", serde_json::to_string(&self.validators)?);
 
         let (sender, receiver) = watch::channel(self.validators.clone());
-
-        sender.send(self.validators.clone())?;
 
         let mut handles = vec![];
         for chain_client in &self.chain_clients {
@@ -95,7 +99,7 @@ impl ValidatorOracle {
                         .await
                         .is_err()
                     {
-                        println!(
+                        error!(
                             "Failed updating the validator manager on {}",
                             chain_client.rpc_url
                         );
@@ -126,7 +130,7 @@ impl ValidatorOracle {
             .address(contract_addr::DEPOSIT)
             // Must be the same signature as the event in deposit.sol
             .event("StakerAdded(bytes)")
-            .from_block(BlockNumberOrTag::Latest);
+            .from_block(BlockNumberOrTag::Finalized);
 
         let ws = WsConnect::new(&self.zq2_config.rpc_url);
         let provider = ProviderBuilder::new().on_ws(ws).await?;
@@ -135,10 +139,10 @@ impl ValidatorOracle {
         let mut stream = subscription.into_stream();
         while let Some(log) = stream.next().await {
             // TODO: infer if staker added or removed
-            println!("Received validator update: {log:?}");
+            info!("Received validator update: {log:?}");
 
             self.validators = self.get_stakers().await?;
-            println!(
+            info!(
                 "Updating chains to the current validator set: {}\n",
                 serde_json::to_string(&self.validators)?
             );
@@ -165,16 +169,13 @@ impl ValidatorOracle {
     }
 
     async fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
-        let ws = Ws::connect(&self.zq2_config.rpc_url).await?;
-        let provider = ethers::providers::Provider::<Ws>::new(ws);
-        let chain_id = provider.get_chainid().await?;
-        let client = provider
-            .with_signer(self.wallet.clone().with_chain_id(chain_id.as_u64()))
-            .nonce_manager(self.wallet.address());
+        debug!("Retreiving validators from the deposit contract");
 
         let tx = TransactionRequest::new()
             .to(H160(contract_addr::DEPOSIT.into_array()))
             .data(contracts::deposit::GET_STAKERS.encode_input(&[])?);
+        // The first chain client is the ZQ2 one.
+        let client = self.chain_clients[0].client.clone();
         let output = client.call(&tx.into(), None).await.unwrap();
         let stakers = contracts::deposit::GET_STAKERS
             .decode_output(&output)
@@ -205,13 +206,13 @@ impl ValidatorOracle {
         let call = validator_manager.set_validators(validators);
         let pending_tx = call.send().await?;
         if let Some(receipt) = pending_tx.await? {
-            println!(
+            info!(
                 "Updated {}: {}",
                 &chain_client.rpc_url,
                 serde_json::to_string(&receipt)?
             );
         } else {
-            println!(
+            error!(
                 "No receipt received when updating {}...",
                 &chain_client.rpc_url
             );
@@ -225,6 +226,11 @@ impl ValidatorOracle {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let config = zilliqa::uccb::read_config(&args)?;
+
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_line_number(true);
+    builder.init();
 
     let mut validator_oracle = ValidatorOracle::new(args.secret_key, config).await?;
     validator_oracle.start().await
