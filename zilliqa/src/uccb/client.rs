@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-// use crate::{ChainGateway, ValidatorManager};
-use crate::uccb::cfg::ChainConfig;
 use anyhow::Result;
 use ethers::{
     middleware::{MiddlewareBuilder, NonceManagerMiddleware, SignerMiddleware},
@@ -9,6 +7,8 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, U256},
 };
+
+use crate::uccb::cfg::ChainConfig;
 
 pub type Client = NonceManagerMiddleware<SignerMiddleware<Provider<Ws>, LocalWallet>>;
 
