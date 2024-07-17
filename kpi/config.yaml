@@ -1,0 +1,25 @@
+blockchain: 
+  rpc_url: "http://127.0.0.1:4201"
+  chainid: 1
+  gas_price: 2000000000
+  gas_limit: 10000
+
+source_of_funds:
+  kind: "eth"
+  # Either set it to a hardcoded prv key, or ${PRIV_KEY} to read it from an env var
+  private_key: '0000000000000000000000000000000000000000000000000000000000000002'
+
+scenario:
+  - !call_read_only_methods
+    iterations: 1000
+    type: get_balance
+
+  - !send_transactions
+    iterations: 1000
+    attempts_to_confirm: 3
+    sleep_ms_before_next_try: 1000
+    type: zil_transfer
+
+output: 
+  type: json
+  path: "stdout"

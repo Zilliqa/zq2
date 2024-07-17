@@ -341,7 +341,7 @@ impl Perf {
     }
 
     pub async fn step(&self, rng: &mut StdRng, step: &ConfigSet) -> Result<()> {
-        let mut modules: Vec<ModuleRecord> = Vec::new();
+        let mut modules: Vec<ModuleRecord> = vec![];
 
         // Construct the modules.
         for this_module in step.modules.iter() {
@@ -356,8 +356,8 @@ impl Perf {
                     .await?;
                     modules.push(ModuleRecord {
                         module: Box::new(this_mod),
-                        results: Vec::new(),
-                        txns: Vec::new(),
+                        results: vec![],
+                        txns: vec![],
                         offset: 0,
                     });
                 }
@@ -371,8 +371,8 @@ impl Perf {
                     .await?;
                     modules.push(ModuleRecord {
                         module: Box::new(this_mod),
-                        results: Vec::new(),
-                        txns: Vec::new(),
+                        results: vec![],
+                        txns: vec![],
                         offset: 0,
                     });
                 }
@@ -381,7 +381,7 @@ impl Perf {
         let mut phase = 0;
         loop {
             // Construct the list of txns to monitor
-            let mut monitor = Vec::new();
+            let mut monitor = vec![];
             let mut continue_anyway = false;
             let mut feeder_nonce = self.get_nonce(&self.source_of_funds).await?;
             for this_mod in modules.iter_mut() {
@@ -399,7 +399,7 @@ impl Perf {
             }
             // Now clear the old results
             for this_mod in modules.iter_mut() {
-                this_mod.results = Vec::new();
+                this_mod.results = vec![];
             }
             // We're done if we have asked everyone and there is nothing to wait for anymore.
             if monitor.is_empty() {
@@ -459,7 +459,7 @@ impl Perf {
         acc_type: AccountKind,
         nr: u32,
     ) -> Result<Vec<Account>> {
-        let mut result = Vec::new();
+        let mut result = vec![];
         for _ in 0..nr {
             result.push(self.gen_account(rng, acc_type).await?)
         }
