@@ -1,3 +1,5 @@
+use std::{path::PathBuf, str::FromStr};
+
 use alloy_provider::{Provider, ProviderBuilder, WsConnect};
 use alloy_rpc_types::{BlockNumberOrTag, Filter};
 use anyhow::Result;
@@ -9,7 +11,6 @@ use ethers::{
     types::{TransactionRequest, H160},
 };
 use futures_util::stream::StreamExt;
-use std::{path::PathBuf, str::FromStr};
 use tokio::sync::watch;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
@@ -119,7 +120,7 @@ impl ValidatorOracle {
             handle.await?;
         }
 
-        return result;
+        result
     }
 
     async fn listen_to_staker_updates(
@@ -192,7 +193,7 @@ impl ValidatorOracle {
 
     async fn update_validator_manager(
         chain_client: &ChainClient,
-        validators: &Vec<NodePublicKey>,
+        validators: &[NodePublicKey],
     ) -> Result<()> {
         let validator_manager = ValidatorManager::new(
             chain_client.validator_manager_address,
@@ -200,7 +201,7 @@ impl ValidatorOracle {
         );
 
         let validators = validators
-            .into_iter()
+            .iter()
             .map(|validator| H160(**validator.into_addr()))
             .collect();
         let call = validator_manager.set_validators(validators);
