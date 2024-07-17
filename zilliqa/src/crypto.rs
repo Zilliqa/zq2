@@ -272,6 +272,10 @@ impl Hash {
     pub const ZERO: Hash = Hash([0; Hash::LEN]);
     pub const LEN: usize = 32;
 
+    pub fn builder() -> HashBuilder {
+        HashBuilder(Keccak256::new())
+    }
+
     pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self> {
         let bytes = bytes.as_ref();
         Ok(Hash(bytes.try_into()?))
@@ -318,5 +322,33 @@ impl Display for Hash {
 impl std::fmt::Debug for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", hex::encode(self.as_bytes()))
+    }
+}
+
+pub struct HashBuilder(Keccak256);
+
+impl HashBuilder {
+    pub fn finalize(self) -> Hash {
+        Hash(self.0.finalize().into())
+    }
+
+    pub fn with(mut self, bytes: impl AsRef<[u8]>) -> Self {
+        self.0.update(bytes.as_ref());
+
+        self
+    }
+
+    pub fn with_optional(self, bytes_optional: Option<impl AsRef<[u8]>>) -> Self {
+        if let Some(bytes) = bytes_optional {
+            self.with(bytes)
+        } else {
+            self
+        }
+    }
+
+    pub fn with_iter<T: AsRef<[u8]>>(mut self, bytes_iter: impl Iterator<Item = T>) -> Self {
+        bytes_iter.for_each(|bytes| self.0.update(bytes.as_ref()));
+
+        self
     }
 }

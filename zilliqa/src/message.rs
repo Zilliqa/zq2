@@ -7,8 +7,10 @@ use std::{
 use alloy_primitives::Address;
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
+use itertools::Either;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
+use tracing::{error, warn};
 
 use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
@@ -347,11 +349,12 @@ impl QuorumCertificate {
     }
 
     pub fn compute_hash(&self) -> Hash {
-        Hash::compute([
-            &self.signature.to_bytes(),
-            &self.cosigned.clone().into_vec(), // FIXME: What does this do when `self.cosigned.len() % 8 != 0`?
-            self.block_hash.as_bytes(),
-        ])
+        Hash::builder()
+            .with(self.signature.to_bytes())
+            .with(self.cosigned.as_raw_slice()) // FIXME: What does this do when `self.cosigned.len() % 8 != 0`?
+            .with(self.block_hash.as_bytes())
+            .with(self.view.to_be_bytes())
+            .finalize()
     }
 }
 
@@ -376,18 +379,13 @@ pub struct AggregateQc {
 impl AggregateQc {
     pub fn compute_hash(&self) -> Hash {
         let hashes: Vec<_> = self.qcs.iter().map(|qc| qc.compute_hash()).collect();
-        let signers = self.cosigned.as_raw_slice();
-        Hash::compute([
-            &self.signature.to_bytes(),
-            signers,
-            Hash::compute(
-                hashes
-                    .iter()
-                    .map(|hash| hash.as_bytes())
-                    .collect::<Vec<_>>(),
-            )
-            .as_bytes(),
-        ])
+
+        Hash::builder()
+            .with(self.signature.to_bytes())
+            .with(self.cosigned.as_raw_slice())
+            .with(self.view.to_be_bytes())
+            .with_iter(hashes.iter().map(|hash| hash.as_bytes()))
+            .finalize()
     }
 }
 
@@ -470,90 +468,28 @@ pub struct Block {
 
 impl Block {
     pub fn genesis(state_root_hash: Hash) -> Block {
-        let view = 0u64;
-        let number = 0u64;
         let qc = QuorumCertificate {
             signature: NodeSignature::identity(),
             cosigned: bitvec![u8, bitvec::order::Msb0; 1; 0],
             block_hash: Hash::ZERO,
             view: 0,
         };
-        let parent_hash = Hash::ZERO;
-        let timestamp = SystemTime::UNIX_EPOCH;
-        let gas_used = EvmGas(0);
-        let gas_limit = EvmGas(0);
 
-        let digest = Hash::compute([
-            &view.to_be_bytes(),
-            &number.to_be_bytes(),
-            qc.compute_hash().as_bytes(),
-            // hash of agg missing here intentionally
-            parent_hash.as_bytes(),
-            state_root_hash.as_bytes(),
-            &Hash::ZERO.0,
-            &Hash::ZERO.0,
-            &gas_used.0.to_be_bytes(),
-            &gas_limit.0.to_be_bytes(),
-        ]);
-
-        Block {
-            header: BlockHeader {
-                view,
-                number,
-                hash: digest,
-                parent_hash,
-                signature: NodeSignature::identity(),
-                state_root_hash,
-                transactions_root_hash: Hash::ZERO,
-                receipts_root_hash: Hash::ZERO,
-                timestamp,
-                gas_used,
-                gas_limit,
-            },
-            qc: QuorumCertificate {
-                signature: NodeSignature::identity(),
-                cosigned: bitvec![u8, bitvec::order::Msb0; 1; 0],
-                block_hash: Hash::ZERO,
-                view: 0,
-            },
-            agg: None,
-            transactions: vec![],
-        }
-    }
-
-    pub fn verify_hash(&self) -> Result<()> {
-        let computed_hash = if let Some(agg) = &self.agg {
-            Hash::compute([
-                &self.view().to_be_bytes(),
-                &self.number().to_be_bytes(),
-                self.qc.compute_hash().as_bytes(),
-                agg.compute_hash().as_bytes(),
-                self.parent_hash().as_bytes(),
-                self.state_root_hash().as_bytes(),
-                self.transactions_root_hash().as_bytes(),
-                self.receipts_root_hash().as_bytes(),
-                &self.gas_used().0.to_be_bytes(),
-                &self.gas_limit().0.to_be_bytes(),
-            ])
-        } else {
-            Hash::compute([
-                &self.view().to_be_bytes(),
-                &self.number().to_be_bytes(),
-                self.qc.compute_hash().as_bytes(),
-                self.parent_hash().as_bytes(),
-                self.state_root_hash().as_bytes(),
-                self.transactions_root_hash().as_bytes(),
-                self.receipts_root_hash().as_bytes(),
-                &self.gas_used().0.to_be_bytes(),
-                &self.gas_limit().0.to_be_bytes(),
-            ])
-        };
-
-        if computed_hash != self.hash() {
-            return Err(anyhow!("invalid hash"));
-        }
-
-        Ok(())
+        Self::new(
+            0u64,
+            0u64,
+            qc,
+            None,
+            Hash::ZERO,
+            state_root_hash,
+            Hash::ZERO,
+            Hash::ZERO,
+            vec![],
+            SystemTime::UNIX_EPOCH,
+            EvmGas(0),
+            EvmGas(0),
+            Either::Right(NodeSignature::identity()),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -571,37 +507,21 @@ impl Block {
         gas_used: EvmGas,
         gas_limit: EvmGas,
     ) -> Block {
-        let digest = Hash::compute([
-            &view.to_be_bytes(),
-            &number.to_be_bytes(),
-            qc.compute_hash().as_bytes(),
-            // hash of agg missing here intentionally
-            parent_hash.as_bytes(),
-            state_root_hash.as_bytes(),
-            transactions_root_hash.as_bytes(),
-            receipts_root_hash.as_bytes(),
-            &gas_used.0.to_be_bytes(),
-            &gas_limit.0.to_be_bytes(),
-        ]);
-        let signature = secret_key.sign(digest.as_bytes());
-        Block {
-            header: BlockHeader {
-                view,
-                number,
-                hash: digest,
-                parent_hash,
-                signature,
-                state_root_hash,
-                transactions_root_hash,
-                receipts_root_hash,
-                timestamp,
-                gas_used,
-                gas_limit,
-            },
+        Self::new(
+            view,
+            number,
             qc,
-            agg: None,
+            None,
+            parent_hash,
+            state_root_hash,
+            transactions_root_hash,
+            receipts_root_hash,
             transactions,
-        }
+            timestamp,
+            gas_used,
+            gas_limit,
+            Either::Left(secret_key),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -617,37 +537,79 @@ impl Block {
         receipts_root_hash: Hash,
         timestamp: SystemTime,
     ) -> Block {
-        let digest = Hash::compute([
-            &view.to_be_bytes(),
-            &number.to_be_bytes(),
-            qc.compute_hash().as_bytes(),
-            agg.compute_hash().as_bytes(),
-            parent_hash.as_bytes(),
-            state_root_hash.as_bytes(),
-            transactions_root_hash.as_bytes(),
-            receipts_root_hash.as_bytes(),
-            &EvmGas(0).0.to_be_bytes(),
-            &EvmGas(0).0.to_be_bytes(),
-        ]);
-        let signature = secret_key.sign(digest.as_bytes());
-        Block {
+        Self::new(
+            view,
+            number,
+            qc,
+            Some(agg),
+            parent_hash,
+            state_root_hash,
+            transactions_root_hash,
+            receipts_root_hash,
+            vec![],
+            timestamp,
+            EvmGas(0),
+            EvmGas(0),
+            Either::Left(secret_key),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        view: u64,
+        number: u64,
+        qc: QuorumCertificate,
+        agg: Option<AggregateQc>,
+        parent_hash: Hash,
+        state_root_hash: Hash,
+        transactions_root_hash: Hash,
+        receipts_root_hash: Hash,
+        transactions: Vec<Hash>,
+        timestamp: SystemTime,
+        gas_used: EvmGas,
+        gas_limit: EvmGas,
+        secret_key_or_signature: Either<SecretKey, NodeSignature>,
+    ) -> Self {
+        let block = Block {
             header: BlockHeader {
                 view,
                 number,
-                hash: digest,
+                hash: Hash::ZERO,
                 parent_hash,
-                signature,
+                signature: NodeSignature::identity(),
                 state_root_hash,
                 transactions_root_hash,
                 receipts_root_hash,
                 timestamp,
-                gas_used: EvmGas(0),
-                gas_limit: EvmGas(0),
+                gas_used,
+                gas_limit,
             },
             qc,
-            agg: Some(agg),
-            transactions: vec![],
+            agg,
+            transactions,
+        };
+
+        let hash = block.compute_hash();
+        let signature = secret_key_or_signature
+            .map_left(|key| key.sign(hash.as_bytes()))
+            .into_inner();
+
+        Block {
+            header: BlockHeader {
+                hash,
+                signature,
+                ..block.header
+            },
+            ..block
         }
+    }
+
+    pub fn verify_hash(&self) -> Result<()> {
+        if self.compute_hash() != self.hash() {
+            return Err(anyhow!("invalid hash"));
+        }
+
+        Ok(())
     }
 
     pub fn verify(&self, public_key: NodePublicKey) -> Result<()> {
@@ -698,5 +660,35 @@ impl Block {
     }
     pub fn gas_limit(&self) -> EvmGas {
         self.header.gas_limit
+    }
+}
+
+impl Block {
+    pub fn compute_hash(&self) -> Hash {
+        Hash::builder()
+            .with(self.view().to_be_bytes())
+            .with(self.number().to_be_bytes())
+            .with(self.parent_hash().as_bytes())
+            .with(self.state_root_hash().as_bytes())
+            .with(self.transactions_root_hash().as_bytes())
+            .with(self.receipts_root_hash().as_bytes())
+            // .with(
+            //     &self
+            //         .timestamp()
+            //         .duration_since(SystemTime::UNIX_EPOCH)
+            //         .unwrap()
+            //         .as_nanos()
+            //         .to_be_bytes(),
+            // )
+            .with(self.gas_used().0.to_be_bytes())
+            .with(self.gas_limit().0.to_be_bytes())
+            .with(self.qc.compute_hash().as_bytes())
+            .with_optional(
+                self.agg
+                    .as_ref()
+                    .map(|agg| agg.compute_hash().as_bytes().to_vec()),
+            )
+            .with_iter(self.transactions.iter().map(|hash| hash.as_bytes()))
+            .finalize()
     }
 }
