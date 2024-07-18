@@ -92,20 +92,42 @@ sqlify_with_bincode!(VecScillaTransitionSqlable);
 make_wrapper!(SystemTime, SystemTimeSqlable);
 impl ToSql for SystemTimeSqlable {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        // SQL can only store i64 as number - but for timestamps as seconds this should be
-        // perfectly fine to convert (otherwise it'd have to be stored as text or raw blob)
-        Ok(ToSqlOutput::from(
-            self.0
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
-        ))
+        use std::mem::size_of;
+
+        let since_epoch = self.0.duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+        let mut buf = [0u8; size_of::<u64>() + size_of::<u32>()];
+
+        buf[..size_of::<u64>()].copy_from_slice(&mut since_epoch.as_secs().to_be_bytes()[..]);
+        buf[size_of::<u64>()..].copy_from_slice(&mut since_epoch.subsec_nanos().to_be_bytes()[..]);
+
+        Ok(ToSqlOutput::from(buf.to_vec()))
     }
 }
 impl FromSql for SystemTimeSqlable {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        use std::mem::size_of;
+
+        let blob = value.as_blob()?;
+
+        if blob.len() != size_of::<u64>() + size_of::<u32>() {
+            return Err(FromSqlError::InvalidBlobSize {
+                expected_size: size_of::<u64>() + size_of::<u32>(),
+                blob_size: blob.len(),
+            });
+        }
+
+        let mut secs_buf = [0u8; size_of::<u64>()];
+        let mut subsec_nanos_buf = [0u8; size_of::<u32>()];
+
+        secs_buf.copy_from_slice(&blob[..size_of::<u64>()]);
+        subsec_nanos_buf.copy_from_slice(&blob[size_of::<u64>()..]);
+
+        let secs = u64::from_be_bytes(secs_buf);
+        let subsec_nanos = u32::from_be_bytes(subsec_nanos_buf);
+
         Ok(SystemTimeSqlable(
-            SystemTime::UNIX_EPOCH + Duration::from_secs(u64::column_result(value)?),
+            SystemTime::UNIX_EPOCH + Duration::new(secs, subsec_nanos),
         ))
     }
 }
@@ -201,7 +223,7 @@ impl Db {
                 state_root_hash BLOB NOT NULL,
                 transactions_root_hash BLOB NOT NULL,
                 receipts_root_hash BLOB NOT NULL,
-                timestamp NUMERIC NOT NULL,
+                timestamp BLOB NOT NULL,
                 gas_used INTEGER NOT NULL,
                 gas_limit INTEGER NOT NULL,
                 qc BLOB NOT NULL,
