@@ -98,8 +98,8 @@ impl ToSql for SystemTimeSqlable {
 
         let mut buf = [0u8; size_of::<u64>() + size_of::<u32>()];
 
-        buf[..size_of::<u64>()].copy_from_slice(&mut since_epoch.as_secs().to_be_bytes()[..]);
-        buf[size_of::<u64>()..].copy_from_slice(&mut since_epoch.subsec_nanos().to_be_bytes()[..]);
+        buf[..size_of::<u64>()].copy_from_slice(&since_epoch.as_secs().to_be_bytes()[..]);
+        buf[size_of::<u64>()..].copy_from_slice(&since_epoch.subsec_nanos().to_be_bytes()[..]);
 
         Ok(ToSqlOutput::from(buf.to_vec()))
     }
