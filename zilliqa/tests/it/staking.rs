@@ -10,7 +10,7 @@ use ethers::{
 use libp2p::PeerId;
 use primitive_types::H160;
 use tracing::{info, trace};
-use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
+use zilliqa::{contracts, crypto::{NodePublicKey, NodeSignature}, state::contract_addr};
 
 use crate::{fund_wallet, LocalRpcClient, Network, Wallet};
 
@@ -39,6 +39,7 @@ async fn deposit_stake(
     peer_id: PeerId,
     stake: u128,
     reward_address: H160,
+    signature : NodeSignature,
 ) {
     // Transfer the new validator enough ZIL to stake.
     let tx = TransactionRequest::pay(reward_address, stake);
@@ -54,7 +55,7 @@ async fn deposit_stake(
                 .encode_input(&[
                     Token::Bytes(key.as_bytes()),
                     Token::Bytes(peer_id.to_bytes()),
-                    Token::Bytes(vec![]),
+                    Token::Bytes(signature.to_bytes()),
                     Token::Address(reward_address),
                 ])
                 .unwrap(),
@@ -154,6 +155,9 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     assert_eq!(stakers.len(), 4);
     assert!(!stakers.contains(&new_validator_key.node_public_key()));
 
+    let signature =
+        new_validator_key.sign(new_validator_key.node_public_key().as_bytes().as_slice());
+
     deposit_stake(
         &mut network,
         &wallet,
@@ -161,6 +165,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         new_validator_key.to_libp2p_keypair().public().to_peer_id(),
         32 * 10u128.pow(18),
         reward_address,
+        signature
     )
     .await;
 
@@ -199,6 +204,9 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     let new_validator_key = network.get_node_raw(index).secret_key;
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
 
+    let signature =
+        new_validator_key.sign(new_validator_key.node_public_key().as_bytes().as_slice());
+
     deposit_stake(
         &mut network,
         &wallet,
@@ -206,6 +214,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
         new_validator_key.to_libp2p_keypair().public().to_peer_id(),
         1024 * 10u128.pow(18),
         reward_address,
+        signature,
     )
     .await;
 
