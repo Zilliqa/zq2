@@ -12,6 +12,8 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
 
     pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
+    pub static TEMP_REMOVE_STAKER: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("tempRemoveStaker").unwrap().clone());
     pub static DEPOSIT: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("deposit").unwrap().clone());
     pub static SET_STAKE: Lazy<Function> =
