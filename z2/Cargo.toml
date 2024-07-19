@@ -34,7 +34,7 @@ colored = "2.1.0"
 eth_trie = {version = "0.1.0", path = "../eth-trie.rs"}
 ethabi = "18.0.0"
 ethereum = "0.15.0"
-ethers = "2.0.14"
+ethers = {version="2.0.14", features = ["ws"]}
 futures = "0.3.30"
 git2 = "0.18.3"
 hex = "0.4.3"
@@ -73,4 +73,4 @@ zilliqa-rs = "0.3.1"
 zqutils = {git = "https://github.com/zilliqa/zq-base"}
 
 [build-dependencies]
-prost-build = "0.12.3"
+prost-build = "0.13.1"
