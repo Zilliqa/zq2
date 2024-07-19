@@ -49,6 +49,15 @@ pub struct BlockStore {
     /// handle pending requests made by ourselves that arrive out-of-order, while also giving some extra space for
     /// newly created blocks that arrive while we are syncing.
     buffered: LruCache<Hash, Proposal>,
+    /// A buffer for proposals we've requested and received, but not yet committed to the chain. Received blocks are
+    /// added to this buffer if they are within our currently requested range of views. This buffer is necessary
+    /// because blocks may arrive out of order. Blocks are indexed by their parent hash. The capacity of this buffer is
+    /// limited to `max_blocks_in_flight`. Assuming no malicious nodes send us false blocks, tihs capacity should never
+    /// be exceeded.
+    in_flight: LruCache<Hash, Proposal>,
+    /// A buffer for newly received block proposals, which we haven't made explicit requests for. The proposals in this
+    /// buffer must form a chain.
+    new_proposals: Vec<Proposal>,
     message_sender: MessageSender,
 }
 
@@ -79,7 +88,20 @@ impl BlockStore {
     pub fn buffer_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
         let view = proposal.view();
 
-        self.buffered.push(proposal.header.parent_hash, proposal);
+        if view <= self.highest_committed_view() {
+            // Don't bother storing this block, we've already committed it (or something with the same view).
+            return Ok(());
+        }
+        if view > self.requested_view {
+            // This is not a block we've requested, so store it in the `new_proposals` buffer. Only store it if it is
+            // consecutive with existing buffered proposals.
+            if self.new_proposals.last().map(|p| proposal.header.parent_hash == p.hash()).unwrap_or(true) {
+                self.new_proposals.push(proposal);
+            }
+        } else {
+            // This is a block we've requested, so store it in the `in_flight` buffer.
+            self.in_flight.push(proposal.header.parent_hash, proposal);
+        }
 
         // If this is the highest block we've seen, remember its view.
         if view > self.highest_known_view {
@@ -107,9 +129,9 @@ impl BlockStore {
         Some(*best)
     }
 
-    pub fn request_missing_blocks(&mut self) -> Result<()> {
-        // Get the highest view we currently have committed to our chain.
-        let current_view = self
+    /// Get the highest view we currently have committed to our chain.
+    fn highest_committed_view(&self) -> Result<u64> {
+        let view = self
             .get_block_by_number(
                 self.db
                     .get_highest_block_number()?
@@ -117,6 +139,12 @@ impl BlockStore {
             )?
             .ok_or_else(|| anyhow!("missing highest block"))?
             .view();
+        Ok(view)
+    }
+
+    pub fn request_missing_blocks(&mut self) -> Result<()> {
+        let current_view = self.highest_committed_view();
+
         // We've already got any block we've previously committed, so don't request them again.
         if self.requested_view < current_view {
             self.requested_view = current_view;
@@ -203,8 +231,12 @@ impl BlockStore {
             }
         }
 
-        if let Some(child) = self.buffered.pop(&block.hash()) {
+        if let Some(child) = self.in_flight.pop(&block.hash()) {
             return Ok(Some(child));
+        }
+
+        if self.new_proposals.first().map(|p| p.header.parent_hash == block.hash()).unwrap_or(false) {
+            return Ok(Some(self.new_proposals.remove(0)));
         }
 
         Ok(None)
