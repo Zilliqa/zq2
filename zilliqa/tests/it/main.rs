@@ -2,6 +2,7 @@ use alloy_primitives::Address;
 use ethers::{
     abi::Tokenize,
     providers::{Middleware, PubsubClient},
+    types::TransactionRequest,
 };
 use primitive_types::U256;
 use serde_json::{value::RawValue, Value};
@@ -253,7 +254,7 @@ impl Network {
                     k.node_public_key(),
                     k.to_libp2p_keypair().public().to_peer_id(),
                     stake.into(),
-                    Address::random_with(rng.lock().unwrap().deref_mut()),
+                    Address::from_private_key(&k.as_ecdsa()),
                 )
             })
             .collect();
@@ -1159,6 +1160,18 @@ async fn deploy_contract_with_args<T: Tokenize>(
 
         (hash, abi)
     }
+}
+
+async fn fund_wallet(network: &mut Network, from_wallet: &Wallet, to_wallet: &Wallet) {
+    let hash = from_wallet
+        .send_transaction(
+            TransactionRequest::pay(to_wallet.address(), 100_000_000_000_000_000_000u128),
+            None,
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(from_wallet, hash, 100).await;
 }
 
 /// An implementation of [JsonRpcClient] which sends requests directly to an [RpcModule], without making any network

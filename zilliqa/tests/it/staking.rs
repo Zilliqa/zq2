@@ -12,7 +12,7 @@ use primitive_types::H160;
 use tracing::{info, trace};
 use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
 
-use crate::{LocalRpcClient, Network};
+use crate::{fund_wallet, LocalRpcClient, Network, Wallet};
 
 async fn check_miner_got_reward(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
@@ -61,6 +61,18 @@ async fn deposit_stake(
         );
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
     network.run_until_receipt(wallet, hash, 80).await;
+}
+
+async fn remove_staker(network: &mut Network, wallet: &Wallet, key: NodePublicKey) {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .data(
+            contracts::deposit::TEMP_REMOVE_STAKER
+                .encode_input(&[Token::Bytes(key.as_bytes())])
+                .unwrap(),
+        );
+    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    network.run_until_receipt(wallet, hash, 50).await;
 }
 
 async fn get_stakers(
@@ -245,4 +257,36 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
             .count()
             >= 6
     );
+}
+
+#[zilliqa_macros::test]
+async fn validators_can_leave(mut network: Network) {
+    let genesis_wallet = network.genesis_wallet().await;
+
+    let validator_to_remove = network.random_index();
+
+    let existing_validator_key = network.get_node_raw(validator_to_remove).secret_key;
+    let validator_wallet = network
+        .wallet_from_key(existing_validator_key.as_ecdsa())
+        .await;
+    fund_wallet(&mut network, &genesis_wallet, &validator_wallet).await;
+
+    let stakers = get_stakers(&genesis_wallet).await;
+    assert_eq!(stakers.len(), 4);
+    assert!(stakers.contains(&existing_validator_key.node_public_key()));
+
+    remove_staker(
+        &mut network,
+        &validator_wallet,
+        existing_validator_key.node_public_key(),
+    )
+    .await;
+
+    let stakers = get_stakers(&genesis_wallet).await;
+    assert_eq!(stakers.len(), 3);
+    assert!(!stakers.contains(&existing_validator_key.node_public_key()));
+
+    network
+        .run_until_block(&genesis_wallet, 5.into(), 500)
+        .await;
 }

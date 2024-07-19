@@ -965,6 +965,8 @@ impl Consensus {
         let mut tx_index_in_block = 0;
         let mut applied_transactions = Vec::new();
 
+        self.apply_rewards(&committee, &parent, block_view + 1, &qc.cosigned)?;
+
         while let Some(tx) = self.transaction_pool.best_transaction() {
             let result = self.apply_transaction(tx.clone(), parent_header, inspector::noop())?;
 
@@ -1019,8 +1021,6 @@ impl Consensus {
 
         let applied_transaction_hashes: Vec<_> =
             applied_transactions.iter().map(|tx| tx.hash).collect();
-
-        self.apply_rewards(&committee, &parent, block_view + 1, &qc.cosigned)?;
 
         let proposal = Block::from_qc(
             self.secret_key,
