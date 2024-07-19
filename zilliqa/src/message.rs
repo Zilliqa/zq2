@@ -10,7 +10,6 @@ use bitvec::{bitvec, order::Msb0};
 use itertools::Either;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use tracing::{error, warn};
 
 use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
@@ -415,7 +414,10 @@ pub struct BlockHeader {
 
 impl BlockHeader {
     pub fn genesis_hash() -> Hash {
-        Hash::compute([&0_u64.to_be_bytes(), Hash::ZERO.as_bytes()])
+        Hash::builder()
+            .with(0_u64.to_be_bytes())
+            .with(Hash::ZERO.as_bytes())
+            .finalize()
     }
 
     pub fn genesis(state_root_hash: Hash) -> Self {
@@ -672,14 +674,13 @@ impl Block {
             .with(self.state_root_hash().as_bytes())
             .with(self.transactions_root_hash().as_bytes())
             .with(self.receipts_root_hash().as_bytes())
-            // .with(
-            //     &self
-            //         .timestamp()
-            //         .duration_since(SystemTime::UNIX_EPOCH)
-            //         .unwrap()
-            //         .as_nanos()
-            //         .to_be_bytes(),
-            // )
+            .with(
+                self.timestamp()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+                    .to_be_bytes(),
+            )
             .with(self.gas_used().0.to_be_bytes())
             .with(self.gas_limit().0.to_be_bytes())
             .with(self.qc.compute_hash().as_bytes())

@@ -285,13 +285,13 @@ impl Hash {
         &self.0
     }
 
-    pub fn compute<T: AsRef<[S]>, S: AsRef<[u8]>>(preimages: T) -> Hash {
-        let mut hasher = Keccak256::new();
-        for preimage in preimages.as_ref() {
-            hasher.update(preimage.as_ref());
-        }
-        Self(hasher.finalize().into())
-    }
+    // pub fn compute<T: AsRef<[S]>, S: AsRef<[u8]>>(preimages: T) -> Hash {
+    //     let mut hasher = Keccak256::new();
+    //     for preimage in preimages.as_ref() {
+    //         hasher.update(preimage.as_ref());
+    //     }
+    //     Self(hasher.finalize().into())
+    // }
 }
 
 impl From<B256> for Hash {

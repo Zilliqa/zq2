@@ -996,7 +996,7 @@ impl Consensus {
 
             transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
 
-            let receipt_hash = receipt.hash();
+            let receipt_hash = receipt.compute_hash();
             receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
             tx_index_in_block += 1;
@@ -2163,7 +2163,7 @@ impl Consensus {
 
             let receipt = Self::create_txn_receipt(result, tx_hash, tx_index, cumulative_gas_used);
 
-            let receipt_hash = receipt.hash();
+            let receipt_hash = receipt.compute_hash();
             receipts_trie
                 .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())
                 .unwrap();
