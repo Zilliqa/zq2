@@ -103,7 +103,7 @@ resource "google_compute_managed_ssl_certificate" "apps" {
 resource "google_compute_instance_group" "apps" {
   name      = "${var.network_name}-apps"
   zone      = "${var.region}-a"
-  instances = module.apps[*].self_link
+  instances = module.apps[0].self_link
 
 
   named_port {
