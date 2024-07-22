@@ -29,6 +29,7 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
+    consensus::Validator,
     contracts,
     crypto::{Hash, NodePublicKey},
     db::TrieStorage,
@@ -414,7 +415,7 @@ impl State {
                 gas_limit: U256::from(self.block_gas_limit.0),
                 basefee: U256::from(self.gas_price),
                 difficulty: U256::from(1),
-                prevrandao: Some(B256::ZERO),
+                prevrandao: Some(Hash::compute([current_block.view.to_be_bytes()]).into()),
                 blob_excess_gas_and_price: None,
             })
             .with_external_context(inspector)
@@ -642,6 +643,26 @@ impl State {
         }
 
         Ok(())
+    }
+
+    pub fn leader_at_block(&self, block: &Block) -> Result<NodePublicKey> {
+        let data = contracts::deposit::LEADER.encode_input(&[])?;
+
+        let leader = self.call_contract(
+            Address::ZERO,
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            0,
+            block.header,
+        )?;
+
+        Ok(NodePublicKey::from_bytes(
+            &contracts::deposit::LEADER.decode_output(&leader).unwrap()[0]
+                .clone()
+                .into_bytes()
+                .unwrap(),
+        )?)
     }
 
     pub fn get_stakers_at_block(&self, block: &Block) -> Result<Vec<NodePublicKey>> {

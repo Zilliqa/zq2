@@ -10,6 +10,11 @@ struct Staker {
     bytes peerId;
 }
 
+struct Validator {
+    bytes publicKey;
+    bytes peerId;
+}
+
 contract Deposit {
     bytes[] _stakerKeys;
     mapping(bytes => Staker) _stakersMap;
@@ -19,6 +24,25 @@ contract Deposit {
 
     constructor(uint256 minimumStake) {
         _minimumStake = minimumStake;
+    }
+
+    function leader() public view returns (bytes memory) {
+        // Get a random number in the inclusive range of 0 to (totalStake - 1)
+        uint256 position = uint256(block.prevrandao) % totalStake;
+        uint256 cummulative_stake = 0;
+
+        for (uint256 i = 0; i < _stakerKeys.length; i++) {
+            bytes storage stakerKey = _stakerKeys[i];
+            Staker storage staker = _stakersMap[stakerKey];
+
+            cummulative_stake += staker.balance;
+
+            if (position < cummulative_stake) {
+                return stakerKey;
+            }
+        }
+
+        revert("Unable to select next leader");
     }
 
     // Temporary function to manually remove a staker. Can be called by the reward address of any staker with more than

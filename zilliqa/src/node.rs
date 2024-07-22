@@ -684,11 +684,7 @@ impl Node {
         let parent = self
             .get_block(header.parent_hash)?
             .ok_or_else(|| anyhow!("missing parent: {}", header.parent_hash))?;
-        let proposer = self
-            .consensus
-            .leader_at_block(&parent, header.view)
-            .unwrap()
-            .public_key;
+        let proposer = self.consensus.leader_at_block(&parent).unwrap().public_key;
 
         self.consensus.state().get_reward_address(proposer)
     }
