@@ -74,7 +74,7 @@ module "apps" {
   name                  = "${var.network_name}-apps-${count.index}"
   service_account_email = google_service_account.apps.email
   network_name          = local.network_name
-  node_zone             = data.google_compute_zones.zones.names.0
+  node_zone             = data.google_compute_zones.zones.names[0]
   subnetwork_name       = data.google_compute_subnetwork.default.name
   otterscan_image       = var.otterscan_image
   spout_image           = var.spout_image

@@ -16,19 +16,21 @@ variable "region" {
 }
 
 variable "node_zone" {
-  type     = string
-  nullable = true
+  description = "(Optional) The GCP zone to provision the node in"
+  type        = string
+  nullable    = true
 }
 
-variable "eth_chain_id" {
-  description = "ZQ2 EVM Chain ID"
-  type        = number
-  nullable    = false
-}
+# variable "eth_chain_id" {
+#   description = "ZQ2 EVM Chain ID"
+#   type        = number
+#   nullable    = false
+# }
 
 variable "subdomain" {
-  type     = string
-  nullable = false
+  description = "The subdomain associated to the nodes"
+  type        = string
+  nullable    = false
 }
 
 variable "network_name" {
@@ -73,6 +75,12 @@ variable "node_count" {
 
 variable "secret_keys" {
   description = "(Optional) ZQ2 Nodes secret keys"
+  type        = list(string)
+  nullable    = false
+}
+
+variable "checkpoint_secret_keys" {
+  description = "(Optional) ZQ2 Checkpoint Nodes secret keys"
   type        = list(string)
   nullable    = false
 }
@@ -127,7 +135,8 @@ variable "distributed_validators" {
 }
 
 variable "apps_node_type" {
-  type     = string
-  default  = "e2-standard-2"
-  nullable = false
+  description = "(Optional) The size of the Nodes app"
+  type        = string
+  default     = "e2-standard-2"
+  nullable    = false
 }

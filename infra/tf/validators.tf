@@ -11,21 +11,21 @@ resource "google_project_iam_member" "validators_metric_writer" {
   count   = length(var.distributed_validators) >= 1 ? 1 : 0
   project = var.project_id
   role    = "roles/monitoring.metricWriter"
-  member  = "serviceAccount:${google_service_account.validators.0.email}"
+  member  = "serviceAccount:${google_service_account.validators[0].email}"
 }
 
 resource "google_project_iam_member" "validators_log_writer" {
   count   = length(var.distributed_validators) >= 1 ? 1 : 0
   project = var.project_id
   role    = "roles/logging.logWriter"
-  member  = "serviceAccount:${google_service_account.validators.0.email}"
+  member  = "serviceAccount:${google_service_account.validators[0].email}"
 }
 
 resource "google_project_iam_member" "validators_artifact_registry_reader" {
   count   = length(var.distributed_validators) >= 1 ? 1 : 0
   project = var.gcp_docker_registry_project_id
   role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:${google_service_account.validators.0.email}"
+  member  = "serviceAccount:${google_service_account.validators[0].email}"
 }
 
 data "google_compute_zones" "validators_zones" {
@@ -42,13 +42,13 @@ module "validators" {
   vm_num = each.value.vm_num
 
   name                  = "${var.network_name}-node-validator-${each.key}"
-  service_account_email = google_service_account.validators.0.email
+  service_account_email = google_service_account.validators[0].email
   network_name          = local.network_name
   node_zone             = each.value.vm_zone != "" ? each.value.vm_zone : sort(data.google_compute_zones.validators_zones[each.key].names)[each.key % length(data.google_compute_zones.validators_zones[each.key].names)]
   subnetwork_name       = each.value.vpc_subnet_name
   docker_image          = var.docker_image
   persistence_url       = var.persistence_url
   role                  = "validator"
-  secret_key      = each.value.node_keys[each.key]
-  zq_network_name = var.network_name
+  secret_key            = each.value.node_keys[each.key]
+  zq_network_name       = var.network_name
 }

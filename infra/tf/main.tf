@@ -66,22 +66,22 @@ resource "google_project_iam_member" "artifact_registry_reader" {
   member  = "serviceAccount:${google_service_account.node.email}"
 }
 
-data "external" "genesis_key_converted" {
-  program     = ["cargo", "run", "--bin", "convert-key"]
-  working_dir = "${path.module}/../.."
-  query = {
-    secret_key = var.genesis_key
-  }
-}
+# data "external" "genesis_key_converted" {
+#   program     = ["cargo", "run", "--bin", "convert-key"]
+#   working_dir = "${path.module}/../.."
+#   query = {
+#     secret_key = var.genesis_key
+#   }
+# }
 
 
-data "external" "bootstrap_key_converted" {
-  program     = ["cargo", "run", "--bin", "convert-key"]
-  working_dir = "${path.module}/../.."
-  query = {
-    secret_key = var.bootstrap_key
-  }
-}
+# data "external" "bootstrap_key_converted" {
+#   program     = ["cargo", "run", "--bin", "convert-key"]
+#   working_dir = "${path.module}/../.."
+#   query = {
+#     secret_key = var.bootstrap_key
+#   }
+# }
 
 
 module "bootstrap_node" {
@@ -89,7 +89,7 @@ module "bootstrap_node" {
 
   name                  = "${var.network_name}-bootstrap-node"
   service_account_email = google_service_account.node.email
-  node_zone             = var.node_zone != "" ? var.node_zone : data.google_compute_zones.zones.names.0
+  node_zone             = var.node_zone != "" ? var.node_zone : data.google_compute_zones.zones.names[0]
   network_name          = local.network_name
   subnetwork_name       = data.google_compute_subnetwork.default.name
   docker_image          = var.docker_image
@@ -100,7 +100,6 @@ module "bootstrap_node" {
   role                  = "bootstrap"
   labels                = local.labels
 }
-
 
 module "node" {
   source = "./modules/node"
@@ -122,9 +121,9 @@ resource "google_project_service" "osconfig" {
   service = "osconfig.googleapis.com"
 }
 
-resource "google_compute_instance_group" "ig_api_zn-a" {
+resource "google_compute_instance_group" "ig_api_zn_a" {
   name      = "${var.network_name}-api-zone-a"
-  zone      = var.node_zone != "" ? var.node_zone : data.google_compute_zones.zones.names.0
+  zone      = var.node_zone != "" ? var.node_zone : data.google_compute_zones.zones.names[0]
   instances = module.bootstrap_node.self_link
 
 
@@ -155,7 +154,7 @@ resource "google_compute_backend_service" "api" {
   enable_cdn            = false
   session_affinity      = "CLIENT_IP"
   backend {
-    group           = google_compute_instance_group.ig_api_zn-a.self_link
+    group           = google_compute_instance_group.ig_api_zn_a.self_link
     balancing_mode  = "UTILIZATION"
     capacity_scaler = 1.0
   }
