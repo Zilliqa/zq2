@@ -19,7 +19,7 @@ use crate::{
     block_store::BlockStore,
     blockhooks,
     cfg::NodeConfig,
-    crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
+    crypto::{verify_messages, Hash, NodePublicKey, NodePublicKeyRaw, NodeSignature, SecretKey},
     db::Db,
     exec::TransactionApplyResult,
     inspector::{self, ScillaInspector, TouchedAddressInspector},
@@ -555,7 +555,7 @@ impl Consensus {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}, head: {:?}", parent.state_root_hash(), self.state.root_hash()?, head_block);
                 self.state.set_to_root(parent.state_root_hash().into());
             }
-            let stakers: Vec<_> = self.state.get_stakers_bytes()?;
+            let stakers: Vec<_> = self.state.get_stakers_raw()?;
 
             // Only tell the block store where this block came from if it wasn't from ourselves.
             let from = (self.peer_id() != from).then_some(from);
@@ -638,17 +638,17 @@ impl Consensus {
         view: u64,
         cosigned: &BitSlice,
     ) -> Result<()> {
-        self.apply_rewards_from_committee_bytes(
-            &committee.iter().map(|k| k.as_bytes()).collect::<Vec<_>>(),
+        self.apply_rewards_raw(
+            &committee.iter().map(|k| (*k).into()).collect::<Vec<_>>(),
             parent_block,
             view,
             cosigned,
         )
     }
 
-    fn apply_rewards_from_committee_bytes(
+    fn apply_rewards_raw(
         &mut self,
-        committee: &[Vec<u8>],
+        committee: &[NodePublicKeyRaw],
         parent_block: &Block,
         view: u64,
         cosigned: &BitSlice,
@@ -658,11 +658,8 @@ impl Consensus {
         let rewards_per_block =
             *self.config.consensus.rewards_per_hour / self.config.consensus.blocks_per_hour as u128;
 
-        let proposer_bytes = self.leader_at_block_bytes(parent_block, view).unwrap().0;
-        if let Some(proposer_address) = self
-            .state
-            .get_reward_address_from_public_key_bytes(proposer_bytes)?
-        {
+        let proposer_bytes = self.leader_at_block_raw(parent_block, view).unwrap().0;
+        if let Some(proposer_address) = self.state.get_reward_address_raw(proposer_bytes)? {
             let reward = rewards_per_block / 2;
             self.state
                 .mutate_account(proposer_address, |a| a.balance += reward)?;
@@ -674,13 +671,10 @@ impl Consensus {
             .enumerate()
             .filter(|(i, _)| cosigned[*i])
             .map(|(_, pub_key)| {
-                let reward_address = self
-                    .state
-                    .get_reward_address_from_public_key_bytes(pub_key.clone())
-                    .unwrap();
+                let reward_address = self.state.get_reward_address_raw(pub_key.clone()).unwrap();
                 let stake = self
                     .state
-                    .get_stake_from_public_key_bytes(pub_key.clone())
+                    .get_stake_raw(pub_key.clone())
                     .unwrap()
                     .unwrap()
                     .get();
@@ -963,7 +957,7 @@ impl Consensus {
         let block_hash = block.hash();
         let block_view = block.view();
 
-        let committee: Vec<_> = self.state.get_stakers_at_block_bytes(&block)?;
+        let committee: Vec<_> = self.state.get_stakers_at_block_raw(&block)?;
 
         let committee_size = committee.len();
 
@@ -1035,7 +1029,7 @@ impl Consensus {
         let applied_transaction_hashes: Vec<_> =
             applied_transactions.iter().map(|(tx, _)| tx.hash).collect();
 
-        self.apply_rewards_from_committee_bytes(&committee, &parent, block_view + 1, &qc.cosigned)?;
+        self.apply_rewards_raw(&committee, &parent, block_view + 1, &qc.cosigned)?;
 
         let proposal = Block::from_qc(
             self.secret_key,
@@ -1609,7 +1603,7 @@ impl Consensus {
 
         let committee = self
             .state
-            .get_stakers_at_block_bytes(&parent)
+            .get_stakers_at_block_raw(&parent)
             .map_err(|e| (e, false))?;
 
         if verified.is_err() {
@@ -1622,8 +1616,8 @@ impl Consensus {
             .map_err(|e| (e, false))?;
 
         let committee: Vec<_> = committee
-            .iter()
-            .map(|k| NodePublicKey::from_bytes(k).unwrap())
+            .into_iter()
+            .map(|k| k.try_into().unwrap())
             .collect();
 
         // Verify the block's QC signature - note the parent should be the committee the QC
@@ -1902,7 +1896,11 @@ impl Consensus {
 
     // TODO: Consider if these checking functions should be implemented at the deposit contract level instead?
 
-    fn check_quorum_in_bits(&self, cosigned: &BitSlice, committee: &[Vec<u8>]) -> Result<()> {
+    fn check_quorum_in_bits(
+        &self,
+        cosigned: &BitSlice,
+        committee: &[NodePublicKeyRaw],
+    ) -> Result<()> {
         let (total_weight, cosigned_sum) = committee
             .iter()
             .enumerate()
@@ -1910,7 +1908,7 @@ impl Consensus {
                 (
                     i,
                     self.state
-                        .get_stake_from_public_key_bytes(public_key.clone())
+                        .get_stake_raw(public_key.clone())
                         .unwrap()
                         .unwrap()
                         .get(),
@@ -1959,30 +1957,33 @@ impl Consensus {
             }
         }
 
+        self.leader_at_block_raw(block, view)
+            .map(|leader| Validator {
+                public_key: leader.0.try_into().unwrap(),
+                peer_id: leader.1,
+            })
+    }
+
+    pub fn leader_at_block_raw(
+        &self,
+        block: &Block,
+        view: u64,
+    ) -> Option<(NodePublicKeyRaw, PeerId)> {
         let Ok(state_at) = self.try_get_state_at(block.number()) else {
             return None;
         };
-        let leader = self.leader(&state_at, view);
+        let leader = self.leader_raw(&state_at, view);
 
         Some(leader)
     }
 
-    pub fn leader_at_block_bytes(&self, block: &Block, view: u64) -> Option<(Vec<u8>, PeerId)> {
-        let Ok(state_at) = self.try_get_state_at(block.number()) else {
-            return None;
-        };
-        let leader = self.leader_bytes(&state_at, view);
-
-        Some(leader)
-    }
-
-    pub fn leader_bytes(&self, state: &State, view: u64) -> (Vec<u8>, PeerId) {
-        let committee = state.get_stakers_bytes().unwrap();
+    pub fn leader_raw(&self, state: &State, view: u64) -> (NodePublicKeyRaw, PeerId) {
+        let committee = state.get_stakers_raw().unwrap();
 
         let mut rng = ChaCha8Rng::seed_from_u64(view);
         let dist = WeightedIndex::new(committee.iter().map(|pub_key| {
             let stake = state
-                .get_stake_from_public_key_bytes(pub_key.clone())
+                .get_stake_raw(pub_key.clone())
                 .unwrap()
                 .context("Committee member has no stake")
                 .unwrap();
@@ -1994,7 +1995,7 @@ impl Consensus {
 
         let peer_id = self
             .state
-            .get_peer_id_from_public_key_bytes(public_key.clone())
+            .get_peer_id_raw(public_key.clone())
             .unwrap()
             .context("Unable to get peer_id from staking contract!")
             .unwrap();
@@ -2003,30 +2004,10 @@ impl Consensus {
     }
 
     pub fn leader(&self, state: &State, view: u64) -> Validator {
-        let committee = state.get_stakers_bytes().unwrap();
-
-        let mut rng = ChaCha8Rng::seed_from_u64(view);
-        let dist = WeightedIndex::new(committee.iter().map(|pub_key| {
-            let stake = state
-                .get_stake_from_public_key_bytes(pub_key.clone())
-                .unwrap()
-                .context("Committee member has no stake")
-                .unwrap();
-            stake.get()
-        }))
-        .unwrap();
-        let index = dist.sample(&mut rng);
-        let public_key = committee.get(index).unwrap();
-
-        let peer_id = self
-            .state
-            .get_peer_id_from_public_key_bytes(public_key.clone())
-            .unwrap()
-            .context("Unable to get peer_id from staking contract!")
-            .unwrap();
+        let (public_key_raw, peer_id) = self.leader_raw(state, view);
 
         Validator {
-            public_key: NodePublicKey::from_bytes(public_key).unwrap(),
+            public_key: public_key_raw.try_into().unwrap(),
             peer_id,
         }
     }
@@ -2166,7 +2147,7 @@ impl Consensus {
                 .iter()
                 .map(|tx_hash| self.get_transaction_by_hash(*tx_hash).unwrap().unwrap().tx)
                 .collect();
-            let committee: Vec<_> = self.state.get_stakers_at_block_bytes(&block_pointer)?;
+            let committee: Vec<_> = self.state.get_stakers_at_block_raw(&block_pointer)?;
             self.execute_block(None, &block_pointer, transactions, &committee)?;
         }
 
@@ -2178,7 +2159,7 @@ impl Consensus {
         from: Option<PeerId>,
         block: &Block,
         transactions: Vec<SignedTransaction>,
-        committee: &[Vec<u8>],
+        committee: &[NodePublicKeyRaw],
     ) -> Result<()> {
         debug!("Executing block: {:?}", block.header.hash);
 
@@ -2208,12 +2189,7 @@ impl Consensus {
             }
         }
 
-        self.apply_rewards_from_committee_bytes(
-            committee,
-            &parent,
-            block.view(),
-            &block.qc.cosigned,
-        )?;
+        self.apply_rewards_raw(committee, &parent, block.view(), &block.qc.cosigned)?;
 
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
