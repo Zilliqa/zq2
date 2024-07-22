@@ -72,6 +72,9 @@ pub struct DeployerNewArgs {
     /// ZQ2 network name
     network_name: Option<String>,
     #[clap(long)]
+    /// ZQ2 EVM chain ID
+    eth_chain_id: Option<u64>,
+    #[clap(long)]
     /// GCP project-id where the network is running
     project_id: Option<String>,
     #[clap(long, value_enum, value_delimiter = ',')]
@@ -432,8 +435,11 @@ async fn main() -> Result<()> {
                     .roles
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("--roles is a mandatory argument"))?;
+                let eth_chain_id = arg
+                    .eth_chain_id
+                    .ok_or_else(|| anyhow::anyhow!("--eth-chain-id is a mandatory argument"))?;
 
-                plumbing::run_deployer_new(&network_name, &project_id, roles)
+                plumbing::run_deployer_new(&network_name, eth_chain_id, &project_id, roles)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer new command: {}", err)
