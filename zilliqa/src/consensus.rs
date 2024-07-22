@@ -91,6 +91,13 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
+#[derive(Debug)]
+struct CachedLeader {
+    block_number: u64,
+    view: u64,
+    next_leader: Validator,
+}
+
 /// The consensus algorithm is pipelined fast-hotstuff, as given in this paper: https://arxiv.org/pdf/2010.11454.pdf
 ///
 /// The algorithm can be condensed down into the following explaination:
@@ -128,7 +135,7 @@ pub struct Consensus {
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub block_store: BlockStore,
-    leader_cache: RefCell<Option<(u64, u64, Validator)>>,
+    latest_leader_cache: RefCell<Option<CachedLeader>>,
     votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128, bool)>,
     /// Votes for a block we don't have stored. They are retained in case we recieve the block later.
     // TODO(#719): Consider how to limit the size of this.
@@ -264,7 +271,7 @@ impl Consensus {
             secret_key,
             config,
             block_store,
-            leader_cache: RefCell::new(None),
+            latest_leader_cache: RefCell::new(None),
             message_sender,
             reset_timeout,
             votes: BTreeMap::new(),
@@ -610,11 +617,11 @@ impl Consensus {
                     return Ok(None);
                 };
 
-                self.leader_cache.replace(Some((
-                    block.number(),
-                    self.view.get_view(),
+                self.latest_leader_cache.replace(Some(CachedLeader {
+                    block_number: block.number(),
+                    view: self.view.get_view(),
                     next_leader,
-                )));
+                }));
 
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
@@ -1951,9 +1958,14 @@ impl Consensus {
     }
 
     pub fn leader_at_block(&self, block: &Block, view: u64) -> Option<Validator> {
-        if let Some((cached_block_num, cached_view, leader)) = *self.leader_cache.borrow() {
-            if cached_block_num == block.number() && cached_view == view {
-                return Some(leader);
+        if let Some(CachedLeader {
+            block_number: cached_block_number,
+            view: cached_view,
+            next_leader,
+        }) = *self.latest_leader_cache.borrow()
+        {
+            if cached_block_number == block.number() && cached_view == view {
+                return Some(next_leader);
             }
         }
 
