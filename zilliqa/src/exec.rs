@@ -18,8 +18,8 @@ use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
     primitives::{
-        AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg, Output,
-        ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
+        AccountInfo, BlobExcessGasAndPrice, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason,
+        HandlerCfg, Output, ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
     },
     Database, DatabaseRef, Evm, Inspector,
 };
@@ -326,7 +326,7 @@ const SCILLA_TRANSFER: ScillaGas = ScillaGas(50);
 const SCILLA_INVOKE_CHECKER: ScillaGas = ScillaGas(100);
 const SCILLA_INVOKE_RUNNER: ScillaGas = ScillaGas(300);
 
-const SPEC_ID: SpecId = SpecId::SHANGHAI;
+const SPEC_ID: SpecId = SpecId::PRAGUE;
 
 pub enum BaseFeeCheck {
     /// Transaction gas price will be validated to be at least the block gas price.
@@ -415,7 +415,7 @@ impl State {
                 basefee: U256::from(self.gas_price),
                 difficulty: U256::from(1),
                 prevrandao: Some(B256::ZERO),
-                blob_excess_gas_and_price: None,
+                blob_excess_gas_and_price: Some(BlobExcessGasAndPrice::new(1)), // FIXME: Determine default value
             })
             .with_external_context(inspector)
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
