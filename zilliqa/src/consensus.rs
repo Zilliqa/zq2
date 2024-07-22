@@ -1921,6 +1921,7 @@ impl Consensus {
         let Ok(state_at) = self.try_get_state_at(block.number()) else {
             return None;
         };
+
         Some(self.leader(&state_at, view))
     }
 
@@ -1940,8 +1941,7 @@ impl Consensus {
         let index = dist.sample(&mut rng);
         let public_key = *committee.get(index).unwrap();
 
-        let peer_id = self
-            .state
+        let peer_id = state
             .get_peer_id(public_key)
             .unwrap()
             .context("Unable to get peer_id from staking contract!")
