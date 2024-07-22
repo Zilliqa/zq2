@@ -865,11 +865,7 @@ impl Consensus {
                     // We propose new block immediately if there's something in mempool or it's the first view
                     // Otherwise the block will be proposed on timeout
 
-                    let transactions_count = self.transaction_pool.size();
-
-                    if (self.view.get_view() == 1)
-                        || (block_view + 1 == self.view.get_view() && transactions_count > 0)
-                    {
+                    if self.view.get_view() == 1 || self.transaction_pool.has_txn_ready() {
                         return self.propose_new_block();
                     } else {
                         // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
