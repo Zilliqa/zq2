@@ -8,6 +8,12 @@ variable "service_account_email" {
   nullable = false
 }
 
+variable "vm_num" {
+  type     = number
+  nullable = false
+  default  = 1
+}
+
 variable "network_name" {
   type     = string
   nullable = false
@@ -126,12 +132,14 @@ resource "random_id" "name_suffix" {
 }
 
 resource "google_compute_instance" "this" {
-  name                      = "${var.name}-${random_id.name_suffix.hex}"
+  count = var.vm_num
+
+  name                      = "${var.name}-${count.index}-${random_id.name_suffix.hex}"
   machine_type              = var.node_type
   allow_stopping_for_update = true
   zone                      = var.node_zone
   labels = merge({ "zq2-network" = var.zq_network_name },
-  { "role" = var.role }, var.labels)
+  { "role" = var.role }, { "node-name" = "${var.name}-${count.index}-${random_id.name_suffix.hex}" }, var.labels)
 
   service_account {
     email = var.service_account_email
@@ -187,13 +195,13 @@ resource "google_compute_instance" "this" {
 }
 
 output "id" {
-  value = google_compute_instance.this.id
+  value = google_compute_instance.this[*].id
 }
 
 output "self_link" {
-  value = google_compute_instance.this.self_link
+  value = google_compute_instance.this[*].self_link
 }
 
 output "network_ip" {
-  value = google_compute_instance.this.network_interface[0].network_ip
+  value = google_compute_instance.this[*].network_interface[0].network_ip
 }

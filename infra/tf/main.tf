@@ -102,7 +102,7 @@ module "bootstrap_node" {
   allowed_timestamp_skew = { secs = 60, nanos = 0 }
   data_dir = "/data"
   consensus.genesis_accounts = [ ["${local.genesis_address}", "21_000_000_000_000_000_000_000_000_000"] ]
-  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "10_000_000_000_000_000_000_000_000", "${local.genesis_address}"] ]
+  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "100_000_000_000_000_000_000_000_000", "${local.genesis_address}"] ]
 
   # Reward parameters
   consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
@@ -139,7 +139,7 @@ module "node" {
   allowed_timestamp_skew = { secs = 60, nanos = 0 }
   data_dir = "/data"
   consensus.genesis_accounts = [ ["${local.genesis_address}", "21_000_000_000_000_000_000_000_000_000"] ]
-  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "10_000_000_000_000_000_000_000_000", "${local.genesis_address}"] ]
+  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "100_000_000_000_000_000_000_000_000", "${local.genesis_address}"] ]
 
   # Reward parameters
   consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
@@ -160,7 +160,7 @@ resource "google_project_service" "osconfig" {
 resource "google_compute_instance_group" "ig_api_zn-a" {
   name      = "${var.network_name}-api-zone-a"
   zone      = var.node_zone != "" ? var.node_zone : data.google_compute_zones.zones.names.0
-  instances = [module.bootstrap_node.self_link]
+  instances = module.bootstrap_node.self_link
 
 
   named_port {
@@ -173,7 +173,7 @@ resource "google_compute_instance_group" "ig_api_znx" {
   count     = var.node_count
   name      = "${var.network_name}-api-zone-${sort(data.google_compute_zones.zones.names)[count.index % length(data.google_compute_zones.zones.names)]}"
   zone      = var.node_zone != "" ? var.node_zone : sort(data.google_compute_zones.zones.names)[count.index % length(data.google_compute_zones.zones.names)]
-  instances = [module.node[count.index].self_link]
+  instances = module.node[count.index].self_link
 
 
   named_port {
