@@ -1,13 +1,10 @@
 use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, U256};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use eth_trie::{MemoryDB, Trie};
 use libp2p::PeerId;
-use rand::distributions::{Distribution, WeightedIndex};
-use rand_chacha::ChaCha8Rng;
-use rand_core::SeedableRng;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -1924,7 +1921,7 @@ impl Consensus {
             return None;
         };
 
-        let public_key = state_at.leader_at_block(&block).unwrap();
+        let public_key = state_at.leader_at_block(block).unwrap();
         let peer_id = state_at.get_peer_id(public_key).unwrap().unwrap();
 
         Some(Validator {
@@ -1932,16 +1929,6 @@ impl Consensus {
             peer_id,
         })
     }
-
-    // pub fn leader(&self, state: &State) -> Validator {
-    //     let public_key = state.leader().unwrap();
-    //     let peer_id = state.get_peer_id(public_key).unwrap().unwrap();
-
-    //     Validator {
-    //         public_key,
-    //         peer_id,
-    //     }
-    // }
 
     fn total_weight(&self, committee: &[NodePublicKey]) -> u128 {
         committee

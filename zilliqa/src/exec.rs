@@ -29,7 +29,6 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    consensus::Validator,
     contracts,
     crypto::{Hash, NodePublicKey},
     db::TrieStorage,
@@ -657,12 +656,12 @@ impl State {
             block.header,
         )?;
 
-        Ok(NodePublicKey::from_bytes(
+        NodePublicKey::from_bytes(
             &contracts::deposit::LEADER.decode_output(&leader).unwrap()[0]
                 .clone()
                 .into_bytes()
                 .unwrap(),
-        )?)
+        )
     }
 
     pub fn get_stakers_at_block(&self, block: &Block) -> Result<Vec<NodePublicKey>> {
