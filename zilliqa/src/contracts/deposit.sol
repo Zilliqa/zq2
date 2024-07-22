@@ -26,9 +26,9 @@ contract Deposit {
         _minimumStake = minimumStake;
     }
 
-    function leader() public view returns (bytes memory) {
+    function leaderFromRandomness(uint256 randomness) private view returns (bytes memory) {
         // Get a random number in the inclusive range of 0 to (totalStake - 1)
-        uint256 position = uint256(block.prevrandao) % totalStake;
+        uint256 position = randomness % totalStake;
         uint256 cummulative_stake = 0;
 
         for (uint256 i = 0; i < _stakerKeys.length; i++) {
@@ -43,6 +43,15 @@ contract Deposit {
         }
 
         revert("Unable to select next leader");
+    }
+
+    function leader() public view returns (bytes memory) {
+        return leaderFromRandomness(uint256(block.prevrandao));
+    }
+
+    function leaderAtView(uint256 viewNumber) public view returns (bytes memory) {
+        uint256 randomness = uint256(keccak256(bytes.concat(bytes32(viewNumber))));
+        return leaderFromRandomness(randomness);
     }
 
     // Temporary function to manually remove a staker. Can be called by the reward address of any staker with more than

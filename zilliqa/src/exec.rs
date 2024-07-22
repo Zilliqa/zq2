@@ -399,6 +399,9 @@ impl State {
         inspector: I,
         base_fee_check: BaseFeeCheck,
     ) -> Result<(ResultAndState, Box<Env>)> {
+        let mut padded_view_number = [0u8; 32];
+        padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
+
         let mut evm = Evm::builder()
             .with_db(self)
             .with_block_env(BlockEnv {
@@ -414,7 +417,7 @@ impl State {
                 gas_limit: U256::from(self.block_gas_limit.0),
                 basefee: U256::from(self.gas_price),
                 difficulty: U256::from(1),
-                prevrandao: Some(Hash::compute([current_block.view.to_be_bytes()]).into()),
+                prevrandao: Some(Hash::compute([&padded_view_number]).into()),
                 blob_excess_gas_and_price: None,
             })
             .with_external_context(inspector)
