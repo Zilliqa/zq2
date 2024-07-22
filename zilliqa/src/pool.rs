@@ -49,7 +49,7 @@ impl MempoolIndex for VerifiedTransaction {
 /// A pool that manages uncommitted transactions.
 ///
 /// It provides transactions to the chain via [`TransactionPool::best_transaction`].
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct TransactionPool {
     /// All transactions in the pool. These transactions are all valid, or might become
     /// valid at some point in the future.
