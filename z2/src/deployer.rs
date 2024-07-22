@@ -25,7 +25,10 @@ use tokio::{
 };
 use zilliqa::node::Node;
 
-use crate::{github::{self, get_release_or_commit}, validators};
+use crate::{
+    github::{self, get_release_or_commit},
+    validators,
+};
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Components {
