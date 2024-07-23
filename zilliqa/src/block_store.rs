@@ -43,6 +43,8 @@ pub struct BlockStore {
     max_blocks_in_flight: u64,
     /// The maximum number of blocks to request at a time.
     batch_size: u64,
+    /// When a request to a peer fails, do not send another request to this peer for this amount of time.
+    failed_request_sleep_duration: Duration,
     /// Buffered block proposals, indexed by their parent hash. These are proposals we've received, whose parents we
     /// haven't yet seen. We want to be careful about buffering too many proposals. There is no guarantee or proof that
     /// any of them will eventually form our canonical chain. Therefore we limit the number of buffered proposals to
@@ -50,8 +52,8 @@ pub struct BlockStore {
     /// handle pending requests made by ourselves that arrive out-of-order, while also giving some extra space for
     /// newly created blocks that arrive while we are syncing.
     buffered: LruCache<Hash, Proposal>,
-    /// Requests we would like to sent, but haven't been able to (e.g. because we have no peers).
-    pending_requests: Vec<(u64, u64)>,
+    /// Requests we would like to send, but haven't been able to (e.g. because we have no peers).
+    unserviceable_requests: Vec<(u64, u64)>,
     message_sender: MessageSender,
 }
 
@@ -88,10 +90,11 @@ impl BlockStore {
             requested_view: 0,
             max_blocks_in_flight: config.max_blocks_in_flight,
             batch_size: config.block_request_batch_size,
+            failed_request_sleep_duration: config.failed_request_sleep_duration,
             buffered: LruCache::new(
                 NonZeroUsize::new(config.max_blocks_in_flight as usize + 100).unwrap(),
             ),
-            pending_requests: vec![],
+            unserviceable_requests: vec![],
             message_sender,
         })
     }
@@ -128,7 +131,7 @@ impl BlockStore {
             .filter(|(_, peer)| {
                 peer.last_request_failed_at
                     .and_then(|at| at.elapsed().ok())
-                    .map(|time_since| time_since > Duration::from_secs(10))
+                    .map(|time_since| time_since > self.failed_request_sleep_duration)
                     .unwrap_or(true)
             })
             .min_by_key(|(_, peer)| peer.requested_blocks)?;
@@ -150,8 +153,11 @@ impl BlockStore {
             self.requested_view = current_view;
         }
 
-        // Attempt to send pending requests if we can.
-        while let Some((from, to)) = self.pending_requests.pop() {
+        // Attempt to send pending requests if we can. Note that unserviceable requests are retried in LIFO order. This
+        // effectively means that requests for higher views are sent first. Also, we break early if a peer can't
+        // service the final request, despite the possibility that it could service a request for lower views. If this
+        // appears to be a problem in practice, we could use a `VecDeque` and retry requests in FIFO order.
+        while let Some((from, to)) = self.unserviceable_requests.pop() {
             if !self.request_blocks(from, to)? {
                 // Stop trying to send requests if no peers are available.
                 break;
@@ -190,7 +196,7 @@ impl BlockStore {
     fn request_blocks(&mut self, from: u64, to: u64) -> Result<bool> {
         let Some(peer) = self.best_peer(from) else {
             warn!(from, "no peers to download missing blocks from");
-            self.pending_requests.push((from, to));
+            self.unserviceable_requests.push((from, to));
             return Ok(false);
         };
         trace!(%peer, from, to, "requesting blocks");

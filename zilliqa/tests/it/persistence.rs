@@ -10,7 +10,7 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
-        json_rpc_port_default, max_blocks_in_flight_default,
+        failed_request_sleep_duration_default, json_rpc_port_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
         Checkpoint,
     },
@@ -111,6 +111,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         block_request_limit: block_request_limit_default(),
         max_blocks_in_flight: max_blocks_in_flight_default(),
         block_request_batch_size: block_request_batch_size_default(),
+        failed_request_sleep_duration: failed_request_sleep_duration_default(),
     };
     let result = crate::node(config, SecretKey::new().unwrap(), 0, Some(dir));
 
