@@ -158,11 +158,11 @@ impl From<NodePublicKey> for NodePublicKeyRaw {
     }
 }
 
-impl TryInto<NodePublicKey> for NodePublicKeyRaw {
+impl TryFrom<NodePublicKeyRaw> for NodePublicKey {
     type Error = anyhow::Error;
 
-    fn try_into(self) -> std::result::Result<NodePublicKey, Self::Error> {
-        NodePublicKey::from_bytes(&self.0)
+    fn try_from(raw: NodePublicKeyRaw) -> std::result::Result<Self, Self::Error> {
+        NodePublicKey::from_bytes(&raw.0)
     }
 }
 
