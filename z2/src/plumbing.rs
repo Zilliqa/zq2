@@ -7,7 +7,7 @@ use colored::Colorize;
 use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
 
-use crate::utils;
+use crate::{kpi, utils};
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
 
@@ -85,6 +85,12 @@ pub async fn run_perf_file(_base_dir: &str, config_file: &str) -> Result<()> {
     Ok(())
 }
 
+pub async fn run_kpi_collector(config_file: &str) -> Result<()> {
+    println!("🦆 Running KPI collector with {config_file} config file...");
+    kpi::Kpi::run(&kpi::Config::load(config_file)?).await;
+    Ok(())
+}
+
 pub async fn run_deployer_new(
     network_name: &str,
     project_id: &str,
@@ -95,9 +101,15 @@ pub async fn run_deployer_new(
     Ok(())
 }
 
+pub async fn run_deployer_install(config_file: &str) -> Result<()> {
+    println!("🦆 Installing {config_file} .. ");
+    deployer::install_or_upgrade(config_file, false).await?;
+    Ok(())
+}
+
 pub async fn run_deployer_upgrade(config_file: &str) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
-    deployer::upgrade(config_file).await?;
+    deployer::install_or_upgrade(config_file, true).await?;
     Ok(())
 }
 

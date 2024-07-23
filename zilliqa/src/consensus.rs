@@ -180,7 +180,6 @@ impl View {
     pub fn set_view(&mut self, view: u64) {
         match view.cmp(&self.view) {
             std::cmp::Ordering::Less => {
-                // todo: this can happen if agg is true - how to handle?
                 warn!(
                     "Tried to set view {} to lower view {} - this is incorrect",
                     self.view, view
@@ -358,12 +357,12 @@ impl Consensus {
             let empty_block_timeout_ms =
                 self.config.consensus.empty_block_timeout.as_millis() as u64;
 
-            let transactions_count = self.transaction_pool.size();
+            let has_txns_for_next_block = self.transaction_pool.has_txn_ready();
 
             // Check if enough time elapsed or there's something in mempool or we don't have enough
             // time but let's try at least until new view can happen
             if time_since_last_block > empty_block_timeout_ms
-                || transactions_count > 0
+                || has_txns_for_next_block
                 || (time_since_last_view_change + minimum_time_left_for_empty_block
                     >= exponential_backoff_timeout)
             {
@@ -435,7 +434,7 @@ impl Consensus {
         let consensus_timeout_ms = self.config.consensus.consensus_timeout.as_millis() as u64;
         let time_since_last_view_change = SystemTime::now()
             .duration_since(self.view.last_timeout())
-            .expect("last timeout seems to be in the future...")
+            .unwrap_or_default()
             .as_millis() as u64;
         let view_difference = self.view.get_view().saturating_sub(self.high_qc.view);
         // in view N our highQC is the one we obtained in view N-1 (or before) and its view is N-2 (or lower)
@@ -728,9 +727,6 @@ impl Consensus {
             }
         };
 
-        // Tell the transaction pool that the sender's nonce has been incremented.
-        self.transaction_pool.mark_executed(&txn);
-
         if !result.success() {
             info!("Transaction was a failure...");
         }
@@ -907,11 +903,7 @@ impl Consensus {
                     // We propose new block immediately if there's something in mempool or it's the first view
                     // Otherwise the block will be proposed on timeout
 
-                    let transactions_count = self.transaction_pool.size();
-
-                    if (self.view.get_view() == 1)
-                        || (block_view + 1 == self.view.get_view() && transactions_count > 0)
-                    {
+                    if self.view.get_view() == 1 || self.transaction_pool.has_txn_ready() {
                         return self.propose_new_block();
                     } else {
                         // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
@@ -945,7 +937,9 @@ impl Consensus {
     }
 
     pub fn try_to_propose_new_block(&mut self) -> Result<Option<NetworkMessage>> {
-        if self.create_next_block_on_timeout {
+        // We try to propose next block here iff this action has already been postponed and there's any txn in the mempool
+        // that will be included in the next block
+        if self.create_next_block_on_timeout && self.transaction_pool.has_txn_ready() {
             if let Ok(Some((block, transactions))) = self.propose_new_block() {
                 self.create_next_block_on_timeout = false;
                 return Ok(Some((
@@ -996,47 +990,71 @@ impl Consensus {
             self.state.set_to_root(parent.state_root_hash().into());
         }
 
-        let transactions = self.get_txns_to_execute();
-
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
 
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
 
-        let applied_transactions: Vec<_> = transactions
-            .into_iter()
-            .enumerate()
-            .filter_map(|(idx, tx)| {
-                transactions_trie
-                    .insert(tx.hash.as_bytes(), tx.hash.as_bytes())
-                    .ok()?;
-
-                self.apply_transaction(tx.clone(), parent_header, inspector::noop())
-                    .transpose()
-                    .map(|r| {
-                        r.and_then(|result| {
-                            gas_left = gas_left
-                                .checked_sub(result.gas_used())
-                                .ok_or_else(|| anyhow!("too much gas used"))?;
-
-                            let receipt = Self::create_txn_receipt(
-                                result.clone(),
-                                tx.hash,
-                                idx,
-                                self.config.consensus.eth_block_gas_limit - gas_left,
-                            );
-                            let receipt_hash = receipt.hash();
-                            receipts_trie
-                                .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
-                            Ok((tx, result))
-                        })
-                    })
-            })
-            .collect::<Result<_>>()?;
-        let applied_transaction_hashes: Vec<_> =
-            applied_transactions.iter().map(|(tx, _)| tx.hash).collect();
+        let mut updated_root_hash = self.state.root_hash()?;
+        let mut tx_index_in_block = 0;
+        let mut applied_transactions = Vec::new();
 
         self.apply_rewards_raw(&committee, &parent, block_view + 1, &qc.cosigned)?;
+
+        while let Some(tx) = self.transaction_pool.best_transaction() {
+            let result = self.apply_transaction(tx.clone(), parent_header, inspector::noop())?;
+
+            // Skip transactions whose execution resulted in an error and don't re-insert them into the pool.
+            let Some(result) = result else {
+                continue;
+            };
+
+            gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
+                g
+            } else {
+                info!(
+                    nonce = tx.tx.nonce(),
+                    "gas limit reached, returning final transaction to pool",
+                );
+                self.transaction_pool.insert_ready_transaction(tx);
+                self.state.set_to_root(updated_root_hash.into());
+                break;
+            };
+
+            self.transaction_pool.mark_executed(&tx);
+
+            let receipt = Self::create_txn_receipt(
+                result.clone(),
+                tx.hash,
+                tx_index_in_block,
+                self.config.consensus.eth_block_gas_limit - gas_left,
+            );
+
+            transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
+
+            let receipt_hash = receipt.hash();
+            receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
+
+            tx_index_in_block += 1;
+            updated_root_hash = self.state.root_hash()?;
+            applied_transactions.push(tx);
+
+            // Lastly - check how much time we have left for processing txns and break the loop to give enough time for block propagation
+            let (
+                time_since_last_view_change,
+                exponential_backoff_timeout,
+                minimum_time_left_for_empty_block,
+            ) = self.get_consensus_timeout_params();
+
+            if time_since_last_view_change + minimum_time_left_for_empty_block
+                >= exponential_backoff_timeout
+            {
+                break;
+            }
+        }
+
+        let applied_transaction_hashes: Vec<_> =
+            applied_transactions.iter().map(|tx| tx.hash).collect();
 
         let proposal = Block::from_qc(
             self.secret_key,
@@ -1065,7 +1083,6 @@ impl Consensus {
         let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
             applied_transactions
                 .into_iter()
-                .map(|(tx, _)| tx)
                 .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
         // however, for the transactions that we are NOT broadcasting, we re-insert
         // them into the pool - this is because upon broadcasting the proposal, we will
@@ -1353,7 +1370,9 @@ impl Consensus {
                 );
                 self.db.set_high_qc(new_high_qc.clone())?;
                 self.high_qc = new_high_qc;
-                self.view.set_view(new_high_qc_block_view + 1);
+                if new_high_qc_block_view >= self.view.get_view() {
+                    self.view.set_view(new_high_qc_block_view + 1);
+                }
             }
         }
 
@@ -1464,8 +1483,6 @@ impl Consensus {
         // formed has to be a one-direct chain in case of pipelined Fast-
         // HotStuff). Then a replica can safely commit the parent of the
         // block pointed by the highQC.
-        // So, in short, look up parent of QC, and finalize it iff the two subsequent blocks
-        // have views N+1, N+2 (the final one being proposal block).
 
         let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else {
             warn!("missing qc block when checking whether to finalize!");
@@ -1478,17 +1495,15 @@ impl Consensus {
             return Ok(());
         };
 
-        // Likewise, block + 1 doesn't have to exist neccessarily
-        let Some(qc_child) = self.get_block_by_number(qc_parent.number() + 1)? else {
-            warn!("missing qc child when checking whether to finalize!");
-            return Ok(());
-        };
-
-        if qc_parent.view() + 1 == qc_child.view() && qc_parent.view() + 2 == proposal.view() {
+        // If we have a one-direct chain, we can finalize the parent regardless of the proposal's view number
+        if qc_parent.view() + 1 == qc_block.view() {
             self.finalize_block(qc_parent)?;
         } else {
             warn!(
-                "Failed to finalize block! Not finalizing QC block {} with view {} and number {}",
+                "Cannot finalize block {} with view {} and number {} because of child {} with view {} and number {}",
+                qc_parent.hash(),
+                qc_parent.view(),
+                qc_parent.number(),
                 qc_block.hash(),
                 qc_block.view(),
                 qc_block.number()
@@ -2215,6 +2230,7 @@ impl Consensus {
             let result = self
                 .apply_transaction(txn.clone(), parent.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
+            self.transaction_pool.mark_executed(&txn);
             for address in inspector.touched {
                 self.db.add_touched_address(address, tx_hash)?;
             }

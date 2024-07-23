@@ -246,11 +246,11 @@ impl SecretKey {
         Self::from_bytes(&bytes_vec)
     }
 
-    fn as_bls(&self) -> bls_signatures::PrivateKey {
+    pub fn as_bls(&self) -> bls_signatures::PrivateKey {
         bls_signatures::PrivateKey::new(self.bytes)
     }
 
-    fn as_ecdsa(&self) -> k256::ecdsa::SigningKey {
+    pub fn as_ecdsa(&self) -> k256::ecdsa::SigningKey {
         // `SigningKey::from_bytes` can fail for two reasons:
         // 1. The bytes represent a zero integer. However, we validate this is not the case on construction.
         // 2. The bytes represent an integer less than the curve's modulus. However for ECDSA, the curve's order is

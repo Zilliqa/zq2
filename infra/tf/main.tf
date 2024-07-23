@@ -95,25 +95,9 @@ module "bootstrap_node" {
   docker_image          = var.docker_image
   external_ip           = data.google_compute_address.bootstrap.address
   persistence_url       = var.persistence_url
-  config                = <<-EOT
-  p2p_port = 3333
-  [[nodes]]
-  eth_chain_id = ${var.eth_chain_id}
-  allowed_timestamp_skew = { secs = 60, nanos = 0 }
-  data_dir = "/data"
-  consensus.genesis_accounts = [ ["${local.genesis_address}", "21_000_000_000_000_000_000_000_000_000"] ]
-  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "10_000_000_000_000_000_000_000_000", "${local.genesis_address}"] ]
-
-  # Reward parameters
-  consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
-  consensus.blocks_per_hour = 3600
-  consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
-  # Gas parameters
-  consensus.eth_block_gas_limit = 84000000
-  consensus.gas_price = "4_761_904_800_000"
-  EOT
   secret_key            = var.bootstrap_key
   zq_network_name       = var.network_name
+  role                  = "bootstrap"
   labels                = local.labels
 }
 
@@ -129,28 +113,9 @@ module "node" {
   subnetwork_name       = data.google_compute_subnetwork.default.name
   docker_image          = var.docker_image
   persistence_url       = var.persistence_url
-
-  config          = <<-EOT
-  p2p_port = 3333
-  bootstrap_address = [ "${local.bootstrap_peer_id}", "/ip4/${data.google_compute_address.bootstrap.address}/tcp/3333" ]
-
-  [[nodes]]
-  eth_chain_id = ${var.eth_chain_id}
-  allowed_timestamp_skew = { secs = 60, nanos = 0 }
-  data_dir = "/data"
-  consensus.genesis_accounts = [ ["${local.genesis_address}", "21_000_000_000_000_000_000_000_000_000"] ]
-  consensus.genesis_deposits = [ ["${local.bootstrap_public_key}", "${local.bootstrap_peer_id}", "10_000_000_000_000_000_000_000_000", "${local.genesis_address}"] ]
-
-  # Reward parameters
-  consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
-  consensus.blocks_per_hour = 3600
-  consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
-  # Gas parameters
-  consensus.eth_block_gas_limit = 84000000
-  consensus.gas_price = "4_761_904_800_000"
-  EOT
-  secret_key      = var.secret_keys[count.index]
-  zq_network_name = var.network_name
+  secret_key            = var.secret_keys[count.index]
+  role                  = "validator"
+  zq_network_name       = var.network_name
 }
 
 resource "google_project_service" "osconfig" {
@@ -160,7 +125,7 @@ resource "google_project_service" "osconfig" {
 resource "google_compute_instance_group" "ig_api_zn-a" {
   name      = "${var.network_name}-api-zone-a"
   zone      = var.node_zone != "" ? var.node_zone : data.google_compute_zones.zones.names.0
-  instances = [module.bootstrap_node.self_link]
+  instances = module.bootstrap_node.self_link
 
 
   named_port {
@@ -173,7 +138,7 @@ resource "google_compute_instance_group" "ig_api_znx" {
   count     = var.node_count
   name      = "${var.network_name}-api-zone-${sort(data.google_compute_zones.zones.names)[count.index % length(data.google_compute_zones.zones.names)]}"
   zone      = var.node_zone != "" ? var.node_zone : sort(data.google_compute_zones.zones.names)[count.index % length(data.google_compute_zones.zones.names)]
-  instances = [module.node[count.index].self_link]
+  instances = module.node[count.index].self_link
 
 
   named_port {

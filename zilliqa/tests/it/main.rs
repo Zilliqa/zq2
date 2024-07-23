@@ -2,6 +2,7 @@ use alloy_primitives::Address;
 use ethers::{
     abi::Tokenize,
     providers::{Middleware, PubsubClient},
+    types::TransactionRequest,
 };
 use primitive_types::U256;
 use serde_json::{value::RawValue, Value};
@@ -253,7 +254,7 @@ impl Network {
                     k.node_public_key(),
                     k.to_libp2p_keypair().public().to_peer_id(),
                     stake.into(),
-                    Address::random_with(rng.lock().unwrap().deref_mut()),
+                    Address::from_private_key(&k.as_ecdsa()),
                 )
             })
             .collect();
@@ -263,7 +264,7 @@ impl Network {
             consensus: ConsensusConfig {
                 genesis_deposits: genesis_deposits.clone(),
                 is_main: send_to_parent.is_none(),
-                consensus_timeout: Duration::from_secs(1),
+                consensus_timeout: Duration::from_secs(5),
                 minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
@@ -369,7 +370,7 @@ impl Network {
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),
                 is_main: self.is_main(),
-                consensus_timeout: Duration::from_secs(1),
+                consensus_timeout: Duration::from_secs(5),
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
                 local_address: "host.docker.internal".to_owned(),
@@ -461,7 +462,7 @@ impl Network {
                     consensus: ConsensusConfig {
                         genesis_deposits: genesis_deposits.clone(),
                         is_main: self.is_main(),
-                        consensus_timeout: Duration::from_secs(1),
+                        consensus_timeout: Duration::from_secs(5),
                         // Give a genesis account 1 billion ZIL.
                         genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                         empty_block_timeout: Duration::from_millis(25),
@@ -1159,6 +1160,18 @@ async fn deploy_contract_with_args<T: Tokenize>(
 
         (hash, abi)
     }
+}
+
+async fn fund_wallet(network: &mut Network, from_wallet: &Wallet, to_wallet: &Wallet) {
+    let hash = from_wallet
+        .send_transaction(
+            TransactionRequest::pay(to_wallet.address(), 100_000_000_000_000_000_000u128),
+            None,
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(from_wallet, hash, 100).await;
 }
 
 /// An implementation of [JsonRpcClient] which sends requests directly to an [RpcModule], without making any network

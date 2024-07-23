@@ -79,7 +79,6 @@ module "apps" {
   otterscan_image       = var.otterscan_image
   spout_image           = var.spout_image
   subdomain             = var.subdomain
-  config                = ""
   secret_key            = ""
   persistence_url       = ""
   genesis_key           = var.genesis_key
@@ -103,7 +102,7 @@ resource "google_compute_managed_ssl_certificate" "apps" {
 resource "google_compute_instance_group" "apps" {
   name      = "${var.network_name}-apps"
   zone      = "${var.region}-a"
-  instances = module.apps[*].self_link
+  instances = module.apps[0].self_link
 
 
   named_port {

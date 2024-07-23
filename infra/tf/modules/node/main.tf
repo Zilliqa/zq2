@@ -8,6 +8,12 @@ variable "service_account_email" {
   nullable = false
 }
 
+variable "vm_num" {
+  type     = number
+  nullable = false
+  default  = 1
+}
+
 variable "network_name" {
   type     = string
   nullable = false
@@ -17,7 +23,6 @@ variable "subnetwork_name" {
   type     = string
   nullable = false
 }
-
 
 variable "subdomain" {
   description = "(Optional) ZQ2 network subdomain"
@@ -29,10 +34,6 @@ variable "docker_image" {
   description = "(Option): ZQ2 validator docker image"
   type        = string
   default     = ""
-}
-
-variable "config" {
-  type     = string
 }
 
 variable "secret_key" {
@@ -75,10 +76,9 @@ variable "region" {
 
 variable "role" {
   description = "VM role"
-  default     = "validator"
   validation {
-    condition     = contains(["validator", "apps"], var.role)
-    error_message = "The role value must be one of 'validator' or 'apps'."
+    condition     = contains(["validator", "apps", "bootstrap", "sentry", "checkpoint"], var.role)
+    error_message = "The role value must be one of: 'validator', 'apps', 'bootstrap', 'sentry', 'checkpoint'."
   }
 }
 
@@ -120,18 +120,19 @@ resource "random_id" "name_suffix" {
     docker_image          = var.docker_image
     otterscan_image       = var.otterscan_image
     spout_image           = var.spout_image
-    config                = var.config
     secret_key            = var.secret_key
   }
 }
 
 resource "google_compute_instance" "this" {
-  name                      = "${var.name}-${random_id.name_suffix.hex}"
+  count = var.vm_num
+
+  name                      = "${var.name}-${count.index}-${random_id.name_suffix.hex}"
   machine_type              = var.node_type
   allow_stopping_for_update = true
   zone                      = var.node_zone
   labels = merge({ "zq2-network" = var.zq_network_name },
-  { "role" = var.role }, var.labels)
+  { "role" = var.role }, { "node-name" = "${var.name}-${count.index}-${random_id.name_suffix.hex}" }, var.labels)
 
   service_account {
     email = var.service_account_email
@@ -169,31 +170,20 @@ resource "google_compute_instance" "this" {
     "enable-guest-attributes" = "TRUE"
     "enable-osconfig"         = "TRUE"
     "genesis_key"             = base64encode(var.genesis_key)
+    "persistence_url"         = base64encode(var.persistence_url)
+    "secret_key"              = base64encode(var.secret_key)
+    "subdomain"               = base64encode(var.subdomain)
   }
-
-  metadata_startup_script = templatefile("${path.module}/scripts/node_provision.py.tpl",
-    {
-      config          = var.config
-      secret_key      = var.secret_key
-      genesis_key     = var.genesis_key
-      docker_image    = var.docker_image
-      persistence_url = var.persistence_url
-      otterscan_image = var.otterscan_image
-      spout_image     = var.spout_image
-      subdomain       = var.subdomain
-      role            = var.role
-    }
-  )
 }
 
 output "id" {
-  value = google_compute_instance.this.id
+  value = google_compute_instance.this[*].id
 }
 
 output "self_link" {
-  value = google_compute_instance.this.self_link
+  value = google_compute_instance.this[*].self_link
 }
 
 output "network_ip" {
-  value = google_compute_instance.this.network_interface[0].network_ip
+  value = google_compute_instance.this[*].network_interface[0].network_ip
 }

@@ -9,10 +9,11 @@ use ethers::{
 };
 use libp2p::PeerId;
 use primitive_types::H160;
+use rand::Rng;
 use tracing::{info, trace};
 use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
 
-use crate::{LocalRpcClient, Network};
+use crate::{fund_wallet, LocalRpcClient, Network, Wallet};
 
 async fn check_miner_got_reward(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
@@ -61,6 +62,18 @@ async fn deposit_stake(
         );
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
     network.run_until_receipt(wallet, hash, 80).await;
+}
+
+async fn remove_staker(network: &mut Network, wallet: &Wallet, key: NodePublicKey) {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .data(
+            contracts::deposit::TEMP_REMOVE_STAKER
+                .encode_input(&[Token::Bytes(key.as_bytes())])
+                .unwrap(),
+        );
+    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    network.run_until_receipt(wallet, hash, 50).await;
 }
 
 async fn get_stakers(
@@ -245,4 +258,47 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
             .count()
             >= 6
     );
+}
+
+#[zilliqa_macros::test]
+async fn validators_can_leave(mut network: Network) {
+    let genesis_wallet = network.genesis_wallet().await;
+
+    let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..5);
+    network
+        .run_until_block(&genesis_wallet, blocks_to_prerun.into(), 100)
+        .await;
+
+    let validator_to_remove = network.random_index();
+    let validator_sending_removal = network.random_index();
+
+    let key_to_remove = network.get_node_raw(validator_to_remove).secret_key;
+    let wallet_sending_removal = network
+        .wallet_from_key(
+            network
+                .get_node_raw(validator_sending_removal)
+                .secret_key
+                .as_ecdsa(),
+        )
+        .await;
+    fund_wallet(&mut network, &genesis_wallet, &wallet_sending_removal).await;
+
+    let stakers = get_stakers(&genesis_wallet).await;
+    assert_eq!(stakers.len(), 4);
+    assert!(stakers.contains(&key_to_remove.node_public_key()));
+
+    remove_staker(
+        &mut network,
+        &wallet_sending_removal,
+        key_to_remove.node_public_key(),
+    )
+    .await;
+
+    let stakers = get_stakers(&genesis_wallet).await;
+    assert_eq!(stakers.len(), 3);
+    assert!(!stakers.contains(&key_to_remove.node_public_key()));
+
+    network
+        .run_until_block(&genesis_wallet, (blocks_to_prerun + 10).into(), 500)
+        .await;
 }

@@ -34,7 +34,7 @@ colored = "2.1.0"
 eth_trie = {version = "0.1.0", path = "../eth-trie.rs"}
 ethabi = "18.0.0"
 ethereum = "0.15.0"
-ethers = "2.0.14"
+ethers = {version="2.0.14", features = ["ws"]}
 futures = "0.3.30"
 git2 = "0.18.3"
 hex = "0.4.3"
@@ -47,7 +47,7 @@ lazy_static = "1.5.0"
 libp2p = {version = "0.53.2", features = ["identify"]}
 octocrab = "0.38.0"
 primitive-types = "0.12.2"
-prost = "0.12.6"
+prost = "0.13.1"
 rand = "0.8.5"
 rand_core = "0.6.4"
 regex = "1.10.4"
@@ -61,10 +61,10 @@ sha2 = "0.10.8"
 sha3 = "0.10.8"
 tempfile = "3.9.0"
 tera = "1.19.1"
-thiserror = "1.0.61"
+thiserror = "1.0.63"
 tokio = {version = "1.38.0", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
 tokio-stream = "0.1.15"
-toml = "0.8.12"
+toml = "0.8.15"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 url = "2.5.2"
@@ -73,4 +73,4 @@ zilliqa-rs = "0.3.1"
 zqutils = {git = "https://github.com/zilliqa/zq-base"}
 
 [build-dependencies]
-prost-build = "0.12.3"
+prost-build = "0.13.1"
