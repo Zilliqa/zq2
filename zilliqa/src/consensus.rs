@@ -1,4 +1,6 @@
-use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration};
+use std::{
+    cell::RefCell, collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration,
+};
 
 use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Result};
@@ -14,7 +16,7 @@ use crate::{
     block_store::BlockStore,
     blockhooks,
     cfg::NodeConfig,
-    crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
+    crypto::{verify_messages, Hash, NodePublicKey, NodePublicKeyRaw, NodeSignature, SecretKey},
     db::Db,
     exec::TransactionApplyResult,
     inspector::{self, ScillaInspector, TouchedAddressInspector},
@@ -86,6 +88,13 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
+#[derive(Debug)]
+struct CachedLeader {
+    block_number: u64,
+    view: u64,
+    next_leader: Validator,
+}
+
 /// The consensus algorithm is pipelined fast-hotstuff, as given in this paper: https://arxiv.org/pdf/2010.11454.pdf
 ///
 /// The algorithm can be condensed down into the following explaination:
@@ -123,6 +132,7 @@ pub struct Consensus {
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub block_store: BlockStore,
+    latest_leader_cache: RefCell<Option<CachedLeader>>,
     votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128, bool)>,
     /// Votes for a block we don't have stored. They are retained in case we recieve the block later.
     // TODO(#719): Consider how to limit the size of this.
@@ -257,6 +267,7 @@ impl Consensus {
             secret_key,
             config,
             block_store,
+            latest_leader_cache: RefCell::new(None),
             message_sender,
             reset_timeout,
             votes: BTreeMap::new(),
@@ -542,7 +553,8 @@ impl Consensus {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}, head: {:?}", parent.state_root_hash(), self.state.root_hash()?, head_block);
                 self.state.set_to_root(parent.state_root_hash().into());
             }
-            let stakers = self.state.get_stakers()?;
+            let stakers: Vec<_> = self.state.get_stakers_raw()?;
+
             // Only tell the block store where this block came from if it wasn't from ourselves.
             let from = (self.peer_id() != from).then_some(from);
             self.execute_block(from, &block, transactions, &stakers)?;
@@ -596,6 +608,12 @@ impl Consensus {
                     return Ok(None);
                 };
 
+                self.latest_leader_cache.replace(Some(CachedLeader {
+                    block_number: block.number(),
+                    view: self.view.get_view(),
+                    next_leader,
+                }));
+
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
                     return Ok(Some((
@@ -618,13 +636,28 @@ impl Consensus {
         view: u64,
         cosigned: &BitSlice,
     ) -> Result<()> {
+        self.apply_rewards_raw(
+            &committee.iter().map(|k| (*k).into()).collect::<Vec<_>>(),
+            parent_block,
+            view,
+            cosigned,
+        )
+    }
+
+    fn apply_rewards_raw(
+        &mut self,
+        committee: &[NodePublicKeyRaw],
+        parent_block: &Block,
+        view: u64,
+        cosigned: &BitSlice,
+    ) -> Result<()> {
         debug!("apply rewards in view {view}");
 
         let rewards_per_block =
             *self.config.consensus.rewards_per_hour / self.config.consensus.blocks_per_hour as u128;
 
-        let proposer = self.leader_at_block(parent_block, view).unwrap().public_key;
-        if let Some(proposer_address) = self.state.get_reward_address(proposer)? {
+        let proposer_bytes = self.leader_at_block_raw(parent_block, view).unwrap().0;
+        if let Some(proposer_address) = self.state.get_reward_address_raw(proposer_bytes)? {
             let reward = rewards_per_block / 2;
             self.state
                 .mutate_account(proposer_address, |a| a.balance += reward)?;
@@ -635,9 +668,14 @@ impl Consensus {
             .iter()
             .enumerate()
             .filter(|(i, _)| cosigned[*i])
-            .map(|(_, &pub_key)| {
-                let reward_address = self.state.get_reward_address(pub_key).unwrap();
-                let stake = self.state.get_stake(pub_key).unwrap().unwrap().get();
+            .map(|(_, pub_key)| {
+                let reward_address = self.state.get_reward_address_raw(pub_key.clone()).unwrap();
+                let stake = self
+                    .state
+                    .get_stake_raw(pub_key.clone())
+                    .unwrap()
+                    .unwrap()
+                    .get();
                 total_cosigner_stake += stake;
                 (reward_address, stake)
             })
@@ -912,7 +950,7 @@ impl Consensus {
         let block_hash = block.hash();
         let block_view = block.view();
 
-        let committee = self.state.get_stakers_at_block(&block)?;
+        let committee: Vec<_> = self.state.get_stakers_at_block_raw(&block)?;
 
         let committee_size = committee.len();
 
@@ -953,7 +991,7 @@ impl Consensus {
         let mut tx_index_in_block = 0;
         let mut applied_transactions = Vec::new();
 
-        self.apply_rewards(&committee, &parent, block_view + 1, &qc.cosigned)?;
+        self.apply_rewards_raw(&committee, &parent, block_view + 1, &qc.cosigned)?;
 
         while let Some(tx) = self.transaction_pool.best_transaction() {
             let result = self.apply_transaction(tx.clone(), parent_header, inspector::noop())?;
@@ -1105,9 +1143,9 @@ impl Consensus {
         }
 
         // Get the committee for the qc hash (should be highest?) for this view
-        let committee = self.committee_for_hash(new_view.qc.block_hash)?;
+        let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
         // verify the sender's signature on the block hash
-        let Some((index, &public_key)) = committee
+        let Some((index, public_key)) = committee
             .iter()
             .enumerate()
             .find(|(_, &public_key)| public_key == new_view.public_key)
@@ -1116,7 +1154,7 @@ impl Consensus {
             return Ok(None);
         };
 
-        new_view.verify(public_key)?;
+        new_view.verify(*public_key)?;
 
         // check if the sender's qc is higher than our high_qc or even higher than our view
         self.update_high_qc_and_view(false, new_view.qc.clone())?;
@@ -1579,7 +1617,7 @@ impl Consensus {
 
         let committee = self
             .state
-            .get_stakers_at_block(&parent)
+            .get_stakers_at_block_raw(&parent)
             .map_err(|e| (e, false))?;
 
         if verified.is_err() {
@@ -1590,6 +1628,12 @@ impl Consensus {
         // Check if the co-signers of the block's QC represent the supermajority.
         self.check_quorum_in_bits(&block.qc.cosigned, &committee)
             .map_err(|e| (e, false))?;
+
+        let committee: Vec<_> = committee
+            .into_iter()
+            .map(|k| k.try_into().unwrap())
+            .collect();
+
         // Verify the block's QC signature - note the parent should be the committee the QC
         // was signed over.
         self.verify_qc_signature(&block.qc, committee.clone())
@@ -1866,21 +1910,32 @@ impl Consensus {
 
     // TODO: Consider if these checking functions should be implemented at the deposit contract level instead?
 
-    fn check_quorum_in_bits(&self, cosigned: &BitSlice, committee: &[NodePublicKey]) -> Result<()> {
-        let cosigned_sum: u128 = committee
+    fn check_quorum_in_bits(
+        &self,
+        cosigned: &BitSlice,
+        committee: &[NodePublicKeyRaw],
+    ) -> Result<()> {
+        let (total_weight, cosigned_sum) = committee
             .iter()
             .enumerate()
-            .map(|(i, &public_key)| {
-                cosigned[i]
-                    .then(|| {
-                        let stake = self.state.get_stake(public_key).unwrap().unwrap();
-                        stake.get()
-                    })
-                    .unwrap_or_default()
+            .map(|(i, public_key)| {
+                (
+                    i,
+                    self.state
+                        .get_stake_raw(public_key.clone())
+                        .unwrap()
+                        .unwrap()
+                        .get(),
+                )
             })
-            .sum();
+            .fold((0, 0), |(total_weight, cosigned_sum), (i, stake)| {
+                (
+                    total_weight + stake,
+                    cosigned_sum + cosigned[i].then_some(stake).unwrap_or_default(),
+                )
+            });
 
-        if cosigned_sum * 3 <= self.total_weight(committee) * 2 {
+        if cosigned_sum * 3 <= total_weight * 2 {
             return Err(anyhow!("no quorum"));
         }
 
@@ -1910,17 +1965,40 @@ impl Consensus {
     }
 
     pub fn leader_at_block(&self, block: &Block, view: u64) -> Option<Validator> {
+        if let Some(CachedLeader {
+            block_number: cached_block_number,
+            view: cached_view,
+            next_leader,
+        }) = *self.latest_leader_cache.borrow()
+        {
+            if cached_block_number == block.number() && cached_view == view {
+                return Some(next_leader);
+            }
+        }
+
+        self.leader_at_block_raw(block, view)
+            .map(|leader| Validator {
+                public_key: leader.0.try_into().unwrap(),
+                peer_id: leader.1,
+            })
+    }
+
+    pub fn leader_at_block_raw(
+        &self,
+        block: &Block,
+        view: u64,
+    ) -> Option<(NodePublicKeyRaw, PeerId)> {
         let Ok(state_at) = self.try_get_state_at(block.number()) else {
             return None;
         };
 
-        let public_key = state_at.leader(view).unwrap();
-        let peer_id = state_at.get_peer_id(public_key).unwrap().unwrap();
+        let public_key = state_at.leader_raw(view).unwrap();
+        let peer_id = state_at
+            .get_peer_id_raw(public_key.clone())
+            .unwrap()
+            .unwrap();
 
-        Some(Validator {
-            public_key,
-            peer_id,
-        })
+        Some((public_key, peer_id))
     }
 
     fn total_weight(&self, committee: &[NodePublicKey]) -> u128 {
@@ -2058,7 +2136,7 @@ impl Consensus {
                 .iter()
                 .map(|tx_hash| self.get_transaction_by_hash(*tx_hash).unwrap().unwrap().tx)
                 .collect();
-            let committee = self.state.get_stakers_at_block(&block_pointer)?;
+            let committee: Vec<_> = self.state.get_stakers_at_block_raw(&block_pointer)?;
             self.execute_block(None, &block_pointer, transactions, &committee)?;
         }
 
@@ -2070,7 +2148,7 @@ impl Consensus {
         from: Option<PeerId>,
         block: &Block,
         transactions: Vec<SignedTransaction>,
-        committee: &[NodePublicKey],
+        committee: &[NodePublicKeyRaw],
     ) -> Result<()> {
         debug!("Executing block: {:?}", block.header.hash);
 
@@ -2100,7 +2178,7 @@ impl Consensus {
             }
         }
 
-        self.apply_rewards(committee, &parent, block.view(), &block.qc.cosigned)?;
+        self.apply_rewards_raw(committee, &parent, block.view(), &block.qc.cosigned)?;
 
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
