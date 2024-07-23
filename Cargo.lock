@@ -142,6 +142,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde 0.2.0",
  "c-kzg",
+ "k256",
  "once_cell",
  "serde",
  "sha2 0.10.8",
@@ -8977,7 +8978,7 @@ dependencies = [
 name = "z2"
 version = "0.1.0"
 dependencies = [
- "alloy-consensus 0.1.4",
+ "alloy-consensus 0.2.0",
  "alloy-eips 0.1.4",
  "alloy-primitives",
  "anyhow",
@@ -9117,7 +9118,7 @@ dependencies = [
 name = "zilliqa"
 version = "0.1.0"
 dependencies = [
- "alloy-consensus 0.1.4",
+ "alloy-consensus 0.2.0",
  "alloy-eips 0.1.4",
  "alloy-primitives",
  "alloy-rlp",
