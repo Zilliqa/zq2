@@ -1,13 +1,10 @@
 use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, U256};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use eth_trie::{MemoryDB, Trie};
 use libp2p::PeerId;
-use rand::distributions::{Distribution, WeightedIndex};
-use rand_chacha::ChaCha8Rng;
-use rand_core::SeedableRng;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -1922,35 +1919,13 @@ impl Consensus {
             return None;
         };
 
-        Some(self.leader(&state_at, view))
-    }
+        let public_key = state_at.leader(view).unwrap();
+        let peer_id = state_at.get_peer_id(public_key).unwrap().unwrap();
 
-    pub fn leader(&self, state: &State, view: u64) -> Validator {
-        let committee = state.get_stakers().unwrap();
-
-        let mut rng = ChaCha8Rng::seed_from_u64(view);
-        let dist = WeightedIndex::new(committee.iter().map(|pub_key| {
-            let stake = state
-                .get_stake(*pub_key)
-                .unwrap()
-                .context("Committee member has no stake")
-                .unwrap();
-            stake.get()
-        }))
-        .unwrap();
-        let index = dist.sample(&mut rng);
-        let public_key = *committee.get(index).unwrap();
-
-        let peer_id = state
-            .get_peer_id(public_key)
-            .unwrap()
-            .context("Unable to get peer_id from staking contract!")
-            .unwrap();
-
-        Validator {
+        Some(Validator {
             public_key,
             peer_id,
-        }
+        })
     }
 
     fn total_weight(&self, committee: &[NodePublicKey]) -> u128 {
