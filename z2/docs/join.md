@@ -8,7 +8,7 @@ Join a ZQ2 network
 Usage: z2 join --chain <CHAIN_NAME>
 
 Options:
-      --chain <CHAIN_NAME>  Specify the ZQ2 chain you want join [possible values: prototestnet]
+      --chain <CHAIN_NAME>  Specify the ZQ2 chain you want join [possible values: zq2-prototestnet]
   -h, --help                Print help
 ```
 
@@ -16,11 +16,11 @@ Options:
 
 ```bash
 
-z2 join --chain prototestnet
+z2 join --chain zq2-prototestnet
 ✌️ Generating the validator startup scripts and configuration
-📋 Chain specification: prototestnet
+📋 Chain specification: zq2-prototestnet
 👤 Role: External Validator
-💾 Validator config: /path/to/zq2/prototestnet.toml
+💾 Validator config: /path/to/zq2/zq2-prototestnet.toml
 💾 Startup script: /path/to/zq2/start_validator.sh
 ```
 
@@ -33,7 +33,7 @@ to restart your node.
 Copy the above generated Validator config and startup script to an Ubuntu 20.04LTS with
 Docker version 26.1+.
 
->Info: the start_validator.sh and the prototestnet.toml MUST be on the same directory.
+>Info: the start_validator.sh and the zq2-prototestnet.toml MUST be on the same directory.
 
 On the Ubuntu 20.04LTS run:
 
