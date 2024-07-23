@@ -335,11 +335,6 @@ impl Consensus {
         ) = self.get_consensus_timeout_params();
 
         if head_block_view + 1 == self.view.get_view() && self.create_next_block_on_timeout {
-            let time_since_last_block = SystemTime::now()
-                .duration_since(self.view.last_timeout())
-                .expect("last timeout seems to be in the future...")
-                .as_millis() as u64;
-
             let empty_block_timeout_ms =
                 self.config.consensus.empty_block_timeout.as_millis() as u64;
 
@@ -347,7 +342,7 @@ impl Consensus {
 
             // Check if enough time elapsed or there's something in mempool or we don't have enough
             // time but let's try at least until new view can happen
-            if time_since_last_block > empty_block_timeout_ms
+            if time_since_last_view_change > empty_block_timeout_ms
                 || has_txns_for_next_block
                 || (time_since_last_view_change + minimum_time_left_for_empty_block
                     >= exponential_backoff_timeout)
@@ -361,7 +356,7 @@ impl Consensus {
                 };
             } else {
                 self.reset_timeout.send(Duration::from_millis(
-                    empty_block_timeout_ms - time_since_last_block + 1,
+                    empty_block_timeout_ms - time_since_last_view_change + 1,
                 ))?;
                 return Ok(None);
             }
