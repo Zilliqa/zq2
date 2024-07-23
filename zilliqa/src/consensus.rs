@@ -3,13 +3,10 @@ use std::{
 };
 
 use alloy_primitives::{Address, U256};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use eth_trie::{MemoryDB, Trie};
 use libp2p::PeerId;
-use rand::distributions::{Distribution, WeightedIndex};
-use rand_chacha::ChaCha8Rng;
-use rand_core::SeedableRng;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -349,11 +346,6 @@ impl Consensus {
         ) = self.get_consensus_timeout_params();
 
         if head_block_view + 1 == self.view.get_view() && self.create_next_block_on_timeout {
-            let time_since_last_block = SystemTime::now()
-                .duration_since(self.view.last_timeout())
-                .expect("last timeout seems to be in the future...")
-                .as_millis() as u64;
-
             let empty_block_timeout_ms =
                 self.config.consensus.empty_block_timeout.as_millis() as u64;
 
@@ -361,7 +353,7 @@ impl Consensus {
 
             // Check if enough time elapsed or there's something in mempool or we don't have enough
             // time but let's try at least until new view can happen
-            if time_since_last_block > empty_block_timeout_ms
+            if time_since_last_view_change > empty_block_timeout_ms
                 || has_txns_for_next_block
                 || (time_since_last_view_change + minimum_time_left_for_empty_block
                     >= exponential_backoff_timeout)
@@ -375,7 +367,7 @@ impl Consensus {
                 };
             } else {
                 self.reset_timeout.send(Duration::from_millis(
-                    empty_block_timeout_ms - time_since_last_block + 1,
+                    empty_block_timeout_ms - time_since_last_view_change + 1,
                 ))?;
                 return Ok(None);
             }
@@ -1999,44 +1991,14 @@ impl Consensus {
         let Ok(state_at) = self.try_get_state_at(block.number()) else {
             return None;
         };
-        let leader = self.leader_raw(&state_at, view);
 
-        Some(leader)
-    }
-
-    pub fn leader_raw(&self, state: &State, view: u64) -> (NodePublicKeyRaw, PeerId) {
-        let committee = state.get_stakers_raw().unwrap();
-
-        let mut rng = ChaCha8Rng::seed_from_u64(view);
-        let dist = WeightedIndex::new(committee.iter().map(|pub_key| {
-            let stake = state
-                .get_stake_raw(pub_key.clone())
-                .unwrap()
-                .context("Committee member has no stake")
-                .unwrap();
-            stake.get()
-        }))
-        .unwrap();
-        let index = dist.sample(&mut rng);
-        let public_key = committee.get(index).unwrap();
-
-        let peer_id = self
-            .state
+        let public_key = state_at.leader_raw(view).unwrap();
+        let peer_id = state_at
             .get_peer_id_raw(public_key.clone())
             .unwrap()
-            .context("Unable to get peer_id from staking contract!")
             .unwrap();
 
-        (public_key.clone(), peer_id)
-    }
-
-    pub fn leader(&self, state: &State, view: u64) -> Validator {
-        let (public_key_raw, peer_id) = self.leader_raw(state, view);
-
-        Validator {
-            public_key: public_key_raw.try_into().unwrap(),
-            peer_id,
-        }
+        Some((public_key, peer_id))
     }
 
     fn total_weight(&self, committee: &[NodePublicKey]) -> u128 {

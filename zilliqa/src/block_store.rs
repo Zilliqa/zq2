@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, num::NonZeroUsize, sync::Arc};
+use std::{cell::RefCell, cmp, collections::HashMap, num::NonZeroUsize, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
@@ -133,7 +133,10 @@ impl BlockStore {
                     <= (self.max_blocks_in_flight - self.batch_size)
             {
                 let from = self.requested_view + 1;
-                let to = (self.requested_view + self.batch_size).max(self.highest_known_view);
+                let to = cmp::min(
+                    self.requested_view + self.batch_size,
+                    self.highest_known_view,
+                );
                 trace!(from, to, "requesting blocks");
                 let message = ExternalMessage::BlockRequest(BlockRequest {
                     from_view: from,
