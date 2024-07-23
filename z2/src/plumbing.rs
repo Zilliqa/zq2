@@ -101,9 +101,15 @@ pub async fn run_deployer_new(
     Ok(())
 }
 
+pub async fn run_deployer_install(config_file: &str) -> Result<()> {
+    println!("🦆 Installing {config_file} .. ");
+    deployer::install_or_upgrade(config_file, false).await?;
+    Ok(())
+}
+
 pub async fn run_deployer_upgrade(config_file: &str) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
-    deployer::upgrade(config_file).await?;
+    deployer::install_or_upgrade(config_file, true).await?;
     Ok(())
 }
 

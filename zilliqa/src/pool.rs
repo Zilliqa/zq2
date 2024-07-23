@@ -260,10 +260,6 @@ impl TransactionPool {
         std::mem::take(&mut self.transactions).into_values()
     }
 
-    pub fn size(&self) -> usize {
-        self.transactions.len()
-    }
-
     pub fn has_txn_ready(&self) -> bool {
         let mut ready = self.ready.clone();
         while let Some(ReadyItem { tx_index, .. }) = ready.pop() {
@@ -409,7 +405,7 @@ mod tests {
         pool.insert_transaction(transaction(from2, 0, 3), 0);
         pool.insert_transaction(transaction(from3, 0, 0), 0);
         pool.insert_transaction(intershard_transaction(0, 1, 5), 0);
-        assert_eq!(pool.size(), 5);
+        assert_eq!(pool.transactions.len(), 5);
 
         assert_eq!(
             pool.best_transaction().unwrap().tx.gas_price_per_evm_gas(),
@@ -431,7 +427,7 @@ mod tests {
             pool.best_transaction().unwrap().tx.gas_price_per_evm_gas(),
             0
         );
-        assert_eq!(pool.size(), 0);
+        assert_eq!(pool.transactions.len(), 0);
     }
 
     #[test]
@@ -441,17 +437,17 @@ mod tests {
             .parse()
             .unwrap();
 
-        assert_eq!(pool.size(), 0);
+        assert_eq!(pool.transactions.len(), 0);
         let normal_tx = transaction(from, 0, 1);
         let xshard_tx = intershard_transaction(0, 0, 1);
         pool.insert_transaction(normal_tx.clone(), 0);
-        assert_eq!(pool.size(), 1);
+        assert_eq!(pool.transactions.len(), 1);
         pool.insert_transaction(xshard_tx.clone(), 0);
-        assert_eq!(pool.size(), 2);
+        assert_eq!(pool.transactions.len(), 2);
         assert_eq!(pool.pop_transaction(normal_tx.hash), Some(normal_tx));
-        assert_eq!(pool.size(), 1);
+        assert_eq!(pool.transactions.len(), 1);
         assert_eq!(pool.pop_transaction(xshard_tx.hash), Some(xshard_tx));
-        assert_eq!(pool.size(), 0);
+        assert_eq!(pool.transactions.len(), 0);
         assert_eq!(pool.best_transaction(), None);
     }
 

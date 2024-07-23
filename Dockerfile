@@ -1,4 +1,4 @@
-FROM rust:1.78.0-slim-bullseye as builder
+FROM rust:1.79.0-slim-bullseye as builder
 
 ARG is_release=false
 RUN apt update -y && \

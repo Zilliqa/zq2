@@ -24,7 +24,6 @@ variable "subnetwork_name" {
   nullable = false
 }
 
-
 variable "subdomain" {
   description = "(Optional) ZQ2 network subdomain"
   type        = string
@@ -35,10 +34,6 @@ variable "docker_image" {
   description = "(Option): ZQ2 validator docker image"
   type        = string
   default     = ""
-}
-
-variable "config" {
-  type     = string
 }
 
 variable "secret_key" {
@@ -81,10 +76,9 @@ variable "region" {
 
 variable "role" {
   description = "VM role"
-  default     = "validator"
   validation {
-    condition     = contains(["validator", "apps"], var.role)
-    error_message = "The role value must be one of 'validator' or 'apps'."
+    condition     = contains(["validator", "apps", "bootstrap", "sentry", "checkpoint"], var.role)
+    error_message = "The role value must be one of: 'validator', 'apps', 'bootstrap', 'sentry', 'checkpoint'."
   }
 }
 
@@ -126,7 +120,6 @@ resource "random_id" "name_suffix" {
     docker_image          = var.docker_image
     otterscan_image       = var.otterscan_image
     spout_image           = var.spout_image
-    config                = var.config
     secret_key            = var.secret_key
   }
 }
@@ -177,21 +170,10 @@ resource "google_compute_instance" "this" {
     "enable-guest-attributes" = "TRUE"
     "enable-osconfig"         = "TRUE"
     "genesis_key"             = base64encode(var.genesis_key)
+    "persistence_url"         = base64encode(var.persistence_url)
+    "secret_key"              = base64encode(var.secret_key)
+    "subdomain"               = base64encode(var.subdomain)
   }
-
-  metadata_startup_script = templatefile("${path.module}/scripts/node_provision.py.tpl",
-    {
-      config          = var.config
-      secret_key      = var.secret_key
-      genesis_key     = var.genesis_key
-      docker_image    = var.docker_image
-      persistence_url = var.persistence_url
-      otterscan_image = var.otterscan_image
-      spout_image     = var.spout_image
-      subdomain       = var.subdomain
-      role            = var.role
-    }
-  )
 }
 
 output "id" {
