@@ -647,8 +647,8 @@ impl State {
         Ok(())
     }
 
-    pub fn leader_at_block(&self, block: &Block) -> Result<NodePublicKey> {
-        let data = contracts::deposit::LEADER.encode_input(&[])?;
+    pub fn leader(&self, view: u64) -> Result<NodePublicKey> {
+        let data = contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?;
 
         let leader = self.call_contract(
             Address::ZERO,
@@ -656,11 +656,13 @@ impl State {
             data,
             0,
             0,
-            block.header,
+            BlockHeader::default(),
         )?;
 
         NodePublicKey::from_bytes(
-            &contracts::deposit::LEADER.decode_output(&leader).unwrap()[0]
+            &contracts::deposit::LEADER_AT_VIEW
+                .decode_output(&leader)
+                .unwrap()[0]
                 .clone()
                 .into_bytes()
                 .unwrap(),

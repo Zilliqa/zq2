@@ -10,11 +10,6 @@ struct Staker {
     bytes peerId;
 }
 
-struct Validator {
-    bytes publicKey;
-    bytes peerId;
-}
-
 contract Deposit {
     bytes[] _stakerKeys;
     mapping(bytes => Staker) _stakersMap;
