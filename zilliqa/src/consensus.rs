@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration};
+use std::{
+    collections::{btree_map::Entry, BTreeMap},
+    error::Error,
+    fmt::Display,
+    sync::Arc,
+    time::Duration,
+};
 
 use alloy_primitives::{Address, U256};
 use anyhow::{anyhow, Context as _, Result};
@@ -1126,6 +1132,29 @@ impl Consensus {
         let mut state = self.state.clone();
         let mut tx_pool = self.transaction_pool.clone();
         let mut votes = self.votes.clone();
+
+        let num = self.db.get_highest_block_number()?.unwrap();
+        let block = self.get_block_by_number(num)?.unwrap();
+
+        // If there are no votes for highest block then we have to create artificial supermajority including our vote only
+        // This is needed to satisfy aggregate signature (otherwise there's nothing agg signature can be built on)
+
+        if let Entry::Vacant(v) = votes.entry(block.hash()) {
+            let my_vote = Vote::new(
+                self.secret_key,
+                block.hash(),
+                self.public_key(),
+                self.view.get_view(),
+            );
+
+            let votes = (
+                vec![my_vote.signature()],
+                bitvec![u8, bitvec::order::Msb0; 1; 1],
+                0,
+                false,
+            );
+            v.insert(votes);
+        }
 
         let result = self.propose_new_block_at(&mut state, &mut tx_pool, &mut votes)?;
 
