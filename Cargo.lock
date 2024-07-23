@@ -8978,7 +8978,7 @@ name = "z2"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus 0.1.4",
- "alloy-eips 0.1.4",
+ "alloy-eips 0.2.0",
  "alloy-primitives",
  "anyhow",
  "async-trait",
@@ -9118,7 +9118,7 @@ name = "zilliqa"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus 0.1.4",
- "alloy-eips 0.1.4",
+ "alloy-eips 0.2.0",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types 0.2.0",
