@@ -1,7 +1,12 @@
-use std::{collections::HashSet, fmt::Debug, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    sync::Arc,
+    time::Duration,
+};
 
 use alloy_eips::{BlockId, BlockNumberOrTag, RpcBlockHash};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_rpc_types_trace::{
     geth::{
         FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
@@ -85,6 +90,18 @@ impl MessageSender {
 /// Tuple of (destination, message).
 pub type NetworkMessage = (Option<PeerId>, ExternalMessage);
 
+#[derive(Debug)]
+pub enum Filter {
+    Block,
+    PendingTransaction,
+    General {
+        from_block: BlockNumberOrTag,
+        to_block: BlockNumberOrTag,
+        addresses: Vec<Address>,
+        topics: Vec<Vec<B256>>,
+    },
+}
+
 /// The central data structure for a blockchain node.
 ///
 /// # Transaction Lifecycle
@@ -107,6 +124,8 @@ pub struct Node {
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     consensus: Consensus,
+    // Tuple arguments correspond to
+    pub filters: HashMap<B256, (Filter, u64)>,
 }
 
 const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
@@ -134,6 +153,7 @@ impl Node {
             reset_timeout: reset_timeout.clone(),
             db: db.clone(),
             consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
+            filters: HashMap::new(),
         };
         Ok(node)
     }
