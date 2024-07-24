@@ -29,4 +29,4 @@ perf.*
 
 # Provisioning files
 provision_*.py
-zq2-*
+config.toml
