@@ -3,12 +3,13 @@ use std::path::PathBuf;
 
 use alloy_primitives::{address, Address};
 use anyhow::{anyhow, Result};
+use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
 use tokio::fs;
 use toml;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
-use zilliqa::crypto::SecretKey;
+use zilliqa::crypto::{SecretKey, TransactionPublicKey};
 use zilliqa::{
     cfg,
     cfg::{
@@ -67,10 +68,11 @@ impl Setup {
         let mut secret_keys = Vec::new();
         let mut node_addresses = Vec::new();
         for i in 0..how_many {
-            let key = generate_secret_key_from_index(i + 1)?;
-            println!("[#{i}] = {}", key.to_hex());
-            secret_keys.push(key);
-            node_addresses.push(key.tx_ecdsa_public_key().into_addr());
+            let (secret_key, signing_key) = generate_keys_from_index(i + 1)?;
+            println!("[#{i}] = {}", secret_key.to_hex());
+            secret_keys.push(secret_key);
+            node_addresses
+                .push(TransactionPublicKey::Ecdsa(*signing_key.verifying_key(), true).into_addr());
         }
 
         Ok(Self {
@@ -405,11 +407,13 @@ pub fn generate_secret_key() -> Result<SecretKey> {
     SecretKey::new().map_err(|err| anyhow!(Box::new(err)))
 }
 
-pub fn generate_secret_key_from_index(index: usize) -> Result<SecretKey> {
+pub fn generate_keys_from_index(index: usize) -> Result<(SecretKey, SigningKey)> {
     assert_ne!(
         index, 0,
         "index must be non-zero when generating secret key"
     );
     let padded_key = format!("{:0>64}", index);
-    SecretKey::from_hex(&padded_key).map_err(|err| anyhow!(Box::new(err)))
+    let secret_key = SecretKey::from_hex(&padded_key).map_err(|err| anyhow!(Box::new(err)))?;
+    let signing_key = SigningKey::from_slice(&hex::decode(padded_key)?)?;
+    Ok((secret_key, signing_key))
 }

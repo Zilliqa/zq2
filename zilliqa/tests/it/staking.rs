@@ -277,8 +277,8 @@ async fn validators_can_leave(mut network: Network) {
         .wallet_from_key(
             network
                 .get_node_raw(validator_sending_removal)
-                .secret_key
-                .as_ecdsa(),
+                .onchain_key
+                .clone(),
         )
         .await;
     fund_wallet(&mut network, &genesis_wallet, &wallet_sending_removal).await;

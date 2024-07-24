@@ -65,7 +65,7 @@ use zilliqa::{
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
         Amount, Checkpoint, ConsensusConfig, NodeConfig,
     },
-    crypto::{NodePublicKey, SecretKey},
+    crypto::{NodePublicKey, SecretKey, TransactionPublicKey},
     db,
     message::{ExternalMessage, InternalMessage},
     node::Node,
@@ -76,12 +76,20 @@ use zilliqa::{
 #[derive(Default)]
 pub struct NewNodeOptions {
     secret_key: Option<SecretKey>,
+    onchain_key: Option<SigningKey>,
     checkpoint: Option<Checkpoint>,
 }
 
 impl NewNodeOptions {
-    fn random_key(rng: Arc<Mutex<ChaCha8Rng>>) -> SecretKey {
-        SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap()
+    fn secret_key_or_random(&self, rng: Arc<Mutex<ChaCha8Rng>>) -> SecretKey {
+        self.secret_key
+            .unwrap_or_else(|| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
+    }
+
+    fn onchain_key_or_random(&self, rng: Arc<Mutex<ChaCha8Rng>>) -> SigningKey {
+        self.onchain_key
+            .clone()
+            .unwrap_or_else(|| k256::ecdsa::SigningKey::random(rng.lock().unwrap().deref_mut()))
     }
 }
 
@@ -103,6 +111,7 @@ type StreamMessage = (PeerId, Option<PeerId>, AnyMessage);
 fn node(
     config: NodeConfig,
     secret_key: SecretKey,
+    onchain_key: SigningKey,
     index: usize,
     datadir: Option<TempDir>,
 ) -> Result<(
@@ -154,6 +163,7 @@ fn node(
             index,
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             secret_key,
+            onchain_key,
             inner: node,
             dir: datadir,
             rpc_module,
@@ -167,6 +177,7 @@ fn node(
 struct TestNode {
     index: usize,
     secret_key: SecretKey,
+    onchain_key: SigningKey,
     peer_id: PeerId,
     rpc_module: RpcModule<Arc<Mutex<Node>>>,
     inner: Arc<Mutex<Node>>,
@@ -234,14 +245,20 @@ impl Network {
         scilla_lib_dir: String,
         do_checkpoints: bool,
     ) -> Network {
-        let mut keys = keys.unwrap_or_else(|| {
+        let mut signing_keys = keys.unwrap_or_else(|| {
             (0..nodes)
                 .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
                 .collect()
         });
         // Sort the keys in the same order as they will occur in the consensus committee. This means node indices line
         // up with indices in the committee, making logs easier to read.
-        keys.sort_unstable_by_key(|key| key.to_libp2p_keypair().public().to_peer_id());
+        signing_keys.sort_unstable_by_key(|key| key.to_libp2p_keypair().public().to_peer_id());
+
+        let onchain_keys: Vec<_> = (0..nodes)
+            .map(|_| k256::ecdsa::SigningKey::random(rng.lock().unwrap().deref_mut()))
+            .collect();
+
+        let keys: Vec<(_, _)> = signing_keys.into_iter().zip(onchain_keys).collect();
 
         let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
@@ -251,10 +268,10 @@ impl Network {
             .iter()
             .map(|k| {
                 (
-                    k.node_public_key(),
-                    k.to_libp2p_keypair().public().to_peer_id(),
+                    k.0.node_public_key(),
+                    k.0.to_libp2p_keypair().public().to_peer_id(),
                     stake.into(),
-                    Address::from_private_key(&k.as_ecdsa()),
+                    TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
                 )
             })
             .collect();
@@ -296,7 +313,14 @@ impl Network {
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
-                node(config.clone(), key, i, Some(tempfile::tempdir().unwrap())).unwrap()
+                node(
+                    config.clone(),
+                    key.0,
+                    key.1,
+                    i,
+                    Some(tempfile::tempdir().unwrap()),
+                )
+                .unwrap()
             })
             .multiunzip();
 
@@ -355,16 +379,12 @@ impl Network {
     }
 
     pub fn add_node_with_options(&mut self, options: NewNodeOptions) -> usize {
-        let secret_key = options
-            .secret_key
-            .unwrap_or_else(|| NewNodeOptions::random_key(self.rng.clone()));
-
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
             json_rpc_port: json_rpc_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            load_checkpoint: options.checkpoint,
+            load_checkpoint: options.checkpoint.clone(),
             do_checkpoints: self.do_checkpoints,
             disable_rpc: disable_rpc_default(),
             consensus: ConsensusConfig {
@@ -390,8 +410,11 @@ impl Network {
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
         };
+
+        let secret_key = options.secret_key_or_random(self.rng.clone());
+        let onchain_key = options.onchain_key_or_random(self.rng.clone());
         let (node, receiver, local_receiver) =
-            node(config, secret_key, self.nodes.len(), None).unwrap();
+            node(config, secret_key, onchain_key, self.nodes.len(), None).unwrap();
 
         trace!("Node {}: {}", node.index, node.peer_id);
 
@@ -413,7 +436,11 @@ impl Network {
         options.copy_inside = true;
 
         // Collect the keys from the validators
-        let keys = self.nodes.iter().map(|n| n.secret_key).collect::<Vec<_>>();
+        let keys = self
+            .nodes
+            .iter()
+            .map(|n| (n.secret_key, n.onchain_key.clone()))
+            .collect::<Vec<_>>();
 
         // The initial stake of each node.
         let stake = 32_000_000_000_000_000_000u128;
@@ -421,10 +448,10 @@ impl Network {
             .iter()
             .map(|k| {
                 (
-                    k.node_public_key(),
-                    k.to_libp2p_keypair().public().to_peer_id(),
+                    k.0.node_public_key(),
+                    k.0.to_libp2p_keypair().public().to_peer_id(),
                     stake.into(),
-                    Address::random_with(self.rng.lock().unwrap().deref_mut()),
+                    TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
                 )
             })
             .collect();
@@ -485,7 +512,7 @@ impl Network {
                     block_request_batch_size: block_request_batch_size_default(),
                 };
 
-                node(config, key, i, Some(new_data_dir)).unwrap()
+                node(config, key.0, key.1, i, Some(new_data_dir)).unwrap()
             })
             .multiunzip();
 
