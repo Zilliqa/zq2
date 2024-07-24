@@ -70,6 +70,10 @@ pub struct NodeConfig {
     /// The maximum number of blocks to request in a single message when syncing.
     #[serde(default = "block_request_batch_size_default")]
     pub block_request_batch_size: u64,
+    /// When a block request to a peer fails, do not send another request to this peer for this amount of time.
+    /// Defaults to 10 seconds.
+    #[serde(default = "failed_request_sleep_duration_default")]
+    pub failed_request_sleep_duration: Duration,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +133,10 @@ pub fn max_blocks_in_flight_default() -> u64 {
 
 pub fn block_request_batch_size_default() -> u64 {
     100
+}
+
+pub fn failed_request_sleep_duration_default() -> Duration {
+    Duration::from_secs(10)
 }
 
 /// Wrapper for [u128] that (de)serializes with a string. `serde_toml` does not support `u128`s.

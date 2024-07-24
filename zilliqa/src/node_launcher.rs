@@ -24,7 +24,7 @@ use crate::{
     crypto::SecretKey,
     health::HealthLayer,
     message::{ExternalMessage, InternalMessage},
-    node,
+    node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
 };
 
@@ -34,9 +34,11 @@ pub struct NodeLauncher {
     pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
     /// The following two message streams are used for networked messages.
     /// The sender is provided to the p2p coordinator, to forward messages to the node.
-    pub inbound_message_sender: UnboundedSender<(PeerId, ExternalMessage)>,
+    pub inbound_message_sender:
+        UnboundedSender<(PeerId, Result<ExternalMessage, OutgoingMessageFailure>)>,
     /// The corresponding receiver is handled here, forwarding messages to the node struct.
-    pub inbound_message_receiver: UnboundedReceiverStream<(PeerId, ExternalMessage)>,
+    pub inbound_message_receiver:
+        UnboundedReceiverStream<(PeerId, Result<ExternalMessage, OutgoingMessageFailure>)>,
     /// The following two message streams are used for local messages.
     /// The sender is provided to the p2p coordinator, to forward cross-shard messages to the node.
     pub local_inbound_message_sender: UnboundedSender<(u64, InternalMessage)>,
@@ -114,7 +116,9 @@ impl NodeLauncher {
         })
     }
 
-    pub fn message_input(&self) -> UnboundedSender<(PeerId, ExternalMessage)> {
+    pub fn message_input(
+        &self,
+    ) -> UnboundedSender<(PeerId, Result<ExternalMessage, OutgoingMessageFailure>)> {
         self.inbound_message_sender.clone()
     }
 
