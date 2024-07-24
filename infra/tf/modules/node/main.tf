@@ -36,8 +36,8 @@ variable "docker_image" {
   default     = ""
 }
 
-variable "secret_key" {
-  type     = string
+variable "secret_keys" {
+  type     = list(string)
 }
 
 variable "genesis_key" {
@@ -45,16 +45,15 @@ variable "genesis_key" {
   default = ""
 }
 
-
 variable "node_type" {
   type     = string
   default  = "e2-standard-2"
   nullable = false
 }
 
-variable "node_zone" {
-  type     = string
-  default  = "europe-west2-a"
+variable "node_zones" {
+  type     = list(string)
+  default  = ["europe-west2-a"]
   nullable = false
 }
 
@@ -120,7 +119,6 @@ resource "random_id" "name_suffix" {
     docker_image          = var.docker_image
     otterscan_image       = var.otterscan_image
     spout_image           = var.spout_image
-    secret_key            = var.secret_key
   }
 }
 
@@ -130,7 +128,8 @@ resource "google_compute_instance" "this" {
   name                      = "${var.name}-${count.index}-${random_id.name_suffix.hex}"
   machine_type              = var.node_type
   allow_stopping_for_update = true
-  zone                      = var.node_zone
+  zone                      = length(var.node_zones) > 1 ? sort(var.node_zones)[count.index % length(var.node_zones)] : var.node_zones[count.index % length(var.node_zones)]
+  
   labels = merge({ "zq2-network" = var.zq_network_name },
   { "role" = var.role }, { "node-name" = "${var.name}-${count.index}-${random_id.name_suffix.hex}" }, var.labels)
 
@@ -171,7 +170,7 @@ resource "google_compute_instance" "this" {
     "enable-osconfig"         = "TRUE"
     "genesis_key"             = base64encode(var.genesis_key)
     "persistence_url"         = base64encode(var.persistence_url)
-    "secret_key"              = base64encode(var.secret_key)
+    "secret_key"              = base64encode(var.secret_keys[count.index])
     "subdomain"               = base64encode(var.subdomain)
   }
 }

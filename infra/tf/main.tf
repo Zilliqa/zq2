@@ -89,13 +89,13 @@ module "bootstrap_node" {
 
   name                  = "${var.network_name}-bootstrap-node"
   service_account_email = google_service_account.node.email
-  node_zone             = var.node_zone != "" ? var.node_zone : data.google_compute_zones.zones.names.0
+  node_zones            = var.node_zone != "" ? [var.node_zone] : data.google_compute_zones.zones.names
   network_name          = local.network_name
   subnetwork_name       = data.google_compute_subnetwork.default.name
   docker_image          = var.docker_image
   external_ip           = data.google_compute_address.bootstrap.address
   persistence_url       = var.persistence_url
-  secret_key            = var.bootstrap_key
+  secret_keys           = [var.bootstrap_key]
   zq_network_name       = var.network_name
   role                  = "bootstrap"
   labels                = local.labels
@@ -104,16 +104,16 @@ module "bootstrap_node" {
 
 module "node" {
   source = "./modules/node"
-  count  = var.node_count
+  vm_num = var.node_count
 
-  name                  = "${var.network_name}-node-${count.index}"
+  name                  = "${var.network_name}-node-validator"
   service_account_email = google_service_account.node.email
   network_name          = local.network_name
-  node_zone             = var.node_zone != "" ? var.node_zone : sort(data.google_compute_zones.zones.names)[count.index % length(data.google_compute_zones.zones.names)]
+  node_zones            = var.node_zone != "" ? [var.node_zone] : data.google_compute_zones.zones.names
   subnetwork_name       = data.google_compute_subnetwork.default.name
   docker_image          = var.docker_image
   persistence_url       = var.persistence_url
-  secret_key            = var.secret_keys[count.index]
+  secret_keys           = var.secret_keys
   role                  = "validator"
   zq_network_name       = var.network_name
 }
@@ -138,7 +138,7 @@ resource "google_compute_instance_group" "ig_api_znx" {
   count     = var.node_count
   name      = "${var.network_name}-api-zone-${sort(data.google_compute_zones.zones.names)[count.index % length(data.google_compute_zones.zones.names)]}"
   zone      = var.node_zone != "" ? var.node_zone : sort(data.google_compute_zones.zones.names)[count.index % length(data.google_compute_zones.zones.names)]
-  instances = module.node[count.index].self_link
+  instances = [module.node.self_link[count.index]]
 
 
   named_port {
