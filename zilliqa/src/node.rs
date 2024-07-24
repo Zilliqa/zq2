@@ -330,11 +330,9 @@ impl Node {
     pub fn handle_filter_interval(&mut self) {
         let now = Instant::now();
 
-        loop {
-            if let Some((_, (_, _, last_used))) = self.filters.peek_lru() {
-                if now.duration_since(*last_used) < self.config.filter_expiry {
-                    break;
-                }
+        while let Some((_, (_, _, last_used))) = self.filters.peek_lru() {
+            if now.duration_since(*last_used) < self.config.filter_expiry {
+                break;
             }
 
             self.filters.pop_lru();
