@@ -85,6 +85,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ),
             ("eth_protocolVersion", protocol_version),
             ("eth_syncing", syncing),
+            ("eth_uninstallFilter", uninstall_filter),
             ("net_peerCount", net_peer_count),
             ("net_listening", net_listening),
         ],
@@ -855,6 +856,16 @@ fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     );
 
     Ok(id.to_hex())
+}
+
+fn uninstall_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
+    let mut seq = params.sequence();
+    let filter_id: B256 = seq.next()?;
+    expect_end_of_params(&mut seq, 1, 1)?;
+
+    let mut node = node.lock().unwrap();
+
+    Ok(node.filters.remove(&filter_id).is_some())
 }
 
 fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
