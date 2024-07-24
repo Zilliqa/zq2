@@ -296,7 +296,7 @@ impl Node {
 
         loop {
             if let Some((_, (_, _, last_used))) = self.filters.peek_lru() {
-                if now.duration_since(*last_used) < Duration::from_secs(300) {
+                if now.duration_since(*last_used) < self.config.filter_expiry {
                     break;
                 }
             }

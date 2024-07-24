@@ -832,6 +832,10 @@ fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         return Err(anyhow!("Too many topics provided, maximum 4"));
     }
 
+    if node.config.max_filters > 0 && node.filters.len() as u64 > node.config.max_filters {
+        return Err(anyhow!("Too many filters already registered"));
+    }
+
     let mut topics = [None, None, None, None];
     topics[..params.topics.len()].swap_with_slice(&mut params.topics[..]);
 
@@ -877,6 +881,10 @@ fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     let mut node = node.lock().unwrap();
 
+    if node.config.max_filters > 0 && node.filters.len() as u64 > node.config.max_filters {
+        return Err(anyhow!("Too many filters already registered"));
+    }
+
     let first_block = node
         .resolve_block_number(BlockNumberOrTag::Latest)?
         .unwrap()
@@ -900,6 +908,10 @@ fn new_pending_transaction_filter(params: Params, node: &Arc<Mutex<Node>>) -> Re
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
 
     let mut node = node.lock().unwrap();
+
+    if node.config.max_filters > 0 && node.filters.len() as u64 > node.config.max_filters {
+        return Err(anyhow!("Too many filters already registered"));
+    }
 
     let first_block = node
         .resolve_block_number(BlockNumberOrTag::Latest)?

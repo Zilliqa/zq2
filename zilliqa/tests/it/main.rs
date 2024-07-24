@@ -61,7 +61,8 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, disable_rpc_default, eth_chain_id_default,
-        json_rcp_port_default, local_address_default, max_blocks_in_flight_default,
+        filter_expiry_default, json_rcp_port_default, local_address_default,
+        max_blocks_in_flight_default, max_filters_default,
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
         Amount, Checkpoint, ConsensusConfig, NodeConfig,
     },
@@ -290,6 +291,8 @@ impl Network {
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
+            filter_expiry: filter_expiry_default(),
+            max_filters: max_filters_default(),
         };
 
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
@@ -389,6 +392,8 @@ impl Network {
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
+            filter_expiry: filter_expiry_default(),
+            max_filters: max_filters_default(),
         };
         let (node, receiver, local_receiver) =
             node(config, secret_key, self.nodes.len(), None).unwrap();
@@ -483,6 +488,8 @@ impl Network {
                     block_request_limit: block_request_limit_default(),
                     max_blocks_in_flight: max_blocks_in_flight_default(),
                     block_request_batch_size: block_request_batch_size_default(),
+                    filter_expiry: filter_expiry_default(),
+                    max_filters: max_filters_default(),
                 };
 
                 node(config, key, i, Some(new_data_dir)).unwrap()

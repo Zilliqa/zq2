@@ -24,10 +24,10 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, consensus_timeout_default, disable_rpc_default,
-        empty_block_timeout_default, eth_chain_id_default, json_rcp_port_default,
-        local_address_default, max_blocks_in_flight_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
-        Amount, ConsensusConfig, NodeConfig,
+        empty_block_timeout_default, eth_chain_id_default, filter_expiry_default,
+        json_rcp_port_default, local_address_default, max_blocks_in_flight_default,
+        max_filters_default, minimum_time_left_for_empty_block_default, scilla_address_default,
+        scilla_lib_dir_default, Amount, ConsensusConfig, NodeConfig,
     },
     crypto::SecretKey,
     node::{MessageSender, Node},
@@ -328,6 +328,8 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
         block_request_limit: block_request_limit_default(),
         max_blocks_in_flight: max_blocks_in_flight_default(),
         block_request_batch_size: block_request_batch_size_default(),
+        filter_expiry: filter_expiry_default(),
+        max_filters: max_filters_default(),
     };
     let secret_key = SecretKey::new()?;
     let (s1, _) = tokio::sync::mpsc::unbounded_channel();

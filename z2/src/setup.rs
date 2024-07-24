@@ -14,9 +14,10 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, consensus_timeout_default, disable_rpc_default,
-        empty_block_timeout_default, eth_chain_id_default, local_address_default,
-        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_lib_dir_default, Amount, ConsensusConfig,
+        empty_block_timeout_default, eth_chain_id_default, filter_expiry_default,
+        local_address_default, max_blocks_in_flight_default, max_filters_default,
+        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
+        Amount, ConsensusConfig,
     },
     crypto::NodePublicKey,
     transaction::EvmGas,
@@ -227,6 +228,8 @@ impl Setup {
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),
                 block_request_batch_size: block_request_batch_size_default(),
+                filter_expiry: filter_expiry_default(),
+                max_filters: max_filters_default(),
             };
             println!("Node {i} has RPC port {0}", node_config.json_rpc_port);
             let data_dir_name = format!("{0}{1}", DATADIR_PREFIX, i);
