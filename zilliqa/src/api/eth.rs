@@ -419,7 +419,7 @@ struct GetLogsParams {
     /// * `[[], [B]]` or `[None, [B]]`  matches any topic in first position AND B in second position
     /// * `[[A], [B]]`                  matches topic A in first position AND B in second position
     /// * `[[A, B], [C, D]]`            matches topic (A OR B) in first position AND (C OR D) in second position
-    topics: Vec<OneOrMany<B256>>,
+    topics: Vec<Option<OneOrMany<B256>>>,
     block_hash: Option<B256>,
 }
 
@@ -461,68 +461,7 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
         }
     };
 
-    // Get the receipts for each transaction. This is an iterator of (receipt, txn_index, txn_hash, block_number, block_hash).
-    let receipts = blocks
-        .map(|block: Result<_>| {
-            let block = block?;
-            let block_number = block.number();
-            let block_hash = block.hash();
-            let receipts = node.get_transaction_receipts_in_block(block_hash)?;
-
-            Ok(block
-                .transactions
-                .into_iter()
-                .enumerate()
-                .zip(receipts)
-                .map(move |((txn_index, txn_hash), receipt)| {
-                    (receipt, txn_index, txn_hash, block_number, block_hash)
-                }))
-        })
-        .flatten_ok();
-
-    // Get the logs from each receipt and filter them based on the provided parameters. This is an iterator of (log, log_index, txn_index, txn_hash, block_number, block_hash).
-    let logs = receipts
-        .map(|r: Result<_>| {
-            let (receipt, txn_index, txn_hash, block_number, block_hash) = r?;
-            Ok(receipt
-                .logs
-                .into_iter()
-                .filter_map(|l| l.into_evm())
-                .enumerate()
-                .map(move |(i, l)| (l, i, txn_index, txn_hash, block_number, block_hash)))
-        })
-        .flatten_ok()
-        .filter_ok(|(log, _, _, _, _, _)| {
-            params
-                .address
-                .as_ref()
-                .map(|a| a.contains(&log.address))
-                .unwrap_or(true)
-        })
-        .filter_ok(|(log, _, _, _, _, _)| {
-            params
-                .topics
-                .iter()
-                .zip(log.topics.iter())
-                .all(|(filter_topic, log_topic)| {
-                    filter_topic.is_empty() || filter_topic.contains(log_topic)
-                })
-        });
-
-    // Finally convert the iterator to our response format.
-    let logs = logs.map(|l: Result<_>| {
-        let (log, log_index, txn_index, txn_hash, block_number, block_hash) = l?;
-        Ok(eth::Log::new(
-            log,
-            log_index,
-            txn_index,
-            txn_hash,
-            block_number,
-            block_hash,
-        ))
-    });
-
-    logs.collect()
+    filter_logs(&node, blocks, &params.address, &params.topics)
 }
 
 fn get_transaction_by_block_hash_and_index(
