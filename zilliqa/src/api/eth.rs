@@ -1,6 +1,9 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+    sync::{Arc, Mutex, MutexGuard},
+    time::Instant,
+};
 
 use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy};
 use alloy_eips::{eip2930::AccessList, BlockId, BlockNumberOrTag, RpcBlockHash};
@@ -842,7 +845,7 @@ fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     let id = B256::from_slice(&id);
 
-    node.filters.insert(
+    node.filters.put(
         id,
         (
             Filter::General(GeneralFilter {
@@ -852,6 +855,7 @@ fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
                 topics: Box::new(topics),
             }),
             first_block,
+            Instant::now(),
         ),
     );
 
@@ -865,7 +869,7 @@ fn uninstall_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
 
     let mut node = node.lock().unwrap();
 
-    Ok(node.filters.remove(&filter_id).is_some())
+    Ok(node.filters.pop(&filter_id).is_some())
 }
 
 fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -886,7 +890,8 @@ fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     let id = B256::from_slice(&id);
 
-    node.filters.insert(id, (Filter::Block, first_block));
+    node.filters
+        .put(id, (Filter::Block, first_block, Instant::now()));
 
     Ok(id.to_hex())
 }
@@ -909,8 +914,10 @@ fn new_pending_transaction_filter(params: Params, node: &Arc<Mutex<Node>>) -> Re
 
     let id = B256::from_slice(&id);
 
-    node.filters
-        .insert(id, (Filter::PendingTransaction, first_block));
+    node.filters.put(
+        id,
+        (Filter::PendingTransaction, first_block, Instant::now()),
+    );
 
     Ok(id.to_hex())
 }
@@ -992,7 +999,8 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
 
     let mut node = node.lock().unwrap();
 
-    let Some((filter, next_block)) = node.filters.get(&filter_id) else {
+    node.filters.promote(&filter_id);
+    let Some((filter, next_block, _)) = node.filters.peek(&filter_id) else {
         // Filter does not exist
         return Ok(serde_json::Value::Array(vec![]));
     };
@@ -1047,8 +1055,9 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
         .unwrap(),
     };
 
-    if let Some((_, next_block)) = node.filters.get_mut(&filter_id) {
+    if let Some((_, next_block, last_use)) = node.filters.get_mut(&filter_id) {
         *next_block = last_block + 1;
+        *last_use = Instant::now();
     }
 
     Ok(result)
@@ -1059,9 +1068,10 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json
     let filter_id: B256 = seq.next()?;
     expect_end_of_params(&mut seq, 1, 1)?;
 
-    let node = node.lock().unwrap();
+    let mut node = node.lock().unwrap();
 
-    let Some((filter, _)) = node.filters.get(&filter_id) else {
+    node.filters.promote(&filter_id);
+    let Some((filter, _, _)) = node.filters.peek(&filter_id) else {
         // Filter does not exist
         return Ok(serde_json::Value::Array(vec![]));
     };
@@ -1130,6 +1140,10 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json
         )
         .unwrap(),
     };
+
+    if let Some((_, _, last_use)) = node.filters.get_mut(&filter_id) {
+        *last_use = Instant::now();
+    }
 
     Ok(result)
 }

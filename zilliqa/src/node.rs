@@ -1,8 +1,8 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fmt::Debug,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_eips::{BlockId, BlockNumberOrTag, RpcBlockHash};
@@ -16,6 +16,7 @@ use alloy_rpc_types_trace::{
 };
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
+use lru::LruCache;
 use revm::Inspector;
 use revm_inspectors::tracing::{
     js::{JsInspector, TransactionContext},
@@ -179,8 +180,9 @@ pub struct Node {
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     consensus: Consensus,
-    // Tuple arguments correspond to
-    pub filters: HashMap<B256, (Filter, u64)>,
+    /// Tuple arguments correspond to filter, block number last time `eth_getFilterChanges` was called, and `Instant` at last time
+    /// the filter was used was called.
+    pub filters: LruCache<B256, (Filter, u64, Instant)>,
 }
 
 const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
@@ -208,7 +210,7 @@ impl Node {
             reset_timeout: reset_timeout.clone(),
             db: db.clone(),
             consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
-            filters: HashMap::new(),
+            filters: LruCache::unbounded(),
         };
         Ok(node)
     }
@@ -287,6 +289,20 @@ impl Node {
             }
         }
         Ok(())
+    }
+
+    pub fn handle_filter_interval(&mut self) {
+        let now = Instant::now();
+
+        loop {
+            if let Some((_, (_, _, last_used))) = self.filters.peek_lru() {
+                if now.duration_since(*last_used) < Duration::from_secs(300) {
+                    break;
+                }
+            }
+
+            self.filters.pop_lru();
+        }
     }
 
     fn inject_intershard_transaction(&mut self, intershard_call: IntershardCall) -> Result<()> {

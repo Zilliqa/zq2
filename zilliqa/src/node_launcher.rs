@@ -130,6 +130,8 @@ impl NodeLauncher {
         let sleep = time::sleep(Duration::from_millis(5));
         tokio::pin!(sleep);
 
+        let mut filter_interval = time::interval(Duration::from_secs(30));
+
         self.node_launched = true;
 
         loop {
@@ -147,6 +149,9 @@ impl NodeLauncher {
                     self.node.lock().unwrap().handle_timeout().unwrap();
                     sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
                 },
+                _ = filter_interval.tick() => {
+                    self.node.lock().unwrap().handle_filter_interval();
+                }
                 r = self.reset_timeout_receiver.next() => {
                     let sleep_time = r.expect("reset timeout stream should be infinite");
                     trace!(?sleep_time, "timeout reset");

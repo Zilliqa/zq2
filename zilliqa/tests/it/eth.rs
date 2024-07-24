@@ -20,10 +20,7 @@ use ethers::{
 use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
 use serde::Serialize;
-use zilliqa::{
-    api::{eth, types::eth::OneOrMany},
-    node::GeneralFilter,
-};
+use zilliqa::{api::types::eth::OneOrMany, node::GeneralFilter};
 
 use crate::{deploy_contract, LocalRpcClient, Network};
 
