@@ -41,14 +41,14 @@ module "validators" {
 
   vm_num = each.value.vm_num
 
-  name                  = "${var.network_name}-node-validator-${each.key}"
+  name                  = "${var.network_name}-node-validator-${each.value.region}"
   service_account_email = google_service_account.validators.0.email
   network_name          = local.network_name
-  node_zone             = each.value.vm_zone != "" ? each.value.vm_zone : sort(data.google_compute_zones.validators_zones[each.key].names)[each.key % length(data.google_compute_zones.validators_zones[each.key].names)]
+  node_zones            = each.value.vm_zone != null ? [each.value.vm_zone] : data.google_compute_zones.validators_zones[each.key].names
   subnetwork_name       = each.value.vpc_subnet_name
   docker_image          = var.docker_image
   persistence_url       = var.persistence_url
   role                  = "validator"
-  secret_key      = each.value.node_keys[each.key]
-  zq_network_name = var.network_name
+  secret_keys           = each.value.node_keys
+  zq_network_name       = var.network_name
 }
