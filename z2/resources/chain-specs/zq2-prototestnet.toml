@@ -1,13 +1,12 @@
 p2p_port = 3333
-bootstrap_address = [ "12D3KooWNYaasyfY1wFrSHga3WBdZkb7bGhQiUz9926bQvk4HQj2", "/dns/bootstrap.zq2-prototestnet.zilliqa.com/tcp/3333" ]
-external_address = "/ip4/34.126.164.76/tcp/3333"
+bootstrap_address = [ "12D3KooWNYaasyfY1wFrSHga3WBdZkb7bGhQiUz9926bQvk4HQj2", "/ip4/34.126.164.76/tcp/3333" ]
 
 [[nodes]]
 eth_chain_id = 33103
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
 consensus.genesis_accounts = [ ["0xcca93a2e1169caf02e515203d1539cc3f390890a", "21_000_000_000_000_000_000_000_000_000"] ]
-consensus.genesis_deposits = [ ["a8b48d731061d1d7387cf113c96d9c2693e4442b91a8cf933037fe4b15f8977e4bc3afc4ed118d35a5181c05fb7e18be", "12D3KooWNYaasyfY1wFrSHga3WBdZkb7bGhQiUz9926bQvk4HQj2", "10_000_000_000_000_000_000_000_000", "0xcca93a2e1169caf02e515203d1539cc3f390890a"] ]
+consensus.genesis_deposits = [ ["a8b48d731061d1d7387cf113c96d9c2693e4442b91a8cf933037fe4b15f8977e4bc3afc4ed118d35a5181c05fb7e18be", "12D3KooWNYaasyfY1wFrSHga3WBdZkb7bGhQiUz9926bQvk4HQj2", "100_000_000_000_000_000_000_000_000", "0xcca93a2e1169caf02e515203d1539cc3f390890a"] ]
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"

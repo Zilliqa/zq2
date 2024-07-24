@@ -28,7 +28,7 @@ Usage: z2 deposit --chain <CHAIN_NAME> --public-key <PUBLIC_KEY> --peer-id <PEER
 1. reward address
 
 ```bash
-    z2 deposit --chain prototestnet --peer-id  12D3KooWJiR42GkGPKTUxxxxx --public-key 9357841b3d8135d55aa8d2ece84de720cafd9c1c055b4e46dxxxx \
-    --wallet 10bcce301da16xxxx --reward-address 0x3e422c617eB2880F7Axxxxx \
-    --amount 10
-
+  z2 deposit --chain zq2-prototestnet --peer-id  12D3KooWJiR42GkGPKTUxxxxx --public-key 9357841b3d8135d55aa8d2ece84de720cafd9c1c055b4e46dxxxx \
+  --wallet 10bcce301da16xxxx --reward-address 0x3e422c617eB2880F7Axxxxx \
+  --amount 100
+```

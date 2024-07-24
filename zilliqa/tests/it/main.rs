@@ -61,15 +61,15 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, disable_rpc_default, eth_chain_id_default,
-        filter_expiry_default, json_rcp_port_default, local_address_default,
-        max_blocks_in_flight_default, max_filters_default,
+        failed_request_sleep_duration_default, filter_expiry_default, json_rpc_port_default,
+        local_address_default, max_blocks_in_flight_default, max_filters_default,
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
         Amount, Checkpoint, ConsensusConfig, NodeConfig,
     },
     crypto::{NodePublicKey, SecretKey},
     db,
     message::{ExternalMessage, InternalMessage},
-    node::Node,
+    node::{Node, RequestId},
     transaction::EvmGas,
 };
 
@@ -96,7 +96,7 @@ enum AnyMessage {
 
 type Wallet = SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>;
 
-type StreamMessage = (PeerId, Option<PeerId>, AnyMessage);
+type StreamMessage = (PeerId, Option<(PeerId, RequestId)>, AnyMessage);
 
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
 // type
@@ -126,7 +126,7 @@ fn node(
         .map(move |(src, dest, message)| {
             (
                 peer_id,
-                Some(peer_id),
+                Some((peer_id, RequestId::default())),
                 AnyMessage::Internal(src, dest, message),
             )
         })
@@ -282,7 +282,7 @@ impl Network {
                 blocks_per_epoch: 10,
                 epochs_per_checkpoint: 1,
             },
-            json_rpc_port: json_rcp_port_default(),
+            json_rpc_port: json_rpc_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             disable_rpc: disable_rpc_default(),
             data_dir: None,
@@ -293,6 +293,7 @@ impl Network {
             block_request_batch_size: block_request_batch_size_default(),
             filter_expiry: filter_expiry_default(),
             max_filters: max_filters_default(),
+            failed_request_sleep_duration: failed_request_sleep_duration_default(),
         };
 
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
@@ -364,7 +365,7 @@ impl Network {
 
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
-            json_rpc_port: json_rcp_port_default(),
+            json_rpc_port: json_rpc_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
             load_checkpoint: options.checkpoint,
@@ -394,6 +395,7 @@ impl Network {
             block_request_batch_size: block_request_batch_size_default(),
             filter_expiry: filter_expiry_default(),
             max_filters: max_filters_default(),
+            failed_request_sleep_duration: failed_request_sleep_duration_default(),
         };
         let (node, receiver, local_receiver) =
             node(config, secret_key, self.nodes.len(), None).unwrap();
@@ -463,7 +465,7 @@ impl Network {
                     load_checkpoint: None,
                     do_checkpoints: self.do_checkpoints,
                     disable_rpc: disable_rpc_default(),
-                    json_rpc_port: json_rcp_port_default(),
+                    json_rpc_port: json_rpc_port_default(),
                     consensus: ConsensusConfig {
                         genesis_deposits: genesis_deposits.clone(),
                         is_main: self.is_main(),
@@ -490,6 +492,7 @@ impl Network {
                     block_request_batch_size: block_request_batch_size_default(),
                     filter_expiry: filter_expiry_default(),
                     max_filters: max_filters_default(),
+                    failed_request_sleep_duration: failed_request_sleep_duration_default(),
                 };
 
                 node(config, key, i, Some(new_data_dir)).unwrap()
@@ -530,7 +533,7 @@ impl Network {
         }
     }
 
-    fn collect_messages(&mut self) -> Vec<(PeerId, Option<PeerId>, AnyMessage)> {
+    fn collect_messages(&mut self) -> Vec<StreamMessage> {
         let mut messages = vec![];
 
         // Poll the receiver with `unconstrained` to ensure it won't be pre-empted. This makes sure we always
@@ -602,10 +605,10 @@ impl Network {
             // Handle the removed proposes correctly for both cases of broadcast and single cast
             for (s, d, m) in removed_items {
                 // If specifically to a node, only allow node 0
-                if let Some(dest) = d {
+                if let Some((dest, id)) = d {
                     // We actually want to allow this message, put it back into the queue
                     if dest == self.nodes[0].peer_id {
-                        messages.push((s, Some(dest), m));
+                        messages.push((s, Some((dest, id)), m));
                         continue;
                     }
 
@@ -613,7 +616,7 @@ impl Network {
                     proposals_seen += 1;
                 } else {
                     // Broadcast seen! Push it back into the queue with specific destination of node 0
-                    messages.push((s, Some(self.nodes[0].peer_id), m));
+                    messages.push((s, Some((self.nodes[0].peer_id, RequestId::default())), m));
 
                     broadcast_handled = true;
                     break;
@@ -755,7 +758,7 @@ impl Network {
         self.handle_message((source, destination, message))
     }
 
-    fn handle_message(&mut self, message: (PeerId, Option<PeerId>, AnyMessage)) {
+    fn handle_message(&mut self, message: StreamMessage) {
         let (source, destination, ref contents) = message;
         match contents {
             AnyMessage::Internal(source_shard, destination_shard, ref internal_message) => {
@@ -793,7 +796,7 @@ impl Network {
                     }
                     InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                         if *destination_shard == self.shard_id {
-                            let destination = destination.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
+                            let (destination, _) = destination.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
                             let idx_node = self.find_node(destination);
                             if let Some((idx, node)) = idx_node {
                                 trace!("Handling intershard message {:?} from shard {}, in node {} of shard {}", internal_message, source_shard, idx, self.shard_id);
@@ -841,7 +844,7 @@ impl Network {
                 }
             }
             AnyMessage::External(external_message) => {
-                let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = destination {
+                let nodes: Vec<(usize, &TestNode)> = if let Some((destination, _)) = destination {
                     let (index, node) = self
                         .nodes
                         .iter()
@@ -874,7 +877,7 @@ impl Network {
                         // Send broadcast to nodes only in the same shard (having same chain_id)
                         if inner.config.eth_chain_id == sender_chain_id {
                             inner
-                                .handle_network_message(source, external_message.clone())
+                                .handle_network_message(source, Ok(external_message.clone()))
                                 .unwrap();
                         }
                     });
@@ -1049,7 +1052,7 @@ impl Network {
 fn format_message(
     nodes: &[TestNode],
     source: PeerId,
-    destination: Option<PeerId>,
+    destination: Option<(PeerId, RequestId)>,
     message: &AnyMessage,
 ) -> String {
     let message = match message {
@@ -1058,7 +1061,7 @@ fn format_message(
     };
 
     let source_index = nodes.iter().find(|n| n.peer_id == source).unwrap().index;
-    if let Some(destination) = destination {
+    if let Some((destination, _)) = destination {
         let destination_index = nodes
             .iter()
             .find(|n| n.peer_id == destination)

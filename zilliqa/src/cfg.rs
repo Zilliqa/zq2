@@ -39,7 +39,7 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
     /// The port to listen for JSON-RPC requests on. Defaults to 4201.
-    #[serde(default = "json_rcp_port_default")]
+    #[serde(default = "json_rpc_port_default")]
     pub json_rpc_port: u16,
     /// If true, the JSON-RPC server is not started. Defaults to false.
     #[serde(default = "disable_rpc_default")]
@@ -76,6 +76,10 @@ pub struct NodeConfig {
     /// Maximum amount of filters registered at once. Set to 0 for no limit.
     #[serde(default = "max_filters_default")]
     pub max_filters: u64,
+    /// When a block request to a peer fails, do not send another request to this peer for this amount of time.
+    /// Defaults to 10 seconds.
+    #[serde(default = "failed_request_sleep_duration_default")]
+    pub failed_request_sleep_duration: Duration,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,7 +117,7 @@ pub fn allowed_timestamp_skew_default() -> Duration {
     Duration::from_secs(10)
 }
 
-pub fn json_rcp_port_default() -> u16 {
+pub fn json_rpc_port_default() -> u16 {
     4201
 }
 
@@ -143,6 +147,10 @@ pub fn filter_expiry_default() -> Duration {
 
 pub fn max_filters_default() -> u64 {
     256
+}
+
+pub fn failed_request_sleep_duration_default() -> Duration {
+    Duration::from_secs(10)
 }
 
 /// Wrapper for [u128] that (de)serializes with a string. `serde_toml` does not support `u128`s.
@@ -222,14 +230,23 @@ pub struct ConsensusConfig {
     /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
     #[serde(default = "local_address_default")]
     pub local_address: String,
+    /// Reward amount issued per hour, in Wei.
     pub rewards_per_hour: Amount,
+    /// Number of blocks per hour. The reward per block is set at (rewards_per_hour/blocks_per_hour) Wei.
     pub blocks_per_hour: u64,
+    /// The minimum stake passed into the deposit contract constructor at genesis, in Wei. Subsequent changes to this
+    /// parameter will have no effect. You must not use this parameter at run-time; obtain the minimum stake in effect
+    /// from the contract - otherwise if this value ever changes, there will be a mismatch between what the deposit
+    /// contract believes and what the validators believe to be the minimum stake.
     pub minimum_stake: Amount,
+    /// Maximum amount of gas permitted in a single block; any transactions over this
+    /// will be held until the next block. The white paper specifies this as 84_000_000.
     pub eth_block_gas_limit: EvmGas,
     #[serde(default = "blocks_per_epoch_default")]
     pub blocks_per_epoch: u64,
     #[serde(default = "epochs_per_checkpoint_default")]
     pub epochs_per_checkpoint: u64,
+    /// The gas price, in Wei per unit of EVM gas.
     pub gas_price: Amount,
 }
 

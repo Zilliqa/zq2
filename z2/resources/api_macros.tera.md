@@ -192,3 +192,59 @@ Examples (from Erigon):
 | `address`          | string | required | The address from which this log was emitted                                               |
 | `data`             | string | required | Hex string; the data associated with this log entry                                       |
 | `topics`           | string | required | An array containing the topics associated with this log entry, as an array of hex strings |
+
+# transaction_receipt
+
+## Transaction Receipt
+
+| Parameter           | Type   | Required | Description                                                                                          |
+|---------------------|--------|----------|------------------------------------------------------------------------------------------------------|
+| `transactionHash`   | string | required | Hash of the transaction for which this is a receipt                                                  |
+| `transactionIndex`  | string | required | Hex number; index of this transaction in the block in which it appears                               |
+| `blockHash`         | string | required | Hash of the block in which this transaction appears                                                  |
+| `blockNumber`       | string | required | Hex number; the block number in which this receipt appears                                           |
+| `from`              | string | required | Address of the sender of this transaction                                                            |
+| `to`                | string | required | Address of the recipient of this transaction                                                         |
+| `cumulativeGasUsed` | string | required | Hex number; cumulative gas used by all transactions in this block up to and including this one       |
+| `effectiveGasPrice` | string | required | Hex number; actual gas price deducted from the sender's account (or otherwise paid)                  |
+| `gasUsed`           | string | required | Hex number; number of gas units used by this transaction                                             |
+| `contractAddress`   | string | required | If this transaction was a contract creation, the address of the resulting contract. Otherwise `null` |
+| `logs`              | array  | required | An array of log entries - see below                                                                  |
+| `logsBloom`         | string | required | see below                                                                                            |
+| `type`              | string | required | hex number; type of this transaction. 0x0 - legacy, 0x1 - EIP-2930, 0x2 - EIP-1159, ...              |
+| `status`            | string | required | hex number; transaction status - 0x0 for failed, 0x1 for succeeded                                   |
+
+
+# logs_bloom
+
+## `logsBloom`
+
+This is a bloom filter of the address and topics of a group of log
+entries, encoded as a string containing 2048 bits, each encoded as `1`
+(set) or `0` (not set). The first element of the string is the 0 index
+into the corresponding bit array.
+
+Bits are set in this array according to the following procedure:
+
+```
+pub fn bloom(&self, bloom: &mut [u8; 256]) {
+     m3_2048(bloom, self.address.as_slice());
+     for topic in &self.topics {
+         m3_2048(bloom, topic.as_slice());
+     }
+}
+
+fn m3_2048(bloom: &mut [u8; 256], data: &[u8]) {
+    let hash = Keccak256::digest(data);
+
+    for i in [0usize, 2, 4] {
+        // Calculate `m` by taking the bottom 11 bits of each pair from the hash. (2 ^ 11) - 1 = 2047.
+        let m = (hash[i + 1] as usize + ((hash[i] as usize) << 8)) & 2047;
+        // The bit at index `2047 - m` (big-endian) in `bloom` should be set to 1.
+        let byte = m / 8;
+        let bit = m % 8;
+        bloom[255 - byte] |= 1 << bit;
+    }
+}
+```
+
