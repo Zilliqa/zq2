@@ -21,10 +21,12 @@ use revm_inspectors::tracing::{
     js::{JsInspector, TransactionContext},
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
 };
+use serde::Serialize;
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
+    api::types::eth::OneOrMany,
     cfg::NodeConfig,
     consensus::Consensus,
     crypto::{Hash, SecretKey},
@@ -90,16 +92,69 @@ impl MessageSender {
 /// Tuple of (destination, message).
 pub type NetworkMessage = (Option<PeerId>, ExternalMessage);
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
+pub struct GeneralFilter {
+    pub from_block: BlockNumberOrTag,
+    pub to_block: BlockNumberOrTag,
+    pub address: Option<OneOrMany<Address>>,
+    // Boxed as enum variant size difference is too large otherwise
+    pub topics: Box<[Option<OneOrMany<B256>>; 4]>,
+}
+
+impl Default for GeneralFilter {
+    fn default() -> Self {
+        GeneralFilter {
+            from_block: BlockNumberOrTag::Latest,
+            to_block: BlockNumberOrTag::Latest,
+            address: None,
+            topics: Box::new([None, None, None, None]),
+        }
+    }
+}
+
+impl GeneralFilter {
+    pub fn from_block(mut self, block: BlockNumberOrTag) -> Self {
+        self.from_block = block;
+
+        self
+    }
+
+    pub fn to_block(mut self, block: BlockNumberOrTag) -> Self {
+        self.to_block = block;
+
+        self
+    }
+
+    pub fn address(mut self, address: Option<OneOrMany<Address>>) -> Self {
+        self.address = address;
+
+        self
+    }
+
+    pub fn topic0(mut self, topic: Option<OneOrMany<B256>>) -> Self {
+        self.topics[0] = topic;
+
+        self
+    }
+
+    pub fn topic1(mut self, topic: Option<OneOrMany<B256>>) -> Self {
+        self.topics[1] = topic;
+
+        self
+    }
+
+    pub fn topic2(mut self, topic: Option<OneOrMany<B256>>) -> Self {
+        self.topics[2] = topic;
+
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Filter {
     Block,
     PendingTransaction,
-    General {
-        from_block: BlockNumberOrTag,
-        to_block: BlockNumberOrTag,
-        addresses: Vec<Address>,
-        topics: Vec<Vec<B256>>,
-    },
+    General(GeneralFilter),
 }
 
 /// The central data structure for a blockchain node.

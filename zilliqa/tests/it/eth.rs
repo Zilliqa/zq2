@@ -1,6 +1,7 @@
 use std::{fmt::Debug, ops::DerefMut};
 
-use alloy_primitives::{hex, Address};
+use alloy_eips::BlockNumberOrTag;
+use alloy_primitives::{hex, Address, B256};
 use ethabi::{ethereum_types::U64, Token};
 use ethers::{
     abi::FunctionExt,
@@ -19,6 +20,10 @@ use ethers::{
 use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
 use serde::Serialize;
+use zilliqa::{
+    api::{eth, types::eth::OneOrMany},
+    node::GeneralFilter,
+};
 
 use crate::{deploy_contract, LocalRpcClient, Network};
 
@@ -413,6 +418,236 @@ async fn get_logs(mut network: Network) {
             .len(),
         2
     );
+}
+
+#[zilliqa_macros::test]
+async fn evm_filters(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    async fn new_filter(provider: &Provider<LocalRpcClient>, filter: &GeneralFilter) -> B256 {
+        provider
+            .request::<_, String>("eth_newFilter", [filter])
+            .await
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+
+    async fn get_filter_changes(
+        provider: &Provider<LocalRpcClient>,
+        filter_id: B256,
+    ) -> Vec<serde_json::Value> {
+        provider
+            .request::<_, Vec<serde_json::Value>>("eth_getFilterChanges", [filter_id])
+            .await
+            .unwrap()
+    }
+
+    let (hash, contract) = deploy_contract(
+        "tests/it/contracts/EmitEvents.sol",
+        "EmitEvents",
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+
+    let emit_first = contract.function("emitEvents").unwrap();
+    let call_tx = TransactionRequest::new()
+        .to(contract_address)
+        .data(emit_first.encode_input(&[]).unwrap());
+
+    let call_tx_hash = wallet
+        .send_transaction(call_tx, None)
+        .await
+        .unwrap()
+        .tx_hash();
+    // Wait until the transaction has succeeded.
+    network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_transaction_receipt(call_tx_hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    let receipt = wallet
+        .get_transaction_receipt(call_tx_hash)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let base_filter = GeneralFilter::default()
+        .from_block(BlockNumberOrTag::Number(
+            receipt.block_number.unwrap().as_u64(),
+        ))
+        .to_block(BlockNumberOrTag::Number(
+            receipt.block_number.unwrap().as_u64(),
+        ));
+
+    let base_id = new_filter(provider, &base_filter).await;
+
+    // Make sure searching by both block hash and block number work.
+    assert_eq!(get_filter_changes(provider, base_id).await.len(), 2);
+
+    // Make sure only the logs since the last call are returned.
+    assert_eq!(get_filter_changes(provider, base_id).await.len(), 0);
+
+    let address_wallet_filter = base_filter.clone().address(Some(OneOrMany::One(Address(
+        wallet.address().as_fixed_bytes().into(),
+    ))));
+
+    let contract_address_filter = base_filter.clone().address(Some(OneOrMany::One(Address(
+        contract_address.as_fixed_bytes().into(),
+    ))));
+
+    let address_wallet_filter_id = new_filter(provider, &address_wallet_filter).await;
+
+    let contract_address_filter_id = new_filter(provider, &contract_address_filter).await;
+
+    // Make sure filtering by address works.
+    assert_eq!(
+        get_filter_changes(provider, address_wallet_filter_id)
+            .await
+            .len(),
+        0
+    );
+    assert_eq!(
+        get_filter_changes(provider, contract_address_filter_id)
+            .await
+            .len(),
+        2
+    );
+
+    // Make sure filtering by topic works.
+    let transfer = contract.event("Transfer").unwrap().signature();
+    let approval = contract.event("Approval").unwrap().signature();
+    let nonsense = H256::from_low_u64_be(123);
+
+    let transfer_filter = base_filter
+        .clone()
+        .topic0(Some(OneOrMany::One(transfer.as_fixed_bytes().into())));
+
+    let approval_filter = base_filter
+        .clone()
+        .topic0(Some(OneOrMany::One(approval.as_fixed_bytes().into())));
+
+    let nonsense_filter = base_filter
+        .clone()
+        .topic0(Some(OneOrMany::One(nonsense.as_fixed_bytes().into())));
+
+    let transfer_approval_filter = base_filter.clone().topic0(Some(OneOrMany::Many(vec![
+        transfer.as_fixed_bytes().into(),
+        approval.as_fixed_bytes().into(),
+    ])));
+
+    let transfer_approval_nonsense_filter =
+        base_filter.clone().topic0(Some(OneOrMany::Many(vec![
+            transfer.as_fixed_bytes().into(),
+            approval.as_fixed_bytes().into(),
+            nonsense.as_fixed_bytes().into(),
+        ])));
+
+    let transfer_filter_id = new_filter(provider, &transfer_filter).await;
+    let approval_filter_id = new_filter(provider, &approval_filter).await;
+    let nonsense_filter_id = new_filter(provider, &nonsense_filter).await;
+    let transfer_approval_filter_id = new_filter(provider, &transfer_approval_filter).await;
+    let transfer_approval_nonsense_filter_id =
+        new_filter(provider, &transfer_approval_nonsense_filter).await;
+
+    // Filter by topic0.
+    assert_eq!(
+        get_filter_changes(provider, transfer_filter_id).await.len(),
+        1
+    );
+    assert_eq!(
+        get_filter_changes(provider, approval_filter_id).await.len(),
+        1
+    );
+    assert_eq!(
+        get_filter_changes(provider, nonsense_filter_id).await.len(),
+        0
+    );
+    // Multiple topics in the same position act as an OR filter.
+    assert_eq!(
+        get_filter_changes(provider, transfer_approval_filter_id)
+            .await
+            .len(),
+        2
+    );
+    // Including extra topics in the OR filter doesn't make a difference.
+    assert_eq!(
+        get_filter_changes(provider, transfer_approval_nonsense_filter_id)
+            .await
+            .len(),
+        2
+    );
+
+    // Filter by topic1 (same value for both logs).
+    let one = H256::from_low_u64_be(1);
+    let one_filter = base_filter
+        .clone()
+        .topic1(Some(OneOrMany::One(one.as_fixed_bytes().into())));
+
+    let one_filter_id = new_filter(provider, &one_filter).await;
+
+    assert_eq!(get_filter_changes(provider, one_filter_id).await.len(), 2);
+
+    // Filter by topic2 (different value for each log).
+    let two = H256::from_low_u64_be(2);
+    let three = H256::from_low_u64_be(3);
+
+    let two_filter = base_filter
+        .clone()
+        .topic2(Some(OneOrMany::One(two.as_fixed_bytes().into())));
+
+    let three_filter = base_filter
+        .clone()
+        .topic2(Some(OneOrMany::One(three.as_fixed_bytes().into())));
+
+    let two_three_filter = base_filter.clone().topic2(Some(OneOrMany::Many(vec![
+        two.as_fixed_bytes().into(),
+        three.as_fixed_bytes().into(),
+    ])));
+
+    let two_filter_id = new_filter(provider, &two_filter).await;
+    let three_filter_id = new_filter(provider, &three_filter).await;
+    let two_three_filter_id = new_filter(provider, &two_three_filter).await;
+
+    assert_eq!(get_filter_changes(provider, two_filter_id).await.len(), 1);
+    assert_eq!(get_filter_changes(provider, three_filter_id).await.len(), 1);
+    assert_eq!(
+        get_filter_changes(provider, two_three_filter_id)
+            .await
+            .len(),
+        2
+    );
+
+    let all_filter = base_filter
+        .clone()
+        .topic0(Some(OneOrMany::Many(vec![
+            transfer.as_fixed_bytes().into(),
+            approval.as_fixed_bytes().into(),
+        ])))
+        .topic1(Some(OneOrMany::One(one.as_fixed_bytes().into())))
+        .topic2(Some(OneOrMany::Many(vec![
+            two.as_fixed_bytes().into(),
+            three.as_fixed_bytes().into(),
+        ])));
+
+    let all_filter_id = new_filter(provider, &all_filter).await;
+
+    // Filter by multiple topics.
+    assert_eq!(get_filter_changes(provider, all_filter_id).await.len(), 2);
 }
 
 #[zilliqa_macros::test]

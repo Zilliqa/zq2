@@ -28,7 +28,7 @@ use super::{
 use crate::{
     crypto::Hash,
     message::Block,
-    node::{Filter, Node},
+    node::{Filter, GeneralFilter, Node},
     state::Code,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction},
@@ -813,33 +813,23 @@ struct NewFilterParams {
     from_block: Option<BlockNumberOrTag>,
     to_block: Option<BlockNumberOrTag>,
     address: Option<OneOrMany<Address>>,
-    topics: Vec<OneOrMany<B256>>,
+    topics: Vec<Option<OneOrMany<B256>>>,
 }
 
 fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut seq = params.sequence();
-    let params: NewFilterParams = seq.next()?;
+    let mut params: NewFilterParams = seq.next()?;
     expect_end_of_params(&mut seq, 1, 1)?;
 
     let mut node = node.lock().unwrap();
 
-    let topics = params
-        .topics
-        .iter()
-        .map(|t| match t {
-            OneOrMany::Null => vec![],
-            OneOrMany::One(t) => vec![*t],
-            OneOrMany::Many(topics) => topics.clone(),
-        })
-        .collect::<Vec<_>>();
+    if params.topics.len() > 4 {
+        // Too many topics provided, max of 4
+        return Err(anyhow!("Too many topics provided, maximum 4"));
+    }
 
-    let addresses = params
-        .address
-        .map_or_else(Vec::new, |addresses| match addresses {
-            OneOrMany::Null => vec![],
-            OneOrMany::One(address) => vec![address],
-            OneOrMany::Many(addresses) => addresses.clone(),
-        });
+    let mut topics = [None, None, None, None];
+    topics[..params.topics.len()].swap_with_slice(&mut params.topics[..]);
 
     let from_block = params.from_block.unwrap_or(BlockNumberOrTag::Latest);
     let first_block = node.resolve_block_number(from_block)?.unwrap().number();
@@ -854,12 +844,12 @@ fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     node.filters.insert(
         id,
         (
-            Filter::General {
+            Filter::General(GeneralFilter {
                 from_block,
                 to_block: params.to_block.unwrap_or(BlockNumberOrTag::Latest),
-                addresses,
-                topics,
-            },
+                address: params.address,
+                topics: Box::new(topics),
+            }),
             first_block,
         ),
     );
@@ -917,8 +907,8 @@ fn new_pending_transaction_filter(params: Params, node: &Arc<Mutex<Node>>) -> Re
 fn filter_logs(
     node: &Node,
     blocks: impl Iterator<Item = Result<Block>>,
-    address: &[Address],
-    topics: &[Vec<B256>],
+    address: &Option<OneOrMany<Address>>,
+    topics: &[Option<OneOrMany<B256>>],
 ) -> Result<Vec<eth::Log>> {
     // Get the receipts for each transaction. This is an iterator of (receipt, txn_index, txn_hash, block_number, block_hash).
     let receipts = blocks
@@ -951,13 +941,20 @@ fn filter_logs(
                 .map(move |(i, l)| (l, i, txn_index, txn_hash, block_number, block_hash)))
         })
         .flatten_ok()
-        .filter_ok(|(log, _, _, _, _, _)| address.is_empty() || address.contains(&log.address))
+        .filter_ok(|(log, _, _, _, _, _)| {
+            address
+                .as_ref()
+                .map_or(true, |address| address.contains(&log.address))
+        })
         .filter_ok(|(log, _, _, _, _, _)| {
             topics
                 .iter()
                 .zip(log.topics.iter())
                 .all(|(filter_topic, log_topic)| {
-                    filter_topic.is_empty() || filter_topic.contains(log_topic)
+                    filter_topic
+                        .as_ref()
+                        .map_or(true, |topic| topic.contains(log_topic))
+                    // filter_topic.is_empty() || filter_topic.contains(log_topic)
                 })
         });
 
@@ -990,7 +987,7 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
     };
 
     let last_block = match filter {
-        Filter::General { to_block, .. } => {
+        Filter::General(GeneralFilter { to_block, .. }) => {
             node.resolve_block_number(*to_block)?.unwrap().number().min(
                 node.resolve_block_number(BlockNumberOrTag::Latest)?
                     .unwrap()
@@ -1018,9 +1015,9 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
     });
 
     let result = match filter {
-        Filter::General {
-            addresses, topics, ..
-        } => serde_json::to_value(filter_logs(&node, blocks, addresses, topics)?).unwrap(),
+        Filter::General(GeneralFilter {
+            address, topics, ..
+        }) => serde_json::to_value(filter_logs(&node, blocks, address, &topics[..])?).unwrap(),
         Filter::Block => serde_json::to_value(
             blocks
                 .map(|block: Result<_>| block.map(|block| block.hash().to_string()))
@@ -1059,7 +1056,7 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json
     };
 
     let last_block = match filter {
-        Filter::General { to_block, .. } => {
+        Filter::General(GeneralFilter { to_block, .. }) => {
             node.resolve_block_number(*to_block)?.unwrap().number().min(
                 node.resolve_block_number(BlockNumberOrTag::Latest)?
                     .unwrap()
@@ -1077,7 +1074,7 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json
     };
 
     let first_block = match filter {
-        Filter::General { from_block, .. } => node
+        Filter::General(GeneralFilter { from_block, .. }) => node
             .resolve_block_number(*from_block)?
             .unwrap()
             .number()
@@ -1102,9 +1099,9 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json
     });
 
     let result = match filter {
-        Filter::General {
-            addresses, topics, ..
-        } => serde_json::to_value(filter_logs(&node, blocks, addresses, topics)?).unwrap(),
+        Filter::General(GeneralFilter {
+            address, topics, ..
+        }) => serde_json::to_value(filter_logs(&node, blocks, address, &topics[..])?).unwrap(),
         Filter::Block => serde_json::to_value(
             blocks
                 .map(|block: Result<_>| block.map(|block| block.hash().to_string()))
