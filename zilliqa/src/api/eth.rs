@@ -431,12 +431,15 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
                 return Ok(vec![]);
             };
 
-            let Some(to) = node
+            let to = match node
                 .resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?
                 .as_ref()
-                .map(Block::number)
-            else {
-                return Ok(vec![]);
+            {
+                Some(block) => block.number(),
+                None => node
+                    .resolve_block_number(BlockNumberOrTag::Latest)?
+                    .unwrap()
+                    .number(),
             };
 
             if from > to {
