@@ -305,8 +305,8 @@ contract HashToCurve {
         // // G1 addition call expects 256 bytes as an input that is interpreted as byte concatenation of two G1 points (128 bytes each). Output is an encoding of addition operation result - single G1 point (128 bytes).
         assembly {
             let success := staticcall(
-                100000, /// gas should be 600
-                0x0a, // address of BLS12_G1ADD
+                500, // From EIP-2537
+                0x0b, // address of BLS12_G1ADD
                 input, //input offset
                 256, // input size
                 result, // output offset
@@ -352,8 +352,8 @@ contract HashToCurve {
         // G2 addition call expects 512 bytes as an input that is interpreted as byte concatenation of two G2 points (256 bytes each). Output is an encoding of addition operation result - single G2 point (256 bytes).
         assembly {
             let success := staticcall(
-                100000, /// gas should be 4500
-                0x0d, // address of BLS12_G2ADD
+                800, // From EIP-2537
+                0x0e, // address of BLS12_G2ADD
                 input, //input offset
                 512, // input size
                 result, // output offset
@@ -388,8 +388,8 @@ contract HashToCurve {
         // Field-to-curve call expects 64 bytes an an input that is interpreted as a an element of the base field. Output of this call is 128 bytes and is G1 point following respective encoding rules.
         assembly {
             let success := staticcall(
-                100000, /// gas should be 5500
-                0x11, // address of BLS12_MAP_FP_TO_G1
+                5500, // From EIP-2537
+                0x12, // address of BLS12_MAP_FP_TO_G1
                 input, //input offset
                 64, // input size
                 result, // output offset
@@ -433,8 +433,8 @@ contract HashToCurve {
         // Field-to-curve call expects 128 bytes an an input that is interpreted as a an element of the quadratic extension field. Output of this call is 256 bytes and is G2 point following respective encoding rules.
         assembly {
             let success := staticcall(
-                200000, /// gas should be 110000
-                0x12, // address of BLS12_MAP_FP2_TO_G2
+                75000, // From EIP-2537
+                0x13, // address of BLS12_MAP_FP2_TO_G2
                 input, //input offset
                 128, // input size
                 result, // output offset
