@@ -126,6 +126,7 @@ mod tests {
             language: "Solidity".to_owned(),
             sources: Source::read_all(
                 [
+                    "hash_to_curve.sol",
                     "deposit.sol",
                     "intershard_bridge.sol",
                     "shard.sol",
