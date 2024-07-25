@@ -77,7 +77,7 @@ contract Deposit {
         bool success;
         assembly {
             success := staticcall(
-                gas(),
+                151000, // 2 * 43000 + 65000
                 0x11,
                 add(input, 0x20),
                 768,
@@ -89,14 +89,23 @@ contract Deposit {
         return output[31] == 0x01;
     }
 
-    bytes constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
-    // test vectors from library
-    bytes constant HASH_TO_G1_DST =
-        "QUUX-V01-CS02-with-BLS12381G1_XMD:SHA-256_SSWU_RO_";
-    bytes constant expected_P_x =
-        hex"00000000000000000000000000000000052926add2207b76ca4fa57a8734416c8dc95e24501772c814278700eed6d1e4e8cf62d9c09db0fac349612b759e79a1";
-    bytes constant expected_P_y =
-        hex"0000000000000000000000000000000008ba738453bfed09cb546dbb0783dbb3a5f1f566ed67bb6be0e8c67e2e81a4cc68ee29813bb7994998f3eae0c9c6a265";
+    bytes constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_"; // FIXME: Use the POP tag instead
+
+    // https://github.com/supranational/blst/blob/52cc60d78591a56abb2f3d0bd1cdafc6ba242997/src/e1.c#L34
+    bytes constant NEG_G1_X =
+        hex"0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb";
+    bytes constant NEG_G1_Y =
+        hex"00000000000000000000000000000000114d1d6855d545a8aa7d76c8cf2e21f267816aef1db507c96655b9d5caac42364e6f38ba0ecb751bad54dcd6b939c2ca";
+    // https://github.com/supranational/blst/blob/52cc60d78591a56abb2f3d0bd1cdafc6ba242997/src/e2.c#L49
+    bytes constant NEG_G2_X0 =
+        hex"00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8";
+    bytes constant NEG_G2_X1 =
+        hex"0000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e";
+    bytes constant NEG_G2_Y0 =
+        hex"000000000000000000000000000000000d1b3cc2c7027888be51d9ef691d77bcb679afda66c73f17f9ee3837a55024f78c71363275a75d75d86bab79f74782aa";
+    bytes constant NEG_G2_Y1 =
+        hex"0000000000000000000000000000000013fa4d4a0ad8b1ce186ed5061789213d993923066dddaf1040bc3ff59f825c78df74f2d75467e25e0f55f8a00fa030ed";
+    bytes16 constant zero16 = 0;
 
     function deposit(
         bytes calldata blsPubKey,
@@ -110,9 +119,20 @@ contract Deposit {
         // TODO: Verify signature as a proof-of-possession of the private key.
 
         hasher = new HashToCurve();
-        G1Point memory result = hasher.hashToCurveG1("", HASH_TO_G1_DST);
-        require(keccak256(result.x) == keccak256(expected_P_x), "Px");
-        require(keccak256(result.y) == keccak256(expected_P_y), "Py");
+        // let a = Self::hash_to_point::<B, C>(msg, dst);
+        G2Point memory aG = hasher.hashToCurveG2(blsPubKey, DST); // PubKey is the message.
+        bytes memory a = bytes.concat(aG.x, aG.x_I, aG.y, aG.y_I);
+        require(a.length == 256, "a.length");
+
+        // let generator = -Self::PublicKey::generator();
+        bytes memory neg_g = bytes.concat(NEG_G1_X, NEG_G1_Y); // TODO: Hard-code this.
+        require(neg_g.length == 128, "neg_g.length");
+
+        // TODO: octet_to_point_E1(pk);
+        // TODO: octet_to_point_E2(sig);
+
+        // if Self::pairing(&[(a, pk), (sig, generator)]) - (G2, G1)
+        //     .is_identity()
 
         uint256 keyIndex = _stakersMap[blsPubKey].keyIndex;
         if (keyIndex == 0) {
