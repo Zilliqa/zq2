@@ -739,18 +739,11 @@ impl Consensus {
         content
     }
 
-    pub fn pending_transaction_count_for_address(&self, address: Address) -> usize {
-        let content = self.transaction_pool.preview_content();
+    pub fn transaction_count_for_account(&self, account: Address) -> u64 {
+        let current_nonce = self.state.must_get_account(account).nonce;
 
-        content
-            .pending
-            .iter()
-            .filter(|txn| {
-                let account_nonce = self.state.must_get_account(txn.signer).nonce;
-                txn.tx.nonce().unwrap() >= account_nonce
-            })
-            .filter(|txn| txn.signer == address)
-            .count()
+        self.transaction_pool
+            .transaction_count(account, current_nonce)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {

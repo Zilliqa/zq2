@@ -777,9 +777,8 @@ impl Node {
         self.consensus.txpool_content()
     }
 
-    pub fn pending_transaction_account_for_address(&self, address: Address) -> usize {
-        self.consensus
-            .pending_transaction_count_for_address(address)
+    pub fn transaction_count_for_account(&self, account: Address) -> u64 {
+        self.consensus.transaction_count_for_account(account)
     }
 
     /// Convenience function to convert a block to a proposal (add full txs)
