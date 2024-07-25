@@ -10,7 +10,11 @@ use ethers::{
 use libp2p::PeerId;
 use primitive_types::H160;
 use tracing::{info, trace};
-use zilliqa::{contracts, crypto::{NodePublicKey, NodeSignature}, state::contract_addr};
+use zilliqa::{
+    contracts,
+    crypto::{NodePublicKey, NodeSignature},
+    state::contract_addr,
+};
 
 use crate::{fund_wallet, LocalRpcClient, Network, Wallet};
 
@@ -39,7 +43,7 @@ async fn deposit_stake(
     peer_id: PeerId,
     stake: u128,
     reward_address: H160,
-    signature : NodeSignature,
+    signature: NodeSignature,
 ) {
     // Transfer the new validator enough ZIL to stake.
     let tx = TransactionRequest::pay(reward_address, stake);
@@ -59,9 +63,10 @@ async fn deposit_stake(
                     Token::Address(reward_address),
                 ])
                 .unwrap(),
-        );
+        )
+        .gas(1_000_000_000_000u128); // consumes quite a bit of gas
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
-    network.run_until_receipt(wallet, hash, 80).await;
+    network.run_until_receipt(wallet, hash, 8000).await;
 }
 
 async fn remove_staker(network: &mut Network, wallet: &Wallet, key: NodePublicKey) {
@@ -165,7 +170,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         new_validator_key.to_libp2p_keypair().public().to_peer_id(),
         32 * 10u128.pow(18),
         reward_address,
-        signature
+        signature,
     )
     .await;
 

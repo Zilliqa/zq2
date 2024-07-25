@@ -66,52 +66,6 @@ contract Deposit {
         );
     }
 
-    function bls12_g1map(
-        bytes memory pubkey
-    ) private view returns (bytes memory) {
-        bytes16 zero = 0; // 16-bytes padding 48b->64b.
-        bytes memory input = abi.encodePacked(zero, pubkey);
-        bytes memory output = new bytes(128);
-        bool success;
-        assembly {
-            success := staticcall(
-                gas(),
-                0x12,
-                add(input, 0x20),
-                64,
-                add(output, 0x20),
-                128
-            )
-        }
-        require(success, "bls12_fp_map_g1");
-        return output;
-    }
-
-    function bls12_g2map(
-        bytes memory in96
-    ) private view returns (bytes memory) {
-        bytes memory input = new bytes(128);
-        for (uint i = 0; i < 48; i++) {
-            // slice inputs
-            input[16 + i] = in96[i];
-            input[16 + 64 + i] = in96[48 + i];
-        }
-        bytes memory output = new bytes(256);
-        bool success;
-        assembly {
-            success := staticcall(
-                gas(),
-                0x13,
-                add(input, 0x20),
-                128,
-                add(output, 0x20),
-                256
-            )
-        }
-        require(success, "bls12_fp2_map_g2");
-        return output;
-    }
-
     function bls12_pairing_check(
         bytes memory a128,
         bytes memory a256,
@@ -135,6 +89,8 @@ contract Deposit {
         return output[31] == 0x01;
     }
 
+    bytes constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+
     function deposit(
         bytes calldata blsPubKey,
         bytes calldata peerId,
@@ -146,6 +102,7 @@ contract Deposit {
         require(signature.length == 96);
         // TODO: Verify signature as a proof-of-possession of the private key.
 
+        G1Point memory a = _hashToCurve.hashToCurveG1(blsPubKey, DST);
 
         uint256 keyIndex = _stakersMap[blsPubKey].keyIndex;
         if (keyIndex == 0) {
