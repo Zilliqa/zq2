@@ -128,7 +128,7 @@ pub struct Node {
     peer_id: PeerId,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
-    consensus: Consensus,
+    pub consensus: Consensus,
 }
 
 const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
