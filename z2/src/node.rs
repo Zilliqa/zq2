@@ -13,7 +13,7 @@ use crate::{
 pub struct ChainNode {
     chain_name: String,
     role: NodeRole,
-    pub machine: Machine,
+    machine: Machine,
     versions: HashMap<String, String>,
 }
 
@@ -32,7 +32,50 @@ impl ChainNode {
         }
     }
 
-    pub async fn import_config_files(&self) -> Result<()> {
+    pub fn name(&self) -> String {
+        self.machine.name.clone()
+    }
+
+    pub async fn install(&self) -> Result<()> {
+        println!(
+            "Installing {} instance {} with address {}",
+            self.role, self.machine.name, self.machine.external_address,
+        );
+
+        self.import_config_files().await?;
+        self.run_provisioning_script().await?;
+
+        Ok(())
+    }
+
+    pub async fn upgrade(&self) -> Result<()> {
+        println!(
+            "Upgrading {} instance {} with address {}",
+            self.role, self.machine.name, self.machine.external_address,
+        );
+
+        self.import_config_files().await?;
+        self.run_provisioning_script().await?;
+
+        // Check the node is making progress
+        if self.role == NodeRole::Bootstrap || self.role == NodeRole::Validator {
+            let first_block_number = self.machine.get_local_block_number().await?;
+            loop {
+                let next_block_number = self.machine.get_local_block_number().await?;
+                println!(
+                    "Polled block number at {next_block_number}, waiting for {} more blocks",
+                    (first_block_number + 10).saturating_sub(next_block_number)
+                );
+                if next_block_number >= first_block_number + 10 {
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn import_config_files(&self) -> Result<()> {
         let provisioning_script = &self.create_provisioning_script().await?;
         self.write("config.toml").await?;
 
@@ -45,7 +88,7 @@ impl ChainNode {
         Ok(())
     }
 
-    pub async fn run_provisioning_script(&self) -> Result<()> {
+    async fn run_provisioning_script(&self) -> Result<()> {
         let cmd = "sudo mv /tmp/config.toml /config.toml && sudo python3 /tmp/provision_node.py";
         let output = self.machine.run(cmd).await?;
         if !output.success {
