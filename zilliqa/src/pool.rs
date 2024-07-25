@@ -190,8 +190,7 @@ impl TransactionPool {
     pub fn transaction_count(&self, account: Address, mut account_nonce: u64) -> u64 {
         while self
             .transactions
-            .get(&TxIndex::Nonced(account, account_nonce))
-            .is_some()
+            .contains_key(&TxIndex::Nonced(account, account_nonce))
         {
             account_nonce += 1;
         }
