@@ -252,14 +252,13 @@ async fn get_transaction_count_pending(mut network: Network) {
     assert_eq!(count, 2);
 
     // Send a transaction from wallet 1 to wallet 2.
-    let hash_3 = wallet_1
+    wallet_1
         .send_transaction(
             TransactionRequest::pay(wallet_2.address(), 10).nonce(3),
             None,
         )
         .await
-        .unwrap()
-        .tx_hash();
+        .unwrap();
 
     // Wallet 1 should no longer have any pending transactions, and should have 2 transactions in the
     // latest block, leading to 2 returned for both "pending" and "latest".
@@ -267,14 +266,13 @@ async fn get_transaction_count_pending(mut network: Network) {
     assert_eq!(count, 2);
 
     // Send a transaction from wallet 1 to wallet 2.
-    let hash_4 = wallet_1
+    wallet_1
         .send_transaction(
             TransactionRequest::pay(wallet_2.address(), 10).nonce(2),
             None,
         )
         .await
-        .unwrap()
-        .tx_hash();
+        .unwrap();
 
     // Wallet 1 should no longer have any pending transactions, and should have 2 transactions in the
     // latest block, leading to 2 returned for both "pending" and "latest".

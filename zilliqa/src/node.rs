@@ -777,6 +777,11 @@ impl Node {
         self.consensus.txpool_content()
     }
 
+    pub fn pending_transaction_account_for_address(&self, address: Address) -> usize {
+        self.consensus
+            .pending_transaction_count_for_address(address)
+    }
+
     /// Convenience function to convert a block to a proposal (add full txs)
     /// NOTE: Includes intershard transactions. Should only be used for syncing history,
     /// not for consensus messages regarding new blocks.

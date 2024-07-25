@@ -299,12 +299,8 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     let nonce = node.get_state(&block)?.get_account(address)?.nonce;
 
     if matches!(block_id, BlockId::Number(BlockNumberOrTag::Pending)) {
-        let pending_transaction_count = node
-            .txpool_content()
-            .pending
-            .iter()
-            .filter(|tx| tx.signer == address)
-            .count() as u64;
+        let pending_transaction_count =
+            node.pending_transaction_account_for_address(address) as u64;
 
         Ok((nonce + pending_transaction_count).to_hex())
     } else {
