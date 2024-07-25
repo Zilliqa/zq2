@@ -739,11 +739,11 @@ impl Consensus {
         content
     }
 
-    pub fn transaction_count_for_account(&self, account: Address) -> u64 {
+    pub fn pending_transaction_count(&self, account: Address) -> u64 {
         let current_nonce = self.state.must_get_account(account).nonce;
 
         self.transaction_pool
-            .transaction_count(account, current_nonce)
+            .pending_transaction_count(account, current_nonce)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {

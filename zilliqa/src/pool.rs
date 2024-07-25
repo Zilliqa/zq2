@@ -187,7 +187,7 @@ impl TransactionPool {
         TxPoolContent { pending, queued }
     }
 
-    pub fn transaction_count(&self, account: Address, mut account_nonce: u64) -> u64 {
+    pub fn pending_transaction_count(&self, account: Address, mut account_nonce: u64) -> u64 {
         while self
             .transactions
             .contains_key(&TxIndex::Nonced(account, account_nonce))

@@ -299,7 +299,7 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     let nonce = node.get_state(&block)?.get_account(address)?.nonce;
 
     if matches!(block_id, BlockId::Number(BlockNumberOrTag::Pending)) {
-        Ok(node.transaction_count_for_account(address).to_hex())
+        Ok(node.consensus.pending_transaction_count(address).to_hex())
     } else {
         Ok(nonce.to_hex())
     }

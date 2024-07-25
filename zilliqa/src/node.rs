@@ -106,7 +106,7 @@ pub struct Node {
     peer_id: PeerId,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
-    consensus: Consensus,
+    pub consensus: Consensus,
 }
 
 const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
@@ -775,10 +775,6 @@ impl Node {
 
     pub fn txpool_content(&self) -> TxPoolContent {
         self.consensus.txpool_content()
-    }
-
-    pub fn transaction_count_for_account(&self, account: Address) -> u64 {
-        self.consensus.transaction_count_for_account(account)
     }
 
     /// Convenience function to convert a block to a proposal (add full txs)
