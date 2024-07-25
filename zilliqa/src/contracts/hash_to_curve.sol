@@ -37,7 +37,6 @@ contract HashToCurve {
         bytes calldata message,
         bytes calldata dst
     ) external view returns (G1Point memory) {
-        require(false, "expand");
         // 1. u = hash_to_field(msg, 2)
         FieldPoint[2] memory u = hashToFieldFp(message, dst);
         // 2. Q0 = map_to_curve(u[0])

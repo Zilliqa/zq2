@@ -63,10 +63,9 @@ async fn deposit_stake(
                     Token::Address(reward_address),
                 ])
                 .unwrap(),
-        )
-        .gas(1_000_000_000_000u128); // consumes quite a bit of gas
+        );
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
-    network.run_until_receipt(wallet, hash, 8000).await;
+    network.run_until_receipt(wallet, hash, 80).await;
 }
 
 async fn remove_staker(network: &mut Network, wallet: &Wallet, key: NodePublicKey) {
