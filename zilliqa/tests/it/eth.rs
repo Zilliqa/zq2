@@ -187,7 +187,7 @@ async fn get_transaction_count_pending(mut network: Network) {
             .as_u64()
     }
 
-    // Both wallets should have no blocks pending.
+    // Both wallets should have no transactions pending.
     let count = get_count(wallet_1.address(), provider, "pending").await;
     assert_eq!(count, 0);
     let count = get_count(wallet_2.address(), provider, "pending").await;
