@@ -12,7 +12,7 @@ struct Staker {
 }
 
 contract Deposit {
-    HashToCurve public _hashToCurve;    
+    HashToCurve public hasher;
     bytes[] _stakerKeys;
     mapping(bytes => Staker) _stakersMap;
     uint256 public totalStake;
@@ -90,6 +90,13 @@ contract Deposit {
     }
 
     bytes constant DST = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+    // test vectors from library
+    bytes constant HASH_TO_G1_DST =
+        "QUUX-V01-CS02-with-BLS12381G1_XMD:SHA-256_SSWU_RO_";
+    bytes constant expected_P_x =
+        hex"052926add2207b76ca4fa57a8734416c8dc95e24501772c814278700eed6d1e4e8cf62d9c09db0fac349612b759e79a1";
+    bytes constant expected_P_y =
+        hex"08ba738453bfed09cb546dbb0783dbb3a5f1f566ed67bb6be0e8c67e2e81a4cc68ee29813bb7994998f3eae0c9c6a265";
 
     function deposit(
         bytes calldata blsPubKey,
@@ -102,7 +109,10 @@ contract Deposit {
         require(signature.length == 96);
         // TODO: Verify signature as a proof-of-possession of the private key.
 
-        G1Point memory a = _hashToCurve.hashToCurveG1(blsPubKey, DST);
+        hasher = new HashToCurve();
+        G1Point memory result = hasher.hashToCurveG1("", HASH_TO_G1_DST);
+        require(keccak256(result.x) == keccak256(expected_P_x));
+        require(keccak256(result.y) == keccak256(expected_P_y));
 
         uint256 keyIndex = _stakersMap[blsPubKey].keyIndex;
         if (keyIndex == 0) {

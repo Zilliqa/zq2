@@ -37,6 +37,7 @@ contract HashToCurve {
         bytes calldata message,
         bytes calldata dst
     ) external view returns (G1Point memory) {
+        require(false, "expand");
         // 1. u = hash_to_field(msg, 2)
         FieldPoint[2] memory u = hashToFieldFp(message, dst);
         // 2. Q0 = map_to_curve(u[0])
@@ -265,7 +266,7 @@ contract HashToCurve {
 
             // Invoke contract 0x5, put return value right after mod.length, @ 0x60
             let success := staticcall(
-                sub(gas(), 1350), // gas
+                200, // gas
                 0x5, // mpdexp precompile
                 freemem, //input offset
                 0x100, // input size  = 0x60+base.length+exp.length+mod.length
