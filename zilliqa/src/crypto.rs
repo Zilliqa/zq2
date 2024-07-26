@@ -139,6 +139,33 @@ impl<'de> Deserialize<'de> for NodePublicKey {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct NodePublicKeyRaw(Vec<u8>);
+
+impl NodePublicKeyRaw {
+    pub fn from_bytes(bytes: &[u8]) -> NodePublicKeyRaw {
+        Self(bytes.to_vec())
+    }
+
+    pub fn as_bytes(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+}
+
+impl From<NodePublicKey> for NodePublicKeyRaw {
+    fn from(value: NodePublicKey) -> Self {
+        Self::from_bytes(&value.as_bytes())
+    }
+}
+
+impl TryFrom<NodePublicKeyRaw> for NodePublicKey {
+    type Error = anyhow::Error;
+
+    fn try_from(raw: NodePublicKeyRaw) -> std::result::Result<Self, Self::Error> {
+        NodePublicKey::from_bytes(&raw.0)
+    }
+}
+
 /// The set of public keys that are accepted for signing and validating transactions, each
 /// corresponding to a variant of `TransactionSignature`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,11 +246,11 @@ impl SecretKey {
         Self::from_bytes(&bytes_vec)
     }
 
-    fn as_bls(&self) -> bls_signatures::PrivateKey {
+    pub fn as_bls(&self) -> bls_signatures::PrivateKey {
         bls_signatures::PrivateKey::new(self.bytes)
     }
 
-    fn as_ecdsa(&self) -> k256::ecdsa::SigningKey {
+    pub fn as_ecdsa(&self) -> k256::ecdsa::SigningKey {
         // `SigningKey::from_bytes` can fail for two reasons:
         // 1. The bytes represent a zero integer. However, we validate this is not the case on construction.
         // 2. The bytes represent an integer less than the curve's modulus. However for ECDSA, the curve's order is

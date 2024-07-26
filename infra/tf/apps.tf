@@ -68,19 +68,18 @@ resource "google_project_iam_member" "apps_artifact_registry_reader" {
 
 
 module "apps" {
-  source                = "./modules/node"
-  count                 = 1
+  source = "./modules/node"
+
   role                  = "apps"
-  name                  = "${var.network_name}-apps-${count.index}"
+  name                  = "${var.network_name}-apps"
   service_account_email = google_service_account.apps.email
   network_name          = local.network_name
-  node_zone             = data.google_compute_zones.zones.names.0
+  node_zones            = var.node_zone != "" ? [var.node_zone] : data.google_compute_zones.zones.names
   subnetwork_name       = data.google_compute_subnetwork.default.name
   otterscan_image       = var.otterscan_image
   spout_image           = var.spout_image
   subdomain             = var.subdomain
-  config                = ""
-  secret_key            = ""
+  secret_keys           = [""]
   persistence_url       = ""
   genesis_key           = var.genesis_key
   node_type             = var.apps_node_type
@@ -103,7 +102,7 @@ resource "google_compute_managed_ssl_certificate" "apps" {
 resource "google_compute_instance_group" "apps" {
   name      = "${var.network_name}-apps"
   zone      = "${var.region}-a"
-  instances = module.apps[*].self_link
+  instances = module.apps.self_link
 
 
   named_port {

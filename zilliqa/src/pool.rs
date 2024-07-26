@@ -185,6 +185,17 @@ impl TransactionPool {
         TxPoolContent { pending, queued }
     }
 
+    pub fn pending_transaction_count(&self, account: Address, mut account_nonce: u64) -> u64 {
+        while self
+            .transactions
+            .contains_key(&TxIndex::Nonced(account, account_nonce))
+        {
+            account_nonce += 1;
+        }
+
+        account_nonce
+    }
+
     pub fn insert_transaction(&mut self, txn: VerifiedTransaction, account_nonce: u64) -> bool {
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
             // This transaction is permanently invalid, so there is nothing to do.
@@ -258,10 +269,6 @@ impl TransactionPool {
         self.ready.clear();
         self.hash_to_index.clear();
         std::mem::take(&mut self.transactions).into_values()
-    }
-
-    pub fn size(&self) -> usize {
-        self.transactions.len()
     }
 
     pub fn has_txn_ready(&self) -> bool {
@@ -415,7 +422,7 @@ mod tests {
         pool.insert_transaction(transaction(from2, 0, 3), 0);
         pool.insert_transaction(transaction(from3, 0, 0), 0);
         pool.insert_transaction(intershard_transaction(0, 1, 5), 0);
-        assert_eq!(pool.size(), 5);
+        assert_eq!(pool.transactions.len(), 5);
 
         assert_eq!(
             pool.best_transaction().unwrap().tx.gas_price_per_evm_gas(),
@@ -437,7 +444,7 @@ mod tests {
             pool.best_transaction().unwrap().tx.gas_price_per_evm_gas(),
             0
         );
-        assert_eq!(pool.size(), 0);
+        assert_eq!(pool.transactions.len(), 0);
     }
 
     #[test]
@@ -447,17 +454,17 @@ mod tests {
             .parse()
             .unwrap();
 
-        assert_eq!(pool.size(), 0);
+        assert_eq!(pool.transactions.len(), 0);
         let normal_tx = transaction(from, 0, 1);
         let xshard_tx = intershard_transaction(0, 0, 1);
         pool.insert_transaction(normal_tx.clone(), 0);
-        assert_eq!(pool.size(), 1);
+        assert_eq!(pool.transactions.len(), 1);
         pool.insert_transaction(xshard_tx.clone(), 0);
-        assert_eq!(pool.size(), 2);
+        assert_eq!(pool.transactions.len(), 2);
         assert_eq!(pool.pop_transaction(normal_tx.hash), Some(normal_tx));
-        assert_eq!(pool.size(), 1);
+        assert_eq!(pool.transactions.len(), 1);
         assert_eq!(pool.pop_transaction(xshard_tx.hash), Some(xshard_tx));
-        assert_eq!(pool.size(), 0);
+        assert_eq!(pool.transactions.len(), 0);
         assert_eq!(pool.best_transaction(), None);
     }
 
