@@ -9955,7 +9955,6 @@ dependencies = [
  "foundry-compilers",
  "fs_extra",
  "futures",
- "futures-util",
  "hex",
  "http 1.1.0",
  "hyper 1.4.1",
