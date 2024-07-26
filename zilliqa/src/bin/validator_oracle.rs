@@ -2,16 +2,12 @@ use std::{path::PathBuf, str::FromStr};
 
 use alloy_contract::{ContractInstance, Interface};
 use alloy_provider::{Provider, ProviderBuilder, WsConnect};
-use alloy_rpc_types::{BlockNumberOrTag, Filter};
+use alloy_rpc_types::{BlockNumberOrTag, Filter, TransactionRequest};
 use alloy_sol_types::sol;
 
 use anyhow::Result;
 use clap::Parser;
-use ethers::{
-    providers::Middleware,
-    signers::{LocalWallet, Signer},
-    types::{TransactionRequest, H160},
-};
+use ethers::signers::{LocalWallet, Signer};
 use futures_util::stream::StreamExt;
 use tokio::sync::watch;
 use tracing::{debug, error, info};
@@ -65,7 +61,7 @@ impl ValidatorOracle {
             chain_clients.push(
                 ChainClient::new(
                     &chain_config,
-                    H160(**config.zq2.validator_manager_address),
+                    config.zq2.validator_manager_address,
                     wallet.clone(),
                 )
                 .await?,
@@ -175,7 +171,7 @@ impl ValidatorOracle {
                 block_instant_finality: None,
                 legacy_gas_estimation: None,
             },
-            H160(**config.zq2.validator_manager_address),
+            config.zq2.validator_manager_address,
             wallet.clone(),
         )
         .await
@@ -184,12 +180,13 @@ impl ValidatorOracle {
     async fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
         debug!("Retreiving validators from the deposit contract");
 
+        /*
         let tx = TransactionRequest::new()
             .to(H160(contract_addr::DEPOSIT.into_array()))
             .data(contracts::deposit::GET_STAKERS.encode_input(&[])?);
         // The first chain client is the ZQ2 one.
         let client = self.chain_clients[0].client.clone();
-        let output = client.call(&tx.into(), None).await.unwrap();
+        let output = client.send_transaction(tx).await.unwrap();
         let stakers = contracts::deposit::GET_STAKERS
             .decode_output(&output)
             .unwrap()[0]
@@ -201,6 +198,8 @@ impl ValidatorOracle {
             .into_iter()
             .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
             .collect())
+        */
+        Ok(vec![])
     }
 
     async fn update_validator_manager(

@@ -1,24 +1,35 @@
 use std::sync::Arc;
 
+use alloy_network::Ethereum;
+use alloy_primitives::Address;
+use alloy_provider::fillers::*;
+use alloy_provider::{Identity, Provider, ProviderBuilder, RootProvider, WsConnect};
+use alloy_pubsub::PubSubFrontend;
+
 use anyhow::Result;
 use ethers::{
-    middleware::{MiddlewareBuilder, NonceManagerMiddleware, SignerMiddleware},
-    providers::{Middleware, Provider, Ws},
-    signers::{LocalWallet, Signer},
-    types::{Address, U256},
+    signers::LocalWallet,
+    // types::{Address, U256},
 };
 
 use crate::uccb::cfg::ChainConfig;
 
-pub type Client = NonceManagerMiddleware<SignerMiddleware<Provider<Ws>, LocalWallet>>;
+// pub type Client =
+// NonceManagerMiddleware<SignerMiddleware<ethers::providers::Provider<Ws>, LocalWallet>>;
+pub type ChainProvider = FillProvider<
+    JoinFill<JoinFill<JoinFill<Identity, GasFiller>, NonceFiller>, ChainIdFiller>,
+    RootProvider<PubSubFrontend>,
+    PubSubFrontend,
+    Ethereum,
+>;
 
 #[derive(Debug, Clone)]
 pub struct ChainClient {
     pub rpc_url: String,
-    pub client: Arc<Client>,
+    pub client: Arc<ChainProvider>,
     pub validator_manager_address: Address,
     // pub chain_gateway_address: Address,
-    pub chain_id: U256,
+    pub chain_id: u64,
     pub wallet: LocalWallet,
     pub chain_gateway_block_deployed: u64,
     pub block_instant_finality: bool,
@@ -32,16 +43,13 @@ impl ChainClient {
         // chain_gateway_address: Address,
         wallet: LocalWallet,
     ) -> Result<Self> {
-        // let provider = Provider::<Http>::try_from(config.rpc_url.as_str())?;
-        let ws = Ws::connect(&config.rpc_url).await?;
-        let provider = ethers::providers::Provider::<Ws>::new(ws);
-        let chain_id = provider.get_chainid().await?;
-
-        let client: Arc<Client> = Arc::new(
-            provider
-                .with_signer(wallet.clone().with_chain_id(chain_id.as_u64()))
-                .nonce_manager(wallet.address()),
-        );
+        let ws = WsConnect::new(&config.rpc_url);
+        let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
+            .on_ws(ws)
+            .await?;
+        let chain_id = provider.get_chain_id().await?;
+        let client: Arc<ChainProvider> = Arc::new(provider);
 
         // TODO: get the validator_manager_address from chain_gateway itself
         // let chain_gateway = ChainGateway::new(config.chain_gateway_address, client.clone());
