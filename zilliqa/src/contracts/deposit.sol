@@ -98,14 +98,13 @@ contract Deposit {
         );
     }
 
-    address constant POP_VERIFY = 0x0000000000000000000000000000000000505056;
-    function popVerify(
+    // keep in-sync with zilliqa/src/precompiles.rs
+    function _popVerify(
         bytes memory pubkey,
         bytes memory signature
     ) private view returns (bool) {
-        // bytes4(keccak256("popVerify(bytes,bytes)")) = 0xbfd24965
         bytes memory input = abi.encodeWithSelector(
-            hex"bfd24965",
+            hex"bfd24965", // bytes4(keccak256("popVerify(bytes,bytes)"))
             signature,
             pubkey
         );
@@ -114,8 +113,8 @@ contract Deposit {
         bool success;
         assembly {
             success := staticcall(
-                100, // FIXME: Gas?
-                POP_VERIFY,
+                gas(), // FIXME: Gas?
+                0x00505056, // "\0PPV"
                 add(input, 0x20),
                 inputLength,
                 add(output, 0x20),
@@ -136,18 +135,16 @@ contract Deposit {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
         require(signature.length == 96);
-        // TODO: Verify signature as a proof-of-possession of the private key.
-        bool pop = popVerify(blsPubKey, signature);
-        require(pop, "test");
+
+        // Verify signature as a proof-of-possession of the private key.
+        bool pop = _popVerify(blsPubKey, signature);
+        require(pop, "rogue key check");
 
         uint256 keyIndex = _stakersMap[blsPubKey].keyIndex;
         if (keyIndex == 0) {
             // The staker will be at index `_stakerKeys.length`. We also need to add 1 to avoid the 0 sentinel value.
             _stakersMap[blsPubKey].keyIndex = _stakerKeys.length + 1;
             _stakerKeys.push(blsPubKey);
-        } else {
-            // TODO: Remove the following check once the verification of the BLS signature has been implemented.
-            require(msg.sender == _stakersMap[blsPubKey].rewardAddress);
         }
 
         _stakersMap[blsPubKey].balance += msg.value;
