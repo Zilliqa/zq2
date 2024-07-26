@@ -174,6 +174,9 @@ impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
             CallScheme::CallCode => TraceEntryType::CallCode,
             CallScheme::DelegateCall => TraceEntryType::DelegateCall,
             CallScheme::StaticCall => TraceEntryType::StaticCall,
+            CallScheme::ExtCall => TraceEntryType::ExtCall,
+            CallScheme::ExtStaticCall => TraceEntryType::ExtStaticCall,
+            CallScheme::ExtDelegateCall => TraceEntryType::ExtDelegateCall,
         };
         self.entries.push(TraceEntry {
             ty,

@@ -278,7 +278,7 @@ impl Database for &State {
         self.storage_ref(address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
         self.block_hash_ref(number)
     }
 }
@@ -316,7 +316,7 @@ impl DatabaseRef for &State {
         Ok(U256::from_be_bytes(result.0))
     }
 
-    fn block_hash_ref(&self, _number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
         // TODO
         Ok(B256::ZERO)
     }
@@ -446,6 +446,7 @@ impl State {
                 gas_priority_fee: None,
                 blob_hashes: vec![],
                 max_fee_per_blob_gas: None,
+                authorization_list: None,
             })
             .append_handler_register(|handler| {
                 let precompiles = handler.pre_execution.load_precompiles();
@@ -880,7 +881,7 @@ impl State {
                 ExecutionResult::Success { .. } => max = mid,
                 ExecutionResult::Revert { .. } => min = mid + 1,
                 ExecutionResult::Halt { reason, .. } => match reason {
-                    HaltReason::OutOfGas(_) | HaltReason::InvalidEFOpcode => min = mid + 1,
+                    HaltReason::OutOfGas(_) | HaltReason::InvalidFEOpcode => min = mid + 1,
                     _ => return Err(anyhow!("halted due to: {reason:?}")),
                 },
             }

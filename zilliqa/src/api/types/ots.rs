@@ -169,6 +169,9 @@ pub enum TraceEntryType {
     Create,
     Create2,
     SelfDestruct,
+    ExtCall,
+    ExtStaticCall,
+    ExtDelegateCall,
 }
 
 #[derive(Debug, Clone, Serialize)]
