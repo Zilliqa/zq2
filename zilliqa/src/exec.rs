@@ -420,7 +420,7 @@ impl State {
                 gas_limit: U256::from(self.block_gas_limit.0),
                 basefee: U256::from(self.gas_price),
                 difficulty: U256::from(1),
-                prevrandao: Some(Hash::compute([&padded_view_number]).into()),
+                prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
                 blob_excess_gas_and_price: None,
             })
             .with_external_context(inspector)
