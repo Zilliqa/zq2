@@ -436,13 +436,21 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             .get_block(block_hash)?
             .ok_or_else(|| anyhow!("block not found"))?))),
         (None, from, to) => {
-            let from = node
+            let Some(from) = node
                 .resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest))?
-                .unwrap()
-                .number();
+                .as_ref()
+                .map(Block::number)
+            else {
+                return Ok(vec![]);
+            };
+
             let to = node
                 .resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?
-                .unwrap()
+                .unwrap_or_else(|| {
+                    node.resolve_block_number(BlockNumberOrTag::Latest)
+                        .unwrap()
+                        .unwrap()
+                })
                 .number();
 
             if from > to {
@@ -780,7 +788,12 @@ fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     topics[..params.topics.len()].swap_with_slice(&mut params.topics[..]);
 
     let from_block = params.from_block.unwrap_or(BlockNumberOrTag::Latest);
-    let first_block = node.resolve_block_number(from_block)?.unwrap().number();
+    // let first_block = node.resolve_block_number(from_block)?.unwrap().number();
+
+    let first_block = match params.from_block.unwrap_or(BlockNumberOrTag::Latest) {
+        BlockNumberOrTag::Number(n) => n,
+        tag => node.resolve_block_number(tag)?.unwrap().number(),
+    };
 
     let mut rng = rand::thread_rng();
 
@@ -958,13 +971,19 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
     };
 
     let last_block = match filter {
-        Filter::General(GeneralFilter { to_block, .. }) => {
-            node.resolve_block_number(*to_block)?.unwrap().number().min(
+        Filter::General(GeneralFilter { to_block, .. }) => node
+            .resolve_block_number(*to_block)?
+            .unwrap_or_else(|| {
+                node.resolve_block_number(BlockNumberOrTag::Latest)
+                    .unwrap()
+                    .unwrap()
+            })
+            .number()
+            .min(
                 node.resolve_block_number(BlockNumberOrTag::Latest)?
                     .unwrap()
                     .number(),
-            )
-        }
+            ),
         Filter::Block => node
             .resolve_block_number(BlockNumberOrTag::Latest)?
             .unwrap()
@@ -1029,13 +1048,19 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json
     };
 
     let last_block = match filter {
-        Filter::General(GeneralFilter { to_block, .. }) => {
-            node.resolve_block_number(*to_block)?.unwrap().number().min(
+        Filter::General(GeneralFilter { to_block, .. }) => node
+            .resolve_block_number(*to_block)?
+            .unwrap_or_else(|| {
+                node.resolve_block_number(BlockNumberOrTag::Latest)
+                    .unwrap()
+                    .unwrap()
+            })
+            .number()
+            .min(
                 node.resolve_block_number(BlockNumberOrTag::Latest)?
                     .unwrap()
                     .number(),
-            )
-        }
+            ),
         Filter::Block => node
             .resolve_block_number(BlockNumberOrTag::Latest)?
             .unwrap()
@@ -1047,15 +1072,20 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json
     };
 
     let first_block = match filter {
-        Filter::General(GeneralFilter { from_block, .. }) => node
-            .resolve_block_number(*from_block)?
-            .unwrap()
-            .number()
-            .max(
-                node.resolve_block_number(BlockNumberOrTag::Earliest)?
-                    .unwrap()
-                    .number(),
-            ),
+        Filter::General(GeneralFilter { from_block, .. }) => {
+            if let Some(first_block) = node.resolve_block_number(*from_block)?.map(|first_block| {
+                first_block.number().max(
+                    node.resolve_block_number(BlockNumberOrTag::Earliest)
+                        .unwrap()
+                        .unwrap()
+                        .number(),
+                )
+            }) {
+                first_block
+            } else {
+                return Ok(serde_json::Value::Array(vec![]));
+            }
+        }
         Filter::Block => node
             .resolve_block_number(BlockNumberOrTag::Earliest)?
             .unwrap()
