@@ -319,7 +319,10 @@ mod tests {
                 .unwrap(),
             },
             signer: from_addr,
-            hash: Hash::compute([from_addr.as_slice(), &[nonce]]),
+            hash: Hash::builder()
+                .with(from_addr.as_slice())
+                .with([nonce])
+                .finalize(),
         }
     }
 
@@ -342,7 +345,10 @@ mod tests {
                 from: Address::ZERO,
             },
             signer: Address::ZERO,
-            hash: Hash::compute([[shard_nonce], [from_shard]]),
+            hash: Hash::builder()
+                .with([shard_nonce])
+                .with([from_shard])
+                .finalize(),
         }
     }
 

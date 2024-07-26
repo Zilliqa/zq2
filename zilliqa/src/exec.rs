@@ -177,15 +177,15 @@ pub struct ScillaTransition {
 }
 
 impl ScillaTransition {
-    pub fn hash(&self) -> Hash {
-        Hash::compute([
-            self.from.0.as_slice(),
-            self.to.0.as_slice(),
-            &self.depth.to_be_bytes(),
-            &self.amount.to_be_bytes(),
-            self.tag.as_bytes(),
-            self.params.as_bytes(),
-        ])
+    pub fn compute_hash(&self) -> Hash {
+        Hash::builder()
+            .with(self.from.0.as_slice())
+            .with(self.to.0.as_slice())
+            .with(self.depth.to_be_bytes())
+            .with(self.amount.to_be_bytes())
+            .with(self.tag.as_bytes())
+            .with(self.params.as_bytes())
+            .finalize()
     }
 }
 
@@ -224,8 +224,11 @@ pub struct ScillaException {
 }
 
 impl ScillaException {
-    pub fn hash(&self) -> Hash {
-        Hash::compute([&self.line.to_be_bytes(), self.message.as_bytes()])
+    pub fn compute_hash(&self) -> Hash {
+        Hash::builder()
+            .with(self.line.to_be_bytes())
+            .with(self.message.as_bytes())
+            .finalize()
     }
 }
 
@@ -417,7 +420,7 @@ impl State {
                 gas_limit: U256::from(self.block_gas_limit.0),
                 basefee: U256::from(self.gas_price),
                 difficulty: U256::from(1),
-                prevrandao: Some(Hash::compute([&padded_view_number]).into()),
+                prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
                 blob_excess_gas_and_price: None,
             })
             .with_external_context(inspector)

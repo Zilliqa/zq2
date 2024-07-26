@@ -355,7 +355,7 @@ pub async fn convert_persistence(
                     .insert(txn_hash.as_slice(), transaction.calculate_hash().as_bytes())
                     .unwrap();
 
-                let receipt_hash = receipt.hash();
+                let receipt_hash = receipt.compute_hash();
                 receipts_trie
                     .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())
                     .unwrap();
