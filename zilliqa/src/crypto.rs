@@ -153,10 +153,6 @@ impl NodePublicKey {
         }
         Ok(())
     }
-
-    pub fn into_addr(&self) -> Address {
-        Address::from_slice(&Keccak256::digest(self.as_bytes())[12..32])
-    }
 }
 
 impl Display for NodePublicKey {
