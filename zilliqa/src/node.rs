@@ -201,7 +201,7 @@ pub struct Node {
     peer_id: PeerId,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
-    consensus: Consensus,
+    pub consensus: Consensus,
     /// Tuple arguments correspond to filter, block number last time `eth_getFilterChanges` was called, and `Instant` at last time
     /// the filter was used was called.
     pub filters: LruCache<B256, (Filter, u64, Instant)>,

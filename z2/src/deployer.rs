@@ -22,6 +22,7 @@ use tera::{Context, Tera};
 use tokio::{
     fs::{self, File},
     io::AsyncWriteExt,
+    task,
 };
 use zilliqa::node::Node;
 
@@ -222,29 +223,29 @@ impl Machine {
             .await?;
         Ok(output)
     }
-}
 
-async fn get_local_block_number(instance: &Machine) -> Result<u64> {
-    let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
-    let output = instance.run(inner_command).await?;
-    if !output.success {
-        return Err(anyhow!(
-            "getting local block number failed: {:?}",
-            output.stderr
-        ));
+    pub async fn get_local_block_number(&self) -> Result<u64> {
+        let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
+        let output = self.run(inner_command).await?;
+        if !output.success {
+            return Err(anyhow!(
+                "getting local block number failed: {:?}",
+                output.stderr
+            ));
+        }
+
+        let response: Value = serde_json::from_slice(&output.stdout)?;
+        let block_number = response
+            .get("result")
+            .ok_or_else(|| anyhow!("response has no result"))?
+            .as_str()
+            .ok_or_else(|| anyhow!("result is not a string"))?
+            .strip_prefix("0x")
+            .ok_or_else(|| anyhow!("result does not start with 0x"))?;
+        let block_number = u64::from_str_radix(block_number, 16)?;
+
+        Ok(block_number)
     }
-
-    let response: Value = serde_json::from_slice(&output.stdout)?;
-    let block_number = response
-        .get("result")
-        .ok_or_else(|| anyhow!("response has no result"))?
-        .as_str()
-        .ok_or_else(|| anyhow!("result is not a string"))?
-        .strip_prefix("0x")
-        .ok_or_else(|| anyhow!("result does not start with 0x"))?;
-    let block_number = u64::from_str_radix(block_number, 16)?;
-
-    Ok(block_number)
 }
 
 pub async fn new(network_name: &str, project_id: &str, roles: Vec<NodeRole>) -> Result<()> {
@@ -272,37 +273,41 @@ pub async fn install_or_upgrade(config_file: &str, is_upgrade: bool) -> Result<(
         )
         .await?;
 
-        for node in nodes.iter() {
-            println!(
-                "{} {} instance {} with address {}",
-                if is_upgrade {
-                    "Upgrading"
-                } else {
-                    "Installing"
-                },
-                node_role,
-                node.machine.name,
-                node.machine.external_address,
-            );
+        let futures = nodes
+            .into_iter()
+            .map(|node| {
+                task::spawn(async move {
+                    let result = if is_upgrade {
+                        node.upgrade().await
+                    } else {
+                        node.install().await
+                    };
+                    (node, result)
+                })
+            })
+            .collect::<Vec<_>>();
 
-            node.import_config_files().await?;
-            node.run_provisioning_script().await?;
+        let results = futures::future::join_all(futures).await;
 
-            // Check the node is making progress
-            if is_upgrade && (node_role == NodeRole::Bootstrap || node_role == NodeRole::Validator)
-            {
-                let first_block_number = get_local_block_number(&node.machine).await?;
-                loop {
-                    let next_block_number = get_local_block_number(&node.machine).await?;
-                    println!(
-                        "Polled block number at {next_block_number}, waiting for {} more blocks",
-                        (first_block_number + 10).saturating_sub(next_block_number)
-                    );
-                    if next_block_number >= first_block_number + 10 {
-                        break;
-                    }
+        let mut successes = vec![];
+        let mut failures = vec![];
+
+        for result in results {
+            match result? {
+                (node, Ok(())) => successes.push(node.name()),
+                (node, Err(err)) => {
+                    println!("Node {} failed with error: {}", node.name(), err);
+                    failures.push(node.name());
                 }
             }
+        }
+
+        if !successes.is_empty() {
+            println!("Successes: {}", successes.join(" "));
+        }
+
+        if !failures.is_empty() {
+            println!("Failures: {}", failures.join(" "));
         }
     }
 

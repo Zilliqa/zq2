@@ -185,6 +185,17 @@ impl TransactionPool {
         TxPoolContent { pending, queued }
     }
 
+    pub fn pending_transaction_count(&self, account: Address, mut account_nonce: u64) -> u64 {
+        while self
+            .transactions
+            .contains_key(&TxIndex::Nonced(account, account_nonce))
+        {
+            account_nonce += 1;
+        }
+
+        account_nonce
+    }
+
     pub fn insert_transaction(&mut self, txn: VerifiedTransaction, account_nonce: u64) -> bool {
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
             // This transaction is permanently invalid, so there is nothing to do.

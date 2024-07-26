@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{anyhow, Ok, Result};
 use serde_json::Value;
+use tempfile::NamedTempFile;
 use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
 
@@ -13,7 +14,7 @@ use crate::{
 pub struct ChainNode {
     chain_name: String,
     role: NodeRole,
-    pub machine: Machine,
+    machine: Machine,
     versions: HashMap<String, String>,
 }
 
@@ -32,12 +33,65 @@ impl ChainNode {
         }
     }
 
-    pub async fn import_config_files(&self) -> Result<()> {
-        let provisioning_script = &self.create_provisioning_script().await?;
-        self.write("config.toml").await?;
+    pub fn name(&self) -> String {
+        self.machine.name.clone()
+    }
+
+    pub async fn install(&self) -> Result<()> {
+        println!(
+            "Installing {} instance {} with address {}",
+            self.role, self.machine.name, self.machine.external_address,
+        );
+
+        self.import_config_files().await?;
+        self.run_provisioning_script().await?;
+
+        Ok(())
+    }
+
+    pub async fn upgrade(&self) -> Result<()> {
+        println!(
+            "Upgrading {} instance {} with address {}",
+            self.role, self.machine.name, self.machine.external_address,
+        );
+
+        self.import_config_files().await?;
+        self.run_provisioning_script().await?;
+
+        // Check the node is making progress
+        if self.role == NodeRole::Bootstrap || self.role == NodeRole::Validator {
+            let first_block_number = self.machine.get_local_block_number().await?;
+            loop {
+                let next_block_number = self.machine.get_local_block_number().await?;
+                println!(
+                    "Polled block number at {next_block_number}, waiting for {} more blocks",
+                    (first_block_number + 10).saturating_sub(next_block_number)
+                );
+                if next_block_number >= first_block_number + 10 {
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn import_config_files(&self) -> Result<()> {
+        let temp_config_toml = NamedTempFile::new()?;
+        let config_toml = &self
+            .create_config_toml(temp_config_toml.path().to_str().unwrap())
+            .await?;
+        let temp_provisioning_script = NamedTempFile::new()?;
+        let provisioning_script = &self
+            .create_provisioning_script(temp_provisioning_script.path().to_str().unwrap())
+            .await?;
 
         self.machine
-            .copy_to(&[provisioning_script, "config.toml"], "/tmp/")
+            .copy_to(&[config_toml], "/tmp/config.toml")
+            .await?;
+
+        self.machine
+            .copy_to(&[provisioning_script], "/tmp/provision_node.py")
             .await?;
 
         println!("Configuration files imported in the node");
@@ -45,7 +99,7 @@ impl ChainNode {
         Ok(())
     }
 
-    pub async fn run_provisioning_script(&self) -> Result<()> {
+    async fn run_provisioning_script(&self) -> Result<()> {
         let cmd = "sudo mv /tmp/config.toml /config.toml && sudo python3 /tmp/provision_node.py";
         let output = self.machine.run(cmd).await?;
         if !output.success {
@@ -58,7 +112,7 @@ impl ChainNode {
         Ok(())
     }
 
-    async fn write(&self, filename: &str) -> Result<()> {
+    async fn create_config_toml(&self, filename: &str) -> Result<String> {
         let mut spec_config = validators::get_chain_spec_config(&self.chain_name).await?;
 
         if self.role == NodeRole::Bootstrap {
@@ -79,10 +133,11 @@ impl ChainNode {
         file.write_all(toml::to_string(&spec_config)?.as_bytes())
             .await?;
         println!("Configuration file created: {filename}");
-        Ok(())
+
+        Ok(filename.to_owned())
     }
 
-    async fn create_provisioning_script(&self) -> Result<String> {
+    async fn create_provisioning_script(&self, filename: &str) -> Result<String> {
         // horrific implementation of a rendering engine for the provisioning script used
         // for both first install and upgrade of the ZQ2 network instances.
         // After the proto-testnet launch we can split the provisioning of the infra from the
@@ -91,7 +146,6 @@ impl ChainNode {
 
         let provisioning_script = include_str!("../resources/node_provision.tera.py");
         let role_name = &self.role.to_string();
-        let filename = "provision_node.py";
 
         let z2_image = &docker_image(
             "zq2",

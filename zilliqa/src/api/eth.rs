@@ -305,10 +305,17 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     expect_end_of_params(&mut params, 3, 3)?;
 
     let node = node.lock().unwrap();
+
     let block = node.get_block(block_id)?;
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
-    Ok(node.get_state(&block)?.get_account(address)?.nonce.to_hex())
+    let nonce = node.get_state(&block)?.get_account(address)?.nonce;
+
+    if matches!(block_id, BlockId::Number(BlockNumberOrTag::Pending)) {
+        Ok(node.consensus.pending_transaction_count(address).to_hex())
+    } else {
+        Ok(nonce.to_hex())
+    }
 }
 
 fn get_gas_price(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
