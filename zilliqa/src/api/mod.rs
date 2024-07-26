@@ -52,7 +52,7 @@ macro_rules! declare_module {
         $(
             let rpc_server_duration = meter
                 .f64_histogram("rpc.server.duration")
-                .with_unit(opentelemetry::metrics::Unit::new("ms"))
+                .with_unit("ms")
                 .init();
             module
                 .register_method($name, move |params, context| {
