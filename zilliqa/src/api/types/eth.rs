@@ -383,11 +383,11 @@ fn m3_2048(bloom: &mut [u8; 256], data: &[u8]) {
     }
 }
 
-/// A type for representing null, a single item or an array of items.
-#[derive(Deserialize, Serialize)]
+/// A type for representing a single item or an array of items.
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(untagged)]
 pub enum OneOrMany<T> {
-    Null,
+    // Null,
     One(T),
     Many(Vec<T>),
 }
@@ -395,7 +395,7 @@ pub enum OneOrMany<T> {
 impl<T: PartialEq> OneOrMany<T> {
     pub fn contains(&self, x: &T) -> bool {
         match self {
-            OneOrMany::Null => false,
+            // OneOrMany::Null => false,
             OneOrMany::One(item) => item == x,
             OneOrMany::Many(items) => items.contains(x),
         }
@@ -403,7 +403,7 @@ impl<T: PartialEq> OneOrMany<T> {
 
     pub fn is_empty(&self) -> bool {
         match self {
-            OneOrMany::Null => true,
+            // OneOrMany::Null => true,
             OneOrMany::One(_) => false,
             OneOrMany::Many(items) => items.is_empty(),
         }

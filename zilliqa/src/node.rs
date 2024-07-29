@@ -1,7 +1,12 @@
-use std::{collections::HashSet, fmt::Debug, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    fmt::Debug,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_eips::{BlockId, BlockNumberOrTag, RpcBlockHash};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_rpc_types_trace::{
     geth::{
         FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
@@ -11,15 +16,18 @@ use alloy_rpc_types_trace::{
 };
 use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
+use lru::LruCache;
 use revm::Inspector;
 use revm_inspectors::tracing::{
     js::{JsInspector, TransactionContext},
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
 };
+use serde::Serialize;
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
+    api::types::eth::OneOrMany,
     cfg::NodeConfig,
     consensus::Consensus,
     crypto::{Hash, SecretKey},
@@ -107,6 +115,71 @@ impl MessageSender {
 /// Tuple of (destination, message).
 pub type NetworkMessage = (Option<PeerId>, ExternalMessage);
 
+#[derive(Debug, Clone, Serialize)]
+pub struct GeneralFilter {
+    pub from_block: BlockNumberOrTag,
+    pub to_block: BlockNumberOrTag,
+    pub address: Option<OneOrMany<Address>>,
+    // Boxed as enum variant size difference is too large otherwise
+    pub topics: Box<[Option<OneOrMany<B256>>; 4]>,
+}
+
+impl Default for GeneralFilter {
+    fn default() -> Self {
+        GeneralFilter {
+            from_block: BlockNumberOrTag::Latest,
+            to_block: BlockNumberOrTag::Latest,
+            address: None,
+            topics: Box::new([None, None, None, None]),
+        }
+    }
+}
+
+impl GeneralFilter {
+    pub fn from_block(mut self, block: BlockNumberOrTag) -> Self {
+        self.from_block = block;
+
+        self
+    }
+
+    pub fn to_block(mut self, block: BlockNumberOrTag) -> Self {
+        self.to_block = block;
+
+        self
+    }
+
+    pub fn address(mut self, address: Option<OneOrMany<Address>>) -> Self {
+        self.address = address;
+
+        self
+    }
+
+    pub fn topic0(mut self, topic: Option<OneOrMany<B256>>) -> Self {
+        self.topics[0] = topic;
+
+        self
+    }
+
+    pub fn topic1(mut self, topic: Option<OneOrMany<B256>>) -> Self {
+        self.topics[1] = topic;
+
+        self
+    }
+
+    pub fn topic2(mut self, topic: Option<OneOrMany<B256>>) -> Self {
+        self.topics[2] = topic;
+
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Filter {
+    Block,
+    PendingTransaction,
+    General(GeneralFilter),
+}
+
 /// The central data structure for a blockchain node.
 ///
 /// # Transaction Lifecycle
@@ -129,6 +202,9 @@ pub struct Node {
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub consensus: Consensus,
+    /// Tuple arguments correspond to filter, block number last time `eth_getFilterChanges` was called, and `Instant` at last time
+    /// the filter was used was called.
+    pub filters: LruCache<B256, (Filter, u64, Instant)>,
 }
 
 const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
@@ -157,6 +233,7 @@ impl Node {
             reset_timeout: reset_timeout.clone(),
             db: db.clone(),
             consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
+            filters: LruCache::unbounded(),
         };
         Ok(node)
     }
@@ -248,6 +325,18 @@ impl Node {
             }
         }
         Ok(())
+    }
+
+    pub fn handle_filter_interval(&mut self) {
+        let now = Instant::now();
+
+        while let Some((_, (_, _, last_used))) = self.filters.peek_lru() {
+            if now.duration_since(*last_used) < self.config.filter_expiry {
+                break;
+            }
+
+            self.filters.pop_lru();
+        }
     }
 
     fn inject_intershard_transaction(&mut self, intershard_call: IntershardCall) -> Result<()> {
