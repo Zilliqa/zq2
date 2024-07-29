@@ -18,7 +18,7 @@ pub mod p2p_node;
 mod pool;
 mod precompiles;
 pub mod schnorr;
-mod scilla;
+pub mod scilla;
 mod scilla_proto;
 pub mod serde_util;
 pub mod state;

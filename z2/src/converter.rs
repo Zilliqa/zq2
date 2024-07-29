@@ -1,8 +1,10 @@
 #![allow(unused_imports)]
 
+use std::string::String;
 use std::{
-    collections::BTreeMap,
+    collections::{hash_map::Entry, BTreeMap, HashMap, VecDeque},
     fs,
+    io::BufRead,
     path::PathBuf,
     process::{self, Stdio},
     sync::Arc,
@@ -14,18 +16,19 @@ use alloy_primitives::{Address, Parity, Signature, TxKind, B256, U256};
 use anyhow::{anyhow, Context, Result};
 use bitvec::bitvec;
 use clap::{Parser, Subcommand};
-use eth_trie::{MemoryDB, Trie};
+use eth_trie::{EthTrie, MemoryDB, Trie};
 use ethabi::Token;
 use git2::Repository;
 use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
 use itertools::Itertools;
 use revm::primitives::ResultAndState;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::{de::Unexpected::Str, Deserialize, Serialize};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sha3::Keccak256;
 use tempfile::TempDir;
-use tracing::{trace, warn};
+use tokio::io::AsyncBufReadExt;
+use tracing::{info, trace, warn};
 use zilliqa::{
     cfg::Config,
     consensus::Validator,
@@ -35,6 +38,7 @@ use zilliqa::{
     exec::BaseFeeCheck,
     inspector,
     message::{Block, BlockHeader, QuorumCertificate, Vote},
+    scilla::storage_key,
     schnorr,
     state::{contract_addr, Account, Code, State},
     time::SystemTime,
@@ -44,6 +48,90 @@ use zilliqa::{
 };
 
 use crate::zq1;
+
+fn convert_scilla_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<()> {
+    let prefix = address
+        .to_string()
+        .to_lowercase()
+        .strip_prefix("0x")
+        .unwrap()
+        .to_string();
+    let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
+
+    let mut contract_values = vec![];
+    let mut field_types: HashMap<String, (String, u8)> = HashMap::new();
+
+    for elem in storage_entries_iter {
+        let (key, value) = elem?;
+
+        const SEPARATOR: u8 = 0x16;
+
+        let chunks = key
+            .as_bytes()
+            .split(|item| *item == SEPARATOR).into_iter().map(|chunk| String::from_utf8(chunk.to_vec()).unwrap()).skip(1).collect::<Vec<_>>();
+
+        if chunks.is_empty() {
+            warn!("Malformed key name in contract storage!");
+            continue;
+        };
+
+        // We handle these keys differently in zq2
+        if chunks[0].contains("_fields_map_depth")
+            || chunks[0].contains("_version")
+            || chunks[0].contains("_hasmap")
+            || chunks[0].contains("_addr")
+        {
+            continue;
+        }
+
+        let key_type = &chunks[0];
+        let field_name = &chunks[1];
+
+        if key_type.contains("_depth") {
+            let value = String::from_utf8(value)?;
+            let field_depth: u8 = std::str::FromStr::from_str(&value)?;
+
+            let (mut field_type, mut depth) = field_types
+                .get(field_name)
+                .cloned()
+                .unwrap_or_else(|| (String::new(), field_depth));
+            depth = field_depth;
+            field_types.insert(field_name.into(), (field_type, depth));
+            continue;
+        } else if key_type.contains("_type") {
+            let field_type = String::from_utf8(value)?;
+            let (mut ty, mut depth) = field_types
+                .get(field_name)
+                .cloned()
+                .unwrap_or_else(|| (String::new(), 0));
+            ty = field_type;
+            field_types.insert(field_name.into(), (ty, depth));
+            continue;
+        }
+
+        let field_name = &chunks[0];
+        let mut indices = vec![];
+
+        for i in 1..chunks.len() {
+            if !chunks[i].is_empty() {
+                indices.push(chunks[i].as_bytes().to_vec())
+            }
+        }
+        contract_values.push((field_name.to_owned(), (indices, value)));
+    }
+
+    let db = Arc::new(zq2_db.state_trie()?);
+    let mut contract_trie = EthTrie::new(db.clone()).at_root(EMPTY_ROOT_HASH);
+
+    for (key_name, (indices, value)) in contract_values {
+        let storage_key = storage_key(&key_name, &indices);
+        contract_trie.insert(&storage_key, &value)?
+    }
+
+    let storage_root = contract_trie.root_hash();
+
+    Ok(())
+}
 
 pub async fn convert_persistence(
     zq1_db: zq1::Db,
@@ -79,21 +167,71 @@ pub async fn convert_persistence(
         let average_distance = distance_sum as f64 / 99.;
         let address_count = ((u64::MAX as f64) / average_distance) as u64;
 
-        let progress = ProgressBar::new(address_count)
-            .with_style(style.clone())
-            .with_message("collect accounts")
-            .with_finish(ProgressFinish::AndLeave);
-        let accounts: Vec<_> = zq1_db.accounts().progress_with(progress).collect();
+        // let progress = ProgressBar::new(address_count)
+        //     .with_style(style.clone())
+        //     .with_message("collect accounts")
+        //     .with_finish(ProgressFinish::AndLeave);
+        //
+        // let progress = ProgressBar::new(accounts.len() as u64)
+        //     .with_style(style.clone())
+        //     .with_message("convert accounts")
+        //     .with_finish(ProgressFinish::AndLeave);
 
-        let progress = ProgressBar::new(accounts.len() as u64)
-            .with_style(style.clone())
-            .with_message("convert accounts")
-            .with_finish(ProgressFinish::AndLeave);
-        for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
+        let accounts: Vec<_> = zq1_db.accounts().collect(); //.progress_with(progress).collect();
+
+        for (address, zq1_account) in accounts.into_iter() {
+            //.progress_with(progress) {
             if address.is_zero() {
                 continue;
             }
             let zq1_account = zq1::Account::from_proto(zq1_account)?;
+
+            let prefix = address
+                .to_string()
+                .strip_prefix("0x")
+                .unwrap()
+                .to_string()
+                .to_lowercase();
+            let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
+
+            for elem in storage_entries_iter {
+                if elem.is_err() {
+                    println!("Something went wrong with quering element by prefix!");
+                    continue;
+                }
+                let (key, val) = elem?;
+                const SEPARATOR: u8 = 0x16;
+
+                let key_bytes = key.as_bytes();
+
+                if key_bytes.contains(&SEPARATOR) {
+                    let chunks = key_bytes.split(|item| *item == SEPARATOR);
+                    println!("Key is: {}, and contains separator 0x1F", key);
+                    println!("Split result: ");
+                    for chunk in chunks {
+                        println!("Chunk: {}", std::str::from_utf8(chunk).unwrap());
+                    }
+                }
+
+                let decoded = String::from_utf8(val.clone());
+                if decoded.is_ok() {
+                    println!(
+                        "Account: {}, Key is: {}, decoded is: {:?}",
+                        address.to_string(),
+                        key,
+                        decoded.unwrap()
+                    );
+                } else {
+                    println!(
+                        "Account: {}, Key is: {}, val is: {:?}",
+                        address.to_string(),
+                        key,
+                        val
+                    );
+                }
+            }
+
+            convert_scilla_state(&zq1_db, &zq2_db, address)?;
 
             let account = Account {
                 nonce: zq1_account.nonce,
@@ -103,9 +241,20 @@ pub async fn convert_persistence(
             };
 
             state.save_account(address, account)?;
-
-            trace!(?address, "account inserted");
+            println!("account inserted: {:?}", address);
+            //println!(?address, "account inserted");
         }
+    }
+
+    let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix("");
+
+    for elem in storage_entries_iter {
+        if elem.is_err() {
+            warn!("Something went wrong with quering element by prefix!");
+            continue;
+        }
+        let (key, val) = elem?;
+        warn!("Key is: {}, val is: {}", key, String::from_utf8(val)?);
     }
 
     // Add stake for this validator. For now, we just assume they've always had 64 ZIL staked.
@@ -147,7 +296,9 @@ pub async fn convert_persistence(
     }
     state.apply_delta_evm(&result_state)?;
 
-    let max_block = zq1_db.get_tx_blocks_aux("MaxTxBlockNumber")?.unwrap();
+    let max_block = zq1_db
+        .get_tx_blocks_aux("MaxTxBlockNumber")?
+        .unwrap_or_default();
 
     let current_block = zq2_db.get_latest_finalized_view()?.unwrap_or(0);
 
