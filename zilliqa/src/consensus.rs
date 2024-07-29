@@ -20,10 +20,8 @@ use tracing::*;
 use crate::{
     block_store::BlockStore,
     blockhooks,
-    cfg::NodeConfig,
-    crypto::{verify_messages, Hash, NodePublicKey, NodePublicKeyRaw, NodeSignature, SecretKey},
     cfg::{ConsensusConfig, NodeConfig},
-    crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
+    crypto::{verify_messages, Hash, NodePublicKey, NodePublicKeyRaw, NodeSignature, SecretKey},
     db::Db,
     exec::TransactionApplyResult,
     inspector::{self, ScillaInspector, TouchedAddressInspector},
@@ -648,17 +646,25 @@ impl Consensus {
         view: u64,
         cosigned: &BitSlice,
     ) -> Result<()> {
-        let proposer_bytes = self.leader_at_block_raw(parent_block, view).unwrap().0;
-        let state = &mut self.state;
-        let config = &self.config.consensus;
-        self.apply_rewards_raw_at(
-            state,
-            config,
+        self.apply_rewards_raw(
             &committee.iter().map(|k| (*k).into()).collect::<Vec<_>>(),
-            proposer_bytes,
+            parent_block,
             view,
             cosigned,
         )
+    }
+    fn apply_rewards_raw(
+        &mut self,
+        committee: &[NodePublicKeyRaw],
+        parent_block: &Block,
+        view: u64,
+        cosigned: &BitSlice,
+    ) -> Result<()> {
+        let proposer_bytes = self.leader_at_block_raw(parent_block, view).unwrap().0;
+        let state = &mut self.state;
+        state.set_to_root(parent_block.state_root_hash().into());
+        let config = &self.config.consensus;
+        Self::apply_rewards_raw_at(state, config, committee, proposer_bytes, view, cosigned)
     }
 
     fn apply_rewards_raw_at(
@@ -671,13 +677,11 @@ impl Consensus {
     ) -> Result<()> {
         debug!("apply rewards in view {view}");
 
-        let rewards_per_block =
-            *config.rewards_per_hour / config.blocks_per_hour as u128;
+        let rewards_per_block = *config.rewards_per_hour / config.blocks_per_hour as u128;
 
         if let Some(proposer_address) = at_state.get_reward_address_raw(proposer_bytes)? {
             let reward = rewards_per_block / 2;
-            at_state
-                .mutate_account(proposer_address, |a| a.balance += reward)?;
+            at_state.mutate_account(proposer_address, |a| a.balance += reward)?;
         }
 
         let mut total_cosigner_stake = 0;
@@ -701,12 +705,10 @@ impl Consensus {
             if let Some(cosigner) = reward_address {
                 let reward = U256::from(rewards_per_block / 2) * U256::from(stake)
                     / U256::from(total_cosigner_stake);
-                at_state
-                    .mutate_account(cosigner, |a| a.balance += reward.to::<u128>())?;
+                at_state.mutate_account(cosigner, |a| a.balance += reward.to::<u128>())?;
             }
         }
         Ok(())
-
     }
 
     pub fn apply_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
@@ -1033,11 +1035,12 @@ impl Consensus {
             .leader_at_block(&parent, block_view + 1)
             .unwrap()
             .public_key;
-        Self::apply_rewards_at(
+
+        Self::apply_rewards_raw_at(
             state,
             &self.config.consensus,
             &committee,
-            proposer,
+            proposer.into(),
             block_view + 1,
             &qc.cosigned,
         )?;
@@ -1159,40 +1162,42 @@ impl Consensus {
         result
     }
 
-    pub fn propose_pending_block(&self) -> Result<Option<Block>> {
+    pub fn get_pending_block(&self) -> Result<Option<Block>> {
         let mut state = self.state.clone();
         let mut tx_pool = self.transaction_pool.clone();
         let mut votes = self.votes.clone();
 
-        let num = self.db.get_highest_block_number()?.unwrap();
-        let block = self.get_block_by_number(num)?.unwrap();
+        let head_height = self.db.get_highest_block_number()?.unwrap();
+        let head_block = self.get_block_by_number(head_height)?.unwrap();
 
-        // If there are no votes for highest block then we have to create artificial supermajority including our vote only
+        // If there are no votes for highest block then we have to create artificial vote
         // This is needed to satisfy aggregate signature (otherwise there's nothing agg signature can be built on)
 
-        if let Entry::Vacant(v) = votes.entry(block.hash()) {
+        if let Entry::Vacant(v) = votes.entry(head_block.hash()) {
             let my_vote = Vote::new(
                 self.secret_key,
-                block.hash(),
+                head_block.hash(),
                 self.public_key(),
                 self.view.get_view(),
             );
 
+            let committee: Vec<_> = state.get_stakers_at_block_raw(&head_block)?;
+
             let votes = (
                 vec![my_vote.signature()],
-                bitvec![u8, bitvec::order::Msb0; 1; 1],
+                bitvec![u8, bitvec::order::Msb0; 1; committee.len()],
                 0,
                 false,
             );
             v.insert(votes);
         }
 
-        let result = self.propose_new_block_at(&mut state, &mut tx_pool, &mut votes)?;
+        let pending_block = self.propose_new_block_at(&mut state, &mut tx_pool, &mut votes)?;
 
-        let Some((block, _)) = result else {
+        let Some((pending_block, _)) = pending_block else {
             return Ok(None);
         };
-        Ok(Some(block))
+        Ok(Some(pending_block))
     }
 
     fn are_we_leader_for_view(&mut self, parent_hash: Hash, view: u64) -> bool {
