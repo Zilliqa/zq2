@@ -10,7 +10,7 @@ use alloy_rpc_types_trace::{
     parity::{TraceResults, TraceType},
 };
 use anyhow::{anyhow, Result};
-use libp2p::PeerId;
+use libp2p::{request_response::OutboundFailure, PeerId};
 use revm::Inspector;
 use revm_inspectors::tracing::{
     js::{JsInspector, TransactionContext},
@@ -38,12 +38,23 @@ use crate::{
     },
 };
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub struct RequestId(u64);
+
+#[derive(Debug)]
+pub struct OutgoingMessageFailure {
+    pub peer: PeerId,
+    pub request_id: RequestId,
+    pub error: OutboundFailure,
+}
+
 #[derive(Debug, Clone)]
 pub struct MessageSender {
     pub our_shard: u64,
     pub our_peer_id: PeerId,
     pub outbound_channel: UnboundedSender<OutboundMessageTuple>,
     pub local_channel: UnboundedSender<LocalMessageTuple>,
+    pub request_id: RequestId,
 }
 
 impl MessageSender {
@@ -65,12 +76,23 @@ impl MessageSender {
         Ok(())
     }
 
+    pub fn next_request_id(&mut self) -> RequestId {
+        let request_id = self.request_id;
+        self.request_id.0 = self.request_id.0.wrapping_add(1);
+        request_id
+    }
+
     /// Send a message to a remote node of the same shard.
-    pub fn send_external_message(&self, peer: PeerId, message: ExternalMessage) -> Result<()> {
+    pub fn send_external_message(
+        &mut self,
+        peer: PeerId,
+        message: ExternalMessage,
+    ) -> Result<RequestId> {
         debug!("sending {message} from {} to {}", self.our_peer_id, peer);
+        let request_id = self.next_request_id();
         self.outbound_channel
-            .send((Some(peer), self.our_shard, message))?;
-        Ok(())
+            .send((Some((peer, request_id)), self.our_shard, message))?;
+        Ok(request_id)
     }
 
     /// Broadcast to the entire network of this shard
@@ -106,7 +128,7 @@ pub struct Node {
     peer_id: PeerId,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
-    consensus: Consensus,
+    pub consensus: Consensus,
 }
 
 const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
@@ -125,6 +147,7 @@ impl Node {
             our_peer_id: peer_id,
             outbound_channel: message_sender_channel,
             local_channel: local_sender_channel,
+            request_id: RequestId::default(),
         };
         let db = Arc::new(Db::new(config.data_dir.as_ref(), config.eth_chain_id)?);
         let node = Node {
@@ -139,9 +162,22 @@ impl Node {
     }
 
     // TODO: Multithreading - `&mut self` -> `&self`
-    pub fn handle_network_message(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
+    pub fn handle_network_message(
+        &mut self,
+        from: PeerId,
+        message: Result<ExternalMessage, OutgoingMessageFailure>,
+    ) -> Result<()> {
         let to = self.peer_id;
         let to_self = from == to;
+        let message = match message {
+            Ok(message) => message,
+            Err(failure) => {
+                debug!(?failure, "handling message failure");
+                self.consensus.report_outgoing_message_failure(failure)?;
+
+                return Ok(());
+            }
+        };
         debug!(%from, %to, %message, "handling message");
         match message {
             ExternalMessage::Proposal(m) => {

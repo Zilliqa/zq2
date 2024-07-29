@@ -22,25 +22,25 @@ templatefile() vars:
 - subdomain, the ZQ2 network domain name
 """
 
+def query_metadata_key(key: str) -> str:
+    url = f"http://metadata.google.internal/computeMetadata/v1/instance/attributes/{key}"
+    r = requests.get(url, headers = {
+        "Metadata-Flavor" : "Google" })
+    return r.text
 
-PERSISTENCE_URL="${persistence_url}"
-
-ZQ2_IMAGE="${docker_image}"
-OTTERSCAN_IMAGE="${otterscan_image}"
-SPOUT_IMAGE="${spout_image}"
-GENESIS_KEY="genesis_key"
+PERSISTENCE_URL=base64.b64decode(query_metadata_key("persistence_url")).decode('utf-8')
+ZQ2_IMAGE="{{ docker_image }}"
+OTTERSCAN_IMAGE="{{ otterscan_image }}"
+SPOUT_IMAGE="{{ spout_image }}"
+GENESIS_KEY=base64.b64decode(query_metadata_key("genesis_key")).decode('utf-8')
+SECRET_KEY=base64.b64decode(query_metadata_key("secret_key")).decode('utf-8')
+SUBDOMAIN=base64.b64decode(query_metadata_key("subdomain")).decode('utf-8')
 
 VERSIONS={
     "zilliqa": ZQ2_IMAGE.split(":")[-1] if ZQ2_IMAGE.split(":")[-1] else "latest",
     "otterscan": OTTERSCAN_IMAGE.split(":")[-1] if OTTERSCAN_IMAGE.split(":")[-1] else "latest",
     "spout": SPOUT_IMAGE.split(":")[-1] if SPOUT_IMAGE.split(":")[-1] else "latest",
 }
-
-def query_metadata_key(key: str) -> str:
-    url = f"http://metadata.google.internal/computeMetadata/v1/instance/attributes/{key}"
-    r = requests.get(url, headers = {
-        "Metadata-Flavor" : "Google" })
-    return r.text
 
 def query_metadata_ext_ip() -> str:
     url = f"http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip"
@@ -51,22 +51,22 @@ def query_metadata_ext_ip() -> str:
 ZQ2_SCRIPT="""#!/bin/bash
 echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
-ZQ2_IMAGE="${docker_image}"
+ZQ2_IMAGE="{{ docker_image }}"
 
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
     docker run -td -p 3333:3333 -p 4201:4201 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
     -e RUST_LOG="zilliqa=trace,libp2p=trace" -e RUST_BACKTRACE=1 \
     -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
-    $${ZQ2_IMAGE} $${1} --log-json
+    ${ZQ2_IMAGE} ${1} --log-json
 }
 
 stop() {
     docker stop zilliqa-""" + VERSIONS.get('zilliqa') + """
 }
 
-case $${1} in
-    start|stop) $${1} $${2};;
+case ${1} in
+    start|stop) ${1} ${2};;
 esac
 
 exit 0
@@ -78,7 +78,7 @@ Description=Zilliqa Node
 
 [Service]
 Type=forking
-ExecStart=/usr/local/bin/zq2.sh start ${secret_key}
+ExecStart=/usr/local/bin/zq2.sh start """ + SECRET_KEY + """
 ExecStop=/usr/local/bin/zq2.sh stop
 RemainAfterExit=yes
 Restart=on-failure
@@ -92,29 +92,24 @@ StandardOutput=append:/zilliqa.log
 WantedBy=multi-user.target
 """
 
-ZQ2_CONFIG="""
-external_address = "/ip4/""" + query_metadata_ext_ip() + """/tcp/3333"
-${config}
-"""
-
 OTTERSCAN_SCRIPT="""#!/bin/bash
 echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
-OTTERSCAN_IMAGE="${otterscan_image}"
+OTTERSCAN_IMAGE="{{ otterscan_image }}"
 
 start() {
      docker rm otterscan-""" + VERSIONS.get('otterscan') + """ &> /dev/null || echo 0
     docker run -td -p 80:80 --name otterscan-""" + VERSIONS.get('otterscan') + """ \
-        -e ERIGON_URL=https://api.${subdomain} \
-        $${OTTERSCAN_IMAGE} &> /dev/null &
+        -e ERIGON_URL=https://api.""" + SUBDOMAIN + """ \
+        ${OTTERSCAN_IMAGE} &> /dev/null &
 }
 
 stop() {
     docker stop otterscan-""" + VERSIONS.get('otterscan') + """
 }
 
-case $${1} in
-    start|stop) $${1} ;;
+case ${1} in
+    start|stop) ${1} ;;
 esac
 
 exit 0
@@ -140,27 +135,27 @@ WantedBy=multi-user.target
 SPOUT_SCRIPT="""#!/bin/bash
 echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
-SPOUT_IMAGE="${spout_image}"
+SPOUT_IMAGE="{{ spout_image }}"
 
 start() {
     docker rm spout-""" + VERSIONS.get('spout') + """ &> /dev/null || echo 0
     docker run -td -p 8080:80 --name spout-""" + VERSIONS.get('spout') + """ \
-        -e RPC_URL=https://api.${subdomain} \
+        -e RPC_URL=https://api.""" + SUBDOMAIN + """ \
         -e NATIVE_TOKEN_SYMBOL="ZIL" \
-        -e PRIVATE_KEY="${genesis_key}" \
+        -e PRIVATE_KEY=""" + GENESIS_KEY + """ \
         -e ETH_AMOUNT=100 \
-        -e EXPLORER_URL="https://explorer.${subdomain}" \
+        -e EXPLORER_URL="https://explorer.""" + SUBDOMAIN + """" \
         -e MINIMUM_SECONDS_BETWEEN_REQUESTS=60 \
         -e BECH32_HRP="zil" \
-        $${SPOUT_IMAGE}
+        ${SPOUT_IMAGE}
 }
 
 stop() {
     docker stop spout-""" + VERSIONS.get('spout') + """
 }
 
-case $${1} in
-    start|stop) $${1} ;;
+case ${1} in
+    start|stop) ${1} ;;
 esac
 
 exit 0
@@ -377,7 +372,7 @@ def go(role):
     install_ops_agent()
     install_gcloud()
     match role:
-        case "validator":
+        case "validator" | "bootstrap":
             log("Configuring a validator node")
             configure_logrotate()
             stop_zq2()
@@ -427,7 +422,7 @@ def install_docker():
         the_key.communicate(input=DOCKER_PUBKEY.encode('utf-8'))
     arch = subprocess.check_output(["dpkg", "--print-architecture"]).decode('utf-8').strip()
     codename = subprocess.check_output(["/bin/sh", "-c", ". /etc/os-release && echo \"$VERSION_CODENAME\""]).decode('utf-8').strip()
-    print(f"arch $${arch} codename $${codename}")
+    print(f"arch ${arch} codename ${codename}")
     with open("/tmp/docker.list", "w") as f:
         f.write(f"deb [arch={arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {codename} stable\n")
     run_or_die(["sudo", "cp", "/tmp/docker.list", "/etc/apt/sources.list.d/docker.list"])
@@ -464,7 +459,6 @@ def create_zq2_start_script():
     run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/zq2-{VERSIONS.get('zilliqa')}.sh", "/usr/local/bin/zq2.sh"])
 
 def install_zilliqa():
-    create_zq2_config()
     create_zq2_start_script()
     if os.path.exists("/etc/systemd/system/zilliqa.service"):
         return 0
@@ -519,15 +513,8 @@ def configure_logrotate():
     with open("/etc/logrotate.d/zilliqa.conf", "w") as f:
         f.write(LOGROTATE_CONFIG)
 
-
-def create_zq2_config():
-    if not os.path.exists("/config.toml"):
-        with open("/config.toml", "w") as f:
-            f.write(ZQ2_CONFIG)
-
-
 def download_persistence():
-    if PERSISTENCE_URL is not None and PERSISTENCE_URL != "${persistence_url}":
+    if PERSISTENCE_URL is not None and PERSISTENCE_URL != "":
         PERSISTENCE_DIR="/data"
         PERSISTENCE_FILENAME = os.path.basename(urlparse(PERSISTENCE_URL).path)
         os.makedirs(PERSISTENCE_DIR, exist_ok=True)
@@ -547,4 +534,4 @@ def stop_zq2():
     pass
 
 if __name__ == "__main__":
-    go(role="${role}")
+    go(role="{{ role }}")
