@@ -9303,6 +9303,7 @@ dependencies = [
  "itertools 0.13.0",
  "jsonrpsee",
  "k256",
+ "lazy_static",
  "libp2p",
  "lru",
  "once_cell",
