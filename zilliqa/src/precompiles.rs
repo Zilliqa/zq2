@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use blsful::Bls12381G2Impl;
 use ethabi::{decode, encode, short_signature, ParamType, Token};
 use revm::{
     precompile::PrecompileError,
@@ -9,8 +10,6 @@ use revm::{
     },
     ContextPrecompile, ContextStatefulPrecompile, InnerEvmContext,
 };
-
-use crate::crypto::{NodePublicKey, NodeSignature};
 
 use crate::state::State;
 
@@ -105,9 +104,9 @@ impl ContextStatefulPrecompile<&State> for ERC20Precompile {
 
 pub(crate) struct PopVerifyPrecompile;
 
+// keep in-sync with zilliqa/src/contracts/deposit.sol
 impl PopVerifyPrecompile {
     const POP_VERIFY_GAS_PRICE: u64 = 1_000_000u64; // FIXME: Gas Price?
-                                                    // keep in-sync with zilliqa/src/contracts/deposit.sol
     fn pop_verify(
         input: &[u8],
         gas_limit: u64,
@@ -123,20 +122,21 @@ impl PopVerifyPrecompile {
         if decoded.len() != 2 {
             // expected 2 arguments
             return Err(PrecompileError::Other("ABI inputs missing".into()).into());
-        }
+        };
 
-        let Ok(signature) =
-            NodeSignature::from_bytes(decoded[0].to_owned().into_bytes().unwrap().as_slice())
-        else {
+        let Ok(pop) = blsful::ProofOfPossession::<Bls12381G2Impl>::try_from(
+            decoded[0].to_owned().into_bytes().unwrap(),
+        ) else {
             return Err(PrecompileError::Other("ABI signature invalid".into()).into());
         };
-        let Ok(pubkey) =
-            NodePublicKey::from_bytes(decoded[1].to_owned().into_bytes().unwrap().as_slice())
-        else {
+
+        let Ok(pk) = blsful::PublicKey::<Bls12381G2Impl>::try_from(
+            decoded[1].to_owned().into_bytes().unwrap(),
+        ) else {
             return Err(PrecompileError::Other("ABI pubkey invalid".into()).into());
         };
 
-        let result = pubkey.verify(&pubkey.as_bytes(), signature).is_ok(); // Verify PubKey against PubKey
+        let result = pop.verify(pk).is_ok();
 
         // FIXME: Gas?
         let output = encode(&[Token::Bool(result)]);
