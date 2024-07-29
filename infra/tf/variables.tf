@@ -2,7 +2,6 @@
 # ZQ2 GCP Terraform input variables
 ################################################################################
 
-
 variable "project_id" {
   description = "Project ID used to dpeloy the ZQ2 network"
   type        = string
@@ -16,19 +15,34 @@ variable "region" {
 }
 
 variable "node_zone" {
-  type     = string
-  nullable = true
+  description = "The zone where to provision to"
+  type        = string
+  nullable    = true
+  default     = ""
 }
 
-variable "eth_chain_id" {
-  description = "ZQ2 EVM Chain ID"
-  type        = number
+# variable "eth_chain_id" {
+#   description = "ZQ2 EVM Chain ID"
+#   type        = number
+#   nullable    = false
+# }
+
+variable "nodes_dns_zone_name" {
+  description = "Nodes DNS zone name"
+  type        = string
+  nullable    = false
+}
+
+variable "dns_zone_project_id" {
+  description = "The id of the Google project that hosts the DNS zone."
+  type        = string
   nullable    = false
 }
 
 variable "subdomain" {
-  type     = string
-  nullable = false
+  description = "The subdomain for the public endpoints"
+  type        = string
+  nullable    = false
 }
 
 variable "network_name" {
@@ -39,8 +53,8 @@ variable "network_name" {
 }
 
 variable "labels" {
-  type        = map(string)
   description = "A single-level map/object with key value pairs of metadata labels to apply to the GCP resources. All keys should use underscores and values should use hyphens. All values must be wrapped in quotes."
+  type        = map(string)
   nullable    = true
   default     = {}
 }
@@ -50,7 +64,6 @@ variable "vpc_main_subnet_name" {
   type        = string
   nullable    = false
 }
-
 
 variable "genesis_key" {
   description = "(Optional) Genesis private key"
@@ -64,19 +77,24 @@ variable "bootstrap_key" {
   nullable    = false
 }
 
-variable "node_count" {
-  description = "(Optional) ZQ2 Node count"
+variable "apps_node_count" {
+  description = "(Optional) ZQ2 Node apps count"
   type        = number
   nullable    = false
-  default     = 3
+  default     = 1
 }
 
-variable "secret_keys" {
-  description = "(Optional) ZQ2 Nodes secret keys"
+variable "api_node_private_keys" {
+  description = "(Optional) API node private key"
   type        = list(string)
   nullable    = false
 }
 
+variable "validator_node_private_keys" {
+  description = "(Optional) ZQ2 Nodes secret keys"
+  type        = list(string)
+  nullable    = false
+}
 
 variable "persistence_url" {
   description = "(Optional) ZQ2 Recovery persistence URL"
@@ -85,23 +103,23 @@ variable "persistence_url" {
   default     = ""
 }
 
-variable "docker_image" {
-  description = "ZQ2 Docker image URL"
-  type        = string
-  default     = ""
-}
+# variable "docker_image" {
+#   description = "ZQ2 Docker image URL"
+#   type        = string
+#   default     = ""
+# }
 
-variable "otterscan_image" {
-  description = "Otterscan Docker image URL"
-  type        = string
-  default     = ""
-}
+# variable "otterscan_image" {
+#   description = "Otterscan Docker image URL"
+#   type        = string
+#   default     = ""
+# }
 
-variable "spout_image" {
-  description = "Spout Docker image URL"
-  type        = string
-  default     = ""
-}
+# variable "spout_image" {
+#   description = "Spout Docker image URL"
+#   type        = string
+#   default     = ""
+# }
 
 variable "gcp_docker_registry_project_id" {
   description = "(Optional) ZQ2 Artifact Registry project id"
@@ -110,6 +128,7 @@ variable "gcp_docker_registry_project_id" {
 }
 
 variable "distributed_validators" {
+  description = "(Optional) regional validators deployment. Useful for distributed load tests."
   type = list(object({
     region          = string
     vm_num          = number
@@ -118,8 +137,7 @@ variable "distributed_validators" {
     node_keys       = list(string)
     vm_zone         = optional(string)
   }))
-  default     = []
-  description = "(Optional) regional validators deployment. Useful for distributed load tests."
+  default = []
   validation {
     condition     = alltrue([for v in var.distributed_validators : (length(v.node_keys) == v.vm_num)])
     error_message = "ERROR: num of vms and number of keys mismatch"
@@ -127,7 +145,8 @@ variable "distributed_validators" {
 }
 
 variable "apps_node_type" {
-  type     = string
-  default  = "e2-standard-2"
-  nullable = false
+  description = "(Optional) The size of the nodes."
+  type        = string
+  default     = "e2-standard-2"
+  nullable    = false
 }

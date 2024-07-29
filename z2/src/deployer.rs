@@ -95,27 +95,30 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeRole {
-    /// Virtual machine validator
-    Validator,
-    /// Virtual machine apps
-    Apps,
     /// Virtual machine bootstrap
     Bootstrap,
-    /// Virtual machine sentry
-    Sentry,
+    /// Virtual machine api
+    Api,
+    /// Virtual machine apps
+    Apps,
+    /// Virtual machine validator
+    Validator,
     /// Virtual machine checkpoint
     Checkpoint,
+    /// Virtual machine sentry
+    Sentry,
 }
 
 impl FromStr for NodeRole {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
-            "validator" => Ok(NodeRole::Validator),
-            "apps" => Ok(NodeRole::Apps),
             "bootstrap" => Ok(NodeRole::Bootstrap),
-            "sentry" => Ok(NodeRole::Sentry),
+            "api" => Ok(NodeRole::Api),
+            "apps" => Ok(NodeRole::Apps),
+            "validator" => Ok(NodeRole::Validator),
             "checkpoint" => Ok(NodeRole::Checkpoint),
+            "sentry" => Ok(NodeRole::Sentry),
             _ => Err(anyhow!("Node role not supported")),
         }
     }
@@ -124,11 +127,12 @@ impl FromStr for NodeRole {
 impl fmt::Display for NodeRole {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            NodeRole::Bootstrap => write!(f, "bootstrap"),
+            NodeRole::Api => write!(f, "api"),
             NodeRole::Apps => write!(f, "apps"),
             NodeRole::Validator => write!(f, "validator"),
-            NodeRole::Bootstrap => write!(f, "bootstrap"),
-            NodeRole::Sentry => write!(f, "sentry"),
             NodeRole::Checkpoint => write!(f, "checkpoint"),
+            NodeRole::Sentry => write!(f, "sentry"),
         }
     }
 }

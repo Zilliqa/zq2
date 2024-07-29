@@ -59,7 +59,10 @@ impl ChainNode {
         self.run_provisioning_script().await?;
 
         // Check the node is making progress
-        if self.role == NodeRole::Bootstrap || self.role == NodeRole::Validator {
+        if self.role == NodeRole::Bootstrap
+            || self.role == NodeRole::Validator
+            || self.role == NodeRole::Api
+        {
             let first_block_number = self.machine.get_local_block_number().await?;
             loop {
                 let next_block_number = self.machine.get_local_block_number().await?;
