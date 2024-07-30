@@ -4,6 +4,14 @@ sudo add-apt-repository ppa:ethereum/ethereum > /dev/null 2>&1
 sudo apt-get update > /dev/null 2>&1
 sudo apt-get install solc libsecp256k1-dev protobuf-compiler > /dev/null 2>&1
 
+echo "Checking scilla HTTP server"
+curl localhost:3000
+retVal=$?
+if [ $retVal -ne 0 ]; then
+    echo "🚫 Scilla docker is not running"
+    exit 1
+fi
+
 # Start network early.
 pwd
 echo "building zilliqa and running it as a detached process"
