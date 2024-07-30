@@ -1,31 +1,40 @@
 # z2 deposit
 
-`z2 deposit` deposit the $ZILs to the deposit smart contract to promote a node as validator.
+The `z2 deposit` command deposits ZIL tokens to the deposit smart contract to promote a node as a validator.
+
 
 ```bash
-z2 deposit
+z2 deposit \
+  --chain <CHAIN_NAME> \
+  --public-key <BLS_PUBLIC_KEY> \
+  --peer-id <PEER_ID> \
+  --wallet <PRIVATE_KEY_OF_VALIDATOR> \
+  --amount <AMOUNT_IN_ZIL> \
+  --reward-address <REWARD_ADDRESS_OF_VALIDATOR>
 
-  --chain <CHAIN_NAME>
-  --public-key <PUBLIC_KEY>
-  --peer-id <PEER_ID>
-  --wallet <WALLET>
-  --amount <AMOUNT>
-  --reward-address <REWARD_ADDRESS>
 
-Usage: z2 deposit --chain <CHAIN_NAME> --public-key <PUBLIC_KEY> --peer-id <PEER_ID> --wallet <WALLET> --amount <AMOUNT> --reward-address <REWARD_ADDRESS>
+Usage: z2 deposit --chain <CHAIN_NAME> --public-key <BLS_PUBLIC_KEY> --peer-id <PEER_ID> --wallet <PRIVATE_KEY_OF_VALIDATOR> --amount <AMOUNT_IN_ZIL> --reward-address <REWARD_ADDRESS_OF_VALIDATOR>
 ```
+Parameters
+* `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet.
+* `--public-key <BLS_PUBLIC_KEY>`: The BLS public key of the validator.
+* `--peer-id <PEER_ID>`: The peer ID of the validator.
+* `--wallet <PRIVATE_KEY_OF_VALIDATOR>`: The private key of the validator node.
+* `--amount <AMOUNT_IN_ZIL>`: The amount in ZIL to deposit. The valid range is from 10 to 255 ZIL, allowing a deposit of up to 255 million ZIL.
+* `--reward-address <REWARD_ADDRESS>`: The address where rewards will be received.
 
 
+```bash
+$ echo '{"secret_key":"85df22702faf5b843b72bc8ff1cf5858f89228527ac548f1e03ad715c80d45c1"}' | cargo run --bin convert-key
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.66s
+     Running `target/debug/convert-key`
+{"address":"0xb606148a62e1c010a9808bc3dfde6d1522349989","peer_id":"12D3KooWFWJA4UdQxBVp9LndNzQgyAv8baSRoLuXi2tLu8pTMqtu","public_key":"ab82e738f757a270e0e8a0d9e90b8bad98f5d8cb436b053e12b85a2567ff15fe1f274d827724c269bf03d1w328750f92"}
+```
 
 ### Run z2 deposit
 
-#### Requirements
+#### Sample run
 
-1. node public key
-1. node peer id
-1. funds wallet
-1. the amount (min. 10M $ZILs)
-1. reward address
 
 ```bash
   z2 deposit --chain zq2-prototestnet --peer-id  12D3KooWJiR42GkGPKTUxxxxx --public-key 9357841b3d8135d55aa8d2ece84de720cafd9c1c055b4e46dxxxx \
