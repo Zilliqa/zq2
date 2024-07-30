@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
-use alloy_network::Ethereum;
-use alloy_primitives::Address;
-use alloy_provider::fillers::*;
-use alloy_provider::{Identity, Provider, ProviderBuilder, RootProvider, WsConnect};
-use alloy_pubsub::PubSubFrontend;
+use alloy::{
+    network::Ethereum,
+    primitives::Address,
+    providers::{fillers::*, Identity, Provider, ProviderBuilder, RootProvider, WsConnect},
+    pubsub::PubSubFrontend,
+};
 
 use anyhow::Result;
 use ethers::{
