@@ -309,7 +309,7 @@ impl Node {
 
             BlockNumberOrTag::Earliest => self.consensus.get_block_by_number(0),
             BlockNumberOrTag::Latest => Ok(Some(self.consensus.head_block())),
-            BlockNumberOrTag::Pending => Ok(Some(self.consensus.head_block())),
+            BlockNumberOrTag::Pending => self.consensus.get_pending_block(),
             BlockNumberOrTag::Finalized => {
                 let Some(view) = self.db.get_latest_finalized_view()? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);

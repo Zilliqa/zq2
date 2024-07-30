@@ -19,7 +19,7 @@ use crate::{
     message::BlockHeader, scilla::Scilla, transaction::EvmGas,
 };
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 /// The state of the blockchain, consisting of:
 /// -  state - a database of Map<Address, Map<key,value>>
 /// -  accounts, Map<Address, Account>
