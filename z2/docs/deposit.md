@@ -15,15 +15,16 @@ z2 deposit \
 
 Usage: z2 deposit --chain <CHAIN_NAME> --public-key <BLS_PUBLIC_KEY> --peer-id <PEER_ID> --wallet <PRIVATE_KEY_OF_VALIDATOR> --amount <AMOUNT_IN_ZIL> --reward-address <REWARD_ADDRESS_OF_VALIDATOR>
 ```
-Parameters
+### Parameters
 * `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet.
-* `--public-key <BLS_PUBLIC_KEY>`: The BLS public key of the validator.
-* `--peer-id <PEER_ID>`: The peer ID of the validator.
+* `--public-key <BLS_PUBLIC_KEY>`: The BLS public key of the validator node.
+* `--peer-id <PEER_ID>`: The peer ID of the validator node.
 * `--wallet <PRIVATE_KEY_OF_VALIDATOR>`: The private key of the validator node.
-* `--amount <AMOUNT_IN_ZIL>`: The amount in ZIL to deposit. The valid range is from 10 to 255 ZIL, allowing a deposit of up to 255 million ZIL.
+* `--amount <AMOUNT_IN_MILLION_ZIL>`: The amount in ZIL to deposit. The valid range is from 10 million to 255 million ZIL, allowing a deposit of up to 255 million ZIL.
 * `--reward-address <REWARD_ADDRESS>`: The address where rewards will be received.
 
-
+### Generating Required Values
+To generate the public_key and peer-id, use the following command inside the zq2 GitHub directory:
 ```bash
 $ echo '{"secret_key":"85df22702faf5b843b72bc8ff1cf5858f89228527ac548f1e03ad715c80d45c1"}' | cargo run --bin convert-key
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.66s
