@@ -1,11 +1,16 @@
 use std::sync::Arc;
 
 use alloy::{
-    network::{Ethereum, EthereumWallet},
+    network::Ethereum,
     primitives::Address,
     providers::{fillers::*, Identity, Provider, ProviderBuilder, RootProvider, WsConnect},
     pubsub::PubSubFrontend,
-    signers::local::PrivateKeySigner,
+};
+
+use anyhow::Result;
+use ethers::{
+    signers::LocalWallet,
+    // types::{Address, U256},
 };
 use anyhow::Result;
 
