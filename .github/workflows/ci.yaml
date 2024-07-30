@@ -46,6 +46,8 @@ jobs:
       scilla:
         image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72
         options: --init
+        ports:
+          - 3000:3000
         env:
           COMMAND: /scilla/0/bin/scilla-server-http
     runs-on: ubuntu-latest
