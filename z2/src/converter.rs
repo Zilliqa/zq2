@@ -1,12 +1,13 @@
 #![allow(unused_imports)]
 
-use std::string::String;
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap, VecDeque},
     fs,
     io::BufRead,
     path::PathBuf,
     process::{self, Stdio},
+    str::FromStr,
+    string::String,
     sync::Arc,
     time::Duration,
 };
@@ -38,8 +39,8 @@ use zilliqa::{
     exec::BaseFeeCheck,
     inspector,
     message::{Block, BlockHeader, QuorumCertificate, Vote},
-    scilla::storage_key,
     schnorr,
+    scilla::storage_key,
     state::{contract_addr, Account, Code, State},
     time::SystemTime,
     transaction::{
@@ -49,33 +50,41 @@ use zilliqa::{
 
 use crate::zq1;
 
-fn convert_scilla_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<()> {
-    let prefix = address
-        .to_string()
-        .to_lowercase()
-        .strip_prefix("0x")
-        .unwrap()
-        .to_string();
+fn create_acc_query_prefix(address: Address) -> String {
+    format!("{:02x}", address)
+}
+
+const ZQ1_STATE_KEY_SEPARATOR: u8 = 0x16;
+
+fn convert_scilla_state(
+    zq1_db: &zq1::Db,
+    zq2_db: &Db,
+    address: Address,
+) -> Result<(B256, BTreeMap<String, (String, u8)>)> {
+    let prefix = create_acc_query_prefix(address);
+
     let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
 
     let mut contract_values = vec![];
-    let mut field_types: HashMap<String, (String, u8)> = HashMap::new();
+    let mut field_types: BTreeMap<String, (String, u8)> = BTreeMap::new();
 
     for elem in storage_entries_iter {
         let (key, value) = elem?;
 
-        const SEPARATOR: u8 = 0x16;
-
         let chunks = key
             .as_bytes()
-            .split(|item| *item == SEPARATOR).into_iter().map(|chunk| String::from_utf8(chunk.to_vec()).unwrap()).skip(1).collect::<Vec<_>>();
+            .split(|item| *item == ZQ1_STATE_KEY_SEPARATOR)
+            .into_iter()
+            .map(|chunk| String::from_utf8(chunk.to_vec()).unwrap())
+            .skip(1)
+            .collect::<Vec<_>>();
 
         if chunks.is_empty() {
             warn!("Malformed key name in contract storage!");
             continue;
         };
 
-        // We handle these keys differently in zq2
+        // We handle this type of keys differently in zq2
         if chunks[0].contains("_fields_map_depth")
             || chunks[0].contains("_version")
             || chunks[0].contains("_hasmap")
@@ -109,6 +118,7 @@ fn convert_scilla_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Resu
             continue;
         }
 
+        // At this point we know it's a field value
         let field_name = &chunks[0];
         let mut indices = vec![];
 
@@ -128,9 +138,69 @@ fn convert_scilla_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Resu
         contract_trie.insert(&storage_key, &value)?
     }
 
-    let storage_root = contract_trie.root_hash();
+    let storage_root = contract_trie.root_hash()?;
 
-    Ok(())
+    Ok((storage_root, field_types))
+}
+
+fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<B256> {
+    let prefix = create_acc_query_prefix(address);
+
+    let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
+
+    let evm_prefix = "_evm_storage".as_bytes();
+
+    let db = Arc::new(zq2_db.state_trie()?);
+    let mut contract_trie = EthTrie::new(db.clone()).at_root(EMPTY_ROOT_HASH);
+
+    for elem in storage_entries_iter {
+        let (key, value) = elem?;
+
+        let chunks = key
+            .as_bytes()
+            .split(|item| *item == ZQ1_STATE_KEY_SEPARATOR)
+            .into_iter()
+            .skip(1)
+            .collect::<Vec<_>>();
+
+        if chunks.len() < 2 || chunks[0] != evm_prefix {
+            warn!("Malformed key name in contract storage!");
+            continue;
+        };
+
+        let key = chunks[1];
+
+        let key = hex::decode(key)?;
+
+        contract_trie.insert(&key, &value)?;
+    }
+
+    Ok(contract_trie.root_hash()?)
+}
+
+fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
+    let Some(code) = zq1_db.get_contract_code(address)? else {
+        return Ok(Code::Evm(vec![]));
+    };
+
+    let evm_prefix = ['E' as u8, 'V' as u8, 'M' as u8];
+
+    if code.len() > 3 && code[0..3] == evm_prefix[0..3] {
+        return Ok(Code::Evm(code[3..].to_vec()));
+    }
+
+    let init_data = zq1_db.get_contract_init_state_2(address)?;
+
+    let init_data = match init_data {
+        Some(data) => String::from_utf8(data)?,
+        None => String::new(),
+    };
+
+    Ok(Code::Scilla {
+        code: String::from_utf8(code)?,
+        init_data,
+        types: BTreeMap::default(),
+    })
 }
 
 pub async fn convert_persistence(
@@ -186,58 +256,79 @@ pub async fn convert_persistence(
             }
             let zq1_account = zq1::Account::from_proto(zq1_account)?;
 
-            let prefix = address
-                .to_string()
-                .strip_prefix("0x")
-                .unwrap()
-                .to_string()
-                .to_lowercase();
-            let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
+            // let prefix = address
+            //     .to_string()
+            //     .strip_prefix("0x")
+            //     .unwrap()
+            //     .to_string()
+            //     .to_lowercase();
+            // let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
+            //
+            // for elem in storage_entries_iter {
+            //     if elem.is_err() {
+            //         println!("Something went wrong with quering element by prefix!");
+            //         continue;
+            //     }
+            //     let (key, val) = elem?;
+            //     const SEPARATOR: u8 = 0x16;
+            //
+            //     let key_bytes = key.as_bytes();
+            //
+            //     if key_bytes.contains(&SEPARATOR) {
+            //         let chunks = key_bytes.split(|item| *item == SEPARATOR);
+            //         println!("Key is: {}, and contains separator 0x1F", key);
+            //         println!("Split result: ");
+            //         for chunk in chunks {
+            //             println!("Chunk: {}", std::str::from_utf8(chunk).unwrap());
+            //         }
+            //     }
+            //
+            //     let decoded = String::from_utf8(val.clone());
+            //     if decoded.is_ok() {
+            //         println!(
+            //             "Account: {}, Key is: {}, decoded is: {:?}",
+            //             address.to_string(),
+            //             key,
+            //             decoded.unwrap()
+            //         );
+            //     } else {
+            //         println!(
+            //             "Account: {}, Key is: {}, val is: {:?}",
+            //             address.to_string(),
+            //             key,
+            //             val
+            //         );
+            //     }
+            // }
 
-            for elem in storage_entries_iter {
-                if elem.is_err() {
-                    println!("Something went wrong with quering element by prefix!");
-                    continue;
+            let mut code = get_contract_code(&zq1_db, address)?;
+
+            let (code, storage_root) = match code {
+                Code::Evm(evm_code) if !evm_code.is_empty() => {
+                    let storage_root = convert_evm_state(&zq1_db, &zq2_db, address)?;
+                    (Code::Evm(evm_code), storage_root)
                 }
-                let (key, val) = elem?;
-                const SEPARATOR: u8 = 0x16;
-
-                let key_bytes = key.as_bytes();
-
-                if key_bytes.contains(&SEPARATOR) {
-                    let chunks = key_bytes.split(|item| *item == SEPARATOR);
-                    println!("Key is: {}, and contains separator 0x1F", key);
-                    println!("Split result: ");
-                    for chunk in chunks {
-                        println!("Chunk: {}", std::str::from_utf8(chunk).unwrap());
-                    }
+                Code::Scilla {
+                    code, init_data, ..
+                } => {
+                    let (storage_root, types) = convert_scilla_state(&zq1_db, &zq2_db, address)?;
+                    (
+                        Code::Scilla {
+                            code,
+                            init_data,
+                            types,
+                        },
+                        storage_root,
+                    )
                 }
-
-                let decoded = String::from_utf8(val.clone());
-                if decoded.is_ok() {
-                    println!(
-                        "Account: {}, Key is: {}, decoded is: {:?}",
-                        address.to_string(),
-                        key,
-                        decoded.unwrap()
-                    );
-                } else {
-                    println!(
-                        "Account: {}, Key is: {}, val is: {:?}",
-                        address.to_string(),
-                        key,
-                        val
-                    );
-                }
-            }
-
-            convert_scilla_state(&zq1_db, &zq2_db, address)?;
+                _ => (code, EMPTY_ROOT_HASH),
+            };
 
             let account = Account {
                 nonce: zq1_account.nonce,
                 balance: zq1_account.balance * 10u128.pow(6),
-                code: Code::Evm(vec![]), // TODO: Convert contract code and state
-                storage_root: EMPTY_ROOT_HASH,
+                code,
+                storage_root,
             };
 
             state.save_account(address, account)?;
