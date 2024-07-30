@@ -24,6 +24,7 @@ use crate::{
     node::Node,
     schnorr,
     scilla::split_storage_key,
+    state::Code,
     transaction::{ScillaGas, SignedTransaction, TxZilliqa, ZilAmount, EVM_GAS_PER_SCILLA_GAS},
 };
 
@@ -341,8 +342,13 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
         .get_state(&block)?
         .get_account(smart_contract_address)?;
 
-    let Some((code, _)) = account.code.scilla_code_and_init_data() else {
-        return Err(anyhow!("Address not contract address"));
+    let code = match account.code {
+        Code::Evm(ref bytes) => {
+            "EVM".to_string()
+                + &String::from_utf16(&bytes.into_iter().map(|v| *v as u16).collect::<Vec<_>>())
+                    .unwrap()
+        }
+        Code::Scilla { code, .. } => code,
     };
 
     Ok(json!({ "code": code }))
