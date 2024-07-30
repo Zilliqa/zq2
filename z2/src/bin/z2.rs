@@ -274,9 +274,9 @@ struct DepositStruct {
     /// Specify the Validator PeerId
     #[clap(long)]
     peer_id: String,
-    /// Specify the wallet address to fund the deposit
+    /// Specify the private_key to fund the deposit
     #[clap(long, short)]
-    wallet: String,
+    private_key: String,
     /// Specify the stake amount you want provide
     #[clap(long, short)]
     amount: u8,
@@ -513,7 +513,7 @@ async fn main() -> Result<()> {
                 node,
                 args.amount,
                 args.chain_name.clone(),
-                &args.wallet,
+                &args.private_key,
                 &args.reward_address,
             )?;
             validators::deposit_stake(&stake).await
