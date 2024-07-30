@@ -1,6 +1,6 @@
 use std::{ops::Deref, str::FromStr, time::Duration};
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use libp2p::{Multiaddr, PeerId};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 

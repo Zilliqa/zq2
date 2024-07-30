@@ -6,7 +6,7 @@
 
 use std::fmt::Display;
 
-use alloy_primitives::{Address, B256};
+use alloy::primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use bls12_381::{G1Projective, G2Affine};
 use bls_signatures::Serialize as BlsSerialize;

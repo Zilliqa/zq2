@@ -2,13 +2,15 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy};
-use alloy_eips::{eip2930::AccessList, BlockId, BlockNumberOrTag, RpcBlockHash};
-use alloy_primitives::{Address, Bytes, Parity, Signature, TxKind, B256, U256, U64};
-use alloy_rlp::{Decodable, Header};
-use alloy_rpc_types::{
-    pubsub::{self, SubscriptionKind},
-    FilteredParams,
+use alloy::{
+    consensus::{TxEip1559, TxEip2930, TxLegacy},
+    eips::{eip2930::AccessList, BlockId, BlockNumberOrTag, RpcBlockHash},
+    primitives::{Address, Bytes, Parity, Signature, TxKind, B256, U256, U64},
+    rlp::{Decodable, Header},
+    rpc::types::{
+        pubsub::{self, SubscriptionKind},
+        FilteredParams,
+    },
 };
 use anyhow::{anyhow, Result};
 use itertools::{Either, Itertools};
@@ -900,10 +902,10 @@ async fn subscribe(
                         continue 'outer;
                     }
 
-                    let log = alloy_rpc_types::Log {
-                        inner: alloy_primitives::Log {
+                    let log = alloy::rpc::types::Log {
+                        inner: alloy::primitives::Log {
                             address: log.address,
-                            data: alloy_primitives::LogData::new_unchecked(
+                            data: alloy::primitives::LogData::new_unchecked(
                                 log.topics,
                                 log.data.into(),
                             ),

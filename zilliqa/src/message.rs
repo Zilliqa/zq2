@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
 use bitvec::{bitvec, order::Msb0};
 use itertools::Either;
@@ -446,7 +446,7 @@ impl Default for BlockHeader {
             hash: Hash::ZERO,
             parent_hash: Hash::ZERO,
             signature: NodeSignature::identity(),
-            state_root_hash: Hash(Keccak256::digest([alloy_rlp::EMPTY_STRING_CODE]).into()),
+            state_root_hash: Hash(Keccak256::digest([alloy::rlp::EMPTY_STRING_CODE]).into()),
             transactions_root_hash: Hash::ZERO,
             receipts_root_hash: Hash::ZERO,
             timestamp: SystemTime::UNIX_EPOCH,

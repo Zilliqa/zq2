@@ -6,9 +6,11 @@ use std::{
     str::FromStr,
 };
 
-use alloy_consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy};
-use alloy_primitives::{keccak256, Address, Signature, TxKind, B256, U256};
-use alloy_rlp::{Encodable, Header, EMPTY_STRING_CODE};
+use alloy::{
+    consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy},
+    primitives::{keccak256, Address, Signature, TxKind, B256, U256},
+    rlp::{Encodable, Header, EMPTY_STRING_CODE},
+};
 use anyhow::{anyhow, Result};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;
@@ -76,7 +78,7 @@ pub enum SignedTransaction {
 mod ser_rlp {
     use std::marker::PhantomData;
 
-    use alloy_rlp::{Decodable, Encodable};
+    use alloy::rlp::{Decodable, Encodable};
     use serde::{de, Deserializer, Serializer};
 
     pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
@@ -837,13 +839,13 @@ impl AddAssign for EvmGas {
     }
 }
 
-impl alloy_rlp::Decodable for EvmGas {
-    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        Ok(EvmGas(<u64 as alloy_rlp::Decodable>::decode(buf)?))
+impl alloy::rlp::Decodable for EvmGas {
+    fn decode(buf: &mut &[u8]) -> alloy::rlp::Result<Self> {
+        Ok(EvmGas(<u64 as alloy::rlp::Decodable>::decode(buf)?))
     }
 }
 
-impl alloy_rlp::Encodable for EvmGas {
+impl alloy::rlp::Encodable for EvmGas {
     fn encode(&self, out: &mut dyn BufMut) {
         self.0.encode(out);
     }

@@ -3,7 +3,7 @@ mod scilla_read;
 
 use std::sync::Arc;
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use erc20::ERC20Precompile;
 use revm::ContextPrecompile;
 use scilla_read::ScillaRead;

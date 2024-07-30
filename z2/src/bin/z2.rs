@@ -1,6 +1,6 @@
 use std::{collections::HashSet, env, fmt};
 
-use alloy_primitives::B256;
+use alloy::primitives::B256;
 use anyhow::{anyhow, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use z2lib::{components::Component, deployer, plumbing, validators};
