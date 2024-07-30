@@ -1,18 +1,19 @@
 use std::{path::PathBuf, str::FromStr};
 
-use alloy_consensus::{SignableTransaction, TxEnvelope};
-use alloy_contract::{ContractInstance, DynCallBuilder, Interface, SolCallBuilder};
-use alloy_dyn_abi::DynSolValue;
-use alloy_network::{eip2718::Encodable2718, EthereumWallet, TransactionBuilder, TxSigner};
-use alloy_primitives::{Bytes, TxKind};
-use alloy_provider::{Provider, ProviderBuilder, WsConnect};
-use alloy_pubsub::PubSubFrontend;
-use alloy_rpc_types::{BlockNumberOrTag, Filter};
-use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
-use alloy_signer::{Signer, SignerSync};
-use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{sol, SolCall};
-
+use alloy::{
+    consensus::{SignableTransaction, TxEnvelope},
+    contract::{ContractInstance, DynCallBuilder, Interface, SolCallBuilder},
+    dyn_abi::DynSolValue,
+    network::{eip2718::Encodable2718, EthereumWallet, TransactionBuilder, TxSigner},
+    primitives::{Bytes, TxKind},
+    providers::{Provider, ProviderBuilder, WsConnect},
+    pubsub::PubSubFrontend,
+    eips::BlockNumberOrTag,
+    rpc::types::{Filter, eth::{TransactionInput, TransactionRequest}},
+    signers::{Signer, SignerSync},
+    signer_local::PrivateKeySigner,
+    sol_types::{sol, SolCall},
+};
 use anyhow::Result;
 use clap::Parser;
 use futures_util::stream::StreamExt;
@@ -189,7 +190,7 @@ impl ValidatorOracle {
         println!("Deposit contract address: {}", contract_addr::DEPOSIT);
         let zq2_chain_client = &self.chain_clients[0];
 
-        let contract: ContractInstance<alloy_pubsub::PubSubFrontend, _> = ContractInstance::new(
+        let contract: ContractInstance<PubSubFrontend, _> = ContractInstance::new(
             contract_addr::DEPOSIT,
             zq2_chain_client.client.as_ref(),
             Interface::new(Deposit::abi::contract()),
@@ -199,7 +200,8 @@ impl ValidatorOracle {
         let value = call_builder.call().await?;
         let validators = if value.len() == 1 {
             value[0]
-                .as_array().unwrap()
+                .as_array()
+                .unwrap()
                 .iter()
                 .map(|k| NodePublicKey::from_bytes(&k.as_bytes().unwrap()).unwrap())
                 .collect()

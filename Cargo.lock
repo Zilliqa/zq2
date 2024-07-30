@@ -2691,6 +2691,7 @@ checksum = "e79e5973c26d4baf0ce55520bd732314328cabe53193286671b47144145b9649"
 dependencies = [
  "chrono",
  "ethers-core",
+ "ethers-solc",
  "reqwest 0.11.27",
  "semver 1.0.23",
  "serde",
@@ -2805,8 +2806,10 @@ dependencies = [
  "semver 1.0.23",
  "serde",
  "serde_json",
+ "sha2",
  "solang-parser",
  "svm-rs 0.3.5",
+ "svm-rs-builds 0.2.3",
  "thiserror",
  "tiny-keccak",
  "tokio",
@@ -2988,7 +2991,7 @@ dependencies = [
  "sha2",
  "solang-parser",
  "svm-rs 0.5.7",
- "svm-rs-builds",
+ "svm-rs-builds 0.5.7",
  "thiserror",
  "tracing",
  "winnow",
@@ -8179,6 +8182,19 @@ dependencies = [
 
 [[package]]
 name = "svm-rs-builds"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa64b5e8eecd3a8af7cfc311e29db31a268a62d5953233d3e8243ec77a71c4e3"
+dependencies = [
+ "build_const",
+ "hex",
+ "semver 1.0.23",
+ "serde_json",
+ "svm-rs 0.3.5",
+]
+
+[[package]]
+name = "svm-rs-builds"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2fa0f145894cb4d1c14446f08098ee5f21fc37ccbd1a7dd9dd355bbc806de3b"
@@ -9952,6 +9968,7 @@ dependencies = [
  "eth_trie",
  "ethabi",
  "ethers",
+ "ethers-solc",
  "foundry-compilers",
  "fs_extra",
  "futures",
