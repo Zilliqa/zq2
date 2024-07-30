@@ -1,14 +1,23 @@
 use std::{path::PathBuf, str::FromStr};
 
-use alloy_contract::{ContractInstance, Interface};
+use alloy_consensus::{SignableTransaction, TxEnvelope};
+use alloy_contract::{ContractInstance, DynCallBuilder, Interface, SolCallBuilder};
+use alloy_dyn_abi::DynSolValue;
+use alloy_network::{eip2718::Encodable2718, EthereumWallet, TransactionBuilder, TxSigner};
+use alloy_primitives::{Bytes, TxKind};
 use alloy_provider::{Provider, ProviderBuilder, WsConnect};
-use alloy_rpc_types::{BlockNumberOrTag, Filter, TransactionRequest};
-use alloy_sol_types::sol;
+use alloy_pubsub::PubSubFrontend;
+use alloy_rpc_types::{BlockNumberOrTag, Filter};
+use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
+use alloy_signer::{Signer, SignerSync};
+use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::{sol, SolCall};
 
 use anyhow::Result;
 use clap::Parser;
-use ethers::signers::{LocalWallet, Signer};
 use futures_util::stream::StreamExt;
+use lazy_static::lazy_static;
+use serde_json::Value;
 use tokio::sync::watch;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
@@ -27,6 +36,12 @@ sol!(
     #[sol(abi)]
     ValidatorManager,
     "src/contracts/uccb/out/ValidatorManager.sol/ValidatorManager.json"
+);
+
+sol!(
+    #[sol(abi)]
+    Deposit,
+    "src/contracts/compiled/Deposit.json"
 );
 
 #[derive(Parser, Debug)]
@@ -48,14 +63,14 @@ impl zilliqa::uccb::Args for Args {
 }
 
 struct ValidatorOracle {
-    wallet: LocalWallet,
+    wallet: PrivateKeySigner,
     zq2_config: ZQ2Config,
     chain_clients: Vec<ChainClient>,
 }
 
 impl ValidatorOracle {
     pub async fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
-        let wallet = LocalWallet::from_str(secret_key.to_hex().as_str())?;
+        let wallet = PrivateKeySigner::from_str(secret_key.to_hex().as_str())?;
         let mut chain_clients = vec![Self::create_zq2_chain_client(config.clone(), &wallet).await?];
         for chain_config in config.chain_configs {
             chain_clients.push(
@@ -76,10 +91,12 @@ impl ValidatorOracle {
     }
 
     pub async fn start(&mut self) -> Result<()> {
+        /*
         info!(
             "Starting validator oracle with wallet address {}",
             self.wallet.address()
         );
+        */
 
         let validators = self.get_stakers().await?;
         info!("Current validator set is: {validators:?}");
@@ -110,20 +127,6 @@ impl ValidatorOracle {
             });
             handles.push(handle);
         }
-
-        /*
-        {
-            let ws = WsConnect::new(&self.zq2_config.rpc_url);
-            let provider = ProviderBuilder::new().on_ws(ws).await?;
-
-            let iface = Interface::new(ValidatorManager::abi::contract());
-            let contract: ContractInstance<alloy_pubsub::PubSubFrontend, _> = ContractInstance::new(
-                alloy_primitives::Address::new(self.chain_clients[0].validator_manager_address.0),
-                provider,
-                iface,
-            );
-        }
-        */
 
         let result = self.listen_to_staker_updates(sender).await;
 
@@ -162,7 +165,10 @@ impl ValidatorOracle {
         Ok(())
     }
 
-    async fn create_zq2_chain_client(config: Config, wallet: &LocalWallet) -> Result<ChainClient> {
+    async fn create_zq2_chain_client(
+        config: Config,
+        wallet: &PrivateKeySigner,
+    ) -> Result<ChainClient> {
         ChainClient::new(
             &ChainConfig {
                 rpc_url: config.zq2.rpc_url,
@@ -180,26 +186,28 @@ impl ValidatorOracle {
     async fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
         debug!("Retreiving validators from the deposit contract");
 
-        /*
-        let tx = TransactionRequest::new()
-            .to(H160(contract_addr::DEPOSIT.into_array()))
-            .data(contracts::deposit::GET_STAKERS.encode_input(&[])?);
-        // The first chain client is the ZQ2 one.
-        let client = self.chain_clients[0].client.clone();
-        let output = client.send_transaction(tx).await.unwrap();
-        let stakers = contracts::deposit::GET_STAKERS
-            .decode_output(&output)
-            .unwrap()[0]
-            .clone()
-            .into_array()
-            .unwrap();
+        println!("Deposit contract address: {}", contract_addr::DEPOSIT);
+        let zq2_chain_client = &self.chain_clients[0];
 
-        Ok(stakers
-            .into_iter()
-            .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
-            .collect())
-        */
-        Ok(vec![])
+        let contract: ContractInstance<alloy_pubsub::PubSubFrontend, _> = ContractInstance::new(
+            contract_addr::DEPOSIT,
+            zq2_chain_client.client.as_ref(),
+            Interface::new(Deposit::abi::contract()),
+        );
+
+        let call_builder: DynCallBuilder<_, _, _> = contract.function("getStakers", &vec![])?;
+        let value = call_builder.call().await?;
+        let validators = if value.len() == 1 {
+            value[0]
+                .as_array().unwrap()
+                .iter()
+                .map(|k| NodePublicKey::from_bytes(&k.as_bytes().unwrap()).unwrap())
+                .collect()
+        } else {
+            vec![]
+        };
+
+        Ok(validators)
     }
 
     async fn update_validator_manager(
