@@ -423,7 +423,7 @@ pub struct CallParams {
     pub gas_price: Option<U128>,
     #[serde(default)]
     pub value: U128,
-    #[serde(default, deserialize_with = "deserialize_data")]
+    #[serde(default, deserialize_with = "deserialize_data", alias = "input")]
     pub data: Vec<u8>,
 }
 
