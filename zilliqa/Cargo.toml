@@ -39,7 +39,7 @@ bls-signatures = "0.15.0"
 bls12_381 = "0.8.0"
 bs58 = "0.5.1"
 bytes = "1.6.1"
-clap = { version = "4.5.8", features = ["derive"] }
+clap = { version = "4.5.11", features = ["derive"] }
 crypto-bigint = "=0.5.5"
 eth_trie = {path =  "../eth-trie.rs"}
 ethabi = "18.0.0"
@@ -63,23 +63,25 @@ rand_chacha = "0.3.1"
 rand_core = "0.6.4"
 revm = { version = "12.1.0", features = ["optional_no_base_fee"] }
 revm-inspectors = { version = "0.5.3", features = ["js-tracer"] }
-rusqlite = { version = "0.32.0", features = ["bundled", "trace"] }
+rusqlite = { version = "0.32.1", features = ["bundled", "trace"] }
 serde = { version = "1.0.204", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"
-serde_json = { version = "1.0.119", features = ["raw_value"] }
+serde_json = { version = "1.0.121", features = ["raw_value"] }
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 sled = "0.34.7"
 tempfile = "3.9.0"
 time = { version = "0.3.36", features = ["formatting", "macros"] }
-tokio = { version = "1.38.1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
+tokio = { version = "1.39.2", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 tokio-stream = "0.1.15"
-toml = "0.8.15"
+toml = "0.8.16"
 tower = "0.4.13"
 tower-http = { version = "0.4.4", features = ["cors"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 cbor4ii = "0.3.2"
+alloy-sol-types = "0.7.7"
+scilla-parser = "1.0.0"
 
 [dev-dependencies]
 alloy-primitives = { version = "0.7.7", features = ["rand"] }
