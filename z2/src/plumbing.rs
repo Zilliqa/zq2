@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 use std::{collections::HashSet, env, path::PathBuf, str::FromStr};
 
-use alloy_primitives::B256;
+use alloy::primitives::B256;
 use anyhow::{anyhow, Result};
 use colored::Colorize;
 use tokio::{fs, process::Command};

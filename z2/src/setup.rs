@@ -1,7 +1,7 @@
 //use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use alloy_primitives::{address, Address};
+use alloy::primitives::{address, Address};
 use anyhow::{anyhow, Result};
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;

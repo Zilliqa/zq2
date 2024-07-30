@@ -1,5 +1,7 @@
-use alloy_eips::eip2930::{AccessList, AccessListItem};
-use alloy_primitives::{Address, B256, B512};
+use alloy::{
+    eips::eip2930::{AccessList, AccessListItem},
+    primitives::{Address, B256, B512},
+};
 use anyhow::{anyhow, Result};
 use ethabi::Token;
 use k256::ecdsa::VerifyingKey;

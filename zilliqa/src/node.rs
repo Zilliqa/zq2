@@ -1,13 +1,15 @@
 use std::{collections::HashSet, fmt::Debug, sync::Arc, time::Duration};
 
-use alloy_eips::{BlockId, BlockNumberOrTag, RpcBlockHash};
-use alloy_primitives::Address;
-use alloy_rpc_types_trace::{
-    geth::{
-        FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
-        GethTrace, NoopFrame, TraceResult,
+use alloy::{
+    eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
+    primitives::Address,
+    rpc::types::trace::{
+        geth::{
+            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
+            GethDebugTracingOptions, GethTrace, NoopFrame, TraceResult,
+        },
+        parity::{TraceResults, TraceType},
     },
-    parity::{TraceResults, TraceType},
 };
 use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};

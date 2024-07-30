@@ -1,5 +1,7 @@
-use alloy_primitives::{I256, U256};
-use alloy_sol_types::{abi::Decoder, SolValue};
+use alloy::{
+    primitives::{I256, U256},
+    sol_types::{abi::Decoder, SolValue},
+};
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie, Trie};
 use revm::{

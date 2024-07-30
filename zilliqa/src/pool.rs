@@ -3,7 +3,7 @@ use std::{
     collections::{BTreeMap, BinaryHeap, HashSet},
 };
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 
 use crate::{
     crypto::Hash,
@@ -289,8 +289,10 @@ impl TransactionPool {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::TxLegacy;
-    use alloy_primitives::{Address, Bytes, Parity, Signature, TxKind, U256};
+    use alloy::{
+        consensus::TxLegacy,
+        primitives::{Address, Bytes, Parity, Signature, TxKind, U256},
+    };
     use rand::{seq::SliceRandom, thread_rng};
 
     use super::TransactionPool;

@@ -2,7 +2,7 @@ use std::{
     cell::RefCell, collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration,
 };
 
-use alloy_primitives::{Address, U256};
+use alloy::primitives::{Address, U256};
 use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use eth_trie::{MemoryDB, Trie};

@@ -3,8 +3,10 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
-use alloy_consensus::EMPTY_ROOT_HASH;
-use alloy_primitives::{Address, B256};
+use alloy::{
+    consensus::EMPTY_ROOT_HASH,
+    primitives::{Address, B256},
+};
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
@@ -245,7 +247,7 @@ impl State {
 }
 
 pub mod contract_addr {
-    use alloy_primitives::Address;
+    use alloy::primitives::Address;
 
     /// For intershard transactions, call this address
     pub const INTERSHARD_BRIDGE: Address = Address::new(*b"\0\0\0\0\0\0\0\0ZQINTERSHARD");

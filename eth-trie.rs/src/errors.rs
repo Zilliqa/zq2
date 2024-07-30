@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use alloy_primitives::B256;
+use alloy::primitives::B256;
 use rlp::DecoderError;
 
 use crate::nibbles::Nibbles;

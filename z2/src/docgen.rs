@@ -10,7 +10,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_primitives::{address, Address};
+use alloy::primitives::{address, Address};
 use anyhow::{anyhow, Context as _, Result};
 use libp2p::PeerId;
 use regex::Regex;

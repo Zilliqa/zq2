@@ -1,4 +1,4 @@
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use anyhow::Result;
 use ethabi::{Event, Log, RawLog, Token};
 use tracing::warn;
