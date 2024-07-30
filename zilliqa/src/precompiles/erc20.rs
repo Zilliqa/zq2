@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use ethabi::{encode, ParamType, Token};
 use revm::{
     precompile::PrecompileError,
@@ -7,20 +5,13 @@ use revm::{
         alloy_primitives::private::alloy_rlp::Encodable, Address, Bytes, PrecompileOutput,
         PrecompileResult,
     },
-    ContextPrecompile, ContextStatefulPrecompile, InnerEvmContext,
+    ContextStatefulPrecompile, InnerEvmContext,
 };
 use sha3::{Digest, Keccak256};
 
 use crate::state::State;
 
-pub(crate) fn get_custom_precompiles<'a>() -> Vec<(Address, ContextPrecompile<&'a State>)> {
-    vec![(
-        Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"),
-        ContextPrecompile::ContextStateful(Arc::new(ERC20Precompile)),
-    )]
-}
-
-pub(crate) struct ERC20Precompile;
+pub struct ERC20Precompile;
 
 impl ERC20Precompile {
     fn get_balance(
