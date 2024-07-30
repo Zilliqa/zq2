@@ -3,6 +3,8 @@ use std::env;
 use std::{convert::TryFrom, str::FromStr};
 
 use anyhow::{anyhow, Context as _, Error, Result};
+use blsful::vsss_rs::ShareIdentifier;
+use blsful::Bls12381G2Impl;
 use clap::ValueEnum;
 use ethabi::Token;
 use ethers::{
@@ -25,14 +27,18 @@ use crate::github;
 pub struct Validator {
     peer_id: libp2p::PeerId,
     public_key: zilliqa::crypto::NodePublicKey,
+    pop: blsful::ProofOfPossession<Bls12381G2Impl>,
 }
 
 impl Validator {
-    pub fn new(peer_id: &str, public_key: &str) -> Result<Self> {
+    pub fn new(peer_id: &str, public_key: &str, pop_signature: &str) -> Result<Self> {
         Ok(Self {
             peer_id: PeerId::from_str(peer_id).unwrap(),
             public_key: NodePublicKey::from_bytes(hex::decode(public_key).unwrap().as_slice())
                 .unwrap(),
+            pop: blsful::ProofOfPossession::<Bls12381G2Impl>::try_from(
+                pop_signature.as_bytes(),
+            )?,
         })
     }
 }
@@ -230,7 +236,14 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
                 .encode_input(&[
                     Token::Bytes(stake.validator.public_key.as_bytes()),
                     Token::Bytes(stake.validator.peer_id.to_bytes()),
-                    Token::Bytes(vec![]),
+                    Token::Bytes(
+                        stake
+                            .validator
+                            .pop
+                            .0
+                            .to_compressed()
+                            .to_vec(),
+                    ),
                     Token::Address(stake.reward_address),
                 ])
                 .unwrap(),

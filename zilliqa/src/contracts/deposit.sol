@@ -113,7 +113,7 @@ contract Deposit {
         bool success;
         assembly {
             success := staticcall(
-                gas(), // FIXME: Gas?
+                gas(),
                 0x00505056, // "\0PPV"
                 add(input, 0x20),
                 inputLength,

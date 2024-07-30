@@ -253,16 +253,9 @@ impl SecretKey {
 
     pub fn pop_prove(&self) -> blsful::ProofOfPossession<Bls12381G2Impl> {
         let sk = blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes);
+        // proof_of_possession() only returns an Err if the key is 0.
+        // Since sk != 0, it is safe to unwrap() here.
         sk.proof_of_possession().unwrap()
-    }
-
-    pub fn as_ecdsa(&self) -> k256::ecdsa::SigningKey {
-        // `SigningKey::from_bytes` can fail for two reasons:
-        // 1. The bytes represent a zero integer. However, we validate this is not the case on construction.
-        // 2. The bytes represent an integer less than the curve's modulus. However for ECDSA, the curve's order is
-        //    equal to its modulus, so this is impossible.
-        // Therefore, it is safe to unwrap here.
-        k256::ecdsa::SigningKey::from_bytes(&self.bytes.into()).unwrap()
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
@@ -279,15 +272,6 @@ impl SecretKey {
 
     pub fn node_public_key(&self) -> NodePublicKey {
         NodePublicKey(self.as_bls().public_key())
-    }
-
-    pub fn tx_ecdsa_public_key(&self) -> TransactionPublicKey {
-        // Default to EIP155 signing
-        TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&self.as_ecdsa()), true)
-    }
-
-    pub fn tx_sign_ecdsa(&self, message: &[u8]) -> TransactionSignature {
-        TransactionSignature::Ecdsa(self.as_ecdsa().sign_prehash_recoverable(message).unwrap().0)
     }
 
     pub fn to_libp2p_keypair(&self) -> libp2p::identity::Keypair {
