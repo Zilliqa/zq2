@@ -3,8 +3,7 @@ use std::env;
 use std::{convert::TryFrom, str::FromStr};
 
 use anyhow::{anyhow, Context as _, Error, Result};
-use blsful::vsss_rs::ShareIdentifier;
-use blsful::Bls12381G2Impl;
+use blsful::{vsss_rs::ShareIdentifier, Bls12381G2Impl};
 use clap::ValueEnum;
 use ethabi::Token;
 use ethers::{
@@ -37,7 +36,7 @@ impl Validator {
             public_key: NodePublicKey::from_bytes(hex::decode(public_key).unwrap().as_slice())
                 .unwrap(),
             pop: blsful::ProofOfPossession::<Bls12381G2Impl>::try_from(
-                pop_signature.as_bytes(),
+                hex::decode(pop_signature).unwrap().as_slice(),
             )?,
         })
     }
@@ -170,6 +169,17 @@ fn hex_string_to_u8_20(hex_str: &str) -> Result<[u8; 20], &'static str> {
     Ok(array)
 }
 
+pub fn pop_prove(secret_key: &str) -> Result<()> {
+    let sk = hex::decode(secret_key)?;
+    if sk.len() != blsful::SECRET_KEY_BYTES {
+        return Err(anyhow!("Invalid secret key {}", secret_key));
+    }
+    let sk = blsful::SecretKey::<Bls12381G2Impl>::from_hash(sk);
+    let sk = sk.proof_of_possession()?;
+    println!("{}", hex::encode(sk.0.to_compressed()));
+    Ok(())
+}
+
 pub async fn get_chain_spec_config(chain_name: &str) -> Result<Value> {
     let contents = get_toml_contents(chain_name)?;
     let config: Value =
@@ -236,14 +246,7 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
                 .encode_input(&[
                     Token::Bytes(stake.validator.public_key.as_bytes()),
                     Token::Bytes(stake.validator.peer_id.to_bytes()),
-                    Token::Bytes(
-                        stake
-                            .validator
-                            .pop
-                            .0
-                            .to_compressed()
-                            .to_vec(),
-                    ),
+                    Token::Bytes(stake.validator.pop.0.to_compressed().to_vec()),
                     Token::Address(stake.reward_address),
                 ])
                 .unwrap(),
