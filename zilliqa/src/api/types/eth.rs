@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use alloy_consensus::TxEip1559;
-use alloy_primitives::{Address, B256, U128, U256, U64};
+use alloy::{
+    consensus::TxEip1559,
+    primitives::{Address, B256, U128, U256, U64},
+};
 use serde::{
     de::{self, Unexpected},
     Deserialize, Deserializer, Serialize,
@@ -443,7 +445,7 @@ pub struct TxPoolContent {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
+    use alloy::primitives::B256;
 
     use super::Log;
 

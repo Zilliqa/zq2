@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B128, B256, B512, U128, U256, U512};
+use alloy::primitives::{Address, B128, B256, B512, U128, U256, U512};
 
 use crate::transaction::{EvmGas, ScillaGas};
 
@@ -116,7 +116,7 @@ serde_impl!(U512);
 mod tests {
     use std::assert_eq;
 
-    use alloy_primitives::U128;
+    use alloy::primitives::U128;
 
     use super::ToHex;
 

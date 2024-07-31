@@ -3,8 +3,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_eips::BlockId;
-use alloy_primitives::{Address, B256};
+use alloy::{
+    eips::BlockId,
+    primitives::{Address, B256},
+};
 use anyhow::{anyhow, Result};
 use ethabi::Token;
 use jsonrpsee::{types::Params, RpcModule};

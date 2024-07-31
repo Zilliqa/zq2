@@ -2,13 +2,15 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy};
-use alloy_eips::{eip2930::AccessList, BlockId, BlockNumberOrTag, RpcBlockHash};
-use alloy_primitives::{Address, Bytes, Parity, Signature, TxKind, B256, U256, U64};
-use alloy_rlp::{Decodable, Header};
-use alloy_rpc_types::{
-    pubsub::{self, SubscriptionKind},
-    FilteredParams,
+use alloy::{
+    consensus::{TxEip1559, TxEip2930, TxLegacy},
+    eips::{eip2930::AccessList, BlockId, BlockNumberOrTag, RpcBlockHash},
+    primitives::{Address, Bytes, Parity, Signature, TxKind, B256, U256, U64},
+    rlp::{Decodable, Header},
+    rpc::types::{
+        pubsub::{self, SubscriptionKind},
+        FilteredParams,
+    },
 };
 use anyhow::{anyhow, Result};
 use itertools::{Either, Itertools};
@@ -292,10 +294,17 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     expect_end_of_params(&mut params, 3, 3)?;
 
     let node = node.lock().unwrap();
+
     let block = node.get_block(block_id)?;
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
-    Ok(node.get_state(&block)?.get_account(address)?.nonce.to_hex())
+    let nonce = node.get_state(&block)?.get_account(address)?.nonce;
+
+    if matches!(block_id, BlockId::Number(BlockNumberOrTag::Pending)) {
+        Ok(node.consensus.pending_transaction_count(address).to_hex())
+    } else {
+        Ok(nonce.to_hex())
+    }
 }
 
 fn get_gas_price(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -423,14 +432,24 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             .get_block(block_hash)?
             .ok_or_else(|| anyhow!("block not found"))?))),
         (None, from, to) => {
-            let from = node
+            let Some(from) = node
                 .resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest))?
-                .unwrap()
-                .number();
-            let to = node
+                .as_ref()
+                .map(Block::number)
+            else {
+                return Ok(vec![]);
+            };
+
+            let to = match node
                 .resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?
-                .unwrap()
-                .number();
+                .as_ref()
+            {
+                Some(block) => block.number(),
+                None => node
+                    .resolve_block_number(BlockNumberOrTag::Latest)?
+                    .unwrap()
+                    .number(),
+            };
 
             if from > to {
                 return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
@@ -519,7 +538,7 @@ fn get_transaction_by_block_hash_and_index(
     let mut params = params.sequence();
     let block_hash: B256 = params.next()?;
     let index: U64 = params.next()?;
-
+    expect_end_of_params(&mut params, 2, 2)?;
     let node = node.lock().unwrap();
 
     let Some(block) = node.get_block(block_hash)? else {
@@ -539,6 +558,7 @@ fn get_transaction_by_block_number_and_index(
     let mut params = params.sequence();
     let block_number: BlockNumberOrTag = params.next()?;
     let index: U64 = params.next()?;
+    expect_end_of_params(&mut params, 2, 2)?;
 
     let node = node.lock().unwrap();
 
@@ -882,10 +902,10 @@ async fn subscribe(
                         continue 'outer;
                     }
 
-                    let log = alloy_rpc_types::Log {
-                        inner: alloy_primitives::Log {
+                    let log = alloy::rpc::types::Log {
+                        inner: alloy::primitives::Log {
                             address: log.address,
-                            data: alloy_primitives::LogData::new_unchecked(
+                            data: alloy::primitives::LogData::new_unchecked(
                                 log.topics,
                                 log.data.into(),
                             ),

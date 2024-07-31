@@ -1,13 +1,17 @@
-use std::{collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration};
+use std::{
+    cell::RefCell,
+    collections::{btree_map::Entry, BTreeMap},
+    error::Error,
+    fmt::Display,
+    sync::Arc,
+    time::Duration,
+};
 
-use alloy_primitives::{Address, U256};
-use anyhow::{anyhow, Context as _, Result};
+use alloy::primitives::{Address, U256};
+use anyhow::{anyhow, Result};
 use bitvec::bitvec;
 use eth_trie::{MemoryDB, Trie};
 use libp2p::PeerId;
-use rand::distributions::{Distribution, WeightedIndex};
-use rand_chacha::ChaCha8Rng;
-use rand_core::SeedableRng;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -16,8 +20,8 @@ use tracing::*;
 use crate::{
     block_store::BlockStore,
     blockhooks,
-    cfg::NodeConfig,
-    crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
+    cfg::{ConsensusConfig, NodeConfig},
+    crypto::{verify_messages, Hash, NodePublicKey, NodePublicKeyRaw, NodeSignature, SecretKey},
     db::Db,
     exec::TransactionApplyResult,
     inspector::{self, ScillaInspector, TouchedAddressInspector},
@@ -25,7 +29,7 @@ use crate::{
         AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, BlockResponse,
         ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
     },
-    node::{MessageSender, NetworkMessage},
+    node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxPoolContent},
     state::State,
     time::SystemTime,
@@ -89,6 +93,15 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
+type BlockVotes = (Vec<NodeSignature>, BitVec, u128, bool);
+
+#[derive(Debug)]
+struct CachedLeader {
+    block_number: u64,
+    view: u64,
+    next_leader: Validator,
+}
+
 /// The consensus algorithm is pipelined fast-hotstuff, as given in this paper: https://arxiv.org/pdf/2010.11454.pdf
 ///
 /// The algorithm can be condensed down into the following explaination:
@@ -126,7 +139,8 @@ pub struct Consensus {
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub block_store: BlockStore,
-    votes: BTreeMap<Hash, (Vec<NodeSignature>, BitVec, u128, bool)>,
+    latest_leader_cache: RefCell<Option<CachedLeader>>,
+    votes: BTreeMap<Hash, BlockVotes>,
     /// Votes for a block we don't have stored. They are retained in case we recieve the block later.
     // TODO(#719): Consider how to limit the size of this.
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
@@ -170,7 +184,6 @@ impl View {
     pub fn set_view(&mut self, view: u64) {
         match view.cmp(&self.view) {
             std::cmp::Ordering::Less => {
-                // todo: this can happen if agg is true - how to handle?
                 warn!(
                     "Tried to set view {} to lower view {} - this is incorrect",
                     self.view, view
@@ -261,6 +274,7 @@ impl Consensus {
             secret_key,
             config,
             block_store,
+            latest_leader_cache: RefCell::new(None),
             message_sender,
             reset_timeout,
             votes: BTreeMap::new(),
@@ -339,20 +353,15 @@ impl Consensus {
         ) = self.get_consensus_timeout_params();
 
         if head_block_view + 1 == self.view.get_view() && self.create_next_block_on_timeout {
-            let time_since_last_block = SystemTime::now()
-                .duration_since(self.view.last_timeout())
-                .expect("last timeout seems to be in the future...")
-                .as_millis() as u64;
-
             let empty_block_timeout_ms =
                 self.config.consensus.empty_block_timeout.as_millis() as u64;
 
-            let transactions_count = self.transaction_pool.size();
+            let has_txns_for_next_block = self.transaction_pool.has_txn_ready();
 
             // Check if enough time elapsed or there's something in mempool or we don't have enough
             // time but let's try at least until new view can happen
-            if time_since_last_block > empty_block_timeout_ms
-                || transactions_count > 0
+            if time_since_last_view_change > empty_block_timeout_ms
+                || has_txns_for_next_block
                 || (time_since_last_view_change + minimum_time_left_for_empty_block
                     >= exponential_backoff_timeout)
             {
@@ -365,7 +374,7 @@ impl Consensus {
                 };
             } else {
                 self.reset_timeout.send(Duration::from_millis(
-                    empty_block_timeout_ms - time_since_last_block + 1,
+                    empty_block_timeout_ms - time_since_last_view_change + 1,
                 ))?;
                 return Ok(None);
             }
@@ -424,7 +433,7 @@ impl Consensus {
         let consensus_timeout_ms = self.config.consensus.consensus_timeout.as_millis() as u64;
         let time_since_last_view_change = SystemTime::now()
             .duration_since(self.view.last_timeout())
-            .expect("last timeout seems to be in the future...")
+            .unwrap_or_default()
             .as_millis() as u64;
         let view_difference = self.view.get_view().saturating_sub(self.high_qc.view);
         // in view N our highQC is the one we obtained in view N-1 (or before) and its view is N-2 (or lower)
@@ -511,8 +520,9 @@ impl Consensus {
                                 .collect(),
                         ),
                     )?;
+                } else {
+                    warn!(?e, "invalid block proposal received!");
                 }
-                warn!(?e, "invalid block proposal received!");
                 return Ok(None);
             }
         }
@@ -551,7 +561,8 @@ impl Consensus {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}, head: {:?}", parent.state_root_hash(), self.state.root_hash()?, head_block);
                 self.state.set_to_root(parent.state_root_hash().into());
             }
-            let stakers = self.state.get_stakers()?;
+            let stakers: Vec<_> = self.state.get_stakers_raw()?;
+
             // Only tell the block store where this block came from if it wasn't from ourselves.
             let from = (self.peer_id() != from).then_some(from);
             self.execute_block(from, &block, transactions, &stakers)?;
@@ -605,6 +616,12 @@ impl Consensus {
                     return Ok(None);
                 };
 
+                self.latest_leader_cache.replace(Some(CachedLeader {
+                    block_number: block.number(),
+                    view: self.view.get_view(),
+                    next_leader,
+                }));
+
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
                     return Ok(Some((
@@ -620,6 +637,8 @@ impl Consensus {
         Ok(None)
     }
 
+    /// Note that the algorithm below is mentioned in cfg.rs - if you change the way
+    /// rewards are calculated, please change the comments in the configuration structure there.
     fn apply_rewards(
         &mut self,
         committee: &[NodePublicKey],
@@ -627,16 +646,42 @@ impl Consensus {
         view: u64,
         cosigned: &BitSlice,
     ) -> Result<()> {
+        self.apply_rewards_raw(
+            &committee.iter().map(|k| (*k).into()).collect::<Vec<_>>(),
+            parent_block,
+            view,
+            cosigned,
+        )
+    }
+    fn apply_rewards_raw(
+        &mut self,
+        committee: &[NodePublicKeyRaw],
+        parent_block: &Block,
+        view: u64,
+        cosigned: &BitSlice,
+    ) -> Result<()> {
+        let proposer_bytes = self.leader_at_block_raw(parent_block, view).unwrap().0;
+        let state = &mut self.state;
+        state.set_to_root(parent_block.state_root_hash().into());
+        let config = &self.config.consensus;
+        Self::apply_rewards_raw_at(state, config, committee, proposer_bytes, view, cosigned)
+    }
+
+    fn apply_rewards_raw_at(
+        at_state: &mut State,
+        config: &ConsensusConfig,
+        committee: &[NodePublicKeyRaw],
+        proposer_bytes: NodePublicKeyRaw,
+        view: u64,
+        cosigned: &BitSlice,
+    ) -> Result<()> {
         debug!("apply rewards in view {view}");
 
-        let rewards_per_block =
-            *self.config.consensus.rewards_per_hour / self.config.consensus.blocks_per_hour as u128;
+        let rewards_per_block = *config.rewards_per_hour / config.blocks_per_hour as u128;
 
-        let proposer = self.leader_at_block(parent_block, view).unwrap().public_key;
-        if let Some(proposer_address) = self.state.get_reward_address(proposer)? {
+        if let Some(proposer_address) = at_state.get_reward_address_raw(proposer_bytes)? {
             let reward = rewards_per_block / 2;
-            self.state
-                .mutate_account(proposer_address, |a| a.balance += reward)?;
+            at_state.mutate_account(proposer_address, |a| a.balance += reward)?;
         }
 
         let mut total_cosigner_stake = 0;
@@ -644,9 +689,13 @@ impl Consensus {
             .iter()
             .enumerate()
             .filter(|(i, _)| cosigned[*i])
-            .map(|(_, &pub_key)| {
-                let reward_address = self.state.get_reward_address(pub_key).unwrap();
-                let stake = self.state.get_stake(pub_key).unwrap().unwrap().get();
+            .map(|(_, pub_key)| {
+                let reward_address = at_state.get_reward_address_raw(pub_key.clone()).unwrap();
+                let stake = at_state
+                    .get_stake_raw(pub_key.clone())
+                    .unwrap()
+                    .unwrap()
+                    .get();
                 total_cosigner_stake += stake;
                 (reward_address, stake)
             })
@@ -656,11 +705,9 @@ impl Consensus {
             if let Some(cosigner) = reward_address {
                 let reward = U256::from(rewards_per_block / 2) * U256::from(stake)
                     / U256::from(total_cosigner_stake);
-                self.state
-                    .mutate_account(cosigner, |a| a.balance += reward.to::<u128>())?;
+                at_state.mutate_account(cosigner, |a| a.balance += reward.to::<u128>())?;
             }
         }
-
         Ok(())
     }
 
@@ -670,18 +717,28 @@ impl Consensus {
         current_block: BlockHeader,
         inspector: I,
     ) -> Result<Option<TransactionApplyResult>> {
+        let db = self.db.clone();
+        let state = &mut self.state;
+        let node_config = &self.config;
+        Self::apply_transaction_at(state, db, node_config, txn, current_block, inspector)
+    }
+
+    pub fn apply_transaction_at<I: for<'s> Inspector<&'s State> + ScillaInspector>(
+        state: &mut State,
+        db: Arc<Db>,
+        config: &NodeConfig,
+        txn: VerifiedTransaction,
+        current_block: BlockHeader,
+        inspector: I,
+    ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
 
-        if !self.db.contains_transaction(&txn.hash)? {
-            self.db.insert_transaction(&txn.hash, &txn.tx)?;
+        if !db.contains_transaction(&txn.hash)? {
+            db.insert_transaction(&txn.hash, &txn.tx)?;
         }
 
-        let result = self.state.apply_transaction(
-            txn.clone(),
-            self.config.eth_chain_id,
-            current_block,
-            inspector,
-        );
+        let result =
+            state.apply_transaction(txn.clone(), config.eth_chain_id, current_block, inspector);
         let result = match result {
             Ok(r) => r,
             Err(error) => {
@@ -689,9 +746,6 @@ impl Consensus {
                 return Ok(None);
             }
         };
-
-        // Tell the transaction pool that the sender's nonce has been incremented.
-        self.transaction_pool.mark_executed(&txn);
 
         if !result.success() {
             info!("Transaction was a failure...");
@@ -737,6 +791,13 @@ impl Consensus {
             txn.tx.nonce().unwrap() >= account_nonce
         });
         content
+    }
+
+    pub fn pending_transaction_count(&self, account: Address) -> u64 {
+        let current_nonce = self.state.must_get_account(account).nonce;
+
+        self.transaction_pool
+            .pending_transaction_count(account, current_nonce)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
@@ -869,11 +930,7 @@ impl Consensus {
                     // We propose new block immediately if there's something in mempool or it's the first view
                     // Otherwise the block will be proposed on timeout
 
-                    let transactions_count = self.transaction_pool.size();
-
-                    if (self.view.get_view() == 1)
-                        || (block_view + 1 == self.view.get_view() && transactions_count > 0)
-                    {
+                    if self.view.get_view() == 1 || self.transaction_pool.has_txn_ready() {
                         return self.propose_new_block();
                     } else {
                         // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
@@ -907,7 +964,9 @@ impl Consensus {
     }
 
     pub fn try_to_propose_new_block(&mut self) -> Result<Option<NetworkMessage>> {
-        if self.create_next_block_on_timeout {
+        // We try to propose next block here iff this action has already been postponed and there's any txn in the mempool
+        // that will be included in the next block
+        if self.create_next_block_on_timeout && self.transaction_pool.has_txn_ready() {
             if let Ok(Some((block, transactions))) = self.propose_new_block() {
                 self.create_next_block_on_timeout = false;
                 return Ok(Some((
@@ -919,19 +978,24 @@ impl Consensus {
         Ok(None)
     }
 
-    fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    fn propose_new_block_at(
+        &self,
+        state: &mut State,
+        transaction_pool: &mut TransactionPool,
+        votes: &mut BTreeMap<Hash, BlockVotes>,
+    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         let num = self.db.get_highest_block_number().unwrap().unwrap();
         let block = self.get_block_by_number(num).unwrap().unwrap();
 
         let block_hash = block.hash();
         let block_view = block.view();
 
-        let committee = self.state.get_stakers_at_block(&block)?;
+        let committee: Vec<_> = state.get_stakers_at_block_raw(&block)?;
 
         let committee_size = committee.len();
 
         let (signatures, cosigned, cosigned_weight, supermajority_reached) =
-            self.votes.get(&block_hash).cloned().unwrap_or_else(|| {
+            votes.get(&block_hash).cloned().unwrap_or_else(|| {
                 (
                     Vec::new(),
                     bitvec![u8, bitvec::order::Msb0; 0; committee_size],
@@ -947,7 +1011,7 @@ impl Consensus {
             .ok_or_else(|| anyhow!("missing block"))?;
         let parent_header = parent.header;
 
-        let previous_state_root_hash = self.state.root_hash()?;
+        let previous_state_root_hash = state.root_hash()?;
 
         if previous_state_root_hash != parent.state_root_hash() {
             warn!(
@@ -955,50 +1019,95 @@ impl Consensus {
                 parent.state_root_hash(),
                 previous_state_root_hash
             );
-            self.state.set_to_root(parent.state_root_hash().into());
+            state.set_to_root(parent.state_root_hash().into());
         }
-
-        let transactions = self.get_txns_to_execute();
 
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
 
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
 
-        let applied_transactions: Vec<_> = transactions
-            .into_iter()
-            .enumerate()
-            .filter_map(|(idx, tx)| {
-                transactions_trie
-                    .insert(tx.hash.as_bytes(), tx.hash.as_bytes())
-                    .ok()?;
+        let mut updated_root_hash = state.root_hash()?;
+        let mut tx_index_in_block = 0;
+        let mut applied_transactions = Vec::new();
 
-                self.apply_transaction(tx.clone(), parent_header, inspector::noop())
-                    .transpose()
-                    .map(|r| {
-                        r.and_then(|result| {
-                            gas_left = gas_left
-                                .checked_sub(result.gas_used())
-                                .ok_or_else(|| anyhow!("too much gas used"))?;
+        let proposer = self
+            .leader_at_block(&parent, block_view + 1)
+            .unwrap()
+            .public_key;
 
-                            let receipt = Self::create_txn_receipt(
-                                result.clone(),
-                                tx.hash,
-                                idx,
-                                self.config.consensus.eth_block_gas_limit - gas_left,
-                            );
-                            let receipt_hash = receipt.hash();
-                            receipts_trie
-                                .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
-                            Ok((tx, result))
-                        })
-                    })
-            })
-            .collect::<Result<_>>()?;
+        Self::apply_rewards_raw_at(
+            state,
+            &self.config.consensus,
+            &committee,
+            proposer.into(),
+            block_view + 1,
+            &qc.cosigned,
+        )?;
+
+        let node_config = &self.config;
+
+        while let Some(tx) = transaction_pool.best_transaction() {
+            let result = Self::apply_transaction_at(
+                state,
+                self.db.clone(),
+                node_config,
+                tx.clone(),
+                parent_header,
+                inspector::noop(),
+            )?;
+
+            // Skip transactions whose execution resulted in an error and don't re-insert them into the pool.
+            let Some(result) = result else {
+                continue;
+            };
+
+            gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
+                g
+            } else {
+                info!(
+                    nonce = tx.tx.nonce(),
+                    "gas limit reached, returning final transaction to pool",
+                );
+                transaction_pool.insert_ready_transaction(tx);
+                state.set_to_root(updated_root_hash.into());
+                break;
+            };
+
+            transaction_pool.mark_executed(&tx);
+
+            let receipt = Self::create_txn_receipt(
+                result.clone(),
+                tx.hash,
+                tx_index_in_block,
+                self.config.consensus.eth_block_gas_limit - gas_left,
+            );
+
+            transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
+
+            let receipt_hash = receipt.compute_hash();
+            receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
+
+            tx_index_in_block += 1;
+            updated_root_hash = state.root_hash()?;
+            applied_transactions.push(tx);
+
+            // Lastly - check how much time we have left for processing txns and break the loop to give enough time for block propagation
+            let (
+                time_since_last_view_change,
+                exponential_backoff_timeout,
+                minimum_time_left_for_empty_block,
+            ) = self.get_consensus_timeout_params();
+
+            if time_since_last_view_change + minimum_time_left_for_empty_block
+                >= exponential_backoff_timeout
+            {
+                break;
+            }
+        }
+
         let applied_transaction_hashes: Vec<_> =
-            applied_transactions.iter().map(|(tx, _)| tx.hash).collect();
-
-        self.apply_rewards(&committee, &parent, block_view + 1, &qc.cosigned)?;
+            applied_transactions.iter().map(|tx| tx.hash).collect();
 
         let proposal = Block::from_qc(
             self.secret_key,
@@ -1006,7 +1115,7 @@ impl Consensus {
             parent.header.number + 1,
             qc,
             parent_hash,
-            self.state.root_hash()?,
+            state.root_hash()?,
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             applied_transaction_hashes.clone(),
@@ -1015,9 +1124,9 @@ impl Consensus {
             self.config.consensus.eth_block_gas_limit,
         );
 
-        self.state.set_to_root(previous_state_root_hash.into());
+        state.set_to_root(previous_state_root_hash.into());
 
-        self.votes.insert(
+        votes.insert(
             block_hash,
             (signatures, cosigned, cosigned_weight, supermajority_reached),
         );
@@ -1027,7 +1136,6 @@ impl Consensus {
         let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
             applied_transactions
                 .into_iter()
-                .map(|(tx, _)| tx)
                 .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
         // however, for the transactions that we are NOT broadcasting, we re-insert
         // them into the pool - this is because upon broadcasting the proposal, we will
@@ -1035,9 +1143,61 @@ impl Consensus {
         // need those transactions again
         for tx in opaque_transactions {
             let account_nonce = self.state.get_account(tx.signer)?.nonce;
-            self.transaction_pool.insert_transaction(tx, account_nonce);
+            transaction_pool.insert_transaction(tx, account_nonce);
         }
         Ok(Some((proposal, broadcasted_transactions)))
+    }
+
+    fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+        let mut state = self.state.clone();
+        let mut tx_pool = self.transaction_pool.clone();
+        let mut votes = self.votes.clone();
+
+        let result = self.propose_new_block_at(&mut state, &mut tx_pool, &mut votes);
+
+        self.state = state;
+        self.transaction_pool = tx_pool;
+        self.votes = votes;
+
+        result
+    }
+
+    pub fn get_pending_block(&self) -> Result<Option<Block>> {
+        let mut state = self.state.clone();
+        let mut tx_pool = self.transaction_pool.clone();
+        let mut votes = self.votes.clone();
+
+        let head_height = self.db.get_highest_block_number()?.unwrap();
+        let head_block = self.get_block_by_number(head_height)?.unwrap();
+
+        // If there are no votes for highest block then we have to create artificial vote
+        // This is needed to satisfy aggregate signature (otherwise there's nothing agg signature can be built on)
+
+        if let Entry::Vacant(v) = votes.entry(head_block.hash()) {
+            let my_vote = Vote::new(
+                self.secret_key,
+                head_block.hash(),
+                self.public_key(),
+                self.view.get_view(),
+            );
+
+            let committee: Vec<_> = state.get_stakers_at_block_raw(&head_block)?;
+
+            let votes = (
+                vec![my_vote.signature()],
+                bitvec![u8, bitvec::order::Msb0; 1; committee.len()],
+                0,
+                false,
+            );
+            v.insert(votes);
+        }
+
+        let pending_block = self.propose_new_block_at(&mut state, &mut tx_pool, &mut votes)?;
+
+        let Some((pending_block, _)) = pending_block else {
+            return Ok(None);
+        };
+        Ok(Some(pending_block))
     }
 
     fn are_we_leader_for_view(&mut self, parent_hash: Hash, view: u64) -> bool {
@@ -1096,9 +1256,9 @@ impl Consensus {
         }
 
         // Get the committee for the qc hash (should be highest?) for this view
-        let committee = self.committee_for_hash(new_view.qc.block_hash)?;
+        let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
         // verify the sender's signature on the block hash
-        let Some((index, &public_key)) = committee
+        let Some((index, public_key)) = committee
             .iter()
             .enumerate()
             .find(|(_, &public_key)| public_key == new_view.public_key)
@@ -1107,7 +1267,7 @@ impl Consensus {
             return Ok(None);
         };
 
-        new_view.verify(public_key)?;
+        new_view.verify(*public_key)?;
 
         // check if the sender's qc is higher than our high_qc or even higher than our view
         self.update_high_qc_and_view(false, new_view.qc.clone())?;
@@ -1315,7 +1475,9 @@ impl Consensus {
                 );
                 self.db.set_high_qc(new_high_qc.clone())?;
                 self.high_qc = new_high_qc;
-                self.view.set_view(new_high_qc_block_view + 1);
+                if new_high_qc_block_view >= self.view.get_view() {
+                    self.view.set_view(new_high_qc_block_view + 1);
+                }
             }
         }
 
@@ -1426,8 +1588,6 @@ impl Consensus {
         // formed has to be a one-direct chain in case of pipelined Fast-
         // HotStuff). Then a replica can safely commit the parent of the
         // block pointed by the highQC.
-        // So, in short, look up parent of QC, and finalize it iff the two subsequent blocks
-        // have views N+1, N+2 (the final one being proposal block).
 
         let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else {
             warn!("missing qc block when checking whether to finalize!");
@@ -1440,17 +1600,15 @@ impl Consensus {
             return Ok(());
         };
 
-        // Likewise, block + 1 doesn't have to exist neccessarily
-        let Some(qc_child) = self.get_block_by_number(qc_parent.number() + 1)? else {
-            warn!("missing qc child when checking whether to finalize!");
-            return Ok(());
-        };
-
-        if qc_parent.view() + 1 == qc_child.view() && qc_parent.view() + 2 == proposal.view() {
+        // If we have a one-direct chain, we can finalize the parent regardless of the proposal's view number
+        if qc_parent.view() + 1 == qc_block.view() {
             self.finalize_block(qc_parent)?;
         } else {
             warn!(
-                "Failed to finalize block! Not finalizing QC block {} with view {} and number {}",
+                "Cannot finalize block {} with view {} and number {} because of child {} with view {} and number {}",
+                qc_parent.hash(),
+                qc_parent.view(),
+                qc_parent.number(),
                 qc_block.hash(),
                 qc_block.view(),
                 qc_block.number()
@@ -1572,7 +1730,7 @@ impl Consensus {
 
         let committee = self
             .state
-            .get_stakers_at_block(&parent)
+            .get_stakers_at_block_raw(&parent)
             .map_err(|e| (e, false))?;
 
         if verified.is_err() {
@@ -1583,6 +1741,12 @@ impl Consensus {
         // Check if the co-signers of the block's QC represent the supermajority.
         self.check_quorum_in_bits(&block.qc.cosigned, &committee)
             .map_err(|e| (e, false))?;
+
+        let committee: Vec<_> = committee
+            .into_iter()
+            .map(|k| k.try_into().unwrap())
+            .collect();
+
         // Verify the block's QC signature - note the parent should be the committee the QC
         // was signed over.
         self.verify_qc_signature(&block.qc, committee.clone())
@@ -1859,21 +2023,32 @@ impl Consensus {
 
     // TODO: Consider if these checking functions should be implemented at the deposit contract level instead?
 
-    fn check_quorum_in_bits(&self, cosigned: &BitSlice, committee: &[NodePublicKey]) -> Result<()> {
-        let cosigned_sum: u128 = committee
+    fn check_quorum_in_bits(
+        &self,
+        cosigned: &BitSlice,
+        committee: &[NodePublicKeyRaw],
+    ) -> Result<()> {
+        let (total_weight, cosigned_sum) = committee
             .iter()
             .enumerate()
-            .map(|(i, &public_key)| {
-                cosigned[i]
-                    .then(|| {
-                        let stake = self.state.get_stake(public_key).unwrap().unwrap();
-                        stake.get()
-                    })
-                    .unwrap_or_default()
+            .map(|(i, public_key)| {
+                (
+                    i,
+                    self.state
+                        .get_stake_raw(public_key.clone())
+                        .unwrap()
+                        .unwrap()
+                        .get(),
+                )
             })
-            .sum();
+            .fold((0, 0), |(total_weight, cosigned_sum), (i, stake)| {
+                (
+                    total_weight + stake,
+                    cosigned_sum + cosigned[i].then_some(stake).unwrap_or_default(),
+                )
+            });
 
-        if cosigned_sum * 3 <= self.total_weight(committee) * 2 {
+        if cosigned_sum * 3 <= total_weight * 2 {
             return Err(anyhow!("no quorum"));
         }
 
@@ -1903,39 +2078,40 @@ impl Consensus {
     }
 
     pub fn leader_at_block(&self, block: &Block, view: u64) -> Option<Validator> {
+        if let Some(CachedLeader {
+            block_number: cached_block_number,
+            view: cached_view,
+            next_leader,
+        }) = *self.latest_leader_cache.borrow()
+        {
+            if cached_block_number == block.number() && cached_view == view {
+                return Some(next_leader);
+            }
+        }
+
+        self.leader_at_block_raw(block, view)
+            .map(|leader| Validator {
+                public_key: leader.0.try_into().unwrap(),
+                peer_id: leader.1,
+            })
+    }
+
+    pub fn leader_at_block_raw(
+        &self,
+        block: &Block,
+        view: u64,
+    ) -> Option<(NodePublicKeyRaw, PeerId)> {
         let Ok(state_at) = self.try_get_state_at(block.number()) else {
             return None;
         };
-        Some(self.leader(&state_at, view))
-    }
 
-    pub fn leader(&self, state: &State, view: u64) -> Validator {
-        let committee = state.get_stakers().unwrap();
-
-        let mut rng = ChaCha8Rng::seed_from_u64(view);
-        let dist = WeightedIndex::new(committee.iter().map(|pub_key| {
-            let stake = state
-                .get_stake(*pub_key)
-                .unwrap()
-                .context("Committee member has no stake")
-                .unwrap();
-            stake.get()
-        }))
-        .unwrap();
-        let index = dist.sample(&mut rng);
-        let public_key = *committee.get(index).unwrap();
-
-        let peer_id = self
-            .state
-            .get_peer_id(public_key)
+        let public_key = state_at.leader_raw(view).unwrap();
+        let peer_id = state_at
+            .get_peer_id_raw(public_key.clone())
             .unwrap()
-            .context("Unable to get peer_id from staking contract!")
             .unwrap();
 
-        Validator {
-            public_key,
-            peer_id,
-        }
+        Some((public_key, peer_id))
     }
 
     fn total_weight(&self, committee: &[NodePublicKey]) -> u128 {
@@ -2073,7 +2249,7 @@ impl Consensus {
                 .iter()
                 .map(|tx_hash| self.get_transaction_by_hash(*tx_hash).unwrap().unwrap().tx)
                 .collect();
-            let committee = self.state.get_stakers_at_block(&block_pointer)?;
+            let committee: Vec<_> = self.state.get_stakers_at_block_raw(&block_pointer)?;
             self.execute_block(None, &block_pointer, transactions, &committee)?;
         }
 
@@ -2085,7 +2261,7 @@ impl Consensus {
         from: Option<PeerId>,
         block: &Block,
         transactions: Vec<SignedTransaction>,
-        committee: &[NodePublicKey],
+        committee: &[NodePublicKeyRaw],
     ) -> Result<()> {
         debug!("Executing block: {:?}", block.header.hash);
 
@@ -2115,7 +2291,7 @@ impl Consensus {
             }
         }
 
-        self.apply_rewards(committee, &parent, block.view(), &block.qc.cosigned)?;
+        self.apply_rewards_raw(committee, &parent, block.view(), &block.qc.cosigned)?;
 
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
@@ -2129,6 +2305,7 @@ impl Consensus {
             let result = self
                 .apply_transaction(txn.clone(), parent.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
+            self.transaction_pool.mark_executed(&txn);
             for address in inspector.touched {
                 self.db.add_touched_address(address, tx_hash)?;
             }
@@ -2143,7 +2320,7 @@ impl Consensus {
 
             let receipt = Self::create_txn_receipt(result, tx_hash, tx_index, cumulative_gas_used);
 
-            let receipt_hash = receipt.hash();
+            let receipt_hash = receipt.compute_hash();
             receipts_trie
                 .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())
                 .unwrap();
@@ -2255,5 +2432,12 @@ impl Consensus {
             errors,
             exceptions,
         }
+    }
+
+    pub fn report_outgoing_message_failure(
+        &mut self,
+        failure: OutgoingMessageFailure,
+    ) -> Result<()> {
+        self.block_store.report_outgoing_message_failure(failure)
     }
 }

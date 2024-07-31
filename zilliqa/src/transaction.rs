@@ -6,9 +6,11 @@ use std::{
     str::FromStr,
 };
 
-use alloy_consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy};
-use alloy_primitives::{keccak256, Address, Signature, TxKind, B256, U256};
-use alloy_rlp::{Encodable, Header, EMPTY_STRING_CODE};
+use alloy::{
+    consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy},
+    primitives::{keccak256, Address, Signature, TxKind, B256, U256},
+    rlp::{Encodable, Header, EMPTY_STRING_CODE},
+};
 use anyhow::{anyhow, Result};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;
@@ -76,7 +78,7 @@ pub enum SignedTransaction {
 mod ser_rlp {
     use std::marker::PhantomData;
 
-    use alloy_rlp::{Decodable, Encodable};
+    use alloy::rlp::{Decodable, Encodable};
     use serde::{de, Deserializer, Serializer};
 
     pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
@@ -837,13 +839,13 @@ impl AddAssign for EvmGas {
     }
 }
 
-impl alloy_rlp::Decodable for EvmGas {
-    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        Ok(EvmGas(<u64 as alloy_rlp::Decodable>::decode(buf)?))
+impl alloy::rlp::Decodable for EvmGas {
+    fn decode(buf: &mut &[u8]) -> alloy::rlp::Result<Self> {
+        Ok(EvmGas(<u64 as alloy::rlp::Decodable>::decode(buf)?))
     }
 }
 
-impl alloy_rlp::Encodable for EvmGas {
+impl alloy::rlp::Encodable for EvmGas {
     fn encode(&self, out: &mut dyn BufMut) {
         self.0.encode(out);
     }
@@ -896,22 +898,24 @@ impl Log {
         }
     }
 
-    pub fn hash(&self) -> Hash {
+    pub fn compute_hash(&self) -> Hash {
         match self {
-            Log::Scilla(log) => Hash::compute([
-                log.event_name.as_bytes(),
-                &log.params
-                    .iter()
-                    .map(|param| param.hash())
-                    .map(|hash| hash.as_bytes().to_vec())
-                    .concat(),
-                log.address.as_slice(),
-            ]),
-            Log::Evm(log) => Hash::compute([
-                log.address.as_slice(),
-                &log.data,
-                &log.topics.iter().map(|topic| topic.to_vec()).concat(),
-            ]),
+            Log::Scilla(log) => Hash::builder()
+                .with(log.event_name.as_bytes())
+                .with(
+                    log.params
+                        .iter()
+                        .map(|param| param.compute_hash())
+                        .map(|hash| hash.as_bytes().to_vec())
+                        .concat(),
+                )
+                .with(log.address.as_slice())
+                .finalize(),
+            Log::Evm(log) => Hash::builder()
+                .with(log.address.as_slice())
+                .with(&log.data)
+                .with(log.topics.iter().map(|topic| topic.to_vec()).concat())
+                .finalize(),
         }
     }
 }
@@ -926,12 +930,12 @@ pub struct ScillaParam {
 }
 
 impl ScillaParam {
-    pub fn hash(&self) -> Hash {
-        Hash::compute([
-            self.ty.as_bytes(),
-            self.value.as_bytes(),
-            self.name.as_bytes(),
-        ])
+    pub fn compute_hash(&self) -> Hash {
+        Hash::builder()
+            .with(self.ty.as_bytes())
+            .with(self.value.as_bytes())
+            .with(self.name.as_bytes())
+            .finalize()
     }
 }
 
@@ -953,36 +957,41 @@ pub struct TransactionReceipt {
 }
 
 impl TransactionReceipt {
-    pub fn hash(&self) -> Hash {
+    pub fn compute_hash(&self) -> Hash {
         let success = [u8::from(self.success); 1];
         let accepted = [u8::from(self.accepted.unwrap_or_default()); 1];
-        Hash::compute([
-            &self.index.to_be_bytes(),
-            self.tx_hash.as_bytes(),
-            success.as_slice(),
-            &self.gas_used.0.to_be_bytes(),
-            &self.cumulative_gas_used.0.to_be_bytes(),
-            self.contract_address
-                .unwrap_or_default()
-                .to_vec()
-                .as_slice(),
-            &self
-                .logs
-                .iter()
-                .map(|log| log.hash().as_bytes().to_vec())
-                .concat(),
-            &self
-                .transitions
-                .iter()
-                .map(|transition| transition.hash().as_bytes().to_vec())
-                .concat(),
-            accepted.as_slice(),
-            &self
-                .exceptions
-                .iter()
-                .map(|exception| exception.hash().as_bytes().to_vec())
-                .concat(),
-        ])
+        Hash::builder()
+            .with(self.index.to_be_bytes())
+            .with(self.tx_hash.as_bytes())
+            .with(success.as_slice())
+            .with(self.gas_used.0.to_be_bytes())
+            .with(self.cumulative_gas_used.0.to_be_bytes())
+            .with(
+                self.contract_address
+                    .unwrap_or_default()
+                    .to_vec()
+                    .as_slice(),
+            )
+            .with(
+                self.logs
+                    .iter()
+                    .map(|log| log.compute_hash().as_bytes().to_vec())
+                    .concat(),
+            )
+            .with(
+                self.transitions
+                    .iter()
+                    .map(|transition| transition.compute_hash().as_bytes().to_vec())
+                    .concat(),
+            )
+            .with(accepted.as_slice())
+            .with(
+                self.exceptions
+                    .iter()
+                    .map(|exception| exception.compute_hash().as_bytes().to_vec())
+                    .concat(),
+            )
+            .finalize()
     }
 }
 

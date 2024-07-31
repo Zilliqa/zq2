@@ -5,7 +5,7 @@ use std::{
     string::FromUtf8Error, sync::Arc,
 };
 
-use alloy_primitives::{Address, B256};
+use alloy::primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie, Trie, DB};
 use hex::FromHex;
@@ -640,7 +640,7 @@ enum FromHexError {
     #[error("invalid utf-8")]
     Utf8(#[from] FromUtf8Error),
     #[error("invalid hex encoding")]
-    Hex(#[from] alloy_primitives::hex::FromHexError),
+    Hex(#[from] alloy::primitives::hex::FromHexError),
 }
 
 fn address_from_hex(hex: Vec<u8>) -> Result<Address, FromHexError> {

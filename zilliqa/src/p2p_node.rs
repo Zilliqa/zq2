@@ -31,6 +31,7 @@ use crate::{
     crypto::SecretKey,
     db,
     message::{ExternalMessage, InternalMessage},
+    node::{OutgoingMessageFailure, RequestId},
     node_launcher::NodeLauncher,
 };
 
@@ -48,14 +49,14 @@ struct Behaviour {
 
 /// Messages circulating over the p2p network.
 /// (destination, shard_id, message)
-pub type OutboundMessageTuple = (Option<PeerId>, u64, ExternalMessage);
+pub type OutboundMessageTuple = (Option<(PeerId, RequestId)>, u64, ExternalMessage);
 
 /// Messages passed between local shard nodes.
 /// (source_shard, destination_shard, message)
 pub type LocalMessageTuple = (u64, u64, InternalMessage);
 
 struct NodeInputChannels {
-    external: UnboundedSender<(PeerId, ExternalMessage)>,
+    external: UnboundedSender<(PeerId, Result<ExternalMessage, OutgoingMessageFailure>)>,
     internal: UnboundedSender<(u64, InternalMessage)>,
 }
 
@@ -74,6 +75,8 @@ pub struct P2pNode {
     /// them as necessary.
     outbound_message_receiver: UnboundedReceiverStream<OutboundMessageTuple>,
     local_message_receiver: UnboundedReceiverStream<LocalMessageTuple>,
+    // Map of pending direct requests. Maps the libp2p request ID to our request ID.
+    pending_requests: HashMap<request_response::OutboundRequestId, (u64, RequestId)>,
 }
 
 impl P2pNode {
@@ -135,6 +138,7 @@ impl P2pNode {
             local_message_sender,
             outbound_message_receiver,
             local_message_receiver,
+            pending_requests: HashMap::new(),
         })
     }
 
@@ -190,7 +194,7 @@ impl P2pNode {
         &self,
         topic_hash: &TopicHash,
         source: PeerId,
-        message: ExternalMessage,
+        message: Result<ExternalMessage, OutgoingMessageFailure>,
     ) -> Result<()> {
         match self.shard_nodes.get(topic_hash) {
             Some(inbound_message_sender) => {
@@ -306,27 +310,39 @@ impl P2pNode {
                             let message = cbor4ii::serde::from_slice::<ExternalMessage>(&data).unwrap();
                             let to = self.peer_id;
                             debug!(%source, %to, %message, "broadcast recieved");
-                            self.forward_external_message_to_node(&topic_hash, source, message)?;
+                            self.forward_external_message_to_node(&topic_hash, source, Ok(message))?;
                         }
 
                         SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: source })) => {
                             match message {
-                                request_response::Message::Request {request, channel, ..} => {
+                                request_response::Message::Request { request, channel, .. } => {
                                     let to = self.peer_id;
                                     let (shard_id, external_message) = request;
                                     debug!(%source, %to, %external_message, "message received");
                                     let topic = Self::shard_id_to_topic(shard_id);
-                                    self.forward_external_message_to_node(&topic.hash(), source, external_message)?;
+                                    self.forward_external_message_to_node(&topic.hash(), source, Ok(external_message))?;
                                     let _ = self.swarm.behaviour_mut().request_response.send_response(channel, (shard_id, ExternalMessage::RequestResponse));
                                 }
-                                request_response::Message::Response {..} => {}
+                                request_response::Message::Response { request_id, .. } => {
+                                    self.pending_requests.remove(&request_id);
+                                }
                             }
                         }
-                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { error: OutboundFailure::DialFailure, .. })) => {
-                            // We failed to send a message to a peer. The likely reason is that we don't know their
-                            // address. Someone else in the network must know it, because we learnt their peer ID.
-                            // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
-                            let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
+                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { peer, request_id, error })) => {
+                            if let OutboundFailure::DialFailure = error {
+                                // We failed to send a message to a peer. The likely reason is that we don't know their
+                                // address. Someone else in the network must know it, because we learnt their peer ID.
+                                // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
+                                let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
+                            }
+
+
+                            if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
+                                let error = OutgoingMessageFailure { peer, request_id, error };
+                                self.forward_external_message_to_node(&Self::shard_id_to_topic(shard_id).hash(), peer, Err(error))?;
+                            } else {
+                                return Err(anyhow!("request without id failed"));
+                            }
                         }
                         _ => {},
                     }
@@ -362,12 +378,13 @@ impl P2pNode {
                     let topic = Self::shard_id_to_topic(shard_id);
 
                     match dest {
-                        Some(dest) => {
+                        Some((dest, request_id)) => {
                             debug!(%from, %dest, %message, "sending direct message");
                             if from == dest {
-                                self.forward_external_message_to_node(&topic.hash(), from, message)?;
+                                self.forward_external_message_to_node(&topic.hash(), from, Ok(message))?;
                             } else {
-                                let _ = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
+                                let libp2p_request_id = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
+                                self.pending_requests.insert(libp2p_request_id, (shard_id, request_id));
                             }
                         },
                         None => {
@@ -379,7 +396,7 @@ impl P2pNode {
                                 }
                             }
                             // Also broadcast the message to ourselves.
-                            self.forward_external_message_to_node(&topic.hash(), from, message)?;
+                            self.forward_external_message_to_node(&topic.hash(), from, Ok(message))?;
                         },
                     }
                 },

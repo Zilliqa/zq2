@@ -3,7 +3,7 @@ use std::{
     collections::{BTreeMap, BinaryHeap, HashSet},
 };
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 
 use crate::{
     crypto::Hash,
@@ -49,7 +49,7 @@ impl MempoolIndex for VerifiedTransaction {
 /// A pool that manages uncommitted transactions.
 ///
 /// It provides transactions to the chain via [`TransactionPool::best_transaction`].
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct TransactionPool {
     /// All transactions in the pool. These transactions are all valid, or might become
     /// valid at some point in the future.
@@ -111,6 +111,9 @@ impl TransactionPool {
     ///
     /// Ready means that the transaction has a nonce equal to the sender's current nonce or it has a nonce that is
     /// consecutive with a previously returned transaction, from the same sender.
+    ///
+    /// If the returned transaction is executed, the caller must call [TransactionPool::mark_executed] to inform the
+    /// pool that the account's nonce has been updated and further transactions from this signer may now be ready.
     pub fn best_transaction(&mut self) -> Option<VerifiedTransaction> {
         loop {
             let ReadyItem { tx_index, .. } = self.ready.pop()?;
@@ -123,11 +126,6 @@ impl TransactionPool {
                 // We loop until we find a transaction that hasn't been made invalid.
                 continue;
             };
-
-            // If we've popped a nonced transaction, that may have made a subsequent one valid
-            if let Some(next) = tx_index.next().and_then(|idx| self.transactions.get(&idx)) {
-                self.ready.push(next.into());
-            }
 
             return Some(transaction);
         }
@@ -187,6 +185,17 @@ impl TransactionPool {
         TxPoolContent { pending, queued }
     }
 
+    pub fn pending_transaction_count(&self, account: Address, mut account_nonce: u64) -> u64 {
+        while self
+            .transactions
+            .contains_key(&TxIndex::Nonced(account, account_nonce))
+        {
+            account_nonce += 1;
+        }
+
+        account_nonce
+    }
+
     pub fn insert_transaction(&mut self, txn: VerifiedTransaction, account_nonce: u64) -> bool {
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
             // This transaction is permanently invalid, so there is nothing to do.
@@ -222,6 +231,15 @@ impl TransactionPool {
         true
     }
 
+    /// Insert a transaction which the caller guarantees is ready to be mined. Breaking this guarantee will cause
+    /// problems. It is likely that the only way to be sure of this guarantee is that you just obtained this
+    /// transaction from `best_transaction` and have the same account state as when you made that call.
+    pub fn insert_ready_transaction(&mut self, txn: VerifiedTransaction) {
+        self.ready.push((&txn).into());
+        self.hash_to_index.insert(txn.hash, txn.mempool_index());
+        self.transactions.insert(txn.mempool_index(), txn);
+    }
+
     pub fn get_transaction(&self, hash: Hash) -> Option<&VerifiedTransaction> {
         let tx_index = self.hash_to_index.get(&hash)?;
         self.transactions.get(tx_index)
@@ -253,15 +271,29 @@ impl TransactionPool {
         std::mem::take(&mut self.transactions).into_values()
     }
 
-    pub fn size(&self) -> usize {
-        self.transactions.len()
+    pub fn has_txn_ready(&self) -> bool {
+        let mut ready = self.ready.clone();
+        while let Some(ReadyItem { tx_index, .. }) = ready.pop() {
+            // A transaction might have been ready, but it might have gotten popped
+            // or the sender's nonce might have increased, making it invalid. In this case,
+            // we will have a stale reference would still exist in the heap.
+            let Some(_) = self.transactions.get(&tx_index) else {
+                continue;
+            };
+
+            return true;
+        }
+        false
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::TxLegacy;
-    use alloy_primitives::{Address, Bytes, Parity, Signature, TxKind, U256};
+    use alloy::{
+        consensus::TxLegacy,
+        primitives::{Address, Bytes, Parity, Signature, TxKind, U256},
+    };
+    use rand::{seq::SliceRandom, thread_rng};
 
     use super::TransactionPool;
     use crate::{
@@ -289,7 +321,10 @@ mod tests {
                 .unwrap(),
             },
             signer: from_addr,
-            hash: Hash::compute([from_addr.as_slice(), &[nonce]]),
+            hash: Hash::builder()
+                .with(from_addr.as_slice())
+                .with([nonce])
+                .finalize(),
         }
     }
 
@@ -312,7 +347,10 @@ mod tests {
                 from: Address::ZERO,
             },
             signer: Address::ZERO,
-            hash: Hash::compute([[shard_nonce], [from_shard]]),
+            hash: Hash::builder()
+                .with([shard_nonce])
+                .with([from_shard])
+                .finalize(),
         }
     }
 
@@ -324,12 +362,48 @@ mod tests {
             .unwrap();
 
         pool.insert_transaction(transaction(from, 1, 1), 0);
+
+        let tx = pool.best_transaction();
+        assert_eq!(tx, None);
+
         pool.insert_transaction(transaction(from, 2, 2), 0);
         pool.insert_transaction(transaction(from, 0, 0), 0);
 
-        assert_eq!(pool.best_transaction().unwrap().tx.nonce().unwrap(), 0);
-        assert_eq!(pool.best_transaction().unwrap().tx.nonce().unwrap(), 1);
-        assert_eq!(pool.best_transaction().unwrap().tx.nonce().unwrap(), 2);
+        let tx = pool.best_transaction().unwrap();
+        assert_eq!(tx.tx.nonce().unwrap(), 0);
+        pool.mark_executed(&tx);
+
+        let tx = pool.best_transaction().unwrap();
+        assert_eq!(tx.tx.nonce().unwrap(), 1);
+        pool.mark_executed(&tx);
+
+        let tx = pool.best_transaction().unwrap();
+        assert_eq!(tx.tx.nonce().unwrap(), 2);
+        pool.mark_executed(&tx);
+    }
+
+    #[test]
+    fn nonces_returned_in_order_same_gas() {
+        let mut pool = TransactionPool::default();
+        let from = "0x0000000000000000000000000000000000001234"
+            .parse()
+            .unwrap();
+
+        const COUNT: u64 = 100;
+
+        let mut nonces = (0..COUNT).collect::<Vec<_>>();
+        let mut rng = thread_rng();
+        nonces.shuffle(&mut rng);
+
+        for i in 0..COUNT {
+            pool.insert_transaction(transaction(from, nonces[i as usize] as u8, 3), 0);
+        }
+
+        for i in 0..COUNT {
+            let tx = pool.best_transaction().unwrap();
+            assert_eq!(tx.tx.nonce().unwrap(), i);
+            pool.mark_executed(&tx);
+        }
     }
 
     #[test]
@@ -350,7 +424,7 @@ mod tests {
         pool.insert_transaction(transaction(from2, 0, 3), 0);
         pool.insert_transaction(transaction(from3, 0, 0), 0);
         pool.insert_transaction(intershard_transaction(0, 1, 5), 0);
-        assert_eq!(pool.size(), 5);
+        assert_eq!(pool.transactions.len(), 5);
 
         assert_eq!(
             pool.best_transaction().unwrap().tx.gas_price_per_evm_gas(),
@@ -372,7 +446,7 @@ mod tests {
             pool.best_transaction().unwrap().tx.gas_price_per_evm_gas(),
             0
         );
-        assert_eq!(pool.size(), 0);
+        assert_eq!(pool.transactions.len(), 0);
     }
 
     #[test]
@@ -382,17 +456,17 @@ mod tests {
             .parse()
             .unwrap();
 
-        assert_eq!(pool.size(), 0);
+        assert_eq!(pool.transactions.len(), 0);
         let normal_tx = transaction(from, 0, 1);
         let xshard_tx = intershard_transaction(0, 0, 1);
         pool.insert_transaction(normal_tx.clone(), 0);
-        assert_eq!(pool.size(), 1);
+        assert_eq!(pool.transactions.len(), 1);
         pool.insert_transaction(xshard_tx.clone(), 0);
-        assert_eq!(pool.size(), 2);
+        assert_eq!(pool.transactions.len(), 2);
         assert_eq!(pool.pop_transaction(normal_tx.hash), Some(normal_tx));
-        assert_eq!(pool.size(), 1);
+        assert_eq!(pool.transactions.len(), 1);
         assert_eq!(pool.pop_transaction(xshard_tx.hash), Some(xshard_tx));
-        assert_eq!(pool.size(), 0);
+        assert_eq!(pool.transactions.len(), 0);
         assert_eq!(pool.best_transaction(), None);
     }
 

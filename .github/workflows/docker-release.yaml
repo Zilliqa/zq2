@@ -5,6 +5,7 @@ on:
     branches:
       - 'release/**'
       - 'main'
+      - dl-retry
     tags:        
       - v*
 
@@ -59,7 +60,7 @@ jobs:
       permissions:
         id-token: write
         contents: write
-      if: ${{ github.ref_name == 'main' }} 
+      if: ${{ github.ref_name == 'main' }} || ${{ github.ref_name == 'dl-retry' }}
       runs-on: [ self-hosted, gcp]
       env:
         GCP_REGISTRY_DOMAIN: asia-docker.pkg.dev

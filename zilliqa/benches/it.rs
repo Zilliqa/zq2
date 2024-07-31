@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use bitvec::bitvec;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use eth_trie::{MemoryDB, Trie};
@@ -11,7 +11,7 @@ use zilliqa::{
     crypto::{Hash, SecretKey},
     db::Db,
     message::{Block, Proposal, QuorumCertificate, Vote},
-    node::MessageSender,
+    node::{MessageSender, RequestId},
     time::SystemTime,
     transaction::EvmGas,
 };
@@ -34,6 +34,7 @@ pub fn process_blocks(c: &mut Criterion) {
         our_peer_id: PeerId::random(),
         outbound_channel: outbound_message_sender,
         local_channel: local_message_sender,
+        request_id: RequestId::default(),
     };
     let db = Db::new::<PathBuf>(None, 0).unwrap();
     let mut consensus = Consensus::new(

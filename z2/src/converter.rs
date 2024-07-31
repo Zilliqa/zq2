@@ -9,8 +9,10 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy, EMPTY_ROOT_HASH};
-use alloy_primitives::{Address, Parity, Signature, TxKind, B256, U256};
+use alloy::{
+    consensus::{TxEip1559, TxEip2930, TxLegacy, EMPTY_ROOT_HASH},
+    primitives::{Address, Parity, Signature, TxKind, B256, U256},
+};
 use anyhow::{anyhow, Context, Result};
 use bitvec::bitvec;
 use clap::{Parser, Subcommand};
@@ -355,7 +357,7 @@ pub async fn convert_persistence(
                     .insert(txn_hash.as_slice(), transaction.calculate_hash().as_bytes())
                     .unwrap();
 
-                let receipt_hash = receipt.hash();
+                let receipt_hash = receipt.compute_hash();
                 receipts_trie
                     .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())
                     .unwrap();

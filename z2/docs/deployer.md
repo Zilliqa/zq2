@@ -44,8 +44,11 @@ Options:
           Virtual Machine roles
 
           Possible values:
-          - validator: Virtual machine validator
-          - apps:      Virtual machine apps
+          - validator:  Virtual machine validator
+          - apps:       Virtual machine apps
+          - bootstrap:  Virtual machine bootstrap
+          - sentry:     Virtual machine sentry
+          - checkpoint: Virtual machine checkpoint
 
   -h, --help
           Print help (see a summary with '-h')

@@ -1,6 +1,6 @@
 use std::{collections::HashSet, env, fmt};
 
-use alloy_primitives::B256;
+use alloy::primitives::B256;
 use anyhow::{anyhow, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use z2lib::{components::Component, deployer, plumbing, validators};
@@ -36,6 +36,7 @@ enum Commands {
     Join(JoinStruct),
     /// Deposit stake amount to validators
     Deposit(DepositStruct),
+    Kpi(KpiStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -57,6 +58,8 @@ pub struct DependsUpdateOptions {
 enum DeployerCommands {
     /// Generate the deployer config file
     New(DeployerNewArgs),
+    /// Perfom the network install
+    Install(DeployerUpgradeArgs),
     /// Perfom the network upgrade
     Upgrade(DeployerUpgradeArgs),
 }
@@ -78,6 +81,7 @@ pub struct DeployerNewArgs {
 pub struct DeployerUpgradeArgs {
     config_file: Option<String>,
 }
+
 #[derive(Subcommand, Debug)]
 enum ConverterCommands {
     /// Convert Zilliqa 1 to Zilliqa 2 persistence format.
@@ -111,6 +115,11 @@ struct PerfStruct {
     config_dir: String,
 
     perf_file: String,
+}
+
+#[derive(Args, Debug)]
+struct KpiStruct {
+    config_file: String,
 }
 
 #[derive(Args, Debug)]
@@ -265,15 +274,18 @@ struct DepositStruct {
     /// Specify the Validator PeerId
     #[clap(long)]
     peer_id: String,
-    /// Specify the wallet address to fund the deposit
+    /// Specify the private_key to fund the deposit
     #[clap(long, short)]
-    wallet: String,
+    private_key: String,
     /// Specify the stake amount you want provide
     #[clap(long, short)]
     amount: u8,
     /// Specify the staking reward address
     #[clap(long, short)]
     reward_address: String,
+    /// Specify the Validator Proof-of-Possession
+    #[clap(long)]
+    pop_signature: String,
 }
 
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
@@ -400,6 +412,10 @@ async fn main() -> Result<()> {
             plumbing::run_perf_file(&arg.config_dir, &arg.perf_file).await?;
             Ok(())
         }
+        Commands::Kpi(ref arg) => {
+            plumbing::run_kpi_collector(&arg.config_file).await?;
+            Ok(())
+        }
         Commands::Deployer(deployer_command) => match &deployer_command {
             DeployerCommands::New(ref arg) => {
                 let network_name = arg
@@ -419,6 +435,19 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer new command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Install(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_install(&config_file)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer install command: {}", err)
                     })?;
                 Ok(())
             }
@@ -482,12 +511,13 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Deposit(ref args) => {
-            let node = validators::Validator::new(&args.peer_id, &args.public_key)?;
+            let node =
+                validators::Validator::new(&args.peer_id, &args.public_key, &args.pop_signature)?;
             let stake = validators::StakeDeposit::new(
                 node,
                 args.amount,
                 args.chain_name.clone(),
-                &args.wallet,
+                &args.private_key,
                 &args.reward_address,
             )?;
             validators::deposit_stake(&stake).await

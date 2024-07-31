@@ -1,5 +1,6 @@
 use std::ops::DerefMut;
 
+use ethabi::{ParamType, Token};
 use ethers::{providers::Middleware, types::TransactionRequest};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use primitive_types::{H160, H256};
@@ -11,7 +12,7 @@ use zilliqa::{
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
 
-use crate::Network;
+use crate::{deploy_contract, Network};
 
 async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160) {
     let wallet = network.genesis_wallet().await;
@@ -344,4 +345,126 @@ async fn create_contract(mut network: Network) {
         .await
         .unwrap();
     assert_eq!(state["welcome_msg"], "foobar");
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn scilla_read_precompile(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network).await;
+
+    let code = r#"
+        scilla_version 0
+
+        library HelloWorld
+
+        let one = Uint128 1
+        let two = Uint128 2
+        let big_number = Uint128 1234
+        let addr = 0x0123456789012345678901234567890123456789
+
+        contract Hello
+        ()
+
+        field num : Uint128 = big_number
+        field str : String = "foobar"
+        field addr_to_int : Map ByStr20 Uint128 =
+          let emp = Emp ByStr20 Uint128 in
+          builtin put emp addr one
+        field addr_to_addr_to_int : Map ByStr20 (Map ByStr20 Uint128) =
+          let emp1 = Emp ByStr20 Uint128 in
+          let inner = builtin put emp1 addr one in
+          let emp2 = Emp ByStr20 (Map ByStr20 Uint128) in
+          builtin put emp2 addr inner
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let (contract_address, _) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        H160::zero(),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = contract_address.unwrap();
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+
+    let read = |fn_name, var_name: &'_ str, keys: &[H160], ty| {
+        let abi = &abi;
+        let wallet = &wallet;
+        let var_name = var_name.to_owned();
+        let keys = keys.to_vec();
+        async move {
+            let function = abi.function(fn_name).unwrap();
+            let mut input = vec![
+                Token::Address(scilla_contract_address),
+                Token::String(var_name),
+            ];
+            for key in keys {
+                input.push(Token::Address(key));
+            }
+            let call_tx = TransactionRequest::new()
+                .to(receipt.contract_address.unwrap())
+                .data(function.encode_input(&input).unwrap());
+
+            let response = wallet.call(&call_tx.clone().into(), None).await.unwrap();
+            ethabi::decode(&[ty], &response).unwrap().remove(0)
+        }
+    };
+
+    let num = read("readUint128", "num", &[], ParamType::Uint(128))
+        .await
+        .into_uint()
+        .unwrap();
+    assert_eq!(num, 1234.into());
+
+    let str = read("readString", "str", &[], ParamType::String)
+        .await
+        .into_string()
+        .unwrap();
+    assert_eq!(str, "foobar");
+
+    let key = "0x0123456789012345678901234567890123456789"
+        .parse()
+        .unwrap();
+
+    let val = read(
+        "readMapUint128",
+        "addr_to_int",
+        &[key],
+        ParamType::Uint(128),
+    )
+    .await
+    .into_uint()
+    .unwrap();
+    assert_eq!(val, 1.into());
+
+    let val = read(
+        "readNestedMapUint128",
+        "addr_to_addr_to_int",
+        &[key, key],
+        ParamType::Uint(128),
+    )
+    .await
+    .into_uint()
+    .unwrap();
+    assert_eq!(val, 1.into());
 }

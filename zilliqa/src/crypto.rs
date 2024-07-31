@@ -6,10 +6,11 @@
 
 use std::fmt::Display;
 
-use alloy_primitives::{Address, B256};
+use alloy::primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use bls12_381::{G1Projective, G2Affine};
 use bls_signatures::Serialize as BlsSerialize;
+use blsful::Bls12381G2Impl;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
 use serde::{
     de::{self, Unexpected},
@@ -139,6 +140,33 @@ impl<'de> Deserialize<'de> for NodePublicKey {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct NodePublicKeyRaw(Vec<u8>);
+
+impl NodePublicKeyRaw {
+    pub fn from_bytes(bytes: &[u8]) -> NodePublicKeyRaw {
+        Self(bytes.to_vec())
+    }
+
+    pub fn as_bytes(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+}
+
+impl From<NodePublicKey> for NodePublicKeyRaw {
+    fn from(value: NodePublicKey) -> Self {
+        Self::from_bytes(&value.as_bytes())
+    }
+}
+
+impl TryFrom<NodePublicKeyRaw> for NodePublicKey {
+    type Error = anyhow::Error;
+
+    fn try_from(raw: NodePublicKeyRaw) -> std::result::Result<Self, Self::Error> {
+        NodePublicKey::from_bytes(&raw.0)
+    }
+}
+
 /// The set of public keys that are accepted for signing and validating transactions, each
 /// corresponding to a variant of `TransactionSignature`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,17 +247,15 @@ impl SecretKey {
         Self::from_bytes(&bytes_vec)
     }
 
-    fn as_bls(&self) -> bls_signatures::PrivateKey {
+    pub fn as_bls(&self) -> bls_signatures::PrivateKey {
         bls_signatures::PrivateKey::new(self.bytes)
     }
 
-    fn as_ecdsa(&self) -> k256::ecdsa::SigningKey {
-        // `SigningKey::from_bytes` can fail for two reasons:
-        // 1. The bytes represent a zero integer. However, we validate this is not the case on construction.
-        // 2. The bytes represent an integer less than the curve's modulus. However for ECDSA, the curve's order is
-        //    equal to its modulus, so this is impossible.
-        // Therefore, it is safe to unwrap here.
-        k256::ecdsa::SigningKey::from_bytes(&self.bytes.into()).unwrap()
+    pub fn pop_prove(&self) -> blsful::ProofOfPossession<Bls12381G2Impl> {
+        let sk = blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes);
+        // proof_of_possession() only returns an Err if the key is 0.
+        // Since sk != 0, it is safe to unwrap() here.
+        sk.proof_of_possession().unwrap()
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
@@ -248,15 +274,6 @@ impl SecretKey {
         NodePublicKey(self.as_bls().public_key())
     }
 
-    pub fn tx_ecdsa_public_key(&self) -> TransactionPublicKey {
-        // Default to EIP155 signing
-        TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&self.as_ecdsa()), true)
-    }
-
-    pub fn tx_sign_ecdsa(&self, message: &[u8]) -> TransactionSignature {
-        TransactionSignature::Ecdsa(self.as_ecdsa().sign_prehash_recoverable(message).unwrap().0)
-    }
-
     pub fn to_libp2p_keypair(&self) -> libp2p::identity::Keypair {
         let keypair: libp2p::identity::ed25519::Keypair = libp2p::identity::ed25519::SecretKey::try_from_bytes(self.bytes)
             .expect("`SecretKey::from_bytes` returns an `Err` only when the length is not 32, we know the length is 32")
@@ -272,6 +289,10 @@ impl Hash {
     pub const ZERO: Hash = Hash([0; Hash::LEN]);
     pub const LEN: usize = 32;
 
+    pub fn builder() -> HashBuilder {
+        HashBuilder(Keccak256::new())
+    }
+
     pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self> {
         let bytes = bytes.as_ref();
         Ok(Hash(bytes.try_into()?))
@@ -279,14 +300,6 @@ impl Hash {
 
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
-    }
-
-    pub fn compute<T: AsRef<[S]>, S: AsRef<[u8]>>(preimages: T) -> Hash {
-        let mut hasher = Keccak256::new();
-        for preimage in preimages.as_ref() {
-            hasher.update(preimage.as_ref());
-        }
-        Self(hasher.finalize().into())
     }
 }
 
@@ -318,5 +331,33 @@ impl Display for Hash {
 impl std::fmt::Debug for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", hex::encode(self.as_bytes()))
+    }
+}
+
+pub struct HashBuilder(Keccak256);
+
+impl HashBuilder {
+    pub fn finalize(self) -> Hash {
+        Hash(self.0.finalize().into())
+    }
+
+    pub fn with(mut self, bytes: impl AsRef<[u8]>) -> Self {
+        self.0.update(bytes.as_ref());
+
+        self
+    }
+
+    pub fn with_optional(self, bytes_optional: Option<impl AsRef<[u8]>>) -> Self {
+        if let Some(bytes) = bytes_optional {
+            self.with(bytes)
+        } else {
+            self
+        }
+    }
+
+    pub fn with_iter<T: AsRef<[u8]>>(mut self, bytes_iter: impl Iterator<Item = T>) -> Self {
+        bytes_iter.for_each(|bytes| self.0.update(bytes.as_ref()));
+
+        self
     }
 }

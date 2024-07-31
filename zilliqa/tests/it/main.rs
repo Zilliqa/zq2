@@ -1,7 +1,8 @@
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use ethers::{
     abi::Tokenize,
     providers::{Middleware, PubsubClient},
+    types::TransactionRequest,
 };
 use primitive_types::U256;
 use serde_json::{value::RawValue, Value};
@@ -63,11 +64,12 @@ use zilliqa::{
         json_rcp_port_default, local_address_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
         state_rpc_limit_default, Amount, Checkpoint, ConsensusConfig, NodeConfig,
+        failed_request_sleep_duration_default
     },
-    crypto::{NodePublicKey, SecretKey},
+    crypto::{NodePublicKey, SecretKey, TransactionPublicKey},
     db,
     message::{ExternalMessage, InternalMessage},
-    node::Node,
+    node::{Node, RequestId},
     transaction::EvmGas,
 };
 
@@ -75,12 +77,20 @@ use zilliqa::{
 #[derive(Default)]
 pub struct NewNodeOptions {
     secret_key: Option<SecretKey>,
+    onchain_key: Option<SigningKey>,
     checkpoint: Option<Checkpoint>,
 }
 
 impl NewNodeOptions {
-    fn random_key(rng: Arc<Mutex<ChaCha8Rng>>) -> SecretKey {
-        SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap()
+    fn secret_key_or_random(&self, rng: Arc<Mutex<ChaCha8Rng>>) -> SecretKey {
+        self.secret_key
+            .unwrap_or_else(|| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
+    }
+
+    fn onchain_key_or_random(&self, rng: Arc<Mutex<ChaCha8Rng>>) -> SigningKey {
+        self.onchain_key
+            .clone()
+            .unwrap_or_else(|| k256::ecdsa::SigningKey::random(rng.lock().unwrap().deref_mut()))
     }
 }
 
@@ -94,7 +104,7 @@ enum AnyMessage {
 
 type Wallet = SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>;
 
-type StreamMessage = (PeerId, Option<PeerId>, AnyMessage);
+type StreamMessage = (PeerId, Option<(PeerId, RequestId)>, AnyMessage);
 
 // allowing it because the Result gets unboxed immediately anyway, significantly simplifying the
 // type
@@ -102,6 +112,7 @@ type StreamMessage = (PeerId, Option<PeerId>, AnyMessage);
 fn node(
     config: NodeConfig,
     secret_key: SecretKey,
+    onchain_key: SigningKey,
     index: usize,
     datadir: Option<TempDir>,
 ) -> Result<(
@@ -124,7 +135,7 @@ fn node(
         .map(move |(src, dest, message)| {
             (
                 peer_id,
-                Some(peer_id),
+                Some((peer_id, RequestId::default())),
                 AnyMessage::Internal(src, dest, message),
             )
         })
@@ -153,6 +164,7 @@ fn node(
             index,
             peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
             secret_key,
+            onchain_key,
             inner: node,
             dir: datadir,
             rpc_module,
@@ -166,6 +178,7 @@ fn node(
 struct TestNode {
     index: usize,
     secret_key: SecretKey,
+    onchain_key: SigningKey,
     peer_id: PeerId,
     rpc_module: RpcModule<Arc<Mutex<Node>>>,
     inner: Arc<Mutex<Node>>,
@@ -233,14 +246,20 @@ impl Network {
         scilla_lib_dir: String,
         do_checkpoints: bool,
     ) -> Network {
-        let mut keys = keys.unwrap_or_else(|| {
+        let mut signing_keys = keys.unwrap_or_else(|| {
             (0..nodes)
                 .map(|_| SecretKey::new_from_rng(rng.lock().unwrap().deref_mut()).unwrap())
                 .collect()
         });
         // Sort the keys in the same order as they will occur in the consensus committee. This means node indices line
         // up with indices in the committee, making logs easier to read.
-        keys.sort_unstable_by_key(|key| key.to_libp2p_keypair().public().to_peer_id());
+        signing_keys.sort_unstable_by_key(|key| key.to_libp2p_keypair().public().to_peer_id());
+
+        let onchain_keys: Vec<_> = (0..nodes)
+            .map(|_| k256::ecdsa::SigningKey::random(rng.lock().unwrap().deref_mut()))
+            .collect();
+
+        let keys: Vec<(_, _)> = signing_keys.into_iter().zip(onchain_keys).collect();
 
         let genesis_key = SigningKey::random(rng.lock().unwrap().deref_mut());
 
@@ -250,10 +269,10 @@ impl Network {
             .iter()
             .map(|k| {
                 (
-                    k.node_public_key(),
-                    k.to_libp2p_keypair().public().to_peer_id(),
+                    k.0.node_public_key(),
+                    k.0.to_libp2p_keypair().public().to_peer_id(),
                     stake.into(),
-                    Address::random_with(rng.lock().unwrap().deref_mut()),
+                    TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
                 )
             })
             .collect();
@@ -263,7 +282,7 @@ impl Network {
             consensus: ConsensusConfig {
                 genesis_deposits: genesis_deposits.clone(),
                 is_main: send_to_parent.is_none(),
-                consensus_timeout: Duration::from_secs(1),
+                consensus_timeout: Duration::from_secs(5),
                 minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
@@ -280,7 +299,7 @@ impl Network {
                 blocks_per_epoch: 10,
                 epochs_per_checkpoint: 1,
             },
-            json_rpc_port: json_rcp_port_default(),
+            json_rpc_port: json_rpc_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             disable_rpc: disable_rpc_default(),
             data_dir: None,
@@ -290,13 +309,21 @@ impl Network {
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
             state_rpc_limit: state_rpc_limit_default(),
+            failed_request_sleep_duration: failed_request_sleep_duration_default(),
         };
 
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
-                node(config.clone(), key, i, Some(tempfile::tempdir().unwrap())).unwrap()
+                node(
+                    config.clone(),
+                    key.0,
+                    key.1,
+                    i,
+                    Some(tempfile::tempdir().unwrap()),
+                )
+                .unwrap()
             })
             .multiunzip();
 
@@ -355,22 +382,18 @@ impl Network {
     }
 
     pub fn add_node_with_options(&mut self, options: NewNodeOptions) -> usize {
-        let secret_key = options
-            .secret_key
-            .unwrap_or_else(|| NewNodeOptions::random_key(self.rng.clone()));
-
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
-            json_rpc_port: json_rcp_port_default(),
+            json_rpc_port: json_rpc_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            load_checkpoint: options.checkpoint,
+            load_checkpoint: options.checkpoint.clone(),
             do_checkpoints: self.do_checkpoints,
             disable_rpc: disable_rpc_default(),
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),
                 is_main: self.is_main(),
-                consensus_timeout: Duration::from_secs(1),
+                consensus_timeout: Duration::from_secs(5),
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
                 local_address: "host.docker.internal".to_owned(),
@@ -390,9 +413,13 @@ impl Network {
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
             state_rpc_limit: state_rpc_limit_default(),
+            failed_request_sleep_duration: failed_request_sleep_duration_default(),
         };
+
+        let secret_key = options.secret_key_or_random(self.rng.clone());
+        let onchain_key = options.onchain_key_or_random(self.rng.clone());
         let (node, receiver, local_receiver) =
-            node(config, secret_key, self.nodes.len(), None).unwrap();
+            node(config, secret_key, onchain_key, self.nodes.len(), None).unwrap();
 
         trace!("Node {}: {}", node.index, node.peer_id);
 
@@ -414,7 +441,11 @@ impl Network {
         options.copy_inside = true;
 
         // Collect the keys from the validators
-        let keys = self.nodes.iter().map(|n| n.secret_key).collect::<Vec<_>>();
+        let keys = self
+            .nodes
+            .iter()
+            .map(|n| (n.secret_key, n.onchain_key.clone()))
+            .collect::<Vec<_>>();
 
         // The initial stake of each node.
         let stake = 32_000_000_000_000_000_000u128;
@@ -422,10 +453,10 @@ impl Network {
             .iter()
             .map(|k| {
                 (
-                    k.node_public_key(),
-                    k.to_libp2p_keypair().public().to_peer_id(),
+                    k.0.node_public_key(),
+                    k.0.to_libp2p_keypair().public().to_peer_id(),
                     stake.into(),
-                    Address::random_with(self.rng.lock().unwrap().deref_mut()),
+                    TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
                 )
             })
             .collect();
@@ -459,11 +490,11 @@ impl Network {
                     load_checkpoint: None,
                     do_checkpoints: self.do_checkpoints,
                     disable_rpc: disable_rpc_default(),
-                    json_rpc_port: json_rcp_port_default(),
+                    json_rpc_port: json_rpc_port_default(),
                     consensus: ConsensusConfig {
                         genesis_deposits: genesis_deposits.clone(),
                         is_main: self.is_main(),
-                        consensus_timeout: Duration::from_secs(1),
+                        consensus_timeout: Duration::from_secs(5),
                         // Give a genesis account 1 billion ZIL.
                         genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                         empty_block_timeout: Duration::from_millis(25),
@@ -485,9 +516,10 @@ impl Network {
                     max_blocks_in_flight: max_blocks_in_flight_default(),
                     block_request_batch_size: block_request_batch_size_default(),
                     state_rpc_limit: state_rpc_limit_default(),
+                    failed_request_sleep_duration: failed_request_sleep_duration_default(),
                 };
 
-                node(config, key, i, Some(new_data_dir)).unwrap()
+                node(config, key.0, key.1, i, Some(new_data_dir)).unwrap()
             })
             .multiunzip();
 
@@ -525,7 +557,7 @@ impl Network {
         }
     }
 
-    fn collect_messages(&mut self) -> Vec<(PeerId, Option<PeerId>, AnyMessage)> {
+    fn collect_messages(&mut self) -> Vec<StreamMessage> {
         let mut messages = vec![];
 
         // Poll the receiver with `unconstrained` to ensure it won't be pre-empted. This makes sure we always
@@ -597,10 +629,10 @@ impl Network {
             // Handle the removed proposes correctly for both cases of broadcast and single cast
             for (s, d, m) in removed_items {
                 // If specifically to a node, only allow node 0
-                if let Some(dest) = d {
+                if let Some((dest, id)) = d {
                     // We actually want to allow this message, put it back into the queue
                     if dest == self.nodes[0].peer_id {
-                        messages.push((s, Some(dest), m));
+                        messages.push((s, Some((dest, id)), m));
                         continue;
                     }
 
@@ -608,7 +640,7 @@ impl Network {
                     proposals_seen += 1;
                 } else {
                     // Broadcast seen! Push it back into the queue with specific destination of node 0
-                    messages.push((s, Some(self.nodes[0].peer_id), m));
+                    messages.push((s, Some((self.nodes[0].peer_id, RequestId::default())), m));
 
                     broadcast_handled = true;
                     break;
@@ -750,7 +782,7 @@ impl Network {
         self.handle_message((source, destination, message))
     }
 
-    fn handle_message(&mut self, message: (PeerId, Option<PeerId>, AnyMessage)) {
+    fn handle_message(&mut self, message: StreamMessage) {
         let (source, destination, ref contents) = message;
         match contents {
             AnyMessage::Internal(source_shard, destination_shard, ref internal_message) => {
@@ -788,7 +820,7 @@ impl Network {
                     }
                     InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
                         if *destination_shard == self.shard_id {
-                            let destination = destination.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
+                            let (destination, _) = destination.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
                             let idx_node = self.find_node(destination);
                             if let Some((idx, node)) = idx_node {
                                 trace!("Handling intershard message {:?} from shard {}, in node {} of shard {}", internal_message, source_shard, idx, self.shard_id);
@@ -836,7 +868,7 @@ impl Network {
                 }
             }
             AnyMessage::External(external_message) => {
-                let nodes: Vec<(usize, &TestNode)> = if let Some(destination) = destination {
+                let nodes: Vec<(usize, &TestNode)> = if let Some((destination, _)) = destination {
                     let (index, node) = self
                         .nodes
                         .iter()
@@ -869,7 +901,7 @@ impl Network {
                         // Send broadcast to nodes only in the same shard (having same chain_id)
                         if inner.config.eth_chain_id == sender_chain_id {
                             inner
-                                .handle_network_message(source, external_message.clone())
+                                .handle_network_message(source, Ok(external_message.clone()))
                                 .unwrap();
                         }
                     });
@@ -1044,7 +1076,7 @@ impl Network {
 fn format_message(
     nodes: &[TestNode],
     source: PeerId,
-    destination: Option<PeerId>,
+    destination: Option<(PeerId, RequestId)>,
     message: &AnyMessage,
 ) -> String {
     let message = match message {
@@ -1053,7 +1085,7 @@ fn format_message(
     };
 
     let source_index = nodes.iter().find(|n| n.peer_id == source).unwrap().index;
-    if let Some(destination) = destination {
+    if let Some((destination, _)) = destination {
         let destination_index = nodes
             .iter()
             .find(|n| n.peer_id == destination)
@@ -1162,6 +1194,18 @@ async fn deploy_contract_with_args<T: Tokenize>(
 
         (hash, abi)
     }
+}
+
+async fn fund_wallet(network: &mut Network, from_wallet: &Wallet, to_wallet: &Wallet) {
+    let hash = from_wallet
+        .send_transaction(
+            TransactionRequest::pay(to_wallet.address(), 100_000_000_000_000_000_000u128),
+            None,
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(from_wallet, hash, 100).await;
 }
 
 /// An implementation of [JsonRpcClient] which sends requests directly to an [RpcModule], without making any network
