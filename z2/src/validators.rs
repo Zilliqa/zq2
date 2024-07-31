@@ -47,7 +47,7 @@ pub struct StakeDeposit {
     validator: Validator,
     amount: u8,
     chain_name: Chain,
-    wallet: String,
+    private_key: String,
     reward_address: H160,
 }
 
@@ -56,14 +56,14 @@ impl StakeDeposit {
         validator: Validator,
         amount: u8,
         chain_name: Chain,
-        wallet: &str,
+        private_key: &str,
         reward_address: &str,
     ) -> Result<Self> {
         Ok(Self {
             validator,
             amount,
             chain_name,
-            wallet: wallet.to_owned(),
+            private_key: private_key.to_owned(),
             reward_address: H160(hex_string_to_u8_20(reward_address).unwrap()),
         })
     }
@@ -219,7 +219,7 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
     let chain_id = provider.get_chainid().await?;
 
     let wallet: LocalWallet = stake
-        .wallet
+        .private_key
         .as_str()
         .parse::<LocalWallet>()?
         .with_chain_id(chain_id.as_u64());
