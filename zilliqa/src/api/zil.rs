@@ -342,12 +342,12 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
         .get_state(&block)?
         .get_account(smart_contract_address)?;
 
-    let (code, language) = match account.code {
+    let (code, type_) = match account.code {
         Code::Evm(ref bytes) => (hex::encode(bytes), "evm".to_string()),
         Code::Scilla { code, .. } => (code, "scilla".to_string()),
     };
 
-    Ok(json!({ "code": code, "lanuage": language }))
+    Ok(json!({ "code": code, "type": type_ }))
 }
 
 fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
