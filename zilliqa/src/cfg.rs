@@ -70,9 +70,9 @@ pub struct NodeConfig {
     /// The maximum number of blocks to request in a single message when syncing.
     #[serde(default = "block_request_batch_size_default")]
     pub block_request_batch_size: u64,
-    /// The maximum size of data returned be GetSmartContract(Sub)State RPC (in KiB) set to 0 for no limit.
-    #[serde(default = "max_smart_contract_rpc_response_size_default")]
-    pub max_smart_contract_rpc_response_size: u64,
+    /// The maximum number of key value pairs allowed to be returned withing the response of the `GetSmartContractState` RPC.
+    #[serde(default = "state_rpc_limit_default")]
+    pub state_rpc_limit: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,7 +134,7 @@ pub fn block_request_batch_size_default() -> u64 {
     100
 }
 
-pub fn max_smart_contract_rpc_response_size_default() -> u64 {
+pub fn state_rpc_limit_default() -> usize {
     1024
 }
 

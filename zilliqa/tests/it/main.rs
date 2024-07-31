@@ -61,9 +61,8 @@ use zilliqa::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, disable_rpc_default, eth_chain_id_default,
         json_rcp_port_default, local_address_default, max_blocks_in_flight_default,
-        max_smart_contract_rpc_response_size_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_lib_dir_default, Amount, Checkpoint, ConsensusConfig,
-        NodeConfig,
+        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
+        state_rpc_limit_default, Amount, Checkpoint, ConsensusConfig, NodeConfig,
     },
     crypto::{NodePublicKey, SecretKey},
     db,
@@ -290,7 +289,7 @@ impl Network {
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
-            max_smart_contract_rpc_response_size: max_smart_contract_rpc_response_size_default(),
+            state_rpc_limit: state_rpc_limit_default(),
         };
 
         let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
@@ -390,7 +389,7 @@ impl Network {
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
-            max_smart_contract_rpc_response_size: max_smart_contract_rpc_response_size_default(),
+            state_rpc_limit: state_rpc_limit_default(),
         };
         let (node, receiver, local_receiver) =
             node(config, secret_key, self.nodes.len(), None).unwrap();
@@ -485,8 +484,7 @@ impl Network {
                     block_request_limit: block_request_limit_default(),
                     max_blocks_in_flight: max_blocks_in_flight_default(),
                     block_request_batch_size: block_request_batch_size_default(),
-                    max_smart_contract_rpc_response_size:
-                        max_smart_contract_rpc_response_size_default(),
+                    state_rpc_limit: state_rpc_limit_default(),
                 };
 
                 node(config, key, i, Some(new_data_dir)).unwrap()

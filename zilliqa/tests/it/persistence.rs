@@ -11,8 +11,8 @@ use zilliqa::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
         json_rcp_port_default, max_blocks_in_flight_default,
-        max_smart_contract_rpc_response_size_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_lib_dir_default, Checkpoint,
+        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
+        state_rpc_limit_default, Checkpoint,
     },
     crypto::{Hash, SecretKey},
     transaction::EvmGas,
@@ -111,7 +111,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         block_request_limit: block_request_limit_default(),
         max_blocks_in_flight: max_blocks_in_flight_default(),
         block_request_batch_size: block_request_batch_size_default(),
-        max_smart_contract_rpc_response_size: max_smart_contract_rpc_response_size_default(),
+        state_rpc_limit: state_rpc_limit_default(),
     };
     let result = crate::node(config, SecretKey::new().unwrap(), 0, Some(dir));
 
