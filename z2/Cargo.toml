@@ -27,6 +27,7 @@ async-trait = "0.1.81"
 base64 = "0.22.0"
 bitvec = "1.0.1"
 bls-signatures = "0.15.0"
+blsful = "2.5.7"
 clap = {version = "4.5.11", features = ["derive"]}
 colored = "2.1.0"
 eth_trie = {version = "0.1.0", path = "../eth-trie.rs"}
