@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use alloy_primitives::{keccak256, B256};
+use alloy::primitives::{keccak256, B256};
 use hashbrown::{HashMap, HashSet};
 use log::warn;
 use rlp::{Prototype, Rlp, RlpStream};
@@ -51,7 +51,7 @@ pub trait Trie<D: DB> {
     ) -> TrieResult<Option<Vec<u8>>>;
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct EthTrie<D>
 where
     D: DB,
@@ -1038,7 +1038,7 @@ mod tests {
         sync::Arc,
     };
 
-    use alloy_primitives::{keccak256, B256};
+    use alloy::primitives::{keccak256, B256};
     use rand::{distributions::Alphanumeric, seq::SliceRandom, thread_rng, Rng};
 
     use super::{EthTrie, Trie};

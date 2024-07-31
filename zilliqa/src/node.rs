@@ -1,13 +1,15 @@
 use std::{collections::HashSet, fmt::Debug, sync::Arc, time::Duration};
 
-use alloy_eips::{BlockId, BlockNumberOrTag, RpcBlockHash};
-use alloy_primitives::Address;
-use alloy_rpc_types_trace::{
-    geth::{
-        FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
-        GethTrace, NoopFrame, TraceResult,
+use alloy::{
+    eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
+    primitives::Address,
+    rpc::types::trace::{
+        geth::{
+            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
+            GethDebugTracingOptions, GethTrace, NoopFrame, TraceResult,
+        },
+        parity::{TraceResults, TraceType},
     },
-    parity::{TraceResults, TraceType},
 };
 use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
@@ -307,7 +309,7 @@ impl Node {
 
             BlockNumberOrTag::Earliest => self.consensus.get_block_by_number(0),
             BlockNumberOrTag::Latest => Ok(Some(self.consensus.head_block())),
-            BlockNumberOrTag::Pending => Ok(Some(self.consensus.head_block())),
+            BlockNumberOrTag::Pending => self.consensus.get_pending_block(),
             BlockNumberOrTag::Finalized => {
                 let Some(view) = self.db.get_latest_finalized_view()? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);

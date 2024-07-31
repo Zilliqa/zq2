@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use bitvec::bitvec;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use eth_trie::{MemoryDB, Trie};

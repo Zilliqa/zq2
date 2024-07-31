@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
-use alloy_consensus::SignableTransaction;
-use alloy_primitives::{Address, B256, B512};
+use alloy::{
+    consensus::SignableTransaction,
+    primitives::{Address, B256, B512},
+};
 use anyhow::Result;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::Serialize;

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use alloy_primitives::{Address, U256};
+use alloy::primitives::{Address, U256};
 use revm::{
     inspectors::NoOpInspector,
     interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome},

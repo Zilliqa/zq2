@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256};
+use alloy::primitives::{Address, B256};
 use serde::Serialize;
 
 use super::{eth, hex, option_hex};

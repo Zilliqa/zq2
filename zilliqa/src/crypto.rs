@@ -6,10 +6,11 @@
 
 use std::fmt::Display;
 
-use alloy_primitives::{Address, B256};
+use alloy::primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use bls12_381::{G1Projective, G2Affine};
 use bls_signatures::Serialize as BlsSerialize;
+use blsful::Bls12381G2Impl;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
 use serde::{
     de::{self, Unexpected},
@@ -248,6 +249,13 @@ impl SecretKey {
 
     pub fn as_bls(&self) -> bls_signatures::PrivateKey {
         bls_signatures::PrivateKey::new(self.bytes)
+    }
+
+    pub fn pop_prove(&self) -> blsful::ProofOfPossession<Bls12381G2Impl> {
+        let sk = blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes);
+        // proof_of_possession() only returns an Err if the key is 0.
+        // Since sk != 0, it is safe to unwrap() here.
+        sk.proof_of_possession().unwrap()
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
