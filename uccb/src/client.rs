@@ -1,20 +1,13 @@
-use std::sync::Arc;
-
+use crate::uccb::cfg::ChainConfig;
 use alloy::{
     network::Ethereum,
     primitives::Address,
     providers::{fillers::*, Identity, Provider, ProviderBuilder, RootProvider, WsConnect},
     pubsub::PubSubFrontend,
-};
-
-use anyhow::Result;
-use ethers::{
-    signers::LocalWallet,
-    // types::{Address, U256},
+    signers::local::PrivateKeySigner,
 };
 use anyhow::Result;
-
-use crate::cfg::ChainConfig;
+use std::sync::Arc;
 
 pub type ChainProvider = FillProvider<
     JoinFill<
