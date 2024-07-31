@@ -343,8 +343,8 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
         .get_account(smart_contract_address)?;
 
     let (code, type_) = match account.code {
-        Code::Evm(ref bytes) => (hex::encode(bytes), "evm".to_string()),
-        Code::Scilla { code, .. } => (code, "scilla".to_string()),
+        Code::Evm(ref bytes) => (hex::encode(bytes), "evm"),
+        Code::Scilla { code, .. } => (code, "scilla"),
     };
 
     Ok(json!({ "code": code, "type": type_ }))
