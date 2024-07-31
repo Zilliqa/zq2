@@ -19,7 +19,7 @@ pub fn get_custom_precompiles<'a>() -> Vec<(Address, ContextPrecompile<&'a State
             ContextPrecompile::ContextStateful(Arc::new(ERC20Precompile)),
         ),
         (
-            Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0PPV"),
+            Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x80"),
             ContextPrecompile::ContextStateful(Arc::new(PopVerify)),
         ),
         (

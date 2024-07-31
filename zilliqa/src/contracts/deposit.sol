@@ -114,7 +114,7 @@ contract Deposit {
         assembly {
             success := staticcall(
                 gas(),
-                0x00505056, // "\0PPV"
+                0x5a494c80, // "ZIL\x80"
                 add(input, 0x20),
                 inputLength,
                 add(output, 0x20),
