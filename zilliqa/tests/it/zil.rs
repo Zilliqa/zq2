@@ -1,7 +1,7 @@
 use std::ops::DerefMut;
 
 use ethabi::{ParamType, Token};
-use ethers::{providers::Middleware, types::TransactionRequest};
+use ethers::{providers::Middleware, types::TransactionRequest, utils::keccak256};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use primitive_types::{H160, H256};
 use prost::Message;
@@ -349,7 +349,7 @@ async fn create_contract(mut network: Network) {
 }
 
 #[zilliqa_macros::test(restrict_concurrency)]
-async fn scilla_read_precompile(mut network: Network) {
+async fn scilla_precompiles(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network).await;
 
@@ -376,6 +376,12 @@ async fn scilla_read_precompile(mut network: Network) {
           let inner = builtin put emp1 addr one in
           let emp2 = Emp ByStr20 (Map ByStr20 Uint128) in
           builtin put emp2 addr inner
+
+        transition InsertIntoMap(a: ByStr20, b: Uint128)
+          addr_to_int[a] := b;
+          e = {_eventname : "Inserted"; a : a; b : b};
+          event e
+        end
     "#;
 
     let data = r#"[
@@ -468,6 +474,71 @@ async fn scilla_read_precompile(mut network: Network) {
     .into_uint()
     .unwrap();
     assert_eq!(val, 1.into());
+
+    // Construct a transaction which uses the scilla_call precompile.
+    let function = abi.function("callScilla").unwrap();
+    let input = &[
+        Token::Address(scilla_contract_address),
+        Token::String("InsertIntoMap".to_owned()),
+        Token::String("addr_to_int".to_owned()),
+        Token::Address(key),
+        Token::Uint(5.into()),
+    ];
+    let tx = TransactionRequest::new()
+        .to(receipt.contract_address.unwrap())
+        .data(function.encode_input(input).unwrap())
+        .gas(84_000_000);
+
+    // First execute the transaction with `eth_call` and assert that updating a value in a Scilla contract, then
+    // reading that value in the same transaction gives us the correct value.
+    let response = wallet.call(&tx.clone().into(), None).await.unwrap();
+    let response = ethabi::decode(&[ParamType::Uint(128)], &response)
+        .unwrap()
+        .remove(0)
+        .into_uint()
+        .unwrap()
+        .as_u32();
+    assert_eq!(response, 5);
+
+    // Now actually run the transaction and assert that the EVM logs include the Scilla log from the internal Scilla
+    // call.
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+    assert_eq!(receipt.logs.len(), 1);
+    let log = &receipt.logs[0];
+    assert_eq!(log.address, scilla_contract_address);
+    assert_eq!(
+        log.topics[0],
+        H256(keccak256("event Inserted(string)".as_bytes()))
+    );
+    let data = ethabi::decode(&[ParamType::String], &log.data).unwrap()[0]
+        .clone()
+        .into_string()
+        .unwrap();
+    let scilla_log: Value = serde_json::from_str(&data).unwrap();
+    assert_eq!(
+        scilla_log["address"],
+        format!("{scilla_contract_address:?}")
+    );
+    assert_eq!(scilla_log["_eventname"], "Inserted");
+    assert_eq!(scilla_log["params"][0]["type"], "ByStr20");
+    assert_eq!(scilla_log["params"][0]["vname"], "a");
+    assert_eq!(scilla_log["params"][0]["value"], format!("{key:?}"));
+    assert_eq!(scilla_log["params"][1]["type"], "Uint128");
+    assert_eq!(scilla_log["params"][1]["vname"], "b");
+    assert_eq!(scilla_log["params"][1]["value"], "5");
+
+    // Assert that the value has been permanently updated for good measure.
+    let val = read(
+        "readMapUint128",
+        "addr_to_int",
+        &[key],
+        ParamType::Uint(128),
+    )
+    .await
+    .into_uint()
+    .unwrap();
+    assert_eq!(val, 5.into());
 }
 
 #[zilliqa_macros::test]
