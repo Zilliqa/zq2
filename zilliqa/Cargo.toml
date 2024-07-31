@@ -76,6 +76,7 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 cbor4ii = "0.3.2"
 scilla-parser = "1.0.0"
+blsful = "2.5.7"
 
 [dev-dependencies]
 alloy = { version = "0.2.0", default-features = false, features = ["rand"] }

@@ -36,8 +36,6 @@ enum Commands {
     Join(JoinStruct),
     /// Deposit stake amount to validators
     Deposit(DepositStruct),
-    /// Compute proof-of-possession signature
-    Pop(PopStruct),
     Kpi(KpiStruct),
 }
 
@@ -313,13 +311,6 @@ impl fmt::Display for LogLevel {
     }
 }
 
-#[derive(Args, Debug)]
-struct PopStruct {
-    /// Specify the Validator Secret Key
-    #[clap(long)]
-    secret_key: String,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Work out the base directory
@@ -531,6 +522,5 @@ async fn main() -> Result<()> {
             )?;
             validators::deposit_stake(&stake).await
         }
-        Commands::Pop(ref args) => validators::pop_prove(&args.secret_key),
     }
 }
