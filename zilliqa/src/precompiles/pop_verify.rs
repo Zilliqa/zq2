@@ -9,7 +9,7 @@ use revm::{
     ContextStatefulPrecompile, InnerEvmContext,
 };
 
-use crate::state::State;
+use crate::exec::PendingState;
 
 pub struct PopVerify;
 
@@ -19,7 +19,7 @@ impl PopVerify {
     fn pop_verify(
         input: &[u8],
         gas_limit: u64,
-        _context: &mut InnerEvmContext<&State>,
+        _context: &mut InnerEvmContext<PendingState>,
     ) -> PrecompileResult {
         if gas_limit < Self::POP_VERIFY_GAS_PRICE {
             return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
@@ -56,12 +56,12 @@ impl PopVerify {
     }
 }
 
-impl ContextStatefulPrecompile<&State> for PopVerify {
+impl ContextStatefulPrecompile<PendingState> for PopVerify {
     fn call(
         &self,
         input: &Bytes,
         gas_price: u64,
-        context: &mut InnerEvmContext<&State>,
+        context: &mut InnerEvmContext<PendingState>,
     ) -> PrecompileResult {
         if input.length() < 4 {
             return Err(PrecompileError::Other(
