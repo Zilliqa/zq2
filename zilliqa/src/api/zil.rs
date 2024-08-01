@@ -315,18 +315,35 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
 
     let is_scilla = account.code.scilla_code_and_init_data().is_some();
     if is_scilla {
+        // The configuration variable contains maximum size in KiB
+        let limit = node.config.state_rpc_limit;
+        let limit = if limit == 0 {
+            limit
+        } else {
+            /* This field being set to 0 corresponds to no limit */
+            usize::MAX
+        };
+
         let trie = state.get_account_trie(address)?;
-        for (k, v) in trie.iter() {
+        for (i, (k, v)) in trie.iter().enumerate() {
+            if i >= limit {
+                return Err(anyhow!(
+                    "State of contract returned has size greater than the allowed maximum"
+                ));
+            }
+
             let (var_name, indices) = split_storage_key(&k)?;
-            let mut var = result.entry(var_name);
+            let mut var = result.entry(var_name.clone());
+
             for index in indices {
                 let next = var.or_insert_with(|| Value::Object(Default::default()));
                 let Value::Object(next) = next else {
                     unreachable!()
                 };
                 let key: String = serde_json::from_slice(&index)?;
-                var = next.entry(key);
+                var = next.entry(key.clone());
             }
+
             var.or_insert(serde_json::from_slice(&v)?);
         }
     }
