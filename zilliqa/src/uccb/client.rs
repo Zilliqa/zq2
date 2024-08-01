@@ -1,6 +1,6 @@
 use crate::uccb::cfg::ChainConfig;
 use alloy::{
-    network::Ethereum,
+    network::{Ethereum, EthereumWallet},
     primitives::Address,
     providers::{fillers::*, Identity, Provider, ProviderBuilder, RootProvider, WsConnect},
     pubsub::PubSubFrontend,
@@ -10,11 +10,29 @@ use anyhow::Result;
 use std::sync::Arc;
 
 pub type ChainProvider = FillProvider<
-    JoinFill<JoinFill<JoinFill<Identity, GasFiller>, NonceFiller>, ChainIdFiller>,
+    JoinFill<
+        JoinFill<JoinFill<JoinFill<Identity, ChainIdFiller>, GasFiller>, NonceFiller>,
+        WalletFiller<EthereumWallet>,
+    >,
     RootProvider<PubSubFrontend>,
     PubSubFrontend,
     Ethereum,
 >;
+
+/*
+pub type ChainProvider = FillProvider<
+    JoinFill<
+        JoinFill<
+            JoinFill<JoinFill<Identity, ChainIdFiller>, NonceFiller>,
+            ChainIdFiller,
+        >,
+        WalletFiller<EthereumWallet>,
+    >,
+    RootProvider<PubSubFrontend>,
+    PubSubFrontend,
+    Ethereum,
+>;
+*/
 
 #[derive(Debug, Clone)]
 pub struct ChainClient {
@@ -37,11 +55,20 @@ impl ChainClient {
         signer: PrivateKeySigner,
     ) -> Result<Self> {
         let ws = WsConnect::new(&config.rpc_url);
+        let wallet = EthereumWallet::from(signer.clone());
         let provider = ProviderBuilder::new()
             .with_recommended_fillers()
-            .on_ws(ws)
+            .wallet(wallet.clone())
+            .on_ws(ws.clone())
             .await?;
         let chain_id = provider.get_chain_id().await?;
+        let provider = ProviderBuilder::new()
+            .with_chain_id(chain_id)
+            .filler(GasFiller)
+            .filler(NonceFiller::default())
+            .wallet(wallet.clone())
+            .on_ws(ws.clone())
+            .await?;
         let provider: Arc<ChainProvider> = Arc::new(provider);
 
         // TODO: get the validator_manager_address from chain_gateway itself
