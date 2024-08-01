@@ -1,19 +1,11 @@
 use alloy::{
-    consensus::{SignableTransaction, TxEnvelope},
-    contract::{ContractInstance, DynCallBuilder, Interface, SolCallBuilder},
-    dyn_abi::{parser::utils::char_parser, DynSolValue},
-    eips::BlockNumberOrTag,
+    contract::{ContractInstance, DynCallBuilder, Interface},
+    dyn_abi::DynSolValue,
+    eips::{eip2930::AccessList, BlockNumberOrTag},
     json_abi::JsonAbi,
-    network::{
-        eip2718::Encodable2718, EthereumWallet, NetworkWallet, TransactionBuilder, TxSigner,
-    },
-    primitives::{Bytes, TxKind},
-    providers::{Provider, ProviderBuilder, WsConnect},
+    providers::Provider,
     pubsub::PubSubFrontend,
-    rpc::types::{
-        eth::{TransactionInput, TransactionRequest},
-        Filter,
-    },
+    rpc::types::Filter,
     signers::local::PrivateKeySigner,
 };
 use anyhow::Result;
@@ -28,7 +20,7 @@ use zilliqa::{
     crypto::{NodePublicKey, SecretKey},
     state::contract_addr,
     uccb::{
-        cfg::{ChainConfig, Config, ZQ2Config},
+        cfg::{ChainConfig, Config},
         client::ChainClient,
     },
 };
@@ -54,9 +46,21 @@ impl zilliqa::uccb::Args for Args {
     }
 }
 
+// Workaround for displaying the collection of validators
+// using Display instead of Debug which shows too mube info...
+struct Display<'a>(&'a std::vec::Vec<NodePublicKey>);
+
+impl<'a> std::fmt::Display for Display<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if let Ok(s) = serde_json::to_string(self.0) {
+            write!(f, "{}", &s)?
+        }
+        Ok(())
+    }
+}
+
 struct ValidatorOracle {
     signer: PrivateKeySigner,
-    zq2_config: ZQ2Config,
     chain_clients: Vec<ChainClient>,
     deploy_abi: JsonAbi,
     validator_manager_abi: JsonAbi,
@@ -78,30 +82,27 @@ impl ValidatorOracle {
             );
         }
 
-        let validator_manager_abi = serde_json::from_value(
-            serde_json::from_str::<serde_json::Value>(VALIDATOR_MANAGER_ABI_JSON)?["abi"].clone(),
-        )?;
         Ok(Self {
             signer,
-            zq2_config: config.zq2,
             chain_clients,
             deploy_abi: serde_json::from_value(serde_json::to_value(
                 contracts::deposit::ABI.clone(),
             )?)?,
-            validator_manager_abi,
+            validator_manager_abi: serde_json::from_value(
+                serde_json::from_str::<serde_json::Value>(VALIDATOR_MANAGER_ABI_JSON)?["abi"]
+                    .clone(),
+            )?,
         })
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        /*
         info!(
             "Starting validator oracle with signer address {}",
             self.signer.address()
         );
-        */
 
         let validators = self.get_stakers().await?;
-        info!("Current validator set is: {validators:?}");
+        info!("Current validator set is: {}", Display(&validators));
 
         let (sender, receiver) = watch::channel(validators);
 
@@ -154,17 +155,21 @@ impl ValidatorOracle {
             .event("StakerAdded(bytes)")
             .from_block(BlockNumberOrTag::Finalized);
 
-        let ws = WsConnect::new(&self.zq2_config.rpc_url);
-        let provider = ProviderBuilder::new().on_ws(ws).await?;
-
-        let subscription = provider.subscribe_logs(&filter).await?;
+        let subscription = self
+            .zq2_chain_client()
+            .provider
+            .subscribe_logs(&filter)
+            .await?;
         let mut stream = subscription.into_stream();
         while let Some(log) = stream.next().await {
             // TODO: infer if staker added or removed
             info!("Received validator update: {log:?}");
 
             let validators = self.get_stakers().await?;
-            info!("Updating chains to the current validator set to: {validators:?}");
+            info!(
+                "Updating chains to the current validator set to: {}",
+                Display(&validators)
+            );
 
             sender.send(validators)?;
         }
@@ -239,8 +244,12 @@ impl ValidatorOracle {
                 .collect(),
         );
 
-        let call_builder: DynCallBuilder<_, _, _> =
-            contract.function("setValidators", &[validators])?.gas_price(1476190480000);
+        let call_builder: DynCallBuilder<_, _, _> = contract
+            .function("setValidators", &[validators])?
+            // FIXME: this is a workaround for using legacy transaction rather than
+            //        EIP-1559 ones; without this Alloy will invoke eth_feeHistory
+            //        which zq2 doesn't support currently.
+            .access_list(AccessList::default());
 
         let output = call_builder.send().await?;
         let receipt = output.get_receipt().await?;
