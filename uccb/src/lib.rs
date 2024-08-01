@@ -1,8 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use anyhow::Result;
-
-use crate::crypto::SecretKey;
+use zilliqa::crypto::SecretKey;
 
 pub mod cfg;
 pub mod client;
