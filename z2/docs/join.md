@@ -58,7 +58,7 @@ If you want to use a custom docker image you need to edit the generated `/path/t
 
 ```bash
 ZQ_VERSION="e5f75649"
-ZQ2_IMAGE="zilliqa/zq2:${ZQ_VERSION}"
+ZQ2_IMAGE="asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:${ZQ_VERSION}"
 ```
 
 # How-to customize the node configuration file
