@@ -15,10 +15,10 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, consensus_timeout_default, disable_rpc_default,
-        empty_block_timeout_default, eth_chain_id_default, local_address_default,
-        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_lib_dir_default, state_rpc_limit_default, Amount,
-        ConsensusConfig, failed_request_sleep_duration_default
+        empty_block_timeout_default, eth_chain_id_default, failed_request_sleep_duration_default,
+        local_address_default, max_blocks_in_flight_default,
+        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
+        state_rpc_limit_default, Amount, ConsensusConfig,
     },
     crypto::NodePublicKey,
     transaction::EvmGas,
