@@ -10,7 +10,7 @@ z2 deposit \
   --peer-id <PEER_ID> \
   --private-key <PRIVATE_KEY_OF_VALIDATOR> \
   --amount <AMOUNT_IN_ZIL> \
-  --reward-address <REWARD_ADDRESS_OF_VALIDATOR>
+  --reward-address <REWARD_ADDRESS_OF_VALIDATOR> \
   --pop-signature <BLS_POP_SIGNATURE>
 
 Usage: z2 deposit --chain <CHAIN_NAME> --public-key <BLS_PUBLIC_KEY> --peer-id <PEER_ID> --private-key <PRIVATE_KEY_OF_VALIDATOR> --amount <AMOUNT_IN_ZIL> --reward-address <REWARD_ADDRESS_OF_VALIDATOR> --pop-signature <BLS_POP_SIGNATURE>
