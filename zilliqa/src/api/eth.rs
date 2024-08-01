@@ -164,7 +164,7 @@ fn block_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("call: params: {:?}", params);
+    info!("call: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
@@ -183,7 +183,7 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.value.to(),
     )?;
 
-    trace!(
+    info!(
         "Performed eth call. Args: {:?} ie: {:?} {:?} {:?}  ret: {:?}",
         serde_json::to_string(&call_params),
         call_params.from,
@@ -201,7 +201,7 @@ fn chain_id(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("estimate_gas: params: {:?}", params);
+    info!("estimate_gas: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
     let block_number: BlockNumberOrTag = params.optional_next()?.unwrap_or_default();
@@ -267,7 +267,7 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("get_storage_at: params: {:?}", params);
+    info!("get_storage_at: params: {:?}", params);
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let position: U256 = params.next()?;
@@ -287,7 +287,7 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("get_transaction_count: params: {:?}", params);
+    info!("get_transaction_count: params: {:?}", params);
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let block_id: BlockId = params.next()?;
@@ -576,7 +576,7 @@ fn get_transaction_by_hash(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<eth::Transaction>> {
-    trace!("get_transaction_by_hash: params: {:?}", params);
+    info!("get_transaction_by_hash: params: {:?}", params);
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
     let node = node.lock().unwrap();
@@ -681,7 +681,7 @@ fn get_transaction_receipt(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<eth::TransactionReceipt>> {
-    trace!("get_transaction_receipt: params: {:?}", params);
+    info!("get_transaction_receipt: params: {:?}", params);
     let hash: B256 = params.one()?;
     let hash: Hash = hash.into();
     let node = node.lock().unwrap();
@@ -689,7 +689,7 @@ fn get_transaction_receipt(
 }
 
 fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("send_raw_transaction: params: {:?}", params);
+    info!("send_raw_transaction: params: {:?}", params);
     let transaction: String = params.one()?;
     let transaction = transaction
         .strip_prefix("0x")

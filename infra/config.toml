@@ -41,5 +41,5 @@ consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
 consensus.blocks_per_hour = 3600
 consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
-consensus.eth_block_gas_limit = 84000000
+consensus.eth_block_gas_limit = 4761904800001
 consensus.gas_price = "4_761_904_800_000"

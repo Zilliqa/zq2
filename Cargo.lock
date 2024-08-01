@@ -105,6 +105,8 @@ dependencies = [
  "alloy-rpc-client",
  "alloy-rpc-types",
  "alloy-serde",
+ "alloy-signer",
+ "alloy-signer-local",
  "alloy-transport",
  "alloy-transport-ws",
 ]
@@ -433,6 +435,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-signer-local"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b537f3e55f30753578f4623d5f66ddad8fa582af3fa6b15bad23dd1b9775228"
+dependencies = [
+ "alloy-consensus",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-signer",
+ "async-trait",
+ "k256",
+ "rand",
+ "thiserror",
+]
+
+[[package]]
 name = "alloy-sol-macro"
 version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -544,7 +562,7 @@ dependencies = [
  "alloy-transport",
  "futures",
  "http 1.1.0",
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.23.1",
@@ -1208,9 +1226,9 @@ dependencies = [
 
 [[package]]
 name = "blst"
-version = "0.3.12"
+version = "0.3.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62dc83a094a71d43eeadd254b1ec2d24cb6a0bb6cadce00df51f0db594711a32"
+checksum = "4378725facc195f1a538864863f6de233b500a8862747e7f165078a419d5e874"
 dependencies = [
  "cc",
  "glob",
@@ -8117,7 +8135,7 @@ checksum = "c6989540ced10490aaf14e6bad2e3d33728a2813310a0c71d1574304c49631cd"
 dependencies = [
  "futures-util",
  "log",
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.26.0",
@@ -8417,7 +8435,7 @@ dependencies = [
  "httparse",
  "log",
  "rand",
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "rustls-pki-types",
  "sha1",
  "thiserror",

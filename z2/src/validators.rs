@@ -103,6 +103,8 @@ impl ChainConfig {
 #[derive(Clone, Debug, ValueEnum)]
 /// To-do: decomment when became available
 pub enum Chain {
+    #[value(name = "localdev")]
+    Localdev,
     // Devnet,
     #[value(name = "zq2-prototestnet")]
     Zq2ProtoTestnet,
@@ -117,6 +119,7 @@ impl Chain {
         match self {
             // Chain::Devnet => "devnet",
             Chain::Zq2ProtoTestnet => "zq2-prototestnet",
+            Chain::Localdev => "localdev",
             // Chain::ProtoMainnet => "protomainnet",
             // Chain::Testnet => "testnet",
             // Chain::Mainnet => "mainnet",
@@ -127,6 +130,7 @@ impl Chain {
         match self {
             // Chain::Devnet => Some("https://api.zq2-devnet.zilliqa.com"),
             Chain::Zq2ProtoTestnet => Some("https://api.zq2-prototestnet.zilliqa.com"),
+            Chain::Localdev => Some("http://127.0.0.1:4201"),
             // Chain::ProtoMainnet => None,
             // Chain::Testnet => None,
             // Chain::Mainnet => None,
@@ -137,6 +141,7 @@ impl Chain {
         match s {
             // "devnet" => Ok(Chain::Devnet),
             "zq2-prototestnet" => Ok(Chain::Zq2ProtoTestnet),
+            "localdev" => Ok(Chain::Localdev),
             // "protomainnet" => Ok(Chain::ProtoMainnet),
             // "testnet" => Ok(Chain::Testnet),
             // "mainnet" => Ok(Chain::Mainnet),
@@ -150,6 +155,7 @@ fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
         "zq2-prototestnet" => Ok(include_str!(
             "../resources/chain-specs/zq2-prototestnet.toml"
         )),
+        "localdev" => Ok(include_str!("../../infra/config.toml")),
         _ => Err(anyhow!("Configuration file for {} not found", chain_name)),
     }
 }
