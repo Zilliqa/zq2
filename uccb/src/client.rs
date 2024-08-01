@@ -1,4 +1,5 @@
-use crate::uccb::cfg::ChainConfig;
+use std::sync::Arc;
+
 use alloy::{
     network::{Ethereum, EthereumWallet},
     primitives::Address,
@@ -7,7 +8,8 @@ use alloy::{
     signers::local::PrivateKeySigner,
 };
 use anyhow::Result;
-use std::sync::Arc;
+
+use crate::cfg::ChainConfig;
 
 pub type ChainProvider = FillProvider<
     JoinFill<

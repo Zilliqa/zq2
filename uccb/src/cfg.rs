@@ -1,7 +1,6 @@
 use alloy::primitives::Address;
 use serde::Deserialize;
-
-use crate::crypto::SecretKey;
+use zilliqa::crypto::SecretKey;
 
 #[derive(Debug, Clone)]
 pub struct ValidatorNodeConfig {

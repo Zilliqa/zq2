@@ -1,3 +1,5 @@
+use std::{path::PathBuf, str::FromStr};
+
 use alloy::{
     contract::{ContractInstance, DynCallBuilder, Interface},
     dyn_abi::DynSolValue,
@@ -11,18 +13,17 @@ use alloy::{
 use anyhow::Result;
 use clap::Parser;
 use futures_util::stream::StreamExt;
-use std::{path::PathBuf, str::FromStr};
 use tokio::sync::watch;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
+use uccb::{
+    cfg::{ChainConfig, Config},
+    client::ChainClient,
+};
 use zilliqa::{
     contracts,
     crypto::{NodePublicKey, SecretKey},
     state::contract_addr,
-    uccb::{
-        cfg::{ChainConfig, Config},
-        client::ChainClient,
-    },
 };
 
 const VALIDATOR_MANAGER_ABI_JSON: &str = include_str![
@@ -37,7 +38,7 @@ struct Args {
     config_file: PathBuf,
 }
 
-impl zilliqa::uccb::Args for Args {
+impl uccb::Args for Args {
     fn secret_key(&self) -> &SecretKey {
         &self.secret_key
     }
@@ -209,14 +210,14 @@ impl ValidatorOracle {
             Interface::new(self.deploy_abi.clone()),
         );
 
-        let call_builder: DynCallBuilder<_, _, _> = contract.function("getStakers", &vec![])?;
+        let call_builder: DynCallBuilder<_, _, _> = contract.function("getStakers", &[])?;
         let output = call_builder.call().await?;
         let validators = if output.len() == 1 {
             output[0]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|k| NodePublicKey::from_bytes(&k.as_bytes().unwrap()).unwrap())
+                .map(|k| NodePublicKey::from_bytes(k.as_bytes().unwrap()).unwrap())
                 .collect()
         } else {
             vec![]
@@ -263,7 +264,7 @@ impl ValidatorOracle {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let config = zilliqa::uccb::read_config(&args)?;
+    let config = uccb::read_config(&args)?;
 
     let builder = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
