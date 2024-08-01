@@ -85,7 +85,7 @@ impl ValidatorOracle {
         );
 
         let validators = self.get_stakers().await?;
-        info!("Current validator set is: {validators:?}");
+        info!("Current validator set is: {}", Display(&validators));
 
         let (sender, receiver) = watch::channel(validators);
 
@@ -154,7 +154,10 @@ impl ValidatorOracle {
             info!("Received validator update: {log:?}");
 
             let validators = self.get_stakers().await?;
-            info!("Updating chains to the current validator set to: {validators:?}");
+            info!(
+                "Updating chains to the current validator set to: {}",
+                Display(&validators)
+            );
 
             sender.send(validators)?;
         }
