@@ -19,21 +19,6 @@ pub type ChainProvider = FillProvider<
     Ethereum,
 >;
 
-/*
-pub type ChainProvider = FillProvider<
-    JoinFill<
-        JoinFill<
-            JoinFill<JoinFill<Identity, ChainIdFiller>, NonceFiller>,
-            ChainIdFiller,
-        >,
-        WalletFiller<EthereumWallet>,
-    >,
-    RootProvider<PubSubFrontend>,
-    PubSubFrontend,
-    Ethereum,
->;
-*/
-
 #[derive(Debug, Clone)]
 pub struct ChainClient {
     pub rpc_url: String,
@@ -56,6 +41,8 @@ impl ChainClient {
     ) -> Result<Self> {
         let ws = WsConnect::new(&config.rpc_url);
         let wallet = EthereumWallet::from(signer.clone());
+
+        // Get the chain Id first
         let provider = ProviderBuilder::new()
             .with_recommended_fillers()
             .wallet(wallet.clone())
