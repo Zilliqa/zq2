@@ -22,9 +22,6 @@ use uccb::{
     cfg::{ChainConfig, Config},
     client::ChainClient,
 };
-use zilliqa::{contracts, crypto::SecretKey, state::contract_addr};
-
-const VALIDATOR_MANAGER_ABI_JSON: &str = include_str!("../../contracts/compiled.json");
 
 #[derive(Parser, Debug)]
 struct Args {
