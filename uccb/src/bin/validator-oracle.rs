@@ -1,5 +1,3 @@
-use std::{path::PathBuf, str::FromStr};
-
 use alloy::{
     contract::{ContractInstance, DynCallBuilder, Interface},
     dyn_abi::DynSolValue,
