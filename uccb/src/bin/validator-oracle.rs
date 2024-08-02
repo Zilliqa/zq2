@@ -26,9 +26,8 @@ use zilliqa::{
     state::contract_addr,
 };
 
-const VALIDATOR_MANAGER_ABI_JSON: &str = include_str![
-    "../../../zilliqa/src/contracts/uccb/out/ValidatorManager.sol/ValidatorManager.json"
-];
+const VALIDATOR_MANAGER_ABI_JSON: &str =
+    include_str!["../../contracts/out/ValidatorManager.sol/ValidatorManager.json"];
 
 #[derive(Parser, Debug)]
 struct Args {
