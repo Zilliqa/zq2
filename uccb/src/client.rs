@@ -62,7 +62,6 @@ impl ChainClient {
 
         // TODO: get the validator_manager_address from chain_gateway itself
         // let chain_gateway = ChainGateway::new(config.chain_gateway_address, provider.clone());
-        // let validator_manager_address: Address = chain_gateway.validator_manager().call().await?;
 
         Ok(ChainClient {
             rpc_url: config.rpc_url.clone(),
@@ -72,8 +71,8 @@ impl ChainClient {
             chain_id,
             signer,
             chain_gateway_block_deployed: config.chain_gateway_block_deployed,
-            block_instant_finality: config.block_instant_finality.unwrap_or_default(),
-            legacy_gas_estimation: config.legacy_gas_estimation.unwrap_or_default(),
+            block_instant_finality: config.block_instant_finality,
+            legacy_gas_estimation: config.legacy_gas_estimation,
         })
     }
 }
