@@ -1,4 +1,4 @@
-name: zq2-prototestnet
+name: zq2-protoinfradevnet
 project_id: prj-d-zq2-testnet-g13pnaa8
 roles:
 - bootstrap

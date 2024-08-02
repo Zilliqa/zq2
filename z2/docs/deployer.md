@@ -76,8 +76,6 @@ Output: `zq2-prototestnet.yaml`
 ```yaml
 name: zq2-prototestnet
 project_id: gcp-tests
-regions:
-- asia-southeast1
 roles:
 - validator
 versions:
@@ -103,8 +101,6 @@ Output: `zq2-prototestnet.yaml`
 ```yaml
 name: zq2-prototestnet
 project_id: gcp-tests
-regions:
-- asia-southeast1
 roles:
 - apps
 versions:
@@ -131,8 +127,6 @@ Output: `zq2-prototestnet.yaml`
 ```yaml
 name: zq2-prototestnet
 project_id: gcp-tests
-regions:
-- asia-southeast1
 roles:
 - validator
 - apps

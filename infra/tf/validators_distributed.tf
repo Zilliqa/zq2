@@ -4,7 +4,7 @@
 
 resource "google_service_account" "validators" {
   count      = length(var.distributed_validators) >= 1 ? 1 : 0
-  account_id = "${var.network_name}-validators"
+  account_id = substr("${var.network_name}-validators", 0, 28)
 }
 
 resource "google_project_iam_member" "validators_metric_writer" {
@@ -25,6 +25,13 @@ resource "google_project_iam_member" "validators_artifact_registry_reader" {
   count   = length(var.distributed_validators) >= 1 ? 1 : 0
   project = var.gcp_docker_registry_project_id
   role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.validators[0].email}"
+}
+
+resource "google_project_iam_member" "validators_secret_manager_accessor" {
+  count   = length(var.distributed_validators) >= 1 ? 1 : 0
+  project = var.gcp_docker_registry_project_id
+  role    = "roles/secretmanager.secretAccessor"
   member  = "serviceAccount:${google_service_account.validators[0].email}"
 }
 
@@ -50,6 +57,7 @@ module "distributed_validators" {
   # docker_image          = var.docker_image
   persistence_url = var.persistence_url
   role            = "validator"
-  secret_keys     = each.value.node_keys
-  zq_network_name = var.network_name
+  # secret_keys     = each.value.node_keys
+  zq_network_name        = var.network_name
+  generate_reward_wallet = true
 }

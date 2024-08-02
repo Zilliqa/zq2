@@ -2,6 +2,31 @@
 # ZQ2 GCP Terraform main resources
 ################################################################################
 
+resource "google_project_service" "secret_manager" {
+  service = "secretmanager.googleapis.com"
+
+  disable_on_destroy = false
+}
+
+resource "random_bytes" "generate_genesis_key" {
+  length = 32
+}
+
+resource "google_secret_manager_secret" "genesis_key" {
+  secret_id = "${var.network_name}-genesis-key"
+
+  labels = merge({ "role" = "genesis" }, local.labels)
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "genesis_key_version" {
+  secret      = google_secret_manager_secret.genesis_key.id
+  secret_data = random_bytes.generate_genesis_key.hex
+}
+
 resource "google_compute_firewall" "allow_ingress_from_iap" {
   name    = "${var.network_name}-allow-ingress-from-iap"
   network = local.network_name
@@ -43,7 +68,7 @@ resource "google_compute_firewall" "allow_external_jsonrpc" {
 }
 
 resource "google_service_account" "node" {
-  account_id = "${var.network_name}-node"
+  account_id = substr("${var.network_name}-node", 0, 28)
 }
 
 data "google_project" "this" {}
@@ -63,6 +88,12 @@ resource "google_project_iam_member" "log_writer" {
 resource "google_project_iam_member" "artifact_registry_reader" {
   project = var.gcp_docker_registry_project_id
   role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.node.email}"
+}
+
+resource "google_project_iam_member" "secret_manager_accessor" {
+  project = var.gcp_docker_registry_project_id
+  role    = "roles/secretmanager.secretAccessor"
   member  = "serviceAccount:${google_service_account.node.email}"
 }
 
@@ -96,7 +127,7 @@ module "bootstrap_node" {
   # docker_image          = var.docker_image
   external_ip     = data.google_compute_address.bootstrap.address
   persistence_url = var.persistence_url
-  secret_keys     = [var.bootstrap_key]
+  # secret_keys     = [local.bootstrap_key]
   zq_network_name = var.network_name
   role            = "bootstrap"
   labels          = local.labels
@@ -104,7 +135,7 @@ module "bootstrap_node" {
 
 module "validators" {
   source = "./modules/node"
-  vm_num = length(var.validator_node_private_keys)
+  vm_num = var.validator_node_count
 
   name                  = "${var.network_name}-node-validator"
   service_account_email = google_service_account.node.email
@@ -115,14 +146,15 @@ module "validators" {
   subnetwork_name       = data.google_compute_subnetwork.default.name
   # docker_image          = var.docker_image
   persistence_url = var.persistence_url
-  secret_keys     = var.validator_node_private_keys
-  role            = "validator"
-  zq_network_name = var.network_name
+  # secret_keys     = var.validator_node_private_keys
+  role                   = "validator"
+  zq_network_name        = var.network_name
+  generate_reward_wallet = true
 }
 
 module "apis" {
   source = "./modules/node"
-  vm_num = length(var.api_node_private_keys)
+  vm_num = var.api_node_count
 
   name                  = "${var.network_name}-node-api"
   service_account_email = google_service_account.node.email
@@ -133,13 +165,15 @@ module "apis" {
   subnetwork_name       = data.google_compute_subnetwork.default.name
   # docker_image          = var.docker_image
   persistence_url = var.persistence_url
-  secret_keys     = var.api_node_private_keys
+  # secret_keys     = var.api_node_private_keys
   role            = "api"
   zq_network_name = var.network_name
 }
 
 resource "google_project_service" "osconfig" {
   service = "osconfig.googleapis.com"
+
+  disable_on_destroy = false
 }
 
 resource "google_compute_instance_group" "bootstrap" {

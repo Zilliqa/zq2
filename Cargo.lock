@@ -9143,6 +9143,7 @@ dependencies = [
  "blsful",
  "clap",
  "colored",
+ "crypto-bigint",
  "eth_trie",
  "ethabi",
  "ethereum",

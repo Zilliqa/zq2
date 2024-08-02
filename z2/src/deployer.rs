@@ -59,7 +59,6 @@ impl FromStr for Components {
 pub struct NetworkConfig {
     name: String,
     project_id: String,
-    regions: Vec<String>,
     roles: Vec<NodeRole>,
     versions: HashMap<String, String>,
 }
@@ -161,17 +160,17 @@ impl NetworkConfig {
             project_id,
             roles,
             versions,
-            regions: vec!["asia-southeast1".to_owned()],
         })
     }
 }
 
+#[derive(Clone)]
 pub struct Machine {
     pub project_id: String,
     pub zone: String,
     pub name: String,
-    pub labels: BTreeMap<String, String>,
     pub external_address: String,
+    pub labels: BTreeMap<String, String>,
 }
 
 impl Machine {

@@ -7,8 +7,9 @@ use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
 
 use crate::{
+    address::EthereumAddress,
     deployer::{docker_image, Machine, NodeRole},
-    validators,
+    validators::Chain,
 };
 
 pub struct ChainNode {
@@ -16,6 +17,9 @@ pub struct ChainNode {
     role: NodeRole,
     machine: Machine,
     versions: HashMap<String, String>,
+    bootstrap_public_ip: String,
+    bootstrap_private_key: String,
+    genesis_wallet_private_key: String,
 }
 
 impl ChainNode {
@@ -24,12 +28,18 @@ impl ChainNode {
         role: NodeRole,
         machine: Machine,
         versions: HashMap<String, String>,
+        bootstrap_public_ip: String,
+        bootstrap_private_key: String,
+        genesis_wallet_private_key: String,
     ) -> Self {
         Self {
             chain_name,
             role,
             machine,
             versions,
+            bootstrap_public_ip,
+            bootstrap_private_key,
+            genesis_wallet_private_key,
         }
     }
 
@@ -116,25 +126,26 @@ impl ChainNode {
     }
 
     async fn create_config_toml(&self, filename: &str) -> Result<String> {
-        let mut spec_config = validators::get_chain_spec_config(&self.chain_name).await?;
+        let spec_config = Chain::get_toml_contents(&self.chain_name)?;
 
-        if self.role == NodeRole::Bootstrap {
-            spec_config
-                .as_table_mut()
-                .unwrap()
-                .remove("bootstrap_address");
-        }
+        let genesis_wallet = EthereumAddress::from_private_key(&self.genesis_wallet_private_key)?;
+        let bootstrap_node = EthereumAddress::from_private_key(&self.bootstrap_private_key)?;
+        let role_name = self.role.to_string();
 
-        let external_address = format!("/ip4/{}/tcp/3333", self.machine.external_address.clone());
+        let mut var_map = BTreeMap::<&str, &str>::new();
+        var_map.insert("role", &role_name);
+        var_map.insert("external_address", &self.machine.external_address);
+        var_map.insert("bootstrap_public_ip", &self.bootstrap_public_ip);
+        var_map.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
+        var_map.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
+        var_map.insert("genesis_address", &genesis_wallet.address);
 
-        spec_config.as_table_mut().unwrap().insert(
-            "external_address".to_owned(),
-            toml::Value::String(external_address),
-        );
+        let ctx = Context::from_serialize(var_map)?;
+        let rendered_template = Tera::one_off(spec_config, &ctx, false)?;
+        let config_file = rendered_template.as_str();
 
-        let mut file = File::create(filename).await?;
-        file.write_all(toml::to_string(&spec_config)?.as_bytes())
-            .await?;
+        let mut fh = File::create(filename).await?;
+        fh.write_all(config_file.as_bytes()).await?;
         println!("Configuration file created: {filename}");
 
         Ok(filename.to_owned())
@@ -250,6 +261,19 @@ pub async fn get_nodes(
         })
         .collect::<Result<Vec<_>>>()?;
 
+    let bootstrap_instances: Vec<Machine> = role_instances
+        .clone()
+        .into_iter()
+        .filter(|m| {
+            m.labels.get("zq2-network") == Some(&chain_name.to_owned())
+                && m.labels.get("role") == Some(&"bootstrap".to_string())
+        })
+        .collect();
+
+    if bootstrap_instances.is_empty() {
+        return Err(anyhow!("No bootstrap instances found"));
+    }
+
     let role_instances: Vec<Machine> = role_instances
         .into_iter()
         .filter(|m| {
@@ -262,6 +286,32 @@ pub async fn get_nodes(
         println!("No {node_role} instances found");
     }
 
+    let bootstrap_private_keys =
+        retrieve_secret_by_role(chain_name, project_id, "bootstrap").await?;
+    let bootstrap_private_key = bootstrap_private_keys.first();
+
+    let bootstrap_private_key = if let Some(private_key) = bootstrap_private_key {
+        private_key.to_owned()
+    } else {
+        return Err(anyhow!(
+            "Found multiple secrets with role bootstrap in the network {}",
+            chain_name
+        ));
+    };
+
+    let genesis_wallet_private_keys =
+        retrieve_secret_by_role(chain_name, project_id, "genesis").await?;
+    let genesis_wallet_private_key = genesis_wallet_private_keys.first();
+
+    let genesis_wallet_private_key = if let Some(private_key) = genesis_wallet_private_key {
+        private_key.to_owned()
+    } else {
+        return Err(anyhow!(
+            "Found multiple secrets with role genesis in the network {}",
+            chain_name
+        ));
+    };
+
     Ok(role_instances
         .into_iter()
         .map(|m| {
@@ -270,7 +320,94 @@ pub async fn get_nodes(
                 node_role.clone(),
                 m,
                 versions.clone(),
+                bootstrap_instances[0].external_address.clone(),
+                bootstrap_private_key.to_owned(),
+                genesis_wallet_private_key.to_owned(),
             )
         })
         .collect::<Vec<_>>())
+}
+
+async fn retrieve_secret_by_role(
+    chain_name: &str,
+    project_id: &str,
+    role_name: &str,
+) -> Result<Vec<String>> {
+    retrieve_secret(
+        chain_name,
+        project_id,
+        format!(
+            "labels.zq2-network={} AND labels.role={}",
+            chain_name, role_name
+        )
+        .as_str(),
+    )
+    .await
+}
+
+async fn retrieve_secret(chain_name: &str, project_id: &str, filter: &str) -> Result<Vec<String>> {
+    let mut secrets_found = Vec::<String>::new();
+
+    // List secrets with gcloud command
+    let output = zqutils::commands::CommandBuilder::new()
+        .silent()
+        .cmd(
+            "gcloud",
+            &[
+                "secrets",
+                "list",
+                "--project",
+                project_id,
+                "--format=json",
+                "--filter",
+                filter,
+            ],
+        )
+        .run()
+        .await?;
+
+    if !output.success {
+        return Err(anyhow!("listing secrets failed"));
+    }
+
+    // Parse the JSON output
+    let secrets: Vec<BTreeMap<String, serde_json::Value>> = serde_json::from_slice(&output.stdout)?;
+
+    // Iterate over the secrets and get their latest versions
+    for secret in secrets {
+        if let Some(secret_name) = secret.get("name").and_then(|v| v.as_str()) {
+            // Find the last '/' in the string
+            if let Some(last_slash_pos) = secret_name.rfind('/') {
+                let last_part = &secret_name[last_slash_pos + 1..];
+
+                let output = zqutils::commands::CommandBuilder::new()
+                    .silent()
+                    .cmd(
+                        "gcloud",
+                        &[
+                            "--project",
+                            project_id,
+                            "secrets",
+                            "versions",
+                            "access",
+                            "latest",
+                            "--secret",
+                            last_part,
+                        ],
+                    )
+                    .run()
+                    .await?;
+
+                if !output.success {
+                    return Err(anyhow!("Error executing the command to retrieve secrets with filter '{}' in the network {}", filter, chain_name));
+                }
+
+                secrets_found.push(std::str::from_utf8(&output.stdout)?.to_string());
+            } else {
+                return Err(anyhow!("Error: secret name {} malformed", secret_name));
+            }
+        }
+    }
+
+    Ok(secrets_found)
 }
