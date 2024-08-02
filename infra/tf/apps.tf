@@ -43,7 +43,7 @@ resource "google_compute_firewall" "allow_apps_external_https" {
 }
 
 resource "google_service_account" "apps" {
-  account_id = "${var.network_name}-apps"
+  account_id = substr("${var.network_name}-apps", 0, 28)
 }
 
 data "google_project" "apps" {}
@@ -66,6 +66,12 @@ resource "google_project_iam_member" "apps_artifact_registry_reader" {
   member  = "serviceAccount:${google_service_account.apps.email}"
 }
 
+resource "google_project_iam_member" "apps_secret_manager_accessor" {
+  project = var.gcp_docker_registry_project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.apps.email}"
+}
+
 module "apps" {
   source = "./modules/node"
   vm_num = var.apps_node_count
@@ -80,17 +86,20 @@ module "apps" {
   subnetwork_name       = data.google_compute_subnetwork.default.name
   # otterscan_image       = var.otterscan_image
   # spout_image           = var.spout_image
-  subdomain       = var.subdomain
-  secret_keys     = tolist([for i in range(var.apps_node_count) : ""])
-  persistence_url = ""
-  genesis_key     = var.genesis_key
-  node_type       = var.apps_node_type
+  subdomain = var.subdomain
+  # secret_keys     = tolist([for i in range(var.apps_node_count) : ""])
+  generate_node_key = false
+  persistence_url   = ""
+  genesis_key       = local.genesis_key
+  node_type         = var.apps_node_type
 
   zq_network_name = var.network_name
 }
 
 resource "google_project_service" "osconfig_apps" {
   service = "osconfig.googleapis.com"
+
+  disable_on_destroy = false
 }
 
 resource "google_compute_managed_ssl_certificate" "apps" {

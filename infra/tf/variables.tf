@@ -65,17 +65,17 @@ variable "vpc_main_subnet_name" {
   nullable    = false
 }
 
-variable "genesis_key" {
-  description = "(Optional) Genesis private key"
-  type        = string
-  nullable    = false
-}
+# variable "genesis_key" {
+#   description = "(Optional) Genesis private key"
+#   type        = string
+#   nullable    = false
+# }
 
-variable "bootstrap_key" {
-  description = "(Optional) Boostrap node private key"
-  type        = string
-  nullable    = false
-}
+# variable "bootstrap_key" {
+#   description = "(Optional) Boostrap node private key"
+#   type        = string
+#   nullable    = false
+# }
 
 variable "apps_node_count" {
   description = "(Optional) ZQ2 Node apps count"
@@ -84,17 +84,31 @@ variable "apps_node_count" {
   default     = 1
 }
 
-variable "api_node_private_keys" {
-  description = "(Optional) API node private key"
-  type        = list(string)
+variable "api_node_count" {
+  description = "(Optional) ZQ2 Node apps count"
+  type        = number
   nullable    = false
+  default     = 3
 }
 
-variable "validator_node_private_keys" {
-  description = "(Optional) ZQ2 Nodes secret keys"
-  type        = list(string)
+variable "validator_node_count" {
+  description = "(Optional) ZQ2 Node apps count"
+  type        = number
   nullable    = false
+  default     = 3
 }
+
+# variable "api_node_private_keys" {
+#   description = "(Optional) API node private key"
+#   type        = list(string)
+#   nullable    = false
+# }
+
+# variable "validator_node_private_keys" {
+#   description = "(Optional) ZQ2 Nodes secret keys"
+#   type        = list(string)
+#   nullable    = false
+# }
 
 variable "persistence_url" {
   description = "(Optional) ZQ2 Recovery persistence URL"
@@ -134,14 +148,14 @@ variable "distributed_validators" {
     vm_num          = number
     vpc_subnet_name = string
     vm_type         = optional(string)
-    node_keys       = list(string)
-    vm_zone         = optional(string)
+    # node_keys       = list(string)
+    vm_zone = optional(string)
   }))
   default = []
-  validation {
-    condition     = alltrue([for v in var.distributed_validators : (length(v.node_keys) == v.vm_num)])
-    error_message = "ERROR: num of vms and number of keys mismatch"
-  }
+  # validation {
+  #   condition     = alltrue([for v in var.distributed_validators : (length(v.node_keys) == v.vm_num)])
+  #   error_message = "ERROR: num of vms and number of keys mismatch"
+  # }
 }
 
 variable "apps_node_type" {

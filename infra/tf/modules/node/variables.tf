@@ -10,6 +10,20 @@ variable "service_account_email" {
   nullable    = false
 }
 
+variable "generate_node_key" {
+  description = "Enable private key generation"
+  type        = bool
+  nullable    = false
+  default     = true
+}
+
+variable "generate_reward_wallet" {
+  description = "Enable reward wallet generation"
+  type        = bool
+  nullable    = false
+  default     = false
+}
+
 variable "vm_num" {
   description = "The number of instances to provision"
   type        = number
@@ -35,10 +49,10 @@ variable "subdomain" {
   default     = ""
 }
 
-variable "secret_keys" {
-  description = "The secret keys to associate with the instances"
-  type        = list(string)
-}
+# variable "secret_keys" {
+#   description = "The secret keys to associate with the instances"
+#   type        = list(string)
+# }
 
 variable "genesis_key" {
   description = "The network genesis key"
