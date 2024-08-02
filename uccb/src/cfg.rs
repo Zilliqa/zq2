@@ -25,8 +25,10 @@ pub struct ChainConfig {
     pub rpc_url: String,
     pub chain_gateway_address: Address,
     pub chain_gateway_block_deployed: u64,
-    pub block_instant_finality: Option<bool>,
-    pub legacy_gas_estimation: Option<bool>,
+    #[serde(default)]
+    pub block_instant_finality: bool,
+    #[serde(default)]
+    pub legacy_gas_estimation: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
