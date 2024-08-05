@@ -1,12 +1,12 @@
 use crate::uccb::{
-    client::{ChainClient, ChainProvider/*, ContractInitializer*/},
+    client::{ChainClient, ChainProvider /*, ContractInitializer*/},
     // contracts::{ChainGateway, DispatchedFilter, RelayedFilter, ValidatorManager},
     event::{RelayEvent, RelayEventSignatures},
     message::{Dispatch, Dispatched, InboundBridgeMessage, OutboundBridgeMessage, Relay},
     signature::SignatureTracker,
 };
-use anyhow::Result;
 use alloy::primitives::{Address, Signature, U256};
+use anyhow::Result;
 use futures_util::StreamExt;
 use std::collections::{HashMap, HashSet};
 use tokio::{
@@ -122,9 +122,9 @@ impl BridgeNode {
                 }
             }
             InboundBridgeMessage::Relay(relay) => {
-            /*
-                self.handle_relay(&relay).await?;
-            */
+                /*
+                    self.handle_relay(&relay).await?;
+                */
             }
         }
 
