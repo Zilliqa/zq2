@@ -25,7 +25,7 @@ use crate::{
     health::HealthLayer,
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
-    p2p_node::{LocalMessageTuple, OutboundMessageTuple},
+    p2p_node::{LocalMessageTuple, OutboundMessageTuple, UCCBConfig},
 };
 
 pub struct NodeLauncher {
@@ -91,6 +91,7 @@ impl NodeLauncher {
         local_outbound_message_sender: UnboundedSender<LocalMessageTuple>,
         request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         peer_num: Arc<AtomicUsize>,
+        uccb_config: Option<UCCBConfig>,
     ) -> Result<(Self, NodeInputChannels)> {
         /// Helper to create a (sender, receiver) pair for a channel.
         fn sender_receiver<T>() -> (UnboundedSender<T>, UnboundedReceiverStream<T>) {
@@ -113,6 +114,7 @@ impl NodeLauncher {
             request_responses_sender,
             reset_timeout_sender.clone(),
             peer_num,
+            uccb_config,
         )?;
         let node = Arc::new(Mutex::new(node));
 

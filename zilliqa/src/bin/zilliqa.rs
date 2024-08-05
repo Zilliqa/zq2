@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
         }
     }));
 
-    let _ = if args.uccb_config_file.is_some() {
+    let uccb_config = if args.uccb_config_file.is_some() {
         Some(zilliqa::uccb::read_config(&args)?)
     } else {
         None
@@ -136,7 +136,7 @@ async fn main() -> Result<()> {
             .build()?;
     };
 
-    let mut node = P2pNode::new(args.secret_key, config.clone())?;
+    let mut node = P2pNode::new(args.secret_key, config.clone(), uccb_config)?;
 
     node.add_shard_node(config.nodes.first().unwrap().clone())
         .await?;
