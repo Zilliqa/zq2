@@ -1,4 +1,3 @@
-use crate::crypto::SecretKey;
 use alloy::primitives::Address;
 use serde::Deserialize;
 
