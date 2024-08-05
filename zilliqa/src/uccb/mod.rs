@@ -10,6 +10,7 @@ pub mod contracts;
 pub mod event;
 pub mod message;
 pub mod signature;
+pub mod validator_node;
 
 pub fn read_config(config_file: &PathBuf) -> Result<cfg::Config> {
     let config_content = if config_file.exists() {

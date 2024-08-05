@@ -1,7 +1,7 @@
 use crate::uccb::cfg::ChainConfig;
 use alloy::{
-    network::Ethereum,
-    primitives::Address,
+    network::{Ethereum, EthereumWallet},
+    primitives::{Address, U256},
     providers::{fillers::*, Identity, Provider, ProviderBuilder, RootProvider, WsConnect},
     pubsub::PubSubFrontend,
     signers::local::PrivateKeySigner,
@@ -25,7 +25,7 @@ pub struct ChainClient {
     pub provider: Arc<ChainProvider>,
     pub validator_manager_address: Address,
     pub chain_gateway_address: Address,
-    pub chain_id: u64,
+    pub chain_id: U256,
     pub signer: PrivateKeySigner,
 }
 
@@ -58,8 +58,8 @@ impl ChainClient {
             rpc_url: config.rpc_url.clone(),
             provider,
             validator_manager_address,
-            chain_id,
             signer,
+            chain_id: U256::from(chain_id),
             chain_gateway_address: config.chain_gateway_address,
         })
     }
