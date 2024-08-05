@@ -17,22 +17,13 @@ use alloy::{
 };
 use anyhow::Result;
 use clap::Parser;
-use ethers::{
-    middleware::MiddlewareBuilder,
-    providers::{Middleware, Ws},
-    signers::{LocalWallet, Signer},
-    types::{TransactionRequest, H160},
-};
 use futures_util::stream::StreamExt;
-use std::{path::PathBuf, str::FromStr};
-use zilliqa::{
-    contracts,
-    crypto::{NodePublicKey, SecretKey},
-    state::contract_addr,
-    uccb::{
-        cfg::{ChainConfig, Config},
-        client::ChainClient,
-    },
+use tokio::sync::watch;
+use tracing::{debug, error, info};
+use tracing_subscriber::EnvFilter;
+use zilliqa::uccb::{
+    cfg::{ChainConfig, Config},
+    client::ChainClient,
 };
 
 #[derive(Parser, Debug)]
