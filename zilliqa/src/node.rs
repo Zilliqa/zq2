@@ -204,6 +204,8 @@ impl Node {
             ExternalMessage::NewTransaction(t) => {
                 self.consensus.handle_new_transaction(t)?;
             }
+            ExternalMessage::BridgeEcho(t) => {
+            }
             _ => {
                 warn!("unexpected message type");
             }
