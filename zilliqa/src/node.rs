@@ -172,6 +172,7 @@ impl Node {
         request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         reset_timeout: UnboundedSender<Duration>,
         peer_num: Arc<AtomicUsize>,
+        uccb_config: Option<crate::uccb::cfg::Config>,
     ) -> Result<Node> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let message_sender = MessageSender {

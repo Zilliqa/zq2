@@ -24,6 +24,7 @@ pub struct ChainClient {
     pub rpc_url: String,
     pub provider: Arc<ChainProvider>,
     pub validator_manager_address: Address,
+    pub chain_gateway_address: Address,
     pub chain_id: u64,
     pub signer: PrivateKeySigner,
 }
@@ -59,6 +60,7 @@ impl ChainClient {
             validator_manager_address,
             chain_id,
             signer,
+            chain_gateway_address: config.chain_gateway_address,
         })
     }
 }
