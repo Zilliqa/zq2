@@ -23,7 +23,7 @@ use futures_util::stream::StreamExt;
 use tokio::{select, sync::watch};
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
-use uccb::{
+use zilliqa::uccb::{
     cfg::{ChainConfig, Config},
     client::ChainClient,
 };
