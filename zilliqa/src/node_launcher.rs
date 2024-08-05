@@ -115,7 +115,8 @@ impl NodeLauncher {
             reset_timeout_sender.clone(),
             peer_num,
             uccb_config,
-        )?;
+        )
+        .await?;
         let node = Arc::new(Mutex::new(node));
 
         let rpc_module = api::rpc_module(Arc::clone(&node));
@@ -179,6 +180,8 @@ impl NodeLauncher {
         tokio::pin!(sleep);
 
         self.node_launched = true;
+
+        let _ = self.node.lock().unwrap().start();
 
         loop {
             select! {
