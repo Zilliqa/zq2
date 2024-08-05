@@ -5,6 +5,8 @@ use std::{fs, path::PathBuf};
 
 pub mod cfg;
 pub mod client;
+pub mod contracts;
+pub mod signature;
 
 pub fn read_config(config_file: &PathBuf) -> Result<cfg::Config> {
     let config_content = if config_file.exists() {

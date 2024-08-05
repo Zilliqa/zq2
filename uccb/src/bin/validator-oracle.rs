@@ -65,7 +65,9 @@ impl ValidatorOracle {
             chain_clients,
             // See above comment regarding ethabi::Contract -> alloy::json_abi::JsonAbi.
             validator_manager_abi: serde_json::from_value(
-                serde_json::from_str::<serde_json::Value>(VALIDATOR_MANAGER_ABI_JSON)?["abi"]
+                serde_json::from_str::<serde_json::Value>(
+                    zilliqa::uccb::contracts::VALIDATOR_MANAGER_ABI_JSON,
+                )?["abi"]
                     .clone(),
             )?,
             deposit_contract,
