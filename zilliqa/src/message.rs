@@ -16,6 +16,7 @@ use crate::{
     db::TrieStorage,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
+    uccb::message::Relay,
 };
 
 /// The maximum number of validators in the consensus committee. This is passed to the deposit contract and we expect
@@ -221,6 +222,9 @@ pub enum ExternalMessage {
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
     Acknowledgement,
+
+    // UCCB
+    BridgeEcho(Relay),
 }
 
 impl ExternalMessage {
@@ -270,6 +274,7 @@ impl Display for ExternalMessage {
                 }
             },
             ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
+            ExternalMessage::BridgeEcho(_) => write!(f, "BridgeEcho"),
         }
     }
 }
