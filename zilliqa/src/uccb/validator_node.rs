@@ -1,10 +1,6 @@
 use std::{collections::HashMap, str::FromStr, time::Duration};
 
-use alloy::{
-    network::{Ethereum, EthereumWallet},
-    primitives::{Address, Signature, U256},
-    signers::local::PrivateKeySigner,
-};
+use alloy::{primitives::U256, signers::local::PrivateKeySigner};
 use anyhow::Result;
 use futures_util::StreamExt;
 use libp2p::PeerId;

@@ -362,7 +362,7 @@ pub struct ApiCallStatus {
     pub status: PageStatus,
 }
 
-pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus>> {
+pub async fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus>> {
     let mut methods = HashMap::new();
 
     // Construct an empty node so we can check for the existence of RPC methods without constructing a full node.
@@ -410,7 +410,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
 
     let my_node = Arc::new(Mutex::new(zilliqa::node::Node::new(
         config, secret_key, s1, s2, s3, s4, peers, None,
-    )?));
+    ).await?));
     let module = zilliqa::api::rpc_module(my_node.clone());
     for m in module.method_names() {
         methods.insert(
