@@ -5,7 +5,7 @@ use std::{
     fmt::{self, Debug, Formatter},
 };
 
-use alloy::primitives::{Address, Bytes, Signature, U256};
+use alloy::primitives::{Address, Signature, U256};
 use serde::{Deserialize, Serialize};
 
 use crate::uccb::event::RelayEvent;
