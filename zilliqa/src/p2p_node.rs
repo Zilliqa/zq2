@@ -41,6 +41,7 @@ use crate::{
 
 /// Messages are a tuple of the destination shard ID and the actual message.
 type DirectMessage = (u64, ExternalMessage);
+pub type UCCBConfig = crate::uccb::cfg::Config;
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
@@ -81,10 +82,16 @@ pub struct P2pNode {
     pending_requests: HashMap<request_response::OutboundRequestId, (u64, RequestId)>,
     // Count of current peers for API
     peer_num: Arc<AtomicUsize>,
+    // UCCB
+    uccb_config: Option<UCCBConfig>,
 }
 
 impl P2pNode {
-    pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
+    pub fn new(
+        secret_key: SecretKey,
+        config: Config,
+        uccb_config: Option<UCCBConfig>,
+    ) -> Result<Self> {
         let (outbound_message_sender, outbound_message_receiver) = mpsc::unbounded_channel();
         let outbound_message_receiver = UnboundedReceiverStream::new(outbound_message_receiver);
 
@@ -146,6 +153,7 @@ impl P2pNode {
             request_responses_receiver,
             pending_requests: HashMap::new(),
             peer_num: Arc::new(AtomicUsize::new(0)),
+            uccb_config,
         })
     }
 
@@ -184,6 +192,7 @@ impl P2pNode {
             self.local_message_sender.clone(),
             self.request_responses_sender.clone(),
             self.peer_num.clone(),
+            self.uccb_config.clone(),
         )
         .await?;
         self.shard_nodes.insert(topic.hash(), input_channels);
