@@ -18,8 +18,21 @@ struct Args {
     secret_key: SecretKey,
     #[clap(long, short, default_values = ["config.toml"])]
     config_file: Vec<PathBuf>,
+    #[clap(long, short)]
+    uccb_config_file: Option<PathBuf>,
     #[clap(long, default_value = "false")]
     log_json: bool,
+}
+
+impl zilliqa::uccb::Args for Args {
+    fn secret_key(&self) -> &SecretKey {
+        &self.secret_key
+    }
+
+    fn config_file(&self) -> PathBuf {
+        let uccb_config_file = self.uccb_config_file.clone();
+        uccb_config_file.unwrap()
+    }
 }
 
 #[tokio::main]
@@ -79,6 +92,12 @@ async fn main() -> Result<()> {
             }
         }
     }));
+
+    let _ = if args.uccb_config_file.is_some() {
+        Some(zilliqa::uccb::read_config(&args)?)
+    } else {
+        None
+    };
 
     let mut merged_config = toml::Table::new();
     for config_file in args.config_file {
