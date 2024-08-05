@@ -209,6 +209,8 @@ impl Node {
                     }
                 }
             }
+            ExternalMessage::BridgeEcho(t) => {
+            }
             _ => {
                 warn!("unexpected message type");
             }
