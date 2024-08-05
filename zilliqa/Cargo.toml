@@ -24,7 +24,7 @@ anyhow = { version = "1.0.86", features = ["backtrace"] }
 vergen = { version = "8.3.1", features = ["git", "git2"] }
 
 [dependencies]
-alloy = { version = "0.2.0", default-features = false, features = ["consensus", "eips", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
+alloy = { version = "0.2.1", default-features = false, features = ["consensus", "eips", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 anyhow = { version = "1.0.86", features = ["backtrace"] }
 async-trait = "0.1.81"
 base64 = "0.22.1"
@@ -79,7 +79,7 @@ scilla-parser = "1.0.0"
 blsful = "2.5.7"
 
 [dev-dependencies]
-alloy = { version = "0.2.0", default-features = false, features = ["rand"] }
+alloy = { version = "0.2.1", default-features = false, features = ["rand"] }
 async-trait = "0.1.81"
 criterion = "0.5.1"
 ethers = { version = "2.0.14", default-features = false, features = ["ethers-solc", "legacy"] }
