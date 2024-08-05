@@ -23,9 +23,11 @@ use futures_util::stream::StreamExt;
 use tokio::{select, sync::watch};
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
-use zilliqa::uccb::{
-    cfg::{ChainConfig, Config},
-    client::ChainClient,
+use zilliqa::{
+    contracts,
+    crypto::{NodePublicKey, SecretKey},
+    state::contract_addr,
+    uccb::{cfg::Config, client::ChainClient},
 };
 
 #[derive(Parser, Debug)]
@@ -47,18 +49,6 @@ struct ValidatorOracle {
 impl ValidatorOracle {
     pub async fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
         let signer = PrivateKeySigner::from_str(secret_key.to_hex().as_str())?;
-        let mut chain_clients = vec![Self::create_zq2_chain_client(config.clone(), &signer).await?];
-
-        for chain_config in config.chain_configs {
-            chain_clients.push(
-                ChainClient::new(
-                    &chain_config,
-                    config.zq2.validator_manager_address,
-                    signer.clone(),
-                )
-                .await?,
-            );
-        }
 
         // We need to convert ethabi::Contract -> alloy::json_abi::JsonAbi. Both JSON
         // representations are the same.
@@ -189,21 +179,6 @@ impl ValidatorOracle {
                 }
             }
         }
-    }
-
-    async fn create_zq2_chain_client(
-        config: Config,
-        signer: &PrivateKeySigner,
-    ) -> Result<ChainClient> {
-        ChainClient::new(
-            &ChainConfig {
-                rpc_url: config.zq2.rpc_url,
-                chain_gateway_address: config.zq2.chain_gateway_address,
-            },
-            config.zq2.validator_manager_address,
-            signer.clone(),
-        )
-        .await
     }
 
     fn zq2_chain_client(&self) -> &ChainClient {
