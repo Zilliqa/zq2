@@ -9297,7 +9297,7 @@ dependencies = [
  "futures",
  "hex",
  "http 0.2.12",
- "hyper 0.14.30",
+ "hyper 1.4.1",
  "indicatif",
  "itertools 0.13.0",
  "jsonrpsee",
