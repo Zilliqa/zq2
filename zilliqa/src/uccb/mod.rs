@@ -3,6 +3,7 @@ use std::{fs, path::PathBuf};
 use anyhow::Result;
 use std::{fs, path::PathBuf};
 
+pub mod bridge_node;
 pub mod cfg;
 pub mod client;
 pub mod contracts;
