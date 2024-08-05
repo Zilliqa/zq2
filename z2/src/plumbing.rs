@@ -384,7 +384,7 @@ pub async fn generate_docs(
     } else {
         DEFAULT_API_URL.to_string()
     };
-    let implemented_apis = docgen::get_implemented_jsonrpc_methods()?;
+    let implemented_apis = docgen::get_implemented_jsonrpc_methods().await?;
     let docs = docgen::Docs::new(
         &scan_dir,
         target_dir,

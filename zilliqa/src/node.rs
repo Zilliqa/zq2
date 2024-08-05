@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     fmt::Debug,
+    str::FromStr,
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
@@ -15,6 +16,7 @@ use alloy::{
         },
         parity::{TraceResults, TraceType},
     },
+    signers::local::PrivateKeySigner,
 };
 use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
@@ -23,7 +25,10 @@ use revm_inspectors::tracing::{
     js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
     TransactionContext,
 };
-use tokio::sync::{broadcast, mpsc::UnboundedSender};
+use tokio::{
+    sync::{broadcast, mpsc::UnboundedSender},
+    task::JoinHandle,
+};
 use tracing::*;
 
 use crate::{
@@ -45,6 +50,8 @@ use crate::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
 };
+
+type UCCBValidatorNode = crate::uccb::validator_node::ValidatorNode;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct RequestId(u64);
@@ -145,6 +152,9 @@ pub struct Node {
     pub consensus: Consensus,
     peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
+    // UCCB
+    validator_node: Option<UCCBValidatorNode>,
+    bridge_inbound_message_sender: Option<UnboundedSender<ExternalMessage>>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -164,7 +174,7 @@ impl ChainId {
 const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
 
 impl Node {
-    pub fn new(
+    pub async fn new(
         config: NodeConfig,
         secret_key: SecretKey,
         message_sender_channel: UnboundedSender<OutboundMessageTuple>,
@@ -175,6 +185,32 @@ impl Node {
         uccb_config: Option<crate::uccb::cfg::Config>,
     ) -> Result<Node> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+
+        let (bridge_inbound_message_sender, validator_node) = if let Some(uccb_config) = uccb_config
+        {
+            let signer = PrivateKeySigner::from_str(secret_key.to_hex().as_str())?;
+            match UCCBValidatorNode::new(
+                &uccb_config,
+                &signer,
+                peer_id,
+                config.eth_chain_id,
+                message_sender_channel.clone(),
+            )
+            .await
+            {
+                Ok(validator_node) => (
+                    Some(validator_node.get_bridge_inbound_message_sender()),
+                    Some(validator_node),
+                ),
+                Err(e) => {
+                    error!("Failed to start UCCB: {}", e);
+                    (None, None)
+                }
+            }
+        } else {
+            (None, None)
+        };
+
         let message_sender = MessageSender {
             our_shard: config.eth_chain_id,
             our_peer_id: peer_id,
@@ -193,8 +229,18 @@ impl Node {
             chain_id: ChainId::new(config.eth_chain_id),
             consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
             peer_num,
+            validator_node,
+            bridge_inbound_message_sender,
         };
         Ok(node)
+    }
+
+    pub fn start(&mut self) -> Option<JoinHandle<Result<()>>> {
+        if let Some(mut validator_node) = std::mem::take(&mut self.validator_node) {
+            Some(tokio::spawn(async move { validator_node.start().await }))
+        } else {
+            None
+        }
     }
 
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
@@ -207,7 +253,13 @@ impl Node {
             ExternalMessage::NewTransaction(t) => {
                 self.consensus.handle_new_transaction(t)?;
             }
-            ExternalMessage::BridgeEcho(t) => {
+            ExternalMessage::BridgeEcho(echo) => {
+                if self.bridge_inbound_message_sender.is_some() {
+                    self.bridge_inbound_message_sender
+                        .as_mut()
+                        .unwrap()
+                        .send(ExternalMessage::BridgeEcho(echo))?
+                }
             }
             _ => {
                 warn!("unexpected message type");
