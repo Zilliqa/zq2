@@ -17,6 +17,9 @@ contract Deposit {
 
     uint256 public _minimumStake;
 
+    event StakerAdded(bytes blsPubKey);
+    event StakerRemoved(bytes blsPubKey);
+
     constructor(uint256 minimumStake) {
         _minimumStake = minimumStake;
     }
@@ -89,6 +92,7 @@ contract Deposit {
 
                 // Delete the staker from `_stakersMap` too.
                 delete _stakersMap[blsPubKey];
+                emit StakerRemoved(blsPubKey);
 
                 return;
             }
@@ -156,6 +160,8 @@ contract Deposit {
 
         _stakersMap[blsPubKey].rewardAddress = rewardAddress;
         _stakersMap[blsPubKey].peerId = peerId;
+
+        emit StakerAdded(blsPubKey);
     }
 
     function setStake(

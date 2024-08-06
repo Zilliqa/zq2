@@ -1,0 +1,294 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'eth_trie'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=eth_trie"
+                ],
+                "filter": {
+                    "name": "eth_trie",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug benchmark 'trie'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bench=trie",
+                    "--package=eth_trie"
+                ],
+                "filter": {
+                    "name": "trie",
+                    "kind": "bench"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug benchmark 'insert_benchmark'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bench=insert_benchmark",
+                    "--package=eth_trie"
+                ],
+                "filter": {
+                    "name": "insert_benchmark",
+                    "kind": "bench"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'zilliqa'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=zilliqa"
+                ],
+                "filter": {
+                    "name": "zilliqa",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'zilliqa'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=zilliqa",
+                    "--package=zilliqa"
+                ],
+                "filter": {
+                    "name": "zilliqa",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'zilliqa'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=zilliqa",
+                    "--package=zilliqa"
+                ],
+                "filter": {
+                    "name": "zilliqa",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'validator_oracle'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=validator_oracle",
+                    "--package=zilliqa"
+                ],
+                "filter": {
+                    "name": "validator_oracle",
+                    "kind": "bin"
+                }
+            },
+            "env": { "RUST_LOG": "info"},
+            "args": [
+                "--config-file",
+                 "/Users/yaron/SoftwareDevelopment/Projects/zilliqa/zilliqa-developer/products/bridge/bridge-validators/infra/config.toml",
+                  "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'validator_oracle'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=validator_oracle",
+                    "--package=zilliqa"
+                ],
+                "filter": {
+                    "name": "validator_oracle",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'convert-key'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=convert-key",
+                    "--package=zilliqa"
+                ],
+                "filter": {
+                    "name": "convert-key",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'convert-key'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=convert-key",
+                    "--package=zilliqa"
+                ],
+                "filter": {
+                    "name": "convert-key",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'it'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=it",
+                    "--package=zilliqa"
+                ],
+                "filter": {
+                    "name": "it",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug benchmark 'it'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bench=it",
+                    "--package=zilliqa"
+                ],
+                "filter": {
+                    "name": "it",
+                    "kind": "bench"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'z2lib'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=z2"
+                ],
+                "filter": {
+                    "name": "z2lib",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'z2'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=z2",
+                    "--package=z2"
+                ],
+                "filter": {
+                    "name": "z2",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'z2'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=z2",
+                    "--package=z2"
+                ],
+                "filter": {
+                    "name": "z2",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
