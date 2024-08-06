@@ -2,6 +2,31 @@
 # ZQ2 GCP Terraform main resources
 ################################################################################
 
+resource "google_project_service" "secret_manager" {
+  service = "secretmanager.googleapis.com"
+
+  disable_on_destroy = false
+}
+
+resource "random_bytes" "generate_genesis_key" {
+  length = 32
+}
+
+resource "google_secret_manager_secret" "genesis_key" {
+  secret_id = "${var.network_name}-genesis-key"
+
+  labels = merge({ "role" = "genesis" }, local.labels)
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "genesis_key_version" {
+  secret      = google_secret_manager_secret.genesis_key.id
+  secret_data = random_bytes.generate_genesis_key.hex
+}
+
 resource "google_compute_firewall" "allow_ingress_from_iap" {
   name    = "${var.network_name}-allow-ingress-from-iap"
   network = local.network_name
@@ -43,7 +68,7 @@ resource "google_compute_firewall" "allow_external_jsonrpc" {
 }
 
 resource "google_service_account" "node" {
-  account_id = "${var.network_name}-node"
+  account_id = substr("${var.network_name}-node", 0, 28)
 }
 
 data "google_project" "this" {}
@@ -66,67 +91,95 @@ resource "google_project_iam_member" "artifact_registry_reader" {
   member  = "serviceAccount:${google_service_account.node.email}"
 }
 
-data "external" "genesis_key_converted" {
-  program     = ["cargo", "run", "--bin", "convert-key"]
-  working_dir = "${path.module}/../.."
-  query = {
-    secret_key = var.genesis_key
-  }
+resource "google_project_iam_member" "secret_manager_accessor" {
+  project = var.gcp_docker_registry_project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.node.email}"
 }
 
+# data "external" "genesis_key_converted" {
+#   program     = ["cargo", "run", "--bin", "convert-key"]
+#   working_dir = "${path.module}/../.."
+#   query = {
+#     secret_key = var.genesis_key
+#   }
+# }
 
-data "external" "bootstrap_key_converted" {
-  program     = ["cargo", "run", "--bin", "convert-key"]
-  working_dir = "${path.module}/../.."
-  query = {
-    secret_key = var.bootstrap_key
-  }
-}
-
+# data "external" "bootstrap_key_converted" {
+#   program     = ["cargo", "run", "--bin", "convert-key"]
+#   working_dir = "${path.module}/../.."
+#   query = {
+#     secret_key = var.bootstrap_key
+#   }
+# }
 
 module "bootstrap_node" {
   source = "./modules/node"
+  vm_num = 1
 
-  name                  = "${var.network_name}-bootstrap-node"
+  name                  = "${var.network_name}-node-bootstrap"
   service_account_email = google_service_account.node.email
-  node_zones            = var.node_zone != "" ? [var.node_zone] : data.google_compute_zones.zones.names
+  dns_zone_project_id   = var.dns_zone_project_id
+  nodes_dns_zone_name   = var.nodes_dns_zone_name
+  node_zones            = local.default_zones
   network_name          = local.network_name
   subnetwork_name       = data.google_compute_subnetwork.default.name
-  docker_image          = var.docker_image
-  external_ip           = data.google_compute_address.bootstrap.address
-  persistence_url       = var.persistence_url
-  secret_keys           = [var.bootstrap_key]
-  zq_network_name       = var.network_name
-  role                  = "bootstrap"
-  labels                = local.labels
+  # docker_image          = var.docker_image
+  external_ip     = data.google_compute_address.bootstrap.address
+  persistence_url = var.persistence_url
+  # secret_keys     = [local.bootstrap_key]
+  zq_network_name = var.network_name
+  role            = "bootstrap"
+  labels          = local.labels
 }
 
-
-module "node" {
+module "validators" {
   source = "./modules/node"
-  vm_num = var.node_count
+  vm_num = var.validator_node_count
 
   name                  = "${var.network_name}-node-validator"
   service_account_email = google_service_account.node.email
+  dns_zone_project_id   = var.dns_zone_project_id
+  nodes_dns_zone_name   = var.nodes_dns_zone_name
   network_name          = local.network_name
-  node_zones            = var.node_zone != "" ? [var.node_zone] : data.google_compute_zones.zones.names
+  node_zones            = local.default_zones
   subnetwork_name       = data.google_compute_subnetwork.default.name
-  docker_image          = var.docker_image
-  persistence_url       = var.persistence_url
-  secret_keys           = var.secret_keys
-  role                  = "validator"
-  zq_network_name       = var.network_name
+  # docker_image          = var.docker_image
+  persistence_url = var.persistence_url
+  # secret_keys     = var.validator_node_private_keys
+  role                   = "validator"
+  zq_network_name        = var.network_name
+  generate_reward_wallet = true
+}
+
+module "apis" {
+  source = "./modules/node"
+  vm_num = var.api_node_count
+
+  name                  = "${var.network_name}-node-api"
+  service_account_email = google_service_account.node.email
+  dns_zone_project_id   = var.dns_zone_project_id
+  nodes_dns_zone_name   = var.nodes_dns_zone_name
+  network_name          = local.network_name
+  node_zones            = local.default_zones
+  subnetwork_name       = data.google_compute_subnetwork.default.name
+  # docker_image          = var.docker_image
+  persistence_url = var.persistence_url
+  # secret_keys     = var.api_node_private_keys
+  role            = "api"
+  zq_network_name = var.network_name
 }
 
 resource "google_project_service" "osconfig" {
   service = "osconfig.googleapis.com"
+
+  disable_on_destroy = false
 }
 
-resource "google_compute_instance_group" "ig_api_zn-a" {
-  name      = "${var.network_name}-api-zone-a"
-  zone      = var.node_zone != "" ? var.node_zone : data.google_compute_zones.zones.names.0
+resource "google_compute_instance_group" "bootstrap" {
+  name      = "${var.network_name}-bootstrap"
+  zone      = var.node_zone != "" ? var.node_zone : data.google_compute_zones.zones.names[0]
   instances = module.bootstrap_node.self_link
-
 
   named_port {
     name = "jsonrpc"
@@ -134,12 +187,25 @@ resource "google_compute_instance_group" "ig_api_zn-a" {
   }
 }
 
-resource "google_compute_instance_group" "ig_api_znx" {
-  count     = var.node_count
-  name      = "${var.network_name}-api-zone-${sort(data.google_compute_zones.zones.names)[count.index % length(data.google_compute_zones.zones.names)]}"
-  zone      = var.node_zone != "" ? var.node_zone : sort(data.google_compute_zones.zones.names)[count.index % length(data.google_compute_zones.zones.names)]
-  instances = [module.node.self_link[count.index]]
+resource "google_compute_instance_group" "validator" {
+  for_each = toset(local.default_zones)
 
+  name      = "${var.network_name}-validator-${each.key}"
+  zone      = each.key
+  instances = [for instance in module.validators.instances : instance.self_link if instance.zone == each.key]
+
+  named_port {
+    name = "jsonrpc"
+    port = "4201"
+  }
+}
+
+resource "google_compute_instance_group" "api" {
+  for_each = toset(local.default_zones)
+
+  name      = "${var.network_name}-api-${each.key}"
+  zone      = each.key
+  instances = [for instance in module.apis.instances : instance.self_link if instance.zone == each.key]
 
   named_port {
     name = "jsonrpc"
@@ -154,14 +220,24 @@ resource "google_compute_backend_service" "api" {
   load_balancing_scheme = "EXTERNAL_MANAGED"
   enable_cdn            = false
   session_affinity      = "CLIENT_IP"
-  backend {
-    group           = google_compute_instance_group.ig_api_zn-a.self_link
-    balancing_mode  = "UTILIZATION"
-    capacity_scaler = 1.0
-  }
+
+  # backend {
+  #   group           = google_compute_instance_group.bootstrap.self_link
+  #   balancing_mode  = "UTILIZATION"
+  #   capacity_scaler = 1.0
+  # }
+
+  # dynamic "backend" {
+  #   for_each = google_compute_instance_group.validator
+  #   content {
+  #     group           = backend.value.self_link
+  #     balancing_mode  = "UTILIZATION"
+  #     capacity_scaler = 1.0
+  #   }
+  # }
 
   dynamic "backend" {
-    for_each = google_compute_instance_group.ig_api_znx
+    for_each = google_compute_instance_group.api
     content {
       group           = backend.value.self_link
       balancing_mode  = "UTILIZATION"
