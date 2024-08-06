@@ -1,13 +1,23 @@
 use crate::uccb::{
     client::{ChainClient, ChainProvider /*, ContractInitializer*/},
+    contracts::{self, chain_gateway},
     // contracts::{ChainGateway, DispatchedFilter, RelayedFilter, ValidatorManager},
     event::{RelayEvent, RelayEventSignatures},
     message::{Dispatch, Dispatched, InboundBridgeMessage, OutboundBridgeMessage, Relay},
     signature::SignatureTracker,
 };
-use alloy::primitives::{Address, Signature, U256};
+use alloy::{
+    contract::{ContractInstance, DynCallBuilder, Interface},
+    dyn_abi::DynSolValue,
+    eips::{eip2930::AccessList, BlockNumberOrTag},
+    primitives::{Address, Signature, U256},
+    providers::Provider,
+    pubsub::PubSubFrontend,
+    rpc::types::Filter,
+    signers::local::PrivateKeySigner,
+};
 use anyhow::Result;
-use futures_util::StreamExt;
+use futures_util::stream::StreamExt;
 use std::collections::{HashMap, HashSet};
 use tokio::{
     select,
@@ -59,6 +69,51 @@ impl BridgeNode {
 
     pub async fn listen_events(&mut self) -> Result<()> {
         println!("Start Listening: {:?}", self.chain_client.chain_id);
+
+        let chain_provider = self.chain_client.provider.clone();
+        let chain_gateway_address = self.chain_client.chain_gateway_address;
+        let chain_gateway_contract: ContractInstance<PubSubFrontend, _> =
+            contracts::chain_gateway::instance(
+                chain_gateway_address,
+                self.chain_client.provider.as_ref(),
+            );
+
+        let relayed_filter = Filter::new()
+            .address(chain_gateway_address)
+            .event("Relayed(uint, address, bytes, uint, uint)")
+            .from_block(BlockNumberOrTag::Finalized);
+
+        let relayed_subscription = chain_provider.subscribe_logs(&relayed_filter).await?;
+        let mut relayed_stream = relayed_subscription.into_stream();
+
+        loop {
+            select! {
+                Some(log) = relayed_stream.next() => {
+                    info!("Relayed received: {log:?}");
+                    /*
+                    for event in events {
+                        self.handle_relay_event(event)?;
+                    }
+                    */
+                },
+            }
+        }
+
+        /*
+        let mut stream = subscription.into_stream();
+        while let Some(log) = stream.next().await {
+            // TODO: infer if staker added or removed
+            info!("Received validator update: {log:?}");
+
+            let validators = self.get_stakers().await?;
+            info!(
+                "Updating chains to the current validator set to: {}",
+                Display(&validators)
+            );
+
+            sender.send(validators)?;
+        }
+        */
 
         /*
         let chain_gateway: ChainGateway<ChainProvider> = self.chain_client.get_contract();
