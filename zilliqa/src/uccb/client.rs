@@ -33,6 +33,7 @@ impl ChainClient {
     pub async fn new(
         config: &ChainConfig,
         validator_manager_address: Address,
+        chain_gateway_address: Address,
         signer: PrivateKeySigner,
     ) -> Result<Self> {
         let ws = WsConnect::new(&config.rpc_url);
@@ -60,7 +61,7 @@ impl ChainClient {
             validator_manager_address,
             signer,
             chain_id: U256::from(chain_id),
-            chain_gateway_address: config.chain_gateway_address,
+            chain_gateway_address,
         })
     }
 }
