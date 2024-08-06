@@ -53,6 +53,7 @@ impl ChainNode {
             self.role, self.machine.name, self.machine.external_address,
         );
 
+        self.tag_machine().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
 
@@ -65,6 +66,7 @@ impl ChainNode {
             self.role, self.machine.name, self.machine.external_address,
         );
 
+        self.tag_machine().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
 
@@ -85,6 +87,41 @@ impl ChainNode {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    async fn tag_machine(&self) -> Result<()> {
+        if self.role == NodeRole::Apps {
+            return Ok(());
+        }
+
+        let private_keys = retrieve_secret_by_node_name(
+            &self.chain_name,
+            &self.machine.project_id,
+            &self.machine.name,
+        )
+        .await?;
+        let private_key = if let Some(private_key) = private_keys.first() {
+            private_key
+        } else {
+            return Err(anyhow!(
+                "Found multiple private keys for the instance {}",
+                &self.machine.name
+            ));
+        };
+
+        let ethereum_address = EthereumAddress::from_private_key(private_key)?;
+
+        let mut labels = BTreeMap::<String, String>::new();
+        labels.insert("peer-id".to_string(), ethereum_address.peer_id.clone());
+
+        self.machine.add_labels(labels).await?;
+
+        println!(
+            "Tagged the machine {} with the peer-id {}",
+            self.machine.name, ethereum_address.peer_id
+        );
 
         Ok(())
     }
@@ -339,6 +376,23 @@ async fn retrieve_secret_by_role(
         format!(
             "labels.zq2-network={} AND labels.role={}",
             chain_name, role_name
+        )
+        .as_str(),
+    )
+    .await
+}
+
+async fn retrieve_secret_by_node_name(
+    chain_name: &str,
+    project_id: &str,
+    node_name: &str,
+) -> Result<Vec<String>> {
+    retrieve_secret(
+        chain_name,
+        project_id,
+        format!(
+            "labels.zq2-network={} AND labels.node-name={}",
+            chain_name, node_name
         )
         .as_str(),
     )

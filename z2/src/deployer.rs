@@ -91,7 +91,7 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, ValueEnum)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeRole {
     /// Virtual machine bootstrap
@@ -174,6 +174,34 @@ pub struct Machine {
 }
 
 impl Machine {
+    pub async fn add_labels(&self, labels: BTreeMap<String, String>) -> Result<()> {
+        let labels = &labels
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join(",");
+        let args = [
+            "--project",
+            &self.project_id,
+            "compute",
+            "instances",
+            "add-labels",
+            &self.name,
+            &format!("--labels={}", labels.to_lowercase()),
+            "--zone",
+            &self.zone,
+        ];
+
+        println!("gcloud {}", args.join(" "));
+
+        zqutils::commands::CommandBuilder::new()
+            .silent()
+            .cmd("gcloud", &args)
+            .run()
+            .await?;
+        Ok(())
+    }
+
     pub async fn copy_to(&self, file_from: &[&str], file_to: &str) -> Result<()> {
         let tgt_spec = format!("{0}:{file_to}", &self.name);
         let args = [
@@ -266,7 +294,10 @@ pub async fn install_or_upgrade(config_file: &str, is_upgrade: bool) -> Result<(
     let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
     let versions = config.versions;
 
-    for node_role in config.roles.clone() {
+    let mut node_roles = config.roles.clone();
+    node_roles.sort();
+
+    for node_role in node_roles {
         // Create a list of instances we need to update
         let nodes = get_nodes(
             &config.name,
