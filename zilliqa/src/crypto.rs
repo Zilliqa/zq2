@@ -9,7 +9,8 @@ use std::fmt::Display;
 use alloy::primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use blsful::{
-    inner_types::Group, vsss_rs::ShareIdentifier, AggregateSignature, Bls12381G2, Bls12381G2Impl, MultiPublicKey, MultiSignature, PublicKey, Signature
+    inner_types::Group, vsss_rs::ShareIdentifier, AggregateSignature, Bls12381G2, Bls12381G2Impl,
+    MultiPublicKey, MultiSignature, PublicKey, Signature,
 };
 use itertools::Itertools;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
