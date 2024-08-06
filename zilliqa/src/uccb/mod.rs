@@ -35,6 +35,7 @@ pub async fn create_chain_clients(
             client::ChainClient::new(
                 &chain_config,
                 config.zq2.validator_manager_address,
+                config.zq2.chain_gateway_address,
                 signer.clone(),
             )
             .await?,
@@ -51,12 +52,12 @@ async fn create_zq2_chain_client(
     client::ChainClient::new(
         &cfg::ChainConfig {
             rpc_url: config.zq2.rpc_url,
-            chain_gateway_address: config.zq2.chain_gateway_address,
             chain_gateway_block_deployed: 0,
             block_instant_finality: false,
             legacy_gas_estimation: false,
         },
         config.zq2.validator_manager_address,
+        config.zq2.chain_gateway_address,
         signer.clone(),
     )
     .await
