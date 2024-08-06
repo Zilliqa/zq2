@@ -9,10 +9,7 @@ use std::fmt::Display;
 use alloy::primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use blsful::{
-    inner_types::{group::prime::PrimeCurveAffine, G2Projective},
-    vsss_rs::ShareIdentifier,
-    AggregateSignature, Bls12381G2, Bls12381G2Impl, MultiPublicKey, MultiSignature, PublicKey,
-    Signature,
+    inner_types::Group, vsss_rs::ShareIdentifier, AggregateSignature, Bls12381G2, Bls12381G2Impl, MultiPublicKey, MultiSignature, PublicKey, Signature
 };
 use itertools::Itertools;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
@@ -28,12 +25,14 @@ pub struct NodeSignature(Signature<Bls12381G2Impl>);
 
 impl NodeSignature {
     pub fn identity() -> NodeSignature {
+        // Default to Basic signatures - it's the normal signature.
         NodeSignature(Signature::<Bls12381G2Impl>::Basic(
-            blsful::inner_types::G2Affine::identity().into(),
+            blsful::inner_types::G2Projective::identity(),
         ))
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<NodeSignature> {
+        // Default to Basic signatures - it's the normal signature.
         Ok(NodeSignature(Signature::<Bls12381G2Impl>::Basic(
             blsful::inner_types::G2Projective::from_compressed(bytes.try_into()?)
                 .expect("blst_p2_uncompress() error"),
@@ -44,14 +43,14 @@ impl NodeSignature {
         let signatures = signatures.iter().map(|s| s.0).collect_vec();
 
         // IETF standards say N >= 1
+        // Handles single case where N == 1, as AggregateSignature::from_signatures() only handles N > 1.
         if signatures.len() < 2 {
-            // let g: G2Projective = blsful::inner_types::G2Affine::identity().into();
-            let s = match signatures[0] {
-                Signature::Basic(s) => s,
-                Signature::MessageAugmentation(s) => s,
-                Signature::ProofOfPossession(s) => s,
-            };
-            return Ok(NodeSignature(Signature::<Bls12381G2Impl>::Basic(s)));
+            let g = blsful::inner_types::G2Projective::identity();
+            return Ok(NodeSignature(match signatures[0] {
+                Signature::Basic(s) => Signature::Basic(g + s),
+                Signature::MessageAugmentation(s) => Signature::MessageAugmentation(g + s),
+                Signature::ProofOfPossession(s) => Signature::ProofOfPossession(g + s),
+            }));
         }
 
         let asig = AggregateSignature::<Bls12381G2Impl>::from_signatures(signatures)?;
