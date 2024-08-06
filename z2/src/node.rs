@@ -91,6 +91,66 @@ impl ChainNode {
         Ok(())
     }
 
+    pub fn get_genesis_key(&self) -> String {
+        self.genesis_wallet_private_key.clone()
+    }
+
+    pub fn get_node_name(&self) -> String {
+        self.machine.name.clone()
+    }
+
+    pub async fn get_private_key(&self) -> Result<String> {
+        if self.role == NodeRole::Apps {
+            return Err(anyhow!(
+                "Node {} has role 'apps' and does not own a private key",
+                &self.machine.name
+            ));
+        }
+
+        let private_keys = retrieve_secret_by_node_name(
+            &self.chain_name,
+            &self.machine.project_id,
+            &self.machine.name,
+        )
+        .await?;
+        let private_key = if let Some(private_key) = private_keys.first() {
+            private_key
+        } else {
+            return Err(anyhow!(
+                "Found multiple private keys for the instance {}",
+                &self.machine.name
+            ));
+        };
+
+        Ok(private_key.to_owned())
+    }
+
+    pub async fn get_wallet_private_key(&self) -> Result<String> {
+        if self.role == NodeRole::Apps {
+            return Err(anyhow!(
+                "Node {} has role 'apps' and does not own a private key",
+                &self.machine.name
+            ));
+        }
+
+        let private_keys = retrieve_wallet_secret_by_node_name(
+            &self.chain_name,
+            &self.machine.project_id,
+            &self.machine.name,
+        )
+        .await?;
+        let private_key = if let Some(private_key) = private_keys.first() {
+            private_key
+        } else {
+            return Err(anyhow!(
+                "Found multiple private keys for the instance {}",
+                &self.machine.name
+            ));
+        };
+
+        Ok(private_key.to_owned())
+    }
+
     async fn tag_machine(&self) -> Result<()> {
         if self.role == NodeRole::Apps {
             return Ok(());
@@ -392,6 +452,23 @@ async fn retrieve_secret_by_node_name(
         project_id,
         format!(
             "labels.zq2-network={} AND labels.node-name={}",
+            chain_name, node_name
+        )
+        .as_str(),
+    )
+    .await
+}
+
+async fn retrieve_wallet_secret_by_node_name(
+    chain_name: &str,
+    project_id: &str,
+    node_name: &str,
+) -> Result<Vec<String>> {
+    retrieve_secret(
+        chain_name,
+        project_id,
+        format!(
+            "labels.zq2-network={} AND labels.node-name={} AND labels.is_reward_wallet=true",
             chain_name, node_name
         )
         .as_str(),
