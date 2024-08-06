@@ -8,9 +8,13 @@ use std::fmt::Display;
 
 use alloy::primitives::{Address, B256};
 use anyhow::{anyhow, Result};
-use bls12_381::{G1Projective, G2Affine};
-use bls_signatures::Serialize as BlsSerialize;
-use blsful::Bls12381G2Impl;
+use blsful::{
+    inner_types::{group::prime::PrimeCurveAffine, G2Projective},
+    vsss_rs::ShareIdentifier,
+    AggregateSignature, Bls12381G2, Bls12381G2Impl, MultiPublicKey, MultiSignature, PublicKey,
+    Signature,
+};
+use itertools::Itertools;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
 use serde::{
     de::{self, Unexpected},
@@ -20,20 +24,42 @@ use sha3::{Digest, Keccak256};
 
 /// The signature type used internally in consensus, to e.g. sign block proposals.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NodeSignature(bls_signatures::Signature);
+pub struct NodeSignature(Signature<Bls12381G2Impl>);
 
 impl NodeSignature {
     pub fn identity() -> NodeSignature {
-        NodeSignature(G2Affine::identity().into())
+        NodeSignature(Signature::<Bls12381G2Impl>::Basic(
+            blsful::inner_types::G2Affine::identity().into(),
+        ))
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<NodeSignature> {
-        Ok(NodeSignature(bls_signatures::Signature::from_bytes(bytes)?))
+        Ok(NodeSignature(Signature::<Bls12381G2Impl>::Basic(
+            blsful::inner_types::G2Projective::from_compressed(bytes.try_into()?)
+                .expect("blst_p2_uncompress() error"),
+        )))
     }
 
     pub fn aggregate(signatures: &[NodeSignature]) -> Result<NodeSignature> {
-        let signatures: Vec<_> = signatures.iter().map(|s| s.0).collect();
-        Ok(NodeSignature(bls_signatures::aggregate(&signatures)?))
+        let signatures = signatures.iter().map(|s| s.0).collect_vec();
+
+        // IETF standards say N >= 1
+        if signatures.len() < 2 {
+            // let g: G2Projective = blsful::inner_types::G2Affine::identity().into();
+            let s = match signatures[0] {
+                Signature::Basic(s) => s,
+                Signature::MessageAugmentation(s) => s,
+                Signature::ProofOfPossession(s) => s,
+            };
+            return Ok(NodeSignature(Signature::<Bls12381G2Impl>::Basic(s)));
+        }
+
+        let asig = AggregateSignature::<Bls12381G2Impl>::from_signatures(signatures)?;
+        Ok(NodeSignature(match asig {
+            AggregateSignature::Basic(s) => Signature::Basic(s),
+            AggregateSignature::MessageAugmentation(s) => Signature::MessageAugmentation(s),
+            AggregateSignature::ProofOfPossession(s) => Signature::ProofOfPossession(s),
+        }))
     }
 
     // Verify that the aggregated signature is valid for the given public keys and message.
@@ -44,25 +70,43 @@ impl NodeSignature {
         message: &[u8],
         public_keys: Vec<NodePublicKey>,
     ) -> Result<()> {
-        let aggregate_key: Vec<bls_signatures::PublicKey> = vec![public_keys
-            .iter()
-            .map(|p| G1Projective::from(p.0))
-            .sum::<G1Projective>()
-            .into()];
-
-        // first verify that the signature itself has been composed from the public keys and the message
-        let hash = vec![bls_signatures::hash(message)];
-
-        if !bls_signatures::verify(&signature.0, &hash, &aggregate_key) {
+        let keys = public_keys.iter().map(|p| p.0).collect_vec();
+        let mpk = MultiPublicKey::<Bls12381G2Impl>::from_public_keys(keys);
+        let msig: MultiSignature<Bls12381G2Impl> = match signature.0 {
+            Signature::Basic(s) => MultiSignature::Basic(s),
+            Signature::MessageAugmentation(s) => MultiSignature::MessageAugmentation(s),
+            Signature::ProofOfPossession(s) => MultiSignature::ProofOfPossession(s),
+        };
+        if msig.verify(mpk, message).is_err() {
             return Err(anyhow!("invalid QC aggregated signature!"));
         }
-
         Ok(())
     }
 
     pub fn to_bytes(self) -> Vec<u8> {
-        self.0.as_bytes()
+        self.0.as_raw_value().to_compressed().to_vec()
     }
+}
+
+pub fn verify_messages(
+    signature: NodeSignature,
+    messages: &[&[u8]],
+    public_keys: &[NodePublicKey],
+) -> Result<()> {
+    let data: Vec<_> = public_keys
+        .iter()
+        .zip(messages.iter())
+        .map(|(a, &b)| (a.0, b))
+        .collect();
+    let asig = match signature.0 {
+        Signature::Basic(s) => AggregateSignature::Basic(s),
+        Signature::MessageAugmentation(s) => AggregateSignature::MessageAugmentation(s),
+        Signature::ProofOfPossession(s) => AggregateSignature::ProofOfPossession(s),
+    };
+    if asig.verify(data.as_slice()).is_err() {
+        return Err(anyhow!("invalid signature"));
+    }
+    Ok(())
 }
 
 impl serde::Serialize for NodeSignature {
@@ -93,22 +137,21 @@ pub enum TransactionSignature {
 
 /// The public key type used internally in consensus, alongside `NodeSignature`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NodePublicKey(pub bls_signatures::PublicKey);
+pub struct NodePublicKey(PublicKey<Bls12381G2Impl>);
 
 impl NodePublicKey {
     pub fn from_bytes(bytes: &[u8]) -> Result<NodePublicKey> {
-        Ok(NodePublicKey(bls_signatures::PublicKey::from_bytes(bytes)?))
+        Ok(NodePublicKey(PublicKey::<Bls12381G2Impl>::try_from(bytes)?))
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
-        self.0.as_bytes()
+        self.0 .0.to_compressed().to_vec()
     }
 
     pub fn verify(&self, message: &[u8], signature: NodeSignature) -> Result<()> {
-        if !self.0.verify(signature.0, message) {
+        if signature.0.verify(&self.0, message).is_err() {
             return Err(anyhow!("invalid signature"));
         }
-
         Ok(())
     }
 }
@@ -198,20 +241,6 @@ impl TransactionPublicKey {
         Address::from_slice(&Keccak256::digest(bytes)[12..32])
     }
 }
-
-pub fn verify_messages(
-    signature: NodeSignature,
-    messages: &[&[u8]],
-    public_keys: &[NodePublicKey],
-) -> Result<()> {
-    let public_keys: Vec<_> = public_keys.iter().map(|p| p.0).collect();
-    if !bls_signatures::verify_messages(&signature.0, messages, &public_keys) {
-        return Err(anyhow!("invalid signature"));
-    }
-
-    Ok(())
-}
-
 /// The secret key type used as the basis of all cryptography in the node.
 /// Any of the `NodePublicKey` or `TransactionPublicKey`s, or a libp2p identity, can be derived
 /// from this.
@@ -223,13 +252,13 @@ pub struct SecretKey {
 impl SecretKey {
     /// Generates a random private key.
     pub fn new() -> Result<SecretKey> {
-        let bls_temp = bls_signatures::PrivateKey::generate(&mut rand_core::OsRng);
-        Self::from_bytes(&bls_temp.as_bytes())
+        let bls_temp = Bls12381G2::new_secret_key();
+        Self::from_bytes(&bls_temp.to_be_bytes())
     }
 
     pub fn new_from_rng<R: rand::Rng + rand::CryptoRng>(rng: &mut R) -> Result<SecretKey> {
-        let bls = bls_signatures::PrivateKey::generate(rng);
-        Self::from_bytes(&bls.as_bytes())
+        let bls_temp = Bls12381G2::random_secret_key(rng);
+        Self::from_bytes(&bls_temp.to_be_bytes())
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<SecretKey> {
@@ -247,15 +276,13 @@ impl SecretKey {
         Self::from_bytes(&bytes_vec)
     }
 
-    pub fn as_bls(&self) -> bls_signatures::PrivateKey {
-        bls_signatures::PrivateKey::new(self.bytes)
+    pub fn as_bls(&self) -> blsful::SecretKey<Bls12381G2Impl> {
+        blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes)
     }
 
     pub fn pop_prove(&self) -> blsful::ProofOfPossession<Bls12381G2Impl> {
         let sk = blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes);
-        // proof_of_possession() only returns an Err if the key is 0.
-        // Since sk != 0, it is safe to unwrap() here.
-        sk.proof_of_possession().unwrap()
+        sk.proof_of_possession().expect("sk != 0")
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
@@ -267,7 +294,11 @@ impl SecretKey {
     }
 
     pub fn sign(&self, message: &[u8]) -> NodeSignature {
-        NodeSignature(self.as_bls().sign(message))
+        NodeSignature(
+            self.as_bls()
+                .sign(blsful::SignatureSchemes::Basic, message)
+                .expect("sk != 0"),
+        )
     }
 
     pub fn node_public_key(&self) -> NodePublicKey {
