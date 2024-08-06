@@ -149,6 +149,8 @@ pub struct Consensus {
     transaction_pool: TransactionPool,
     /// Flag indicating that block creation should be postponed due to empty mempool
     create_next_block_on_timeout: bool,
+    /// Flag indicating if the node has just started
+    is_fresh_launch: bool,
     pub new_blocks: broadcast::Sender<BlockHeader>,
     pub receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
@@ -216,6 +218,9 @@ impl Consensus {
             db.load_trusted_checkpoint(&checkpoint.file, &checkpoint.hash, config.eth_chain_id)?;
         }
 
+        let latest_view = db
+            .get_latest_finalized_view()?;
+
         let latest_block = db
             .get_latest_finalized_view()?
             .map(|view| {
@@ -245,23 +250,59 @@ impl Consensus {
             }
         };
 
-        let (start_view, high_qc) = {
+        let (start_view, high_qc, is_fresh_launch) = {
             match db.get_high_qc()? {
                 Some(qc) => {
                     let high_block = block_store
                         .get_block(qc.block_hash)?
                         .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
 
-                    let start_view = high_block.view() + 1;
+                    //let qc_start_view = high_block.view() + 1;
+
+                    let highest_block_number = db.get_highest_block_number().unwrap().unwrap();
+                    let head_block = block_store
+                        .get_block_by_number(highest_block_number)
+                        .unwrap()
+                        .unwrap();
+
+
+                    let start_view = high_block.view() + 1;//head_block.view() + 1;
+
+                    let highest_finalized = db.get_latest_finalized_view().unwrap().unwrap();
+                    let finalized_block = db.get_block_by_view(&highest_finalized)?.unwrap();
+
+                    db.set_canonical_block_number(high_block.number(), high_block.hash())?;
+
+                    state.set_to_root(high_block.header.state_root_hash.into());
+
+                    if head_block.number() > high_block.number() {
+                        db.revert_canonical_block_number(head_block.number())?;
+                    }
+
+
+                    info!("State root is: {:?}", state.root_hash()?);
+                    info!("Head Block State root is: {:?}", head_block.header.state_root_hash);
+                    info!("high_block State root is: {:?}", high_block.header.state_root_hash);
+                    info!("finalized State root is: {:?}", finalized_block.header.state_root_hash);
+
                     info!("During recovery, starting consensus at view {}", start_view);
-                    (start_view, qc)
+                    (start_view, qc, true)
                 }
                 None => {
                     let start_view = 1;
-                    (start_view, QuorumCertificate::genesis(1024))
+                    (start_view, QuorumCertificate::genesis(1024), false)
                 }
             }
         };
+
+        // let highest_block_number = db.get_highest_block_number().unwrap().unwrap();
+        // let head_block = block_store
+        //     .get_block_by_number(highest_block_number)
+        //     .unwrap()
+        //     .unwrap();
+        //
+        // info!("Start view is: {}, head_block_num is: {}, head_block_view is: {}", start_view, head_block.header.number, head_block.header.view);
+
 
         let mut consensus = Consensus {
             secret_key,
@@ -280,6 +321,7 @@ impl Consensus {
             db,
             transaction_pool: Default::default(),
             create_next_block_on_timeout: false,
+            is_fresh_launch,
             new_blocks: broadcast::Sender::new(4),
             receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
@@ -312,25 +354,34 @@ impl Consensus {
 
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
         // We never want to timeout while on view 1
-        if self.view.get_view() == 1 {
-            let genesis = self
-                .get_block_by_view(0)
-                .unwrap()
-                .ok_or_else(|| anyhow!("missing block"))?;
+        if self.view.get_view() == 1  || self.is_fresh_launch {
+            self.is_fresh_launch = false;
+
+            let block = match self.view.get_view() {
+                1 => self
+                    .get_block_by_view(0)
+                    .unwrap()
+                    .ok_or_else(|| anyhow!("missing block"))?,
+                _ => {
+                    self.block_store
+                        .get_block(self.high_qc.block_hash)?
+                        .ok_or_else(|| anyhow!("missing block that high QC points to!"))?
+                }
+            };
             // If we're in the genesis committee, vote again.
             let stakers = self.state.get_stakers()?;
             if stakers.iter().any(|v| *v == self.public_key()) {
-                info!("timeout in view 1, we will vote for genesis block rather than incrementing view, genesis hash: {}", genesis.hash());
+                info!("timeout in view: {:?}, we will vote for genesis block rather than incrementing view, genesis hash: {}", self.view.get_view(), block.hash());
                 let leader = self
-                    .leader_at_block(&genesis, self.view.get_view())
+                    .leader_at_block(&block, self.view.get_view())
                     .unwrap();
-                let vote = self.vote_from_block(&genesis);
+                let vote = self.vote_from_block(&block);
                 return Ok(Some((
                     Some(leader.peer_id),
                     ExternalMessage::Vote(Box::new(vote)),
                 )));
             } else {
-                info!("We are on view 1 but we are not a validator, so we are waiting.");
+                info!("We are on view: {:?} but we are not a validator, so we are waiting.", self.view.get_view());
             }
 
             return Ok(None);
@@ -345,6 +396,7 @@ impl Consensus {
             minimum_time_left_for_empty_block,
         ) = self.get_consensus_timeout_params();
 
+        info!("HeadBlockView + 1: {}, self_view: {}", head_block_view + 1, self.view.get_view());
         if head_block_view + 1 == self.view.get_view() && self.create_next_block_on_timeout {
             let empty_block_timeout_ms =
                 self.config.consensus.empty_block_timeout.as_millis() as u64;
@@ -1137,18 +1189,18 @@ impl Consensus {
     }
 
     pub fn new_view(&mut self, _: PeerId, new_view: NewView) -> Result<Option<Block>> {
-        trace!("Received new view for height: {:?}", new_view.view);
+        info!("Received new view for height: {:?}", new_view.view);
 
         // The leader for this view should be chosen according to the parent of the highest QC
         // What happens when there are multiple QCs with different parents?
         // if we are not the leader of the round in which the vote counts
         if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
-            trace!(new_view.view, "skipping new view, not the leader");
+            info!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
         // if the vote is too old and does not count anymore
         if new_view.view < self.view.get_view() {
-            trace!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", self.view.get_view(), new_view.view);
+            info!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", self.view.get_view(), new_view.view);
             return Ok(None);
         }
 
@@ -1160,7 +1212,7 @@ impl Consensus {
             .enumerate()
             .find(|(_, &public_key)| public_key == new_view.public_key)
         else {
-            debug!("ignoring new view from unknown node (buffer?) - committee size is : {:?} hash is: {:?} high hash is: {:?}", committee.len(), new_view.qc.block_hash, self.high_qc.block_hash);
+            info!("ignoring new view from unknown node (buffer?) - committee size is : {:?} hash is: {:?} high hash is: {:?}", committee.len(), new_view.qc.block_hash, self.high_qc.block_hash);
             return Ok(None);
         };
 
@@ -1257,7 +1309,7 @@ impl Consensus {
 
                     trace!("Our high QC is {:?}", self.high_qc);
 
-                    trace!(proposal_hash = ?proposal.hash(), view = self.view.get_view(), height = proposal.header.number, "######### creating proposal block from new view");
+                    info!(proposal_hash = ?proposal.hash(), view = self.view.get_view(), height = proposal.header.number, "######### creating proposal block from new view");
 
                     // as a future improvement, process the proposal before broadcasting it
                     return Ok(Some(proposal));

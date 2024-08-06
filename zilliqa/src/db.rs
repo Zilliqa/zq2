@@ -606,7 +606,7 @@ impl Db {
 
     pub fn insert_block_with_db_tx(&self, sqlite_tx: &Connection, block: &Block) -> Result<()> {
         sqlite_tx.execute(
-            "INSERT INTO blocks
+            "INSERT OR REPLACE INTO blocks
                 (block_hash, view, height, parent_hash, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, qc, agg)
             VALUES (:block_hash, :view, :height, :parent_hash, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :qc, :agg)",
             named_params! {

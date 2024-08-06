@@ -134,6 +134,7 @@ fn convert_scilla_state(
     let mut contract_trie = EthTrie::new(db.clone()).at_root(EMPTY_ROOT_HASH);
 
     for (key_name, (indices, value)) in contract_values {
+        println!("Will insert key_name to tree: {:?}", &key_name);
         let storage_key = storage_key(&key_name, &indices);
         contract_trie.insert(&storage_key, &value)?
     }
@@ -171,8 +172,11 @@ fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<
         let key = chunks[1];
 
         let key = hex::decode(key)?;
+        let key = State::account_storage_key(address, B256::from_slice(&key));
 
-        contract_trie.insert(&key, &value)?;
+        println!("Inserting key: {:?} and val: {:?} for addr: {:?}", hex::encode(&key), hex::encode(&value), address);
+
+        contract_trie.insert(&key.0, &value)?;
     }
 
     Ok(contract_trie.root_hash()?)
@@ -339,6 +343,9 @@ pub async fn convert_persistence(
 
     let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix("");
 
+    let acc = state.get_account(secret_key.tx_ecdsa_public_key().into_addr())?;
+
+
     for elem in storage_entries_iter {
         if elem.is_err() {
             warn!("Something went wrong with quering element by prefix!");
@@ -361,7 +368,7 @@ pub async fn convert_persistence(
                 .to_bytes(),
         ),
         Token::Address(ethabi::Address::from_low_u64_be(1)),
-        Token::Uint((64 * 10u128.pow(18)).into()),
+        Token::Uint((64_000_000_000_000_000_000u128).into()),
     ])?;
     let (
         ResultAndState {
@@ -372,7 +379,7 @@ pub async fn convert_persistence(
     ) = state.apply_transaction_evm(
         Address::ZERO,
         Some(contract_addr::DEPOSIT),
-        *node_config.consensus.gas_price,
+        0,
         node_config.consensus.eth_block_gas_limit,
         0,
         data,
@@ -469,7 +476,7 @@ pub async fn convert_persistence(
                 // We know all mainnet transactions before this block were not EVM. However, some of them had bugs
                 // with their `version` which cause them to be marked as EVM. So we use the block number to figure
                 // disambiguate.
-                let pre_evm = block_number < 2_828_325;
+                let pre_evm = block_number < 0;//2_828_325;
 
                 let (transaction, receipt) = match (pre_evm, version) {
                     // TODO: Why are versions other than 1 possible here?
@@ -516,7 +523,7 @@ pub async fn convert_persistence(
                             tx: TxZilliqa {
                                 chain_id,
                                 nonce: transaction.nonce,
-                                gas_price: ZilAmount::from_amount(transaction.gas_price),
+                                gas_price: ZilAmount::from_raw(transaction.gas_price),
                                 gas_limit: ScillaGas(transaction.gas_limit),
                                 to_addr: transaction.to_addr,
                                 amount: ZilAmount::from_amount(transaction.amount),
@@ -536,6 +543,12 @@ pub async fn convert_persistence(
                             )?,
                             sig: schnorr::Signature::from_slice(transaction.signature.as_slice())?,
                         };
+
+                        // let verified = transaction.clone().verify();
+                        // if let Err(err) = verified {
+                        //     let foo = 10;
+                        //     println!("Transaction verification failed!");
+                        // }
 
                         (transaction, receipt)
                     }
@@ -633,24 +646,30 @@ pub async fn convert_persistence(
                 receipt.block_hash = block.hash();
             }
 
-            zq2_db.set_canonical_block_number(block_number, block.hash())?;
-            zq2_db.set_high_qc(block.qc.clone())?;
             blocks.push(block.clone());
-            zq2_db.set_latest_finalized_view(block_number)?;
 
             trace!(%block_number, "block inserted");
             parent_hash = block.hash();
         }
 
         zq2_db.with_sqlite_tx(|sqlite_tx| {
+            for block in &blocks {
+                zq2_db.insert_block_with_db_tx(sqlite_tx, block)?;
+                zq2_db.set_canonical_block_number_with_db_tx(sqlite_tx, block.number(), block.hash())?;
+                zq2_db.set_high_qc_with_db_tx(sqlite_tx, block.qc.clone())?;
+                zq2_db.set_latest_finalized_view_with_db_tx(sqlite_tx, block.view())?;
+            }
+
+            let empty_high_qc_block = create_empty_block_from_parent(blocks.last().unwrap(), secret_key);
+            zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_high_qc_block)?;
+            zq2_db.set_canonical_block_number_with_db_tx(sqlite_tx, empty_high_qc_block.number(), empty_high_qc_block.hash())?;
+            zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.qc.clone())?;
+
             for (hash, transaction) in &transactions {
                 zq2_db.insert_transaction_with_db_tx(sqlite_tx, hash, transaction)?;
             }
             for receipt in &receipts {
                 zq2_db.insert_transaction_receipt_with_db_tx(sqlite_tx, receipt.to_owned())?;
-            }
-            for block in &blocks {
-                zq2_db.insert_block_with_db_tx(sqlite_tx, block)?;
             }
             Ok(())
         })?;
@@ -662,6 +681,37 @@ pub async fn convert_persistence(
     );
 
     Ok(())
+}
+
+fn create_empty_block_from_parent(parent_block: &Block, secret_key: SecretKey) -> Block {
+    let vote = Vote::new(
+        secret_key,
+        parent_block.hash(),
+        secret_key.node_public_key(),
+        parent_block.number(),
+    );
+
+    let qc = QuorumCertificate::new(
+        &[vote.signature()],
+        bitvec![u8, bitvec::order::Msb0; 1; 1],
+        parent_block.hash(),
+        parent_block.number(),
+    );
+
+    Block::from_qc(
+        secret_key,
+        parent_block.header.view + 1,
+        parent_block.header.number + 1,
+        qc,
+        parent_block.hash(),
+        parent_block.header.state_root_hash,
+        parent_block.transactions_root_hash(),
+        parent_block.header.receipts_root_hash,
+        vec![],
+        parent_block.header.timestamp,
+        parent_block.header.gas_used,
+        parent_block.header.gas_limit,
+    )
 }
 
 fn infer_eth_signature(

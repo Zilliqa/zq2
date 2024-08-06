@@ -14,6 +14,7 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
+use hex::FromHex;
 use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
@@ -267,15 +268,31 @@ impl Database for &State {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        self.basic_ref(address)
+        if address != Address::from_hex("0x000000000000000000005a494c4445504f534954".as_bytes()).unwrap()  && address != Address::from_hex("0x0000000000000000000000000000000000000000".as_bytes()).unwrap() {
+            info!("QUERYING basic for addr: {:?}", address);
+        }
+        let res = self.basic_ref(address);
+        res
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        info!("QUERYING code hash for addr: {:?}", code_hash);
         self.code_by_hash_ref(code_hash)
     }
 
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        self.storage_ref(address, index)
+        if address != Address::from_hex("0x000000000000000000005a494c4445504f534954".as_bytes()).unwrap()  && address != Address::from_hex("0x0000000000000000000000000000000000000000".as_bytes()).unwrap() {
+            info!("QUERYING storage for addr: {:?} and index: {:?}", address, index);
+            let res = self.storage_ref(address, index);
+            info!("Result is: {:?}", res.unwrap());
+            let res = self.storage_ref(address, index);
+            res
+
+        }
+        else {
+            let res = self.storage_ref(address, index);
+            res
+        }
     }
 
     fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {

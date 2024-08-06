@@ -149,7 +149,7 @@ impl NodeLauncher {
                 () = &mut sleep => {
                     // No messages for a while, so check if consensus wants to timeout
                     self.node.lock().unwrap().handle_timeout().unwrap();
-                    sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
+                    sleep.as_mut().reset(Instant::now() + Duration::from_millis(1500));
                 },
                 r = self.reset_timeout_receiver.next() => {
                     let sleep_time = r.expect("reset timeout stream should be infinite");
