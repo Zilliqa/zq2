@@ -254,11 +254,10 @@ impl Node {
                 self.consensus.handle_new_transaction(t)?;
             }
             ExternalMessage::BridgeEcho(echo) => {
-                if self.bridge_inbound_message_sender.is_some() {
-                    self.bridge_inbound_message_sender
-                        .as_mut()
-                        .unwrap()
-                        .send(ExternalMessage::BridgeEcho(echo))?
+                if let Some(bridge_inbound_message_sender) =
+                    self.bridge_inbound_message_sender.as_ref()
+                {
+                    bridge_inbound_message_sender.send(ExternalMessage::BridgeEcho(echo))?
                 }
             }
             _ => {
