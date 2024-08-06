@@ -27,6 +27,7 @@ use tokio::{
 use zilliqa::node::Node;
 
 use crate::{
+    address::EthereumAddress,
     github::{self, get_release_or_commit},
     node::get_nodes,
     validators,
@@ -343,6 +344,54 @@ pub async fn install_or_upgrade(config_file: &str, is_upgrade: bool) -> Result<(
         if !failures.is_empty() {
             println!("Failures: {}", failures.join(" "));
         }
+    }
+
+    Ok(())
+}
+
+// z2 deposit --reward-address <node_reward_address>
+
+pub async fn get_deposit_commands(config_file: &str) -> Result<()> {
+    let config = fs::read_to_string(config_file).await?;
+    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let versions = config.versions;
+    let chain_name = &config.name;
+
+    // Create a list of validators instances
+    let nodes = get_nodes(
+        chain_name,
+        &config.project_id,
+        NodeRole::Validator,
+        versions.clone(),
+    )
+    .await?;
+
+    println!(
+        "Deposit commands for the validators in the chain {}",
+        chain_name
+    );
+
+    for node in nodes {
+        let genesis_private_key = node.get_genesis_key();
+        let private_keys = node.get_private_key().await?;
+        let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
+        let reward_private_keys = node.get_wallet_private_key().await?;
+        let node_reward_ethereum_address = EthereumAddress::from_private_key(&reward_private_keys)?;
+
+        println!("Validator {}:", node.get_node_name());
+        println!("z2 deposit --chain {} \\", chain_name);
+        println!("\t--peer-id {} \\", node_ethereum_address.peer_id);
+        println!("\t--public-key {} \\", node_ethereum_address.bls_public_key);
+        println!(
+            "\t--pop-signature {} \\",
+            node_ethereum_address.bls_pop_signature
+        );
+        println!("\t--private-key {} \\", genesis_private_key);
+        println!(
+            "\t--reward-address {} \\",
+            node_reward_ethereum_address.address
+        );
+        println!("\t--amount 100\n");
     }
 
     Ok(())
