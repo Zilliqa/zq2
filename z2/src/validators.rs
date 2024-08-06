@@ -101,7 +101,7 @@ impl ChainConfig {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug, ValueEnum)]
-/// To-do: decomment when became available
+// TODO: decomment when became available
 pub enum Chain {
     // Devnet,
     #[value(name = "zq2-prototestnet")]
