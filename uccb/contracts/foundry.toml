@@ -5,6 +5,11 @@ libs = [
   "../../vendor/openzeppelin-contracts/contracts",
   "../../vendor/openzeppelin-contracts/lib"
 ]
+test = 'test'
+cache_path = 'cache-foundry'
+via_ir = true
+auto_detect_solc = true
+build_info = true
 remappings = [
   "@openzeppelin/=../../vendor/openzeppelin-contracts/",
   "contracts/=src/"
