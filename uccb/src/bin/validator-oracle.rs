@@ -89,7 +89,6 @@ impl ValidatorOracle {
         for chain_client in &self.chain_clients {
             let mut receiver = receiver.clone();
             let chain_client = chain_client.clone();
-            let validator_manager_abi = self.validator_manager_abi.clone();
             let handle = tokio::spawn(async move {
                 loop {
                     let validators = receiver.borrow_and_update().clone();
@@ -208,17 +207,14 @@ impl ValidatorOracle {
     async fn update_validator_manager(
         chain_client: &ChainClient,
         validators: &[Address],
-        validator_manager_abi: JsonAbi,
     ) -> Result<()> {
         info!("Updating validators at {}", &chain_client.rpc_url);
 
-        let validator_manager_interface = Interface::new(validator_manager_abi);
-
-        let contract: ContractInstance<PubSubFrontend, _> = ContractInstance::new(
-            chain_client.validator_manager_address,
-            chain_client.provider.as_ref(),
-            validator_manager_interface.clone(),
-        );
+        let contract: ContractInstance<PubSubFrontend, _> =
+            zilliqa::uccb::contracts::validator_manager::instance(
+                chain_client.validator_manager_address,
+                chain_client.provider.as_ref(),
+            );
 
         let validators = DynSolValue::Array(
             validators
