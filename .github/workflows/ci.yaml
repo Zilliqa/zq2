@@ -42,11 +42,20 @@ jobs:
       - name: Verify working directory is clean
         run: git diff --exit-code
   e2e_test:
+    services:
+      scilla:
+        image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72
+        options: --init --add-host host.docker.internal:host-gateway
+        ports:
+          - 3000:3000
+
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Test connection to Scilla server
+        run: curl http://localhost:3000
       - name: Install Rust
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - uses: Swatinem/rust-cache@v2
