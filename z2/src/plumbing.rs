@@ -113,6 +113,12 @@ pub async fn run_deployer_upgrade(config_file: &str) -> Result<()> {
     Ok(())
 }
 
+pub async fn run_deployer_deposit_commands(config_file: &str) -> Result<()> {
+    println!("🦆 Getting node deposit commands for {config_file} .. ");
+    deployer::get_deposit_commands(config_file).await?;
+    Ok(())
+}
+
 pub async fn print_depends(_base_dir: &str) -> Result<()> {
     for p in Component::all().iter() {
         let req = setup::Setup::describe_component(p).await?;

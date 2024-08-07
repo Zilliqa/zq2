@@ -62,6 +62,8 @@ enum DeployerCommands {
     Install(DeployerUpgradeArgs),
     /// Perfom the network upgrade
     Upgrade(DeployerUpgradeArgs),
+    /// Provide the deposit commands for the validator nodes
+    GetDepositCommands(DeployerUpgradeArgs),
 }
 
 #[derive(Args, Debug)]
@@ -274,9 +276,9 @@ struct DepositStruct {
     /// Specify the Validator PeerId
     #[clap(long)]
     peer_id: String,
-    /// Specify the wallet address to fund the deposit
+    /// Specify the private_key to fund the deposit
     #[clap(long, short)]
-    wallet: String,
+    private_key: String,
     /// Specify the stake amount you want provide
     #[clap(long, short)]
     amount: u8,
@@ -464,6 +466,22 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
+            DeployerCommands::GetDepositCommands(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_deposit_commands(&config_file)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to run deployer get-deposit-commands command: {}",
+                            err
+                        )
+                    })?;
+                Ok(())
+            }
         },
         Commands::Converter(converter_command) => match &converter_command {
             ConverterCommands::Convert(ref arg) => {
@@ -517,7 +535,7 @@ async fn main() -> Result<()> {
                 node,
                 args.amount,
                 args.chain_name.clone(),
-                &args.wallet,
+                &args.private_key,
                 &args.reward_address,
             )?;
             validators::deposit_stake(&stake).await

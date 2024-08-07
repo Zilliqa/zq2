@@ -1,113 +1,61 @@
-variable "name" {
-  type     = string
-  nullable = false
+# Add a random suffix to the compute instance names. This ensures that when they are re-created, their `self_link`
+# changes and any instance groups containing them are updated.
+
+resource "random_bytes" "generate_node_key" {
+  count  = !var.generate_node_key ? 0 : var.vm_num
+  length = 32
 }
 
-variable "service_account_email" {
-  type     = string
-  nullable = false
-}
+resource "google_secret_manager_secret" "node_key" {
+  count     = !var.generate_node_key ? 0 : var.vm_num
+  secret_id = "${var.name}-${count.index}-${random_id.name_suffix.hex}-pk"
 
-variable "vm_num" {
-  type     = number
-  nullable = false
-  default  = 1
-}
+  labels = merge(
+    { "zq2-network" = var.zq_network_name },
+    { "role" = var.role },
+    { "node-name" = "${var.name}-${count.index}-${random_id.name_suffix.hex}" },
+    var.labels
+  )
 
-variable "network_name" {
-  type     = string
-  nullable = false
-}
-
-variable "subnetwork_name" {
-  type     = string
-  nullable = false
-}
-
-variable "subdomain" {
-  description = "(Optional) ZQ2 network subdomain"
-  type        = string
-  default     = ""
-}
-
-variable "docker_image" {
-  description = "(Option): ZQ2 validator docker image"
-  type        = string
-  default     = ""
-}
-
-variable "secret_keys" {
-  type     = list(string)
-}
-
-variable "genesis_key" {
-  type = string
-  default = ""
-}
-
-variable "node_type" {
-  type     = string
-  default  = "e2-standard-2"
-  nullable = false
-}
-
-variable "node_zones" {
-  type     = list(string)
-  default  = ["europe-west2-a"]
-  nullable = false
-}
-
-variable "persistence_url" {
-  type     = string
-  nullable = true
-}
-
-variable "zq_network_name" {
-  type     = string
-  nullable = false
-}
-
-variable "region" {
-  description = "The region ID to host the network in"
-  type        = string
-  default     = "europe-west2"
-}
-
-variable "role" {
-  description = "VM role"
-  validation {
-    condition     = contains(["validator", "apps", "bootstrap", "sentry", "checkpoint"], var.role)
-    error_message = "The role value must be one of: 'validator', 'apps', 'bootstrap', 'sentry', 'checkpoint'."
+  replication {
+    auto {}
   }
 }
 
-variable "labels" {
-  type        = map(string)
-  description = "A single-level map/object with key value pairs of metadata labels to apply to the GCP resources. All keys should use underscores and values should use hyphens. All values must be wrapped in quotes."
-  nullable    = true
-  default     = {}
+resource "google_secret_manager_secret_version" "node_key_version" {
+  count       = !var.generate_node_key ? 0 : var.vm_num
+  secret      = google_secret_manager_secret.node_key[count.index].id
+  secret_data = random_bytes.generate_node_key[count.index].hex
 }
 
-variable "external_ip" {
-  description = "The external IP address. Leave empty for no external IP."
-  type        = string
-  default     = ""
+resource "random_bytes" "generate_reward_wallet" {
+  count  = !var.generate_reward_wallet ? 0 : var.vm_num
+  length = 32
 }
 
-variable "otterscan_image" {
-  description = "(Optional): Otterscan docker image url (incl. version)"
-  type        = string
-  default     = ""
+resource "google_secret_manager_secret" "reward_wallet" {
+  count     = !var.generate_reward_wallet ? 0 : var.vm_num
+  secret_id = "${var.name}-${count.index}-${random_id.name_suffix.hex}-wallet-pk"
+
+  labels = merge(
+    { "zq2-network" = var.zq_network_name },
+    { "role" = var.role },
+    { "node-name" = "${var.name}-${count.index}-${random_id.name_suffix.hex}" },
+    { "is_reward_wallet" = true },
+    var.labels
+  )
+
+  replication {
+    auto {}
+  }
 }
 
-variable "spout_image" {
-  description = "(Optional): spout docker image url (incl. version)"
-  type        = string
-  default     = ""
+resource "google_secret_manager_secret_version" "reward_wallet_version" {
+  count       = !var.generate_reward_wallet ? 0 : var.vm_num
+  secret      = google_secret_manager_secret.reward_wallet[count.index].id
+  secret_data = random_bytes.generate_reward_wallet[count.index].hex
 }
 
-# Add a random suffix to the compute instance names. This ensures that when they are re-created, their `self_link`
-# changes and any instance groups containing them are updated.
 resource "random_id" "name_suffix" {
   byte_length = 2
 
@@ -116,9 +64,9 @@ resource "random_id" "name_suffix" {
     service_account_email = var.service_account_email
     network_name          = var.network_name
     subnetwork_name       = var.subnetwork_name
-    docker_image          = var.docker_image
-    otterscan_image       = var.otterscan_image
-    spout_image           = var.spout_image
+    # docker_image          = var.docker_image
+    # otterscan_image       = var.otterscan_image
+    # spout_image           = var.spout_image
   }
 }
 
@@ -129,7 +77,7 @@ resource "google_compute_instance" "this" {
   machine_type              = var.node_type
   allow_stopping_for_update = true
   zone                      = length(var.node_zones) > 1 ? sort(var.node_zones)[count.index % length(var.node_zones)] : var.node_zones[count.index % length(var.node_zones)]
-  
+
   labels = merge({ "zq2-network" = var.zq_network_name },
   { "role" = var.role }, { "node-name" = "${var.name}-${count.index}-${random_id.name_suffix.hex}" }, var.labels)
 
@@ -140,7 +88,7 @@ resource "google_compute_instance" "this" {
       "https://www.googleapis.com/auth/devstorage.read_only",
       "https://www.googleapis.com/auth/logging.write",
       "https://www.googleapis.com/auth/monitoring.write",
-      "https://www.googleapis.com/auth/compute", // REMOVE
+      "https://www.googleapis.com/auth/compute", # REMOVE
     ]
   }
 
@@ -157,7 +105,7 @@ resource "google_compute_instance" "this" {
     subnetwork = var.subnetwork_name
 
     dynamic "access_config" {
-      for_each = [ var.role == "validator" ? 1 : 0 ] # Always create the access_config block for validators
+      for_each = [var.role == "validator" ? 1 : 0] # Always create the access_config block for validators
       content {
         # Conditionally set nat_ip only if var.external_ip is not empty
         nat_ip = var.external_ip != "" ? var.external_ip : null
@@ -166,23 +114,26 @@ resource "google_compute_instance" "this" {
   }
 
   metadata = {
-    "enable-guest-attributes" = "TRUE"
-    "enable-osconfig"         = "TRUE"
-    "genesis_key"             = base64encode(var.genesis_key)
-    "persistence_url"         = base64encode(var.persistence_url)
-    "secret_key"              = base64encode(var.secret_keys[count.index])
-    "subdomain"               = base64encode(var.subdomain)
+    "enable-guest-attributes"   = "TRUE"
+    "enable-osconfig"           = "TRUE"
+    "genesis_key"               = base64encode(var.genesis_key)
+    "persistence_url"           = base64encode(var.persistence_url)
+    "subdomain"                 = base64encode(var.subdomain)
+    "secret_key"                = !var.generate_node_key ? "" : base64encode(google_secret_manager_secret_version.node_key_version[count.index].secret_data)
+    "secret_id"                 = !var.generate_node_key ? "" : google_secret_manager_secret_version.node_key_version[count.index].id
+    "reward_wallet_private_key" = !var.generate_reward_wallet ? "" : base64encode(google_secret_manager_secret_version.reward_wallet_version[count.index].secret_data)
+    "reward_wallet_secret_id"   = !var.generate_reward_wallet ? "" : google_secret_manager_secret_version.reward_wallet_version[count.index].id
   }
 }
 
-output "id" {
-  value = google_compute_instance.this[*].id
-}
+resource "google_dns_record_set" "this" {
+  for_each = { for idx, instance in google_compute_instance.this : idx => instance }
 
-output "self_link" {
-  value = google_compute_instance.this[*].self_link
-}
+  project      = var.dns_zone_project_id
+  managed_zone = local.nodes_domain_name
+  name         = each.key != "@" ? "${each.value.name}.${var.nodes_dns_zone_name}." : "${var.nodes_dns_zone_name}."
+  type         = "A"
+  ttl          = try(each.value.ttl, "60")
 
-output "network_ip" {
-  value = google_compute_instance.this[*].network_interface[0].network_ip
+  rrdatas = [each.value.network_interface[0].access_config[0].nat_ip]
 }
