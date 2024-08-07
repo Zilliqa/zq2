@@ -2,8 +2,11 @@ use std::collections::HashMap;
 
 use alloy::{
     dyn_abi::DecodedEvent,
-    primitives::{Address, Bytes, Signature, U256},
-    signers::local::PrivateKeySigner,
+    primitives::{eip191_hash_message, Address, Bytes, Signature, B256, U256},
+    signers::{
+        local::{LocalSigner, PrivateKeySigner},
+        Signer, SignerSync,
+    },
 };
 use anyhow::{anyhow, Result};
 use libp2p::core::DecodeError;
@@ -49,37 +52,37 @@ impl RelayEvent {
             nonce,
         })
     }
-    /*
-        pub fn from(event: RelayedFilter, source_chain_id: U256) -> Self {
-            RelayEvent {
-                source_chain_id,
-                target_chain_id: event.target_chain_id,
-                target: event.target,
-                call: event.call,
-                gas_limit: event.gas_limit,
-                nonce: event.nonce,
-            }
-        }
-
-        pub fn hash(&self) -> H256 {
-            hash_message(abi::encode(&[
-                Token::Uint(self.source_chain_id),
-                Token::Uint(self.target_chain_id),
-                Token::Address(self.target),
-                Token::Bytes(self.call.to_vec()),
-                Token::Uint(self.gas_limit),
-                Token::Uint(self.nonce),
-            ]))
-        }
-        pub fn sign(&self, signer: &PrivateKeySigner) -> Result<Signature> {
-            let &credentials = signer.credentials();
-    credentials.sign(&)
-            let data = self.hash();
-            let signature = wallet.sign_hash(data)?;
-
-            Ok(signature)
-        }
+    pub fn hash(&self) -> B256 {
+        eip191_hash_message(&self)
+        /*
+        hash_message(abi::encode(&[
+            Token::Uint(self.source_chain_id),
+            Token::Uint(self.target_chain_id),
+            Token::Address(self.target),
+            Token::Bytes(self.call.to_vec()),
+            Token::Uint(self.gas_limit),
+            Token::Uint(self.nonce),
+        ]))
         */
+    }
+
+    pub async fn sign(&self, signer: &PrivateKeySigner) -> Result<Signature> {
+        let data = self.hash();
+        let signature = signer.sign_message(data.as_slice()).await?;
+
+        Ok(signature)
+    }
+}
+
+impl core::convert::AsRef<[u8]> for RelayEvent {
+    fn as_ref(&self) -> &[u8] {
+        unsafe {
+            std::slice::from_raw_parts(
+                self as *const RelayEvent as *const u8,
+                std::mem::size_of::<RelayEvent>(),
+            )
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
