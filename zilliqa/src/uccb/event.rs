@@ -12,7 +12,7 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RelayEvent {
+pub struct RelayedEvent {
     pub source_chain_id: U256,
     pub target_chain_id: U256,
     pub target: Address,
@@ -21,7 +21,7 @@ pub struct RelayEvent {
     pub nonce: U256,
 }
 
-impl RelayEvent {
+impl RelayedEvent {
     pub fn try_from(event: DecodedEvent, source_chain_id: U256) -> Result<Self> {
         let indexed = event.indexed;
         let values = event.body;
@@ -57,12 +57,12 @@ impl RelayEvent {
     }
 }
 
-impl core::convert::AsRef<[u8]> for RelayEvent {
+impl core::convert::AsRef<[u8]> for RelayedEvent {
     fn as_ref(&self) -> &[u8] {
         unsafe {
             std::slice::from_raw_parts(
-                self as *const RelayEvent as *const u8,
-                std::mem::size_of::<RelayEvent>(),
+                self as *const RelayedEvent as *const u8,
+                std::mem::size_of::<RelayedEvent>(),
             )
         }
     }
@@ -70,13 +70,13 @@ impl core::convert::AsRef<[u8]> for RelayEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RelayEventSignatures {
-    pub event: Option<RelayEvent>,
+    pub event: Option<RelayedEvent>,
     pub dispatched: bool,
     pub signatures: HashMap<Address, Signature>,
 }
 
 impl RelayEventSignatures {
-    pub fn new(event: RelayEvent, address: Address, signature: Signature) -> Self {
+    pub fn new(event: RelayedEvent, address: Address, signature: Signature) -> Self {
         RelayEventSignatures {
             event: Some(event),
             dispatched: false,
