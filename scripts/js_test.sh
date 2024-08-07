@@ -4,10 +4,6 @@ sudo add-apt-repository ppa:ethereum/ethereum > /dev/null 2>&1
 sudo apt-get update > /dev/null 2>&1
 sudo apt-get install solc libsecp256k1-dev protobuf-compiler > /dev/null 2>&1
 
-echo "Installing docker..."
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-
 echo "Running scilla HTTP server"
 docker run --detach --name scilla --add-host host.docker.internal:host-gateway --publish 3000:3000 --init --rm asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72 /scilla/0/bin/scilla-server-http
 
