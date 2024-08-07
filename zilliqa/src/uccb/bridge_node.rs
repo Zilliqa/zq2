@@ -23,7 +23,7 @@ use tokio::{
     sync::mpsc::{self, UnboundedSender},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::{info, trace, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug)]
 pub struct BridgeNode {
@@ -57,7 +57,7 @@ impl BridgeNode {
             relay_nonces: HashSet::new(),
         };
 
-        bridge_node.update_validators().await?;
+        //bridge_node.update_validators().await?;
 
         Ok(bridge_node)
     }
@@ -88,10 +88,13 @@ impl BridgeNode {
         loop {
             select! {
                 Some(log) = relayed_stream.next() => {
-                    trace!("Received a log on the relay event stream: {log:?}");
+                    debug!("Received a log on the relay event stream: {log:?}");
                     let event = RelayEvent::try_from(relayed_event.decode_log(log.data(), true)?, self.chain_client.chain_id)?;
                     self.handle_relay_event(event).await?;
                 },
+                Some(message) = self.inbound_message_receiver.next() => {
+                    self.handle_bridge_message(message).await?;
+                }
             }
         }
 
@@ -175,9 +178,7 @@ impl BridgeNode {
                 }
             }
             InboundBridgeMessage::Relay(relay) => {
-                /*
-                    self.handle_relay(&relay).await?;
-                */
+                self.handle_relay(&relay).await?;
             }
         }
 
@@ -242,14 +243,22 @@ impl BridgeNode {
     }
 
     async fn update_validators(&mut self) -> Result<()> {
-        /*
-        let validator_manager: ValidatorManager<ChainProvider> = self.chain_client.get_contract();
-
-        // TODO: should this be a call?
-        let validators: Vec<Address> = validator_manager.get_validators().call().await?;
+        let validator_manager: ContractInstance<PubSubFrontend, _> =
+            contracts::validator_manager::instance(
+                self.chain_client.validator_manager_address,
+                self.chain_client.provider.as_ref(),
+            );
+        let call_builder: DynCallBuilder<_, _, _> =
+            validator_manager.function("getValidators", &[])?;
+        let output = call_builder.call().await?;
+        let validators: Vec<Address> = output[0]
+            .as_array()
+            .unwrap()
+            .into_iter()
+            .map(|value| value.as_address().unwrap())
+            .collect();
 
         self.validators = validators.into_iter().collect();
-        */
         Ok(())
     }
 
@@ -257,7 +266,6 @@ impl BridgeNode {
         signature_count * 3 > self.validators.len() * 2
     }
 
-    /*
     /// Handle message, verify and add to storage.
     /// If has supermajority then submit the transaction.
     async fn handle_relay(&mut self, echo: &Relay) -> Result<()> {
@@ -265,11 +273,22 @@ impl BridgeNode {
         let nonce = event.nonce;
         let event_hash = event.hash();
 
-        let signature = Signature::try_from(signature.to_vec().as_slice())?;
+        let address = match signature.recover_address_from_msg(event_hash.as_slice()) {
+            Ok(address) => {
+                debug!("Recovered address is: {address}");
+                address
+            }
+            Err(e) => {
+                error!("Couldn't recover address ({e})");
+                return Ok(());
+            }
+        };
 
+        // TODO: check if the address is in the validator set
         // update validator set in case it has changed
         self.update_validators().await?;
 
+        /*
         let address = match signature.recover(event_hash) {
             Ok(addr) => addr,
             Err(err) => {
@@ -282,11 +301,13 @@ impl BridgeNode {
             info!("Address not part of the validator set, {}", address);
             return Ok(());
         }
+        */
 
         // TODO: handle case where validators sign different data to the same event
         let event_signatures = match self.event_signatures.get_mut(&nonce) {
             None => {
-                let event_signatures = RelayEventSignatures::new(event.clone(), address, signature);
+                let event_signatures =
+                    RelayEventSignatures::new(event.clone(), address, *signature);
                 self.event_signatures
                     .insert(nonce, event_signatures.clone());
 
@@ -308,7 +329,7 @@ impl BridgeNode {
 
                 event_signatures
                     .signatures
-                    .add_signature(address, signature);
+                    .add_signature(address, *signature);
 
                 event_signatures.clone()
             }
@@ -320,6 +341,7 @@ impl BridgeNode {
             event_signatures.signatures.len()
         );
 
+        // TODO: take is_leader from the consensus
         // if leader and majority, create request to dispatch
         if self.is_leader && self.has_supermajority(event_signatures.signatures.len()) {
             // TODO: Verify if any signatures became invalid due to validator changes
@@ -334,5 +356,4 @@ impl BridgeNode {
 
         Ok(())
     }
-    */
 }
