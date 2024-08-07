@@ -1,8 +1,7 @@
 ################################################################################
-# ZQ2 GCP Terraform providers
+# ZQ2 GCP Terraform locals variables
 ################################################################################
 
-provider "google" {
-  project = var.project_id
-  region  = var.region
+locals {
+  nodes_domain_name = replace(var.nodes_dns_zone_name, ".", "-")
 }
