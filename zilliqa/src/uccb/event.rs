@@ -54,16 +54,6 @@ impl RelayEvent {
     }
     pub fn hash(&self) -> B256 {
         eip191_hash_message(&self)
-        /*
-        hash_message(abi::encode(&[
-            Token::Uint(self.source_chain_id),
-            Token::Uint(self.target_chain_id),
-            Token::Address(self.target),
-            Token::Bytes(self.call.to_vec()),
-            Token::Uint(self.gas_limit),
-            Token::Uint(self.nonce),
-        ]))
-        */
     }
 
     pub async fn sign(&self, signer: &PrivateKeySigner) -> Result<Signature> {
@@ -87,15 +77,15 @@ impl core::convert::AsRef<[u8]> for RelayEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RelayEventSignatures {
-    // pub event: Option<RelayEvent>,
+    pub event: Option<RelayEvent>,
     pub dispatched: bool,
     pub signatures: HashMap<Address, Signature>,
 }
 
 impl RelayEventSignatures {
-    pub fn new(/*event: RelayEvent,*/ address: Address, signature: Signature) -> Self {
+    pub fn new(event: RelayEvent, address: Address, signature: Signature) -> Self {
         RelayEventSignatures {
-            // event: Some(event),
+            event: Some(event),
             dispatched: false,
             signatures: HashMap::from([(address, signature)]),
         }
