@@ -8,11 +8,11 @@ use std::{
 use alloy::primitives::{Address, Signature, U256};
 use serde::{Deserialize, Serialize};
 
-use crate::uccb::event::RelayEvent;
+use crate::uccb::event::RelayedEvent;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Relay {
-    pub event: RelayEvent,
+    pub event: RelayedEvent,
     pub signature: Signature,
 }
 
@@ -34,7 +34,7 @@ pub struct Dispatched {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dispatch {
-    pub event: RelayEvent,
+    pub event: RelayedEvent,
     pub signatures: HashMap<Address, Signature>,
 }
 
