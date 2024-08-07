@@ -4,7 +4,7 @@ import hre from "hardhat";
 import {parallelizer} from "../../helpers";
 import {Account} from "@zilliqa-js/zilliqa";
 
-xdescribe("Scilla Fungible token contract", function () {
+describe("Scilla Fungible token contract", function () {
   let contract: ScillaContract;
   let signer: Account;
   let null_contract: ScillaContract;

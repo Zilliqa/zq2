@@ -3,10 +3,10 @@ name: ZQ2 CI
 on:
   push:
     branches:
-    - main
+      - main
   pull_request:
     branches:
-    - main
+      - main
   merge_group:
     types:
       - checks_requested
@@ -20,35 +20,35 @@ jobs:
   check:
     runs-on: [self-hosted, gcp]
     steps:
-    - name: Install Rust
-      run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-    - name: Install nightly
-      run: rustup toolchain install nightly
-    - name: Install dependencies
-      run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-    - uses: Swatinem/rust-cache@v2
-    - name: Build
-      run: cargo build --release --all-targets --all-features
-    - name: Clippy
-      run: cargo clippy --release --all --all-targets --all-features -- -D warnings
-    # Run `cargo fmt` with nightly, because we use 'unstable' rustfmt features.
-    - name: rustfmt
-      run: cargo +nightly fmt --all --check
-    - name: Test
-      run: cargo test --release --all-targets --all-features
-    - name: Verify working directory is clean
-      run: git diff --exit-code
+      - name: Install Rust
+        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install nightly
+        run: rustup toolchain install nightly
+      - name: Install dependencies
+        run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --all-targets --all-features
+      - name: Clippy
+        run: cargo clippy --release --all --all-targets --all-features -- -D warnings
+      # Run `cargo fmt` with nightly, because we use 'unstable' rustfmt features.
+      - name: rustfmt
+        run: cargo +nightly fmt --all --check
+      - name: Test
+        run: cargo test --release --all-targets --all-features
+      - name: Verify working directory is clean
+        run: git diff --exit-code
   e2e_test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-    - name: Install Rust
-      run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-    - uses: Swatinem/rust-cache@v2
-    - name: JS test framework
-      run: export PATH="/scilla/0/bin:$PATH" && ./scripts/js_test.sh
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Rust
+        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - uses: Swatinem/rust-cache@v2
+      - name: JS test framework
+        run: export PATH="/scilla/0/bin:$PATH" && ./scripts/js_test.sh

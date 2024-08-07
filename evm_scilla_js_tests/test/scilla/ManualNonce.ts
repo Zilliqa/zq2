@@ -3,7 +3,7 @@ import {expect} from "chai";
 import hre from "hardhat";
 import {Account} from "@zilliqa-js/zilliqa";
 
-xdescribe("Manual nonce #parallel", function () {
+describe("Manual nonce #parallel", function () {
   let contract: ScillaContract;
   let signer: Account;
   const VALUE = 12;
@@ -25,11 +25,6 @@ xdescribe("Manual nonce #parallel", function () {
   });
 
   it("Should be possible to call multiple transitions with manual nonces @block-2", async function () {
-    if (hre.getNetworkName() === "isolated_server") {
-      // This test doesn't work on iso server, but does on a devnet
-      this.skip();
-    }
-  
     let result = await hre.zilliqaSetup.zilliqa.blockchain.getBalance(signer.address);
 
     const NONCE = result.result.nonce;
