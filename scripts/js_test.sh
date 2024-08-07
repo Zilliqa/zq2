@@ -9,7 +9,7 @@ curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
 
 echo "Running scilla HTTP server"
-docker run --name scilla --network host --init --rm asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72 /scilla/0/bin/scilla-server-http
+docker run --name scilla --network host --detach --init --rm asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72 /scilla/0/bin/scilla-server-http
 
 echo "Checking scilla HTTP server"
 curl localhost:3000
