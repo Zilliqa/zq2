@@ -1,7 +1,7 @@
 use crate::uccb::{
     client::ChainClient,
     contracts,
-    event::{DispatchedEvent, RelayEvent, RelayEventSignatures},
+    event::{DispatchedEvent, RelayEventSignatures, RelayedEvent},
     message::{Dispatch, Dispatched, InboundBridgeMessage, OutboundBridgeMessage, Relay},
     signature::SignatureTracker,
 };
@@ -99,52 +99,18 @@ impl BridgeNode {
             select! {
                 Some(log) = relayed_stream.next() => {
                     debug!("Received a log on the relay event stream: {log:?}");
-                    let event = RelayEvent::try_from(relayed_event.decode_log(log.data(), true)?, self.chain_client.chain_id)?;
-                    self.handle_relay_event(event).await?;
+                    let event = RelayedEvent::try_from(relayed_event.decode_log(log.data(), true)?, self.chain_client.chain_id)?;
+                    self.handle_relayed_event(event).await?;
                 },
                 Some(log) = dispatched_stream.next() => {
                     let event = DispatchedEvent::try_from(dispatched_event.decode_log(log.data(), true)?, self.chain_client.chain_id)?;
-                    self.handle_dispatch_event(event)?;
+                    self.handle_dispatched_event(event)?;
                 },
                 Some(message) = self.inbound_message_receiver.next() => {
                     self.handle_bridge_message(message).await?;
                 }
             }
         }
-
-        /*
-        let chain_gateway: ChainGateway<ChainProvider> = self.chain_client.get_contract();
-
-        // TODO: polling finalized events
-        let relayed_filter = chain_gateway.event::<RelayedFilter>().filter;
-        let dispatched_filter = chain_gateway.event::<DispatchedFilter>().filter;
-
-        let relayed_listener: EventListener<RelayedFilter> =
-            EventListener::new(self.chain_client.clone(), relayed_filter);
-        let dispatched_listener: EventListener<DispatchedFilter> =
-            EventListener::new(self.chain_client.clone(), dispatched_filter);
-
-        let mut relayed_stream = relayed_listener.listen();
-        let mut dispatched_stream = dispatched_listener.listen();
-
-        loop {
-            select! {
-                Some(Ok(events)) = relayed_stream.next() => {
-                    for event in events {
-                        self.handle_relay_event(event)?;
-                    }
-                },
-                Some(Ok(events)) = dispatched_stream.next() => {
-                    for event in events {
-                        self.handle_dispatch_event(event)?;
-                    }
-                }
-                Some(message) = self.inbound_message_receiver.next() => {
-                    self.handle_bridge_message(message).await?;
-                }
-            }
-        }
-        */
 
         println!("Done Listening: {:?}", self.chain_client.chain_id);
         Ok(())
@@ -183,7 +149,7 @@ impl BridgeNode {
         Ok(())
     }
 
-    async fn handle_relay_event(&mut self, event: RelayEvent) -> Result<()> {
+    async fn handle_relayed_event(&mut self, event: RelayedEvent) -> Result<()> {
         if self.relay_nonces.contains(&event.nonce) {
             warn!(
                 "Chain: {} event duplicated {event:?}",
@@ -215,17 +181,17 @@ impl BridgeNode {
         Ok(())
     }
 
-    fn handle_dispatch_event(&mut self, event: DispatchedEvent) -> Result<()> {
-            info!(
-                "Found dispatched event chain: {}, nonce: {}",
-                event.source_chain_id, event.nonce
-            );
+    fn handle_dispatched_event(&mut self, event: DispatchedEvent) -> Result<()> {
+        info!(
+            "Found dispatched event chain: {}, nonce: {}",
+            event.source_chain_id, event.nonce
+        );
 
-            self.outbound_message_sender
-                .send(OutboundBridgeMessage::Dispatched(Dispatched {
-                    chain_id: event.source_chain_id,
-                    nonce: event.nonce,
-                }))?;
+        self.outbound_message_sender
+            .send(OutboundBridgeMessage::Dispatched(Dispatched {
+                chain_id: event.source_chain_id,
+                nonce: event.nonce,
+            }))?;
 
         Ok(())
     }
