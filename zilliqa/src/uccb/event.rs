@@ -5,19 +5,11 @@ use alloy::{
     primitives::{eip191_hash_message, Address, Bytes, Signature, B256, U256},
     signers::{
         local::{LocalSigner, PrivateKeySigner},
-        Signer, SignerSync,
+        Signer,
     },
 };
 use anyhow::{anyhow, Result};
-use libp2p::core::DecodeError;
 use serde::{Deserialize, Serialize};
-
-/*
-#[derive(Debug)]
-enum EventConversionError {
-    IncorrectValueCount,
-}
-*/
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayEvent {
@@ -52,6 +44,7 @@ impl RelayEvent {
             nonce,
         })
     }
+
     pub fn hash(&self) -> B256 {
         eip191_hash_message(&self)
     }
@@ -89,5 +82,38 @@ impl RelayEventSignatures {
             dispatched: false,
             signatures: HashMap::from([(address, signature)]),
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DispatchedEvent {
+    pub source_chain_id: U256,
+    pub target: Address,
+    pub success: bool,
+    pub response: Bytes,
+    pub nonce: U256,
+}
+
+impl DispatchedEvent {
+    pub fn try_from(event: DecodedEvent, source_chain_id: U256) -> Result<Self> {
+        let indexed = event.indexed;
+        let values = event.body;
+        if indexed.len() != 3 || values.len() != 2 {
+            return Err(anyhow!("Incorrect number of values"));
+        }
+
+        let source_chain_id = indexed[0].as_uint().unwrap().0;
+        let target = indexed[1].as_address().unwrap();
+        let success = values[0].as_bool().unwrap();
+        let response = Bytes::from(values[1].as_bytes().unwrap().to_vec());
+        let nonce = values[2].as_uint().unwrap().0;
+
+        Ok(Self {
+            source_chain_id,
+            target,
+            success,
+            response,
+            nonce,
+        })
     }
 }
