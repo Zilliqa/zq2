@@ -90,7 +90,7 @@ impl BridgeNode {
                 Some(log) = relayed_stream.next() => {
                     trace!("Received a log on the relay event stream: {log:?}");
                     let event = RelayEvent::try_from(relayed_event.decode_log(log.data(), true)?, self.chain_client.chain_id)?;
-                    self.handle_relay_event(event)?;
+                    self.handle_relay_event(event).await?;
                 },
             }
         }
@@ -184,21 +184,18 @@ impl BridgeNode {
         Ok(())
     }
 
-    fn handle_relay_event(&mut self, event: RelayEvent) -> Result<()> {
-        info!("Relayed received: {event:?}");
-
+    async fn handle_relay_event(&mut self, event: RelayEvent) -> Result<()> {
         if self.relay_nonces.contains(&event.nonce) {
-            info!(
+            warn!(
                 "Chain: {} event duplicated {event:?}",
                 self.chain_client.chain_id
             );
             return Ok(());
         }
 
-        /*
         info!(
-            "Chain: {} event found to be broadcasted: {}",
-            self.chain_client.chain_id, event
+            "Chain: {} event found to be broadcasted: {event:?}",
+            self.chain_client.chain_id
         );
 
         if let Some(RelayEventSignatures {
@@ -209,16 +206,13 @@ impl BridgeNode {
             return Ok(());
         }
 
-        let relay_event = RelayEvent::from(event, self.chain_client.chain_id);
-
-        self.relay_nonces.insert(relay_event.nonce);
+        self.relay_nonces.insert(event.nonce);
 
         self.broadcast_message(Relay {
-            signature: relay_event.sign(&self.chain_client.wallet)?,
-            event: relay_event,
+            signature: event.sign(&self.chain_client.signer).await?,
+            event,
         })?;
 
-        */
         Ok(())
     }
 
@@ -236,6 +230,7 @@ impl BridgeNode {
 
         Ok(())
     }
+    */
 
     fn broadcast_message(&self, relay: Relay) -> Result<()> {
         info!("Broadcasting: {:?}", relay);
@@ -245,7 +240,6 @@ impl BridgeNode {
 
         Ok(())
     }
-    */
 
     async fn update_validators(&mut self) -> Result<()> {
         /*
