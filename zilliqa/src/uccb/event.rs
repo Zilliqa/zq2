@@ -1,22 +1,20 @@
 use std::collections::HashMap;
 
 use alloy::{
+    dyn_abi::DecodedEvent,
     primitives::{Address, Bytes, Signature, U256},
     signers::local::PrivateKeySigner,
-    sol_types::sol,
 };
-use anyhow::Result;
-/*
-use ethers::{
-    abi::{self, Token},
-    signers::LocalWallet,
-    types::{Address, Bytes, Signature, H256, U256},
-    utils::hash_message,
-};
-*/
+use anyhow::{anyhow, Result};
+use libp2p::core::DecodeError;
 use serde::{Deserialize, Serialize};
 
-//use crate::uccb::contracts::RelayedFilter;
+/*
+#[derive(Debug)]
+enum EventConversionError {
+    IncorrectValueCount,
+}
+*/
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayEvent {
@@ -29,6 +27,28 @@ pub struct RelayEvent {
 }
 
 impl RelayEvent {
+    pub fn try_from(event: DecodedEvent, source_chain_id: U256) -> Result<Self> {
+        let indexed = event.indexed;
+        let values = event.body;
+        if indexed.len() != 1 || values.len() != 4 {
+            return Err(anyhow!("Incorrect number of values"));
+        }
+
+        let target = values[0].as_address().unwrap();
+        let target_chain_id = indexed[0].as_uint().unwrap().0;
+        let gas_limit = values[2].as_uint().unwrap().0;
+        let nonce = values[3].as_uint().unwrap().0;
+        let call = Bytes::from(values[1].as_bytes().unwrap().to_vec());
+
+        Ok(Self {
+            source_chain_id,
+            target_chain_id,
+            target,
+            call,
+            gas_limit,
+            nonce,
+        })
+    }
     /*
         pub fn from(event: RelayedFilter, source_chain_id: U256) -> Self {
             RelayEvent {
