@@ -23,6 +23,7 @@ use tracing::{error, info, warn};
 use crate::{
     message::ExternalMessage,
     p2p_node::OutboundMessageTuple,
+    schnorr::sign,
     uccb::{
         bridge_node::BridgeNode,
         cfg::Config,
@@ -44,6 +45,8 @@ pub struct ValidatorNode {
     bridge_outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
     bridge_inbound_message_sender: UnboundedSender<ExternalMessage>,
     bridge_inbound_message_receiver: UnboundedReceiverStream<ExternalMessage>,
+    config: Config,
+    signer: PrivateKeySigner,
     chain_clients: HashMap<ChainID, ChainClient>,
 }
 
@@ -55,12 +58,6 @@ impl ValidatorNode {
         shard_id: u64,
         bridge_outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
     ) -> Result<Self> {
-        let chain_clients = crate::uccb::create_chain_clients(config, signer).await?;
-        let chain_clients: HashMap<ChainID, ChainClient> = chain_clients
-            .into_iter()
-            .map(|chain_client| (chain_client.chain_id, chain_client))
-            .collect();
-
         let (bridge_inbound_message_sender, bridge_inbound_message_receiver) =
             mpsc::unbounded_channel::<ExternalMessage>();
         let bridge_inbound_message_receiver =
@@ -71,7 +68,9 @@ impl ValidatorNode {
             bridge_outbound_message_sender,
             bridge_inbound_message_sender,
             bridge_inbound_message_receiver,
-            chain_clients,
+            config: config.clone(),
+            signer: signer.clone(),
+            chain_clients: HashMap::<ChainID, ChainClient>::new(),
         })
     }
 
@@ -80,6 +79,13 @@ impl ValidatorNode {
     }
 
     pub async fn start(&mut self) -> Result<()> {
+        let chain_clients = crate::uccb::create_chain_clients(&self.config, &self.signer).await?;
+        let chain_clients: HashMap<ChainID, ChainClient> = chain_clients
+            .into_iter()
+            .map(|chain_client| (chain_client.chain_id, chain_client))
+            .collect();
+        self.chain_clients = chain_clients;
+
         let (bridge_message_sender, bridge_message_receiver) =
             mpsc::unbounded_channel::<OutboundBridgeMessage>();
         let mut bridge_message_receiver = UnboundedReceiverStream::new(bridge_message_receiver);
@@ -174,21 +180,12 @@ impl ValidatorNode {
             }
         };
 
-        //if let Some(relay_event) = contracts::chain_gateway::ABI.event("relay") {
         let chain_gateway_contract: ContractInstance<PubSubFrontend, _> =
             contracts::chain_gateway::instance(
                 chain_client.chain_gateway_address,
                 chain_client.provider.as_ref(),
             );
 
-        /*
-        pub source_chain_id: U256,
-        pub target_chain_id: U256,
-        pub target: Address,
-        pub call: Bytes,
-        pub gas_limit: U256,
-        pub nonce: U256,
-                     */
         let args = vec![
             DynSolValue::Uint(event.source_chain_id, 256),
             DynSolValue::Address(event.target),
@@ -202,10 +199,6 @@ impl ValidatorNode {
         let output = call_builder.send().await?;
         let receipt = output.get_receipt().await?;
         info!("Receipt from {}: {receipt:?}", &chain_client.rpc_url);
-
-        //chain_gateway_contract.event(filter)
-        //} else {
-        //}
 
         /*
             let chain_gateway: ChainGateway<ChainProvider> = client.get_contract();
