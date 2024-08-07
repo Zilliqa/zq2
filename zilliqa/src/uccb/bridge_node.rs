@@ -1,14 +1,13 @@
 use crate::uccb::{
-    client::{ChainClient, ChainProvider /*, ContractInitializer*/},
-    contracts::{self, chain_gateway},
-    // contracts::{ChainGateway, DispatchedFilter, RelayedFilter, ValidatorManager},
+    client::ChainClient,
+    contracts,
     event::{RelayEvent, RelayEventSignatures},
     message::{Dispatch, Dispatched, InboundBridgeMessage, OutboundBridgeMessage, Relay},
     signature::SignatureTracker,
 };
 use alloy::{
     contract::{ContractInstance, DynCallBuilder, Interface},
-    dyn_abi::DynSolValue,
+    dyn_abi::{DynSolValue, EventExt},
     eips::{eip2930::AccessList, BlockNumberOrTag},
     primitives::{Address, Signature, U256},
     providers::Provider,
@@ -24,7 +23,7 @@ use tokio::{
     sync::mpsc::{self, UnboundedSender},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
 
 #[derive(Debug)]
 pub struct BridgeNode {
@@ -70,17 +69,17 @@ impl BridgeNode {
     pub async fn listen_events(&mut self) -> Result<()> {
         println!("Start Listening: {:?}", self.chain_client.chain_id);
 
+        let chain_gateway_abi = &contracts::chain_gateway::ABI;
+        let relayed_events = chain_gateway_abi.event("Relayed").unwrap();
+        let relayed_event = relayed_events.get(0).unwrap();
+        let relayed_event_signature = relayed_event.signature();
+
         let chain_provider = self.chain_client.provider.clone();
         let chain_gateway_address = self.chain_client.chain_gateway_address;
-        let chain_gateway_contract: ContractInstance<PubSubFrontend, _> =
-            contracts::chain_gateway::instance(
-                chain_gateway_address,
-                self.chain_client.provider.as_ref(),
-            );
 
         let relayed_filter = Filter::new()
             .address(chain_gateway_address)
-            .event("Relayed(uint, address, bytes, uint, uint)")
+            .event(&relayed_event_signature)
             .from_block(BlockNumberOrTag::Finalized);
 
         let relayed_subscription = chain_provider.subscribe_logs(&relayed_filter).await?;
@@ -89,12 +88,9 @@ impl BridgeNode {
         loop {
             select! {
                 Some(log) = relayed_stream.next() => {
-                    info!("Relayed received: {log:?}");
-                    /*
-                    for event in events {
-                        self.handle_relay_event(event)?;
-                    }
-                    */
+                    trace!("Received a log on the relay event stream: {log:?}");
+                    let event = RelayEvent::try_from(relayed_event.decode_log(log.data(), true)?, self.chain_client.chain_id)?;
+                    self.handle_relay_event(event)?;
                 },
             }
         }
@@ -148,6 +144,8 @@ impl BridgeNode {
             }
         }
         */
+
+        println!("Done Listening: {:?}", self.chain_client.chain_id);
         Ok(())
     }
 
@@ -186,16 +184,18 @@ impl BridgeNode {
         Ok(())
     }
 
-    /*
-    fn handle_relay_event(&mut self, event: RelayedFilter) -> Result<()> {
+    fn handle_relay_event(&mut self, event: RelayEvent) -> Result<()> {
+        info!("Relayed received: {event:?}");
+
         if self.relay_nonces.contains(&event.nonce) {
             info!(
-                "Chain: {} event duplicated {}",
-                self.chain_client.chain_id, event
+                "Chain: {} event duplicated {event:?}",
+                self.chain_client.chain_id
             );
             return Ok(());
         }
 
+        /*
         info!(
             "Chain: {} event found to be broadcasted: {}",
             self.chain_client.chain_id, event
@@ -218,9 +218,11 @@ impl BridgeNode {
             event: relay_event,
         })?;
 
+        */
         Ok(())
     }
 
+    /*
     fn handle_dispatch_event(&mut self, event: DispatchedFilter) -> Result<()> {
         info!(
             "Found dispatched event chain: {}, nonce: {}",
