@@ -5,9 +5,7 @@ json_rpc_port = 4201
 eth_chain_id = 0x8001
 consensus.consensus_timeout = { secs = 5, nanos = 0 }
 consensus.genesis_deposits = [
-    ["8cabc35ecafdd76b1caf77267d3c7502891efe770039b9ef6606568b98edab3a9cb8f5dbd80971dcfe500e53869509f3", "12D3KooWHdiAxVd8uMQR1hGWXccidmfCwLqcMpGwR6QcTP6QRMuD", "10000000000000000000000000", "0x2b5ad5c4795c026514f8317c7a215e218dccd6cf"],
-]
-
+    ["b27aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a3", "12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU", "10000000000000000000000000", "7E5F4552091A69125d5DfCb7b8C2659029395Bdf"],
 consensus.genesis_accounts = [
     # Accounts with private key 0x2, 0x3, 0x4.
     # Don't use account with priv key = 0x1 since it's also used for voting rewards
@@ -18,8 +16,6 @@ consensus.genesis_accounts = [
     ["9cB422D2Fabe9622ed706ad5D9d3fFd2cDd1C001", "5000000000000000000000"],
     ["AcE5F1e883d3e02A1b2C78F6909a8C0430C6Fb12", "5000000000000000000000"],
 ]
-
-data_dir = "zq2-persistence"
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"

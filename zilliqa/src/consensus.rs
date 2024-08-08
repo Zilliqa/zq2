@@ -1268,18 +1268,18 @@ impl Consensus {
     }
 
     pub fn new_view(&mut self, _: PeerId, new_view: NewView) -> Result<Option<Block>> {
-        info!("Received new view for height: {:?}", new_view.view);
+        trace!("Received new view for height: {:?}", new_view.view);
 
         // The leader for this view should be chosen according to the parent of the highest QC
         // What happens when there are multiple QCs with different parents?
         // if we are not the leader of the round in which the vote counts
         if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
-            info!(new_view.view, "skipping new view, not the leader");
+            trace!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
         // if the vote is too old and does not count anymore
         if new_view.view < self.view.get_view() {
-            info!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", self.view.get_view(), new_view.view);
+            trace!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", self.view.get_view(), new_view.view);
             return Ok(None);
         }
 
@@ -1291,7 +1291,7 @@ impl Consensus {
             .enumerate()
             .find(|(_, &public_key)| public_key == new_view.public_key)
         else {
-            info!("ignoring new view from unknown node (buffer?) - committee size is : {:?} hash is: {:?} high hash is: {:?}", committee.len(), new_view.qc.block_hash, self.high_qc.block_hash);
+            debug!("ignoring new view from unknown node (buffer?) - committee size is : {:?} hash is: {:?} high hash is: {:?}", committee.len(), new_view.qc.block_hash, self.high_qc.block_hash);
             return Ok(None);
         };
 
@@ -1386,9 +1386,7 @@ impl Consensus {
 
                     self.state.set_to_root(previous_state_root_hash.into());
 
-                    trace!("Our high QC is {:?}", self.high_qc);
-
-                    info!(proposal_hash = ?proposal.hash(), view = self.view.get_view(), height = proposal.header.number, "######### creating proposal block from new view");
+                    trace!(proposal_hash = ?proposal.hash(), view = self.view.get_view(), height = proposal.header.number, "######### creating proposal block from new view");
 
                     // as a future improvement, process the proposal before broadcasting it
                     return Ok(Some(proposal));

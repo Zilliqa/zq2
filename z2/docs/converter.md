@@ -34,7 +34,7 @@ bootstrap_address = [ "12D3KooWNYaasyfY1wFrSHga3WBdZkb7bGhQiUz9926bQvk4HQj2", "/
 [[nodes]]
 eth_chain_id = 33101 # change the chain it for your conversion
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
-data_dir = "/data"[README.md](..%2FREADME.md)
+data_dir = "/data"
 consensus.consensus_timeout = { secs = 60, nanos = 0 }
 consensus.genesis_accounts = [ ["0xcca93a2e1169caf02e515203d1539cc3f390890a", "1000000000000000000000000"] ]
 EOF

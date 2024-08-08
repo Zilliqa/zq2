@@ -304,6 +304,7 @@ impl SignedTransaction {
             }
             SignedTransaction::Zilliqa { tx, key, sig } => {
                 let txn_data = encode_zilliqa_transaction(&tx, key);
+
                 schnorr::verify(&txn_data, key, sig).ok_or_else(|| anyhow!("invalid signature"))?;
 
                 let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
