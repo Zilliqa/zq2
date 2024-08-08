@@ -101,6 +101,7 @@ struct ConvertConfigStruct {
     secret_key: SecretKey,
     #[clap(long)]
     skip_accounts: bool,
+    pre_evm_block_num: u64,
 }
 
 #[derive(Args, Debug)]
@@ -470,6 +471,7 @@ async fn main() -> Result<()> {
                     &arg.zq2_config_file,
                     arg.secret_key,
                     arg.skip_accounts,
+                    arg.pre_evm_block_num,
                 )
                 .await?;
                 Ok(())

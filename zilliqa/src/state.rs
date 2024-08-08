@@ -1,4 +1,3 @@
-use tracing::info;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
@@ -12,8 +11,6 @@ use ethabi::Token;
 use revm::primitives::ResultAndState;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use hex::FromHex;
-use alloy_primitives::{hex, U256};
 
 use crate::{
     cfg::ConsensusConfig, contracts, crypto, db::TrieStorage, exec::BaseFeeCheck, inspector,
@@ -173,13 +170,6 @@ impl State {
 
     /// Canonical method to obtain trie key for an account's storage trie's storage node
     pub fn account_storage_key(address: Address, index: B256) -> B256 {
-        if address != Address::from_hex("0x000000000000000000005a494c4445504f534954".as_bytes()).unwrap()  && address != Address::from_hex("0x0000000000000000000000000000000000000000".as_bytes()).unwrap() {
-            let mut h = Keccak256::new();
-            h.update(address);
-            h.update(index);
-            let key: [u8; 32] = <[u8; 32]>::from(h.finalize()).into();
-            info!("QUERYING storage key: {:?} and key: {:?}", address, hex::encode(&key));
-        }
         let mut h = Keccak256::new();
         h.update(address);
         h.update(index);
@@ -219,17 +209,6 @@ impl State {
 
     /// If using this to modify the account, ensure save_account gets called
     pub fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
-
-        if address != Address::from_hex("0x000000000000000000005a494c4445504f534954".as_bytes()).unwrap()  && address != Address::from_hex("0x0000000000000000000000000000000000000000".as_bytes()).unwrap() {
-            let account = self.get_account(address)?;
-            let trie = PatriciaTrie::new(self.db.clone()).at_root(account.storage_root);
-
-            info!("Keys are in storage trie:");
-            for (key, value) in trie.iter() {
-                info!("Key: {:?}, Val: {:?}", hex::encode(&key), hex::encode(&value));
-            }
-
-        }
         let account = self.get_account(address)?;
         Ok(PatriciaTrie::new(self.db.clone()).at_root(account.storage_root))
     }

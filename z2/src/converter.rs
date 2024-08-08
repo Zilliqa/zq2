@@ -56,6 +56,7 @@ fn create_acc_query_prefix(address: Address) -> String {
 
 const ZQ1_STATE_KEY_SEPARATOR: u8 = 0x16;
 
+#[allow(clippy::type_complexity)]
 fn convert_scilla_state(
     zq1_db: &zq1::Db,
     zq2_db: &Db,
@@ -74,9 +75,8 @@ fn convert_scilla_state(
         let chunks = key
             .as_bytes()
             .split(|item| *item == ZQ1_STATE_KEY_SEPARATOR)
-            .into_iter()
             .map(|chunk| String::from_utf8(chunk.to_vec()).unwrap())
-            .skip(1)
+            .skip(1) // Skip contract address (which was a part of key in zq1)
             .collect::<Vec<_>>();
 
         if chunks.is_empty() {
@@ -100,21 +100,19 @@ fn convert_scilla_state(
             let value = String::from_utf8(value)?;
             let field_depth: u8 = std::str::FromStr::from_str(&value)?;
 
-            let (mut field_type, mut depth) = field_types
+            let (field_type, _) = field_types
                 .get(field_name)
                 .cloned()
                 .unwrap_or_else(|| (String::new(), field_depth));
-            depth = field_depth;
-            field_types.insert(field_name.into(), (field_type, depth));
+            field_types.insert(field_name.into(), (field_type, field_depth));
             continue;
         } else if key_type.contains("_type") {
             let field_type = String::from_utf8(value)?;
-            let (mut ty, mut depth) = field_types
+            let (_, depth) = field_types
                 .get(field_name)
                 .cloned()
                 .unwrap_or_else(|| (String::new(), 0));
-            ty = field_type;
-            field_types.insert(field_name.into(), (ty, depth));
+            field_types.insert(field_name.into(), (field_type, depth));
             continue;
         }
 
@@ -122,9 +120,9 @@ fn convert_scilla_state(
         let field_name = &chunks[0];
         let mut indices = vec![];
 
-        for i in 1..chunks.len() {
-            if !chunks[i].is_empty() {
-                indices.push(chunks[i].as_bytes().to_vec())
+        for chunk in chunks.iter().skip(1) {
+            if !chunk.is_empty() {
+                indices.push(chunk.as_bytes().to_vec())
             }
         }
         contract_values.push((field_name.to_owned(), (indices, value)));
@@ -134,7 +132,6 @@ fn convert_scilla_state(
     let mut contract_trie = EthTrie::new(db.clone()).at_root(EMPTY_ROOT_HASH);
 
     for (key_name, (indices, value)) in contract_values {
-        println!("Will insert key_name to tree: {:?}", &key_name);
         let storage_key = storage_key(&key_name, &indices);
         contract_trie.insert(&storage_key, &value)?
     }
@@ -160,8 +157,7 @@ fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<
         let chunks = key
             .as_bytes()
             .split(|item| *item == ZQ1_STATE_KEY_SEPARATOR)
-            .into_iter()
-            .skip(1)
+            .skip(1) // skip contract address which was a part of key in zq1
             .collect::<Vec<_>>();
 
         if chunks.len() < 2 || chunks[0] != evm_prefix {
@@ -169,12 +165,8 @@ fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<
             continue;
         };
 
-        let key = chunks[1];
-
-        let key = hex::decode(key)?;
+        let key = hex::decode(chunks[1])?;
         let key = State::account_storage_key(address, B256::from_slice(&key));
-
-        println!("Inserting key: {:?} and val: {:?} for addr: {:?}", hex::encode(&key), hex::encode(&value), address);
 
         contract_trie.insert(&key.0, &value)?;
     }
@@ -187,7 +179,7 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
         return Ok(Code::Evm(vec![]));
     };
 
-    let evm_prefix = ['E' as u8, 'V' as u8, 'M' as u8];
+    let evm_prefix = [b'E', b'V', b'M'];
 
     if code.len() > 3 && code[0..3] == evm_prefix[0..3] {
         return Ok(Code::Evm(code[3..].to_vec()));
@@ -213,6 +205,7 @@ pub async fn convert_persistence(
     zq2_config: Config,
     secret_key: SecretKey,
     skip_accounts: bool,
+    pre_evm_block_number: u64,
 ) -> Result<()> {
     let style = ProgressStyle::with_template(
         "{msg} {wide_bar} [{per_sec}] {human_pos}/~{human_len} ({elapsed}/~{duration})",
@@ -241,71 +234,25 @@ pub async fn convert_persistence(
         let average_distance = distance_sum as f64 / 99.;
         let address_count = ((u64::MAX as f64) / average_distance) as u64;
 
-        // let progress = ProgressBar::new(address_count)
-        //     .with_style(style.clone())
-        //     .with_message("collect accounts")
-        //     .with_finish(ProgressFinish::AndLeave);
-        //
-        // let progress = ProgressBar::new(accounts.len() as u64)
-        //     .with_style(style.clone())
-        //     .with_message("convert accounts")
-        //     .with_finish(ProgressFinish::AndLeave);
+        let progress = ProgressBar::new(address_count)
+            .with_style(style.clone())
+            .with_message("collect accounts")
+            .with_finish(ProgressFinish::AndLeave);
 
-        let accounts: Vec<_> = zq1_db.accounts().collect(); //.progress_with(progress).collect();
+        let accounts: Vec<_> = zq1_db.accounts().progress_with(progress).collect();
 
-        for (address, zq1_account) in accounts.into_iter() {
-            //.progress_with(progress) {
+        let progress = ProgressBar::new(accounts.len() as u64)
+            .with_style(style.clone())
+            .with_message("convert accounts")
+            .with_finish(ProgressFinish::AndLeave);
+
+        for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
             if address.is_zero() {
                 continue;
             }
             let zq1_account = zq1::Account::from_proto(zq1_account)?;
 
-            // let prefix = address
-            //     .to_string()
-            //     .strip_prefix("0x")
-            //     .unwrap()
-            //     .to_string()
-            //     .to_lowercase();
-            // let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
-            //
-            // for elem in storage_entries_iter {
-            //     if elem.is_err() {
-            //         println!("Something went wrong with quering element by prefix!");
-            //         continue;
-            //     }
-            //     let (key, val) = elem?;
-            //     const SEPARATOR: u8 = 0x16;
-            //
-            //     let key_bytes = key.as_bytes();
-            //
-            //     if key_bytes.contains(&SEPARATOR) {
-            //         let chunks = key_bytes.split(|item| *item == SEPARATOR);
-            //         println!("Key is: {}, and contains separator 0x1F", key);
-            //         println!("Split result: ");
-            //         for chunk in chunks {
-            //             println!("Chunk: {}", std::str::from_utf8(chunk).unwrap());
-            //         }
-            //     }
-            //
-            //     let decoded = String::from_utf8(val.clone());
-            //     if decoded.is_ok() {
-            //         println!(
-            //             "Account: {}, Key is: {}, decoded is: {:?}",
-            //             address.to_string(),
-            //             key,
-            //             decoded.unwrap()
-            //         );
-            //     } else {
-            //         println!(
-            //             "Account: {}, Key is: {}, val is: {:?}",
-            //             address.to_string(),
-            //             key,
-            //             val
-            //         );
-            //     }
-            // }
-
-            let mut code = get_contract_code(&zq1_db, address)?;
+            let code = get_contract_code(&zq1_db, address)?;
 
             let (code, storage_root) = match code {
                 Code::Evm(evm_code) if !evm_code.is_empty() => {
@@ -336,23 +283,7 @@ pub async fn convert_persistence(
             };
 
             state.save_account(address, account)?;
-            println!("account inserted: {:?}", address);
-            //println!(?address, "account inserted");
         }
-    }
-
-    let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix("");
-
-    let acc = state.get_account(secret_key.tx_ecdsa_public_key().into_addr())?;
-
-
-    for elem in storage_entries_iter {
-        if elem.is_err() {
-            warn!("Something went wrong with quering element by prefix!");
-            continue;
-        }
-        let (key, val) = elem?;
-        warn!("Key is: {}, val is: {}", key, String::from_utf8(val)?);
     }
 
     // Add stake for this validator. For now, we just assume they've always had 64 ZIL staked.
@@ -368,7 +299,7 @@ pub async fn convert_persistence(
                 .to_bytes(),
         ),
         Token::Address(ethabi::Address::from_low_u64_be(1)),
-        Token::Uint((64_000_000_000_000_000_000u128).into()),
+        Token::Uint((64 * 10u128.pow(18)).into()),
     ])?;
     let (
         ResultAndState {
@@ -476,7 +407,7 @@ pub async fn convert_persistence(
                 // We know all mainnet transactions before this block were not EVM. However, some of them had bugs
                 // with their `version` which cause them to be marked as EVM. So we use the block number to figure
                 // disambiguate.
-                let pre_evm = block_number < 0;//2_828_325;
+                let pre_evm = block_number < pre_evm_block_number;
 
                 let (transaction, receipt) = match (pre_evm, version) {
                     // TODO: Why are versions other than 1 possible here?
@@ -543,12 +474,6 @@ pub async fn convert_persistence(
                             )?,
                             sig: schnorr::Signature::from_slice(transaction.signature.as_slice())?,
                         };
-
-                        // let verified = transaction.clone().verify();
-                        // if let Err(err) = verified {
-                        //     let foo = 10;
-                        //     println!("Transaction verification failed!");
-                        // }
 
                         (transaction, receipt)
                     }
@@ -648,21 +573,30 @@ pub async fn convert_persistence(
 
             blocks.push(block.clone());
 
-            trace!(%block_number, "block inserted");
             parent_hash = block.hash();
         }
 
         zq2_db.with_sqlite_tx(|sqlite_tx| {
             for block in &blocks {
                 zq2_db.insert_block_with_db_tx(sqlite_tx, block)?;
-                zq2_db.set_canonical_block_number_with_db_tx(sqlite_tx, block.number(), block.hash())?;
+                zq2_db.set_canonical_block_number_with_db_tx(
+                    sqlite_tx,
+                    block.number(),
+                    block.hash(),
+                )?;
                 zq2_db.set_high_qc_with_db_tx(sqlite_tx, block.qc.clone())?;
                 zq2_db.set_latest_finalized_view_with_db_tx(sqlite_tx, block.view())?;
+                trace!("{} block inserted", block.number());
             }
-
-            let empty_high_qc_block = create_empty_block_from_parent(blocks.last().unwrap(), secret_key);
+            // Let's insert another block (empty) which will be used as high_qc block when zq2 starts from converted persistence
+            let empty_high_qc_block =
+                create_empty_block_from_parent(blocks.last().unwrap(), secret_key);
             zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_high_qc_block)?;
-            zq2_db.set_canonical_block_number_with_db_tx(sqlite_tx, empty_high_qc_block.number(), empty_high_qc_block.hash())?;
+            zq2_db.set_canonical_block_number_with_db_tx(
+                sqlite_tx,
+                empty_high_qc_block.number(),
+                empty_high_qc_block.hash(),
+            )?;
             zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.qc.clone())?;
 
             for (hash, transaction) in &transactions {
