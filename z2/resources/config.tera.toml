@@ -1,0 +1,22 @@
+p2p_port = 3333
+
+{%- if role != "bootstrap" %}
+bootstrap_address = [ "{{ bootstrap_peer_id }}", "/ip4/{{ bootstrap_public_ip }}/tcp/3333" ]
+{%- endif %}
+
+external_address = "/ip4/{{ external_address }}/tcp/3333"
+
+[[nodes]]
+eth_chain_id = 33103
+allowed_timestamp_skew = { secs = 60, nanos = 0 }
+data_dir = "/data"
+consensus.genesis_accounts = [ ["{{ genesis_address }}", "21_000_000_000_000_000_000_000_000_000"] ]
+consensus.genesis_deposits = [ ["{{ bootstrap_bls_public_key }}", "{{ bootstrap_peer_id }}", "100_000_000_000_000_000_000_000_000", "{{ genesis_address }}"] ]
+
+# Reward parameters
+consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
+consensus.blocks_per_hour = 3600
+consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
+# Gas parameters
+consensus.eth_block_gas_limit = 84000000
+consensus.gas_price = "4_761_904_800_000"

@@ -54,3 +54,15 @@ pub fn string_from_path(in_path: &Path) -> Result<String> {
         .ok_or(anyhow!("Cannot convert path to string"))?
         .to_string())
 }
+
+/// Get local public IP
+pub async fn get_public_ip() -> Result<String> {
+    let output: zqutils::commands::CommandOutput = zqutils::commands::CommandBuilder::new()
+        .silent()
+        .cmd("curl", &["-4", "ipconfig.io"])
+        .run_for_output()
+        .await?;
+
+    let stdout = output.stdout;
+    Ok(std::str::from_utf8(&stdout)?.trim().to_owned())
+}

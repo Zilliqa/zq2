@@ -1,8 +1,5 @@
 p2p_port = 3333
-
-{%- if role != "bootstrap" %}
-bootstrap_address = [ "{{ bootstrap_peer_id }}", "/ip4/{{ bootstrap_public_ip }}/tcp/3333" ]
-{%- endif %}
+bootstrap_address = [ "12D3KooWSbWHfP79WBHYr2hk6kfe3Ruc7n29cuh9xjvkRGC9bjgW", "/ip4/34.142.172.123/tcp/3333" ]
 
 external_address = "/ip4/{{ external_address }}/tcp/3333"
 
@@ -10,8 +7,8 @@ external_address = "/ip4/{{ external_address }}/tcp/3333"
 eth_chain_id = 33103
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
-consensus.genesis_accounts = [ ["{{ genesis_address }}", "21_000_000_000_000_000_000_000_000_000"] ]
-consensus.genesis_deposits = [ ["{{ bootstrap_bls_public_key }}", "{{ bootstrap_peer_id }}", "100_000_000_000_000_000_000_000_000", "{{ genesis_address }}"] ]
+consensus.genesis_accounts = [ ["0x19f5aa2b09BaD32Fd29631BAd9957030280c2aA8", "21_000_000_000_000_000_000_000_000_000"] ]
+consensus.genesis_deposits = [ ["84c484950fdd0c073a8591e6431da8558d1b7c682ef501119247001375786e9910ba378fbec16b98e46eea14831d057f", "12D3KooWSbWHfP79WBHYr2hk6kfe3Ruc7n29cuh9xjvkRGC9bjgW", "100_000_000_000_000_000_000_000_000", "0x19f5aa2b09BaD32Fd29631BAd9957030280c2aA8"] ]
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
