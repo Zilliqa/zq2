@@ -1,7 +1,6 @@
 use std::fmt::Display;
 
-use alloy_eips::BlockId;
-use alloy_primitives::B256;
+use alloy::{eips::BlockId, primitives::B256};
 use serde::{ser::SerializeSeq, Serializer};
 
 use super::to_hex::ToHex;

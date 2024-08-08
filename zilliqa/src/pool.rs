@@ -3,7 +3,7 @@ use std::{
     collections::{BTreeMap, BinaryHeap, HashSet},
 };
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 
 use crate::{
     crypto::Hash,
@@ -49,7 +49,7 @@ impl MempoolIndex for VerifiedTransaction {
 /// A pool that manages uncommitted transactions.
 ///
 /// It provides transactions to the chain via [`TransactionPool::best_transaction`].
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct TransactionPool {
     /// All transactions in the pool. These transactions are all valid, or might become
     /// valid at some point in the future.
@@ -289,8 +289,10 @@ impl TransactionPool {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::TxLegacy;
-    use alloy_primitives::{Address, Bytes, Parity, Signature, TxKind, U256};
+    use alloy::{
+        consensus::TxLegacy,
+        primitives::{Address, Bytes, Parity, Signature, TxKind, U256},
+    };
     use rand::{seq::SliceRandom, thread_rng};
 
     use super::TransactionPool;

@@ -1,6 +1,6 @@
 use std::{collections::HashSet, env, fmt};
 
-use alloy_primitives::B256;
+use alloy::primitives::B256;
 use anyhow::{anyhow, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use z2lib::{components::Component, deployer, plumbing, validators};
@@ -62,6 +62,8 @@ enum DeployerCommands {
     Install(DeployerUpgradeArgs),
     /// Perfom the network upgrade
     Upgrade(DeployerUpgradeArgs),
+    /// Provide the deposit commands for the validator nodes
+    GetDepositCommands(DeployerUpgradeArgs),
 }
 
 #[derive(Args, Debug)]
@@ -275,15 +277,18 @@ struct DepositStruct {
     /// Specify the Validator PeerId
     #[clap(long)]
     peer_id: String,
-    /// Specify the wallet address to fund the deposit
+    /// Specify the private_key to fund the deposit
     #[clap(long, short)]
-    wallet: String,
+    private_key: String,
     /// Specify the stake amount you want provide
     #[clap(long, short)]
     amount: u8,
     /// Specify the staking reward address
     #[clap(long, short)]
     reward_address: String,
+    /// Specify the Validator Proof-of-Possession
+    #[clap(long)]
+    pop_signature: String,
 }
 
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
@@ -462,6 +467,22 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
+            DeployerCommands::GetDepositCommands(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_deposit_commands(&config_file)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to run deployer get-deposit-commands command: {}",
+                            err
+                        )
+                    })?;
+                Ok(())
+            }
         },
         Commands::Converter(converter_command) => match &converter_command {
             ConverterCommands::Convert(ref arg) => {
@@ -510,12 +531,13 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Deposit(ref args) => {
-            let node = validators::Validator::new(&args.peer_id, &args.public_key)?;
+            let node =
+                validators::Validator::new(&args.peer_id, &args.public_key, &args.pop_signature)?;
             let stake = validators::StakeDeposit::new(
                 node,
                 args.amount,
                 args.chain_name.clone(),
-                &args.wallet,
+                &args.private_key,
                 &args.reward_address,
             )?;
             validators::deposit_stake(&stake).await

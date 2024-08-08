@@ -1,8 +1,9 @@
-use std::fs;
+use std::{fs, ops::DerefMut};
 
-use alloy_eips::BlockId;
+use alloy::eips::BlockId;
 use ethabi::Token;
 use ethers::{providers::Middleware, types::TransactionRequest};
+use k256::ecdsa::SigningKey;
 use primitive_types::H160;
 use rand::Rng;
 use tracing::*;
@@ -12,7 +13,7 @@ use zilliqa::{
         block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
         failed_request_sleep_duration_default, json_rpc_port_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
-        Checkpoint,
+        state_rpc_limit_default, Checkpoint,
     },
     crypto::{Hash, SecretKey},
     transaction::EvmGas,
@@ -111,9 +112,17 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         block_request_limit: block_request_limit_default(),
         max_blocks_in_flight: max_blocks_in_flight_default(),
         block_request_batch_size: block_request_batch_size_default(),
+        state_rpc_limit: state_rpc_limit_default(),
         failed_request_sleep_duration: failed_request_sleep_duration_default(),
     };
-    let result = crate::node(config, SecretKey::new().unwrap(), 0, Some(dir));
+    let mut rng = network.rng.lock().unwrap();
+    let result = crate::node(
+        config,
+        SecretKey::new_from_rng(rng.deref_mut()).unwrap(),
+        SigningKey::random(rng.deref_mut()),
+        0,
+        Some(dir),
+    );
 
     // Sometimes, the dropping Arc<Node> (by dropping the TestNode above) does not actually drop
     // the underlying Node. See: https://github.com/Zilliqa/zq2/issues/299

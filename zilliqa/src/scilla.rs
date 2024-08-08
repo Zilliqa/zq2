@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use bytes::{BufMut, Bytes, BytesMut};

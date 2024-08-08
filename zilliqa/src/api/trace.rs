@@ -3,11 +3,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::B256;
-use alloy_rpc_types_trace::{
-    geth::{GethDebugTracingOptions, TraceResult},
-    parity::{TraceResults, TraceType},
+use alloy::{
+    eips::BlockNumberOrTag,
+    primitives::B256,
+    rpc::types::trace::{
+        geth::{GethDebugTracingOptions, TraceResult},
+        parity::{TraceResults, TraceType},
+    },
 };
 use anyhow::Result;
 use jsonrpsee::{types::Params, RpcModule};

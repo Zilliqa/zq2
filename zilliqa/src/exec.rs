@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, MutexGuard},
 };
 
-use alloy_primitives::{hex, Address, U256};
+use alloy::primitives::{hex, Address, U256};
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use eth_trie::{EthTrie, Trie};

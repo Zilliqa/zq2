@@ -2,7 +2,6 @@
 # ZQ2 GCP Terraform providers
 ################################################################################
 
-
 provider "google" {
   project = var.project_id
   region  = var.region

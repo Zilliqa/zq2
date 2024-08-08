@@ -1,6 +1,6 @@
 use std::{fmt::Debug, ops::DerefMut};
 
-use alloy_primitives::{hex, Address};
+use alloy::primitives::{hex, Address};
 use ethabi::{ethereum_types::U64, Token};
 use ethers::{
     abi::FunctionExt,

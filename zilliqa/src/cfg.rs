@@ -1,6 +1,6 @@
 use std::{ops::Deref, str::FromStr, time::Duration};
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use libp2p::{Multiaddr, PeerId};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
@@ -70,6 +70,9 @@ pub struct NodeConfig {
     /// The maximum number of blocks to request in a single message when syncing.
     #[serde(default = "block_request_batch_size_default")]
     pub block_request_batch_size: u64,
+    /// The maximum number of key value pairs allowed to be returned withing the response of the `GetSmartContractState` RPC.
+    #[serde(default = "state_rpc_limit_default")]
+    pub state_rpc_limit: usize,
     /// When a block request to a peer fails, do not send another request to this peer for this amount of time.
     /// Defaults to 10 seconds.
     #[serde(default = "failed_request_sleep_duration_default")]
@@ -133,6 +136,10 @@ pub fn max_blocks_in_flight_default() -> u64 {
 
 pub fn block_request_batch_size_default() -> u64 {
     100
+}
+
+pub fn state_rpc_limit_default() -> usize {
+    1024
 }
 
 pub fn failed_request_sleep_duration_default() -> Duration {

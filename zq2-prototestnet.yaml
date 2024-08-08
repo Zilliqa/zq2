@@ -1,14 +1,11 @@
 name: zq2-prototestnet
 project_id: prj-d-zq2-testnet-g13pnaa8
-regions:
-- asia-southeast1
-- europe-west1
-- europe-west2
 roles:
 - bootstrap
+- api
 - apps
 - validator
 versions:
-  zq2: 76480cd6
+  zq2: v0.1.0
   otterscan: develop
-  spout: v1.3.75
+  spout: main

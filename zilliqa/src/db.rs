@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie, Trie};
 use itertools::Either;
@@ -897,7 +897,7 @@ impl eth_trie::DB for TrieStorage {
 mod tests {
     use std::ops::Deref;
 
-    use alloy_consensus::EMPTY_ROOT_HASH;
+    use alloy::consensus::EMPTY_ROOT_HASH;
     use rand::{
         distributions::{Distribution, Uniform},
         Rng, SeedableRng,

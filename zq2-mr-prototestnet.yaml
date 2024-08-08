@@ -1,0 +1,11 @@
+name: zq2-mr-prototestnet
+project_id: prj-d-zq2-testnet-g13pnaa8
+roles:
+- bootstrap
+- api
+- apps
+- validator
+versions:
+  zq2: v0.1.0
+  otterscan: develop
+  spout: main

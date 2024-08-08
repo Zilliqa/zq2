@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 use std::{collections::HashSet, env, path::PathBuf, str::FromStr};
 
-use alloy_primitives::B256;
+use alloy::primitives::B256;
 use anyhow::{anyhow, Result};
 use colored::Colorize;
 use tokio::{fs, process::Command};
@@ -110,6 +110,12 @@ pub async fn run_deployer_install(config_file: &str) -> Result<()> {
 pub async fn run_deployer_upgrade(config_file: &str) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
     deployer::install_or_upgrade(config_file, true).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_deposit_commands(config_file: &str) -> Result<()> {
+    println!("🦆 Getting node deposit commands for {config_file} .. ");
+    deployer::get_deposit_commands(config_file).await?;
     Ok(())
 }
 

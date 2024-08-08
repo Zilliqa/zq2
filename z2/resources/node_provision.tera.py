@@ -372,7 +372,7 @@ def go(role):
     install_ops_agent()
     install_gcloud()
     match role:
-        case "validator" | "bootstrap":
+        case "validator" | "bootstrap" | "api":
             log("Configuring a validator node")
             configure_logrotate()
             stop_zq2()
