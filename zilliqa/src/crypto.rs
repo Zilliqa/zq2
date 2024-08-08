@@ -43,19 +43,16 @@ impl NodeSignature {
     }
 
     pub fn aggregate(signatures: &[NodeSignature]) -> Result<NodeSignature> {
-        let signatures = signatures.iter().map(|s| s.0).collect_vec();
-
         // IETF standards say N >= 1
         // Handles single case where N == 1, as AggregateSignature::from_signatures() only handles N > 1.
         // Reported upstream https://github.com/hyperledger-labs/agora-blsful/issues/10
         if signatures.len() < 2 {
-            return Ok(NodeSignature(match signatures[0] {
-                Signature::Basic(s) => Signature::Basic(s),
-                Signature::MessageAugmentation(s) => Signature::MessageAugmentation(s),
-                Signature::ProofOfPossession(s) => Signature::ProofOfPossession(s),
-            }));
+            return Ok(NodeSignature(
+                signatures.first().context("zero signatures")?.0,
+            ));
         }
 
+        let signatures = signatures.iter().map(|s: &NodeSignature| s.0).collect_vec();
         let asig = AggregateSignature::<Bls12381G2Impl>::from_signatures(signatures)?;
         Ok(NodeSignature(match asig {
             AggregateSignature::Basic(s) => Signature::Basic(s),
@@ -74,7 +71,7 @@ impl NodeSignature {
     ) -> Result<()> {
         let keys = public_keys.iter().map(|p| p.0).collect_vec();
         let mpk = MultiPublicKey::<Bls12381G2Impl>::from_public_keys(keys);
-        let msig: MultiSignature<Bls12381G2Impl> = match signature.0 {
+        let msig = match signature.0 {
             Signature::Basic(s) => MultiSignature::Basic(s),
             Signature::MessageAugmentation(s) => MultiSignature::MessageAugmentation(s),
             Signature::ProofOfPossession(s) => MultiSignature::ProofOfPossession(s),
