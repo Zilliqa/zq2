@@ -40,7 +40,8 @@ alloy = { version = "0.4.2", default-features = false, features = [
   "serde",
   "signers",
   "signer-local",
-  "sol-types" ] }
+  "sol-types",
+  "transports"] }
 anyhow = { version = "1.0.89", features = ["backtrace"] }
 async-trait = "0.1.83"
 base64 = "0.22.1"
