@@ -45,12 +45,13 @@ impl NodeSignature {
 
         // IETF standards say N >= 1
         // Handles single case where N == 1, as AggregateSignature::from_signatures() only handles N > 1.
+        // Reported upstream https://github.com/hyperledger-labs/agora-blsful/issues/10
         if signatures.len() < 2 {
             let g = blsful::inner_types::G2Projective::identity();
             return Ok(NodeSignature(match signatures[0] {
-                Signature::Basic(s) => Signature::Basic(g + s),
-                Signature::MessageAugmentation(s) => Signature::MessageAugmentation(g + s),
-                Signature::ProofOfPossession(s) => Signature::ProofOfPossession(g + s),
+                Signature::Basic(s) => Signature::Basic(s),
+                Signature::MessageAugmentation(s) => Signature::MessageAugmentation(s),
+                Signature::ProofOfPossession(s) => Signature::ProofOfPossession(s),
             }));
         }
 
@@ -93,11 +94,11 @@ pub fn verify_messages(
     messages: &[&[u8]],
     public_keys: &[NodePublicKey],
 ) -> Result<()> {
-    let data: Vec<_> = public_keys
+    let data = public_keys
         .iter()
         .zip(messages.iter())
         .map(|(a, &b)| (a.0, b))
-        .collect();
+        .collect_vec();
     let asig = match signature.0 {
         Signature::Basic(s) => AggregateSignature::Basic(s),
         Signature::MessageAugmentation(s) => AggregateSignature::MessageAugmentation(s),
