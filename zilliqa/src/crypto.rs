@@ -7,7 +7,7 @@
 use std::fmt::Display;
 
 use alloy::primitives::{Address, B256};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use blsful::{
     inner_types::Group, vsss_rs::ShareIdentifier, AggregateSignature, Bls12381G2, Bls12381G2Impl,
     MultiPublicKey, MultiSignature, PublicKey, Signature,
@@ -35,8 +35,10 @@ impl NodeSignature {
     pub fn from_bytes(bytes: &[u8]) -> Result<NodeSignature> {
         // Default to Basic signatures - it's the normal signature.
         Ok(NodeSignature(Signature::<Bls12381G2Impl>::Basic(
+            // Underlying type is compressed G2Affine
             blsful::inner_types::G2Projective::from_compressed(bytes.try_into()?)
-                .expect("blst_p2_uncompress() error"),
+                .into_option()
+                .context("bls signature error")?,
         )))
     }
 
@@ -47,7 +49,6 @@ impl NodeSignature {
         // Handles single case where N == 1, as AggregateSignature::from_signatures() only handles N > 1.
         // Reported upstream https://github.com/hyperledger-labs/agora-blsful/issues/10
         if signatures.len() < 2 {
-            let g = blsful::inner_types::G2Projective::identity();
             return Ok(NodeSignature(match signatures[0] {
                 Signature::Basic(s) => Signature::Basic(s),
                 Signature::MessageAugmentation(s) => Signature::MessageAugmentation(s),
