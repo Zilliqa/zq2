@@ -196,94 +196,75 @@ impl ValidatorNode {
             DynSolValue::Array(vec![]),
         ];
         let call_builder = chain_gateway_contract.function("dispatch", &args)?;
+        /*
         let output = call_builder.send().await?;
         let receipt = output.get_receipt().await?;
         info!("Receipt from {}: {receipt:?}", &chain_client.rpc_url);
+        */
 
-        /*
-            let chain_gateway: ChainGateway<ChainProvider> = client.get_contract();
+        let call_builder = if chain_client.legacy_gas_estimation {
+            call_builder.access_list(AccessList::default())
+        } else {
+            call_builder
+        };
 
-            let function_call = chain_gateway.dispatch(
-                event.source_chain_id,
-                event.target,
-                event.call,
-                event.gas_limit,
-                event.nonce,
-                signatures.into_ordered_signatures(),
-            );
-            info!(
-                "Preparing to send dispatch {}.{}",
-                event.target_chain_id, event.nonce
-            );
+        for i in 1..6 {
+            info!("Dispatch Attempt {:?}", i);
 
-            let function_call = if client.legacy_gas_estimation {
-                function_call.legacy()
-            } else {
-                function_call
-            };
-
-            for i in 1..6 {
-                info!("Dispatch Attempt {:?}", i);
-
-                // Get gas estimate
-                // TODO: refactor configs specifically for zilliqa
-                let _function_call = if client.legacy_gas_estimation {
-                    let gas_estimate = match function_call.estimate_gas().await {
-                        Ok(estimate) => estimate,
-                        Err(err) => {
-                            warn!("Failed to estimate gas, {:?}", err);
-                            return Ok(());
-                        }
-                    };
-                    info!("Gas estimate {:?}", gas_estimate);
-                    function_call.clone().gas(gas_estimate * 130 / 100) // Apply multiplier
-                } else {
-                    let function_call = function_call.clone();
-                    // `eth_call` does not seem to work on ZQ so it had to be skipped
-                    // Simulate call, if fails decode error and exit early
-                    if let Err(contract_err) = function_call.call().await {
-                        match contract_err.decode_contract_revert::<ChainGatewayErrors>() {
-                            Some(ChainGatewayErrors::AlreadyDispatched(_)) => {
-                                info!(
-                                    "Already Dispatched {}.{}",
-                                    event.target_chain_id, event.nonce
-                                );
-                                return Ok(());
-                            }
-                            Some(err) => {
-                                warn!("ChainGatewayError: {:?}", err);
-                                return Ok(());
-                            }
-                            None => {
-                                warn!("Some unknown error, {:?}", contract_err);
-                                tokio::time::sleep(Duration::from_secs(1)).await;
-                                continue;
-                            }
-                        }
-                    }
-                    function_call
-                };
-
-                // Make the actual call
-                match _function_call.send().await {
-                    Ok(tx) => {
-                        println!(
-                            "Transaction Sent {}.{} {:?}",
-                            event.target_chain_id,
-                            event.nonce,
-                            tx.tx_hash()
-                        );
-
+            let _call_builder = if chain_client.legacy_gas_estimation {
+                let gas_estimate = match call_builder.estimate_gas().await {
+                    Ok(estimate) => estimate,
+                    Err(err) => {
+                        warn!("Failed to estimate gas, {:?}", err);
                         return Ok(());
                     }
-                    Err(err) => {
-                        warn!("Failed to send: {:?}", err);
+                };
+                info!("Gas estimate {:?}", gas_estimate);
+                call_builder.clone().gas(gas_estimate * 130 / 100) // Apply multiplier
+            } else {
+                let call_builder = call_builder.clone();
+                // let already_dispatched_error = chain_gateway_contract.abi().error("AlreadyDispatched").unwrap().get(0).unwrap();
+                if let Err(contract_err) = call_builder.call().await {
+                    use alloy::{contract::Error, transports::RpcError};
+                    match contract_err {
+                        Error::TransportError(RpcError::ErrorResp(e)) => {
+                            if let Ok(revert_code) = e.deser_data::<i64>() {
+                                // TODO: how to properly decipher this specific error?
+                                info!(
+                                    "Already Dispatched {}.{} (error: {revert_code})",
+                                    event.target_chain_id, event.nonce
+                                );
+                            }
+                            return Ok(());
+                        }
+                        _ => {
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            continue;
+                        }
                     }
                 }
+                call_builder
+            };
 
-                tokio::time::sleep(Duration::from_secs(1)).await;
+            // Make the actual call
+            match _call_builder.send().await {
+                Ok(tx) => {
+                    println!(
+                        "Transaction sent {}.{} {:?}",
+                        event.target_chain_id,
+                        event.nonce,
+                        tx.tx_hash()
+                    );
+
+                    return Ok(());
+                }
+                Err(err) => {
+                    warn!("Failed to send: {:?}", err);
+                }
             }
-        */
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
 
         Ok(())
     }
