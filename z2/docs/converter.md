@@ -34,7 +34,7 @@ bootstrap_address = [ "12D3KooWNYaasyfY1wFrSHga3WBdZkb7bGhQiUz9926bQvk4HQj2", "/
 [[nodes]]
 eth_chain_id = 33101 # change the chain it for your conversion
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
-data_dir = "/data"
+data_dir = "/data"[README.md](..%2FREADME.md)
 consensus.consensus_timeout = { secs = 60, nanos = 0 }
 consensus.genesis_accounts = [ ["0xcca93a2e1169caf02e515203d1539cc3f390890a", "1000000000000000000000000"] ]
 EOF
@@ -48,7 +48,8 @@ session later. Use `screen`)
 ```
 screen -a
 export Z2_CONVERTER=true
-z2 converter convert /my/dir/persistences/zq1 /my/dir/persistences/zq2 config.toml <secret key>
+z2 converter convert /my/dir/persistences/zq1 /my/dir/persistences/zq2 config.toml <secret key> <pre_evm_block_number>
 ```
 
 The secret key is for a single validator which will be assumed to have 64 ZIL staked, so that the network has a validator on startup.
+PreEvm block number is the last block number before EVM support was enabled.
