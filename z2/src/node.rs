@@ -9,7 +9,6 @@ use tokio::{fs::File, io::AsyncWriteExt};
 use crate::{
     address::EthereumAddress,
     deployer::{docker_image, Machine, NodeRole},
-    validators::Chain,
 };
 
 pub struct ChainNode {
@@ -223,7 +222,7 @@ impl ChainNode {
     }
 
     async fn create_config_toml(&self, filename: &str) -> Result<String> {
-        let spec_config = Chain::get_toml_contents(&self.chain_name)?;
+        let spec_config = include_str!("../resources/config.tera.toml");
 
         let genesis_wallet = EthereumAddress::from_private_key(&self.genesis_wallet_private_key)?;
         let bootstrap_node = EthereumAddress::from_private_key(&self.bootstrap_private_key)?;
