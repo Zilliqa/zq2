@@ -15,8 +15,14 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    cfg::ConsensusConfig, contracts, crypto, db::TrieStorage, exec::BaseFeeCheck, inspector,
-    message::BlockHeader, scilla::Scilla, transaction::EvmGas,
+    cfg::ConsensusConfig,
+    contracts, crypto,
+    db::TrieStorage,
+    exec::BaseFeeCheck,
+    inspector,
+    message::BlockHeader,
+    scilla::{Scilla, Transition},
+    transaction::EvmGas,
 };
 
 #[derive(Clone, Debug)]
@@ -282,6 +288,7 @@ pub enum Code {
         code: String,
         init_data: String,
         types: BTreeMap<String, (String, u8)>,
+        transitions: Vec<Transition>,
     },
 }
 
