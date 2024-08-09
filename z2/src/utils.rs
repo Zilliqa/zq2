@@ -59,7 +59,7 @@ pub fn string_from_path(in_path: &Path) -> Result<String> {
 pub async fn get_public_ip() -> Result<String> {
     let output: zqutils::commands::CommandOutput = zqutils::commands::CommandBuilder::new()
         .silent()
-        .cmd("curl", &["-4", "ipconfig.io"])
+        .cmd("curl", &["-s", "https://ipinfo.io/ip"])
         .run_for_output()
         .await?;
 
