@@ -85,7 +85,7 @@ ethers-solc = { version = "2.0.13", features = ["svm-solc"] }
 fs_extra = "1.3.0"
 indicatif = "0.17.8"
 primitive-types = { version = "0.12.2" }
-ureq = "2.10.0"
+ureq = "2.10.1"
 zilliqa = { path = ".", default-features = false, features = ["fake_time"] }
 zilliqa-macros = { path = "../zilliqa-macros" }
 
