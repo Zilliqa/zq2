@@ -37,3 +37,24 @@ pub mod bool_as_str {
         Ok(b)
     }
 }
+
+pub mod json_value_as_str {
+    use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+    use serde_json::Value;
+
+    pub fn serialize<S>(value: &Value, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value.to_string().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        serde_json::from_str(
+            &String::deserialize(deserializer)?
+        ).map_err(de::Error::custom)
+    }
+}

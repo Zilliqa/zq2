@@ -12,6 +12,7 @@ use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use revm::primitives::ResultAndState;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha3::{Digest, Keccak256};
 
 use crate::{
@@ -23,8 +24,9 @@ use crate::{
     inspector,
     message::{BlockHeader, MAX_COMMITTEE_SIZE},
     node::ChainId,
-    scilla::{Scilla, Transition},
+    scilla::{ParamValue, Scilla, Transition},
     transaction::EvmGas,
+    serde_util::json_value_as_str,
 };
 
 #[derive(Clone, Debug)]
@@ -305,10 +307,42 @@ pub enum Code {
     Evm(#[serde(with = "serde_bytes")] Vec<u8>),
     Scilla {
         code: String,
-        init_data: String,
+        init_data: Vec<InitDataValue>,
         types: BTreeMap<String, (String, u8)>,
         transitions: Vec<Transition>,
     },
+}
+
+/// The values of a contract's init data. This is the same as [ParamValue], but encodes the `value` as a
+/// string to ensure `bincode` can handle it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InitDataValue {
+    #[serde(rename = "vname")]
+    pub name: String,
+    #[serde(with = "json_value_as_str")]
+    pub value: Value,
+    #[serde(rename = "type")]
+    pub ty: String,
+}
+
+impl From<ParamValue> for InitDataValue {
+    fn from(value: ParamValue) -> Self {
+        InitDataValue {
+            name: value.name,
+            value: value.value,
+            ty: value.ty,
+        }
+    }
+}
+
+impl From<InitDataValue> for ParamValue {
+    fn from(value: InitDataValue) -> Self {
+        ParamValue {
+            name: value.name,
+            value: value.value,
+            ty: value.ty,
+        }
+    }
 }
 
 impl Default for Code {
@@ -336,7 +370,7 @@ impl Code {
         }
     }
 
-    pub fn scilla_code_and_init_data(self) -> Option<(String, String)> {
+    pub fn scilla_code_and_init_data(self) -> Option<(String, Vec<InitDataValue>)> {
         match self {
             Code::Scilla {
                 code, init_data, ..

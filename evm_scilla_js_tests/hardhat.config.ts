@@ -99,8 +99,8 @@ const config: HardhatUserConfig = {
       miningState: false
     },
     isolated_server: {
-      url: "http://127.0.0.1:4201/",
-      websocketUrl: "ws://127.0.0.1:4201/",
+      url: "http://127.0.0.1:8080/",
+      websocketUrl: "ws://127.0.0.1:8080/",
       accounts: [
         // Don't use account with private key = '0x1' because it's also used as staking reward address
         // This could lead to false tests failures when checks are made against balance changes

@@ -36,8 +36,8 @@ use crate::{
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
     precompiles::{get_custom_precompiles, scilla_call_handle_register},
-    scilla::{self, split_storage_key, storage_key, Scilla},
-    state::{contract_addr, Account, Code, State},
+    scilla::{self, split_storage_key, storage_key, ParamValue, Scilla},
+    state::{contract_addr, Account, Code, InitDataValue, State},
     time::SystemTime,
     transaction::{
         total_scilla_gas_price, EvmGas, EvmLog, Log, ScillaGas, ScillaLog, ScillaParam,
@@ -189,7 +189,7 @@ impl ScillaTransition {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ScillaResult {
     /// Whether the transaction succeeded and the resulting state changes were persisted.
     pub success: bool,
@@ -1343,11 +1343,17 @@ fn scilla_create(
     // than this.
     let contract_address = zil_contract_address(from_addr, txn.nonce - 1);
 
-    let mut init_data: Vec<Value> = serde_json::from_str(&txn.data)?;
-    init_data.push(json!({"vname": "_creation_block", "type": "BNum", "value": current_block.number.to_string()}));
-    let contract_address_hex = format!("{contract_address:#x}");
-    init_data
-        .push(json!({"vname": "_this_address", "type": "ByStr20", "value": contract_address_hex}));
+    let mut init_data: Vec<ParamValue> = serde_json::from_str(&txn.data)?;
+    init_data.push(ParamValue {
+        name: "_creation_block".to_owned(),
+        ty: "BNum".to_owned(),
+        value:  current_block.number.to_string().into(),
+    });
+    init_data.push(ParamValue {
+        name: "_this_address".to_owned(),
+        ty: "ByStr20".to_owned(),
+        value: format!("{contract_address:#x}").into(),
+    });
 
     let gas = txn.gas_limit;
 
@@ -1406,7 +1412,7 @@ fn scilla_create(
     account.account.balance = txn.amount.get();
     account.account.code = Code::Scilla {
         code: txn.code.clone(),
-        init_data: serde_json::to_string(&init_data)?,
+        init_data: init_data.clone().into_iter().map(InitDataValue::from).collect(),
         types,
         transitions,
     };
@@ -1510,17 +1516,33 @@ pub fn scilla_call(
     let mut state = Some(state);
 
     while let Some((depth, sender, to_addr, amount, message)) = call_stack.pop() {
+        trace!(depth, %sender, %to_addr, %amount, ?message, "scilla call");
         let mut current_state = state.take().expect("missing state");
 
+        //fn implements_scilla_receiver(state: &State, from: Address, contract: Address) -> bool {
+        //    // TODO: Consider if this should be called on `PendingState` instead?
+        //    // Think about the implications of an ERC-165 implementation which calls the scilla_call precompile.
+        //    state.apply_transaction_evm(
+        //        from_addr,
+        //        Some(contract),
+        //        state.gas_price,
+        //    )
+        //}
+
+        let message_contains_evm_call = message
+            .as_ref()
+            .and_then(|m| m.get("params"))
+            .and_then(|m| m.as_array())
+            .map(|m| m.iter().any(|param|
+                param.get("vname")
+                    .map_or(false, |name| name == "_EvmCall")
+            ))
+            .unwrap_or(false);
         let contract = current_state.load_account(to_addr)?;
         let code_and_data = match &contract.account.code {
-            // EOAs are currently represented by [Code::Evm] with no code.
-            Code::Evm(code) if code.is_empty() => None,
-            Code::Scilla {
-                code, init_data, ..
-            } => Some((code, init_data)),
-            // Calls to EVM contracts should fail.
-            Code::Evm(_) => {
+            // If the message is to an EVM contract and it contains the special `_EvmCall` parameter, the call should
+            // fail.
+            Code::Evm(code) if !code.is_empty() && message_contains_evm_call => {
                 return Ok((
                     ScillaResult {
                         success: false,
@@ -1534,12 +1556,40 @@ pub fn scilla_call(
                             .collect(),
                         exceptions: vec![ScillaException {
                             line: 0,
-                            message: "Scilla call to EVM contract".to_owned(),
+                            message: "Scilla call to EVM contract with '_EvmCall' parameter".to_owned(),
                         }],
                     },
                     current_state,
                 ));
             }
+            // If the message is to an EVM contract and that contract implements the `ScillaReceiver` interface via
+            // EIP-165, the call should fail.
+            //Code::Evm(code) if !code.is_empty() && implements_scilla_receiver(to_addr) => {
+            //    return Ok((
+            //        ScillaResult {
+            //            success: false,
+            //            contract_address: None,
+            //            logs: vec![],
+            //            gas_used: (gas_limit - gas).into(),
+            //            transitions: vec![],
+            //            accepted: Some(false),
+            //            errors: [(depth, vec![ScillaError::CallFailed])]
+            //                .into_iter()
+            //                .collect(),
+            //            exceptions: vec![ScillaException {
+            //                line: 0,
+            //                message: "Scilla call to EVM contract which implements 'ScillaReceiver'".to_owned(),
+            //            }],
+            //        },
+            //        current_state,
+            //    ));
+            //}
+            // Otherwise, treat all EVM contracts as if they are an EOA. Conveniently, EOAs are represented by
+            // [Code::Evm] with no code.
+            Code::Evm(_) => None,
+            Code::Scilla {
+                code, init_data, ..
+            } => Some((code, init_data)),
         };
 
         if let Some((code, init_data)) = code_and_data {
@@ -1564,7 +1614,7 @@ pub fn scilla_call(
             gas = g;
 
             let code = code.clone();
-            let init_data = serde_json::from_str::<Vec<_>>(init_data)?;
+            let init_data: Vec<_> = init_data.clone().into_iter().map(ParamValue::from).collect();
             let contract_balance = contract.account.balance;
 
             let (output, mut new_state) = scilla.invoke_contract(
@@ -1657,12 +1707,7 @@ pub fn scilla_call(
                         .map(|p| {
                             Ok(ScillaParam {
                                 ty: p.ty,
-                                // If the value is a JSON string, don't double encode it.
-                                value: if let Value::String(v) = p.value {
-                                    v
-                                } else {
-                                    serde_json::to_string(&p.value)?
-                                },
+                                value: p.value.to_string(), // TODO: Consider changing type to [Value] (or really remove `ScillaParam` and replace with `scilla::ParamValue`)?
                                 name: p.name,
                             })
                         })

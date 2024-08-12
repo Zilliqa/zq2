@@ -42,8 +42,8 @@ use zilliqa::{
     message::{Block, BlockHeader, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
     schnorr,
-    scilla::storage_key,
-    state::{contract_addr, Account, Code, State},
+    scilla::{storage_key, ParamValue},
+    state::{contract_addr, Account, Code, InitDataValue, State},
     time::SystemTime,
     transaction::{
         EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
@@ -198,11 +198,12 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
             .map_err(|err| anyhow!("Unable to convert scilla initdata into string: {err}"))?,
         None => String::new(),
     };
+    let init_data: Vec<ParamValue> = serde_json::from_str(&init_data)?;
 
     Ok(Code::Scilla {
         code: String::from_utf8(code)
             .map_err(|err| anyhow!("Unable to convert scilla code into string: {err}"))?,
-        init_data,
+        init_data: init_data.into_iter().map(InitDataValue::from).collect(),
         types: BTreeMap::default(),
         transitions: vec![],
     })

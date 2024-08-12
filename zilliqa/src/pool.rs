@@ -116,6 +116,7 @@ impl TransactionPool {
     /// If the returned transaction is executed, the caller must call [TransactionPool::mark_executed] to inform the
     /// pool that the account's nonce has been updated and further transactions from this signer may now be ready.
     pub fn best_transaction(&mut self) -> Option<VerifiedTransaction> {
+        tracing::trace!(ready_count = self.ready.len(), transaction_count = self.transactions.len());
         loop {
             let ReadyItem { tx_index, .. } = self.ready.pop()?;
             let Some(transaction) = self.transactions.remove(&tx_index) else {

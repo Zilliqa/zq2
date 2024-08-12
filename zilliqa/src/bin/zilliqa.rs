@@ -28,7 +28,8 @@ async fn main() -> Result<()> {
 
     let builder = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
-        .with_line_number(true);
+        .with_line_number(true)
+        .with_ansi(false);
     if args.log_json {
         builder.json().init();
     } else {

@@ -135,7 +135,7 @@ impl Scilla {
         &self,
         code: &str,
         gas_limit: ScillaGas,
-        init: &[Value],
+        init: &[ParamValue],
     ) -> Result<Result<CheckOutput, ErrorResponse>> {
         let args = vec![
             "-init".to_owned(),
@@ -192,7 +192,7 @@ impl Scilla {
         code: &str,
         gas_limit: ScillaGas,
         value: ZilAmount,
-        init: &[Value],
+        init: &[ParamValue],
     ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
         let args = vec![
             "-i".to_owned(),
@@ -260,7 +260,7 @@ impl Scilla {
         code: &str,
         gas_limit: ScillaGas,
         contract_balance: ZilAmount,
-        init: &[Value],
+        init: &[ParamValue],
         msg: &Value,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
         let args = vec![
@@ -407,7 +407,7 @@ pub struct ScillaEvent {
     pub params: Vec<ParamValue>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ParamValue {
     #[serde(rename = "vname")]
     pub name: String,

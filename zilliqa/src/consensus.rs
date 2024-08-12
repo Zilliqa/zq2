@@ -830,30 +830,6 @@ impl Consensus {
         Ok(Some(result))
     }
 
-    pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
-        let mut gas_left = self.config.consensus.eth_block_gas_limit;
-        std::iter::from_fn(|| self.transaction_pool.best_transaction())
-            .filter(|txn| {
-                let account_nonce = self.state.must_get_account(txn.signer).nonce;
-                // Ignore this transaction if it is no longer valid.
-                // Transactions are (or will be) valid iff their nonce is greater than the account
-                // nonce OR if they have no nonce
-                txn.tx
-                    .nonce()
-                    .map(|tx_nonce| tx_nonce >= account_nonce)
-                    .unwrap_or(true)
-            })
-            .take_while(|txn| {
-                if let Some(g) = gas_left.checked_sub(txn.tx.gas_limit()) {
-                    gas_left = g;
-                    true
-                } else {
-                    false
-                }
-            })
-            .collect()
-    }
-
     pub fn txpool_content(&self) -> TxPoolContent {
         let mut content = self.transaction_pool.preview_content();
         // Ignore txns having too low nonces
@@ -1595,7 +1571,7 @@ impl Consensus {
         if new {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
-            // Avoid cloning the transaction aren't any subscriptions to send it to.
+            // Avoid cloning the transaction if there aren't any subscriptions to send it to.
             if self.new_transactions.receiver_count() != 0 {
                 // Clone the transaction from the pool, because we moved it in.
                 let txn = self
@@ -1607,6 +1583,7 @@ impl Consensus {
             }
         }
 
+        trace!(new, "foo");
         Ok(new)
     }
 

@@ -183,7 +183,7 @@ impl SignedTransaction {
             SignedTransaction::Legacy { tx, .. } => tx.chain_id,
             SignedTransaction::Eip2930 { tx, .. } => Some(tx.chain_id),
             SignedTransaction::Eip1559 { tx, .. } => Some(tx.chain_id),
-            SignedTransaction::Zilliqa { tx, .. } => Some(tx.chain_id as u64),
+            SignedTransaction::Zilliqa { tx, .. } => Some(tx.chain_id as u64 + 32768),
             SignedTransaction::Intershard { tx, .. } => Some(tx.chain_id),
         }
     }
@@ -885,7 +885,7 @@ impl ScillaLog {
         EvmLog {
             address: self.address,
             topics: vec![keccak256(
-                format!("event {}(string)", self.event_name).into_bytes(),
+                format!("{}(string)", self.event_name).into_bytes(),
             )],
             data,
         }

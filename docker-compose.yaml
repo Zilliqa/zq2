@@ -4,11 +4,8 @@ services:
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info,opentelemetry=trace,opentelemetry_otlp=trace
-    image: zq2-node0
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: zilliqanode0
+    build: .
     volumes:
       - "./infra/config.toml:/config.toml"
     command:
@@ -21,7 +18,7 @@ services:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info
     container_name: zilliqanode1
-    image: zq2-node0
+    build: .
     volumes:
       - "./infra/config.toml:/config.toml"
     command:
@@ -32,7 +29,7 @@ services:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info
     container_name: zilliqanode2
-    image: zq2-node0
+    build: .
     volumes:
       - "./infra/config.toml:/config.toml"
     command:
@@ -43,7 +40,7 @@ services:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info
     container_name: zilliqanode3
-    image: zq2-node0
+    build: .
     volumes:
       - "./infra/config.toml:/config.toml"
     command:
