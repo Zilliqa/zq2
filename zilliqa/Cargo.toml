@@ -80,7 +80,8 @@ blsful = "2.5.7"
 alloy = { version = "0.2.1", default-features = false, features = ["rand"] }
 async-trait = "0.1.81"
 criterion = "0.5.1"
-ethers = { version = "2.0.14", default-features = false, features = ["legacy"] }
+ethers = { version = "2.0.14", default-features = false, features = ["ethers-solc", "legacy"] }
+ethers-solc = { version = "2.0.14", features = ["svm-solc"] }
 foundry-compilers = { version = "0.10.2", features = ["svm-solc"] }
 fs_extra = "1.3.0"
 indicatif = "0.17.8"
