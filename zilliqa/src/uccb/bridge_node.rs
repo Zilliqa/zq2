@@ -1,9 +1,12 @@
-use crate::uccb::{
-    client::ChainClient,
-    contracts,
-    event::{DispatchedEvent, RelayEventSignatures, RelayedEvent},
-    message::{Dispatch, Dispatched, InboundBridgeMessage, OutboundBridgeMessage, Relay},
-    signature::SignatureTracker,
+use crate::{
+    consensus::Consensus,
+    uccb::{
+        client::ChainClient,
+        contracts,
+        event::{DispatchedEvent, RelayEventSignatures, RelayedEvent},
+        message::{Dispatch, Dispatched, InboundBridgeMessage, OutboundBridgeMessage, Relay},
+        signature::SignatureTracker,
+    },
 };
 use alloy::{
     contract::{ContractInstance, DynCallBuilder, Interface},
@@ -17,7 +20,10 @@ use alloy::{
 };
 use anyhow::Result;
 use futures_util::stream::StreamExt;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
+};
 use tokio::{
     select,
     sync::mpsc::{self, UnboundedSender},
@@ -34,14 +40,14 @@ pub struct BridgeNode {
     inbound_message_sender: UnboundedSender<InboundBridgeMessage>,
     pub chain_client: ChainClient,
     validators: HashSet<Address>,
-    is_leader: bool,
+    consensus: Arc<Mutex<Consensus>>,
 }
 
 impl BridgeNode {
     pub async fn new(
         chain_client: ChainClient,
         outbound_message_sender: UnboundedSender<OutboundBridgeMessage>,
-        is_leader: bool,
+        consensus: Arc<Mutex<Consensus>>,
     ) -> Result<Self> {
         let (inbound_message_sender, inbound_message_receiver) = mpsc::unbounded_channel();
         let inbound_message_receiver = UnboundedReceiverStream::new(inbound_message_receiver);
@@ -53,7 +59,7 @@ impl BridgeNode {
             outbound_message_sender,
             inbound_message_receiver,
             inbound_message_sender,
-            is_leader,
+            consensus,
             relay_nonces: HashSet::new(),
         };
 
@@ -306,15 +312,20 @@ impl BridgeNode {
 
         // TODO: take is_leader from the consensus
         // if leader and majority, create request to dispatch
-        if self.is_leader && self.has_supermajority(event_signatures.signatures.len()) {
-            // TODO: Verify if any signatures became invalid due to validator changes
-            info!("Sending out dispatch request for {:?}", &echo);
+        let consensus = self.consensus.lock().unwrap();
+        let view = consensus.finalized_view();
+        if let Some(block) = consensus.get_block_by_view(view)? {
+            if consensus.are_we_leader_for_view(block.hash(), view)
+                && self.has_supermajority(event_signatures.signatures.len())
+            {
+                info!("Sending out dispatch request for {:?}", &echo);
 
-            self.outbound_message_sender
-                .send(OutboundBridgeMessage::Dispatch(Dispatch {
-                    event: event.clone(),
-                    signatures: event_signatures.signatures,
-                }))?;
+                self.outbound_message_sender
+                    .send(OutboundBridgeMessage::Dispatch(Dispatch {
+                        event: event.clone(),
+                        signatures: event_signatures.signatures,
+                    }))?;
+            }
         }
 
         Ok(())
