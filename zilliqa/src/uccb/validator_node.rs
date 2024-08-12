@@ -1,4 +1,9 @@
-use std::{collections::HashMap, str::FromStr, time::Duration};
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use alloy::{
     contract::{ContractInstance, DynCallBuilder, Interface},
@@ -21,6 +26,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{error, info, warn};
 
 use crate::{
+    consensus::Consensus,
     message::ExternalMessage,
     p2p_node::OutboundMessageTuple,
     schnorr::sign,
@@ -48,6 +54,7 @@ pub struct ValidatorNode {
     config: Config,
     signer: PrivateKeySigner,
     chain_clients: HashMap<ChainID, ChainClient>,
+    consensus: Arc<Mutex<Consensus>>,
 }
 
 impl ValidatorNode {
@@ -57,6 +64,7 @@ impl ValidatorNode {
         peer_id: PeerId,
         shard_id: u64,
         bridge_outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
+        consensus: Arc<Mutex<Consensus>>,
     ) -> Result<Self> {
         let (bridge_inbound_message_sender, bridge_inbound_message_receiver) =
             mpsc::unbounded_channel::<ExternalMessage>();
@@ -71,6 +79,7 @@ impl ValidatorNode {
             config: config.clone(),
             signer: signer.clone(),
             chain_clients: HashMap::<ChainID, ChainClient>::new(),
+            consensus,
         })
     }
 
