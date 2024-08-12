@@ -1,4 +1,8 @@
-use std::{fs, path::PathBuf};
+use std::{
+    backtrace::{Backtrace, BacktraceStatus},
+    fs,
+    path::PathBuf,
+};
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
@@ -30,6 +34,51 @@ async fn main() -> Result<()> {
     } else {
         builder.init();
     }
+
+    // Set a panic hook that records the panic as a `tracing` event at the `ERROR` verbosity level.
+    std::panic::set_hook(Box::new(|panic| {
+        let message = match panic.payload().downcast_ref::<&'static str>() {
+            Some(s) => *s,
+            None => match panic.payload().downcast_ref::<String>() {
+                Some(s) => &s[..],
+                None => "Box<dyn Any>",
+            },
+        };
+        let thread = std::thread::current();
+        let thread_name = thread.name().unwrap_or("<unnamed>");
+
+        let backtrace = Backtrace::capture();
+        let backtrace =
+            (backtrace.status() == BacktraceStatus::Captured).then(|| backtrace.to_string());
+
+        match (panic.location(), backtrace) {
+            (None, None) => {
+                tracing::error!(thread_name, message);
+            }
+            (None, Some(backtrace)) => {
+                tracing::error!(thread_name, message, %backtrace);
+            }
+            (Some(location), None) => {
+                tracing::error!(
+                    thread_name,
+                    message,
+                    panic.file = location.file(),
+                    panic.line = location.line(),
+                    panic.column = location.column(),
+                );
+            }
+            (Some(location), Some(backtrace)) => {
+                tracing::error!(
+                    thread_name,
+                    message,
+                    panic.file = location.file(),
+                    panic.line = location.line(),
+                    panic.column = location.column(),
+                    %backtrace,
+                );
+            }
+        }
+    }));
 
     let mut merged_config = toml::Table::new();
     for config_file in args.config_file {
