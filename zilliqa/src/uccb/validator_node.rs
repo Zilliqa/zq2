@@ -109,7 +109,7 @@ impl ValidatorNode {
             let mut bridge_node = BridgeNode::new(
                 chain_client.clone(),
                 bridge_message_sender.clone(),
-                false, //config.is_leader,
+                self.consensus.clone(),
             )
             .await?;
 
