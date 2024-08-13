@@ -1112,10 +1112,12 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     let mut contract_file = tempfile::Builder::new()
         .prefix("zq2")
         .suffix(".sol")
-        // .keep(true) // rely on OS cleanup
+        .keep(true) // do not delete
         .tempfile()
         .unwrap();
     contract_file.write_all(&contract_source).unwrap();
+
+    let temp_path = contract_file.into_temp_path();
 
     let project = Project::builder()
         .paths(
@@ -1126,7 +1128,7 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
         .build(Default::default())
         .unwrap();
 
-    let output = project.compile_file(contract_file.path()).unwrap();
+    let output = project.compile_file(temp_path.to_path_buf()).unwrap();
 
     if output.has_compiler_errors() {
         panic!(
@@ -1138,7 +1140,7 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     let contract = output
         .output()
         .contracts
-        .get(contract_file.path(), contract)
+        .get(temp_path.to_path_buf().as_path(), contract)
         .unwrap();
 
     let abi = contract.abi.unwrap().clone();
