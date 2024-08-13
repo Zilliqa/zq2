@@ -117,13 +117,11 @@ impl P2pNode {
             autonat: autonat::Behaviour::new(
                 peer_id,
                 autonat::Config {
-                    // Config changes to speed up autonat initialization.
+                    // Config changes to speed up autonat initialization. Set back to default if too aggressive.
                     retry_interval: Duration::from_secs(10),
                     refresh_interval: Duration::from_secs(30),
                     boot_delay: Duration::from_secs(5),
                     throttle_server_period: Duration::ZERO,
-                    // Don't attempt to reach IPs that are known to be at a private.
-                    only_global_ips: false,
                     ..Default::default()
                 },
             ),
@@ -322,7 +320,7 @@ impl P2pNode {
                             match new {
                                 autonat::NatStatus::Public(_) => (), // Autonat will add this automatically
                                 autonat::NatStatus::Private => {
-                                    let external_addresses: Vec<_> = self.swarm.external_addresses().map(|x|x.clone()).collect();
+                                    let external_addresses: Vec<_> = self.swarm.external_addresses().cloned().collect();
                                     for addr in external_addresses {
                                         self.swarm.remove_external_address(&addr);
                                     }
