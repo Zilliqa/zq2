@@ -40,7 +40,6 @@ use ethers::{
     types::{Bytes, TransactionReceipt, H256, U64},
     utils::secret_key_to_address,
 };
-
 use foundry_compilers::{solc::SolcLanguage, Project, ProjectPathsConfig};
 use fs_extra::dir::*;
 use futures::{stream::BoxStream, Future, FutureExt, Stream, StreamExt};
