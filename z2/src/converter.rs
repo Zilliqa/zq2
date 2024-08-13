@@ -594,16 +594,6 @@ pub async fn convert_persistence(
                 zq2_db.set_latest_finalized_view_with_db_tx(sqlite_tx, block.view())?;
                 trace!("{} block inserted", block.number());
             }
-            // Let's insert another block (empty) which will be used as high_qc block when zq2 starts from converted persistence
-            let empty_high_qc_block =
-                create_empty_block_from_parent(blocks.last().unwrap(), secret_key);
-            zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_high_qc_block)?;
-            zq2_db.set_canonical_block_number_with_db_tx(
-                sqlite_tx,
-                empty_high_qc_block.number(),
-                empty_high_qc_block.hash(),
-            )?;
-            zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.qc.clone())?;
 
             for (hash, transaction) in &transactions {
                 zq2_db.insert_transaction_with_db_tx(sqlite_tx, hash, transaction)?;
@@ -611,6 +601,23 @@ pub async fn convert_persistence(
             for receipt in &receipts {
                 zq2_db.insert_transaction_receipt_with_db_tx(sqlite_tx, receipt.to_owned())?;
             }
+            Ok(())
+        })?;
+    }
+
+    // Let's insert another block (empty) which will be used as high_qc block when zq2 starts from converted persistence
+    if let Some(highest_block) = zq2_db.get_highest_block_number()? {
+        zq2_db.with_sqlite_tx(|sqlite_tx| {
+            let highest_block = zq2_db.get_block_by_view(&highest_block)?.unwrap();
+
+            let empty_high_qc_block = create_empty_block_from_parent(&highest_block, secret_key);
+            zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_high_qc_block)?;
+            zq2_db.set_canonical_block_number_with_db_tx(
+                sqlite_tx,
+                empty_high_qc_block.number(),
+                empty_high_qc_block.hash(),
+            )?;
+            zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.qc.clone())?;
             Ok(())
         })?;
     }
