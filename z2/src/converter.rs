@@ -331,7 +331,7 @@ pub async fn convert_persistence(
         .get_tx_blocks_aux("MaxTxBlockNumber")?
         .unwrap_or_default();
 
-    let current_block = zq2_db.get_latest_finalized_view()?.unwrap_or(0);
+    let current_block = zq2_db.get_latest_finalized_view()?.unwrap_or(1);
 
     let progress = ProgressBar::new(max_block)
         .with_style(style.clone())
@@ -348,6 +348,8 @@ pub async fn convert_persistence(
         .with_style(style)
         .with_message("convert blocks")
         .with_finish(ProgressFinish::AndLeave);
+
+    let mut fixed_block_number = current_block;
     for chunk in tx_blocks
         .into_iter()
         .progress_with(progress)
@@ -547,21 +549,16 @@ pub async fn convert_persistence(
                 //trace!(?txn_hash, "transaction inserted");
             }
 
-            let fixed_block_number = match blocks.last() {
-                Some(block) => block.number(),
-                _ => block_number,
-            };
-
             let qc = QuorumCertificate::new(
                 &[vote.signature()],
                 bitvec![u8, bitvec::order::Msb0; 1; 1],
                 parent_hash,
-                fixed_block_number,
+                fixed_block_number - 1,
             );
             let block = Block::from_qc(
                 secret_key,
-                fixed_block_number + 1,
-                fixed_block_number + 1,
+                fixed_block_number,
+                fixed_block_number,
                 qc,
                 parent_hash,
                 state.root_hash()?,
@@ -572,6 +569,8 @@ pub async fn convert_persistence(
                 ScillaGas(block.gas_used).into(),
                 ScillaGas(block.gas_limit).into(),
             );
+
+            fixed_block_number += 1;
 
             // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash
             for receipt in &mut receipts {
