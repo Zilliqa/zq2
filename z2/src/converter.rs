@@ -357,7 +357,7 @@ pub async fn convert_persistence(
     {
         let mut transactions = Vec::new();
         let mut receipts = Vec::new();
-        let mut blocks = Vec::new();
+        let mut blocks: Vec<Block> = Vec::new();
         let mut parent_hash = Hash::ZERO;
 
         for (block_number, block) in chunk {
@@ -547,16 +547,21 @@ pub async fn convert_persistence(
                 //trace!(?txn_hash, "transaction inserted");
             }
 
+            let fixed_block_number = match blocks.last() {
+                Some(block) => block.number(),
+                _ => block_number,
+            };
+
             let qc = QuorumCertificate::new(
                 &[vote.signature()],
                 bitvec![u8, bitvec::order::Msb0; 1; 1],
                 parent_hash,
-                block.block_num - 1,
+                fixed_block_number - 1,
             );
             let block = Block::from_qc(
                 secret_key,
-                block.block_num,
-                block.block_num,
+                fixed_block_number,
+                fixed_block_number,
                 qc,
                 parent_hash,
                 state.root_hash()?,
