@@ -156,8 +156,6 @@ mod tests {
 
         let solc = foundry_compilers::solc::Solc::find_or_install(&semver::Version::new(0, 8, 26))
             .unwrap();
-        // solc.base_path = Some(root.clone());
-        // solc.allow_paths.insert(PathBuf::from("../vendor"));
 
         let output = solc.compile_exact(&input).unwrap();
         let output_file = root.join("src").join("contracts").join("compiled.json");

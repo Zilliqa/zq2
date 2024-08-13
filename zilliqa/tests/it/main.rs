@@ -1110,7 +1110,6 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
 
     // Write the contract source to a file, so `solc` can compile it.
     let mut contract_file = tempfile::Builder::new()
-        .prefix("zq2")
         .suffix(".sol")
         .keep(true) // do not delete
         .tempfile()
@@ -1146,7 +1145,7 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     let abi = contract.abi.unwrap().clone();
     let bytecode = contract.bytecode().unwrap().clone();
 
-    // Work-around strict-typing
+    // Convert from the `alloy` representation of an ABI to the `ethers` representation, via JSON
     let abi = serde_json::from_value(serde_json::to_value(abi).unwrap()).unwrap();
     let bytecode = serde_json::from_value(serde_json::to_value(bytecode).unwrap()).unwrap();
 
