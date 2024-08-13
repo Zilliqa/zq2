@@ -20,6 +20,7 @@ use std::{
     env,
     fmt::Debug,
     fs,
+    io::Write,
     ops::DerefMut,
     pin::Pin,
     rc::Rc,
@@ -1111,17 +1112,17 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     let mut contract_file = tempfile::Builder::new()
         .prefix("zq2")
         .suffix(".sol")
-        .keep(true) // rely on OS cleanup
+        // .keep(true) // rely on OS cleanup
         .tempfile()
         .unwrap();
-    std::io::Write::write_all(&mut contract_file, &contract_source).unwrap();
+    contract_file.write_all(&contract_source).unwrap();
 
     let project = Project::builder()
         .paths(
             ProjectPathsConfig::hardhat(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap(),
         )
         .single_solc_jobs() // single file only
-        .locked_version(SolcLanguage::Solidity, semver::Version::new(0, 8, 23)) // downloads and installs, if not already in `svm list`
+        .locked_version(SolcLanguage::Solidity, semver::Version::new(0, 8, 26)) // downloads and installs, if not already in `svm list`
         .build(Default::default())
         .unwrap();
 
