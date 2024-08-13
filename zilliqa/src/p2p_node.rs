@@ -279,7 +279,7 @@ impl P2pNode {
                                 self.swarm.behaviour_mut().kademlia.remove_address(&peer_id, &addr);
                             }
                         }
-                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id })) => {
+                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id, .. })) => {
                             for addr in listen_addrs {
                                 // If the node is advertising a non-global address, ignore it.
                                 let is_non_global = addr.iter().any(|p| match p {
