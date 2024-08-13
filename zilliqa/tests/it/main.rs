@@ -34,13 +34,14 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use ethers::{
     abi::Contract,
-    prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, SignerMiddleware},
+    prelude::{DeploymentTxFactory, SignerMiddleware},
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::LocalWallet,
-    solc::SHANGHAI_SOLC,
     types::{Bytes, TransactionReceipt, H256, U64},
     utils::secret_key_to_address,
 };
+
+use foundry_compilers::{solc::SolcLanguage, Project, ProjectPathsConfig};
 use fs_extra::dir::*;
 use futures::{stream::BoxStream, Future, FutureExt, Stream, StreamExt};
 use itertools::Itertools;
@@ -1098,7 +1099,7 @@ fn format_message(
 }
 
 const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
-const EVM_VERSION: EvmVersion = EvmVersion::Shanghai;
+// const EVM_VERSION: EvmVersion = EvmVersion::Shanghai;
 
 fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     let full_path = format!("{}{}", PROJECT_ROOT, path);
@@ -1114,39 +1115,59 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     let mut contract_file = tempfile::Builder::new().suffix(".sol").tempfile().unwrap();
     std::io::Write::write_all(&mut contract_file, &contract_source).unwrap();
 
-    let sc = ethers::solc::Solc::default();
+    let project = Project::builder()
+        .paths(
+            ProjectPathsConfig::hardhat(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap(),
+        )
+        .locked_version(SolcLanguage::Solidity, semver::Version::new(0, 8, 20))
+        .build(Default::default())
+        .unwrap();
 
-    let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
-    let compiler_input = compiler_input.first_mut().unwrap();
-    compiler_input.settings.evm_version = Some(EVM_VERSION);
+    // FIXME: Are these checks strictly needed?
 
-    if let Ok(version) = sc.version() {
-        // gets the minimum EvmVersion that is compatible the given EVM_VERSION and version arguments
-        if EVM_VERSION.normalize_version(&version) != Some(EVM_VERSION) {
-            panic!(
-                "solc version {} required, currently set {}",
-                SHANGHAI_SOLC, version
-            );
-        }
-    }
+    // let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
+    // let compiler_input = compiler_input.first_mut().unwrap();
+    // compiler_input.settings.evm_version = Some(EVM_VERSION);
 
-    let out = sc
-        .compile::<CompilerInput>(compiler_input)
-        .unwrap_or_else(|e| {
-            panic!("failed to compile contract {}: {}", contract, e);
-        });
+    // // gets the minimum EvmVersion that is compatible the given EVM_VERSION and version arguments
+    // if EVM_VERSION.normalize_version_solc(&sc.version) != Some(EVM_VERSION) {
+    //     panic!(
+    //         "solc version {} required, currently set {}",
+    //         SHANGHAI_SOLC, sc.version
+    //     );
+    // }
+
+    // let out = sc
+    //     .compile::<CompilerInput>(compiler_input)
+    //     .unwrap_or_else(|e| {
+    //         panic!("failed to compile contract {}: {}", contract, e);
+    //     });
 
     // test if your solc can compile with v8.20 (shanghai) with
     // solc --evm-version shanghai zilliqa/tests/it/contracts/Storage.sol
-    if out.has_error() {
-        panic!("failed to compile contract with error  {:?}", out.errors);
+
+    let output = project.compile_file(contract_file.path()).unwrap();
+
+    if output.has_compiler_errors() {
+        panic!(
+            "failed to compile contract with error  {:?}",
+            output.output().errors
+        );
     }
 
-    let contract = out
-        .get(contract_file.path().to_str().unwrap(), contract)
+    let contract = output
+        .output()
+        .contracts
+        .get(contract_file.path(), contract)
         .unwrap();
+
     let abi = contract.abi.unwrap().clone();
     let bytecode = contract.bytecode().unwrap().clone();
+
+    // Work-around strict-typing
+    let abi = serde_json::from_value(serde_json::to_value(abi).unwrap()).unwrap();
+    let bytecode = serde_json::from_value(serde_json::to_value(bytecode).unwrap()).unwrap();
+
     (abi, bytecode)
 }
 
