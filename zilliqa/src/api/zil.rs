@@ -315,14 +315,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
 
     let is_scilla = account.code.scilla_code_and_init_data().is_some();
     if is_scilla {
-        // The configuration variable contains maximum size in KiB
         let limit = node.config.state_rpc_limit;
-        let limit = if limit == 0 {
-            limit
-        } else {
-            /* This field being set to 0 corresponds to no limit */
-            usize::MAX
-        };
 
         let trie = state.get_account_trie(address)?;
         for (i, (k, v)) in trie.iter().enumerate() {

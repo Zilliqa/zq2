@@ -70,7 +70,7 @@ pub struct NodeConfig {
     /// The maximum number of blocks to request in a single message when syncing.
     #[serde(default = "block_request_batch_size_default")]
     pub block_request_batch_size: u64,
-    /// The maximum number of key value pairs allowed to be returned withing the response of the `GetSmartContractState` RPC.
+    /// The maximum number of key value pairs allowed to be returned withing the response of the `GetSmartContractState` RPC. Defaults to no limit.
     #[serde(default = "state_rpc_limit_default")]
     pub state_rpc_limit: usize,
     /// When a block request to a peer fails, do not send another request to this peer for this amount of time.
@@ -139,7 +139,7 @@ pub fn block_request_batch_size_default() -> u64 {
 }
 
 pub fn state_rpc_limit_default() -> usize {
-    1024
+    usize::MAX
 }
 
 pub fn failed_request_sleep_duration_default() -> Duration {
