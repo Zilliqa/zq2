@@ -556,12 +556,12 @@ pub async fn convert_persistence(
                 &[vote.signature()],
                 bitvec![u8, bitvec::order::Msb0; 1; 1],
                 parent_hash,
-                fixed_block_number - 1,
+                fixed_block_number,
             );
             let block = Block::from_qc(
                 secret_key,
-                fixed_block_number,
-                fixed_block_number,
+                fixed_block_number + 1,
+                fixed_block_number + 1,
                 qc,
                 parent_hash,
                 state.root_hash()?,
