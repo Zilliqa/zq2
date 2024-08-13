@@ -77,7 +77,9 @@ fn convert_scilla_state(
         let chunks = key
             .as_bytes()
             .split(|item| *item == ZQ1_STATE_KEY_SEPARATOR)
-            .map(|chunk| String::from_utf8(chunk.to_vec()).unwrap())
+            .map(|chunk| {
+                String::from_utf8(chunk.to_vec()).expect("Unable to convert key chunk into string!")
+            })
             .skip(1) // Skip contract address (which was a part of key in zq1)
             .collect::<Vec<_>>();
 
@@ -99,7 +101,8 @@ fn convert_scilla_state(
         let field_name = &chunks[1];
 
         if key_type.contains("_depth") {
-            let value = String::from_utf8(value)?;
+            let value = String::from_utf8(value)
+                .map_err(|err| anyhow!("Unable to convert _depth value into string: {err}"))?;
             let field_depth: u8 = std::str::FromStr::from_str(&value)?;
 
             let (field_type, _) = field_types
@@ -109,7 +112,8 @@ fn convert_scilla_state(
             field_types.insert(field_name.into(), (field_type, field_depth));
             continue;
         } else if key_type.contains("_type") {
-            let field_type = String::from_utf8(value)?;
+            let field_type = String::from_utf8(value)
+                .map_err(|err| anyhow!("Unable to convert field_type into string: {err}"))?;
             let (_, depth) = field_types
                 .get(field_name)
                 .cloned()
@@ -190,12 +194,14 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
     let init_data = zq1_db.get_contract_init_state_2(address)?;
 
     let init_data = match init_data {
-        Some(data) => String::from_utf8(data)?,
+        Some(data) => String::from_utf8(data)
+            .map_err(|err| anyhow!("Unable to convert scilla initdata into string: {err}"))?,
         None => String::new(),
     };
 
     Ok(Code::Scilla {
-        code: String::from_utf8(code)?,
+        code: String::from_utf8(code)
+            .map_err(|err| anyhow!("Unable to convert scilla code into string: {err}"))?,
         init_data,
         types: BTreeMap::default(),
     })
@@ -413,9 +419,14 @@ pub async fn convert_persistence(
                 // disambiguate.
                 let pre_evm = block_number < pre_evm_block_number;
 
-                let (transaction, receipt) = match (pre_evm, version) {
+                let force_evm_transaction = match transaction.code.clone() {
+                    Some(vec) if !vec.is_empty() => String::from_utf8(vec).is_err(),
+                    _ => false,
+                };
+
+                let (transaction, receipt) = match (pre_evm, version, force_evm_transaction) {
                     // TODO: Why are versions other than 1 possible here?
-                    (true, _) | (false, 1) => {
+                    (true, _, false) | (false, 1, false) => {
                         let from_addr = transaction.sender_pub_key.zil_addr();
 
                         let contract_address = transaction.to_addr.is_zero().then(|| {
@@ -481,7 +492,7 @@ pub async fn convert_persistence(
 
                         (transaction, receipt)
                     }
-                    (false, 2..=4) => {
+                    (false, 2..=4, true) => {
                         let from_addr = transaction.sender_pub_key.eth_addr();
 
                         let contract_address = transaction
