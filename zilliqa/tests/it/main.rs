@@ -1099,7 +1099,6 @@ fn format_message(
 }
 
 const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
-// const EVM_VERSION: EvmVersion = EvmVersion::Shanghai;
 
 fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     let full_path = format!("{}{}", PROJECT_ROOT, path);
@@ -1119,32 +1118,10 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
         .paths(
             ProjectPathsConfig::hardhat(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap(),
         )
-        .locked_version(SolcLanguage::Solidity, semver::Version::new(0, 8, 20))
+        .single_solc_jobs() // single file only
+        .locked_version(SolcLanguage::Solidity, semver::Version::new(0, 8, 23)) // automatically downloads and installs, if not already available with `svm list`
         .build(Default::default())
         .unwrap();
-
-    // FIXME: Are these checks strictly needed?
-
-    // let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
-    // let compiler_input = compiler_input.first_mut().unwrap();
-    // compiler_input.settings.evm_version = Some(EVM_VERSION);
-
-    // // gets the minimum EvmVersion that is compatible the given EVM_VERSION and version arguments
-    // if EVM_VERSION.normalize_version_solc(&sc.version) != Some(EVM_VERSION) {
-    //     panic!(
-    //         "solc version {} required, currently set {}",
-    //         SHANGHAI_SOLC, sc.version
-    //     );
-    // }
-
-    // let out = sc
-    //     .compile::<CompilerInput>(compiler_input)
-    //     .unwrap_or_else(|e| {
-    //         panic!("failed to compile contract {}: {}", contract, e);
-    //     });
-
-    // test if your solc can compile with v8.20 (shanghai) with
-    // solc --evm-version shanghai zilliqa/tests/it/contracts/Storage.sol
 
     let output = project.compile_file(contract_file.path()).unwrap();
 

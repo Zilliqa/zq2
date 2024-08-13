@@ -154,9 +154,8 @@ mod tests {
             },
         };
 
-        let solc =
-            foundry_compilers::solc::Solc::find_or_install(&semver::Version::new(0, 8, 23))
-                .unwrap();
+        let solc = foundry_compilers::solc::Solc::find_or_install(&semver::Version::new(0, 8, 23))
+            .unwrap();
         // solc.base_path = Some(root.clone());
         // solc.allow_paths.insert(PathBuf::from("../vendor"));
 
