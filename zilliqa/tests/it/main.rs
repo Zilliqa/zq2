@@ -1097,10 +1097,8 @@ fn format_message(
     }
 }
 
-const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
-
 fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
-    let full_path = format!("{}{}", PROJECT_ROOT, path);
+    let full_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), path);
 
     let contract_source = std::fs::read(&full_path).unwrap_or_else(|e| {
         panic!(
@@ -1110,7 +1108,12 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     });
 
     // Write the contract source to a file, so `solc` can compile it.
-    let mut contract_file = tempfile::Builder::new().suffix(".sol").tempfile().unwrap();
+    let mut contract_file = tempfile::Builder::new()
+        .prefix("zq2")
+        .suffix(".sol")
+        .keep(true) // rely on OS cleanup
+        .tempfile()
+        .unwrap();
     std::io::Write::write_all(&mut contract_file, &contract_source).unwrap();
 
     let project = Project::builder()
@@ -1118,7 +1121,7 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
             ProjectPathsConfig::hardhat(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap(),
         )
         .single_solc_jobs() // single file only
-        .locked_version(SolcLanguage::Solidity, semver::Version::new(0, 8, 23)) // automatically downloads and installs, if not already available with `svm list`
+        .locked_version(SolcLanguage::Solidity, semver::Version::new(0, 8, 23)) // downloads and installs, if not already in `svm list`
         .build(Default::default())
         .unwrap();
 
