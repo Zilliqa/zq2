@@ -4,6 +4,7 @@ use std::{collections::HashMap, iter, time::Duration};
 
 use anyhow::{anyhow, Result};
 use libp2p::{
+    autonat,
     core::upgrade,
     dns,
     futures::StreamExt,
@@ -43,6 +44,7 @@ struct Behaviour {
     request_response: request_response::cbor::Behaviour<DirectMessage, DirectMessage>,
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
+    autonat: libp2p::autonat::Behaviour,
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
 }
@@ -112,6 +114,17 @@ impl P2pNode {
             )
             .map_err(|e| anyhow!(e))?,
             mdns: mdns::Behaviour::new(Default::default(), peer_id)?,
+            autonat: autonat::Behaviour::new(
+                peer_id,
+                autonat::Config {
+                    retry_interval: Duration::from_secs(10),
+                    refresh_interval: Duration::from_secs(30),
+                    boot_delay: Duration::from_secs(5),
+                    throttle_server_period: Duration::ZERO,
+                    only_global_ips: false,
+                    ..Default::default()
+                },
+            ),
             identify: identify::Behaviour::new(identify::Config::new(
                 "/ipfs/id/1.0.0".to_owned(),
                 key_pair.public(),
@@ -237,6 +250,14 @@ impl P2pNode {
         addr.push(Protocol::Tcp(self.config.p2p_port));
 
         self.swarm.listen_on(addr)?;
+
+        if let Some(bootstrap_address) = &self.config.bootstrap_address {
+            self.swarm
+                .behaviour_mut()
+                .autonat
+                .add_server(bootstrap_address.0, Some(bootstrap_address.1.clone()));
+        }
+
         if let Some(external_address) = &self.config.external_address {
             self.swarm.add_external_address(external_address.clone());
         }
@@ -279,7 +300,7 @@ impl P2pNode {
                                 self.swarm.behaviour_mut().kademlia.remove_address(&peer_id, &addr);
                             }
                         }
-                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { observed_addr, listen_addrs, .. }, peer_id, .. })) => {
+                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { listen_addrs, .. }, peer_id, .. })) => {
                             for addr in listen_addrs {
                                 // If the node is advertising a non-global address, ignore it.
                                 let is_non_global = addr.iter().any(|p| match p {
@@ -293,12 +314,20 @@ impl P2pNode {
 
                                 self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
                             }
-                            // Mark the address observed for us by the external peer as confirmed. Only do this if our
-                            // configuration hasn't already told us an external address.
-                            if self.config.external_address.is_none() {
-                                self.swarm.add_external_address(observed_addr);
-                            }
                         }
+                        SwarmEvent::Behaviour(BehaviourEvent::Autonat(libp2p::autonat::Event::StatusChanged{old, new})) => {
+                            info!("Autonat status changed from {:?} to {:?}", old, new);
+                            match new {
+                                autonat::NatStatus::Public(_) => (), // Autonat will add this automatically
+                                autonat::NatStatus::Private => {
+                                    let external_addresses: Vec<_> = self.swarm.external_addresses().map(|x|x.clone()).collect();
+                                    for addr in external_addresses {
+                                        self.swarm.remove_external_address(&addr);
+                                    }
+                                },
+                                autonat::NatStatus::Unknown => (),
+                            };
+                        },
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
                             message: gossipsub::Message {
                                 source,
