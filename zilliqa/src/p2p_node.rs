@@ -117,10 +117,12 @@ impl P2pNode {
             autonat: autonat::Behaviour::new(
                 peer_id,
                 autonat::Config {
+                    // Config changes to speed up autonat initialization.
                     retry_interval: Duration::from_secs(10),
                     refresh_interval: Duration::from_secs(30),
                     boot_delay: Duration::from_secs(5),
                     throttle_server_period: Duration::ZERO,
+                    // Don't attempt to reach IPs that are known to be at a private.
                     only_global_ips: false,
                     ..Default::default()
                 },
