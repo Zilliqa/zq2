@@ -488,10 +488,23 @@ pub async fn convert_persistence(
             }
 
             for (hash, transaction) in &transactions {
-                zq2_db.insert_transaction_with_db_tx(sqlite_tx, hash, transaction)?;
+                if let Err(err) = zq2_db.insert_transaction_with_db_tx(sqlite_tx, hash, transaction)
+                {
+                    warn!(
+                        "Unable to insert transaction with id: {:?} to db, err: {:?}",
+                        *hash, err
+                    );
+                }
             }
             for receipt in &receipts {
-                zq2_db.insert_transaction_receipt_with_db_tx(sqlite_tx, receipt.to_owned())?;
+                if let Err(err) =
+                    zq2_db.insert_transaction_receipt_with_db_tx(sqlite_tx, receipt.to_owned())
+                {
+                    warn!(
+                        "Unable to insert receipt with id: {:?} into db, err: {:?}",
+                        receipt.tx_hash, err
+                    );
+                }
             }
             Ok(())
         })?;
