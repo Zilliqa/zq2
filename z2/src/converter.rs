@@ -50,7 +50,7 @@ use zilliqa::{
     },
 };
 
-use crate::zq1;
+use crate::{zq1, zq1::Transaction};
 
 fn create_acc_query_prefix(address: Address) -> String {
     format!("{:02x}", address)
@@ -417,143 +417,24 @@ pub async fn convert_persistence(
                 // We know all mainnet transactions before this block were not EVM. However, some of them had bugs
                 // with their `version` which cause them to be marked as EVM. So we use the block number to figure
                 // disambiguate.
-                let pre_evm = block_number < pre_evm_block_number;
+                let _pre_evm = block_number < pre_evm_block_number;
 
-                let force_evm_transaction = match transaction.code.clone() {
-                    Some(vec) if !vec.is_empty() => String::from_utf8(vec).is_err(),
-                    _ => false,
-                };
+                // let force_evm_transaction = match transaction.code.clone() {
+                //     Some(vec) if !vec.is_empty() => String::from_utf8(vec).is_err(),
+                //     _ => false,
+                // };
 
-                let (transaction, receipt) = match (pre_evm, version, force_evm_transaction) {
-                    // TODO: Why are versions other than 1 possible here?
-                    (true, _, false) | (false, 1, false) => {
-                        let from_addr = transaction.sender_pub_key.zil_addr();
-
-                        let contract_address = transaction.to_addr.is_zero().then(|| {
-                            let mut hasher = Sha256::new();
-                            hasher.update(from_addr.as_slice());
-                            hasher.update(transaction.nonce.to_be_bytes());
-                            let hashed = hasher.finalize();
-                            Address::from_slice(&hashed[12..])
-                        });
-
-                        let receipt = TransactionReceipt {
-                            tx_hash: Hash(txn_hash.0),
-                            block_hash: Hash::ZERO,
-                            index: index as u64,
-                            success: transaction.receipt.success,
-                            gas_used: EvmGas(transaction.receipt.cumulative_gas),
-                            cumulative_gas_used: EvmGas(transaction.receipt.cumulative_gas),
-                            contract_address,
-                            logs: transaction
-                                .receipt
-                                .event_logs
-                                .iter()
-                                .map(|log| {
-                                    let log = log.to_eth_log()?;
-
-                                    Ok(Log::Evm(EvmLog {
-                                        address: log.address,
-                                        topics: log.topics,
-                                        data: log.data,
-                                    }))
-                                })
-                                .collect::<Result<_>>()?,
-                            transitions: vec![],
-                            accepted: None,
-                            errors: BTreeMap::new(),
-                            exceptions: vec![],
-                        };
-
-                        let transaction = SignedTransaction::Zilliqa {
-                            tx: TxZilliqa {
-                                chain_id,
-                                nonce: transaction.nonce,
-                                gas_price: ZilAmount::from_raw(transaction.gas_price),
-                                gas_limit: ScillaGas(transaction.gas_limit),
-                                to_addr: transaction.to_addr,
-                                amount: ZilAmount::from_amount(transaction.amount),
-                                code: transaction
-                                    .code
-                                    .map(String::from_utf8)
-                                    .transpose()?
-                                    .unwrap_or_default(),
-                                data: transaction
-                                    .data
-                                    .map(String::from_utf8)
-                                    .transpose()?
-                                    .unwrap_or_default(),
-                            },
-                            key: schnorr::PublicKey::from_sec1_bytes(
-                                transaction.sender_pub_key.as_ref(),
-                            )?,
-                            sig: schnorr::Signature::from_slice(transaction.signature.as_slice())?,
-                        };
-
-                        (transaction, receipt)
-                    }
-                    (false, 2..=4, true) => {
-                        let from_addr = transaction.sender_pub_key.eth_addr();
-
-                        let contract_address = transaction
-                            .to_addr
-                            .is_zero()
-                            .then(|| from_addr.create(transaction.nonce - 1));
-
-                        let receipt = TransactionReceipt {
-                            tx_hash: Hash(txn_hash.0),
-                            // Block hash is not know at this point (we need to have all receipts to build receipt_root_hash which is needed for block_hash)
-                            block_hash: Hash::ZERO,
-                            index: index as u64,
-                            success: transaction.receipt.success,
-                            gas_used: EvmGas(transaction.receipt.cumulative_gas),
-                            cumulative_gas_used: EvmGas(transaction.receipt.cumulative_gas),
-                            contract_address,
-                            logs: transaction
-                                .receipt
-                                .event_logs
-                                .iter()
-                                .map(|log| {
-                                    let log = log.to_eth_log()?;
-
-                                    Ok(Log::Evm(EvmLog {
-                                        address: log.address,
-                                        topics: log.topics,
-                                        data: log.data,
-                                    }))
-                                })
-                                .collect::<Result<_>>()?,
-                            transitions: vec![],
-                            accepted: None,
-                            errors: BTreeMap::new(),
-                            exceptions: vec![],
-                        };
-
-                        let transaction =
-                            infer_eth_signature(*txn_hash, version, chain_id + 0x8000, transaction)
-                                .with_context(|| {
-                                    format!(
-                                        "failed to infer signature of transaction: {txn_hash:?}"
-                                    )
-                                })?;
-
-                        (transaction, receipt)
-                    }
-                    (pre_evm, version, force_evm) => {
-                        return Err(anyhow!(
-                            "invalid transaction: pre_evm: {pre_evm}, force_evm: {force_evm},  version: {version}: {txn_hash:?}"
-                        ));
-                    }
+                let Ok((transaction, receipt)) =
+                    process_txn(transaction, *txn_hash, chain_id, version, index)
+                else {
+                    return Err(anyhow!("Can't process transaction: {:?}", *txn_hash));
                 };
 
                 transactions_trie
-                    .insert(txn_hash.as_slice(), transaction.calculate_hash().as_bytes())
-                    .unwrap();
+                    .insert(txn_hash.as_slice(), transaction.calculate_hash().as_bytes())?;
 
                 let receipt_hash = receipt.compute_hash();
-                receipts_trie
-                    .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())
-                    .unwrap();
+                receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
                 transactions.push((Hash(txn_hash.0), transaction));
                 receipts.push(receipt);
@@ -670,6 +551,147 @@ fn create_empty_block_from_parent(parent_block: &Block, secret_key: SecretKey) -
         parent_block.header.gas_used,
         parent_block.header.gas_limit,
     )
+}
+
+fn process_txn(
+    transaction: Transaction,
+    txn_hash: B256,
+    chain_id: u16,
+    version: u16,
+    index: usize,
+) -> Result<(SignedTransaction, TransactionReceipt)> {
+    if let Ok(zil_result) = try_with_zil_transaction(transaction.clone(), txn_hash, chain_id, index)
+    {
+        return Ok(zil_result);
+    }
+
+    try_with_evm_transaction(transaction, txn_hash, chain_id, version, index)
+}
+
+fn try_with_zil_transaction(
+    transaction: Transaction,
+    txn_hash: B256,
+    chain_id: u16,
+    index: usize,
+) -> Result<(SignedTransaction, TransactionReceipt)> {
+    let from_addr = transaction.sender_pub_key.zil_addr();
+
+    let contract_address = transaction.to_addr.is_zero().then(|| {
+        let mut hasher = Sha256::new();
+        hasher.update(from_addr.as_slice());
+        hasher.update(transaction.nonce.to_be_bytes());
+        let hashed = hasher.finalize();
+        Address::from_slice(&hashed[12..])
+    });
+
+    let receipt = TransactionReceipt {
+        tx_hash: Hash(txn_hash.0),
+        block_hash: Hash::ZERO,
+        index: index as u64,
+        success: transaction.receipt.success,
+        gas_used: EvmGas(transaction.receipt.cumulative_gas),
+        cumulative_gas_used: EvmGas(transaction.receipt.cumulative_gas),
+        contract_address,
+        logs: transaction
+            .receipt
+            .event_logs
+            .iter()
+            .map(|log| {
+                let log = log.to_eth_log()?;
+
+                Ok(Log::Evm(EvmLog {
+                    address: log.address,
+                    topics: log.topics,
+                    data: log.data,
+                }))
+            })
+            .collect::<Result<_>>()?,
+        transitions: vec![],
+        accepted: None,
+        errors: BTreeMap::new(),
+        exceptions: vec![],
+    };
+
+    let transaction = SignedTransaction::Zilliqa {
+        tx: TxZilliqa {
+            chain_id,
+            nonce: transaction.nonce,
+            gas_price: ZilAmount::from_raw(transaction.gas_price),
+            gas_limit: ScillaGas(transaction.gas_limit),
+            to_addr: transaction.to_addr,
+            amount: ZilAmount::from_amount(transaction.amount),
+            code: transaction
+                .code
+                .map(String::from_utf8)
+                .transpose()?
+                .unwrap_or_default(),
+            data: transaction
+                .data
+                .map(String::from_utf8)
+                .transpose()?
+                .unwrap_or_default(),
+        },
+        key: schnorr::PublicKey::from_sec1_bytes(transaction.sender_pub_key.as_ref())?,
+        sig: schnorr::Signature::from_slice(transaction.signature.as_slice())?,
+    };
+
+    let transaction = transaction.verify()?;
+    if transaction.hash != txn_hash.into() {
+        return Err(anyhow!(
+            "Failed to verify zil transaction signature!: {txn_hash:?}"
+        ));
+    }
+
+    Ok((transaction.tx, receipt))
+}
+
+fn try_with_evm_transaction(
+    transaction: Transaction,
+    txn_hash: B256,
+    chain_id: u16,
+    version: u16,
+    index: usize,
+) -> Result<(SignedTransaction, TransactionReceipt)> {
+    let from_addr = transaction.sender_pub_key.eth_addr();
+
+    let contract_address = transaction
+        .to_addr
+        .is_zero()
+        .then(|| from_addr.create(transaction.nonce - 1));
+
+    let receipt = TransactionReceipt {
+        tx_hash: Hash(txn_hash.0),
+        // Block hash is not know at this point (we need to have all receipts to build receipt_root_hash which is needed for block_hash)
+        block_hash: Hash::ZERO,
+        index: index as u64,
+        success: transaction.receipt.success,
+        gas_used: EvmGas(transaction.receipt.cumulative_gas),
+        cumulative_gas_used: EvmGas(transaction.receipt.cumulative_gas),
+        contract_address,
+        logs: transaction
+            .receipt
+            .event_logs
+            .iter()
+            .map(|log| {
+                let log = log.to_eth_log()?;
+
+                Ok(Log::Evm(EvmLog {
+                    address: log.address,
+                    topics: log.topics,
+                    data: log.data,
+                }))
+            })
+            .collect::<Result<_>>()?,
+        transitions: vec![],
+        accepted: None,
+        errors: BTreeMap::new(),
+        exceptions: vec![],
+    };
+
+    let transaction = infer_eth_signature(txn_hash, version, chain_id + 0x8000, transaction)
+        .with_context(|| format!("failed to infer signature of transaction: {txn_hash:?}"))?;
+
+    Ok((transaction, receipt))
 }
 
 fn infer_eth_signature(
