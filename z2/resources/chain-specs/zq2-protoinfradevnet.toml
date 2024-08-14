@@ -1,8 +1,6 @@
 p2p_port = 3333
 bootstrap_address = [ "12D3KooWSbWHfP79WBHYr2hk6kfe3Ruc7n29cuh9xjvkRGC9bjgW", "/ip4/34.142.172.123/tcp/3333" ]
 
-external_address = "/ip4/{{ external_address }}/tcp/3333"
-
 [[nodes]]
 eth_chain_id = 33103
 allowed_timestamp_skew = { secs = 60, nanos = 0 }

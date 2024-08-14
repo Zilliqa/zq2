@@ -47,10 +47,7 @@ impl ChainNode {
     }
 
     pub async fn install(&self) -> Result<()> {
-        println!(
-            "Installing {} instance {} with address {}",
-            self.role, self.machine.name, self.machine.external_address,
-        );
+        println!("Installing {} instance {}", self.role, self.machine.name,);
 
         self.tag_machine().await?;
         self.import_config_files().await?;
@@ -60,10 +57,7 @@ impl ChainNode {
     }
 
     pub async fn upgrade(&self) -> Result<()> {
-        println!(
-            "Upgrading {} instance {} with address {}",
-            self.role, self.machine.name, self.machine.external_address,
-        );
+        println!("Upgrading {} instance {}", self.role, self.machine.name,);
 
         self.tag_machine().await?;
         self.import_config_files().await?;
@@ -230,7 +224,6 @@ impl ChainNode {
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", &role_name);
-        var_map.insert("external_address", &self.machine.external_address);
         var_map.insert("bootstrap_public_ip", &self.bootstrap_public_ip);
         var_map.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
         var_map.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);

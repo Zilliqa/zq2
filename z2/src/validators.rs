@@ -1,6 +1,6 @@
 /// Code to render the validator join configuration and startup script.
 use std::env;
-use std::{collections::BTreeMap, convert::TryFrom, str::FromStr};
+use std::{convert::TryFrom, str::FromStr};
 
 use anyhow::{anyhow, Context as _, Error, Result};
 use blsful::{vsss_rs::ShareIdentifier, Bls12381G2Impl};
@@ -15,7 +15,7 @@ use ethers::{
 };
 use libp2p::PeerId;
 use serde::Deserialize;
-use tera::{Context, Tera};
+use tera::Tera;
 use tokio::{fs::File, io::AsyncWriteExt};
 use toml::Value;
 use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
@@ -187,16 +187,9 @@ fn hex_string_to_u8_20(hex_str: &str) -> Result<[u8; 20], &'static str> {
 
 pub async fn get_chain_spec_config(chain_name: &str) -> Result<Value> {
     let spec_config = Chain::get_toml_contents(chain_name)?;
-    let public_ip = crate::utils::get_public_ip().await?;
-
-    let mut var_map = BTreeMap::<&str, &str>::new();
-    var_map.insert("external_address", &public_ip);
-    let ctx = Context::from_serialize(var_map)?;
-    let rendered_template = Tera::one_off(spec_config, &ctx, false)?;
-    let config_file = rendered_template.as_str();
 
     let config: Value =
-        toml::from_str(config_file).map_err(|_| anyhow!("Unable to parse TOML".to_string()))?;
+        toml::from_str(spec_config).map_err(|_| anyhow!("Unable to parse TOML".to_string()))?;
     Ok(config)
 }
 
