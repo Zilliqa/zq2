@@ -539,9 +539,9 @@ pub async fn convert_persistence(
 
                         (transaction, receipt)
                     }
-                    _ => {
+                    (pre_evm, version, force_evm) => {
                         return Err(anyhow!(
-                            "invalid transaction version {version}: {txn_hash:?}"
+                            "invalid transaction: pre_evm: {pre_evm}, force_evm: {force_evm},  version: {version}: {txn_hash:?}"
                         ));
                     }
                 };
