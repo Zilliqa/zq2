@@ -700,8 +700,10 @@ fn infer_eth_signature(
     chain_id: u16,
     transaction: zq1::Transaction,
 ) -> Result<SignedTransaction> {
-    let r = U256::try_from_be_slice(&transaction.signature.0[..32]).unwrap();
-    let s = U256::try_from_be_slice(&transaction.signature.0[32..]).unwrap();
+    let r = U256::try_from_be_slice(&transaction.signature.0[..32])
+        .context("Can retrieve r item from signature!")?;
+    let s = U256::try_from_be_slice(&transaction.signature.0[32..])
+        .context("Can retrieve s item from signature!")?;
 
     for y_is_odd in [false, true] {
         let mut parity = Parity::Parity(y_is_odd);
@@ -779,7 +781,11 @@ fn infer_eth_signature(
                 },
                 sig,
             },
-            _ => unreachable!(),
+            _ => {
+                return Err(anyhow!(
+                    "Unable to parse evm transaction with version: {version}"
+                ));
+            }
         };
 
         let transaction = transaction.verify()?;
