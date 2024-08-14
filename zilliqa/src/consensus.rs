@@ -811,7 +811,13 @@ impl Consensus {
 
         for key in keys_to_process {
             if let Ok(Some(block)) = self.get_block(&key) {
-                if block.view() < self.view.get_view() {
+                // Remove votes for blocks that have been finalized. However, note that the block hashes which are keys
+                // into `self.votes` are the parent hash of the (potential) block that is being voted on. Therefore, we
+                // subtract one in this condition to ensure there is no chance of removing votes for blocks that still
+                // have a chance of being mined. It is possible this is unnecessary, since `self.finalized_view` is
+                // already at least 2 views behind the head of the chain, but keeping one extra vote in memory doesn't
+                // cost much and does make us more confident that we won't dispose of valid votes.
+                if block.view() < self.finalized_view.saturating_sub(1) {
                     self.votes.remove(&key);
                 }
             } else {
