@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use alloy::primitives::{address, Address};
 use anyhow::{anyhow, Result};
 use k256::ecdsa::SigningKey;
-use libp2p::PeerId;
 use tokio::fs;
 use toml;
+use zilliqa::cfg::GenesisDeposit;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::{SecretKey, TransactionPublicKey};
@@ -20,7 +20,6 @@ use zilliqa::{
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
         Amount, ConsensusConfig,
     },
-    crypto::NodePublicKey,
     transaction::EvmGas,
 };
 
@@ -164,17 +163,17 @@ impl Setup {
 
     pub async fn generate_config(&self) -> Result<()> {
         // The genesis deposits.
-        let mut genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)> = Vec::new();
+        let mut genesis_deposits: Vec<GenesisDeposit> = Vec::new();
         for i in 0..self.how_many {
-            genesis_deposits.push((
-                self.secret_keys[i].node_public_key(),
-                self.secret_keys[i]
+            genesis_deposits.push(GenesisDeposit { public_key: self.secret_keys[i].node_public_key(),
+                peer_id: self.secret_keys[i]
                     .to_libp2p_keypair()
                     .public()
                     .to_peer_id(),
-                GENESIS_DEPOSIT.into(),
-                self.node_addresses[i],
-            ))
+                stake: GENESIS_DEPOSIT.into(),
+                reward_address: self.node_addresses[i],
+                control_address: self.node_addresses[i],
+            })
         }
 
         let genesis_accounts: Vec<(Address, Amount)> = vec![

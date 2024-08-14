@@ -59,14 +59,9 @@ use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tracing::*;
 use zilliqa::{
     cfg::{
-        allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, disable_rpc_default, eth_chain_id_default,
-        failed_request_sleep_duration_default, json_rpc_port_default, local_address_default,
-        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_lib_dir_default, Amount, Checkpoint, ConsensusConfig,
-        NodeConfig,
+        allowed_timestamp_skew_default, block_request_batch_size_default, block_request_limit_default, disable_rpc_default, eth_chain_id_default, failed_request_sleep_duration_default, json_rpc_port_default, local_address_default, max_blocks_in_flight_default, minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default, Amount, Checkpoint, ConsensusConfig, GenesisDeposit, NodeConfig
     },
-    crypto::{NodePublicKey, SecretKey, TransactionPublicKey},
+    crypto::{SecretKey, TransactionPublicKey},
     db,
     message::{ExternalMessage, InternalMessage},
     node::{Node, RequestId},
@@ -186,7 +181,7 @@ struct TestNode {
 }
 
 struct Network {
-    pub genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)>,
+    pub genesis_deposits: Vec<GenesisDeposit>,
     /// Child shards.
     pub children: HashMap<u64, Network>,
     pub shard_id: u64,
@@ -268,12 +263,13 @@ impl Network {
         let genesis_deposits: Vec<_> = keys
             .iter()
             .map(|k| {
-                (
-                    k.0.node_public_key(),
-                    k.0.to_libp2p_keypair().public().to_peer_id(),
-                    stake.into(),
-                    TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
-                )
+                GenesisDeposit {
+                    public_key: k.0.node_public_key(),
+                    peer_id: k.0.to_libp2p_keypair().public().to_peer_id(),
+                    stake: stake.into(),
+                    reward_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
+                    control_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
+                }
             })
             .collect();
 
@@ -450,12 +446,13 @@ impl Network {
         let genesis_deposits: Vec<_> = keys
             .iter()
             .map(|k| {
-                (
-                    k.0.node_public_key(),
-                    k.0.to_libp2p_keypair().public().to_peer_id(),
-                    stake.into(),
-                    TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
-                )
+                GenesisDeposit {
+                    public_key: k.0.node_public_key(),
+                    peer_id: k.0.to_libp2p_keypair().public().to_peer_id(),
+                    stake: stake.into(),
+                    reward_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
+                    control_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
+                }
             })
             .collect();
 

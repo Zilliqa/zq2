@@ -1047,6 +1047,16 @@ impl Consensus {
 
         let node_config = &self.config;
 
+        if self.block_is_first_in_epoch(parent.number() + 1) {
+            // Here we ignore any errors and proceed with block creation, under the philosophy that
+            // it is better to have the network run but with broken epochs, than it would be to
+            // crash the entire network on a failing epoch transition.
+            match state.tick_epoch() {
+                Ok(()) => (),
+                Err(e) => error!("Unable to transition the epoch - EVM error: {e}"),
+            };
+        }
+
         while let Some(tx) = transaction_pool.best_transaction() {
             let result = Self::apply_transaction_at(
                 state,
@@ -1654,8 +1664,6 @@ impl Consensus {
         }
 
         if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
-            // TODO: handle epochs (#1140)
-
             if self.config.do_checkpoints
                 && self.epoch_is_checkpoint(self.epoch_number(block.number()))
             {
@@ -2292,6 +2300,12 @@ impl Consensus {
         }
 
         self.apply_rewards_raw(committee, &parent, block.view(), &block.qc.cosigned)?;
+        if self.block_is_first_in_epoch(block.number()) {
+            match self.state.tick_epoch() {
+                Ok(()) => (),
+                Err(e) => warn!("Unable to transition the epoch - EVM error {e}")
+            }
+        }
 
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);

@@ -380,7 +380,7 @@ impl State {
                 Ok(addr)
             }
             ExecutionResult::Success { .. } => {
-                Err(anyhow!("deployment did not create a transaction"))
+                Err(anyhow!("deployment did not create a contract"))
             }
             ExecutionResult::Revert { .. } => Err(anyhow!("deployment reverted")),
             ExecutionResult::Halt { reason, .. } => Err(anyhow!("deployment halted: {reason:?}")),
@@ -820,6 +820,38 @@ impl State {
             .unwrap();
 
         Ok(amount.as_u128())
+    }
+
+    pub fn tick_epoch(&mut self) -> Result<()> {
+        let payload = contracts::deposit::TICK_EPOCH.encode_input(&[])?;
+        let (ResultAndState { result, state }, ..) = self.apply_transaction_evm(
+            Address::ZERO,
+            Some(contract_addr::DEPOSIT),
+            0,
+            EvmGas(u64::MAX), // it's better for the network to stall
+                              // than to be unable to increment the epoch
+            0,
+            payload,
+            None,
+            0,
+            BlockHeader::genesis(Hash::ZERO),
+            inspector::noop(),
+            BaseFeeCheck::Ignore,
+        )?;
+
+        match result {
+            ExecutionResult::Success {
+                output: Output::Call(_),
+                ..
+            } => {
+                self.apply_delta_evm(&state)
+            }
+            ExecutionResult::Success { .. } => {
+                Err(anyhow!("epoch tick transaction created a contract - this should never be possible"))
+            }
+            ExecutionResult::Revert { .. } => Err(anyhow!("epoch tick reverted")),
+            ExecutionResult::Halt { reason, .. } => Err(anyhow!("epoch tick halted: {reason:?}")),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

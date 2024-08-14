@@ -195,7 +195,7 @@ pub struct ConsensusConfig {
     /// The initially staked deposits in the deposit contract at genesis, composed of
     /// (public key, peerId, amount, reward address) tuples.
     #[serde(default)]
-    pub genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)>,
+    pub genesis_deposits: Vec<GenesisDeposit>,
     /// Accounts that will be pre-funded at genesis.
     #[serde(default)]
     pub genesis_accounts: Vec<(Address, Amount)>,
@@ -234,6 +234,16 @@ pub struct ConsensusConfig {
     pub epochs_per_checkpoint: u64,
     /// The gas price, in Wei per unit of EVM gas.
     pub gas_price: Amount,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GenesisDeposit {
+    pub public_key: NodePublicKey,
+    pub peer_id: PeerId,
+    pub stake: Amount,
+    pub reward_address: Address,
+    pub control_address: Address,
 }
 
 pub fn consensus_timeout_default() -> Duration {
