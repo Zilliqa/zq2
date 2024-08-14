@@ -560,12 +560,13 @@ fn process_txn(
     version: u16,
     index: usize,
 ) -> Result<(SignedTransaction, TransactionReceipt)> {
-    if let Ok(zil_result) = try_with_zil_transaction(transaction.clone(), txn_hash, chain_id, index)
+    if let Ok(evm_result) =
+        try_with_evm_transaction(transaction.clone(), txn_hash, chain_id, version, index)
     {
-        return Ok(zil_result);
+        return Ok(evm_result);
     }
 
-    try_with_evm_transaction(transaction, txn_hash, chain_id, version, index)
+    try_with_zil_transaction(transaction, txn_hash, chain_id, index)
 }
 
 fn try_with_zil_transaction(
@@ -635,14 +636,7 @@ fn try_with_zil_transaction(
         sig: schnorr::Signature::from_slice(transaction.signature.as_slice())?,
     };
 
-    let transaction = transaction.verify()?;
-    if transaction.hash != txn_hash.into() {
-        return Err(anyhow!(
-            "Failed to verify zil transaction signature!: {txn_hash:?}"
-        ));
-    }
-
-    Ok((transaction.tx, receipt))
+    Ok((transaction, receipt))
 }
 
 fn try_with_evm_transaction(
