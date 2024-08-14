@@ -1669,26 +1669,26 @@ impl Consensus {
             }
         }
 
-        if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
-            if self.config.do_checkpoints
-                && self.epoch_is_checkpoint(self.epoch_number(block.number()))
-            {
-                if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
-                    let parent =
-                        self.db
-                            .get_block_by_hash(&block.parent_hash())?
-                            .ok_or(anyhow!(
-                                "Trying to checkpoint block, but we don't have its parent"
-                            ))?;
-                    self.message_sender.send_message_to_coordinator(
-                        InternalMessage::ExportBlockCheckpoint(
-                            Box::new(block),
-                            Box::new(parent),
-                            self.db.state_trie()?.clone(),
-                            checkpoint_path,
-                        ),
-                    )?;
-                }
+        if self.block_is_first_in_epoch(block.number())
+            && !block.is_genesis()
+            && self.config.do_checkpoints
+            && self.epoch_is_checkpoint(self.epoch_number(block.number()))
+        {
+            if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
+                let parent = self
+                    .db
+                    .get_block_by_hash(&block.parent_hash())?
+                    .ok_or(anyhow!(
+                        "Trying to checkpoint block, but we don't have its parent"
+                    ))?;
+                self.message_sender.send_message_to_coordinator(
+                    InternalMessage::ExportBlockCheckpoint(
+                        Box::new(block),
+                        Box::new(parent),
+                        self.db.state_trie()?.clone(),
+                        checkpoint_path,
+                    ),
+                )?;
             }
         }
 
@@ -2309,7 +2309,7 @@ impl Consensus {
         if self.block_is_first_in_epoch(block.number()) {
             match self.state.tick_epoch() {
                 Ok(()) => (),
-                Err(e) => warn!("Unable to transition the epoch - EVM error {e}")
+                Err(e) => warn!("Unable to transition the epoch - EVM error {e}"),
             }
         }
 

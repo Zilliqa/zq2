@@ -15,8 +15,14 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    cfg::{ConsensusConfig, GenesisDeposit}, contracts, crypto, db::TrieStorage, exec::BaseFeeCheck, inspector,
-    message::BlockHeader, scilla::Scilla, transaction::EvmGas,
+    cfg::{ConsensusConfig, GenesisDeposit},
+    contracts, crypto,
+    db::TrieStorage,
+    exec::BaseFeeCheck,
+    inspector,
+    message::BlockHeader,
+    scilla::Scilla,
+    transaction::EvmGas,
 };
 
 #[derive(Clone, Debug)]
@@ -104,7 +110,14 @@ impl State {
 
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
 
-        for GenesisDeposit { public_key, peer_id, stake, reward_address, control_address } in config.genesis_deposits {
+        for GenesisDeposit {
+            public_key,
+            peer_id,
+            stake,
+            reward_address,
+            control_address,
+        } in config.genesis_deposits
+        {
             let data = contracts::deposit::SET_STAKE.encode_input(&[
                 Token::Bytes(public_key.as_bytes()),
                 Token::Bytes(peer_id.to_bytes()),

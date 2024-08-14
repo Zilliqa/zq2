@@ -64,7 +64,7 @@ use zilliqa::{
         failed_request_sleep_duration_default, json_rpc_port_default, local_address_default,
         max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
         scilla_address_default, scilla_lib_dir_default, state_rpc_limit_default, Amount,
-        Checkpoint, GenesisDeposit, ConsensusConfig, NodeConfig,
+        Checkpoint, ConsensusConfig, GenesisDeposit, NodeConfig,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -267,14 +267,13 @@ impl Network {
         let stake = 32_000_000_000_000_000_000u128;
         let genesis_deposits: Vec<_> = keys
             .iter()
-            .map(|k| {
-                GenesisDeposit {
-                    public_key: k.0.node_public_key(),
-                    peer_id: k.0.to_libp2p_keypair().public().to_peer_id(),
-                    stake: stake.into(),
-                    reward_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
-                    control_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
-                }
+            .map(|k| GenesisDeposit {
+                public_key: k.0.node_public_key(),
+                peer_id: k.0.to_libp2p_keypair().public().to_peer_id(),
+                stake: stake.into(),
+                reward_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
+                control_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true)
+                    .into_addr(),
             })
             .collect();
 
@@ -452,14 +451,13 @@ impl Network {
         let stake = 32_000_000_000_000_000_000u128;
         let genesis_deposits: Vec<_> = keys
             .iter()
-            .map(|k| {
-                GenesisDeposit {
-                    public_key: k.0.node_public_key(),
-                    peer_id: k.0.to_libp2p_keypair().public().to_peer_id(),
-                    stake: stake.into(),
-                    reward_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
-                    control_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
-                }
+            .map(|k| GenesisDeposit {
+                public_key: k.0.node_public_key(),
+                peer_id: k.0.to_libp2p_keypair().public().to_peer_id(),
+                stake: stake.into(),
+                reward_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
+                control_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true)
+                    .into_addr(),
             })
             .collect();
 

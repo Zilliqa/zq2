@@ -379,9 +379,7 @@ impl State {
                 self.apply_delta_evm(&state)?;
                 Ok(addr)
             }
-            ExecutionResult::Success { .. } => {
-                Err(anyhow!("deployment did not create a contract"))
-            }
+            ExecutionResult::Success { .. } => Err(anyhow!("deployment did not create a contract")),
             ExecutionResult::Revert { .. } => Err(anyhow!("deployment reverted")),
             ExecutionResult::Halt { reason, .. } => Err(anyhow!("deployment halted: {reason:?}")),
         }
@@ -829,7 +827,7 @@ impl State {
             Some(contract_addr::DEPOSIT),
             0,
             EvmGas(u64::MAX), // it's better for the network to stall
-                              // than to be unable to increment the epoch
+            // than to be unable to increment the epoch
             0,
             payload,
             None,
@@ -843,12 +841,10 @@ impl State {
             ExecutionResult::Success {
                 output: Output::Call(_),
                 ..
-            } => {
-                self.apply_delta_evm(&state)
-            }
-            ExecutionResult::Success { .. } => {
-                Err(anyhow!("epoch tick transaction created a contract - this should never be possible"))
-            }
+            } => self.apply_delta_evm(&state),
+            ExecutionResult::Success { .. } => Err(anyhow!(
+                "epoch tick transaction created a contract - this should never be possible"
+            )),
             ExecutionResult::Revert { .. } => Err(anyhow!("epoch tick reverted")),
             ExecutionResult::Halt { reason, .. } => Err(anyhow!("epoch tick halted: {reason:?}")),
         }

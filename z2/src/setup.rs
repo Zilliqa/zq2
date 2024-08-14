@@ -165,7 +165,8 @@ impl Setup {
         // The genesis deposits.
         let mut genesis_deposits: Vec<GenesisDeposit> = Vec::new();
         for i in 0..self.how_many {
-            genesis_deposits.push(GenesisDeposit { public_key: self.secret_keys[i].node_public_key(),
+            genesis_deposits.push(GenesisDeposit {
+                public_key: self.secret_keys[i].node_public_key(),
                 peer_id: self.secret_keys[i]
                     .to_libp2p_keypair()
                     .public()
