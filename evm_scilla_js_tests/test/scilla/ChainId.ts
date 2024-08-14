@@ -3,7 +3,7 @@ import {ScillaContract} from "hardhat-scilla-plugin";
 import hre from "hardhat";
 import {Account} from "@zilliqa-js/zilliqa";
 
-xdescribe("ChainId contract #parallel", () => {
+describe("ChainId contract #parallel", () => {
   let contract: ScillaContract;
   let signer: Account;
 
@@ -16,7 +16,7 @@ xdescribe("ChainId contract #parallel", () => {
     expect(contract.address).to.be.properAddress;
   });
 
-  it("Call chain id contract -  EventChainId @block-1", async () => {
+  xit("Call chain id contract -  EventChainId @block-1", async () => {
     const tx = await contract.EventChainID();
 
     expect(tx).to.have.eventLogWithParams("ChainID", {value: hre.getZilliqaChainId()});

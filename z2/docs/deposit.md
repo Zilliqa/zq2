@@ -8,21 +8,23 @@ z2 deposit \
   --chain <CHAIN_NAME> \
   --public-key <BLS_PUBLIC_KEY> \
   --peer-id <PEER_ID> \
-  --private-key <PRIVATE_KEY_OF_VALIDATOR> \
+  --private-key <PRIVATE_KEY_OF_WALLET_WITH_MIN_10_MIL_FUND> \
   --amount <AMOUNT_IN_ZIL> \
-  --reward-address <REWARD_ADDRESS_OF_VALIDATOR>
+  --reward-address <REWARD_ADDRESS_OF_VALIDATOR> \
   --pop-signature <BLS_POP_SIGNATURE>
 
-Usage: z2 deposit --chain <CHAIN_NAME> --public-key <BLS_PUBLIC_KEY> --peer-id <PEER_ID> --private-key <PRIVATE_KEY_OF_VALIDATOR> --amount <AMOUNT_IN_ZIL> --reward-address <REWARD_ADDRESS_OF_VALIDATOR> --pop-signature <BLS_POP_SIGNATURE>
+Usage: z2 deposit --chain <CHAIN_NAME> --public-key <BLS_PUBLIC_KEY> --peer-id <PEER_ID> --private-key <PRIVATE_KEY_OF_WALLET_WITH_MIN_10_MIL_FUND> --amount <AMOUNT_IN_ZIL> --reward-address <REWARD_ADDRESS_OF_VALIDATOR> --pop-signature <BLS_POP_SIGNATURE>
 ```
 ## Parameters
 * `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet.
 * `--public-key <BLS_PUBLIC_KEY>`: The BLS public key of the validator node.
 * `--peer-id <PEER_ID>`: The peer ID of the validator node.
-* `--private-key <PRIVATE_KEY_OF_VALIDATOR>`: The private key of the validator node.
+* `--private-key <PRIVATE_KEY_OF_WALLET_WITH_MIN_10_MIL_FUND>`: The private key of the wallet that has a minimum stake amount of 10 million.
 * `--amount <AMOUNT_IN_MILLION_ZIL>`: The amount in ZIL to deposit. The valid range is from 10 million to 255 million ZIL, allowing a deposit of up to 255 million ZIL.
 * `--reward-address <REWARD_ADDRESS>`: Specifies the address to receive rewards. You can generate a new wallet address to receive the rewards.
 * `--pop-signature <BLS_POP_SIGNATURE>`: The BLS proof-of-possession signature of the validator node.
+
+**Note**: The `--private-key` parameter should be the private key of a wallet that has secured a minimum stake amount of 10 million ZILs. It must be different from the validator node's private key.
 
 ### Generating Required Values
 To generate the `public-key`, `pop-signature` and `peer-id`, use the following command inside the zq2 folder. Please pass `PRIVATE_KEY_OF_VALIDATOR` to the command input.

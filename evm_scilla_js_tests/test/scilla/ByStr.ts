@@ -3,7 +3,7 @@ import {expect} from "chai";
 import hre from "hardhat";
 import {Account} from "@zilliqa-js/zilliqa";
 
-xdescribe("Scilla ByStr Functionality #parallel", function () {
+describe("Scilla ByStr Functionality #parallel", function () {
   let contract: ScillaContract;
   let signer: Account;
   let BYSTR5_VALUE = "0x1234567890";

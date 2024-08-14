@@ -62,6 +62,8 @@ enum DeployerCommands {
     Install(DeployerUpgradeArgs),
     /// Perfom the network upgrade
     Upgrade(DeployerUpgradeArgs),
+    /// Provide the deposit commands for the validator nodes
+    GetDepositCommands(DeployerUpgradeArgs),
 }
 
 #[derive(Args, Debug)]
@@ -461,6 +463,22 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::GetDepositCommands(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_deposit_commands(&config_file)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to run deployer get-deposit-commands command: {}",
+                            err
+                        )
                     })?;
                 Ok(())
             }

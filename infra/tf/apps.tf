@@ -43,7 +43,7 @@ resource "google_compute_firewall" "allow_apps_external_https" {
 }
 
 resource "google_service_account" "apps" {
-  account_id = "${var.network_name}-apps"
+  account_id = substr("${var.network_name}-apps", 0, 28)
 }
 
 data "google_project" "apps" {}
@@ -66,29 +66,40 @@ resource "google_project_iam_member" "apps_artifact_registry_reader" {
   member  = "serviceAccount:${google_service_account.apps.email}"
 }
 
+resource "google_project_iam_member" "apps_secret_manager_accessor" {
+  project = var.gcp_docker_registry_project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.apps.email}"
+}
 
 module "apps" {
   source = "./modules/node"
+  vm_num = var.apps_node_count
 
   role                  = "apps"
   name                  = "${var.network_name}-apps"
   service_account_email = google_service_account.apps.email
+  dns_zone_project_id   = var.dns_zone_project_id
+  nodes_dns_zone_name   = var.nodes_dns_zone_name
   network_name          = local.network_name
-  node_zones            = var.node_zone != "" ? [var.node_zone] : data.google_compute_zones.zones.names
+  node_zones            = local.default_zones
   subnetwork_name       = data.google_compute_subnetwork.default.name
-  otterscan_image       = var.otterscan_image
-  spout_image           = var.spout_image
-  subdomain             = var.subdomain
-  secret_keys           = [""]
-  persistence_url       = ""
-  genesis_key           = var.genesis_key
-  node_type             = var.apps_node_type
+  # otterscan_image       = var.otterscan_image
+  # spout_image           = var.spout_image
+  subdomain = var.subdomain
+  # secret_keys     = tolist([for i in range(var.apps_node_count) : ""])
+  generate_node_key = false
+  persistence_url   = ""
+  genesis_key       = local.genesis_key
+  node_type         = var.apps_node_type
 
   zq_network_name = var.network_name
 }
 
 resource "google_project_service" "osconfig_apps" {
   service = "osconfig.googleapis.com"
+
+  disable_on_destroy = false
 }
 
 resource "google_compute_managed_ssl_certificate" "apps" {
@@ -100,10 +111,11 @@ resource "google_compute_managed_ssl_certificate" "apps" {
 }
 
 resource "google_compute_instance_group" "apps" {
-  name      = "${var.network_name}-apps"
-  zone      = "${var.region}-a"
-  instances = module.apps.self_link
+  for_each = toset(local.default_zones)
 
+  name      = "${var.network_name}-apps-${each.key}"
+  zone      = each.key
+  instances = [for instance in module.apps.instances : instance.self_link if instance.zone == each.key]
 
   named_port {
     name = "otterscan"
@@ -123,10 +135,14 @@ resource "google_compute_backend_service" "otterscan" {
   load_balancing_scheme = "EXTERNAL_MANAGED"
   enable_cdn            = false
   session_affinity      = "CLIENT_IP"
-  backend {
-    group           = google_compute_instance_group.apps.self_link
-    balancing_mode  = "UTILIZATION"
-    capacity_scaler = 1.0
+
+  dynamic "backend" {
+    for_each = google_compute_instance_group.apps
+    content {
+      group           = backend.value.self_link
+      balancing_mode  = "UTILIZATION"
+      capacity_scaler = 1.0
+    }
   }
 }
 
@@ -147,10 +163,14 @@ resource "google_compute_backend_service" "spout" {
   load_balancing_scheme = "EXTERNAL_MANAGED"
   enable_cdn            = false
   session_affinity      = "CLIENT_IP"
-  backend {
-    group           = google_compute_instance_group.apps.self_link
-    balancing_mode  = "UTILIZATION"
-    capacity_scaler = 1.0
+
+  dynamic "backend" {
+    for_each = google_compute_instance_group.apps
+    content {
+      group           = backend.value.self_link
+      balancing_mode  = "UTILIZATION"
+      capacity_scaler = 1.0
+    }
   }
 }
 

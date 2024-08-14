@@ -59,7 +59,12 @@ use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tracing::*;
 use zilliqa::{
     cfg::{
-        allowed_timestamp_skew_default, block_request_batch_size_default, block_request_limit_default, disable_rpc_default, eth_chain_id_default, failed_request_sleep_duration_default, json_rpc_port_default, local_address_default, max_blocks_in_flight_default, minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default, Amount, Checkpoint, ConsensusConfig, GenesisDeposit, NodeConfig
+        allowed_timestamp_skew_default, block_request_batch_size_default,
+        block_request_limit_default, disable_rpc_default, eth_chain_id_default,
+        failed_request_sleep_duration_default, json_rpc_port_default, local_address_default,
+        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
+        scilla_address_default, scilla_lib_dir_default, state_rpc_limit_default, Amount,
+        Checkpoint, GenesisDeposit, ConsensusConfig, NodeConfig,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -304,6 +309,7 @@ impl Network {
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
+            state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
         };
 
@@ -407,6 +413,7 @@ impl Network {
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
+            state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
         };
 
@@ -510,6 +517,7 @@ impl Network {
                     block_request_limit: block_request_limit_default(),
                     max_blocks_in_flight: max_blocks_in_flight_default(),
                     block_request_batch_size: block_request_batch_size_default(),
+                    state_rpc_limit: state_rpc_limit_default(),
                     failed_request_sleep_duration: failed_request_sleep_duration_default(),
                 };
 
