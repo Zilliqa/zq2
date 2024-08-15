@@ -19,9 +19,9 @@ use std::{
     collections::{HashMap, HashSet},
     env,
     fmt::Debug,
-    fs,
-    io::Write,
+    fs::{self},
     ops::DerefMut,
+    path::Path,
     pin::Pin,
     rc::Rc,
     sync::{
@@ -1100,24 +1100,15 @@ fn format_message(
 
 fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     let full_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), path);
-
-    let contract_source = std::fs::read(&full_path).unwrap_or_else(|e| {
-        panic!(
-            "failed to read contract source {}: aka {:?}. Error: {}",
-            path, full_path, e
-        )
-    });
-
-    // Write the contract source to a file, so `solc` can compile it.
-    let mut contract_file = tempfile::Builder::new()
+    let source_path = Path::new(&full_path);
+    let target_file = tempfile::Builder::new()
         .suffix(".sol")
         .tempfile()
-        .expect("tempfile err");
-    contract_file
-        .write_all(&contract_source)
-        .expect("write_all err");
+        .expect("target_file");
+    let binding = target_file.into_temp_path().to_path_buf();
+    let target_path = binding.as_path();
 
-    let temp_path = contract_file.into_temp_path();
+    std::fs::copy(source_path, target_path).expect("copy err");
 
     let project = Project::builder()
         .paths(
@@ -1130,7 +1121,7 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
         .expect("solc builder");
 
     let output = project
-        .compile_file(temp_path.to_path_buf())
+        .compile_file(target_path)
         .expect("compile_file error");
 
     if output.has_compiler_errors() {
@@ -1143,16 +1134,21 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     let contract = output
         .output()
         .contracts
-        .get(temp_path.to_path_buf().as_path(), contract)
+        .get(target_path, contract)
         .expect("output_contracts error");
 
     let abi = contract.abi.expect("jsonabi error");
     let bytecode = contract.bytecode().expect("bytecode error");
 
     // Convert from the `alloy` representation of an ABI to the `ethers` representation, via JSON
-    let abi = serde_json::from_value(serde_json::to_value(abi).expect("ser abi")).expect("des abi");
-    let bytecode = serde_json::from_value(serde_json::to_value(bytecode).expect("ser bytecode"))
-        .expect("des bytecode");
+    let abi = serde_json::from_slice(serde_json::to_vec(abi).expect("ser abi").as_slice())
+        .expect("des abi");
+    let bytecode = serde_json::from_slice(
+        serde_json::to_vec(bytecode)
+            .expect("ser bytecode")
+            .as_slice(),
+    )
+    .expect("des bytecode");
 
     (abi, bytecode)
 }
