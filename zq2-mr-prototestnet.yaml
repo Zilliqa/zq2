@@ -6,6 +6,6 @@ roles:
 - apps
 - validator
 versions:
-  zq2: v0.1.0
+  zq2: v0.1.1
   otterscan: develop
   spout: main
