@@ -1,6 +1,6 @@
 use std::cmp::min;
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Nibbles {
     hex_data: Vec<u8>,
 }

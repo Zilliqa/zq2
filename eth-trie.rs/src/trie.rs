@@ -116,6 +116,101 @@ where
     trie: &'a EthTrie<D>,
     nibble: Nibbles,
     nodes: Vec<TraceNode>,
+    advance_to: Option<Nibbles>,
+}
+
+impl<'a, D> TrieIterator<'a, D>
+where
+    D: DB,
+{
+    fn advance_to(&mut self, key: Nibbles) -> Result<(), ()> {
+        loop {
+            let partial = key.offset(self.nibble.len());
+            let mut now = self.nodes.last().cloned();
+            if let Some(ref mut now) = now {
+                self.nodes.last_mut().unwrap().advance();
+
+                match (now.status.clone(), &now.node) {
+                    (TraceStatus::Doing, Node::Extension(ref ext)) => {
+                        let borrow_ext = ext.read().unwrap();
+
+                        if partial < borrow_ext.prefix {
+                            self.nodes.last_mut().unwrap().status = TraceStatus::Doing;
+
+                            break;
+                        } else if partial.common_prefix(&borrow_ext.prefix)
+                            == borrow_ext.prefix.len()
+                        {
+                            self.nibble.extend(&borrow_ext.prefix);
+                            self.nodes.push(borrow_ext.node.clone().into());
+                        } else {
+                            self.nodes.pop();
+                        }
+                    }
+                    (TraceStatus::Doing, Node::Leaf(ref leaf)) => {
+                        use std::cmp::Ordering as O;
+                        match partial.cmp(&leaf.key) {
+                            O::Less => {
+                                self.nodes.last_mut().unwrap().status = TraceStatus::Doing;
+                                break;
+                            }
+                            O::Equal => {
+                                self.nodes.pop();
+                                break;
+                            }
+                            O::Greater => {
+                                self.nodes.pop();
+                            }
+                        }
+                    }
+                    (TraceStatus::Doing, Node::Branch(ref branch)) => {
+                        if partial.is_empty() || partial.at(0) == 16 {
+                            self.nodes.last_mut().unwrap().status = TraceStatus::Doing;
+                            break;
+                        }
+
+                        let borrow_branch = branch.read().unwrap();
+
+                        let index = partial.at(0);
+                        {
+                            let last_node = self.nodes.last_mut().unwrap();
+                            last_node.status = TraceStatus::Child(index as u8);
+                            last_node.advance();
+                        }
+
+                        self.nibble.push(index as u8);
+                        self.nodes
+                            .push(borrow_branch.children[index].clone().into());
+                    }
+                    (TraceStatus::Doing, Node::Hash(ref hash_node)) => {
+                        let node_hash = hash_node.hash;
+                        if let Ok(n) = self.trie.recover_from_db(node_hash) {
+                            self.nodes.pop();
+                            match n {
+                                Some(node) => self.nodes.push(node.into()),
+                                None => {
+                                    warn!("Trie node with hash {:?} is missing from the database. Skipping...", &node_hash);
+                                    continue;
+                                }
+                            }
+                        } else {
+                            //error!();
+                            return Err(());
+                        }
+                    }
+                    (TraceStatus::Doing, Node::Empty) => {
+                        self.nodes.pop();
+                    }
+                    (TraceStatus::Start, _) => {}
+                    (TraceStatus::End | TraceStatus::Child(_), _) => {
+                        unreachable!()
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl<'a, D> Iterator for TrieIterator<'a, D>
@@ -125,6 +220,12 @@ where
     type Item = (Vec<u8>, Vec<u8>);
 
     fn next(&mut self) -> Option<Self::Item> {
+        if let Some(key) = self.advance_to.clone() {
+            self.advance_to(key).ok()?;
+
+            self.advance_to = None;
+        }
+
         loop {
             let mut now = self.nodes.last().cloned();
             if let Some(ref mut now) = now {
@@ -215,13 +316,25 @@ impl<D> EthTrie<D>
 where
     D: DB,
 {
-    pub fn iter(&self) -> TrieIterator<D> {
-        let nodes = vec![(self.root.clone()).into()];
+    fn construct_iter(&self, node: Node, prefix: &[u8], after: Option<&[u8]>) -> TrieIterator<D> {
+        let advance_to = after.map(|v| Nibbles::from_raw(v, true));
+        let nibble = Nibbles::from_raw(prefix, false);
+        let nodes = vec![node.into()];
+
         TrieIterator {
             trie: self,
-            nibble: Nibbles::from_raw(&[], false),
+            nibble,
             nodes,
+            advance_to,
         }
+    }
+
+    pub fn iter(&self) -> TrieIterator<D> {
+        self.construct_iter(self.root.clone(), &[], None)
+    }
+
+    pub fn iter_after(&self, after: &[u8]) -> TrieIterator<D> {
+        self.construct_iter(self.root.clone(), &[], Some(after))
     }
 
     /// Return an iterator of key-value pairs in the trie that start with the given prefix. The keys are returned in
@@ -229,17 +342,15 @@ where
     pub fn iter_by_prefix(&self, prefix: &[u8]) -> TrieResult<TrieIterator<D>> {
         let nibble = Nibbles::from_raw(prefix, false);
         let node = self.node_with_prefix(&self.root, &nibble)?;
-        let nodes = vec![node.into()];
 
-        // Here we utilise the same `TrieIterator` code as above, which iterates over a whole trie. However, instead
-        // of setting its `nodes` stack to the root trie, we set it to the node returned by `node_by_prefix`. This node
-        // and all nodes under it are guaranteed to be prefixed by `prefix`. We also initialize `nibble` to the prefix,
-        // as the `TrieIterator` will prepend this value to the returned keys.
-        Ok(TrieIterator {
-            trie: self,
-            nibble,
-            nodes,
-        })
+        Ok(self.construct_iter(node, prefix, None))
+    }
+
+    pub fn iter_after_by_prefix(&self, after: &[u8], prefix: &[u8]) -> TrieResult<TrieIterator<D>> {
+        let nibble = Nibbles::from_raw(prefix, false);
+        let node = self.node_with_prefix(&self.root, &nibble)?;
+
+        Ok(self.construct_iter(node, prefix, Some(after)))
     }
 
     pub fn remove_by_prefix(&mut self, prefix: &[u8]) -> TrieResult<()> {
@@ -1443,14 +1554,24 @@ mod tests {
         {
             let mut trie = EthTrie::new(memdb.clone());
             let mut kv = kv.clone();
+            let mut kv2 = kv.clone();
             kv.iter().for_each(|(k, v)| {
                 trie.insert(k, v).unwrap();
             });
             root1 = trie.root_hash().unwrap();
 
+            kv2.remove(&b"test".to_vec());
+            kv2.remove(&b"test1".to_vec());
+            kv2.remove(&b"test11".to_vec());
+            kv2.remove(&b"test14".to_vec());
+
             trie.iter()
                 .for_each(|(k, v)| assert_eq!(kv.remove(&k).unwrap(), v));
             assert!(kv.is_empty());
+
+            trie.iter_after(b"test14")
+                .for_each(|(k, v)| assert_eq!(kv2.remove(&k).unwrap(), v));
+            assert!(kv2.is_empty());
         }
 
         {
