@@ -12,12 +12,16 @@ use alloy::{
 };
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 
 use super::{
     to_hex::ToHex,
-    types::zil::{self, BlockchainInfo, ShardingStructure, SmartContract},
+    types::zil::{
+        self, BlockchainInfo, DSBlock, DSBlockHeader, DSBlockHeaderVerbose, DSBlockListing,
+        DSBlockListingResult, DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult,
+        PoWWinnerIP, SWInfo, ShardingStructure, SmartContract,
+    },
 };
 use crate::{
     api::types::zil::{CreateTransactionResponse, GetTxResponse, RPCErrorCode},
@@ -476,98 +480,6 @@ fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Sm
     }
 
     Ok(contracts)
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct DSBlock {
-    pub header: DSBlockHeader,
-    pub signature: String,
-}
-
-#[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, Clone)]
-pub struct DSBlockHeader {
-    pub BlockNum: String,
-    pub Difficulty: u64,
-    pub DifficultyDS: u64,
-    pub GasPrice: String,
-    pub PoWWinners: Vec<String>,
-    pub PrevHash: String,
-    pub Timestamp: String,
-}
-
-#[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, Clone)]
-pub struct DSBlockVerbose {
-    // Sample fields based on given/expected data structure
-    pub B1: Vec<bool>,
-    pub B2: Vec<bool>,
-    pub CS1: String,
-    pub PrevDSHash: String,
-    pub header: DSBlockHeaderVerbose,
-    pub signature: String,
-}
-
-#[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, Clone)]
-pub struct DSBlockHeaderVerbose {
-    pub BlockNum: String,
-    pub CommitteeHash: String,
-    pub Difficulty: u64,
-    pub DifficultyDS: u64,
-    pub EpochNum: String,
-    pub GasPrice: String,
-    pub MembersEjected: Vec<String>,
-    pub PoWWinners: Vec<String>,
-    pub PoWWinnersIP: Vec<PoWWinnerIP>,
-    pub PrevHash: String,
-    pub ReservedField: String,
-    pub SWInfo: SWInfo,
-    pub ShardingHash: String,
-    pub Timestamp: String,
-    pub Version: u32,
-}
-
-#[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, Clone)]
-pub struct PoWWinnerIP {
-    pub IP: String,
-    pub port: u32,
-}
-
-#[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, Clone)]
-pub struct SWInfo {
-    pub Scilla: Vec<u64>,
-    pub Zilliqa: Vec<u64>,
-}
-
-#[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, Clone)]
-pub struct GetCurrentDSCommResult {
-    pub CurrentDSEpoch: String,
-    pub CurrentTxEpoch: String,
-    pub NumOfDSGuard: u32,
-    pub dscomm: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct DSBlockRateResult {
-    pub rate: f64,
-}
-
-#[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, Clone)]
-pub struct DSBlockListingResult {
-    pub data: Vec<DSBlockListing>,
-    pub maxPages: u32,
-}
-
-#[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, Clone)]
-pub struct DSBlockListing {
-    pub BlockNum: u64,
-    pub Hash: String,
 }
 
 fn get_example_ds_block() -> DSBlock {

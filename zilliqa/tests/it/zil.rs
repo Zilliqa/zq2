@@ -5,6 +5,7 @@ use ethers::{providers::Middleware, types::TransactionRequest};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use primitive_types::{H160, H256};
 use prost::Message;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use zilliqa::{
@@ -467,4 +468,95 @@ async fn scilla_read_precompile(mut network: Network) {
     .into_uint()
     .unwrap();
     assert_eq!(val, 1.into());
+}
+
+#[zilliqa_macros::test]
+async fn get_ds_block(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetDSBlock", ["9000"])
+        .await
+        .expect("Failed to call GetDSBlock API");
+
+    zilliqa::api::types::zil::DSBlock::deserialize(&response).unwrap();
+}
+
+#[zilliqa_macros::test]
+async fn get_ds_block_verbose(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetDSBlockVerbose", ["9000"])
+        .await
+        .expect("Failed to call GetDSBlockVerbose API");
+
+    zilliqa::api::types::zil::DSBlockVerbose::deserialize(&response).unwrap();
+}
+
+#[zilliqa_macros::test]
+async fn get_latest_ds_block(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetLatestDSBlock", [""])
+        .await
+        .expect("Failed to call GetLatestDSBlock API");
+
+    zilliqa::api::types::zil::DSBlock::deserialize(&response).unwrap();
+}
+
+#[zilliqa_macros::test]
+async fn get_current_ds_comm(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetCurrentDSComm", [""])
+        .await
+        .expect("Failed to call GetCurrentDSComm API");
+
+    zilliqa::api::types::zil::GetCurrentDSCommResult::deserialize(&response).unwrap();
+}
+
+#[zilliqa_macros::test]
+async fn get_current_ds_epoch(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetCurrentDSEpoch", [""])
+        .await
+        .expect("Failed to call GetCurrentDSEpoch API");
+
+    assert!(response.is_string());
+}
+
+#[zilliqa_macros::test]
+async fn ds_block_listing(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("DSBlockListing", [1])
+        .await
+        .expect("Failed to call DSBlockListing API");
+
+    zilliqa::api::types::zil::DSBlockListingResult::deserialize(&response).unwrap();
+}
+
+#[zilliqa_macros::test]
+async fn get_ds_block_rate(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetDSBlockRate", [""])
+        .await
+        .expect("Failed to call GetDSBlockRate API");
+
+    zilliqa::api::types::zil::DSBlockRateResult::deserialize(&response).unwrap();
 }
