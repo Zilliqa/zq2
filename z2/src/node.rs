@@ -203,7 +203,7 @@ impl ChainNode {
     }
 
     async fn run_provisioning_script(&self) -> Result<()> {
-        let cmd = "sudo mv /tmp/config.toml /config.toml && sudo python3 /tmp/provision_node.py";
+        let cmd = "sudo chmod 666 /tmp/config.toml /tmp/provision_node.py && sudo mv /tmp/config.toml /config.toml && sudo python3 /tmp/provision_node.py";
         let output = self.machine.run(cmd).await?;
         if !output.success {
             println!("{:?}", output.stderr);
