@@ -113,19 +113,20 @@ struct Contract {
 mod tests {
     use std::{fs::File, path::PathBuf};
 
-    use ethers::solc::{
-        artifacts::{output_selection::OutputSelection, Optimizer, Settings, Source},
-        remappings::Remapping,
-        CompilerInput, EvmVersion, Solc,
+    use foundry_compilers::{
+        artifacts::{
+            output_selection::OutputSelection, EvmVersion, Optimizer, Remapping, Settings,
+            SolcInput, Source,
+        },
+        solc::SolcLanguage,
     };
-    use ethers_solc::CompilerOutput;
 
     #[test]
     #[cfg_attr(not(feature = "test_contract_bytecode"), ignore)]
     fn compile_all() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let input = CompilerInput {
-            language: "Solidity".to_owned(),
+        let input = SolcInput {
+            language: SolcLanguage::Solidity,
             sources: Source::read_all(
                 [
                     "deposit.sol",
@@ -153,10 +154,8 @@ mod tests {
             },
         };
 
-        let solc = Solc::find_or_install_svm_version("0.8.23")
-            .unwrap()
-            .with_base_path(&root)
-            .args(["--allow-paths", "../vendor"]);
+        let solc = foundry_compilers::solc::Solc::find_or_install(&semver::Version::new(0, 8, 26))
+            .unwrap();
 
         let output = solc.compile_exact(&input).unwrap();
         let output_file = root.join("src").join("contracts").join("compiled.json");
@@ -168,7 +167,7 @@ mod tests {
             println!("`compiled.json` updated, please commit these changes");
         } else {
             let file = File::open(output_file).unwrap();
-            let current_output: CompilerOutput = serde_json::from_reader(file).unwrap();
+            let current_output = serde_json::from_reader(file).unwrap();
 
             assert_eq!(output, current_output);
         }
