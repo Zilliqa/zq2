@@ -154,7 +154,7 @@ mod tests {
             },
         };
 
-        let solc = foundry_compilers::solc::Solc::find_or_install(&semver::Version::new(0, 8, 26))
+        let solc = foundry_compilers::solc::Solc::find_or_install(&semver::Version::new(0, 8, 25))
             .unwrap();
 
         let output = solc.compile_exact(&input).unwrap();

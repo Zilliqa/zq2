@@ -1123,7 +1123,7 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
             ProjectPathsConfig::hardhat(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap(),
         )
         .single_solc_jobs() // single file only
-        .locked_version(SolcLanguage::Solidity, semver::Version::new(0, 8, 26)) // downloads and installs, if not already in `svm list`
+        .locked_version(SolcLanguage::Solidity, semver::Version::new(0, 8, 25)) // downloads and installs, if not already in `svm list`
         .build(Default::default())
         .unwrap();
 
