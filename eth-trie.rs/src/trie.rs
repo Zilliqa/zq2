@@ -1560,10 +1560,10 @@ mod tests {
             });
             root1 = trie.root_hash().unwrap();
 
-            kv2.remove(&b"test".to_vec());
-            kv2.remove(&b"test1".to_vec());
-            kv2.remove(&b"test11".to_vec());
-            kv2.remove(&b"test14".to_vec());
+            kv2.remove(b"test".as_slice());
+            kv2.remove(b"test1".as_slice());
+            kv2.remove(b"test11".as_slice());
+            kv2.remove(b"test14".as_slice());
 
             trie.iter()
                 .for_each(|(k, v)| assert_eq!(kv.remove(&k).unwrap(), v));
