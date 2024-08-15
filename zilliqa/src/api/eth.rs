@@ -135,7 +135,7 @@ fn build_errored_response_for_missing_block(
     }
 }
 
-fn expect_end_of_params(seq: &mut ParamsSequence, min: u32, max: u32) -> Result<()> {
+pub fn expect_end_of_params(seq: &mut ParamsSequence, min: u32, max: u32) -> Result<()> {
     // Styled after the geth error message.
     let msg = if min != max {
         format!("too many arguments, want at most {max}")

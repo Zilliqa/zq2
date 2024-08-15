@@ -591,7 +591,7 @@ impl StateServer {
 // occur in Scilla values, but we include an assertion to make sure this remains true.
 
 // Separate each index with the ASCII unit separator byte.
-const SEPARATOR: u8 = 0x1F;
+pub const SEPARATOR: u8 = 0x1F;
 
 pub fn storage_key(var_name: &str, indices: &[Vec<u8>]) -> Bytes {
     let len = var_name.len() + indices.len() + indices.iter().map(|v| v.len()).sum::<usize>();

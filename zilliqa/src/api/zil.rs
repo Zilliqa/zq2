@@ -11,11 +11,13 @@ use alloy::{
     primitives::{Address, B256},
 };
 use anyhow::{anyhow, Result};
+use itertools::{Either, Itertools};
 use jsonrpsee::{types::Params, RpcModule};
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 
 use super::{
+    eth::expect_end_of_params,
     to_hex::ToHex,
     types::zil::{self, BlockchainInfo, ShardingStructure, SmartContract},
 };
@@ -25,7 +27,7 @@ use crate::{
     exec::zil_contract_address,
     node::Node,
     schnorr,
-    scilla::split_storage_key,
+    scilla::{self, split_storage_key},
     state::Code,
     transaction::{ScillaGas, SignedTransaction, TxZilliqa, ZilAmount, EVM_GAS_PER_SCILLA_GAS},
 };
@@ -295,7 +297,10 @@ fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let address: Address = params.one()?;
+    let mut seq = params.sequence();
+    let address: Address = seq.next()?;
+    let after: Option<Vec<String>> = seq.optional_next()?;
+    expect_end_of_params(&mut seq, 1, 2)?;
     let node = node.lock().unwrap();
 
     // First get the account and check that its a scilla account
@@ -318,7 +323,23 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
         let limit = node.config.state_rpc_limit;
 
         let trie = state.get_account_trie(address)?;
-        for (i, (k, v)) in trie.iter().enumerate() {
+
+        let iter = match after {
+            Some(key) => Either::Left(
+                trie.iter_after(
+                    #[allow(unstable_name_collisions)]
+                    &key.iter()
+                        .map(String::as_bytes)
+                        .intersperse(&[scilla::SEPARATOR])
+                        .flat_map(|v| v.iter())
+                        .copied()
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+            None => Either::Right(trie.iter()),
+        };
+
+        for (i, (k, ref v)) in iter.into_iter().enumerate() {
             if i >= limit {
                 return Err(anyhow!(
                     "State of contract returned has size greater than the allowed maximum"
@@ -337,7 +358,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
                 var = next.entry(key.clone());
             }
 
-            var.or_insert(serde_json::from_slice(&v)?);
+            var.or_insert(serde_json::from_slice(v)?);
         }
     }
 
