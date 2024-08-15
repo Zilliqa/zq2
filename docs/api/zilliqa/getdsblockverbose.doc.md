@@ -6,13 +6,10 @@ GetDSBlockVerbose
 
 DS,block,get,verbose
 
-# Status
-
-NotYetDocumented
-
 # Description
 
 Returns verbose details of a specified Directory Service block.
+Deprecated in ZQ2; now returns a constant placeholder value.
 
 # Curl
 
@@ -129,4 +126,3 @@ curl -d '{
 | `jsonrpc` | string | Required | `"2.0"`                                              |
 | `method`  | string | Required | `"GetDsBlockVerbose"`                                |
 | `params`  | string | Required | Specified DS block number to return. Example: `"40"` |
-

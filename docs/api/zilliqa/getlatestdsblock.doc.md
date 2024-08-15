@@ -6,13 +6,10 @@ GetLatestDSBlock
 
 DS,block,get,latest
 
-# Status
-
-NotYetDocumented
-
 # Description
 
 Returns the details of the most recent Directory Service block.
+Deprecated in ZQ2; now returns a constant placeholder value.
 
 # Curl
 
