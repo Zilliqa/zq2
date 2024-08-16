@@ -18,9 +18,9 @@ use serde_json::{json, Value};
 use super::{
     to_hex::ToHex,
     types::zil::{
-        self, BlockchainInfo, DSBlock, DSBlockHeader, DSBlockHeaderVerbose, DSBlockListing,
-        DSBlockListingResult, DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult,
-        PoWWinnerIP, SWInfo, ShardingStructure, SmartContract,
+        self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
+        DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, PoWWinnerIP, SWInfo,
+        ShardingStructure, SmartContract,
     },
 };
 use crate::{
