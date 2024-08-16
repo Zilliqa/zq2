@@ -403,6 +403,15 @@ pub struct DSBlock {
     pub signature: String,
 }
 
+impl From<DSBlockVerbose> for DSBlock {
+    fn from(verbose_block: DSBlockVerbose) -> Self {
+        DSBlock {
+            header: DSBlockHeader::from(verbose_block.header),
+            signature: verbose_block.signature,
+        }
+    }
+}
+
 #[allow(non_snake_case)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct DSBlockHeader {
@@ -425,6 +434,20 @@ pub struct DSBlockVerbose {
     pub PrevDSHash: String,
     pub header: DSBlockHeaderVerbose,
     pub signature: String,
+}
+
+impl From<DSBlockHeaderVerbose> for DSBlockHeader {
+    fn from(header: DSBlockHeaderVerbose) -> Self {
+        DSBlockHeader {
+            BlockNum: header.BlockNum,
+            Difficulty: header.Difficulty,
+            DifficultyDS: header.DifficultyDS,
+            GasPrice: header.GasPrice,
+            PoWWinners: header.PoWWinners,
+            PrevHash: header.PrevHash,
+            Timestamp: header.Timestamp,
+        }
+    }
 }
 
 #[allow(non_snake_case)]

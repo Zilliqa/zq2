@@ -541,7 +541,7 @@ async fn ds_block_listing(mut network: Network) {
 
     let response: Value = wallet
         .provider()
-        .request("DSBlockListing", [1])
+        .request("DSBlockListing", ["1"])
         .await
         .expect("Failed to call DSBlockListing API");
 
