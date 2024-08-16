@@ -7,6 +7,7 @@ use alloy::{
         local::{LocalSigner, PrivateKeySigner},
         Signer,
     },
+    sol_types::{sol_data, SolValue},
 };
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -46,7 +47,17 @@ impl RelayedEvent {
     }
 
     pub fn hash(&self) -> B256 {
-        eip191_hash_message(&self)
+        eip191_hash_message(
+            &(
+                self.source_chain_id, //: U256,
+                self.target_chain_id, //: U256,
+                self.target,          //: Address,
+                self.call.to_vec(),   //: Bytes,
+                self.gas_limit,       //: U256,
+                self.nonce,           //: U256,
+            )
+                .abi_encode(),
+        )
     }
 
     pub async fn sign(&self, signer: &PrivateKeySigner) -> Result<Signature> {
@@ -54,17 +65,6 @@ impl RelayedEvent {
         let signature = signer.sign_message(data.as_slice()).await?;
 
         Ok(signature)
-    }
-}
-
-impl core::convert::AsRef<[u8]> for RelayedEvent {
-    fn as_ref(&self) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(
-                self as *const RelayedEvent as *const u8,
-                std::mem::size_of::<RelayedEvent>(),
-            )
-        }
     }
 }
 
