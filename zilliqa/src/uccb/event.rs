@@ -106,7 +106,7 @@ impl DispatchedEvent {
         let target = indexed[1].as_address().unwrap();
         let success = values[0].as_bool().unwrap();
         let response = Bytes::from(values[1].as_bytes().unwrap().to_vec());
-        let nonce = values[2].as_uint().unwrap().0;
+        let nonce = indexed[2].as_uint().unwrap().0;
 
         Ok(Self {
             source_chain_id,

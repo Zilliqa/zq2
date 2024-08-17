@@ -16,7 +16,9 @@ use alloy::{
 };
 use anyhow::Result;
 use futures_util::StreamExt;
+use hex::FromHex;
 use libp2p::PeerId;
+use revm::primitives::Address;
 use tokio::{
     select,
     sync::mpsc::{self, UnboundedSender},
@@ -205,12 +207,6 @@ impl ValidatorNode {
             DynSolValue::Array(vec![]),
         ];
         let call_builder = chain_gateway_contract.function("dispatch", &args)?;
-        /*
-        let output = call_builder.send().await?;
-        let receipt = output.get_receipt().await?;
-        info!("Receipt from {}: {receipt:?}", &chain_client.rpc_url);
-        */
-
         let call_builder = if chain_client.legacy_gas_estimation {
             call_builder.access_list(AccessList::default())
         } else {
@@ -268,7 +264,7 @@ impl ValidatorNode {
                     return Ok(());
                 }
                 Err(err) => {
-                    warn!("Failed to send: {:?}", err);
+                    println!("Failed to send: {:?}", err);
                 }
             }
 
