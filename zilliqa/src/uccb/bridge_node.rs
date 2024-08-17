@@ -310,7 +310,6 @@ impl BridgeNode {
             event_signatures.signatures.len()
         );
 
-        // TODO: take is_leader from the consensus
         // if leader and majority, create request to dispatch
         let consensus = self.consensus.lock().unwrap();
         let view = consensus.finalized_view();
