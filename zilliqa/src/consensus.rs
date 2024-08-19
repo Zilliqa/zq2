@@ -841,11 +841,19 @@ impl Consensus {
 
         for key in keys_to_process {
             if let Ok(Some(block)) = self.get_block(&key) {
-                if block.view() < self.view.get_view() {
+                // Remove votes for blocks that have been finalized. However, note that the block hashes which are keys
+                // into `self.votes` are the parent hash of the (potential) block that is being voted on. Therefore, we
+                // subtract one in this condition to ensure there is no chance of removing votes for blocks that still
+                // have a chance of being mined. It is possible this is unnecessary, since `self.finalized_view` is
+                // already at least 2 views behind the head of the chain, but keeping one extra vote in memory doesn't
+                // cost much and does make us more confident that we won't dispose of valid votes.
+                if block.view() < self.finalized_view.saturating_sub(1) {
+                    trace!(block_view = %block.view(), block_hash = %key, "cleaning vote");
                     self.votes.remove(&key);
                 }
             } else {
                 warn!("Missing block for vote (this shouldn't happen), removing from memory");
+                trace!(block_hash = %key, "cleaning vote");
                 self.votes.remove(&key);
             }
         }
@@ -1022,17 +1030,12 @@ impl Consensus {
 
         let committee: Vec<_> = state.get_stakers_at_block_raw(&block)?;
 
-        let committee_size = committee.len();
-
-        let (signatures, cosigned, cosigned_weight, supermajority_reached) =
-            votes.get(&block_hash).cloned().unwrap_or_else(|| {
-                (
-                    Vec::new(),
-                    bitvec![u8, bitvec::order::Msb0; 0; committee_size],
-                    0,
-                    false,
-                )
-            });
+        let Some((signatures, cosigned, cosigned_weight, supermajority_reached)) =
+            votes.get(&block_hash).cloned()
+        else {
+            warn!(%block_hash, %block_view, "tried to create a proposal without any votes, this shouldn't happen");
+            return Ok(None);
+        };
 
         let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone(), block_view);
         let parent_hash = qc.block_hash;

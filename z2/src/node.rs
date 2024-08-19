@@ -9,7 +9,6 @@ use tokio::{fs::File, io::AsyncWriteExt};
 use crate::{
     address::EthereumAddress,
     deployer::{docker_image, Machine, NodeRole},
-    validators::Chain,
 };
 
 pub struct ChainNode {
@@ -48,10 +47,7 @@ impl ChainNode {
     }
 
     pub async fn install(&self) -> Result<()> {
-        println!(
-            "Installing {} instance {} with address {}",
-            self.role, self.machine.name, self.machine.external_address,
-        );
+        println!("Installing {} instance {}", self.role, self.machine.name,);
 
         self.tag_machine().await?;
         self.import_config_files().await?;
@@ -61,10 +57,7 @@ impl ChainNode {
     }
 
     pub async fn upgrade(&self) -> Result<()> {
-        println!(
-            "Upgrading {} instance {} with address {}",
-            self.role, self.machine.name, self.machine.external_address,
-        );
+        println!("Upgrading {} instance {}", self.role, self.machine.name,);
 
         self.tag_machine().await?;
         self.import_config_files().await?;
@@ -210,7 +203,7 @@ impl ChainNode {
     }
 
     async fn run_provisioning_script(&self) -> Result<()> {
-        let cmd = "sudo mv /tmp/config.toml /config.toml && sudo python3 /tmp/provision_node.py";
+        let cmd = "sudo chmod 666 /tmp/config.toml /tmp/provision_node.py && sudo mv /tmp/config.toml /config.toml && sudo python3 /tmp/provision_node.py";
         let output = self.machine.run(cmd).await?;
         if !output.success {
             println!("{:?}", output.stderr);
@@ -223,7 +216,7 @@ impl ChainNode {
     }
 
     async fn create_config_toml(&self, filename: &str) -> Result<String> {
-        let spec_config = Chain::get_toml_contents(&self.chain_name)?;
+        let spec_config = include_str!("../resources/config.tera.toml");
 
         let genesis_wallet = EthereumAddress::from_private_key(&self.genesis_wallet_private_key)?;
         let bootstrap_node = EthereumAddress::from_private_key(&self.bootstrap_private_key)?;
@@ -231,7 +224,6 @@ impl ChainNode {
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", &role_name);
-        var_map.insert("external_address", &self.machine.external_address);
         var_map.insert("bootstrap_public_ip", &self.bootstrap_public_ip);
         var_map.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
         var_map.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);

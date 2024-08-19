@@ -186,9 +186,10 @@ fn hex_string_to_u8_20(hex_str: &str) -> Result<[u8; 20], &'static str> {
 }
 
 pub async fn get_chain_spec_config(chain_name: &str) -> Result<Value> {
-    let contents = Chain::get_toml_contents(chain_name)?;
+    let spec_config = Chain::get_toml_contents(chain_name)?;
+
     let config: Value =
-        toml::from_str(contents).map_err(|_| anyhow!("Unable to parse TOML".to_string()))?;
+        toml::from_str(spec_config).map_err(|_| anyhow!("Unable to parse TOML".to_string()))?;
     Ok(config)
 }
 
