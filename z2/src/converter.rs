@@ -30,7 +30,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sha3::Keccak256;
 use tempfile::TempDir;
-use tokio::io::AsyncBufReadExt;
+//use tokio::io::AsyncBufReadExt;
 use tracing::{info, trace, warn};
 use zilliqa::{
     cfg::Config,
@@ -355,7 +355,7 @@ pub async fn convert_persistence(
         .with_message("convert blocks")
         .with_finish(ProgressFinish::AndLeave);
 
-    let mut fixed_block_number = current_block;
+    //let mut fixed_block_number = current_block;
     for chunk in tx_blocks
         .into_iter()
         .progress_with(progress)
@@ -445,12 +445,12 @@ pub async fn convert_persistence(
                 &[vote.signature()],
                 bitvec![u8, bitvec::order::Msb0; 1; 1],
                 parent_hash,
-                fixed_block_number - 1,
+                block.block_num - 1,
             );
             let block = Block::from_qc(
                 secret_key,
-                fixed_block_number,
-                fixed_block_number,
+                block.block_num,
+                block.block_num,
                 qc,
                 parent_hash,
                 state.root_hash()?,
@@ -462,7 +462,7 @@ pub async fn convert_persistence(
                 ScillaGas(block.gas_limit).into(),
             );
 
-            fixed_block_number += 1;
+            //fixed_block_number += 1;
 
             // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash
             for receipt in &mut receipts {

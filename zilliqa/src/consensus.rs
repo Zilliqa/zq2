@@ -274,6 +274,8 @@ impl Consensus {
                     // If there was a newer block proposed - it's no longer valid because not every participant could have received it
                     if head_block.number() > high_block.number() {
                         db.revert_canonical_block_number(head_block.number())?;
+                        db.remove_transactions_executed_in_block(&head_block.hash())?;
+                        db.remove_block(&head_block)?;
                     }
 
                     let start_view = high_block.view() + 1;

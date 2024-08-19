@@ -606,7 +606,7 @@ impl Db {
 
     pub fn insert_block_with_db_tx(&self, sqlite_tx: &Connection, block: &Block) -> Result<()> {
         sqlite_tx.execute(
-            "INSERT OR REPLACE INTO blocks
+            "INSERT INTO blocks
                 (block_hash, view, height, parent_hash, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, qc, agg)
             VALUES (:block_hash, :view, :height, :parent_hash, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :qc, :agg)",
             named_params! {
@@ -629,6 +629,14 @@ impl Db {
 
     pub fn insert_block(&self, block: &Block) -> Result<()> {
         self.insert_block_with_db_tx(&self.block_store.lock().unwrap(), block)
+    }
+
+    pub fn remove_block(&self, block: &Block) -> Result<()> {
+        self.block_store.lock().unwrap().execute(
+            "DELETE FROM blocks WHERE block_hash = ?1",
+            [block.header.hash],
+        )?;
+        Ok(())
     }
 
     fn get_transactionless_block(&self, key: Either<&Hash, &u64>) -> Result<Option<Block>> {
