@@ -19,9 +19,9 @@ use std::{
     collections::{HashMap, HashSet},
     env,
     fmt::Debug,
-    fs,
-    io::Write,
+    fs::{self},
     ops::DerefMut,
+    path::Path,
     pin::Pin,
     rc::Rc,
     sync::{
@@ -41,7 +41,10 @@ use ethers::{
     types::{Bytes, TransactionReceipt, H256, U64},
     utils::secret_key_to_address,
 };
-use foundry_compilers::{solc::SolcLanguage, Project, ProjectPathsConfig};
+use foundry_compilers::{
+    artifacts::{EvmVersion, SolcInput, Source},
+    solc::{Solc, SolcLanguage},
+};
 use fs_extra::dir::*;
 use futures::{stream::BoxStream, Future, FutureExt, Stream, StreamExt};
 use itertools::Itertools;
@@ -1100,54 +1103,46 @@ fn format_message(
 
 fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     let full_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), path);
-
-    let contract_source = std::fs::read(&full_path).unwrap_or_else(|e| {
-        panic!(
-            "failed to read contract source {}: aka {:?}. Error: {}",
-            path, full_path, e
-        )
-    });
-
-    // Write the contract source to a file, so `solc` can compile it.
-    let mut contract_file = tempfile::Builder::new()
+    let source_path = Path::new(&full_path);
+    let target_file = tempfile::Builder::new()
         .suffix(".sol")
-        .keep(true) // do not delete
         .tempfile()
-        .unwrap();
-    contract_file.write_all(&contract_source).unwrap();
+        .expect("target_file");
+    let binding = target_file.into_temp_path().to_path_buf();
+    let target_path = binding.as_path();
 
-    let temp_path = contract_file.into_temp_path();
+    std::fs::copy(source_path, target_path).expect("copy err");
 
-    let project = Project::builder()
-        .paths(
-            ProjectPathsConfig::hardhat(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap(),
-        )
-        .single_solc_jobs() // single file only
-        .locked_version(SolcLanguage::Solidity, semver::Version::new(0, 8, 26)) // downloads and installs, if not already in `svm list`
-        .build(Default::default())
-        .unwrap();
+    let solc = Solc::find_or_install(&semver::Version::new(0, 8, 26)).expect("solc");
+    let solc_input = SolcInput::new(
+        SolcLanguage::Solidity,
+        Source::read_all_files(vec![binding.clone()]).expect("target_path"),
+        Default::default(),
+    )
+    .evm_version(EvmVersion::Shanghai);
 
-    let output = project.compile_file(temp_path.to_path_buf()).unwrap();
+    let output = solc.compile_exact(&solc_input).expect("compile_exact");
 
-    if output.has_compiler_errors() {
-        panic!(
-            "failed to compile contract with error  {:?}",
-            output.output().errors
-        );
+    if output.has_error() {
+        panic!("failed to compile contract with error  {:?}", output.errors);
     }
 
     let contract = output
-        .output()
-        .contracts
-        .get(temp_path.to_path_buf().as_path(), contract)
-        .unwrap();
+        .get(target_path, contract)
+        .expect("output_contracts error");
 
-    let abi = contract.abi.unwrap().clone();
-    let bytecode = contract.bytecode().unwrap().clone();
+    let abi = contract.abi.expect("jsonabi error");
+    let bytecode = contract.bytecode().expect("bytecode error");
 
     // Convert from the `alloy` representation of an ABI to the `ethers` representation, via JSON
-    let abi = serde_json::from_value(serde_json::to_value(abi).unwrap()).unwrap();
-    let bytecode = serde_json::from_value(serde_json::to_value(bytecode).unwrap()).unwrap();
+    let abi = serde_json::from_slice(serde_json::to_vec(abi).expect("ser abi").as_slice())
+        .expect("des abi");
+    let bytecode = serde_json::from_slice(
+        serde_json::to_vec(bytecode)
+            .expect("ser bytecode")
+            .as_slice(),
+    )
+    .expect("des bytecode");
 
     (abi, bytecode)
 }
