@@ -1102,31 +1102,35 @@ fn format_message(
 }
 
 fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
+    // create temporary .sol file to avoid solc compilation error
     let full_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), path);
     let source_path = Path::new(&full_path);
     let target_file = tempfile::Builder::new()
         .suffix(".sol")
         .tempfile()
-        .expect("target_file");
-    let binding = target_file.into_temp_path().to_path_buf();
-    let target_path = binding.as_path();
+        .expect("tempfile target");
+    let target_pathbuf = target_file.into_temp_path().to_path_buf();
+    let target_path = &target_pathbuf.as_path();
 
-    std::fs::copy(source_path, target_path).expect("copy err");
+    std::fs::copy(source_path, target_path).expect("copy .sol");
 
-    let solc = Solc::find_or_install(&semver::Version::new(0, 8, 26)).expect("solc");
+    // configure solc compiler
     let solc_input = SolcInput::new(
         SolcLanguage::Solidity,
-        Source::read_all_files(vec![binding.clone()]).expect("target_path"),
+        Source::read_all_files(vec![target_pathbuf.clone()]).expect("missing target"),
         Default::default(),
     )
-    .evm_version(EvmVersion::Shanghai);
+    .evm_version(EvmVersion::Shanghai); // ensure compatible with EVM version in exec.rs
 
-    let output = solc.compile_exact(&solc_input).expect("compile_exact");
+    // compile .sol file
+    let solc = Solc::find_or_install(&semver::Version::new(0, 8, 26)).expect("solc missing");
+    let output = solc.compile_exact(&solc_input).expect("solc compile_exact");
 
     if output.has_error() {
         panic!("failed to compile contract with error  {:?}", output.errors);
     }
 
+    // extract output
     let contract = output
         .get(target_path, contract)
         .expect("output_contracts error");
@@ -1135,14 +1139,14 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     let bytecode = contract.bytecode().expect("bytecode error");
 
     // Convert from the `alloy` representation of an ABI to the `ethers` representation, via JSON
-    let abi = serde_json::from_slice(serde_json::to_vec(abi).expect("ser abi").as_slice())
-        .expect("des abi");
+    let abi = serde_json::from_slice(serde_json::to_vec(abi).expect("serialisation abi").as_slice())
+        .expect("deserialisation abi");
     let bytecode = serde_json::from_slice(
         serde_json::to_vec(bytecode)
-            .expect("ser bytecode")
+            .expect("serialisation bytecode")
             .as_slice(),
     )
-    .expect("des bytecode");
+    .expect("deserialisation bytecode");
 
     (abi, bytecode)
 }
