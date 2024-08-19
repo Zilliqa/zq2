@@ -1139,8 +1139,12 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     let bytecode = contract.bytecode().expect("bytecode error");
 
     // Convert from the `alloy` representation of an ABI to the `ethers` representation, via JSON
-    let abi = serde_json::from_slice(serde_json::to_vec(abi).expect("serialisation abi").as_slice())
-        .expect("deserialisation abi");
+    let abi = serde_json::from_slice(
+        serde_json::to_vec(abi)
+            .expect("serialisation abi")
+            .as_slice(),
+    )
+    .expect("deserialisation abi");
     let bytecode = serde_json::from_slice(
         serde_json::to_vec(bytecode)
             .expect("serialisation bytecode")
