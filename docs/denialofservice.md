@@ -13,13 +13,24 @@ A good starting point in learning about general infrastructure hardening and DoS
 
 ## Data Layer
 
+TODO
+
 ## Network Layer
 
-ZQ2 uses `libp2p` for its network layer.
-A set of useful guidelines on how to mitigate DoS issues can be found in their [documentation](https://docs.libp2p.io/concepts/security/dos-mitigation/).
+- ZQ2 uses `libp2p` for its P2P layer.
+A set of useful guidelines on how to mitigate DoS issues is published in their [documentation](https://docs.libp2p.io/concepts/security/dos-mitigation/).
+- The RPC layer will benefit from general REST API [hardening strategies](https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html) proposed by OWASP.
 
 ## Consensus Layer
 
+A potential *Proof of Stake* vulnerability is that, if the next Proposer can be predicted, it can be subjected to a DoS attack to cripple proposal generation.
 
+While *sentry nodes* are a practical short-term solution, the long-term solution is *single secret leader election* (SSLE) proposals, of which there are a few:
+
+- [Whisk](https://ethresear.ch/t/whisk-a-practical-shuffle-based-ssle-protocol-for-ethereum/11763)
+- [Simplified SSLE](https://ethresear.ch/t/simplified-ssle/12315)
+- [Secret non-Single Leader Election](https://ethresear.ch/t/secret-non-single-leader-election/11789)
 
 ## Application Layer
+
+TODO
