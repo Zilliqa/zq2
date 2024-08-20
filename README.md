@@ -123,3 +123,7 @@ Of the currently undocumented APIs, the following are partially implemented:
   * `eth_getBlockByNumber` (issue #79)
   * `eth_syncing`
   * `net_peerCount`
+
+## Denial of Service
+
+Refer to `docs/denialofservice.md` for a collection of guides to help mitigate the issue.
