@@ -720,8 +720,8 @@ impl Node {
         }
 
         let parent = self
-            .get_block(header.parent_hash)?
-            .ok_or_else(|| anyhow!("missing parent: {}", header.parent_hash))?;
+            .get_block(header.qc.block_hash)?
+            .ok_or_else(|| anyhow!("missing parent: {}", header.qc.block_hash))?;
         let proposer = self
             .consensus
             .leader_at_block(&parent, header.view)
