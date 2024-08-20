@@ -950,7 +950,7 @@ mod tests {
         let state_hash = root_trie.root_hash().unwrap();
         let parent_block = Block::genesis(state_hash.into());
         // bit of a hack to generate a successor block
-        let mut qc2 = QuorumCertificate::genesis(0);
+        let mut qc2 = QuorumCertificate::genesis();
         qc2.block_hash = parent_block.hash();
         qc2.view = 1;
         let checkpoint_block = Block::from_qc(
