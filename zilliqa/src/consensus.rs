@@ -9,7 +9,7 @@ use std::{
 
 use alloy::primitives::{Address, U256};
 use anyhow::{anyhow, Result};
-use bitvec::bitvec;
+use bitvec::{bitarr, order::Msb0};
 use eth_trie::{MemoryDB, Trie};
 use libp2p::PeerId;
 use revm::Inspector;
@@ -26,8 +26,9 @@ use crate::{
     exec::TransactionApplyResult,
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
-        AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, BlockResponse,
+        AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockResponse,
         ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
+        MAX_COMMITTEE_SIZE,
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxPoolContent},
@@ -39,7 +40,7 @@ use crate::{
 #[derive(Debug)]
 struct NewViewVote {
     signatures: Vec<NodeSignature>,
-    cosigned: BitVec,
+    cosigned: BitArray,
     cosigned_weight: u128,
     qcs: Vec<QuorumCertificate>,
 }
@@ -93,7 +94,7 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
-type BlockVotes = (Vec<NodeSignature>, BitVec, u128, bool);
+type BlockVotes = (Vec<NodeSignature>, BitArray, u128, bool);
 
 #[derive(Debug)]
 struct CachedLeader {
@@ -265,7 +266,7 @@ impl Consensus {
                 }
                 None => {
                     let start_view = 1;
-                    (start_view, QuorumCertificate::genesis(1024))
+                    (start_view, QuorumCertificate::genesis())
                 }
             }
         };
@@ -889,7 +890,7 @@ impl Consensus {
             self.votes.get(&block_hash).cloned().unwrap_or_else(|| {
                 (
                     Vec::new(),
-                    bitvec![u8, bitvec::order::Msb0; 0; committee.len()],
+                    bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
                     0,
                     false,
                 )
@@ -927,7 +928,7 @@ impl Consensus {
                 block_hash,
                 (
                     signatures.clone(),
-                    cosigned.clone(),
+                    cosigned,
                     cosigned_weight,
                     supermajority_reached,
                 ),
@@ -1007,7 +1008,7 @@ impl Consensus {
             return Ok(None);
         };
 
-        let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone(), block_view);
+        let qc = self.qc_from_bits(block_hash, &signatures, cosigned, block_view);
         let parent_hash = qc.block_hash;
         let parent = self
             .get_block(&parent_hash)?
@@ -1184,11 +1185,10 @@ impl Consensus {
                 self.view.get_view(),
             );
 
-            let committee: Vec<_> = state.get_stakers_at_block_raw(&head_block)?;
-
             let votes = (
                 vec![my_vote.signature()],
-                bitvec![u8, bitvec::order::Msb0; 1; committee.len()],
+                // Lets pretend everyone has signed this block.
+                bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
                 0,
                 false,
             );
@@ -1285,7 +1285,7 @@ impl Consensus {
             .remove(&new_view.view)
             .unwrap_or_else(|| NewViewVote {
                 signatures: Vec::new(),
-                cosigned: bitvec![u8, bitvec::order::Msb0; 0; committee.len()],
+                cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
                 cosigned_weight: 0,
                 qcs: Vec::new(),
             });
@@ -1492,7 +1492,7 @@ impl Consensus {
         view: u64,
         qcs: Vec<QuorumCertificate>,
         signatures: &[NodeSignature],
-        cosigned: BitVec,
+        cosigned: BitArray,
     ) -> Result<AggregateQc> {
         assert_eq!(qcs.len(), signatures.len());
 
@@ -1508,7 +1508,7 @@ impl Consensus {
         &self,
         block_hash: Hash,
         signatures: &[NodeSignature],
-        cosigned: BitVec,
+        cosigned: BitArray,
         view: u64,
     ) -> QuorumCertificate {
         // we've already verified the signatures upon receipt of the responses so there's no need to do it again
@@ -2058,7 +2058,11 @@ impl Consensus {
         Ok(())
     }
 
-    fn check_quorum_in_indices(&self, signers: &BitVec, committee: &[NodePublicKey]) -> Result<()> {
+    fn check_quorum_in_indices(
+        &self,
+        signers: &BitSlice,
+        committee: &[NodePublicKey],
+    ) -> Result<()> {
         let cosigned_sum: u128 = signers
             .iter()
             .enumerate()

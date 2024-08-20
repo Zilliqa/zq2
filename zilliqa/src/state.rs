@@ -15,8 +15,14 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    cfg::ConsensusConfig, contracts, crypto, db::TrieStorage, exec::BaseFeeCheck, inspector,
-    message::BlockHeader, scilla::Scilla, transaction::EvmGas,
+    cfg::ConsensusConfig,
+    contracts, crypto,
+    db::TrieStorage,
+    exec::BaseFeeCheck,
+    inspector,
+    message::{BlockHeader, MAX_COMMITTEE_SIZE},
+    scilla::Scilla,
+    transaction::EvmGas,
 };
 
 #[derive(Clone, Debug)]
@@ -99,7 +105,10 @@ impl State {
 
         let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
             contracts::deposit::BYTECODE.to_vec(),
-            &[Token::Uint((*config.minimum_stake).into())],
+            &[
+                Token::Uint((*config.minimum_stake).into()),
+                Token::Uint(MAX_COMMITTEE_SIZE.into()),
+            ],
         )?;
 
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;

@@ -14,7 +14,7 @@ use alloy::{
     primitives::{Address, Parity, Signature, TxKind, B256, U256},
 };
 use anyhow::{anyhow, Context, Result};
-use bitvec::bitvec;
+use bitvec::{bitarr, bitvec, order::Msb0};
 use clap::{Parser, Subcommand};
 use eth_trie::{MemoryDB, Trie};
 use ethabi::Token;
@@ -31,12 +31,12 @@ use tracing::{trace, warn};
 use zilliqa::{
     cfg::Config,
     consensus::Validator,
-    contracts, crypto,
-    crypto::{Hash, SecretKey},
+    contracts,
+    crypto::{self, Hash, SecretKey},
     db::Db,
     exec::BaseFeeCheck,
     inspector,
-    message::{Block, BlockHeader, QuorumCertificate, Vote},
+    message::{Block, BlockHeader, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     schnorr,
     state::{contract_addr, Account, Code, State},
     time::SystemTime,
@@ -369,7 +369,7 @@ pub async fn convert_persistence(
 
             let qc = QuorumCertificate::new(
                 &[vote.signature()],
-                bitvec![u8, bitvec::order::Msb0; 1; 1],
+                bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
                 parent_hash,
                 block.block_num - 1,
             );
