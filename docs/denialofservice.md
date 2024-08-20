@@ -34,4 +34,6 @@ One should be implemented in the future, when the need arises.
 
 ## Application Layer
 
-TODO
+There are many ways to make a Smart Contract unusable.
+It would be prudent to develop an understanding for the [Top-10 Smart Contact vulnerabilities](https://owasp.org/www-project-smart-contract-top-10/) published by OWASP.
+A collection of additional examples can also be found [here](https://solidity-by-example.org/hacks/denial-of-service/).
