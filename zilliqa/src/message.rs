@@ -6,7 +6,7 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
-use bitvec::{bitvec, order::Msb0};
+use bitvec::{bitarr, order::Msb0};
 use itertools::Either;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
@@ -18,7 +18,10 @@ use crate::{
     transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
 };
 
-pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
+/// The maximum number of validators in the consensus committee. This is passed to the deposit contract and we expect
+/// it to reject deposits which would make the committee larger than this.
+pub const MAX_COMMITTEE_SIZE: usize = 256;
+pub type BitArray = bitvec::BitArr!(for MAX_COMMITTEE_SIZE, in u8, Msb0);
 pub type BitSlice = bitvec::slice::BitSlice<u8, Msb0>;
 
 /// A block proposal. The only difference between this and [Block] is that `transactions` contains the full transaction
@@ -293,16 +296,16 @@ impl Display for InternalMessage {
 pub struct QuorumCertificate {
     /// An aggregated signature from `n - f` distinct replicas, built by signing a block hash in a specific view.
     pub signature: NodeSignature,
-    pub cosigned: BitVec,
+    pub cosigned: BitArray,
     pub block_hash: Hash,
     pub view: u64,
 }
 
 impl QuorumCertificate {
-    pub fn genesis(committee_size: usize) -> Self {
+    pub fn genesis() -> Self {
         Self {
             signature: NodeSignature::identity(),
-            cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
+            cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
             block_hash: Hash::ZERO,
             view: 0,
         }
@@ -310,7 +313,7 @@ impl QuorumCertificate {
 
     pub fn new(
         signatures: &[NodeSignature],
-        cosigned: BitVec,
+        cosigned: BitArray,
         block_hash: Hash,
         view: u64,
     ) -> Self {
@@ -370,7 +373,7 @@ impl Display for QuorumCertificate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateQc {
     pub signature: NodeSignature,
-    pub cosigned: BitVec,
+    pub cosigned: BitArray,
     pub view: u64,
     pub qcs: Vec<QuorumCertificate>,
 }
@@ -470,17 +473,10 @@ pub struct Block {
 
 impl Block {
     pub fn genesis(state_root_hash: Hash) -> Block {
-        let qc = QuorumCertificate {
-            signature: NodeSignature::identity(),
-            cosigned: bitvec![u8, bitvec::order::Msb0; 1; 0],
-            block_hash: Hash::ZERO,
-            view: 0,
-        };
-
         Self::new(
             0u64,
             0u64,
-            qc,
+            QuorumCertificate::genesis(),
             None,
             Hash::ZERO,
             state_root_hash,
