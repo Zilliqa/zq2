@@ -23,11 +23,7 @@ contract Deposit {
     event StakerAdded(bytes blsPubKey);
     event StakerRemoved(bytes blsPubKey);
 
-<<<<<<< HEAD
     constructor(uint256 minimumStake, uint256 maximumStakers) {
-=======
-    constructor(uint256 minimumStake) {
->>>>>>> 4ef4458 (Add events to the deposit contract to track when validators are added or)
         _minimumStake = minimumStake;
         _maximumStakers = maximumStakers;
     }
