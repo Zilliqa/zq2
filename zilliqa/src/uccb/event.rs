@@ -95,7 +95,7 @@ pub struct DispatchedEvent {
 }
 
 impl DispatchedEvent {
-    pub fn try_from(event: DecodedEvent, source_chain_id: U256) -> Result<Self> {
+    pub fn try_from(event: DecodedEvent) -> Result<Self> {
         let indexed = event.indexed;
         let values = event.body;
         if indexed.len() != 3 || values.len() != 2 {
