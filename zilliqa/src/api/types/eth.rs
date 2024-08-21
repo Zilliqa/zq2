@@ -98,7 +98,7 @@ impl Block {
                 .map(|h| HashOrTransaction::Hash((*h).into()))
                 .collect(),
             uncles: vec![],
-            quorum_certificate: QuorumCertificate::from_qc(&block.qc),
+            quorum_certificate: QuorumCertificate::from_qc(&block.header.qc),
             aggregate_quorum_certificate: AggregateQc::from_agg(&block.agg),
         }
     }
@@ -156,7 +156,7 @@ impl Header {
             number: header.number,
             view: header.view,
             hash: header.hash.into(),
-            parent_hash: header.parent_hash.into(),
+            parent_hash: header.qc.block_hash.into(),
             mix_hash: B256::ZERO,
             nonce: [0; 8],
             sha_3_uncles: B256::ZERO,

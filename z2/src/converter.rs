@@ -378,7 +378,6 @@ pub async fn convert_persistence(
                 block.block_num,
                 block.block_num,
                 qc,
-                parent_hash,
                 state.root_hash()?,
                 Hash(transactions_trie.root_hash()?.into()),
                 Hash(receipts_trie.root_hash()?.into()),
@@ -394,7 +393,7 @@ pub async fn convert_persistence(
             }
 
             zq2_db.set_canonical_block_number(block_number, block.hash())?;
-            zq2_db.set_high_qc(block.qc.clone())?;
+            zq2_db.set_high_qc(block.header.qc)?;
             blocks.push(block.clone());
             zq2_db.set_latest_finalized_view(block_number)?;
 

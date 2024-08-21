@@ -218,7 +218,6 @@ impl Db {
                 block_hash BLOB NOT NULL PRIMARY KEY,
                 view INTEGER NOT NULL UNIQUE,
                 height INTEGER NOT NULL,
-                parent_hash BLOB NOT NULL,
                 signature BLOB NOT NULL,
                 state_root_hash BLOB NOT NULL,
                 transactions_root_hash BLOB NOT NULL,
@@ -377,7 +376,7 @@ impl Db {
             self.insert_block_with_db_tx(tx, block_ref)?;
             self.insert_block_with_db_tx(tx, &parent)?;
             self.set_latest_finalized_view_with_db_tx(tx, block_ref.view())?;
-            self.set_high_qc_with_db_tx(tx, block_ref.qc.clone())?;
+            self.set_high_qc_with_db_tx(tx, block_ref.header.qc)?;
             self.set_canonical_block_number_with_db_tx(tx, block_ref.number(), block_ref.hash())?;
             self.set_canonical_block_number_with_db_tx(tx, parent.number(), parent.hash())?;
             Ok(())
@@ -607,13 +606,13 @@ impl Db {
     pub fn insert_block_with_db_tx(&self, sqlite_tx: &Connection, block: &Block) -> Result<()> {
         sqlite_tx.execute(
             "INSERT INTO blocks
-                (block_hash, view, height, parent_hash, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, qc, agg)
-            VALUES (:block_hash, :view, :height, :parent_hash, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :qc, :agg)",
+                (block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg)
+            VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg)",
             named_params! {
                 ":block_hash": block.header.hash,
                 ":view": block.header.view,
                 ":height": block.header.number,
-                ":parent_hash": block.header.parent_hash,
+                ":qc": block.header.qc,
                 ":signature": block.header.signature,
                 ":state_root_hash": block.header.state_root_hash,
                 ":transactions_root_hash": block.header.transactions_root_hash,
@@ -621,7 +620,6 @@ impl Db {
                 ":timestamp": SystemTimeSqlable(block.header.timestamp),
                 ":gas_used": block.header.gas_used,
                 ":gas_limit": block.header.gas_limit,
-                ":qc": block.qc,
                 ":agg": block.agg,
             })?;
         Ok(())
@@ -638,7 +636,7 @@ impl Db {
                     hash: row.get(0)?,
                     view: row.get(1)?,
                     number: row.get(2)?,
-                    parent_hash: row.get(3)?,
+                    qc: row.get(3)?,
                     signature: row.get(4)?,
                     state_root_hash: row.get(5)?,
                     transactions_root_hash: row.get(6)?,
@@ -647,14 +645,13 @@ impl Db {
                     gas_used: row.get(9)?,
                     gas_limit: row.get(10)?,
                 },
-                qc: row.get(11)?,
-                agg: row.get(12)?,
+                agg: row.get(11)?,
                 transactions: vec![],
             })
         }
         macro_rules! query_block {
             ($cond: tt, $key: tt) => {
-                self.block_store.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, parent_hash, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, qc, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
+                self.block_store.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
             };
         }
         Ok(match key {
@@ -958,7 +955,6 @@ mod tests {
             1,
             1,
             qc2,
-            parent_block.hash(),
             state_hash.into(),
             EMPTY_ROOT_HASH.into(),
             EMPTY_ROOT_HASH.into(),
