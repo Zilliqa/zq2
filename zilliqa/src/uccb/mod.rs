@@ -54,7 +54,7 @@ async fn create_zq2_chain_client(
             rpc_url: config.zq2.rpc_url,
             chain_gateway_block_deployed: 0,
             block_instant_finality: false,
-            legacy_gas_estimation: false,
+            legacy_gas_estimation: config.zq2.legacy_gas_estimation,
         },
         config.zq2.validator_manager_address,
         config.zq2.chain_gateway_address,

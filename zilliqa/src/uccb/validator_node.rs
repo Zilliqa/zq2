@@ -213,10 +213,10 @@ impl ValidatorNode {
             call_builder
         };
 
-        for i in 1..6 {
+        for i in 1..self.config.max_dispatch_attempts {
             info!("Dispatch Attempt {:?}", i);
 
-            let _call_builder = if chain_client.legacy_gas_estimation {
+            let call_builder = if chain_client.legacy_gas_estimation {
                 let gas_estimate = match call_builder.estimate_gas().await {
                     Ok(estimate) => estimate,
                     Err(err) => {
@@ -252,7 +252,7 @@ impl ValidatorNode {
             };
 
             // Make the actual call
-            match _call_builder.send().await {
+            match call_builder.send().await {
                 Ok(tx) => {
                     println!(
                         "Transaction sent {}.{} {:?}",
