@@ -7,6 +7,8 @@ pub struct ZQ2Config {
     pub rpc_url: String,
     pub chain_gateway_address: Address,
     pub validator_manager_address: Address,
+    #[serde(default)]
+    pub legacy_gas_estimation: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -19,6 +21,7 @@ pub struct ChainConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    pub max_dispatch_attempts: u8,
     pub zq2: ZQ2Config,
     pub chain_configs: Vec<ChainConfig>,
 }
