@@ -956,8 +956,14 @@ impl Consensus {
                         }
 
                         self.create_next_block_on_timeout = true;
-                        self.reset_timeout
-                            .send(self.config.consensus.empty_block_timeout)?;
+                        // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
+                        // the last view change. At this point we should be ready to produce a new empty block.
+                        self.reset_timeout.send(
+                            self.config
+                                .consensus
+                                .empty_block_timeout
+                                .saturating_sub(Duration::from_millis(time_since_last_view_change)),
+                        )?;
                         trace!("Empty transaction pool, will create new block on timeout");
                     }
                 }
