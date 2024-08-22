@@ -179,6 +179,7 @@ fn node(
         request_responses_sender,
         reset_timeout_sender,
         Arc::new(AtomicUsize::new(0)),
+        None,
     )?;
     let node = Arc::new(Mutex::new(node));
     let rpc_module: RpcModule<Arc<Mutex<Node>>> = zilliqa::api::rpc_module(node.clone());

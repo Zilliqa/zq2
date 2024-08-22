@@ -115,8 +115,7 @@ impl NodeLauncher {
             reset_timeout_sender.clone(),
             peer_num,
             uccb_config,
-        )
-        .await?;
+        )?;
         let node = Arc::new(Mutex::new(node));
 
         let rpc_module = api::rpc_module(Arc::clone(&node));

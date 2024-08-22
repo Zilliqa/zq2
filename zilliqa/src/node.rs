@@ -174,7 +174,7 @@ impl ChainId {
 const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
 
 impl Node {
-    pub async fn new(
+    pub fn new(
         config: NodeConfig,
         secret_key: SecretKey,
         message_sender_channel: UnboundedSender<OutboundMessageTuple>,
@@ -208,13 +208,10 @@ impl Node {
             match UCCBValidatorNode::new(
                 &uccb_config,
                 &signer,
-                peer_id,
                 config.eth_chain_id,
                 message_sender_channel,
                 consensus.clone(),
-            )
-            .await
-            {
+            ) {
                 Ok(validator_node) => (
                     Some(validator_node.get_bridge_inbound_message_sender()),
                     Some(validator_node),

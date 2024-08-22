@@ -25,7 +25,7 @@ use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 use zilliqa::{
     contracts,
-    crypto::{NodePublicKey, SecretKey},
+    crypto::SecretKey,
     state::contract_addr,
     uccb::{cfg::Config, client::ChainClient},
 };
