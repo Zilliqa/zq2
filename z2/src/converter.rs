@@ -213,7 +213,6 @@ pub async fn convert_persistence(
     zq2_config: Config,
     secret_key: SecretKey,
     skip_accounts: bool,
-    pre_evm_block_number: u64,
 ) -> Result<()> {
     let style = ProgressStyle::with_template(
         "{msg} {wide_bar} [{per_sec}] {human_pos}/~{human_len} ({elapsed}/~{duration})",
@@ -413,15 +412,6 @@ pub async fn convert_persistence(
 
                 let chain_id = (transaction.version >> 16) as u16;
                 let version = (transaction.version & 0xffff) as u16;
-                // We know all mainnet transactions before this block were not EVM. However, some of them had bugs
-                // with their `version` which cause them to be marked as EVM. So we use the block number to figure
-                // disambiguate.
-                let _pre_evm = block_number < pre_evm_block_number;
-
-                // let force_evm_transaction = match transaction.code.clone() {
-                //     Some(vec) if !vec.is_empty() => String::from_utf8(vec).is_err(),
-                //     _ => false,
-                // };
 
                 let Ok((transaction, receipt)) =
                     process_txn(transaction, *txn_hash, chain_id, version, index)
@@ -437,7 +427,7 @@ pub async fn convert_persistence(
 
                 transactions.push((Hash(txn_hash.0), transaction));
                 receipts.push(receipt);
-                //trace!(?txn_hash, "transaction inserted");
+                trace!(?txn_hash, "transaction inserted");
             }
 
             let qc = QuorumCertificate::new(
@@ -460,8 +450,6 @@ pub async fn convert_persistence(
                 ScillaGas(block.gas_used).into(),
                 ScillaGas(block.gas_limit).into(),
             );
-
-            //fixed_block_number += 1;
 
             // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash
             for receipt in &mut receipts {
@@ -508,8 +496,7 @@ pub async fn convert_persistence(
             Ok(())
         })?;
     }
-    println!("Main loop done. Inserting auxiliary block");
-    warn!("Main loop done. Inserting auxiliary block");
+
     // Let's insert another block (empty) which will be used as high_qc block when zq2 starts from converted persistence
     let highest_block = zq2_db.get_highest_block_number()?.unwrap();
     let highest_block = zq2_db.get_block_by_view(&highest_block)?.unwrap();

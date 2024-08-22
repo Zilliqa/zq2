@@ -181,7 +181,6 @@ pub async fn run_persistence_converter(
     zq2_config: &str,
     secret_key: SecretKey,
     skip_accounts: bool,
-    pre_evm_block_number: u64,
 ) -> Result<()> {
     println!("🐼 Converting {zq1_pers_dir} into {zq2_data_dir}.. ");
     let zq1_dir = PathBuf::from_str(zq1_pers_dir)?;
@@ -196,15 +195,7 @@ pub async fn run_persistence_converter(
         .map(|node| node.eth_chain_id)
         .unwrap_or(0);
     let zq2_db = zilliqa::db::Db::new(Some(zq2_dir), shard_id)?;
-    converter::convert_persistence(
-        zq1_db,
-        zq2_db,
-        zq2_config,
-        secret_key,
-        skip_accounts,
-        pre_evm_block_number,
-    )
-    .await?;
+    converter::convert_persistence(zq1_db, zq2_db, zq2_config, secret_key, skip_accounts).await?;
     Ok(())
 }
 

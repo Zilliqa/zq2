@@ -48,8 +48,7 @@ session later. Use `screen`)
 ```
 screen -a
 export Z2_CONVERTER=true
-z2 converter convert /my/dir/persistences/zq1 /my/dir/persistences/zq2 config.toml <secret key> <pre_evm_block_number>
+z2 converter convert /my/dir/persistences/zq1 /my/dir/persistences/zq2 config.toml <secret key>
 ```
 
 The secret key is for a single validator which will be assumed to have 64 ZIL staked, so that the network has a validator on startup.
-PreEvm block number is the last block number before EVM support was enabled.
