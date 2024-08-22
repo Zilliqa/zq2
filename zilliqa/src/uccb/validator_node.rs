@@ -60,10 +60,9 @@ pub struct ValidatorNode {
 }
 
 impl ValidatorNode {
-    pub async fn new(
+    pub fn new(
         config: &Config,
         signer: &PrivateKeySigner,
-        peer_id: PeerId,
         shard_id: u64,
         bridge_outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
         consensus: Arc<Mutex<Consensus>>,

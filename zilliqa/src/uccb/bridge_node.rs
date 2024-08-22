@@ -52,7 +52,7 @@ impl BridgeNode {
         let (inbound_message_sender, inbound_message_receiver) = mpsc::unbounded_channel();
         let inbound_message_receiver = UnboundedReceiverStream::new(inbound_message_receiver);
 
-        let mut bridge_node = BridgeNode {
+        Ok(BridgeNode {
             event_signatures: HashMap::new(),
             chain_client,
             validators: HashSet::new(),
@@ -61,11 +61,7 @@ impl BridgeNode {
             inbound_message_sender,
             consensus,
             relay_nonces: HashSet::new(),
-        };
-
-        //bridge_node.update_validators().await?;
-
-        Ok(bridge_node)
+        })
     }
 
     pub fn get_inbound_message_sender(&self) -> UnboundedSender<InboundBridgeMessage> {
@@ -109,7 +105,7 @@ impl BridgeNode {
                     self.handle_relayed_event(event).await?;
                 },
                 Some(log) = dispatched_stream.next() => {
-                    let event = DispatchedEvent::try_from(dispatched_event.decode_log(log.data(), true)?, self.chain_client.chain_id)?;
+                    let event = DispatchedEvent::try_from(dispatched_event.decode_log(log.data(), true)?)?;
                     self.handle_dispatched_event(event)?;
                 },
                 Some(message) = self.inbound_message_receiver.next() => {
@@ -117,9 +113,6 @@ impl BridgeNode {
                 }
             }
         }
-
-        println!("Done Listening: {:?}", self.chain_client.chain_id);
-        Ok(())
     }
 
     /// Handles incoming bridge related messages, either Relay from other validators or Dispatch from another chain
