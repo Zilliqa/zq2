@@ -355,14 +355,13 @@ pub async fn convert_persistence(
         .with_message("convert blocks")
         .with_finish(ProgressFinish::AndLeave);
 
-    //let mut fixed_block_number = current_block;
-    for chunk in tx_blocks
+    let chunks = tx_blocks
         .into_iter()
         .progress_with(progress)
         .skip_while(|(n, _)| *n <= current_block)
-        .chunks(1000)
-        .into_iter()
-    {
+        .chunks(100000);
+
+    for chunk in chunks.into_iter() {
         let mut transactions = Vec::new();
         let mut receipts = Vec::new();
         let mut blocks: Vec<Block> = Vec::new();
