@@ -5,6 +5,7 @@ use alloy::{
     dyn_abi::DynSolValue,
     eips::{eip2930::AccessList, BlockNumberOrTag},
     json_abi::JsonAbi,
+    primitives::Address,
     providers::Provider,
     pubsub::PubSubFrontend,
     rpc::types::Filter,
@@ -20,11 +21,7 @@ use uccb::{
     cfg::{ChainConfig, Config},
     client::ChainClient,
 };
-use zilliqa::{
-    contracts,
-    crypto::{NodePublicKey, SecretKey},
-    state::contract_addr,
-};
+use zilliqa::{contracts, crypto::SecretKey, state::contract_addr};
 
 const VALIDATOR_MANAGER_ABI_JSON: &str =
     include_str!["../../contracts/out/ValidatorManager.sol/ValidatorManager.json"];
@@ -49,7 +46,7 @@ impl uccb::Args for Args {
 
 // Workaround for displaying the collection of validators
 // using Display instead of Debug which shows too mube info...
-struct Display<'a>(&'a std::vec::Vec<NodePublicKey>);
+struct Display<'a>(&'a std::vec::Vec<Address>);
 
 impl<'a> std::fmt::Display for Display<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -148,7 +145,7 @@ impl ValidatorOracle {
 
     async fn listen_to_staker_updates(
         &mut self,
-        sender: watch::Sender<Vec<NodePublicKey>>,
+        sender: watch::Sender<Vec<Address>>,
     ) -> Result<()> {
         let filter = Filter::new()
             .address(contract_addr::DEPOSIT)
@@ -200,7 +197,7 @@ impl ValidatorOracle {
         &self.chain_clients[0]
     }
 
-    async fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
+    async fn get_stakers(&self) -> Result<Vec<Address>> {
         debug!("Retreiving validators from the deposit contract");
 
         let contract: ContractInstance<PubSubFrontend, _> = ContractInstance::new(
@@ -209,14 +206,15 @@ impl ValidatorOracle {
             Interface::new(self.deploy_abi.clone()),
         );
 
-        let call_builder: DynCallBuilder<_, _, _> = contract.function("getStakers", &[])?;
+        let call_builder: DynCallBuilder<_, _, _> =
+            contract.function("getStakerSignerAddresses", &[])?;
         let output = call_builder.call().await?;
         let validators = if output.len() == 1 {
             output[0]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|k| NodePublicKey::from_bytes(k.as_bytes().unwrap()).unwrap())
+                .map(|k| k.as_address().unwrap() /*NodePublicKey::from_bytes(k.as_bytes().unwrap()).unwrap()*/)
                 .collect()
         } else {
             vec![]
@@ -227,7 +225,7 @@ impl ValidatorOracle {
 
     async fn update_validator_manager(
         chain_client: &ChainClient,
-        validators: &[NodePublicKey],
+        validators: &[Address],
         validator_manager_abi: JsonAbi,
     ) -> Result<()> {
         let validator_manager_interface = Interface::new(validator_manager_abi);
@@ -241,7 +239,7 @@ impl ValidatorOracle {
         let validators = DynSolValue::Array(
             validators
                 .iter()
-                .map(|validator| DynSolValue::Address(validator.into_addr()))
+                .map(|validator| DynSolValue::Address(validator.clone()))
                 .collect(),
         );
 
