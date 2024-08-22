@@ -8,6 +8,7 @@ struct Staker {
     uint256 balance;
     address rewardAddress;
     bytes peerId;
+    address signerAddress;
 }
 
 contract Deposit {
@@ -136,7 +137,8 @@ contract Deposit {
         bytes calldata blsPubKey,
         bytes calldata peerId,
         bytes calldata signature,
-        address rewardAddress
+        address rewardAddress,
+        address signerAddress
     ) public payable {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
@@ -164,6 +166,7 @@ contract Deposit {
 
         _stakersMap[blsPubKey].rewardAddress = rewardAddress;
         _stakersMap[blsPubKey].peerId = peerId;
+        _stakersMap[blsPubKey].signerAddress = signerAddress;
 
         emit StakerAdded(blsPubKey);
     }
