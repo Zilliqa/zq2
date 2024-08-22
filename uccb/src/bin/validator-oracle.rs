@@ -211,16 +211,25 @@ impl ValidatorOracle {
     async fn get_stakers(&self) -> Result<Vec<Address>> {
         debug!("Retreiving validators from the deposit contract");
 
-        let call_builder: DynCallBuilder<_, _, _> = self
-            .deposit_contract
-            .function("getStakerData", &[])?;
+        let contract: ContractInstance<PubSubFrontend, _> = ContractInstance::new(
+            contract_addr::DEPOSIT,
+            self.zq2_chain_client().provider.as_ref(),
+            Interface::new(self.deploy_abi.clone()),
+        );
+
+        let call_builder: DynCallBuilder<_, _, _> =
+            contract.function("getStakerSignerAddresses", &[])?;
         let output = call_builder.call().await?;
-        let validators = output[1]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|k| k.as_address().unwrap())
-            .collect();
+        let validators = if output.len() == 1 {
+            output[0]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|k| k.as_address().unwrap() /*NodePublicKey::from_bytes(k.as_bytes().unwrap()).unwrap()*/)
+                .collect()
+        } else {
+            vec![]
+        };
 
         Ok(validators)
     }
