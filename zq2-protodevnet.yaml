@@ -1,6 +1,6 @@
-name: zq2-prototestnet
+name: zq2-protodevnet
 eth_chain_id: 33103
-project_id: prj-d-zq2-testnet-g13pnaa8
+project_id: prj-d-zq2-devnet-c83bkpsd
 roles:
 - bootstrap
 - api

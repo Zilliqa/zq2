@@ -14,6 +14,7 @@ output "node_keys" {
     module.bootstrap_node.node_key,
     module.apis.node_key,
     module.validators.node_key,
+    module.checkpoints.node_key,
   [for k, m in module.distributed_validators : m.node_key]))
 }
 
