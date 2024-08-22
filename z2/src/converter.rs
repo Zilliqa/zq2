@@ -1,13 +1,10 @@
 #![allow(unused_imports)]
 
 use std::{
-    collections::{hash_map::Entry, BTreeMap, HashMap, VecDeque},
+    collections::BTreeMap,
     fs,
-    io::BufRead,
     path::PathBuf,
     process::{self, Stdio},
-    str::FromStr,
-    string::String,
     sync::Arc,
     time::Duration,
 };
@@ -17,7 +14,7 @@ use alloy::{
     primitives::{Address, Parity, Signature, TxKind, B256, U256},
 };
 use anyhow::{anyhow, Context, Result};
-use bitvec::bitvec;
+use bitvec::{bitarr, bitvec, order::Msb0};
 use clap::{Parser, Subcommand};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use ethabi::Token;
@@ -30,17 +27,16 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sha3::Keccak256;
 use tempfile::TempDir;
-//use tokio::io::AsyncBufReadExt;
 use tracing::{info, trace, warn};
 use zilliqa::{
     cfg::Config,
     consensus::Validator,
-    contracts, crypto,
-    crypto::{Hash, SecretKey},
+    contracts,
+    crypto::{self, Hash, SecretKey},
     db::Db,
     exec::BaseFeeCheck,
     inspector,
-    message::{Block, BlockHeader, QuorumCertificate, Vote},
+    message::{Block, BlockHeader, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     schnorr,
     scilla::storage_key,
     state::{contract_addr, Account, Code, State},

@@ -9,7 +9,7 @@ use std::{
 
 use alloy::primitives::{Address, U256};
 use anyhow::{anyhow, Result};
-use bitvec::bitvec;
+use bitvec::{bitarr, order::Msb0};
 use eth_trie::{MemoryDB, Trie};
 use libp2p::PeerId;
 use revm::Inspector;
@@ -26,8 +26,9 @@ use crate::{
     exec::TransactionApplyResult,
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
-        AggregateQc, BitSlice, BitVec, Block, BlockHeader, BlockRef, BlockResponse,
+        AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockResponse,
         ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
+        MAX_COMMITTEE_SIZE,
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxPoolContent},
@@ -39,7 +40,7 @@ use crate::{
 #[derive(Debug)]
 struct NewViewVote {
     signatures: Vec<NodeSignature>,
-    cosigned: BitVec,
+    cosigned: BitArray,
     cosigned_weight: u128,
     qcs: Vec<QuorumCertificate>,
 }
@@ -93,7 +94,7 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
-type BlockVotes = (Vec<NodeSignature>, BitVec, u128, bool);
+type BlockVotes = (Vec<NodeSignature>, BitArray, u128, bool);
 
 #[derive(Debug)]
 struct CachedLeader {
@@ -285,7 +286,7 @@ impl Consensus {
                 }
                 None => {
                     let start_view = 1;
-                    (start_view, QuorumCertificate::genesis(1024), false)
+                    (start_view, QuorumCertificate::genesis(), false)
                 }
             }
         };
@@ -448,7 +449,7 @@ impl Consensus {
 
         let new_view = NewView::new(
             self.secret_key,
-            self.high_qc.clone(),
+            self.high_qc,
             self.view.get_view(),
             self.secret_key.node_public_key(),
         );
@@ -557,7 +558,7 @@ impl Consensus {
             }
         }
 
-        self.update_high_qc_and_view(block.agg.is_some(), block.qc.clone())?;
+        self.update_high_qc_and_view(block.agg.is_some(), block.header.qc)?;
 
         let proposal_view = block.view();
         let parent = self
@@ -919,7 +920,7 @@ impl Consensus {
             self.votes.get(&block_hash).cloned().unwrap_or_else(|| {
                 (
                     Vec::new(),
-                    bitvec![u8, bitvec::order::Msb0; 0; committee.len()],
+                    bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
                     0,
                     false,
                 )
@@ -957,7 +958,7 @@ impl Consensus {
                 block_hash,
                 (
                     signatures.clone(),
-                    cosigned.clone(),
+                    cosigned,
                     cosigned_weight,
                     supermajority_reached,
                 ),
@@ -985,8 +986,14 @@ impl Consensus {
                         }
 
                         self.create_next_block_on_timeout = true;
-                        self.reset_timeout
-                            .send(self.config.consensus.empty_block_timeout)?;
+                        // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
+                        // the last view change. At this point we should be ready to produce a new empty block.
+                        self.reset_timeout.send(
+                            self.config
+                                .consensus
+                                .empty_block_timeout
+                                .saturating_sub(Duration::from_millis(time_since_last_view_change)),
+                        )?;
                         trace!("Empty transaction pool, will create new block on timeout");
                     }
                 }
@@ -1037,7 +1044,7 @@ impl Consensus {
             return Ok(None);
         };
 
-        let qc = self.qc_from_bits(block_hash, &signatures, cosigned.clone(), block_view);
+        let qc = self.qc_from_bits(block_hash, &signatures, cosigned, block_view);
         let parent_hash = qc.block_hash;
         let parent = self
             .get_block(&parent_hash)?
@@ -1147,7 +1154,6 @@ impl Consensus {
             self.view.get_view(),
             parent.header.number + 1,
             qc,
-            parent_hash,
             state.root_hash()?,
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
@@ -1214,11 +1220,10 @@ impl Consensus {
                 self.view.get_view(),
             );
 
-            let committee: Vec<_> = state.get_stakers_at_block_raw(&head_block)?;
-
             let votes = (
                 vec![my_vote.signature()],
-                bitvec![u8, bitvec::order::Msb0; 1; committee.len()],
+                // Lets pretend everyone has signed this block.
+                bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
                 0,
                 false,
             );
@@ -1303,7 +1308,7 @@ impl Consensus {
         new_view.verify(*public_key)?;
 
         // check if the sender's qc is higher than our high_qc or even higher than our view
-        self.update_high_qc_and_view(false, new_view.qc.clone())?;
+        self.update_high_qc_and_view(false, new_view.qc)?;
 
         let NewViewVote {
             mut signatures,
@@ -1315,7 +1320,7 @@ impl Consensus {
             .remove(&new_view.view)
             .unwrap_or_else(|| NewViewVote {
                 signatures: Vec::new(),
-                cosigned: bitvec![u8, bitvec::order::Msb0; 0; committee.len()],
+                cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
                 cosigned_weight: 0,
                 qcs: Vec::new(),
             });
@@ -1380,9 +1385,8 @@ impl Consensus {
                         self.secret_key,
                         self.view.get_view(),
                         parent.header.number + 1,
-                        high_qc.clone(),
+                        high_qc,
                         agg,
-                        parent_hash,
                         self.state.root_hash()?,
                         empty_root_hash,
                         empty_root_hash,
@@ -1487,7 +1491,7 @@ impl Consensus {
 
         if self.high_qc.block_hash == Hash::ZERO {
             trace!("received high qc, self high_qc is currently uninitialized, setting to the new one.");
-            self.db.set_high_qc(new_high_qc.clone())?;
+            self.db.set_high_qc(new_high_qc)?;
             self.high_qc = new_high_qc;
         } else {
             let current_high_qc_view = self
@@ -1504,7 +1508,7 @@ impl Consensus {
                     new_high_qc_block_view + 1,
                     current_high_qc_view,
                 );
-                self.db.set_high_qc(new_high_qc.clone())?;
+                self.db.set_high_qc(new_high_qc)?;
                 self.high_qc = new_high_qc;
                 if new_high_qc_block_view >= self.view.get_view() {
                     self.view.set_view(new_high_qc_block_view + 1);
@@ -1520,7 +1524,7 @@ impl Consensus {
         view: u64,
         qcs: Vec<QuorumCertificate>,
         signatures: &[NodeSignature],
-        cosigned: BitVec,
+        cosigned: BitArray,
     ) -> Result<AggregateQc> {
         assert_eq!(qcs.len(), signatures.len());
 
@@ -1536,7 +1540,7 @@ impl Consensus {
         &self,
         block_hash: Hash,
         signatures: &[NodeSignature],
-        cosigned: BitVec,
+        cosigned: BitArray,
         view: u64,
     ) -> QuorumCertificate {
         // we've already verified the signatures upon receipt of the responses so there's no need to do it again
@@ -1559,8 +1563,8 @@ impl Consensus {
     }
 
     fn check_safe_block(&mut self, proposal: &Block, during_sync: bool) -> Result<bool> {
-        let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else {
-            trace!("could not get qc for block: {}", proposal.qc.block_hash);
+        let Some(qc_block) = self.get_block(&proposal.parent_hash())? else {
+            trace!("could not get qc for block: {}", proposal.parent_hash());
             return Ok(false);
         };
         // We don't vote on blocks older than our view
@@ -1620,9 +1624,9 @@ impl Consensus {
         // HotStuff). Then a replica can safely commit the parent of the
         // block pointed by the highQC.
 
-        let Some(qc_block) = self.get_block(&proposal.qc.block_hash)? else {
+        let Some(qc_block) = self.get_block(&proposal.parent_hash())? else {
             warn!("missing qc block when checking whether to finalize!");
-            return Err(MissingBlockError::from(proposal.qc.block_hash).into());
+            return Err(MissingBlockError::from(proposal.parent_hash()).into());
         };
 
         // If we don't have the parent (e.g. genesis, or pruned node), we can't finalize, so just exit
@@ -1770,7 +1774,7 @@ impl Consensus {
         }
 
         // Check if the co-signers of the block's QC represent the supermajority.
-        self.check_quorum_in_bits(&block.qc.cosigned, &committee)
+        self.check_quorum_in_bits(&block.header.qc.cosigned, &committee)
             .map_err(|e| (e, false))?;
 
         let committee: Vec<_> = committee
@@ -1780,7 +1784,7 @@ impl Consensus {
 
         // Verify the block's QC signature - note the parent should be the committee the QC
         // was signed over.
-        self.verify_qc_signature(&block.qc, committee.clone())
+        self.verify_qc_signature(&block.header.qc, committee.clone())
             .map_err(|e| (e, false))?;
         if let Some(agg) = &block.agg {
             // Check if the signers of the block's aggregate QC represent the supermajority
@@ -1934,18 +1938,18 @@ impl Consensus {
         )
     }
 
-    fn get_high_qc_from_block<'a>(&self, block: &'a Block) -> Result<&'a QuorumCertificate> {
+    fn get_high_qc_from_block(&self, block: &Block) -> Result<QuorumCertificate> {
         let Some(agg) = &block.agg else {
-            return Ok(&block.qc);
+            return Ok(block.header.qc);
         };
 
         let high_qc = self.get_highest_from_agg(agg)?;
 
-        if &block.qc != high_qc {
+        if block.header.qc != high_qc {
             return Err(anyhow!("qc mismatch"));
         }
 
-        Ok(&block.qc)
+        Ok(block.header.qc)
     }
 
     pub fn get_block(&self, key: &Hash) -> Result<Option<Block>> {
@@ -1984,7 +1988,7 @@ impl Consensus {
             .ok_or_else(|| anyhow!("No block at height {number}"))
     }
 
-    fn get_highest_from_agg<'a>(&self, agg: &'a AggregateQc) -> Result<&'a QuorumCertificate> {
+    fn get_highest_from_agg(&self, agg: &AggregateQc) -> Result<QuorumCertificate> {
         agg.qcs
             .iter()
             .map(|qc| (qc, self.get_block(&qc.block_hash)))
@@ -2001,7 +2005,7 @@ impl Consensus {
                 }
             })?
             .ok_or_else(|| anyhow!("no qcs in agg"))
-            .map(|(qc, _)| qc)
+            .map(|(qc, _)| *qc)
     }
 
     fn verify_qc_signature(
@@ -2086,7 +2090,11 @@ impl Consensus {
         Ok(())
     }
 
-    fn check_quorum_in_indices(&self, signers: &BitVec, committee: &[NodePublicKey]) -> Result<()> {
+    fn check_quorum_in_indices(
+        &self,
+        signers: &BitSlice,
+        committee: &[NodePublicKey],
+    ) -> Result<()> {
         let cosigned_sum: u128 = signers
             .iter()
             .enumerate()
@@ -2322,7 +2330,7 @@ impl Consensus {
             }
         }
 
-        self.apply_rewards_raw(committee, &parent, block.view(), &block.qc.cosigned)?;
+        self.apply_rewards_raw(committee, &parent, block.view(), &block.header.qc.cosigned)?;
 
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);

@@ -16,9 +16,11 @@ contract Deposit {
     uint256 public totalStake;
 
     uint256 public _minimumStake;
+    uint256 public _maximumStakers;
 
-    constructor(uint256 minimumStake) {
+    constructor(uint256 minimumStake, uint256 maximumStakers) {
         _minimumStake = minimumStake;
+        _maximumStakers = maximumStakers;
     }
 
     function leaderFromRandomness(
@@ -135,6 +137,8 @@ contract Deposit {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
         require(signature.length == 96);
+
+        require(_stakerKeys.length < _maximumStakers, "too many stakers");
 
         // Verify signature as a proof-of-possession of the private key.
         bool pop = _popVerify(blsPubKey, signature);
