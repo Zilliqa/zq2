@@ -15,6 +15,9 @@ pub const EVM_MAX_INIT_CODE_SIZE: usize = 2 * EVM_MAX_CODE_SIZE;
 // Minimum gas required for EVM transaction (without input data)
 pub const EVM_MIN_GAS_UNITS: EvmGas = EvmGas(21000);
 
+// Gas used for verifying proof of posession
+pub const EVM_POP_VERIFY_GAS_PRICE: EvmGas = EvmGas(1_000_000);
+
 // Maximum code size allowed for zil transactions (imported from ZQ1)
 pub const ZIL_MAX_CODE_SIZE: usize = 76800;
 

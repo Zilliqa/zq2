@@ -9,19 +9,18 @@ use revm::{
     ContextStatefulPrecompile, InnerEvmContext,
 };
 
-use crate::state::State;
+use crate::{constants::EVM_POP_VERIFY_GAS_PRICE, state::State};
 
 pub struct PopVerify;
 
 // keep in-sync with zilliqa/src/contracts/deposit.sol
 impl PopVerify {
-    const POP_VERIFY_GAS_PRICE: u64 = 1_000_000u64; // FIXME: Gas Price?
     fn pop_verify(
         input: &[u8],
         gas_limit: u64,
         _context: &mut InnerEvmContext<&State>,
     ) -> PrecompileResult {
-        if gas_limit < Self::POP_VERIFY_GAS_PRICE {
+        if gas_limit < EVM_POP_VERIFY_GAS_PRICE.0 {
             return Err(PrecompileErrors::Error(PrecompileError::OutOfGas));
         }
 
@@ -47,10 +46,9 @@ impl PopVerify {
 
         let result = pop.verify(pk).is_ok();
 
-        // FIXME: Gas?
         let output = encode(&[Token::Bool(result)]);
         Ok(PrecompileOutput::new(
-            Self::POP_VERIFY_GAS_PRICE,
+            EVM_POP_VERIFY_GAS_PRICE.0,
             output.into(),
         ))
     }
