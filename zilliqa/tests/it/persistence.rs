@@ -8,18 +8,11 @@ use primitive_types::H160;
 use rand::Rng;
 use tracing::*;
 use zilliqa::{
-    cfg::{
-        allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
-        failed_request_sleep_duration_default, json_rpc_port_default, max_blocks_in_flight_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
-        state_rpc_limit_default, Checkpoint,
-    },
+    cfg::Checkpoint,
     crypto::{Hash, SecretKey},
-    transaction::EvmGas,
 };
 
-use crate::{deploy_contract, ConsensusConfig, Network, NewNodeOptions, NodeConfig, TestNode};
+use crate::{deploy_contract, Network, NewNodeOptions, TestNode};
 
 #[zilliqa_macros::test]
 async fn block_and_tx_data_persistence(mut network: Network) {
@@ -74,6 +67,9 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let block_with_tx = inner.get_block(receipt.block_hash).unwrap().unwrap();
     let last_block = inner.get_block(last_number).unwrap().unwrap();
     let tx = inner.get_transaction_by_hash(hash).unwrap().unwrap();
+
+    let config = node.inner.lock().unwrap().config.clone(); // no need to create a config from scratch, just copy the old one
+
     // sanity check
     assert_eq!(tx.hash, hash);
     assert_eq!(block_with_tx.transactions.len(), 1);
@@ -82,39 +78,6 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     drop(inner);
     #[allow(clippy::redundant_closure_call)]
     let dir = (|mut node: TestNode| node.dir.take())(node).unwrap(); // move dir out and drop the rest of node
-    let config = NodeConfig {
-        consensus: ConsensusConfig {
-            is_main: true,
-            genesis_accounts: Network::genesis_accounts(&network.genesis_key),
-            empty_block_timeout: Duration::from_millis(25),
-            local_address: "host.docker.internal".to_owned(),
-            rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
-            blocks_per_hour: 3600 * 40,
-            minimum_stake: 32_000_000_000_000_000_000u128.into(),
-            eth_block_gas_limit: EvmGas(84000000),
-            gas_price: 4_761_904_800_000u128.into(),
-            consensus_timeout: consensus_timeout_default(),
-            genesis_deposits: Vec::new(),
-            main_shard_id: None,
-            minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
-            scilla_address: scilla_address_default(),
-            blocks_per_epoch: 10,
-            epochs_per_checkpoint: 1,
-            scilla_lib_dir: scilla_lib_dir_default(),
-        },
-        allowed_timestamp_skew: allowed_timestamp_skew_default(),
-        data_dir: None,
-        load_checkpoint: None,
-        do_checkpoints: false,
-        disable_rpc: false,
-        json_rpc_port: json_rpc_port_default(),
-        eth_chain_id: eth_chain_id_default(),
-        block_request_limit: block_request_limit_default(),
-        max_blocks_in_flight: max_blocks_in_flight_default(),
-        block_request_batch_size: block_request_batch_size_default(),
-        state_rpc_limit: state_rpc_limit_default(),
-        failed_request_sleep_duration: failed_request_sleep_duration_default(),
-    };
     let mut rng = network.rng.lock().unwrap();
     let result = crate::node(
         config,

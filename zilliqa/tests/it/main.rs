@@ -209,9 +209,12 @@ struct Network {
     scilla_address: String,
     scilla_lib_dir: String,
     do_checkpoints: bool,
+    blocks_per_epoch: u64,
 }
 
 impl Network {
+    // This is only used in the zilliqa_macros::test macro. Consider refactoring this to a builder
+    // or removing entirely (and calling new_shard there)?
     /// Create a main shard network with reasonable defaults.
     pub fn new(
         rng: Arc<Mutex<ChaCha8Rng>>,
@@ -220,6 +223,7 @@ impl Network {
         scilla_address: String,
         scilla_lib_dir: String,
         do_checkpoints: bool,
+        blocks_per_epoch: u64,
     ) -> Network {
         Self::new_shard(
             rng,
@@ -231,6 +235,7 @@ impl Network {
             scilla_address,
             scilla_lib_dir,
             do_checkpoints,
+            blocks_per_epoch,
         )
     }
 
@@ -245,6 +250,7 @@ impl Network {
         scilla_address: String,
         scilla_lib_dir: String,
         do_checkpoints: bool,
+        blocks_per_epoch: u64,
     ) -> Network {
         let mut signing_keys = keys.unwrap_or_else(|| {
             (0..nodes)
@@ -296,7 +302,7 @@ impl Network {
                 eth_block_gas_limit: EvmGas(84000000),
                 gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
-                blocks_per_epoch: 10,
+                blocks_per_epoch,
                 epochs_per_checkpoint: 1,
             },
             json_rpc_port: json_rpc_port_default(),
@@ -359,6 +365,7 @@ impl Network {
             genesis_key,
             scilla_address,
             do_checkpoints,
+            blocks_per_epoch,
             scilla_lib_dir,
         }
     }
@@ -405,7 +412,7 @@ impl Network {
                 main_shard_id: None,
                 minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                 scilla_address: scilla_address_default(),
-                blocks_per_epoch: 10,
+                blocks_per_epoch: self.blocks_per_epoch,
                 epochs_per_checkpoint: 1,
                 scilla_lib_dir: scilla_lib_dir_default(),
             },
@@ -508,7 +515,7 @@ impl Network {
                         minimum_time_left_for_empty_block:
                             minimum_time_left_for_empty_block_default(),
                         scilla_address: scilla_address_default(),
-                        blocks_per_epoch: 10,
+                        blocks_per_epoch: self.blocks_per_epoch,
                         epochs_per_checkpoint: 1,
                         scilla_lib_dir: scilla_lib_dir_default(),
                     },
@@ -814,6 +821,7 @@ impl Network {
                                     self.scilla_address.clone(),
                                     self.scilla_lib_dir.clone(),
                                     self.do_checkpoints,
+                                    self.blocks_per_epoch,
                                 ),
                             );
                         }

@@ -820,19 +820,18 @@ impl State {
         Ok(amount.as_u128())
     }
 
-    pub fn tick_epoch(&mut self) -> Result<()> {
+    pub fn tick_epoch(&mut self, current_block: BlockHeader) -> Result<()> {
         let payload = contracts::deposit::TICK_EPOCH.encode_input(&[])?;
         let (ResultAndState { result, state }, ..) = self.apply_transaction_evm(
             Address::ZERO,
             Some(contract_addr::DEPOSIT),
             0,
-            EvmGas(u64::MAX), // it's better for the network to stall
-            // than to be unable to increment the epoch
+            self.block_gas_limit,
             0,
             payload,
             None,
             0,
-            BlockHeader::genesis(Hash::ZERO),
+            current_block,
             inspector::noop(),
             BaseFeeCheck::Ignore,
         )?;

@@ -105,7 +105,10 @@ impl State {
 
         let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
             contracts::deposit::BYTECODE.to_vec(),
-            &[Token::Uint((*config.minimum_stake).into())],
+            &[
+                Token::Uint((*config.minimum_stake).into()),
+                Token::Uint(config.blocks_per_epoch.into()),
+            ],
         )?;
 
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;

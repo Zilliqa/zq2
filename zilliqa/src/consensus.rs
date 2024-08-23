@@ -849,7 +849,7 @@ impl Consensus {
         vote.verify()?;
 
         // Retrieve the actual block this vote is for.
-        let Some(block) = self.get_block(&block_hash)? else {
+        let Some(_block) = self.get_block(&block_hash)? else {
             trace!("vote for unknown block, buffering");
             // If we don't have the block yet, we buffer the vote in case we recieve the block later. Note that we
             // don't know the leader of this view without the block, so we may be storing this unnecessarily, however
@@ -871,7 +871,8 @@ impl Consensus {
             );
             return Ok(None);
         }
-        let committee = self.state.get_stakers_at_block(&block)?;
+
+        let committee = self.state.get_stakers()?;
 
         // verify the sender's signature on block_hash
         let Some((index, _)) = committee
@@ -1053,13 +1054,19 @@ impl Consensus {
 
         let node_config = &self.config;
 
-        if self.block_is_first_in_epoch(parent.number() + 1) {
+        // We use the parent's number in EVM's block.number determination. This is because
+        // parent.header is what's passed to the EVM when applying transactions.
+        // Thus, the epoch change happens as the first state change in the first block AFTER the
+        // epoch boundary block.
+        if self.block_is_first_in_epoch(parent.number()) {
             // Here we ignore any errors and proceed with block creation, under the philosophy that
             // it is better to have the network run but with broken epochs, than it would be to
             // crash the entire network on a failing epoch transition.
-            match state.tick_epoch() {
+            match state.tick_epoch(parent_header) {
                 Ok(()) => (),
-                Err(e) => error!("Unable to transition the epoch - EVM error: {e}"),
+                Err(e) => {
+                    error!("Unable to transition epoch in new block - EVM error: {e}");
+                }
             };
         }
 
@@ -2306,10 +2313,13 @@ impl Consensus {
         }
 
         self.apply_rewards_raw(committee, &parent, block.view(), &block.qc.cosigned)?;
-        if self.block_is_first_in_epoch(block.number()) {
-            match self.state.tick_epoch() {
+        // Transactions are applied with parent.header, so check parent.number() here
+        if self.block_is_first_in_epoch(parent.number()) {
+            match self.state.tick_epoch(parent.header) {
                 Ok(()) => (),
-                Err(e) => warn!("Unable to transition the epoch - EVM error {e}"),
+                Err(e) => {
+                    warn!("Unable to transition epoch when verifying block - EVM error {e}");
+                }
             }
         }
 

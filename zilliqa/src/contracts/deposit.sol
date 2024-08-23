@@ -2,7 +2,6 @@
 pragma solidity ^0.8.20;
 
 // Implementation of a circular queue/buffer of validator public keys
-library RingBuffer {
     struct Value {
         bytes key;
         uint256 amount;
@@ -18,7 +17,7 @@ library RingBuffer {
     }
 
     // Returns the physical index of an element, given its logical index.
-    function physicalIdx(KeysQueue storage queue, uint256 idx) private view returns (uint256) {
+    function physicalIdx(KeysQueue storage queue, uint256 idx) view returns (uint256) {
         uint256 physical = queue.head + idx;
         // Wrap the physical index in case it is out-of-bounds of the buffer.
         if (physical >= queue.values.length) {
@@ -28,12 +27,12 @@ library RingBuffer {
         }
     }
 
-    function length(KeysQueue storage queue) public view returns (uint256) {
+    function length(KeysQueue storage queue) view returns (uint256) {
         return queue.len;
     }
 
     // Get the element at the given logical index. Reverts if `idx >= queue.length()`.
-    function get(KeysQueue storage queue, uint256 idx) public view returns (Value storage) {
+    function get(KeysQueue storage queue, uint256 idx) view returns (Value storage) {
         if (idx >= queue.len) {
             revert("element does not exist");
         }
@@ -43,7 +42,7 @@ library RingBuffer {
     }
 
     // Push an empty element to the back of the queue. Returns a reference to the new element.
-    function pushBack(KeysQueue storage queue) public returns (Value storage) {
+    function pushBack(KeysQueue storage queue) returns (Value storage) {
         // Add more space in the buffer if it is full.
         if (queue.len == queue.values.length) {
             queue.values.push();
@@ -58,7 +57,7 @@ library RingBuffer {
     // Pop an element from the front of the queue. Note that this returns a reference to the element in storage. This
     // means that further mutations of the queue may invalidate the returned element. Do not use this return value
     // after calling any other mutations on the queue.
-    function popFront(KeysQueue storage queue) public returns (Value storage) {
+    function popFront(KeysQueue storage queue) returns (Value storage) {
         if (queue.len == 0) {
             revert("queue is empty");
         }
@@ -68,7 +67,8 @@ library RingBuffer {
         queue.len -= 1;
         return queue.values[oldHead];
     }
-}
+
+using {length, get, pushBack, popFront} for KeysQueue;
 
 enum Status { Pending, Active, Suspended, Slashed }
 
@@ -97,7 +97,7 @@ contract Deposit {
     // at the end of one epoch and the committee set changing immediately.
     uint8 constant WAIT_EPOCHS = 2; // epochs
 
-    using RingBuffer for RingBuffer.KeysQueue;
+    // using RingBuffer for RingBuffer.KeysQueue;
 
     // All stakers
     mapping(bytes => Staker) _stakersMap;
@@ -106,12 +106,14 @@ contract Deposit {
     // Active stakers
     bytes[] committeeKeys;
 
-    RingBuffer.KeysQueue[WAIT_EPOCHS] pendingQueues;
-    RingBuffer.KeysQueue[WAIT_EPOCHS] unstakingQueues;
-    RingBuffer.KeysQueue kickQueue; // only one queue, as all nodes queued for kicking (slashing or suspending) get processed ASAP in the next epoch
+    KeysQueue[WAIT_EPOCHS] pendingQueues;
+    KeysQueue[WAIT_EPOCHS] unstakingQueues;
+    KeysQueue kickQueue; // only one queue, as all nodes queued for kicking (slashing or suspending) get processed ASAP in the next epoch
 
     uint256 public totalStake;
-    uint256 public _minimumStake;
+    uint256 public minimumStake;
+
+    uint64 public blocksPerEpoch; // TODO - get this from shard contract instead!
 
     uint64 public headProcessedEpoch;
 
@@ -126,8 +128,9 @@ contract Deposit {
         _;
     }
 
-    constructor(uint256 minimumStake) {
-        _minimumStake = minimumStake;
+    constructor(uint256 _minimumStake, uint64 _blocksPerEpoch) {
+        minimumStake = _minimumStake;
+        blocksPerEpoch = _blocksPerEpoch;
     }
 
     function leaderFromRandomness(
@@ -210,7 +213,7 @@ contract Deposit {
         // peerId is guaranteed to be non-zero for all stakers
         if (_stakersMap[blsPubKey].controlAddress == address(0)) {
             // Initial deposit on staker creation must be above minimal
-            if (msg.value < _minimumStake) {
+            if (msg.value < minimumStake) {
                 revert("Initial stake is less than minimum stake");
             }
 
@@ -219,6 +222,7 @@ contract Deposit {
             _stakersMap[blsPubKey].peerId = peerId;
             _stakersMap[blsPubKey].keyIndex = -1;
             _stakersMap[blsPubKey].status = Status.Pending; // Will be already implicitly initialised to this; explicit assignment for clarity
+            _stakerKeys[msg.sender] = blsPubKey;
         }
 
         queueNewDeposit(blsPubKey, msg.value);
@@ -230,7 +234,7 @@ contract Deposit {
     }
 
     function queueNewDeposit(bytes memory blsPubKey, uint256 amount) private {
-        RingBuffer.Value storage newDeposit = pendingQueues[currentQueueIndex()].pushBack();
+        Value storage newDeposit = pendingQueues[currentQueueIndex()].pushBack();
         newDeposit.key = blsPubKey;
         newDeposit.amount = amount;
     }
@@ -246,7 +250,7 @@ contract Deposit {
         }
         _stakersMap[blsPubKey].unstakingBalance += amount;
 
-        RingBuffer.Value storage newUnstaking = unstakingQueues[currentQueueIndex()].pushBack();
+        Value storage newUnstaking = unstakingQueues[currentQueueIndex()].pushBack();
         newUnstaking.key = blsPubKey;
         newUnstaking.amount = amount;
     }
@@ -276,7 +280,7 @@ contract Deposit {
         // but would remain liable for liveness until then.
         _stakersMap[blsPubKey].status = Status.Suspended;
 
-        RingBuffer.Value storage newSuspension = kickQueue.pushBack();
+        Value storage newSuspension = kickQueue.pushBack();
         newSuspension.key = blsPubKey;
         // no associated amount
     }
@@ -301,7 +305,7 @@ contract Deposit {
         // it should not be possible for it to get into the committee in any way.
         // Thus we only bother queueing a kick if it's currently in the committee.
         if (_stakersMap[blsPubKey].keyIndex >= 0) {
-            RingBuffer.Value storage ejection = kickQueue.pushBack();
+            Value storage ejection = kickQueue.pushBack();
             ejection.key = blsPubKey;
             ejection.amount = slashAmount;
         }
@@ -309,15 +313,17 @@ contract Deposit {
 
     function swapRemoveValidator(uint index) private {
         _stakersMap[committeeKeys[index]].keyIndex = -1;
-        bytes storage lastValidatorKey = committeeKeys[committeeKeys.length - 1];
-        committeeKeys[index] = lastValidatorKey;
-        _stakersMap[lastValidatorKey].keyIndex = int(index);
+        if (index != committeeKeys.length - 1) {
+            bytes storage lastValidatorKey = committeeKeys[committeeKeys.length - 1];
+            committeeKeys[index] = lastValidatorKey;
+            _stakersMap[lastValidatorKey].keyIndex = int(index);
+        }
         committeeKeys.pop();
     }
 
 
     function currentEpoch() public view returns (uint64) {
-        return uint64(block.number / 3600); // TODO - get this from shard contract
+        return uint64(block.number / blocksPerEpoch); // TODO - take the value from the shard contract rather than storing it locally
     }
 
     function currentQueueIndex() private view returns (uint8) {
@@ -334,7 +340,7 @@ contract Deposit {
 
         // Process pending queue for this epoch
         for (uint i = 0; i < pendingQueues[queueIndex].length(); ++i) {
-            RingBuffer.Value storage newDeposit = pendingQueues[queueIndex].popFront();
+            Value storage newDeposit = pendingQueues[queueIndex].popFront();
             _stakersMap[newDeposit.key].stakedBalance += newDeposit.amount;
             totalStake += newDeposit.amount;
             // If the validator wasn't already active (or suspended or slashed), activate it
@@ -347,14 +353,14 @@ contract Deposit {
 
         // Process unstakings queue for this epoch
         for (uint i = 0; i < unstakingQueues[queueIndex].length(); ++i) {
-            RingBuffer.Value storage unstaking = unstakingQueues[queueIndex].popFront();
+            Value storage unstaking = unstakingQueues[queueIndex].popFront();
             _stakersMap[unstaking.key].stakedBalance -= unstaking.amount;
             _stakersMap[unstaking.key].unstakingBalance -= unstaking.amount;
             _stakersMap[unstaking.key].freeBalance += unstaking.amount;
             totalStake -= unstaking.amount;
 
             // If the validator's stakedBalance is now below minimum stake, suspend it
-            if (_stakersMap[unstaking.key].stakedBalance < _minimumStake && _stakersMap[unstaking.key].status == Status.Active) {
+            if (_stakersMap[unstaking.key].stakedBalance < minimumStake && _stakersMap[unstaking.key].status == Status.Active) {
                 _stakersMap[unstaking.key].status = Status.Suspended;
                 swapRemoveValidator(uint(_stakersMap[unstaking.key].keyIndex)); // should be safe, because it should not be possible for a validator to be Active without having a positive keyIndex
             }
@@ -362,7 +368,7 @@ contract Deposit {
 
         // Process kick queue - suspensions (voluntary, and for liveness violations) and slashings (for consensus violations)
         for (uint i = 0; i < kickQueue.length(); ++i) {
-            RingBuffer.Value storage kick = kickQueue.popFront();
+            Value storage kick = kickQueue.popFront();
             Staker storage staker = _stakersMap[kick.key];
             // Remove the staker from the total stake and the active committee
             totalStake -= staker.stakedBalance;
@@ -397,7 +403,7 @@ contract Deposit {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
 
-        if (amount < _minimumStake) {
+        if (amount < minimumStake) {
             revert("stake less than minimum stake");
         }
 
@@ -419,6 +425,8 @@ contract Deposit {
         staker.rewardAddress = rewardAddress;
         staker.controlAddress = controlAddress;
         staker.peerId = peerId;
+        staker.status = Status.Active;
+        _stakerKeys[controlAddress] = blsPubKey;
     }
 
     function getStake(bytes calldata blsPubKey) public view returns (uint256) {
