@@ -350,125 +350,123 @@ pub async fn convert_persistence(
         .with_message("convert blocks")
         .with_finish(ProgressFinish::AndLeave);
 
-    let chunks = tx_blocks
+    let tx_blocks_iter = tx_blocks
         .into_iter()
         .progress_with(progress)
-        .skip_while(|(n, _)| *n <= current_block)
-        .chunks(100000);
+        .skip_while(|(n, _)| *n <= current_block);
+    //.chunks(100000);
 
-    for chunk in chunks.into_iter() {
+    let mut parent_hash = Hash::ZERO;
+
+    for (block_number, block) in tx_blocks_iter {
+        //for chunk in chunks.into_iter() {
         let mut transactions = Vec::new();
         let mut receipts = Vec::new();
-        let mut blocks: Vec<Block> = Vec::new();
-        let mut parent_hash = Hash::ZERO;
 
-        for (block_number, block) in chunk {
-            let block = zq1::TxBlock::from_proto(block)?;
-            // TODO: Retain ZQ1 block hash, so we can return it in APIs.
+        //for (block_number, block) in chunk {
+        let block = zq1::TxBlock::from_proto(block)?;
+        // TODO: Retain ZQ1 block hash, so we can return it in APIs.
 
-            let txn_hashes: Vec<_> = block
-                .mb_infos
-                .iter()
-                .filter_map(|mbi| {
-                    let key = zq1_db.get_micro_block_key(mbi.hash).unwrap()?;
-                    zq1_db.get_micro_block(&key).unwrap()
-                })
-                .flat_map(|micro_block| {
-                    micro_block
-                        .tranhashes
-                        .into_iter()
-                        .map(|txn| B256::from_slice(&txn))
-                })
-                .collect();
+        let txn_hashes: Vec<_> = block
+            .mb_infos
+            .iter()
+            .filter_map(|mbi| {
+                let key = zq1_db.get_micro_block_key(mbi.hash).unwrap()?;
+                zq1_db.get_micro_block(&key).unwrap()
+            })
+            .flat_map(|micro_block| {
+                micro_block
+                    .tranhashes
+                    .into_iter()
+                    .map(|txn| B256::from_slice(&txn))
+            })
+            .collect();
 
-            let vote = Vote::new(
-                secret_key,
-                parent_hash,
-                secret_key.node_public_key(),
-                block.block_num - 1,
-            );
+        let vote = Vote::new(
+            secret_key,
+            parent_hash,
+            secret_key.node_public_key(),
+            block.block_num - 1,
+        );
 
-            let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
 
-            let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
 
-            // Block hash is built using receipt and transaction root hashes. This means we have to compute all receipts before creating a block.
-            // Since receipt also contains block hash it belongs too - at the time it's being built it uses a placeholder: Hash::ZERO. Once all transactions are processed,
-            // block hash can be calculated and each receipt is updated with final block hash (by replacing Hash::ZERO placeholder).
+        // Block hash is built using receipt and transaction root hashes. This means we have to compute all receipts before creating a block.
+        // Since receipt also contains block hash it belongs too - at the time it's being built it uses a placeholder: Hash::ZERO. Once all transactions are processed,
+        // block hash can be calculated and each receipt is updated with final block hash (by replacing Hash::ZERO placeholder).
 
-            for (index, txn_hash) in txn_hashes.iter().enumerate() {
-                let Some(transaction) = zq1_db.get_tx_body(block_number, *txn_hash)? else {
-                    warn!(?txn_hash, %block_number, "missing transaction");
-                    continue;
-                };
-                let transaction = zq1::Transaction::from_proto(block_number, transaction)?;
-                if *txn_hash != transaction.id {
-                    return Err(anyhow!("txn hash mismatch"));
-                }
-
-                let chain_id = (transaction.version >> 16) as u16;
-                let version = (transaction.version & 0xffff) as u16;
-
-                let Ok((transaction, receipt)) =
-                    process_txn(transaction, *txn_hash, chain_id, version, index)
-                else {
-                    return Err(anyhow!("Can't process transaction: {:?}", *txn_hash));
-                };
-
-                transactions_trie
-                    .insert(txn_hash.as_slice(), transaction.calculate_hash().as_bytes())?;
-
-                let receipt_hash = receipt.compute_hash();
-                receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
-
-                transactions.push((Hash(txn_hash.0), transaction));
-                receipts.push(receipt);
-                trace!(?txn_hash, "transaction inserted");
+        for (index, txn_hash) in txn_hashes.iter().enumerate() {
+            let Some(transaction) = zq1_db.get_tx_body(block_number, *txn_hash)? else {
+                warn!(?txn_hash, %block_number, "missing transaction");
+                continue;
+            };
+            let transaction = zq1::Transaction::from_proto(block_number, transaction)?;
+            if *txn_hash != transaction.id {
+                return Err(anyhow!("txn hash mismatch"));
             }
 
-            let qc = QuorumCertificate::new(
-                &[vote.signature()],
-                bitvec![u8, bitvec::order::Msb0; 1; 1],
-                parent_hash,
-                block.block_num - 1,
-            );
-            let block = Block::from_qc(
-                secret_key,
-                block.block_num,
-                block.block_num,
-                qc,
-                parent_hash,
-                state.root_hash()?,
-                Hash(transactions_trie.root_hash()?.into()),
-                Hash(receipts_trie.root_hash()?.into()),
-                txn_hashes.iter().map(|h| Hash(h.0)).collect(),
-                SystemTime::UNIX_EPOCH + Duration::from_micros(block.timestamp),
-                ScillaGas(block.gas_used).into(),
-                ScillaGas(block.gas_limit).into(),
-            );
+            let chain_id = (transaction.version >> 16) as u16;
+            let version = (transaction.version & 0xffff) as u16;
 
-            // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash
-            for receipt in &mut receipts {
-                receipt.block_hash = block.hash();
-            }
+            let Ok((transaction, receipt)) =
+                process_txn(transaction, *txn_hash, chain_id, version, index)
+            else {
+                return Err(anyhow!("Can't process transaction: {:?}", *txn_hash));
+            };
 
-            blocks.push(block.clone());
+            transactions_trie
+                .insert(txn_hash.as_slice(), transaction.calculate_hash().as_bytes())?;
 
-            parent_hash = block.hash();
+            let receipt_hash = receipt.compute_hash();
+            receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
+
+            transactions.push((Hash(txn_hash.0), transaction));
+            receipts.push(receipt);
+            trace!(?txn_hash, "transaction inserted");
         }
 
+        let qc = QuorumCertificate::new(
+            &[vote.signature()],
+            bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
+            parent_hash,
+            block.block_num - 1,
+        );
+        let block = Block::from_qc(
+            secret_key,
+            block.block_num,
+            block.block_num,
+            qc,
+            state.root_hash()?,
+            Hash(transactions_trie.root_hash()?.into()),
+            Hash(receipts_trie.root_hash()?.into()),
+            txn_hashes.iter().map(|h| Hash(h.0)).collect(),
+            SystemTime::UNIX_EPOCH + Duration::from_micros(block.timestamp),
+            ScillaGas(block.gas_used).into(),
+            ScillaGas(block.gas_limit).into(),
+        );
+
+        // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash
+        for receipt in &mut receipts {
+            receipt.block_hash = block.hash();
+        }
+
+        //blocks.push(block.clone());
+
+        parent_hash = block.hash();
+        //}
+
         zq2_db.with_sqlite_tx(|sqlite_tx| {
-            for block in &blocks {
-                zq2_db.insert_block_with_db_tx(sqlite_tx, block)?;
-                zq2_db.set_canonical_block_number_with_db_tx(
-                    sqlite_tx,
-                    block.number(),
-                    block.hash(),
-                )?;
-                zq2_db.set_high_qc_with_db_tx(sqlite_tx, block.qc.clone())?;
-                zq2_db.set_latest_finalized_view_with_db_tx(sqlite_tx, block.view())?;
-                trace!("{} block inserted", block.number());
-            }
+            zq2_db.insert_block_with_db_tx(sqlite_tx, &block)?;
+            zq2_db.set_canonical_block_number_with_db_tx(
+                sqlite_tx,
+                block.number(),
+                block.hash(),
+            )?;
+            zq2_db.set_high_qc_with_db_tx(sqlite_tx, block.header.qc)?;
+            zq2_db.set_latest_finalized_view_with_db_tx(sqlite_tx, block.view())?;
+            trace!("{} block inserted", block.number());
 
             for (hash, transaction) in &transactions {
                 if let Err(err) = zq2_db.insert_transaction_with_db_tx(sqlite_tx, hash, transaction)
@@ -505,7 +503,7 @@ pub async fn convert_persistence(
             empty_high_qc_block.number(),
             empty_high_qc_block.hash(),
         )?;
-        zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.qc.clone())?;
+        zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.header.qc)?;
         Ok(())
     })?;
 
@@ -527,7 +525,7 @@ fn create_empty_block_from_parent(parent_block: &Block, secret_key: SecretKey) -
 
     let qc = QuorumCertificate::new(
         &[vote.signature()],
-        bitvec![u8, bitvec::order::Msb0; 1; 1],
+        bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
         parent_block.hash(),
         parent_block.number(),
     );
@@ -537,7 +535,6 @@ fn create_empty_block_from_parent(parent_block: &Block, secret_key: SecretKey) -
         parent_block.header.view + 1,
         parent_block.header.number + 1,
         qc,
-        parent_block.hash(),
         parent_block.header.state_root_hash,
         parent_block.transactions_root_hash(),
         parent_block.header.receipts_root_hash,
