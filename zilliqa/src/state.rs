@@ -20,7 +20,7 @@ use crate::{
     db::TrieStorage,
     exec::BaseFeeCheck,
     inspector,
-    message::BlockHeader,
+    message::{BlockHeader, MAX_COMMITTEE_SIZE},
     scilla::Scilla,
     transaction::EvmGas,
 };
@@ -107,6 +107,7 @@ impl State {
             contracts::deposit::BYTECODE.to_vec(),
             &[
                 Token::Uint((*config.minimum_stake).into()),
+                Token::Uint(MAX_COMMITTEE_SIZE.into()),
                 Token::Uint(config.blocks_per_epoch.into()),
             ],
         )?;

@@ -19,8 +19,9 @@ use std::{
     collections::{HashMap, HashSet},
     env,
     fmt::Debug,
-    fs,
+    fs::{self},
     ops::DerefMut,
+    path::Path,
     pin::Pin,
     rc::Rc,
     sync::{
@@ -34,12 +35,15 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use ethers::{
     abi::Contract,
-    prelude::{CompilerInput, DeploymentTxFactory, EvmVersion, SignerMiddleware},
+    prelude::{DeploymentTxFactory, SignerMiddleware},
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::LocalWallet,
-    solc::SHANGHAI_SOLC,
     types::{Bytes, TransactionReceipt, H256, U64},
     utils::secret_key_to_address,
+};
+use foundry_compilers::{
+    artifacts::{EvmVersion, SolcInput, Source},
+    solc::{Solc, SolcLanguage},
 };
 use fs_extra::dir::*;
 use futures::{stream::BoxStream, Future, FutureExt, Stream, StreamExt};
@@ -1105,56 +1109,57 @@ fn format_message(
     }
 }
 
-const PROJECT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
-const EVM_VERSION: EvmVersion = EvmVersion::Shanghai;
-
 fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
-    let full_path = format!("{}{}", PROJECT_ROOT, path);
+    // create temporary .sol file to avoid solc compilation error
+    let full_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), path);
+    let source_path = Path::new(&full_path);
+    let target_file = tempfile::Builder::new()
+        .suffix(".sol")
+        .tempfile()
+        .expect("tempfile target");
+    let target_pathbuf = target_file.into_temp_path().to_path_buf();
+    let target_path = &target_pathbuf.as_path();
 
-    let contract_source = std::fs::read(&full_path).unwrap_or_else(|e| {
-        panic!(
-            "failed to read contract source {}: aka {:?}. Error: {}",
-            path, full_path, e
-        )
-    });
+    std::fs::copy(source_path, target_path).expect("copy .sol");
 
-    // Write the contract source to a file, so `solc` can compile it.
-    let mut contract_file = tempfile::Builder::new().suffix(".sol").tempfile().unwrap();
-    std::io::Write::write_all(&mut contract_file, &contract_source).unwrap();
+    // configure solc compiler
+    let solc_input = SolcInput::new(
+        SolcLanguage::Solidity,
+        Source::read_all_files(vec![target_pathbuf.clone()]).expect("missing target"),
+        Default::default(),
+    )
+    .evm_version(EvmVersion::Shanghai); // ensure compatible with EVM version in exec.rs
 
-    let sc = ethers::solc::Solc::default();
+    // compile .sol file
+    let solc = Solc::find_or_install(&semver::Version::new(0, 8, 26)).expect("solc missing");
+    let output = solc.compile_exact(&solc_input).expect("solc compile_exact");
 
-    let mut compiler_input = CompilerInput::new(contract_file.path()).unwrap();
-    let compiler_input = compiler_input.first_mut().unwrap();
-    compiler_input.settings.evm_version = Some(EVM_VERSION);
-
-    if let Ok(version) = sc.version() {
-        // gets the minimum EvmVersion that is compatible the given EVM_VERSION and version arguments
-        if EVM_VERSION.normalize_version(&version) != Some(EVM_VERSION) {
-            panic!(
-                "solc version {} required, currently set {}",
-                SHANGHAI_SOLC, version
-            );
-        }
+    if output.has_error() {
+        panic!("failed to compile contract with error  {:?}", output.errors);
     }
 
-    let out = sc
-        .compile::<CompilerInput>(compiler_input)
-        .unwrap_or_else(|e| {
-            panic!("failed to compile contract {}: {}", contract, e);
-        });
+    // extract output
+    let contract = output
+        .get(target_path, contract)
+        .expect("output_contracts error");
 
-    // test if your solc can compile with v8.20 (shanghai) with
-    // solc --evm-version shanghai zilliqa/tests/it/contracts/Storage.sol
-    if out.has_error() {
-        panic!("failed to compile contract with error  {:?}", out.errors);
-    }
+    let abi = contract.abi.expect("jsonabi error");
+    let bytecode = contract.bytecode().expect("bytecode error");
 
-    let contract = out
-        .get(contract_file.path().to_str().unwrap(), contract)
-        .unwrap();
-    let abi = contract.abi.unwrap().clone();
-    let bytecode = contract.bytecode().unwrap().clone();
+    // Convert from the `alloy` representation of an ABI to the `ethers` representation, via JSON
+    let abi = serde_json::from_slice(
+        serde_json::to_vec(abi)
+            .expect("serialisation abi")
+            .as_slice(),
+    )
+    .expect("deserialisation abi");
+    let bytecode = serde_json::from_slice(
+        serde_json::to_vec(bytecode)
+            .expect("serialisation bytecode")
+            .as_slice(),
+    )
+    .expect("deserialisation bytecode");
+
     (abi, bytecode)
 }
 

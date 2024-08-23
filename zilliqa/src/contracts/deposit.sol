@@ -112,6 +112,7 @@ contract Deposit {
 
     uint256 public totalStake;
     uint256 public minimumStake;
+    uint256 public maximumStakers;
 
     uint64 public blocksPerEpoch; // TODO - get this from shard contract instead!
 
@@ -128,9 +129,10 @@ contract Deposit {
         _;
     }
 
-    constructor(uint256 _minimumStake, uint64 _blocksPerEpoch) {
+    constructor(uint256 _minimumStake, uint256 _maximumStakers, uint64 _blocksPerEpoch) {
         minimumStake = _minimumStake;
         blocksPerEpoch = _blocksPerEpoch;
+        maximumStakers = _maximumStakers;
     }
 
     function leaderFromRandomness(
@@ -204,6 +206,8 @@ contract Deposit {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
         require(signature.length == 96);
+
+        require(committeeKeys.length < maximumStakers, "too many stakers");
 
         // Verify signature as a proof-of-possession of the private key.
         bool pop = _popVerify(blsPubKey, signature);

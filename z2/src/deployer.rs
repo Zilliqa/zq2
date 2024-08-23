@@ -59,6 +59,7 @@ impl FromStr for Components {
 #[derive(Deserialize, Serialize, Debug)]
 pub struct NetworkConfig {
     name: String,
+    eth_chain_id: u64,
     project_id: String,
     roles: Vec<NodeRole>,
     versions: HashMap<String, String>,
@@ -138,7 +139,12 @@ impl fmt::Display for NodeRole {
 }
 
 impl NetworkConfig {
-    async fn new(name: String, project_id: String, roles: Vec<NodeRole>) -> Result<Self> {
+    async fn new(
+        name: String,
+        eth_chain_id: u64,
+        project_id: String,
+        roles: Vec<NodeRole>,
+    ) -> Result<Self> {
         let mut versions = HashMap::new();
 
         for r in roles.clone() {
@@ -158,6 +164,7 @@ impl NetworkConfig {
 
         Ok(Self {
             name,
+            eth_chain_id,
             project_id,
             roles,
             versions,
@@ -280,9 +287,19 @@ impl Machine {
     }
 }
 
-pub async fn new(network_name: &str, project_id: &str, roles: Vec<NodeRole>) -> Result<()> {
-    let config =
-        NetworkConfig::new(network_name.to_string(), project_id.to_string(), roles).await?;
+pub async fn new(
+    network_name: &str,
+    eth_chain_id: u64,
+    project_id: &str,
+    roles: Vec<NodeRole>,
+) -> Result<()> {
+    let config = NetworkConfig::new(
+        network_name.to_string(),
+        eth_chain_id,
+        project_id.to_string(),
+        roles,
+    )
+    .await?;
     let content = serde_yaml::to_string(&config)?;
     let mut file_path = std::env::current_dir()?;
     file_path.push(format!("{network_name}.yaml"));
@@ -302,6 +319,7 @@ pub async fn install_or_upgrade(config_file: &str, is_upgrade: bool) -> Result<(
         // Create a list of instances we need to update
         let nodes = get_nodes(
             &config.name,
+            config.eth_chain_id,
             &config.project_id,
             node_role.clone(),
             versions.clone(),
@@ -349,8 +367,6 @@ pub async fn install_or_upgrade(config_file: &str, is_upgrade: bool) -> Result<(
     Ok(())
 }
 
-// z2 deposit --reward-address <node_reward_address>
-
 pub async fn get_deposit_commands(config_file: &str) -> Result<()> {
     let config = fs::read_to_string(config_file).await?;
     let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
@@ -360,6 +376,7 @@ pub async fn get_deposit_commands(config_file: &str) -> Result<()> {
     // Create a list of validators instances
     let nodes = get_nodes(
         chain_name,
+        config.eth_chain_id,
         &config.project_id,
         NodeRole::Validator,
         versions.clone(),

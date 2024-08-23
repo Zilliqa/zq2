@@ -49,11 +49,6 @@ variable "subdomain" {
   default     = ""
 }
 
-# variable "secret_keys" {
-#   description = "The secret keys to associate with the instances"
-#   type        = list(string)
-# }
-
 variable "genesis_key" {
   description = "The network genesis key"
   type        = string
@@ -98,12 +93,6 @@ variable "dns_zone_project_id" {
   nullable    = false
 }
 
-# variable "region" {
-#   description = "The region ID to host the network in"
-#   type        = string
-#   default     = "europe-west2"
-# }
-
 variable "role" {
   description = "VM role"
   type        = string
@@ -125,21 +114,3 @@ variable "external_ip" {
   type        = string
   default     = ""
 }
-
-# variable "docker_image" {
-#   description = "(Option): ZQ2 validator docker image"
-#   type        = string
-#   default     = ""
-# }
-
-# variable "otterscan_image" {
-#   description = "(Optional): Otterscan docker image url (incl. version)"
-#   type        = string
-#   default     = ""
-# }
-
-# variable "spout_image" {
-#   description = "(Optional): spout docker image url (incl. version)"
-#   type        = string
-#   default     = ""
-# }
