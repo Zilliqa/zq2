@@ -205,6 +205,8 @@ impl Node {
         let (bridge_inbound_message_sender, validator_node) = if let Some(uccb_config) = uccb_config
         {
             let signer = PrivateKeySigner::from_str(secret_key.to_hex().as_str())?;
+            let address = signer.address();
+            info!("Signer address {address}");
             match UCCBValidatorNode::new(
                 &uccb_config,
                 &signer,

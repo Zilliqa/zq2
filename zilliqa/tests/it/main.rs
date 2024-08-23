@@ -507,9 +507,13 @@ impl Network {
                     k.0.to_libp2p_keypair().public().to_peer_id(),
                     stake.into(),
                     TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
+<<<<<<< HEAD
                     PrivateKeySigner::from_str(k.0.to_hex().as_str())
                         .unwrap()
                         .address(),
+=======
+                    PrivateKeySigner::from_str(k.0.to_hex().as_str()).unwrap().address(),
+>>>>>>> c0f5bb01 (Add the signer address to setStake so that genesis accounts don't have a)
                 )
             })
             .collect();
