@@ -292,13 +292,12 @@ impl DatabaseRef for &State {
         }
 
         let account = self.get_account(address)?;
+        let code = Bytecode::new_raw(account.code.evm_code().unwrap_or_default().into());
         let account_info = AccountInfo {
             balance: U256::from(account.balance),
             nonce: account.nonce,
-            code_hash: KECCAK_EMPTY,
-            code: Some(Bytecode::new_raw(
-                account.code.evm_code().unwrap_or_default().into(),
-            )),
+            code_hash: code.hash_slow(),
+            code: Some(code),
         };
 
         Ok(Some(account_info))
