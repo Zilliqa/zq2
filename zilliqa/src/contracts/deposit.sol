@@ -407,6 +407,8 @@ contract Deposit {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
 
+        require(committeeKeys.length < maximumStakers, "too many stakers");
+
         if (amount < minimumStake) {
             revert("stake less than minimum stake");
         }
