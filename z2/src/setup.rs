@@ -1,9 +1,12 @@
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::{Path, PathBuf, str::FromStr},
 };
 
-use alloy::primitives::{address, Address};
+use alloy::{
+    primitives::{address, Address},
+    signers::local::PrivateKeySigner,
+};
 use anyhow::{anyhow, Context, Result};
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
@@ -275,7 +278,8 @@ impl Setup {
 
     pub async fn generate_config(&self) -> Result<()> {
         // The genesis deposits.
-        let mut genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)> = Vec::new();
+        let mut genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address, Address)> =
+            Vec::new();
         for (node, desc) in self.config.shape.nodes.iter() {
             if desc.is_validator {
                 let data = self
@@ -285,11 +289,13 @@ impl Setup {
                     .ok_or(anyhow!("no node data for {node}"))?;
                 // Better have a genesis deposit.
                 let secret_key = SecretKey::from_hex(&data.secret_key)?;
+                let signer = PrivateKeySigner::from_str(secret_key.to_hex().as_str())?;
                 genesis_deposits.push((
                     secret_key.node_public_key(),
                     secret_key.to_libp2p_keypair().public().to_peer_id(),
                     GENESIS_DEPOSIT.into(),
                     data.address,
+                    signer.address(),
                 ))
             }
         }
