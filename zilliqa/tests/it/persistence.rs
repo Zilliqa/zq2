@@ -68,7 +68,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let last_block = inner.get_block(last_number).unwrap().unwrap();
     let tx = inner.get_transaction_by_hash(hash).unwrap().unwrap();
 
-    let config = node.inner.lock().unwrap().config.clone(); // no need to create a config from scratch, just copy the old one
+    let config = inner.config.clone(); // no need to create a config from scratch, just copy the old one
 
     // sanity check
     assert_eq!(tx.hash, hash);
