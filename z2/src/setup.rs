@@ -6,7 +6,6 @@ use anyhow::{anyhow, Result};
 use k256::ecdsa::SigningKey;
 use tokio::fs;
 use toml;
-use zilliqa::cfg::GenesisDeposit;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::{SecretKey, TransactionPublicKey};
@@ -18,7 +17,7 @@ use zilliqa::{
         empty_block_timeout_default, eth_chain_id_default, failed_request_sleep_duration_default,
         local_address_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
-        state_rpc_limit_default, Amount, ConsensusConfig,
+        state_rpc_limit_default, Amount, ConsensusConfig, GenesisDeposit,
     },
     transaction::EvmGas,
 };
