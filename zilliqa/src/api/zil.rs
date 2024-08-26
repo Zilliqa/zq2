@@ -1081,9 +1081,14 @@ fn get_transaction_status(
         "Txn receipt not found".to_string(),
         jsonrpc_error_data.clone(),
     ))?;
+    let block = node.get_block(receipt.block_hash)?.ok_or(jsonrpsee::types::ErrorObject::owned(
+        RPCErrorCode::RpcDatabaseError as i32,
+        "Block not found".to_string(),
+        jsonrpc_error_data.clone(),
+    ))?;
 
-    Ok(TransactionStatusResponse::new(transaction, receipt));
-    todo!();
+    let res = TransactionStatusResponse::new(transaction, receipt, block);
+    Ok(res)
 }
 
 fn get_tx_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<f64> {
