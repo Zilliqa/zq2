@@ -23,7 +23,7 @@ use super::{
         RecentTransactionsResponse, SWInfo, ShardingStructure, ShardingStructure, SmartContract,
         SmartContract, SmartContractSubState, StateProofResponse, TransactionBody,
         TransactionReceiptResponse, TransactionStatusResponse, TxBlockListing,
-        TxBlockListingResult, TxnBodiesForTxBlockExResponse,
+        TxBlockListingResult, TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -449,6 +449,32 @@ fn get_transactions_for_tx_block(
         .into_iter()
         .map(|h| B256::from(h).to_hex_no_prefix())
         .collect()])
+}
+
+fn get_transactions_for_tx_block_ex(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<TxnsForTxBlockExResponse> {
+    let mut seq = params.sequence();
+    let block_number: u64 = seq.next()?;
+    let page_number: usize = seq.next()?;
+
+    let node = node.lock().unwrap();
+    let Some(block) = node.get_block(block_number)? else {
+        return Err(anyhow!("Tx Block does not exist"));
+    };
+    if block.transactions.is_empty() {
+        return Err(anyhow!("TxBlock has no transactions"));
+    }
+
+    let num_pages = block.transactions.len() / TRANSACTIONS_PER_PAGE;
+    let slice = block.transactions[page_number*TRANSACTIONS_PER_PAGE..(page_number+1)*TRANSACTIONS_PER_PAGE].to_vec();
+
+    Ok(TxnsForTxBlockExResponse{
+        CurrPage: page_number as u64,
+        NumPages: num_pages as u64,
+        Transactions: slice.into_iter().map(|h| B256::from(h).to_hex_no_prefix()).collect(),
+    })
 }
 
 pub const TRANSACTIONS_PER_PAGE: usize = 2500;
@@ -904,34 +930,24 @@ fn get_transaction_status(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<TransactionStatusResponse> {
+    let jsonrpc_error_data: Option<String> = None;
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
 
     let node = node.lock().unwrap();
-    let tx_status = node
-        .get_transaction_status(hash)?
-        .ok_or_else(|| anyhow!("Transaction status not found"))?;
+    let transaction = node.get_transaction_by_hash(hash)?.ok_or(jsonrpsee::types::ErrorObject::owned(
+        RPCErrorCode::RpcDatabaseError as i32,
+        "Txn Hash not found".to_string(),
+        jsonrpc_error_data.clone(),
+    ))?;
+    let receipt = node.get_transaction_receipt(hash)?.ok_or(jsonrpsee::types::ErrorObject::owned(
+        RPCErrorCode::RpcDatabaseError as i32,
+        "Txn receipt not found".to_string(),
+        jsonrpc_error_data.clone(),
+    ))?;
 
-    // Placeholder implementation to simulate fetching transaction status
-    Ok(TransactionStatusResponse {
-        ID: hash.to_string(),
-        _id: json!({"$oid": "5fd053b0d127fe45cc5eea24"}),
-        amount: tx_status.amount.to_string(),
-        data: tx_status.data.clone(),
-        epochInserted: tx_status.epoch_inserted.to_string(),
-        epochUpdated: tx_status.epoch_updated.to_string(),
-        gasLimit: tx_status.gas_limit.to_string(),
-        gasPrice: tx_status.gas_price.to_string(),
-        lastModified: tx_status.last_modified.to_string(),
-        modificationState: tx_status.modification_state,
-        status: tx_status.status,
-        nonce: tx_status.nonce.to_string(),
-        senderAddr: tx_status.sender_addr.to_string(),
-        signature: tx_status.signature.clone(),
-        success: tx_status.success,
-        toAddr: tx_status.to_addr.to_string(),
-        version: tx_status.version.to_string(),
-    })
+    Ok(TransactionStatusResponse::new(transaction, receipt));
+    todo!();
 }
 
 fn get_txn_bodies_for_tx_block_ex(

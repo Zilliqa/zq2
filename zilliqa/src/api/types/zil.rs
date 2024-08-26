@@ -590,6 +590,13 @@ pub struct TransactionStatusResponse {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+pub struct TxnsForTxBlockExResponse {
+    pub CurrPage: u64,
+    pub NumPages: u64,
+    pub Transactions: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct TxnBodiesForTxBlockExResponse {
     pub CurrPage: u64,
     pub NumPages: u64,
