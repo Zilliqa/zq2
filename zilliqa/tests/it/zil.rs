@@ -631,3 +631,450 @@ async fn get_ds_block_rate(mut network: Network) {
 
     zilliqa::api::types::zil::DSBlockRateResult::deserialize(&response).unwrap();
 }
+
+#[zilliqa_macros::test]
+async fn get_miner_info(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetMinerInfo", ["5500"])
+        .await
+        .expect("Failed to call GetMinerInfo API");
+
+    zilliqa::api::types::zil::MinerInfo::deserialize(&response).unwrap();
+}
+
+#[zilliqa_macros::test]
+async fn get_node_type(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNodeType", [""])
+        .await
+        .expect("Failed to call GetNodeType API");
+
+    assert!(
+        response.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response
+    );
+
+    let node_types = vec![
+        "Seed",
+        "Lookup",
+        "Not in network, synced till epoch", // assuming node.get_synced_epoch() returns some epoch.
+    ];
+    let response_str = response.as_str().expect("Expected response to be a string");
+
+    assert!(
+        node_types.iter().any(|&n| response_str.starts_with(n)),
+        "Unexpected node type: {}",
+        response_str
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_num_ds_blocks(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNumDSBlocks", [""])
+        .await
+        .expect("Failed to call GetNumDSBlocks API");
+
+    assert!(
+        response.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_num_peers(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNumPeers", [""])
+        .await
+        .expect("Failed to call GetNumPeers API");
+
+    assert!(
+        response.is_number(),
+        "Expected response to be a number, got: {:?}",
+        response
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_num_transactions(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNumTransactions", [""])
+        .await
+        .expect("Failed to call GetNumTransactions API");
+
+    assert!(
+        response.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_num_txns_ds_epoch(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNumTxnsDSEpoch", [""])
+        .await
+        .expect("Failed to call GetNumTxnsDSEpoch API");
+
+    assert!(
+        response.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_num_txns_tx_epoch(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNumTxnsTxEpoch", [""])
+        .await
+        .expect("Failed to call GetNumTxnsTxEpoch API");
+
+    assert!(
+        response.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_recent_transactions(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetRecentTransactions", [""])
+        .await
+        .expect("Failed to call GetRecentTransactions API");
+
+    let recent_transactions =
+        zilliqa::api::types::zil::RecentTransactionsResponse::deserialize(&response)
+            .expect("Failed to deserialize response");
+
+    assert_eq!(
+        recent_transactions.number as usize,
+        recent_transactions.TxnHashes.len()
+    );
+    assert_eq!(recent_transactions.number, 100); // Adjust based on the expected number of recent transactions
+}
+
+#[zilliqa_macros::test]
+async fn get_smart_contract_sub_state(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let contract_address = "fe001824823b12b58708bf24edd94d8b5e1cfcf7";
+    let variable_name = "admins";
+    let indices: Vec<Value> = vec![];
+
+    let response: Value = wallet
+        .provider()
+        .request(
+            "GetSmartContractSubState",
+            (contract_address, variable_name, indices),
+        )
+        .await
+        .expect("Failed to call GetSmartContractSubState API");
+
+    let sub_state: zilliqa::api::types::zil::SmartContractSubState =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert!(
+        sub_state._balance.parse::<u64>().is_ok(),
+        "Invalid balance format"
+    );
+    if let Some(admins) = sub_state.admins {
+        assert!(
+            admins.is_object(),
+            "Expected admins to be an object, got: {:?}",
+            admins
+        );
+    }
+}
+
+#[zilliqa_macros::test]
+async fn get_soft_confirmed_transaction(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let txn_hash = "cd8727674bc05e0ede405597a218164e1c13c7103b9d0ba43586785f3d8cede5";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetSoftConfirmedTransaction", [txn_hash])
+        .await
+        .expect("Failed to call GetSoftConfirmedTransaction API");
+
+    zilliqa::api::types::zil::GetTxResponse::deserialize(&response)
+        .expect("Failed to deserialize response");
+}
+
+#[zilliqa_macros::test]
+async fn get_state_proof(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let contract_address = "6d84363526a2d764835f8cf52dfeefe80a360fac";
+    let variable_hash = "A0BD91DE66D97E6930118179BA4F1836C366C4CB3309A6B354D26F52ABB2AAC6";
+    let tx_block = "39";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetStateProof", [contract_address, variable_hash, tx_block])
+        .await
+        .expect("Failed to call GetStateProof API");
+
+    let state_proof: zilliqa::api::types::zil::StateProofResponse =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert!(
+        state_proof.accountProof.len() > 0,
+        "Expected accountProof to be non-empty, got: {:?}",
+        state_proof.accountProof
+    );
+    assert!(
+        state_proof.stateProof.len() > 0,
+        "Expected stateProof to be non-empty, got: {:?}",
+        state_proof.stateProof
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_total_coin_supply(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTotalCoinSupply", [""])
+        .await
+        .expect("Failed to call GetTotalCoinSupply API");
+
+    assert!(
+        response.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_total_coin_supply_as_int(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTotalCoinSupplyAsInt", [""])
+        .await
+        .expect("Failed to call GetTotalCoinSupplyAsInt API");
+
+    assert!(
+        response.is_number(),
+        "Expected response to be a number, got: {:?}",
+        response
+    );
+
+    let total_coin_supply_as_int: u64 = response.as_u64().expect("Expected number conversion");
+    assert!(
+        total_coin_supply_as_int > 0,
+        "Total coin supply should be greater than 0"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_transaction_status(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let txn_hash = "1bb178b023f816e950d862f6505cd79a32bb97e71fd78441cbc3486940a2e1b7";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTransactionStatus", [txn_hash])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
+
+    let tx_status: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert_eq!(tx_status.ID, txn_hash);
+    assert!(
+        tx_status.amount.parse::<f64>().is_ok(),
+        "Invalid amount format"
+    );
+    assert!(
+        tx_status.gasLimit.parse::<u64>().is_ok(),
+        "Invalid gasLimit format"
+    );
+    assert!(
+        tx_status.gasPrice.parse::<u64>().is_ok(),
+        "Invalid gasPrice format"
+    );
+    assert!(
+        tx_status.nonce.parse::<u64>().is_ok(),
+        "Invalid nonce format"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_txn_bodies_for_tx_block_ex(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let block_number = "1002353";
+    let page_number = "2";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxnBodiesForTxBlockEx", [block_number, page_number])
+        .await
+        .expect("Failed to call GetTxnBodiesForTxBlockEx API");
+
+    let txn_bodies: zilliqa::api::types::zil::TxnBodiesForTxBlockExResponse =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert_eq!(txn_bodies.CurrPage, page_number.parse::<u64>().unwrap());
+    assert!(
+        txn_bodies.NumPages > 0,
+        "Expected NumPages to be greater than 0"
+    );
+    assert!(
+        txn_bodies.Transactions.len() <= 2500,
+        "Expected Transcations length to be less than or equal to 2500"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_tx_block_rate(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxBlockRate", [""])
+        .await
+        .expect("Failed to call GetTxBlockRate API");
+
+    assert!(
+        response.is_number(),
+        "Expected response to be a number, got: {:?}",
+        response
+    );
+
+    let tx_block_rate: f64 = response.as_f64().expect("Expected number conversion");
+    assert!(
+        tx_block_rate >= 0.0,
+        "Transaction block rate should be non-negative"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_tx_rate(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxRate", [""])
+        .await
+        .expect("Failed to call GetTxRate API");
+
+    let tx_rate: zilliqa::api::types::zil::TxRate =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert!(
+        tx_rate.tx_block_rate >= 0.0,
+        "Transaction block rate should be non-negative"
+    );
+    assert!(
+        tx_rate.transaction_rate >= 0.0,
+        "Transaction rate should be non-negative"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_txn_bodies_for_tx_block_ex(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let block_number = "1002353";
+    let page_number = "2";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxnBodiesForTxBlockEx", [block_number, page_number])
+        .await
+        .expect("Failed to call GetTxnBodiesForTxBlockEx API");
+
+    let txn_bodies: zilliqa::api::types::zil::TxnBodiesForTxBlockExResponse =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert_eq!(txn_bodies.CurrPage, page_number.parse::<u64>().unwrap());
+    assert!(
+        txn_bodies.NumPages > 0,
+        "Expected NumPages to be greater than 0"
+    );
+    assert!(
+        txn_bodies.Transactions.len() <= 2500,
+        "Expected Transactions length to be less than or equal to 2500"
+    );
+
+    if !txn_bodies.Transactions.is_empty() {
+        assert!(
+            txn_bodies.Transactions[0].receipt.success,
+            "Expected the first transaction to be successful, got: {:?}",
+            txn_bodies.Transactions[0].receipt.success
+        );
+    }
+}
+
+#[zilliqa_macros::test]
+async fn tx_block_listing(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let page_number = 1;
+
+    let response: Value = wallet
+        .provider()
+        .request("TxBlockListing", [page_number])
+        .await
+        .expect("Failed to call TxBlockListing API");
+
+    let tx_block_listing: zilliqa::api::types::zil::TxBlockListingResult =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert_eq!(
+        tx_block_listing.data.len(),
+        10,
+        "Expected 10 TxBlock listings"
+    );
+    assert!(
+        tx_block_listing.maxPages >= 1,
+        "Expected at least 1 page of TxBlock listings"
+    );
+
+    if !tx_block_listing.data.is_empty() {
+        assert!(
+            tx_block_listing.data[0].BlockNum > 0,
+            "Expected BlockNum to be greater than 0, got: {:?}",
+            tx_block_listing.data[0].BlockNum
+        );
+        assert!(
+            !tx_block_listing.data[0].Hash.is_empty(),
+            "Expected Hash to be non-empty, got: {:?}",
+            tx_block_listing.data[0].Hash
+        );
+    }
+}

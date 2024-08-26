@@ -1306,3 +1306,30 @@ async fn deploy_deterministic_deployment_proxy(mut network: Network) {
             .unwrap()
     );
 }
+
+#[zilliqa_macros::test]
+async fn eth_gas_price(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("eth_gasPrice", ())
+        .await
+        .expect("Failed to call eth_gasPrice API");
+
+    assert!(
+        response.is_string(),
+        "Expected response to be a string in hex format, got: {:?}",
+        response
+    );
+
+    let gas_price_str = response.as_str().expect("Expected string response");
+    assert!(
+        gas_price_str.starts_with("0x"),
+        "Gas price should be in hex format starting with '0x'"
+    );
+    assert!(
+        u64::from_str_radix(&gas_price_str[2..], 16).is_ok(),
+        "Gas price should be a valid hex number"
+    );
+}

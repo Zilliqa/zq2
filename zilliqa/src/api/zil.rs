@@ -18,9 +18,12 @@ use serde_json::{json, Value};
 use super::{
     to_hex::ToHex,
     types::zil::{
-        self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
-        DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, SWInfo, ShardingStructure,
-        SmartContract,
+        self, self, BlockchainInfo, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing,
+        DSBlockListingResult, DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo,
+        RecentTransactionsResponse, SWInfo, ShardingStructure, ShardingStructure, SmartContract,
+        SmartContract, SmartContractSubState, StateProofResponse, TransactionBody,
+        TransactionReceiptResponse, TransactionStatusResponse, TxBlockListing,
+        TxBlockListingResult, TxnBodiesForTxBlockExResponse,
     },
 };
 use crate::{
@@ -602,6 +605,74 @@ pub fn get_current_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<
     Ok(num_ds_blocks.to_string())
 }
 
+fn get_miner_info(params: Params, _node: &Arc<Mutex<Node>>) -> Result<MinerInfo> {
+    // Dummy implementation
+    let block_number: String = params.one()?;
+    let block_number: u64 = block_number.parse()?;
+
+    // Responding with static data as an example; adjust as needed.
+    Ok(MinerInfo {
+        dscommittee: vec![
+            "0x03F25E4B68050496086758C33D16C47792F18D1102BB5DFC0CE5E3A57927008A0B".to_string(),
+            // Add more committee members as needed
+        ],
+        shards: vec![
+            ShardInfo {
+                nodes: vec![
+                    "0x0245C0DDAA493700F86A3943260EB04D05DEBD62897E3EC51AE65A704E5C65C0A6"
+                        .to_string(),
+                    // Add more nodes as needed
+                ],
+                size: 535,
+            },
+            ShardInfo {
+                nodes: vec![
+                    "0x02646640964F472CBE1E9BAF2DC5F1A0915AE529DDFF08F28DDE3E460C755DC8C4"
+                        .to_string(),
+                    // Add more nodes as needed
+                ],
+                size: 535,
+            },
+            ShardInfo {
+                nodes: vec![
+                    "0x0218C2BA9876BCF3EE9EFF220C9F4CF433F5BE09D9D592F3C657AE7353CFFC3245"
+                        .to_string(),
+                    // Add more nodes as needed
+                ],
+                size: 534,
+            },
+        ],
+    })
+}
+
+fn get_node_type(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    // Dummy implementation based on possible return values in the documentation.
+    // Adjust logic based on actual node state in a real implementation.
+
+    let node = node.lock().unwrap();
+
+    // Example logic, replace with real checks based on node state
+    if node.is_synced {
+        if node.is_seed {
+            Ok("Seed".to_string())
+        } else {
+            Ok("Lookup".to_string())
+        }
+    } else {
+        Ok(format!(
+            "Not in network, synced till epoch {}",
+            node.get_synced_epoch()
+        ))
+    }
+}
+
+fn get_num_ds_blocks(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+    let num_tx_blocks = node.get_chain_tip();
+    let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
+    Ok(num_ds_blocks.to_string())
+}
+
 pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlockListingResult> {
     // Dummy implementation
     let node = node.lock().unwrap();
@@ -630,5 +701,302 @@ pub fn get_ds_block_rate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<DS
     // Dummy implementation
     Ok(DSBlockRateResult {
         rate: 0.00014142137245459714,
+    })
+}
+fn get_num_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u64> {
+    let node = node.lock().unwrap();
+    // Placeholder value for the number of peers. Adjust based on actual node state.
+    let num_peers = node.num_peers();
+    Ok(num_peers)
+}
+
+fn get_num_transactions(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+    let num_transactions = node.get_num_transactions(); // Implement this in your `Node` struct if it doesn't exist.
+    Ok(num_transactions.to_string())
+}
+
+fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+    let num_txns_ds_epoch = node.get_num_txns_ds_epoch(); // Implement this in your `Node` struct if it doesn't exist.
+    Ok(num_txns_ds_epoch.to_string())
+}
+
+fn get_num_txns_tx_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+    let num_txns_tx_epoch = node.get_num_txns_tx_epoch(); // Implement this in your `Node` struct if it doesn't exist.
+    Ok(num_txns_tx_epoch.to_string())
+}
+
+fn get_recent_transactions(
+    _params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<RecentTransactionsResponse> {
+    let node = node.lock().unwrap();
+    let recent_transactions = node.get_recent_transactions(); // Implement this in your `Node` struct if it doesn't exist.
+
+    Ok(RecentTransactionsResponse {
+        TxnHashes: recent_transactions,
+        number: recent_transactions.len() as u64,
+    })
+}
+
+fn get_smart_contract_sub_state(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<SmartContractSubState> {
+    let params: Vec<Value> = params.parse()?;
+    let address: Address = serde_json::from_value(params[0].clone())?;
+    let variable_name = params.get(1).and_then(|v| v.as_str()).unwrap_or("");
+    let indices: Vec<Value> = params
+        .get(2)
+        .and_then(|v| v.as_array())
+        .unwrap_or(&vec![])
+        .clone();
+
+    // Dummy implementation to simulate fetching sub-state for a contract at an address
+    let node = node.lock().unwrap();
+    let block = node
+        .get_block(BlockId::latest())?
+        .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
+    let state = node.get_state(&block)?;
+
+    let account = state.get_account(address)?;
+
+    let mut balance = ZilAmount::from_amount(account.balance).to_string();
+    let mut admins = None;
+
+    let is_scilla = account.code.scilla_code_and_init_data().is_some();
+    if is_scilla {
+        let trie = state.get_account_trie(address)?;
+        for (i, (k, v)) in trie.iter().enumerate() {
+            let (var_name, indices_in_key) = split_storage_key(&k)?;
+            if var_name == variable_name {
+                let value = serde_json::from_slice(&v)?;
+                if var_name == "admins" {
+                    admins = Some(value);
+                }
+            }
+        }
+    }
+
+    Ok(SmartContractSubState {
+        _balance: balance,
+        admins,
+    })
+}
+
+fn get_soft_confirmed_transaction(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<GetTxResponse> {
+    let jsonrpc_error_data: Option<String> = None;
+    let hash: B256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+
+    let tx = node
+        .lock()
+        .unwrap()
+        .get_transaction_by_hash(hash)?
+        .ok_or_else(|| {
+            jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcDatabaseError as i32,
+                "Txn Hash not Present".to_string(),
+                jsonrpc_error_data.clone(),
+            )
+        })?;
+    let receipt = node
+        .lock()
+        .unwrap()
+        .get_transaction_receipt(hash)?
+        .ok_or_else(|| {
+            jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcDatabaseError as i32,
+                "Txn Hash not Present".to_string(),
+                jsonrpc_error_data.clone(),
+            )
+        })?;
+    let block = node
+        .lock()
+        .unwrap()
+        .get_block(receipt.block_hash)?
+        .ok_or_else(|| anyhow!("block does not exist"))?;
+
+    GetTxResponse::new(tx, receipt, block.number())
+}
+
+fn get_state_proof(params: Params, node: &Arc<Mutex<Node>>) -> Result<StateProofResponse> {
+    let params: Vec<String> = params.parse()?;
+    let address: Address = Address::from_str(&params[0])?;
+    let variable_hash = &params[1];
+    let tx_block = if params[2] == "latest" {
+        BlockId::latest()
+    } else {
+        BlockId::Number(params[2].parse()?)
+    };
+
+    // Dummy implementation to simulate fetching state proof
+    let node = node.lock().unwrap();
+    let block = node
+        .get_block(tx_block)?
+        .ok_or_else(|| anyhow!("Unable to get block!"))?;
+
+    // Simulate state proof data; replace with real implementation
+    let account_proof = vec![
+        "F851808080A0C7083D05AC726A32DC3313B5CA7526449EFCADAB51179A47B60901C63B108E908080A0BC76B4E969C8214F2DF641D3F387AA35CDBF17EEB54D23F5F01B4E688AB2A21980808080808080808080".into(),
+        "F871808080A0D5FE2E3CEA6C64AD708DFAD93B79FC9894C5A5AE59372D3C3872C1C8143CD749A087B1E084016657B3F8D32B429AE8055A63F12811DDFDC3AA8E863F25A03781F4A0AEDA08F7295A9E63544F9EAE728EBF98D571A07757E4BD95C91749CE9CC40B858080808080808080808080".into(),
+    ];
+
+    let state_proof = vec![
+        "E213A01CE797360949BDEBE357D68D54CD592D300084732CEE4F93A4ED41BDDBACD016".into(),
+        "E216A042A6C50E3845BDB58866500B65D1721DD45AC4E8BE0A4FEE6AEB4E0140D9E4E3".into(),
+    ];
+
+    Ok(StateProofResponse {
+        accountProof: account_proof,
+        stateProof: state_proof,
+    })
+}
+
+fn get_total_coin_supply(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+    let total_coin_supply = node.get_total_coin_supply(); // Implement this in your `Node` struct if it doesn't exist.
+    Ok(total_coin_supply.to_string())
+}
+
+fn get_total_coin_supply_as_int(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u64> {
+    let node = node.lock().unwrap();
+    let total_coin_supply = node.get_total_coin_supply(); // Implement this in your `Node` struct if it doesn't exist.
+                                                          // Assuming `total_coin_supply` is returned as a string from `node.get_total_coin_supply()`
+    let total_coin_supply_float: f64 = total_coin_supply.parse()?;
+    Ok(total_coin_supply_float.round() as u64)
+}
+
+fn get_transaction_status(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<TransactionStatusResponse> {
+    let hash: B256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+
+    let node = node.lock().unwrap();
+    let tx_status = node
+        .get_transaction_status(hash)?
+        .ok_or_else(|| anyhow!("Transaction status not found"))?;
+
+    // Placeholder implementation to simulate fetching transaction status
+    Ok(TransactionStatusResponse {
+        ID: hash.to_string(),
+        _id: json!({"$oid": "5fd053b0d127fe45cc5eea24"}),
+        amount: tx_status.amount.to_string(),
+        data: tx_status.data.clone(),
+        epochInserted: tx_status.epoch_inserted.to_string(),
+        epochUpdated: tx_status.epoch_updated.to_string(),
+        gasLimit: tx_status.gas_limit.to_string(),
+        gasPrice: tx_status.gas_price.to_string(),
+        lastModified: tx_status.last_modified.to_string(),
+        modificationState: tx_status.modification_state,
+        status: tx_status.status,
+        nonce: tx_status.nonce.to_string(),
+        senderAddr: tx_status.sender_addr.to_string(),
+        signature: tx_status.signature.clone(),
+        success: tx_status.success,
+        toAddr: tx_status.to_addr.to_string(),
+        version: tx_status.version.to_string(),
+    })
+}
+
+fn get_txn_bodies_for_tx_block_ex(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<TxnBodiesForTxBlockExResponse> {
+    let params: Vec<String> = params.parse()?;
+    let block_number: u64 = params[0].parse()?;
+    let page_number: usize = params[1].parse()?;
+
+    let node = node.lock().unwrap();
+    let block = node
+        .get_block(block_number)?
+        .ok_or_else(|| anyhow!("Block not found"))?;
+
+    let transactions_per_page = 2500;
+    let total_transactions = block.transactions.len();
+    let num_pages = (total_transactions / transactions_per_page)
+        + (if total_transactions % transactions_per_page != 0 {
+            1
+        } else {
+            0
+        }) as u64;
+    let start = page_number * transactions_per_page;
+    let end = std::cmp::min(start + transactions_per_page, total_transactions);
+
+    let transactions: Vec<TransactionBody> = block.transactions[start..end]
+        .iter()
+        .map(|tx| TransactionBody {
+            ID: tx.hash.to_string(),
+            amount: tx.amount.to_string(),
+            gasLimit: tx.gas_limit.to_string(),
+            gasPrice: tx.gas_price.to_string(),
+            nonce: tx.nonce.to_string(),
+            receipt: TransactionReceiptResponse {
+                cumulative_gas: tx.receipt.cumulative_gas.to_string(),
+                epoch_num: tx.receipt.epoch_num.to_string(),
+                success: tx.receipt.success,
+            },
+            senderPubKey: tx.sender_pub_key.to_string(),
+            signature: tx.signature.to_string(),
+            toAddr: tx.to_addr.to_string(),
+            version: tx.version.to_string(),
+        })
+        .collect();
+
+    Ok(TxnBodiesForTxBlockExResponse {
+        CurrPage: page_number as u64,
+        NumPages: num_pages,
+        Transactions: transactions,
+    })
+}
+
+fn get_tx_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<f64> {
+    let node = node.lock().unwrap();
+    let tx_block_rate = node.get_tx_block_rate(); // Implement this in your `Node` struct if it doesn't exist.
+    Ok(tx_block_rate)
+}
+
+fn get_tx_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<TxRate> {
+    let node = node.lock().unwrap();
+    let tx_block_rate = node.get_tx_block_rate(); // Implement this in your `Node` struct if it doesn't exist.
+    let transaction_rate = node.get_transaction_rate(); // Implement this in your `Node` struct if it doesn't exist.
+    Ok(TxRate {
+        tx_block_rate,
+        transaction_rate,
+    })
+}
+
+fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockListingResult> {
+    let page_requested: String = params.one()?;
+    let page_number: u64 = page_requested
+        .parse()
+        .map_err(|_| anyhow!("Invalid page number"))?;
+
+    let node = node.lock().unwrap();
+    let num_tx_blocks = node.get_chain_tip();
+    let num_pages = (num_tx_blocks / 10) + 1;
+
+    let start_block = page_number * 10;
+    let end_block = std::cmp::min(start_block + 10, num_tx_blocks);
+
+    let listings: Vec<TxBlockListing> = (start_block..end_block)
+        .map(|block_number| TxBlockListing {
+            BlockNum: block_number,
+            Hash: node
+                .get_block_hash_by_number(block_number)
+                .unwrap_or_else(|| "Unknown".to_string()),
+        })
+        .collect();
+
+    Ok(TxBlockListingResult {
+        data: listings,
+        maxPages: num_pages,
     })
 }

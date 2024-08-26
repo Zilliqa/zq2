@@ -538,3 +538,100 @@ pub struct DSBlockListing {
     #[serde(rename = "Hash")]
     pub hash: String,
 }
+
+pub struct MinerInfo {
+    pub dscommittee: Vec<String>,
+    pub shards: Vec<ShardInfo>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ShardInfo {
+    pub nodes: Vec<String>,
+    pub size: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TxBlockListing {
+    pub BlockNum: u64,
+    pub Hash: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RecentTransactionsResponse {
+    pub TxnHashes: Vec<String>,
+    pub number: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct StateProofResponse {
+    pub accountProof: Vec<String>,
+    pub stateProof: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TransactionStatusResponse {
+    pub ID: String,
+    pub _id: serde_json::Value,
+    pub amount: String,
+    pub data: String,
+    pub epochInserted: String,
+    pub epochUpdated: String,
+    pub gasLimit: String,
+    pub gasPrice: String,
+    pub lastModified: String,
+    pub modificationState: u64,
+    pub status: u64,
+    pub nonce: String,
+    pub senderAddr: String,
+    pub signature: String,
+    pub success: bool,
+    pub toAddr: String,
+    pub version: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TxnBodiesForTxBlockExResponse {
+    pub CurrPage: u64,
+    pub NumPages: u64,
+    pub Transactions: Vec<TransactionBody>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TransactionBody {
+    pub ID: String,
+    pub amount: String,
+    pub gasLimit: String,
+    pub gasPrice: String,
+    pub nonce: String,
+    pub receipt: TransactionReceipt,
+    pub senderPubKey: String,
+    pub signature: String,
+    pub toAddr: String,
+    pub version: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TransactionReceiptResponse {
+    pub cumulative_gas: String,
+    pub epoch_num: String,
+    pub success: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TxRate {
+    pub tx_block_rate: f64,
+    pub transaction_rate: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TxBlockListingResult {
+    pub data: Vec<TxBlockListing>,
+    pub maxPages: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SmartContractSubState {
+    pub _balance: String,
+    pub admins: Option<serde_json::Value>,
+    // Add other contract-specific fields as necessary
+}

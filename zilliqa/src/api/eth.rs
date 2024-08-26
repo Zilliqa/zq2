@@ -961,3 +961,9 @@ async fn subscribe(
 
     Ok(())
 }
+
+fn gas_price(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+    let gas_price = node.get_gas_price(); // Implement this in your `Node` struct if it doesn't exist.
+    Ok(format!("0x{:x}", gas_price))
+}
