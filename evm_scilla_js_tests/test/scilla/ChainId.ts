@@ -16,7 +16,7 @@ describe("ChainId contract #parallel", () => {
     expect(contract.address).to.be.properAddress;
   });
 
-  xit("Call chain id contract -  EventChainId @block-1", async () => {
+  it("Call chain id contract -  EventChainId @block-1", async () => {
     const tx = await contract.EventChainID();
 
     expect(tx).to.have.eventLogWithParams("ChainID", {value: hre.getZilliqaChainId()});

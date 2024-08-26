@@ -1013,6 +1013,10 @@ impl PendingState {
         load_account(&self.pre_state, &mut self.new_state, address)
     }
 
+    pub fn network_id(&self) -> u64 {
+        self.pre_state.chain_id - 0x8000
+    }
+
     pub fn load_var_info(&mut self, address: Address, variable: &str) -> Result<(&str, u8)> {
         let account = self.load_account(address)?;
         let Code::Scilla { types, .. } = &account.account.code else {

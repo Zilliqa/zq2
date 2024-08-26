@@ -552,9 +552,10 @@ impl StateServer {
                     return Err(err("no active call"));
                 };
 
-                active_call.fetch_blockchain_info(query_name, query_args);
-
-                Ok::<_, ErrorObject>(())
+                match active_call.fetch_blockchain_info(query_name, query_args) {
+                    Ok(value) => Ok(Value::Array(vec![true.into(), value.into()])),
+                    Err(e) => Err(err(e)),
+                }
             }
         })?;
 
@@ -775,7 +776,12 @@ impl ActiveCall {
         Ok(())
     }
 
-    fn fetch_blockchain_info(&self, name: String, args: String) {
-        eprintln!("fetch_blockchain_info - {name}, {args}");
+    fn fetch_blockchain_info(&self, name: String, _args: String) -> Result<String> {
+        match name.as_str() {
+            "CHAINID" => Ok(self.state.network_id().to_string()),
+            _ => Err(anyhow!(
+                "fetch_blockchain_info: `{name}` not implemented yet."
+            )),
+        }
     }
 }
