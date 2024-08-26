@@ -34,6 +34,7 @@ use tracing::trace;
 
 use crate::{
     exec::{PendingState, StorageValue},
+    message::BlockHeader,
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
     transaction::{ScillaGas, ZilAmount},
@@ -189,6 +190,7 @@ impl Scilla {
         gas_limit: ScillaGas,
         value: ZilAmount,
         init: &[Value],
+        current_block: BlockHeader,
     ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
         let args = vec![
             "-i".to_owned(),
@@ -213,7 +215,7 @@ impl Scilla {
             self.state_server
                 .lock()
                 .unwrap()
-                .active_call(sender, state, || {
+                .active_call(sender, state, current_block, || {
                     self.request_tx.send(("run", params))?;
                     Ok(self.response_rx.lock().unwrap().recv()?)
                 })?;
@@ -258,6 +260,7 @@ impl Scilla {
         value: ZilAmount,
         init: &[Value],
         msg: &Value,
+        current_block: BlockHeader,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
         let args = vec![
             "-init".to_owned(),
@@ -282,14 +285,15 @@ impl Scilla {
         let mut params = ObjectParams::new();
         params.insert("argv", args)?;
 
-        let (response, state) =
-            self.state_server
-                .lock()
-                .unwrap()
-                .active_call(contract, state, || {
-                    self.request_tx.send(("run", params))?;
-                    Ok(self.response_rx.lock().unwrap().recv()?)
-                })?;
+        let (response, state) = self.state_server.lock().unwrap().active_call(
+            contract,
+            state,
+            current_block,
+            || {
+                self.request_tx.send(("run", params))?;
+                Ok(self.response_rx.lock().unwrap().recv()?)
+            },
+        )?;
 
         let response: Value = match response {
             Ok(r) => r,
@@ -572,11 +576,16 @@ impl StateServer {
         &mut self,
         sender: Address, // TODO: rename
         state: PendingState,
+        current_block: BlockHeader,
         f: impl FnOnce() -> Result<R>,
     ) -> Result<(R, PendingState)> {
         {
             let mut active_call = self.active_call.lock().unwrap();
-            *active_call = Some(ActiveCall { sender, state });
+            *active_call = Some(ActiveCall {
+                sender,
+                state,
+                current_block,
+            });
         }
 
         let response = f()?;
@@ -619,6 +628,7 @@ pub fn split_storage_key(key: impl AsRef<[u8]>) -> Result<(String, Vec<Vec<u8>>)
 struct ActiveCall {
     sender: Address,
     state: PendingState,
+    current_block: BlockHeader,
 }
 
 impl ActiveCall {
@@ -779,6 +789,7 @@ impl ActiveCall {
     fn fetch_blockchain_info(&self, name: String, _args: String) -> Result<String> {
         match name.as_str() {
             "CHAINID" => Ok(self.state.network_id().to_string()),
+            "BLOCKNUMBER" => Ok(self.current_block.number.to_string()),
             _ => Err(anyhow!(
                 "fetch_blockchain_info: `{name}` not implemented yet."
             )),

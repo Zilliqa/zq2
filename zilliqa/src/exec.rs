@@ -489,7 +489,14 @@ impl State {
                 inspector,
             )
         } else {
-            scilla_call(state, self.scilla(), from_addr, txn, inspector)
+            scilla_call(
+                state,
+                self.scilla(),
+                from_addr,
+                txn,
+                inspector,
+                current_block,
+            )
         }?;
 
         let from = state.load_account(from_addr)?;
@@ -1380,6 +1387,7 @@ fn scilla_create(
         gas,
         txn.amount,
         &init_data,
+        current_block,
     )?;
     let create_output = match create_output {
         Ok(o) => o,
@@ -1429,6 +1437,7 @@ fn scilla_call(
     from_addr: Address,
     txn: TxZilliqa,
     mut inspector: impl ScillaInspector,
+    current_block: BlockHeader,
 ) -> Result<(ScillaResult, PendingState)> {
     let mut gas = txn.gas_limit;
 
@@ -1515,6 +1524,7 @@ fn scilla_call(
                 message
                     .as_ref()
                     .ok_or_else(|| anyhow!("call to a Scilla contract without a message"))?,
+                current_block,
             )?;
             inspector.call(sender, to_addr, amount.get(), depth);
 
