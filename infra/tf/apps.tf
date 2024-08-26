@@ -67,7 +67,7 @@ resource "google_project_iam_member" "apps_artifact_registry_reader" {
 }
 
 resource "google_project_iam_member" "apps_secret_manager_accessor" {
-  project = var.gcp_docker_registry_project_id
+  project = data.google_project.apps.project_id
   role    = "roles/secretmanager.secretAccessor"
   member  = "serviceAccount:${google_service_account.apps.email}"
 }
@@ -84,14 +84,11 @@ module "apps" {
   network_name          = local.network_name
   node_zones            = local.default_zones
   subnetwork_name       = data.google_compute_subnetwork.default.name
-  # otterscan_image       = var.otterscan_image
-  # spout_image           = var.spout_image
-  subdomain = var.subdomain
-  # secret_keys     = tolist([for i in range(var.apps_node_count) : ""])
-  generate_node_key = false
-  persistence_url   = ""
-  genesis_key       = local.genesis_key
-  node_type         = var.apps_node_type
+  subdomain             = var.subdomain
+  generate_node_key     = false
+  persistence_url       = ""
+  genesis_key           = local.genesis_key
+  node_type             = var.apps_node_type
 
   zq_network_name = var.network_name
 }

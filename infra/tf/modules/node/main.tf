@@ -64,9 +64,6 @@ resource "random_id" "name_suffix" {
     service_account_email = var.service_account_email
     network_name          = var.network_name
     subnetwork_name       = var.subnetwork_name
-    # docker_image          = var.docker_image
-    # otterscan_image       = var.otterscan_image
-    # spout_image           = var.spout_image
   }
 }
 
@@ -123,6 +120,12 @@ resource "google_compute_instance" "this" {
     "secret_id"                 = !var.generate_node_key ? "" : google_secret_manager_secret_version.node_key_version[count.index].id
     "reward_wallet_private_key" = !var.generate_reward_wallet ? "" : base64encode(google_secret_manager_secret_version.reward_wallet_version[count.index].secret_data)
     "reward_wallet_secret_id"   = !var.generate_reward_wallet ? "" : google_secret_manager_secret_version.reward_wallet_version[count.index].id
+  }
+
+  lifecycle {
+    ignore_changes = [
+      labels["peer-id"]
+    ]
   }
 }
 

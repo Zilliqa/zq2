@@ -103,7 +103,7 @@ impl BlockStore {
     pub fn buffer_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
         let view = proposal.view();
 
-        self.buffered.push(proposal.header.parent_hash, proposal);
+        self.buffered.push(proposal.header.qc.block_hash, proposal);
 
         // If this is the highest block we've seen, remember its view.
         if view > self.highest_known_view {
