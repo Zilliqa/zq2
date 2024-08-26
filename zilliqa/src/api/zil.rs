@@ -743,13 +743,26 @@ fn get_recent_transactions(
     node: &Arc<Mutex<Node>>,
 ) -> Result<RecentTransactionsResponse> {
     let node = node.lock().unwrap();
-    let recent_transactions = node.get_recent_transactions(); // Implement this in your `Node` struct if it doesn't exist.
+    let mut block_number = node.get_chain_tip();
+    let mut txns = Vec::new();
+    while block_number > 0 && txns.len() < 100 {
+        let block = match node.consensus.block_store.get_block_by_number(block_number)? {
+            Some(block) => block,
+            None => continue,
+        };
+        for txn in block.transactions {
+            txns.push(txn.to_string());
+            if txns.len() >= 100 {
+                break;
+            }
+        }
+        block_number -= 1;
+    }
 
     Ok(RecentTransactionsResponse {
-        TxnHashes: recent_transactions,
-        number: recent_transactions.len() as u64,
-    });
-    todo!();
+        number: (&txns).len() as u64,
+        TxnHashes: txns,
+    })
 }
 
 fn get_smart_contract_sub_state(
