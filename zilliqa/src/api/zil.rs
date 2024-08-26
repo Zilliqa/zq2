@@ -847,8 +847,7 @@ fn get_soft_confirmed_transaction(
         .get_block(receipt.block_hash)?
         .ok_or_else(|| anyhow!("block does not exist"))?;
 
-    GetTxResponse::new(tx, receipt, block.number());
-    todo!();
+    GetTxResponse::new(tx, receipt, block.number())
 }
 
 fn get_state_proof(params: Params, node: &Arc<Mutex<Node>>) -> Result<StateProofResponse> {
