@@ -120,10 +120,7 @@ impl BridgeNode {
     async fn handle_bridge_message(&mut self, message: InboundBridgeMessage) -> Result<()> {
         match message {
             InboundBridgeMessage::Dispatched(dispatch) => {
-                info!(
-                    "Register event as dispatched Chain {}, Nonce: {}",
-                    dispatch.chain_id, dispatch.nonce
-                );
+                info!("{dispatch:?} done");
                 match self.event_signatures.get_mut(&dispatch.nonce) {
                     Some(event_signature) => {
                         event_signature.dispatched = true;
@@ -150,40 +147,36 @@ impl BridgeNode {
 
     async fn handle_relayed_event(&mut self, event: RelayedEvent) -> Result<()> {
         if self.relay_nonces.contains(&event.nonce) {
-            warn!(
-                "Chain: {} event duplicated {event:?}",
-                self.chain_client.chain_id
-            );
+            warn!("Ignoring a duplicate relay event {event:?} with ");
             return Ok(());
         }
-
-        info!(
-            "Chain: {} event found to be broadcasted: {event:?}",
-            self.chain_client.chain_id
-        );
 
         if let Some(RelayEventSignatures {
             dispatched: true, ..
         }) = self.event_signatures.get(&event.nonce)
         {
-            info!("Already dispatched, no need to broadcast");
+            warn!(
+                "Ignoring a relay event {event:?} since one was already dispatched for this nonce"
+            );
             return Ok(());
         }
 
+        info!("Received a relay event: {event:?}");
         self.relay_nonces.insert(event.nonce);
 
-        self.broadcast_message(Relay {
-            signature: event.sign(&self.chain_client.signer).await?,
-            event,
-        })?;
+        self.outbound_message_sender
+            .send(OutboundBridgeMessage::Relay(Relay {
+                signature: event.sign(&self.chain_client.signer).await?,
+                event,
+            }))?;
 
         Ok(())
     }
 
     fn handle_dispatched_event(&mut self, event: DispatchedEvent) -> Result<()> {
         info!(
-            "Found dispatched event chain: {}, nonce: {}",
-            event.source_chain_id, event.nonce
+            "Chain {} has received {event:?}",
+            self.chain_client.chain_id
         );
 
         self.outbound_message_sender
@@ -191,15 +184,6 @@ impl BridgeNode {
                 chain_id: event.source_chain_id,
                 nonce: event.nonce,
             }))?;
-
-        Ok(())
-    }
-
-    fn broadcast_message(&self, relay: Relay) -> Result<()> {
-        info!("Broadcasting: {:?}", relay);
-        // Send out echo message
-        self.outbound_message_sender
-            .send(OutboundBridgeMessage::Relay(relay))?;
 
         Ok(())
     }
@@ -220,6 +204,7 @@ impl BridgeNode {
             .map(|value| value.as_address().unwrap())
             .collect();
 
+        debug!("Validator set is: {validators:?}");
         self.validators = validators.into_iter().collect();
         Ok(())
     }
@@ -246,24 +231,14 @@ impl BridgeNode {
             }
         };
 
-        // TODO: check if the address is in the validator set
         // update validator set in case it has changed
         self.update_validators().await?;
-
-        /*
-        let address = match signature.recover(event_hash) {
-            Ok(addr) => addr,
-            Err(err) => {
-                info!("Address not part of the validator set: {:?}", err);
-                return Ok(());
-            }
-        };
-
         if !self.validators.contains(&address) {
-            info!("Address not part of the validator set, {}", address);
+            warn!(
+                "Ignoring {event:?} since it isn signed by {address} which isn't a UCCB validator"
+            );
             return Ok(());
         }
-        */
 
         // TODO: handle case where validators sign different data to the same event
         let event_signatures = match self.event_signatures.get_mut(&nonce) {
@@ -298,8 +273,7 @@ impl BridgeNode {
         };
 
         info!(
-            "Handling received: {:?}, collected: {:?}",
-            &echo,
+            "Handling relay event: {echo:?}, collected: {:?}",
             event_signatures.signatures.len()
         );
 
