@@ -145,6 +145,10 @@ impl BlockStore {
         Some(*best)
     }
 
+    pub fn get_num_peers(&self) -> usize {
+        self.peers.len()
+    }
+
     pub fn request_missing_blocks(&mut self) -> Result<()> {
         // Get the highest view we currently have committed to our chain.
         let current_view = self

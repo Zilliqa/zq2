@@ -643,6 +643,7 @@ fn get_miner_info(params: Params, _node: &Arc<Mutex<Node>>) -> Result<MinerInfo>
             },
         ],
     })
+    todo!();
 }
 
 fn get_node_type(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -664,13 +665,15 @@ fn get_node_type(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
             node.get_synced_epoch()
         ))
     }
+    todo!();
 }
 
 fn get_num_ds_blocks(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
     let num_tx_blocks = node.get_chain_tip();
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
-    Ok(num_ds_blocks.to_string())
+    Ok(num_ds_blocks.to_string());
+    todo!();
 }
 
 pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlockListingResult> {
@@ -705,15 +708,15 @@ pub fn get_ds_block_rate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<DS
 }
 fn get_num_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u64> {
     let node = node.lock().unwrap();
-    // Placeholder value for the number of peers. Adjust based on actual node state.
-    let num_peers = node.num_peers();
-    Ok(num_peers)
+    let num_peers = node.consensus.block_store.get_num_peers();
+    Ok(num_peers as u64)
 }
 
 fn get_num_transactions(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
     let num_transactions = node.get_num_transactions(); // Implement this in your `Node` struct if it doesn't exist.
-    Ok(num_transactions.to_string())
+    Ok(num_transactions.to_string());
+    todo!();
 }
 
 fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -725,7 +728,8 @@ fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Str
 fn get_num_txns_tx_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
     let num_txns_tx_epoch = node.get_num_txns_tx_epoch(); // Implement this in your `Node` struct if it doesn't exist.
-    Ok(num_txns_tx_epoch.to_string())
+    Ok(num_txns_tx_epoch.to_string());
+    todo!();
 }
 
 fn get_recent_transactions(
@@ -738,7 +742,8 @@ fn get_recent_transactions(
     Ok(RecentTransactionsResponse {
         TxnHashes: recent_transactions,
         number: recent_transactions.len() as u64,
-    })
+    });
+    todo!();
 }
 
 fn get_smart_contract_sub_state(
@@ -783,7 +788,8 @@ fn get_smart_contract_sub_state(
     Ok(SmartContractSubState {
         _balance: balance,
         admins,
-    })
+    });
+    todo!();
 }
 
 fn get_soft_confirmed_transaction(
@@ -822,7 +828,8 @@ fn get_soft_confirmed_transaction(
         .get_block(receipt.block_hash)?
         .ok_or_else(|| anyhow!("block does not exist"))?;
 
-    GetTxResponse::new(tx, receipt, block.number())
+    GetTxResponse::new(tx, receipt, block.number());
+    todo!();
 }
 
 fn get_state_proof(params: Params, node: &Arc<Mutex<Node>>) -> Result<StateProofResponse> {
@@ -855,13 +862,15 @@ fn get_state_proof(params: Params, node: &Arc<Mutex<Node>>) -> Result<StateProof
     Ok(StateProofResponse {
         accountProof: account_proof,
         stateProof: state_proof,
-    })
+    });
+    todo!();
 }
 
 fn get_total_coin_supply(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
     let total_coin_supply = node.get_total_coin_supply(); // Implement this in your `Node` struct if it doesn't exist.
-    Ok(total_coin_supply.to_string())
+    Ok(total_coin_supply.to_string());
+    todo!();
 }
 
 fn get_total_coin_supply_as_int(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u64> {
@@ -870,6 +879,7 @@ fn get_total_coin_supply_as_int(_params: Params, node: &Arc<Mutex<Node>>) -> Res
                                                           // Assuming `total_coin_supply` is returned as a string from `node.get_total_coin_supply()`
     let total_coin_supply_float: f64 = total_coin_supply.parse()?;
     Ok(total_coin_supply_float.round() as u64)
+    todo!();
 }
 
 fn get_transaction_status(
@@ -987,11 +997,11 @@ fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockLi
     let end_block = std::cmp::min(start_block + 10, num_tx_blocks);
 
     let listings: Vec<TxBlockListing> = (start_block..end_block)
-        .map(|block_number| TxBlockListing {
-            BlockNum: block_number,
-            Hash: node
-                .get_block_hash_by_number(block_number)
-                .unwrap_or_else(|| "Unknown".to_string()),
+        .filter_map(|block_number| {
+            node.get_block(block_number).ok().flatten().map(|block| TxBlockListing {
+                BlockNum: block.number(),
+                Hash: block.hash().to_hex(),
+            })
         })
         .collect();
 
