@@ -239,7 +239,7 @@ impl ValidatorOracle {
         let validators = DynSolValue::Array(
             validators
                 .iter()
-                .map(|validator| DynSolValue::Address(validator.clone()))
+                .map(|validator| DynSolValue::Address(*validator))
                 .collect(),
         );
 
