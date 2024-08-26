@@ -11,7 +11,13 @@ pub use time_impl::*;
 
 #[cfg(feature = "fake_time")]
 mod time_impl {
-    use std::{error::Error, fmt, ops::Add, sync::Mutex, time::Duration};
+    use std::{
+        error::Error,
+        fmt,
+        ops::{Add, Sub},
+        sync::Mutex,
+        time::Duration,
+    };
 
     use futures::Future;
     use serde::{Deserialize, Serialize};
@@ -51,6 +57,15 @@ mod time_impl {
 
         fn add(self, rhs: Duration) -> Self::Output {
             SystemTime(self.0 + rhs)
+        }
+    }
+
+    impl Sub<Duration> for SystemTime {
+        type Output = SystemTime;
+
+        fn sub(self, dur: Duration) -> SystemTime {
+            self.checked_sub(dur)
+                .expect("overflow when subtracting duration from instant")
         }
     }
 

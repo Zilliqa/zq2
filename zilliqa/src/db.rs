@@ -792,6 +792,34 @@ impl Db {
         )?;
         Ok(count)
     }
+
+    pub fn count_blocks_in_last_seconds(&self, seconds: u64) -> Result<usize> {
+        let now = SystemTime::now();
+        let since = now - Duration::new(seconds, 0);
+        let since_sql = SystemTimeSqlable(since);
+
+        let count: usize = self.block_store.lock().unwrap().query_row(
+            "SELECT COUNT(*) FROM blocks WHERE timestamp >= ?1",
+            [since_sql],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    pub fn count_receipts_in_blocks_in_last_seconds(&self, seconds: u64) -> Result<usize> {
+        let now = SystemTime::now();
+        let since = now - Duration::new(seconds, 0);
+        let since_sql = SystemTimeSqlable(since);
+
+        let count: usize = self.block_store.lock().unwrap().query_row(
+            "SELECT COUNT(*) FROM receipts
+             JOIN blocks ON receipts.block_hash = blocks.block_hash
+             WHERE blocks.timestamp >= ?1",
+            [since_sql],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
 }
 
 pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(

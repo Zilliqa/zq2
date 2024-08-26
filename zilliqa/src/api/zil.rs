@@ -16,12 +16,28 @@ use serde_json::{json, Value};
 use super::{
     to_hex::ToHex,
     types::zil::{
-        self, self, BlockchainInfo, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing,
-        DSBlockListingResult, DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo,
-        RecentTransactionsResponse, SWInfo, ShardingStructure, ShardingStructure, SmartContract,
-        SmartContract, SmartContractSubState, StateProofResponse, TransactionBody,
-        TransactionReceiptResponse, TransactionStatusResponse, TxBlockListing,
-        TxBlockListingResult, TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
+        self,
+        BlockchainInfo,
+        DSBlock,
+        DSBlockHeaderVerbose,
+        DSBlockListing,
+        DSBlockListingResult,
+        DSBlockRateResult,
+        DSBlockVerbose,
+        GetCurrentDSCommResult,
+        MinerInfo,
+        RecentTransactionsResponse,
+        SWInfo,
+        ShardingStructure,
+        SmartContract,
+        SmartContractSubState,
+        StateProofResponse,
+        TransactionBody,
+        TransactionStatusResponse,
+        TxBlockListing,
+        TxBlockListingResult,
+        TxnBodiesForTxBlockExResponse,
+        TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -1056,17 +1072,22 @@ fn get_transaction_status(
 
 fn get_tx_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<f64> {
     let node = node.lock().unwrap();
-    let tx_block_rate = node.get_tx_block_rate(); // Implement this in your `Node` struct if it doesn't exist.
+    let measurement_span = 60*60; // 1 hour
+    let tx_blocks_count = node.db.count_blocks_in_last_seconds(measurement_span)?;
+    let tx_block_rate = tx_blocks_count as f64 / measurement_span as f64;
     Ok(tx_block_rate)
 }
 
 fn get_tx_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<TxRate> {
     let node = node.lock().unwrap();
-    let tx_block_rate = node.get_tx_block_rate(); // Implement this in your `Node` struct if it doesn't exist.
-    let transaction_rate = node.get_transaction_rate(); // Implement this in your `Node` struct if it doesn't exist.
+    let measurement_span = 60*60; // 1 hour
+    let tx_blocks_count = node.db.count_blocks_in_last_seconds(measurement_span)?;
+    let tx_block_rate = tx_blocks_count as f64 / measurement_span as f64;
+    let receipt_count = node.db.count_receipts_in_blocks_in_last_seconds(measurement_span)?;
+    let receipt_rate = receipt_count as f64 / measurement_span as f64;
     Ok(TxRate {
-        tx_block_rate,
-        transaction_rate,
+        tx_block_rate: tx_block_rate,
+        transaction_rate: receipt_rate,
     })
 }
 
