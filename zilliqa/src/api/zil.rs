@@ -720,15 +720,22 @@ fn get_num_transactions(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
 
 fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
-    let num_txns_ds_epoch = node.get_num_txns_ds_epoch(); // Implement this in your `Node` struct if it doesn't exist.
-    Ok(num_txns_ds_epoch.to_string())
+    let ds_epoch_size = 1000; // TODO: Check this
+    let current_epoch = node.get_chain_tip() / ds_epoch_size;
+    let current_epoch_first = current_epoch * ds_epoch_size;
+    let current_epoch_last = node.get_chain_tip();
+    let num_txns_epoch = node.consensus.block_store.get_num_transactions_between_block_heights(current_epoch_first, current_epoch_last)?;
+    Ok(num_txns_epoch.to_string())
 }
 
 fn get_num_txns_tx_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
-    let num_txns_tx_epoch = node.get_num_txns_tx_epoch(); // Implement this in your `Node` struct if it doesn't exist.
-    Ok(num_txns_tx_epoch.to_string());
-    todo!();
+    let tx_epoch_size = node.config.consensus.blocks_per_epoch;
+    let current_epoch = node.get_chain_tip() / tx_epoch_size;
+    let current_epoch_first = current_epoch * tx_epoch_size;
+    let current_epoch_last = node.get_chain_tip();
+    let num_txns_epoch = node.consensus.block_store.get_num_transactions_between_block_heights(current_epoch_first, current_epoch_last)?;
+    Ok(num_txns_epoch.to_string())
 }
 
 fn get_recent_transactions(

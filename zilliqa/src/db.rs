@@ -781,6 +781,17 @@ impl Db {
         )?;
         Ok(count)
     }
+
+    pub fn get_receipt_count_in_range(&self, start_height: u64, end_height: u64) -> Result<usize> {
+        let count: usize = self.block_store.lock().unwrap().query_row(
+            "SELECT COUNT(*) FROM receipts
+             JOIN blocks ON receipts.block_hash = blocks.block_hash
+             WHERE blocks.height BETWEEN ?1 AND ?2",
+            [start_height, end_height],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
 }
 
 pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(

@@ -310,4 +310,13 @@ impl BlockStore {
         let count = self.db.get_total_transaction_count()?;
         Ok(count)
     }
+
+    pub fn get_num_transactions_between_block_heights(
+        &self,
+        start: u64,
+        end: u64,
+    ) -> Result<usize> {
+        let count = self.db.get_receipt_count_in_range(start, end)?;
+        Ok(count)
+    }
 }
