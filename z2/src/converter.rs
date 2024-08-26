@@ -204,7 +204,7 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
 }
 
 pub async fn convert_persistence(
-    zq1_db: zq1::Db,
+    zq1_dir: PathBuf,
     zq2_db: Db,
     zq2_config: Config,
     secret_key: SecretKey,
@@ -219,6 +219,7 @@ pub async fn convert_persistence(
     let mut state = State::new_with_genesis(zq2_db.state_trie()?, node_config.consensus.clone())?;
 
     if !skip_accounts {
+        let zq1_db = zq1::Db::new(zq1_dir.clone())?;
         // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
         // between pairs of adjacent addresses, taking the average and extrapolating to the end of the key space.
         let distance_sum: u64 = zq1_db
@@ -328,6 +329,7 @@ pub async fn convert_persistence(
     }
     state.apply_delta_evm(&result_state)?;
 
+    let zq1_db = zq1::Db::new(zq1_dir)?;
     let max_block = zq1_db
         .get_tx_blocks_aux("MaxTxBlockNumber")?
         .unwrap_or_default();

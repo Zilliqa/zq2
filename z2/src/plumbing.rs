@@ -186,7 +186,6 @@ pub async fn run_persistence_converter(
     let zq1_dir = PathBuf::from_str(zq1_pers_dir)?;
     let zq2_dir = PathBuf::from_str(zq2_data_dir)?;
     let config_file = PathBuf::from_str(zq2_config)?;
-    let zq1_db = zq1::Db::new(zq1_dir)?;
     let zq2_config = fs::read_to_string(config_file).await?;
     let zq2_config: zilliqa::cfg::Config = toml::from_str(&zq2_config)?;
     let shard_id: u64 = zq2_config
@@ -195,7 +194,7 @@ pub async fn run_persistence_converter(
         .map(|node| node.eth_chain_id)
         .unwrap_or(0);
     let zq2_db = zilliqa::db::Db::new(Some(zq2_dir), shard_id)?;
-    converter::convert_persistence(zq1_db, zq2_db, zq2_config, secret_key, skip_accounts).await?;
+    converter::convert_persistence(zq1_dir, zq2_db, zq2_config, secret_key, skip_accounts).await?;
     Ok(())
 }
 
