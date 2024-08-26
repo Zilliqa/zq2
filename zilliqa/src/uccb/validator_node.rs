@@ -185,7 +185,7 @@ impl ValidatorNode {
         let chain_client = match self.chain_clients.get(&event.target_chain_id) {
             Some(chain_client) => chain_client,
             None => {
-                warn!("Unsupported Chain ID");
+                warn!("Ignoring {event:?} due to an unknown target chain ID");
                 return Ok(());
             }
         };
@@ -213,7 +213,7 @@ impl ValidatorNode {
         };
 
         for i in 1..self.config.max_dispatch_attempts {
-            info!("Dispatch Attempt {:?}", i);
+            info!("Dispatch attempt {:?}", i);
 
             let call_builder = if chain_client.legacy_gas_estimation {
                 let gas_estimate = match call_builder.estimate_gas().await {
@@ -232,10 +232,10 @@ impl ValidatorNode {
                     use alloy::{contract::Error, transports::RpcError};
                     match contract_err {
                         Error::TransportError(RpcError::ErrorResp(e)) => {
-                            if let Ok(revert_code) = e.deser_data::<i64>() {
+                            if let Ok(revert_code) = e.deser_data::<String>() {
                                 // TODO: how to properly decipher this specific error?
-                                info!(
-                                    "Already Dispatched {}.{} (error: {revert_code})",
+                                warn!(
+                                    "Event {event:?} already dispatched {}.{} (error: {revert_code})",
                                     event.target_chain_id, event.nonce
                                 );
                             }
