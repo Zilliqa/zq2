@@ -724,6 +724,9 @@ async fn get_num_transactions(mut network: Network) {
         "Expected response to be a string, got: {:?}",
         response
     );
+    response
+        .parse::<u64>()
+        .expect("Failed to parse response as u64");
 }
 
 #[zilliqa_macros::test]

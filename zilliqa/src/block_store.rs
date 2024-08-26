@@ -103,6 +103,8 @@ impl BlockStore {
             ),
             unserviceable_requests: BTreeSet::new(),
             message_sender,
+            total_txns_cached_to: 0,
+            total_txns_cached_count: 0,
         })
     }
 
@@ -302,5 +304,10 @@ impl BlockStore {
         self.peers
             .entry(peer)
             .or_insert_with(|| PeerInfo::new(capacity))
+    }
+
+    pub fn get_num_transactions(&self) -> Result<usize> {
+        let count = self.db.get_total_transaction_count()?;
+        Ok(count)
     }
 }

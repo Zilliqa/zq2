@@ -714,9 +714,8 @@ fn get_num_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u64> {
 
 fn get_num_transactions(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
-    let num_transactions = node.get_num_transactions(); // Implement this in your `Node` struct if it doesn't exist.
-    Ok(num_transactions.to_string());
-    todo!();
+    let num_transactions = node.consensus.block_store.get_num_transactions()?;
+    Ok(num_transactions.to_string())
 }
 
 fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
