@@ -1099,7 +1099,7 @@ fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockLi
 
     let node = node.lock().unwrap();
     let num_tx_blocks = node.get_chain_tip();
-    let num_pages = (num_tx_blocks / 10) + 1;
+    let num_pages = (num_tx_blocks / 10) + if num_tx_blocks % 10 == 0 { 0 } else { 1 };
 
     let start_block = page_number * 10;
     let end_block = std::cmp::min(start_block + 10, num_tx_blocks);
@@ -1108,7 +1108,7 @@ fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockLi
         .filter_map(|block_number| {
             node.get_block(block_number).ok().flatten().map(|block| TxBlockListing {
                 BlockNum: block.number(),
-                Hash: block.hash().to_hex(),
+                Hash: block.hash().to_string(),
             })
         })
         .collect();
