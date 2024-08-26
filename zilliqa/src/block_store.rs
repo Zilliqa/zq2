@@ -316,7 +316,7 @@ impl BlockStore {
         start: u64,
         end: u64,
     ) -> Result<usize> {
-        let count = self.db.get_receipt_count_in_range(start, end)?;
+        let count = self.db.get_unique_transaction_count_in_range(start, end)?;
         Ok(count)
     }
 }

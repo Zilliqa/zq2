@@ -782,9 +782,13 @@ impl Db {
         Ok(count)
     }
 
-    pub fn get_receipt_count_in_range(&self, start_height: u64, end_height: u64) -> Result<usize> {
+    pub fn get_unique_transaction_count_in_range(
+        &self,
+        start_height: u64,
+        end_height: u64,
+    ) -> Result<usize> {
         let count: usize = self.block_store.lock().unwrap().query_row(
-            "SELECT COUNT(*) FROM receipts
+            "SELECT COUNT(DISTINCT receipts.tx_hash) FROM receipts
              JOIN blocks ON receipts.block_hash = blocks.block_hash
              WHERE blocks.height BETWEEN ?1 AND ?2",
             [start_height, end_height],
@@ -812,7 +816,7 @@ impl Db {
         let since_sql = SystemTimeSqlable(since);
 
         let count: usize = self.block_store.lock().unwrap().query_row(
-            "SELECT COUNT(*) FROM receipts
+            "SELECT COUNT(DISTINCT receipts.tx_hash) FROM receipts
              JOIN blocks ON receipts.block_hash = blocks.block_hash
              WHERE blocks.timestamp >= ?1",
             [since_sql],
