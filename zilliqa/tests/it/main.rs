@@ -303,7 +303,9 @@ impl Network {
                     k.0.to_libp2p_keypair().public().to_peer_id(),
                     stake.into(),
                     TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
-                    PrivateKeySigner::from_str(k.0.to_hex().as_str()).unwrap().address(),
+                    PrivateKeySigner::from_str(k.0.to_hex().as_str())
+                        .unwrap()
+                        .address(),
                 )
             })
             .collect();
@@ -499,7 +501,9 @@ impl Network {
                     k.0.to_libp2p_keypair().public().to_peer_id(),
                     stake.into(),
                     TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
-                    PrivateKeySigner::from_str(k.0.to_hex().as_str()).unwrap().address(),
+                    PrivateKeySigner::from_str(k.0.to_hex().as_str())
+                        .unwrap()
+                        .address(),
                 )
             })
             .collect();
