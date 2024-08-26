@@ -1,7 +1,7 @@
 //! The Zilliqa API, as documented at <https://dev.zilliqa.com/api/introduction/api-introduction>.
 
 use std::{
-    cmp, fmt::Display, str::FromStr, sync::{Arc, Mutex}
+    cmp, collections::HashSet, fmt::Display, str::FromStr, sync::{Arc, Mutex}
 };
 
 use alloy::{
@@ -393,6 +393,68 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
             let mut var = result.entry(var_name.clone());
 
             for index in indices {
+                let next = var.or_insert_with(|| Value::Object(Default::default()));
+                let Value::Object(next) = next else {
+                    unreachable!()
+                };
+                let key: String = serde_json::from_slice(&index)?;
+                var = next.entry(key.clone());
+            }
+
+            var.or_insert(serde_json::from_slice(&v)?);
+        }
+    }
+
+    Ok(result.into())
+}
+
+fn get_smart_contract_sub_state(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Value> {
+    let mut seq = params.sequence();
+    let address: Address = seq.next()?;
+    let requested_varname: String = seq.next()?;
+    let requested_indices: HashSet<String> = seq.next()?;
+    let node = node.lock().unwrap();
+
+    // First get the account and check that its a scilla account
+    let block = node
+        .get_block(BlockId::latest())?
+        .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
+
+    let state = node.get_state(&block)?;
+    let account = state.get_account(address)?;
+
+    let result = json!({
+        "_balance": ZilAmount::from_amount(account.balance).to_string(),
+    });
+    let Value::Object(mut result) = result else {
+        unreachable!()
+    };
+
+    let is_scilla = account.code.scilla_code_and_init_data().is_some();
+    if is_scilla {
+        let limit = node.config.state_rpc_limit;
+
+        let trie = state.get_account_trie(address)?;
+        for (i, (k, v)) in trie.iter().enumerate() {
+            if i >= limit {
+                return Err(anyhow!(
+                    "State of contract returned has size greater than the allowed maximum"
+                ));
+            }
+
+            let (var_name, indices) = split_storage_key(&k)?;
+            if var_name != requested_varname {
+                continue;
+            }
+            let mut var = result.entry(var_name.clone());
+
+            for index in indices {
+                if !requested_indices.contains(&index.to_hex()) {
+                    continue;
+                }
                 let next = var.or_insert_with(|| Value::Object(Default::default()));
                 let Value::Object(next) = next else {
                     unreachable!()
@@ -909,52 +971,6 @@ fn get_recent_transactions(
         number: (&txns).len() as u64,
         TxnHashes: txns,
     })
-}
-
-fn get_smart_contract_sub_state(
-    params: Params,
-    node: &Arc<Mutex<Node>>,
-) -> Result<SmartContractSubState> {
-    let params: Vec<Value> = params.parse()?;
-    let address: Address = serde_json::from_value(params[0].clone())?;
-    let variable_name = params.get(1).and_then(|v| v.as_str()).unwrap_or("");
-    let indices: Vec<Value> = params
-        .get(2)
-        .and_then(|v| v.as_array())
-        .unwrap_or(&vec![])
-        .clone();
-
-    // Dummy implementation to simulate fetching sub-state for a contract at an address
-    let node = node.lock().unwrap();
-    let block = node
-        .get_block(BlockId::latest())?
-        .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
-    let state = node.get_state(&block)?;
-
-    let account = state.get_account(address)?;
-
-    let mut balance = ZilAmount::from_amount(account.balance).to_string();
-    let mut admins = None;
-
-    let is_scilla = account.code.scilla_code_and_init_data().is_some();
-    if is_scilla {
-        let trie = state.get_account_trie(address)?;
-        for (i, (k, v)) in trie.iter().enumerate() {
-            let (var_name, indices_in_key) = split_storage_key(&k)?;
-            if var_name == variable_name {
-                let value = serde_json::from_slice(&v)?;
-                if var_name == "admins" {
-                    admins = Some(value);
-                }
-            }
-        }
-    }
-
-    Ok(SmartContractSubState {
-        _balance: balance,
-        admins,
-    });
-    todo!();
 }
 
 fn get_soft_confirmed_transaction(

@@ -635,10 +635,3 @@ pub struct TxBlockListingResult {
     pub data: Vec<TxBlockListing>,
     pub maxPages: u64,
 }
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct SmartContractSubState {
-    pub _balance: String,
-    pub admins: Option<serde_json::Value>,
-    // Add other contract-specific fields as necessary
-}
