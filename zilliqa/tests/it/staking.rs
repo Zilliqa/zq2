@@ -59,6 +59,7 @@ async fn deposit_stake(
                     Token::Bytes(peer_id.to_bytes()),
                     Token::Bytes(pop.0.to_compressed().to_vec()),
                     Token::Address(reward_address),
+                    Token::Address(wallet.address()),
                 ])
                 .unwrap(),
         );
