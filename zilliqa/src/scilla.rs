@@ -183,6 +183,7 @@ impl Scilla {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_contract(
         &self,
         state: PendingState,
