@@ -95,9 +95,9 @@ impl State {
             Some(contract_addr::INTERSHARD_BRIDGE),
         )?;
 
-        if config.genesis_accounts.is_empty() {
-            panic!("No genesis accounts provided");
-        }
+        // if config.genesis_accounts.is_empty() {
+        //     panic!("No genesis accounts provided");
+        // }
 
         for (address, balance) in config.genesis_accounts {
             state.mutate_account(address, |a| a.balance = *balance)?;
