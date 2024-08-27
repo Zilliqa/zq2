@@ -17,8 +17,8 @@ describe("BlockNumber contract #parallel", () => {
   });
 
   it("Call BlockNumber contract -  EventBlockNumber @block-1", async () => {
-    let result = (await hre.zilliqaSetup.zilliqa.blockchain.getNumTxBlocks()).result;
+    const blockNumber = (await hre.zilliqaSetup.zilliqa.blockchain.getNumTxBlocks()).result;
     const tx = await contract.EventBlockNumber();
-    expect(tx).to.have.eventLogWithParams("BlockNumber", {value: result});
+    expect(tx).to.have.eventLogWithParams("BlockNumber", {value: blockNumber});
   });
 });
