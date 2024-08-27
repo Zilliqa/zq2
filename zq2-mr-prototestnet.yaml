@@ -6,7 +6,6 @@ roles:
 - api
 - apps
 - validator
-- checkpoint
 versions:
   zq2: 459f3a1f
   otterscan: develop
