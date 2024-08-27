@@ -231,7 +231,7 @@ pub struct ConsensusConfig {
     #[serde(default = "consensus_timeout_default")]
     pub consensus_timeout: Duration,
     /// The initially staked deposits in the deposit contract at genesis, composed of
-    /// (public key, peerId, amount, reward address) tuples.
+    /// (public key, peerId, amount, reward address, signer address) tuples.
     #[serde(default)]
     pub genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address, Address)>,
     /// Accounts that will be pre-funded at genesis.

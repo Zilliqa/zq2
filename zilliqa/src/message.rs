@@ -252,7 +252,7 @@ pub enum ExternalMessage {
     /// require any data in the response.
     Acknowledgement,
 
-    // UCCB
+    // UCCB; echoes a relay event so that validators can sign
     BridgeEcho(Relay),
 }
 
