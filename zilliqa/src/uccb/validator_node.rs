@@ -1,24 +1,15 @@
 use std::{
     collections::HashMap,
-    str::FromStr,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use alloy::{
-    contract::{ContractInstance, DynCallBuilder, Interface},
-    dyn_abi::DynSolValue,
-    eips::{eip2930::AccessList, BlockNumberOrTag},
-    primitives::U256,
-    pubsub::PubSubFrontend,
-    rpc::types::Filter,
-    signers::local::PrivateKeySigner,
+    contract::ContractInstance, dyn_abi::DynSolValue, eips::eip2930::AccessList, primitives::U256,
+    pubsub::PubSubFrontend, signers::local::PrivateKeySigner,
 };
 use anyhow::Result;
 use futures_util::StreamExt;
-use hex::FromHex;
-use libp2p::PeerId;
-use revm::primitives::Address;
 use tokio::{
     select,
     sync::mpsc::{self, UnboundedSender},
@@ -31,15 +22,12 @@ use crate::{
     consensus::Consensus,
     message::ExternalMessage,
     p2p_node::OutboundMessageTuple,
-    schnorr::sign,
     uccb::{
         bridge_node::BridgeNode,
         cfg::Config,
-        client::{ChainClient, ChainProvider /*, ContractInitializer*/},
+        client::ChainClient,
         contracts,
-        // contracts::{ChainGateway, ChainGatewayErrors},
         message::{Dispatch, InboundBridgeMessage, OutboundBridgeMessage},
-        signature::SignatureTracker,
     },
 };
 

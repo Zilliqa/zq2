@@ -9,14 +9,13 @@ use crate::{
     },
 };
 use alloy::{
-    contract::{ContractInstance, DynCallBuilder, Interface},
-    dyn_abi::{DynSolValue, EventExt},
-    eips::{eip2930::AccessList, BlockNumberOrTag},
-    primitives::{Address, Signature, U256},
+    contract::{ContractInstance, DynCallBuilder},
+    dyn_abi::EventExt,
+    eips::BlockNumberOrTag,
+    primitives::{Address, U256},
     providers::Provider,
     pubsub::PubSubFrontend,
     rpc::types::Filter,
-    signers::local::PrivateKeySigner,
 };
 use anyhow::Result;
 use futures_util::stream::StreamExt;
