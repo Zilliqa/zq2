@@ -5,11 +5,9 @@ import {Account} from "@zilliqa-js/zilliqa";
 
 describe("BlockNumber contract #parallel", () => {
   let contract: ScillaContract;
-  let signer: Account;
 
   before(async () => {
-    signer = hre.allocateZilSigner();
-    contract = await hre.deployScillaContractWithSigner("BlockNumber", signer);
+    contract = await hre.deployScillaContract2("BlockNumber");
   });
 
   it("Deploy BlockNumber contract @block-1", async () => {
