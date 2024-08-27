@@ -60,6 +60,35 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
 }
 
 #[derive(Deserialize)]
+#[serde(transparent)]
+struct ZilAddress {
+    #[serde(deserialize_with = "deserialize_zil_address")]
+    inner: Address,
+}
+
+impl From<ZilAddress> for Address {
+    fn from(value: ZilAddress) -> Self {
+        value.inner
+    }
+}
+
+fn deserialize_zil_address<'de, D>(deserializer: D) -> Result<Address, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+
+    let addr = if s.starts_with("zil") {
+        let (_hrp, data) = bech32::decode(&s).map_err(serde::de::Error::custom)?;
+        (&data[..]).try_into().map_err(serde::de::Error::custom)?
+    } else {
+        s.parse().map_err(serde::de::Error::custom)?
+    };
+
+    Ok(addr)
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TransactionParams {
     version: u32,
@@ -199,7 +228,8 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<GetTxRespo
 }
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let address: Address = params.one()?;
+    let address: ZilAddress = params.one()?;
+    let address: Address = address.into();
 
     let node = node.lock().unwrap();
     let block = node
@@ -295,7 +325,9 @@ fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let address: Address = params.one()?;
+    let address: ZilAddress = params.one()?;
+    let address: Address = address.into();
+
     let node = node.lock().unwrap();
 
     // First get the account and check that its a scilla account
@@ -345,14 +377,14 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
 }
 
 fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let smart_contract_address: Address = params.one()?;
+    let address: ZilAddress = params.one()?;
+    let address: Address = address.into();
+
     let node = node.lock().unwrap();
     let block = node
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
-    let account = node
-        .get_state(&block)?
-        .get_account(smart_contract_address)?;
+    let account = node.get_state(&block)?.get_account(address)?;
 
     let (code, type_) = match account.code {
         Code::Evm(ref bytes) => (hex::encode(bytes), "evm"),
@@ -363,14 +395,14 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
 }
 
 fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let smart_contract_address: Address = params.one()?;
+    let address: ZilAddress = params.one()?;
+    let address: Address = address.into();
+
     let node = node.lock().unwrap();
     let block = node
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
-    let account = node
-        .get_state(&block)?
-        .get_account(smart_contract_address)?;
+    let account = node.get_state(&block)?.get_account(address)?;
 
     let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address not contract address"));
@@ -431,7 +463,8 @@ fn get_tx_block(
 }
 
 fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<SmartContract>> {
-    let address: Address = params.one()?;
+    let address: ZilAddress = params.one()?;
+    let address: Address = address.into();
 
     let block = node
         .lock()
