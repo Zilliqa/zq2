@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use alloy::primitives::Address;
+use alloy::{hex::ToHexExt, primitives::Address};
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -29,6 +29,8 @@ use serde::{
     Deserialize, Deserializer,
 };
 use serde_json::Value;
+use sha2::Sha256;
+use sha3::{digest::DynDigest, Digest};
 use tokio::runtime;
 use tracing::trace;
 
@@ -36,6 +38,7 @@ use crate::{
     exec::{PendingState, StorageValue},
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
+    state::Code,
     transaction::{ScillaGas, ZilAmount},
 };
 
@@ -715,7 +718,19 @@ impl ActiveCall {
                 Ok(Some((val, "ByStr20".to_owned())))
             }
             "_codehash" => {
-                todo!()
+                let code_bytes = match &account.account.code {
+                    Code::Evm(bytes) => bytes.clone(),
+                    Code::Scilla { code, .. } => code.clone().into_bytes(),
+                };
+
+                let mut hasher = Sha256::new();
+                DynDigest::update(&mut hasher, &code_bytes);
+
+                let mut hash = [0u8; 32];
+                DynDigest::finalize_into(hasher, &mut hash[..]).unwrap();
+
+                let val = scilla_val(format!("\"0x{}\"", hash.encode_hex()).into_bytes());
+                Ok(Some((val, "ByStr32".to_owned())))
             }
             _ => self.fetch_value_inner(addr, name.clone(), indices.clone()),
         }
