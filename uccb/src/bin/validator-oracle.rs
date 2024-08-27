@@ -201,6 +201,7 @@ impl ValidatorOracle {
             vec![]
         };
 
+        debug!("Retrieved validator set: {}", Display(&validators));
         Ok(validators)
     }
 
