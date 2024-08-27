@@ -202,8 +202,12 @@ impl ValidatorNode {
             DynSolValue::Bytes(event.call.to_vec()),
             DynSolValue::Uint(event.gas_limit, 256),
             DynSolValue::Uint(event.nonce, 256),
-            // TODO: signatures
-            DynSolValue::Array(vec![]),
+            DynSolValue::Array(
+                signatures
+                    .into_iter()
+                    .map(|key_value| DynSolValue::Bytes(key_value.1.into()))
+                    .collect(),
+            ),
         ];
         let call_builder = chain_gateway_contract.function("dispatch", &args)?;
         let call_builder = if chain_client.legacy_gas_estimation {
@@ -219,7 +223,7 @@ impl ValidatorNode {
                 let gas_estimate = match call_builder.estimate_gas().await {
                     Ok(estimate) => estimate,
                     Err(err) => {
-                        warn!("Failed to estimate gas, {:?}", err);
+                        error!("Failed to estimate gas, {:?}", err);
                         return Ok(());
                     }
                 };
@@ -263,7 +267,7 @@ impl ValidatorNode {
                     return Ok(());
                 }
                 Err(err) => {
-                    println!("Failed to send: {:?}", err);
+                    error!("Failed to send: {:?}", err);
                 }
             }
 
