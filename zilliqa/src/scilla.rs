@@ -789,7 +789,7 @@ impl ActiveCall {
 
     fn fetch_blockchain_info(&self, name: String, _args: String) -> Result<String> {
         match name.as_str() {
-            "CHAINID" => Ok(self.state.network_id().to_string()),
+            "CHAINID" => Ok(self.state.get_zil_chain_id().to_string()),
             "BLOCKNUMBER" => Ok(self.current_block.number.to_string()),
             "TIMESTAMP" => Ok(self
                 .current_block

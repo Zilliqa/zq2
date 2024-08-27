@@ -30,7 +30,7 @@ use crate::{
         ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
         MAX_COMMITTEE_SIZE,
     },
-    node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
+    node::{ChainId, MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxPoolContent},
     state::State,
     time::SystemTime,
@@ -738,8 +738,12 @@ impl Consensus {
             db.insert_transaction(&txn.hash, &txn.tx)?;
         }
 
-        let result =
-            state.apply_transaction(txn.clone(), config.eth_chain_id, current_block, inspector);
+        let result = state.apply_transaction(
+            txn.clone(),
+            &ChainId::new(config.eth_chain_id),
+            current_block,
+            inspector,
+        );
         let result = match result {
             Ok(r) => r,
             Err(error) => {

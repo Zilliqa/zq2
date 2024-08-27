@@ -21,6 +21,7 @@ use crate::{
     exec::BaseFeeCheck,
     inspector,
     message::{BlockHeader, MAX_COMMITTEE_SIZE},
+    node::ChainId,
     scilla::Scilla,
     transaction::EvmGas,
 };
@@ -44,7 +45,7 @@ pub struct State {
     scilla_lib_dir: String,
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
-    pub chain_id: u64,
+    pub zil_chain_id: u64,
 }
 
 impl State {
@@ -60,7 +61,7 @@ impl State {
             scilla_lib_dir: consensus_config.scilla_lib_dir.clone(),
             block_gas_limit: consensus_config.eth_block_gas_limit,
             gas_price: *consensus_config.gas_price,
-            chain_id: config.eth_chain_id,
+            zil_chain_id: ChainId::zil_chain_id(config.eth_chain_id),
         }
     }
 
@@ -163,7 +164,7 @@ impl State {
             scilla_lib_dir: self.scilla_lib_dir.clone(),
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
-            chain_id: self.chain_id,
+            zil_chain_id: self.zil_chain_id,
         }
     }
 

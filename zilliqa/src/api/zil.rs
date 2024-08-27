@@ -99,10 +99,10 @@ fn create_transaction(
     let version = transaction.version & 0xffff;
     let chain_id = transaction.version >> 16;
 
-    if (chain_id as u64) != (node.config.eth_chain_id - 0x8000) {
+    if (chain_id as u64) != (node.chain_id.zil) {
         return Err(anyhow!(
             "unexpected chain ID, expected: {}, got: {chain_id}",
-            node.config.eth_chain_id - 0x8000
+            node.chain_id.zil
         ));
     }
 
@@ -246,14 +246,8 @@ fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<ZilAmount
     Ok(ZilAmount::from_amount(price))
 }
 
-fn network_id(eth_chain_id: u64) -> u64 {
-    // We fix the convention the Zilliqa network ID is equal to the Ethereum chain ID minus 0x8000. This is true for
-    // all current Zilliqa networks.
-    eth_chain_id - 0x8000
-}
-
 fn get_network_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    let network_id = network_id(node.lock().unwrap().config.eth_chain_id);
+    let network_id = node.lock().unwrap().chain_id.zil;
     Ok(network_id.to_string())
 }
 

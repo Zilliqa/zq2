@@ -131,6 +131,26 @@ pub struct Node {
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub consensus: Consensus,
+    pub chain_id: ChainId,
+}
+
+#[derive(Debug)]
+pub struct ChainId {
+    pub eth: u64,
+    pub zil: u64,
+}
+
+impl ChainId {
+    pub fn new(eth_chain_id: u64) -> Self {
+        ChainId {
+            eth: eth_chain_id,
+            zil: Self::zil_chain_id(eth_chain_id),
+        }
+    }
+
+    pub fn zil_chain_id(eth_chain_id: u64) -> u64 {
+        eth_chain_id - 0x8000
+    }
 }
 
 const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
@@ -158,6 +178,7 @@ impl Node {
             message_sender: message_sender.clone(),
             reset_timeout: reset_timeout.clone(),
             db: db.clone(),
+            chain_id: ChainId::new(config.eth_chain_id),
             consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
         };
         Ok(node)
@@ -233,7 +254,7 @@ impl Node {
     }
 
     pub fn handle_internal_message(&mut self, from: u64, message: InternalMessage) -> Result<()> {
-        let to = self.config.eth_chain_id;
+        let to = self.chain_id.eth;
         tracing::debug!(%from, %to, %message, "handling message");
         match message {
             InternalMessage::IntershardCall(intershard_call) => {
@@ -255,7 +276,7 @@ impl Node {
     fn inject_intershard_transaction(&mut self, intershard_call: IntershardCall) -> Result<()> {
         let tx = SignedTransaction::Intershard {
             tx: TxIntershard {
-                chain_id: self.config.eth_chain_id,
+                chain_id: self.chain_id.eth,
                 bridge_nonce: intershard_call.bridge_nonce,
                 source_chain: intershard_call.source_chain_id,
                 gas_price: intershard_call.gas_price,
@@ -396,7 +417,7 @@ impl Node {
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
                 state.apply_transaction(
                     other_txn,
-                    self.get_chain_id(),
+                    &self.chain_id,
                     parent.header,
                     inspector::noop(),
                 )?;
@@ -405,12 +426,8 @@ impl Node {
                 let mut inspector = TracingInspector::new(config);
                 let pre_state = state.try_clone()?;
 
-                let result = state.apply_transaction(
-                    txn,
-                    self.get_chain_id(),
-                    parent.header,
-                    &mut inspector,
-                )?;
+                let result =
+                    state.apply_transaction(txn, &self.chain_id, parent.header, &mut inspector)?;
 
                 let TransactionApplyResult::Evm(result, ..) = result else {
                     return Err(anyhow!("not an EVM transaction"));
@@ -457,13 +474,13 @@ impl Node {
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
                 state.apply_transaction(
                     other_txn,
-                    self.get_chain_id(),
+                    &self.chain_id,
                     parent.header,
                     inspector::noop(),
                 )?;
             } else {
                 let result =
-                    state.apply_transaction(txn, self.get_chain_id(), parent.header, inspector)?;
+                    state.apply_transaction(txn, &self.chain_id, parent.header, inspector)?;
 
                 return Ok(result);
             }
@@ -532,7 +549,7 @@ impl Node {
 
             let result = state.apply_transaction(
                 txn,
-                self.get_chain_id(),
+                &self.chain_id,
                 parent_block.header,
                 &mut inspector,
             )?;
@@ -563,7 +580,7 @@ impl Node {
 
                     let result = state.apply_transaction(
                         txn,
-                        self.get_chain_id(),
+                        &self.chain_id,
                         parent_block.header,
                         &mut inspector,
                     )?;
@@ -585,7 +602,7 @@ impl Node {
                     let mut inspector = FourByteInspector::default();
                     let result = state.apply_transaction(
                         txn,
-                        self.get_chain_id(),
+                        &self.chain_id,
                         parent_block.header,
                         &mut inspector,
                     )?;
@@ -605,7 +622,7 @@ impl Node {
                     let mut inspector = MuxInspector::try_from_config(mux_config)?;
                     let result = state.apply_transaction(
                         txn,
-                        self.get_chain_id(),
+                        &self.chain_id,
                         parent_block.header,
                         &mut inspector,
                     )?;
@@ -632,7 +649,7 @@ impl Node {
                     );
                     let result = state.apply_transaction(
                         txn,
-                        self.get_chain_id(),
+                        &self.chain_id,
                         parent_block.header,
                         &mut inspector,
                     )?;
@@ -667,7 +684,7 @@ impl Node {
 
                 let result = state.apply_transaction(
                     txn,
-                    self.get_chain_id(),
+                    &self.chain_id,
                     parent_block.header,
                     &mut inspector,
                 )?;
@@ -708,7 +725,7 @@ impl Node {
             to_addr,
             data,
             amount,
-            self.config.eth_chain_id,
+            self.chain_id.eth,
             block.header,
         )
     }
@@ -759,7 +776,7 @@ impl Node {
             from_addr,
             to_addr,
             data,
-            self.config.eth_chain_id,
+            self.chain_id.eth,
             block.header,
             gas,
             gas_price,
@@ -782,10 +799,6 @@ impl Node {
 
     pub fn subscribe_to_new_transaction_hashes(&self) -> broadcast::Receiver<Hash> {
         self.consensus.new_transaction_hashes.subscribe()
-    }
-
-    pub fn get_chain_id(&self) -> u64 {
-        self.config.eth_chain_id
     }
 
     pub fn get_chain_tip(&self) -> u64 {

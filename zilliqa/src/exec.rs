@@ -35,6 +35,7 @@ use crate::{
     eth_helpers::extract_revert_msg,
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
+    node::ChainId,
     precompiles::get_custom_precompiles,
     scilla::{self, split_storage_key, storage_key, Scilla},
     state::{contract_addr, Account, Code, State},
@@ -512,7 +513,7 @@ impl State {
     pub fn apply_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
         &mut self,
         txn: VerifiedTransaction,
-        chain_id: u64,
+        chain_id: &ChainId,
         current_block: BlockHeader,
         inspector: I,
     ) -> Result<TransactionApplyResult> {
@@ -539,7 +540,7 @@ impl State {
                 txn.amount(),
                 txn.payload().to_vec(),
                 txn.nonce(),
-                chain_id,
+                chain_id.eth,
                 current_block,
                 inspector,
                 if blessed {
@@ -1016,12 +1017,12 @@ impl PendingState {
         }
     }
 
-    pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
-        load_account(&self.pre_state, &mut self.new_state, address)
+    pub fn get_zil_chain_id(&self) -> u64 {
+        self.pre_state.zil_chain_id
     }
 
-    pub fn network_id(&self) -> u64 {
-        self.pre_state.chain_id - 0x8000
+    pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
+        load_account(&self.pre_state, &mut self.new_state, address)
     }
 
     pub fn load_var_info(&mut self, address: Address, variable: &str) -> Result<(&str, u8)> {
