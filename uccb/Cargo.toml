@@ -17,7 +17,7 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy = { version = "0.2.1", default-features = false, features = [
+alloy = { version = "0.3.5", default-features = false, features = [
   "consensus",
   "contract",
   "dyn-abi",
@@ -35,20 +35,20 @@ alloy = { version = "0.2.1", default-features = false, features = [
   "signers",
   "signer-local",
   "sol-types"] }
-anyhow = "1.0.86"
+anyhow = { version = "1.0.89", features = ["backtrace"] }
 async-trait = "0.1.81"
 bls-signatures = "0.15.0"
-clap = {version = "4.5.11", features = ["derive"]}
+clap = {version = "4.5.17", features = ["derive"]}
 futures = "0.3.30"
 futures-util = "0.3"
 hex = "0.4.3"
 itertools = "0.13.0"
 primitive-types = "0.12.2"
-serde = { version = "1.0.206", features = ["derive"] }
+serde = { version = "1.0.210", features = ["derive"] }
 serde_json = { version = "1.0.124", features = ["raw_value"] }
 thiserror = "1.0.63"
 tokio = {version = "1.39.2", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
-tokio-stream = "0.1.15"
+tokio-stream = "0.1.16"
 toml = "0.8.19"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
