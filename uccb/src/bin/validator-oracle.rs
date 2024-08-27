@@ -182,6 +182,7 @@ impl ValidatorOracle {
             .map(|k| k.as_address().unwrap())
             .collect();
 
+        debug!("Retrieved validator set: {}", Display(&validators));
         Ok(validators)
     }
 
