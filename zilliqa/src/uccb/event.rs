@@ -3,11 +3,8 @@ use std::collections::HashMap;
 use alloy::{
     dyn_abi::DecodedEvent,
     primitives::{eip191_hash_message, Address, Bytes, Signature, B256, U256},
-    signers::{
-        local::{LocalSigner, PrivateKeySigner},
-        Signer,
-    },
-    sol_types::{sol_data, SolValue},
+    signers::{local::PrivateKeySigner, Signer},
+    sol_types::SolValue,
 };
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
