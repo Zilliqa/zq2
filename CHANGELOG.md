@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 Unreleased changes.
+- [#1304](https://github.com/Zilliqa/zq2/pull/1304): Implement the following APIs for querying DS blocks:  `eth_getGasPrice`, `GetMinerInfo`, `GetNodeType`, `GetNumDSBlocks`, `GetNumPeers`, `GetNumTransactions`, `GetNumTxnsDSEpoch`, `GetNumTxnsTxEpoch`, `GetRecentTransactions`, `GetSmartContractSubState`, `GetSoftConfirmedTransaction`, `GetStateProof`, `GetTotalCoinSupply`, `GetTotalCoinSupplyAsInt`, `GetTransactionStatus`, `GetTransactionsForTxBlockEx`, `GetTxBlockRate`, `GetTxRate`, `GetTxnBodiesForTxBlockEx`, `TxBlockListing`
 
 ## [0.1.1] - 2024-08-14
 
@@ -11,6 +12,7 @@ Unreleased changes.
 - [#1281](https://github.com/Zilliqa/zq2/pull/1281): Emit an `ERROR` level log when a node panics.
 - [#1174](https://github.com/Zilliqa/zq2/pull/1174): Limit the returned size of `GetSmartContractState` when the `state_rpc_limit` configuration is set.
 - [#1304](https://github.com/Zilliqa/zq2/pull/1304): Implement DS block APIs by inventing placeholder blocks.
+
 ## [0.1.0] - 2024-08-01
 
 Initial release of Zilliqa 2.
