@@ -188,11 +188,9 @@ impl Db {
         let (db, mut connection, path) = match data_dir {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
-                let db_path = path.join("blocks");
-                fs::create_dir_all(&db_path)?;
                 (
                     sled::open(path.join("state"))?,
-                    Connection::open(db_path.join("blockdata.db"))?,
+                    Connection::open(path.join("blockdata.db"))?,
                     Some(path.into_boxed_path()),
                 )
             }
