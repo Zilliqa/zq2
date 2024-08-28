@@ -330,6 +330,7 @@ pub async fn convert_persistence(
     state.apply_delta_evm(&result_state)?;
 
     if !convert_blocks {
+        println!("Accounts converted. Skipping blocks.");
         return Ok(());
     }
 
@@ -510,7 +511,7 @@ pub async fn convert_persistence(
 
     println!(
         "Persistence conversion done up to block {}",
-        zq2_db.get_highest_block_number()?.unwrap()
+        zq2_db.get_highest_block_number()?.unwrap_or(0)
     );
 
     Ok(())
