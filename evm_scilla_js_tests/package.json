@@ -41,7 +41,7 @@
     "hardhat-gas-reporter": "^1.0.9",
     "hardhat-scilla-plugin": "3.7.1",
     "jest-circus": "^29.7.0",
-    "lint-staged": "^13.3.0",
+    "lint-staged": "^15.2.9",
     "prettier": "^2.8.8",
     "semver": "^7.5.4",
     "solidity-coverage": "^0.8.5",
