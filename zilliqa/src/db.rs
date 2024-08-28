@@ -334,7 +334,7 @@ impl Db {
             // a node that already contains previous state, until (and unless) there's ever a
             // usecase for going through the effort to support it and ensure it works as expected.
             if let Some(db_block) = self.get_block_by_hash(&block.hash())? {
-                if db_block.parent_hash() != block.parent_hash() {
+                if db_block != block {
                     return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"));
                 }
             } else {
