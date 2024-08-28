@@ -204,11 +204,12 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
 }
 
 pub async fn convert_persistence(
-    zq1_dir: PathBuf,
+    zq1_db: zq1::Db,
     zq2_db: Db,
     zq2_config: Config,
     secret_key: SecretKey,
-    skip_accounts: bool,
+    convert_accounts: bool,
+    convert_blocks: bool,
 ) -> Result<()> {
     let style = ProgressStyle::with_template(
         "{msg} {wide_bar} [{per_sec}] {human_pos}/~{human_len} ({elapsed}/~{duration})",
@@ -218,8 +219,7 @@ pub async fn convert_persistence(
     let node_config = &zq2_config.nodes[0];
     let mut state = State::new_with_genesis(zq2_db.state_trie()?, node_config.consensus.clone())?;
 
-    if !skip_accounts {
-        let zq1_db = zq1::Db::new(zq1_dir.clone())?;
+    if convert_accounts {
         // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
         // between pairs of adjacent addresses, taking the average and extrapolating to the end of the key space.
         let distance_sum: u64 = zq1_db
@@ -329,7 +329,10 @@ pub async fn convert_persistence(
     }
     state.apply_delta_evm(&result_state)?;
 
-    let zq1_db = zq1::Db::new(zq1_dir)?;
+    if !convert_blocks {
+        return Ok(());
+    }
+
     let max_block = zq1_db
         .get_tx_blocks_aux("MaxTxBlockNumber")?
         .unwrap_or_default();
@@ -356,7 +359,6 @@ pub async fn convert_persistence(
         .into_iter()
         .progress_with(progress)
         .skip_while(|(n, _)| *n <= current_block);
-    //.chunks(100000);
 
     let mut parent_hash = Hash::ZERO;
 
@@ -454,10 +456,7 @@ pub async fn convert_persistence(
             receipt.block_hash = block.hash();
         }
 
-        //blocks.push(block.clone());
-
         parent_hash = block.hash();
-        //}
 
         zq2_db.with_sqlite_tx(|sqlite_tx| {
             zq2_db.insert_block_with_db_tx(sqlite_tx, &block)?;
