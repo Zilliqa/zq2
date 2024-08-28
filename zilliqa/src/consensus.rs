@@ -1063,7 +1063,7 @@ impl Consensus {
                 self.db.clone(),
                 node_config,
                 tx.clone(),
-                parent_header,
+                block.header,
                 inspector::noop(),
             )?;
 
@@ -2314,7 +2314,7 @@ impl Consensus {
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = self
-                .apply_transaction(txn.clone(), parent.header, &mut inspector)?
+                .apply_transaction(txn.clone(), block.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
             self.transaction_pool.mark_executed(&txn);
             for address in inspector.touched {
