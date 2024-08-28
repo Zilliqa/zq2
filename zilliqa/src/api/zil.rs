@@ -76,16 +76,20 @@ fn deserialize_zil_address<'de, D>(deserializer: D) -> Result<Address, D::Error>
 where
     D: Deserializer<'de>,
 {
+    use serde::de::Error as E;
+
     let s = String::deserialize(deserializer)?;
 
-    let addr = if s.starts_with("zil") {
-        let (_hrp, data) = bech32::decode(&s).map_err(serde::de::Error::custom)?;
-        (&data[..]).try_into().map_err(serde::de::Error::custom)?
-    } else {
-        s.parse().map_err(serde::de::Error::custom)?
-    };
-
-    Ok(addr)
+    bech32::decode(&s).map_or_else(
+        |_| s.parse().map_err(E::custom),
+        |(hrp, data)| {
+            if hrp.as_str() == "zil" {
+                (&data[..]).try_into().map_err(E::custom)
+            } else {
+                Err(E::custom("Invalid HRP, expected 'zil'"))
+            }
+        },
+    )
 }
 
 #[derive(Deserialize)]
