@@ -262,6 +262,13 @@ impl Consensus {
                         .get_block(qc.block_hash)?
                         .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
 
+                    let finalized_number = db
+                        .get_latest_finalized_view()?
+                        .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
+                    let finalzied_block = db
+                        .get_block_by_view(&finalized_number)?
+                        .ok_or_else(|| anyhow!("missing finalized block!"))?;
+
                     let highest_block_number = db
                         .get_highest_block_number()?
                         .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
@@ -270,16 +277,22 @@ impl Consensus {
                         .get_block_by_number(highest_block_number)?
                         .ok_or_else(|| anyhow!("missing head block!"))?;
 
-                    state.set_to_root(high_block.header.state_root_hash.into());
+                    if finalized_number > high_block.number() {
+                        state.set_to_root(finalzied_block.header.state_root_hash.into());
+                    } else {
+                        state.set_to_root(high_block.header.state_root_hash.into());
+                    }
 
                     // If there was a newer block proposed - it's no longer valid because not every participant could have received it
-                    if head_block.number() > high_block.number() {
+                    if head_block.number() > high_block.number()
+                        && head_block.number() > finalized_number
+                    {
                         db.revert_canonical_block_number(head_block.number())?;
                         db.remove_transactions_executed_in_block(&head_block.hash())?;
                         db.remove_block(&head_block)?;
                     }
 
-                    let start_view = high_block.view() + 1;
+                    let start_view = std::cmp::max(high_block.view(), finalzied_block.view()) + 1;
 
                     info!("During recovery, starting consensus at view {}", start_view);
                     (start_view, qc, true)
@@ -349,10 +362,20 @@ impl Consensus {
                     .get_block_by_view(0)
                     .unwrap()
                     .ok_or_else(|| anyhow!("missing block"))?,
-                _ => self
-                    .block_store
-                    .get_block(self.high_qc.block_hash)?
-                    .ok_or_else(|| anyhow!("missing block that high QC points to!"))?,
+                _ => {
+                    let high_block = self
+                        .block_store
+                        .get_block(self.high_qc.block_hash)?
+                        .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
+                    let finalized_block = self
+                        .get_block_by_view(self.finalized_view)?
+                        .ok_or_else(|| anyhow!("missing finalized block!"))?;
+                    if finalized_block.number() > high_block.number() {
+                        finalized_block
+                    } else {
+                        high_block
+                    }
+                }
             };
             // If we're in the genesis committee, vote again.
             let stakers = self.state.get_stakers()?;
@@ -1660,7 +1683,12 @@ impl Consensus {
 
     /// Saves the finalized tip view, and runs all hooks for the newly finalized block
     fn finalize_block(&mut self, block: Block) -> Result<()> {
-        trace!("Finalizing block {} at view {}", block.hash(), block.view());
+        trace!(
+            "Finalizing block {} at view {} num {}",
+            block.hash(),
+            block.view(),
+            block.number()
+        );
         self.finalize_view(block.view())?;
 
         let receipts = self.db.get_transaction_receipts_in_block(&block.hash())?;
