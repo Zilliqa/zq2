@@ -9,6 +9,7 @@ Tx,block,get,latest
 # Description
 
 Returns the details of the most recent Transaction block.
+Deprecated in ZQ2; now returns a constant placeholder value.
 
 # Curl
 

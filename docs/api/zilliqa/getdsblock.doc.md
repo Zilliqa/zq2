@@ -6,13 +6,10 @@ GetDSBlock
 
 DS,block,get
 
-# Status
-
-NotYetDocumented
-
 # Description
 
 Returns the details of a specified Directory Service block.
+Deprecated in ZQ2; now returns a constant placeholder value.
 
 # Curl
 
@@ -49,7 +46,7 @@ public class App {
 ```python
 from pyzil.zilliqa import chain
 chain.set_active_chain(chain.MainNet)
-print(chain.active_chain.api.GetDsBlock("9000
+print(chain.active_chain.api.GetDsBlock("9000"))
 ```
 
 # Go
@@ -102,4 +99,3 @@ func GetDsBlock() {
 | `jsonrpc` | string | Required | `"2.0"`                                              |
 | `method`  | string | Required | `"GetDsBlock"`                                       |
 | `params`  | string | Required | Specified DS block number to return. Example: `"40"` |
-
