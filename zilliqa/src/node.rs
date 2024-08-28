@@ -528,12 +528,8 @@ impl Node {
             let inspector_config = TracingInspectorConfig::from_geth_config(&config);
             let mut inspector = TracingInspector::new(inspector_config);
 
-            let result = state.apply_transaction(
-                txn,
-                self.get_chain_id(),
-                block.header,
-                &mut inspector,
-            )?;
+            let result =
+                state.apply_transaction(txn, self.get_chain_id(), block.header, &mut inspector)?;
 
             let TransactionApplyResult::Evm(result, ..) = result else {
                 return Ok(None);
