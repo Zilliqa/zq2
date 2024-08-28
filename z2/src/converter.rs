@@ -22,7 +22,7 @@ use git2::Repository;
 use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
 use itertools::Itertools;
 use revm::primitives::ResultAndState;
-use serde::{de::Unexpected::Str, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sha3::Keccak256;
@@ -364,11 +364,9 @@ pub async fn convert_persistence(
     let mut parent_hash = Hash::ZERO;
 
     for (block_number, block) in tx_blocks_iter {
-        //for chunk in chunks.into_iter() {
         let mut transactions = Vec::new();
         let mut receipts = Vec::new();
 
-        //for (block_number, block) in chunk {
         let block = zq1::TxBlock::from_proto(block)?;
         // TODO: Retain ZQ1 block hash, so we can return it in APIs.
 
