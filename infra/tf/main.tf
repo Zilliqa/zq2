@@ -92,26 +92,10 @@ resource "google_project_iam_member" "artifact_registry_reader" {
 }
 
 resource "google_project_iam_member" "secret_manager_accessor" {
-  project = var.gcp_docker_registry_project_id
+  project = data.google_project.this.project_id
   role    = "roles/secretmanager.secretAccessor"
   member  = "serviceAccount:${google_service_account.node.email}"
 }
-
-# data "external" "genesis_key_converted" {
-#   program     = ["cargo", "run", "--bin", "convert-key"]
-#   working_dir = "${path.module}/../.."
-#   query = {
-#     secret_key = var.genesis_key
-#   }
-# }
-
-# data "external" "bootstrap_key_converted" {
-#   program     = ["cargo", "run", "--bin", "convert-key"]
-#   working_dir = "${path.module}/../.."
-#   query = {
-#     secret_key = var.bootstrap_key
-#   }
-# }
 
 module "bootstrap_node" {
   source = "./modules/node"
@@ -124,29 +108,25 @@ module "bootstrap_node" {
   node_zones            = local.default_zones
   network_name          = local.network_name
   subnetwork_name       = data.google_compute_subnetwork.default.name
-  # docker_image          = var.docker_image
-  external_ip     = data.google_compute_address.bootstrap.address
-  persistence_url = var.persistence_url
-  # secret_keys     = [local.bootstrap_key]
-  zq_network_name = var.network_name
-  role            = "bootstrap"
-  labels          = local.labels
+  external_ip           = data.google_compute_address.bootstrap.address
+  persistence_url       = var.persistence_url
+  zq_network_name       = var.network_name
+  role                  = "bootstrap"
+  labels                = local.labels
 }
 
 module "validators" {
   source = "./modules/node"
   vm_num = var.validator_node_count
 
-  name                  = "${var.network_name}-node-validator"
-  service_account_email = google_service_account.node.email
-  dns_zone_project_id   = var.dns_zone_project_id
-  nodes_dns_zone_name   = var.nodes_dns_zone_name
-  network_name          = local.network_name
-  node_zones            = local.default_zones
-  subnetwork_name       = data.google_compute_subnetwork.default.name
-  # docker_image          = var.docker_image
-  persistence_url = var.persistence_url
-  # secret_keys     = var.validator_node_private_keys
+  name                   = "${var.network_name}-node-validator"
+  service_account_email  = google_service_account.node.email
+  dns_zone_project_id    = var.dns_zone_project_id
+  nodes_dns_zone_name    = var.nodes_dns_zone_name
+  network_name           = local.network_name
+  node_zones             = local.default_zones
+  subnetwork_name        = data.google_compute_subnetwork.default.name
+  persistence_url        = var.persistence_url
   role                   = "validator"
   zq_network_name        = var.network_name
   generate_reward_wallet = true
@@ -163,11 +143,9 @@ module "apis" {
   network_name          = local.network_name
   node_zones            = local.default_zones
   subnetwork_name       = data.google_compute_subnetwork.default.name
-  # docker_image          = var.docker_image
-  persistence_url = var.persistence_url
-  # secret_keys     = var.api_node_private_keys
-  role            = "api"
-  zq_network_name = var.network_name
+  persistence_url       = var.persistence_url
+  role                  = "api"
+  zq_network_name       = var.network_name
 }
 
 resource "google_project_service" "osconfig" {
@@ -220,21 +198,6 @@ resource "google_compute_backend_service" "api" {
   load_balancing_scheme = "EXTERNAL_MANAGED"
   enable_cdn            = false
   session_affinity      = "CLIENT_IP"
-
-  # backend {
-  #   group           = google_compute_instance_group.bootstrap.self_link
-  #   balancing_mode  = "UTILIZATION"
-  #   capacity_scaler = 1.0
-  # }
-
-  # dynamic "backend" {
-  #   for_each = google_compute_instance_group.validator
-  #   content {
-  #     group           = backend.value.self_link
-  #     balancing_mode  = "UTILIZATION"
-  #     capacity_scaler = 1.0
-  #   }
-  # }
 
   dynamic "backend" {
     for_each = google_compute_instance_group.api

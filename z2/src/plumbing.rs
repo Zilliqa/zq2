@@ -93,11 +93,12 @@ pub async fn run_kpi_collector(config_file: &str) -> Result<()> {
 
 pub async fn run_deployer_new(
     network_name: &str,
+    eth_chain_id: u64,
     project_id: &str,
     roles: Vec<NodeRole>,
 ) -> Result<()> {
     println!("🦆 Generating the deployer configuration file {network_name}.yaml .. ");
-    deployer::new(network_name, project_id, roles).await?;
+    deployer::new(network_name, eth_chain_id, project_id, roles).await?;
     Ok(())
 }
 

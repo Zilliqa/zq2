@@ -13,6 +13,7 @@ use crate::{
 
 pub struct ChainNode {
     chain_name: String,
+    eth_chain_id: u64,
     role: NodeRole,
     machine: Machine,
     versions: HashMap<String, String>,
@@ -21,9 +22,11 @@ pub struct ChainNode {
     genesis_wallet_private_key: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl ChainNode {
     pub fn new(
         chain_name: String,
+        eth_chain_id: u64,
         role: NodeRole,
         machine: Machine,
         versions: HashMap<String, String>,
@@ -33,6 +36,7 @@ impl ChainNode {
     ) -> Self {
         Self {
             chain_name,
+            eth_chain_id,
             role,
             machine,
             versions,
@@ -50,6 +54,7 @@ impl ChainNode {
         println!("Installing {} instance {}", self.role, self.machine.name,);
 
         self.tag_machine().await?;
+        self.clean_previous_install().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
 
@@ -60,6 +65,7 @@ impl ChainNode {
         println!("Upgrading {} instance {}", self.role, self.machine.name,);
 
         self.tag_machine().await?;
+        self.clean_previous_install().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
 
@@ -67,6 +73,7 @@ impl ChainNode {
         if self.role == NodeRole::Bootstrap
             || self.role == NodeRole::Validator
             || self.role == NodeRole::Api
+            || self.role == NodeRole::Checkpoint
         {
             let first_block_number = self.machine.get_local_block_number().await?;
             loop {
@@ -197,7 +204,31 @@ impl ChainNode {
             .copy_to(&[provisioning_script], "/tmp/provision_node.py")
             .await?;
 
+        if self.role == NodeRole::Checkpoint {
+            let temp_checkpoint_cron_job = NamedTempFile::new()?;
+            let checkpoint_cron_job = &self
+                .create_checkpoint_cron_job(temp_checkpoint_cron_job.path().to_str().unwrap())
+                .await?;
+
+            self.machine
+                .copy_to(&[checkpoint_cron_job], "/tmp/checkpoint_cron_job.sh")
+                .await?;
+        }
+
         println!("Configuration files imported in the node");
+
+        Ok(())
+    }
+
+    async fn clean_previous_install(&self) -> Result<()> {
+        let cmd = "sudo rm -f /tmp/config.toml /tmp/provision_node.py";
+        let output = self.machine.run(cmd).await?;
+        if !output.success {
+            println!("{:?}", output.stderr);
+            return Err(anyhow!("Error removing previous installation files"));
+        }
+
+        println!("Removed previous installation files");
 
         Ok(())
     }
@@ -207,12 +238,41 @@ impl ChainNode {
         let output = self.machine.run(cmd).await?;
         if !output.success {
             println!("{:?}", output.stderr);
-            return Err(anyhow!("upgrade failed"));
+            return Err(anyhow!("Error running the provisioning script"));
+        }
+
+        if self.role == NodeRole::Checkpoint {
+            let cmd = "sudo chmod 777 /tmp/checkpoint_cron_job.sh && sudo mv /tmp/checkpoint_cron_job.sh /checkpoint_cron_job.sh && echo '*/5 * * * * /checkpoint_cron_job.sh' | sudo crontab -";
+            let output = self.machine.run(cmd).await?;
+            if !output.success {
+                println!("{:?}", output.stderr);
+                return Err(anyhow!("Error creating the checkpoint cronjob"));
+            }
         }
 
         println!("Provisioning script run successfully");
 
         Ok(())
+    }
+
+    async fn create_checkpoint_cron_job(&self, filename: &str) -> Result<String> {
+        let spec_config = include_str!("../resources/checkpoints.tera.sh");
+
+        let eth_chain_id = self.eth_chain_id.to_string();
+
+        let mut var_map = BTreeMap::<&str, &str>::new();
+        var_map.insert("network_name", &self.chain_name);
+        var_map.insert("eth_chain_id", &eth_chain_id);
+
+        let ctx = Context::from_serialize(var_map)?;
+        let rendered_template = Tera::one_off(spec_config, &ctx, false)?;
+        let config_file = rendered_template.as_str();
+
+        let mut fh = File::create(filename).await?;
+        fh.write_all(config_file.as_bytes()).await?;
+        println!("Cron job file created: {filename}");
+
+        Ok(filename.to_owned())
     }
 
     async fn create_config_toml(&self, filename: &str) -> Result<String> {
@@ -221,9 +281,11 @@ impl ChainNode {
         let genesis_wallet = EthereumAddress::from_private_key(&self.genesis_wallet_private_key)?;
         let bootstrap_node = EthereumAddress::from_private_key(&self.bootstrap_private_key)?;
         let role_name = self.role.to_string();
+        let eth_chain_id = self.eth_chain_id.to_string();
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", &role_name);
+        var_map.insert("eth_chain_id", &eth_chain_id);
         var_map.insert("bootstrap_public_ip", &self.bootstrap_public_ip);
         var_map.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
         var_map.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
@@ -287,6 +349,7 @@ impl ChainNode {
 
 pub async fn get_nodes(
     chain_name: &str,
+    eth_chain_id: u64,
     project_id: &str,
     node_role: NodeRole,
     versions: HashMap<String, String>,
@@ -406,6 +469,7 @@ pub async fn get_nodes(
         .map(|m| {
             ChainNode::new(
                 chain_name.to_owned(),
+                eth_chain_id,
                 node_role.clone(),
                 m,
                 versions.clone(),
