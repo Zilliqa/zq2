@@ -54,6 +54,7 @@ impl ChainNode {
         println!("Installing {} instance {}", self.role, self.machine.name,);
 
         self.tag_machine().await?;
+        self.clean_previous_install().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
 
@@ -64,6 +65,7 @@ impl ChainNode {
         println!("Upgrading {} instance {}", self.role, self.machine.name,);
 
         self.tag_machine().await?;
+        self.clean_previous_install().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
 
@@ -218,12 +220,25 @@ impl ChainNode {
         Ok(())
     }
 
+    async fn clean_previous_install(&self) -> Result<()> {
+        let cmd = "sudo rm -f /tmp/config.toml /tmp/provision_node.py";
+        let output = self.machine.run(cmd).await?;
+        if !output.success {
+            println!("{:?}", output.stderr);
+            return Err(anyhow!("Error removing previous installation files"));
+        }
+
+        println!("Removed previous installation files");
+
+        Ok(())
+    }
+
     async fn run_provisioning_script(&self) -> Result<()> {
         let cmd = "sudo chmod 666 /tmp/config.toml /tmp/provision_node.py && sudo mv /tmp/config.toml /config.toml && sudo python3 /tmp/provision_node.py";
         let output = self.machine.run(cmd).await?;
         if !output.success {
             println!("{:?}", output.stderr);
-            return Err(anyhow!("upgrade failed"));
+            return Err(anyhow!("Error running the provisioning script"));
         }
 
         if self.role == NodeRole::Checkpoint {
@@ -231,7 +246,7 @@ impl ChainNode {
             let output = self.machine.run(cmd).await?;
             if !output.success {
                 println!("{:?}", output.stderr);
-                return Err(anyhow!("upgrade failed"));
+                return Err(anyhow!("Error creating the checkpoint cronjob"));
             }
         }
 

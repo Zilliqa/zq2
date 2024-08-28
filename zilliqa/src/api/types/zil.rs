@@ -6,7 +6,7 @@ use alloy::{
 };
 use anyhow::Result;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{hex, hex_no_prefix, option_hex_no_prefix};
 use crate::{
@@ -395,4 +395,119 @@ pub enum RPCErrorCode {
     RpcVerifyRejected = -26,       // Transaction or block was rejected by network rules
     RpcInWarmup = -28,             // Client still warming up
     RpcMethodDeprecated = -32,     // RPC method is deprecated
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlock {
+    pub header: DSBlockHeader,
+    pub signature: String,
+}
+
+impl From<DSBlockVerbose> for DSBlock {
+    fn from(verbose_block: DSBlockVerbose) -> Self {
+        DSBlock {
+            header: DSBlockHeader::from(verbose_block.header),
+            signature: verbose_block.signature,
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlockHeader {
+    pub BlockNum: String,
+    pub Difficulty: u64,
+    pub DifficultyDS: u64,
+    pub GasPrice: String,
+    pub PoWWinners: Vec<String>,
+    pub PrevHash: String,
+    pub Timestamp: String,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlockVerbose {
+    // Sample fields based on given/expected data structure
+    pub B1: Vec<bool>,
+    pub B2: Vec<bool>,
+    pub CS1: String,
+    pub PrevDSHash: String,
+    pub header: DSBlockHeaderVerbose,
+    pub signature: String,
+}
+
+impl From<DSBlockHeaderVerbose> for DSBlockHeader {
+    fn from(header: DSBlockHeaderVerbose) -> Self {
+        DSBlockHeader {
+            BlockNum: header.BlockNum,
+            Difficulty: header.Difficulty,
+            DifficultyDS: header.DifficultyDS,
+            GasPrice: header.GasPrice,
+            PoWWinners: header.PoWWinners,
+            PrevHash: header.PrevHash,
+            Timestamp: header.Timestamp,
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlockHeaderVerbose {
+    pub BlockNum: String,
+    pub CommitteeHash: String,
+    pub Difficulty: u64,
+    pub DifficultyDS: u64,
+    pub EpochNum: String,
+    pub GasPrice: String,
+    pub MembersEjected: Vec<String>,
+    pub PoWWinners: Vec<String>,
+    pub PoWWinnersIP: Vec<PoWWinnerIP>,
+    pub PrevHash: String,
+    pub ReservedField: String,
+    pub SWInfo: SWInfo,
+    pub ShardingHash: String,
+    pub Timestamp: String,
+    pub Version: u32,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PoWWinnerIP {
+    pub IP: String,
+    pub port: u32,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SWInfo {
+    pub Scilla: Vec<u64>,
+    pub Zilliqa: Vec<u64>,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct GetCurrentDSCommResult {
+    pub CurrentDSEpoch: String,
+    pub CurrentTxEpoch: String,
+    pub NumOfDSGuard: u32,
+    pub dscomm: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlockRateResult {
+    pub rate: f64,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlockListingResult {
+    pub data: Vec<DSBlockListing>,
+    pub maxPages: u32,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlockListing {
+    pub BlockNum: u64,
+    pub Hash: String,
 }
