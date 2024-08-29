@@ -7,6 +7,8 @@ Unreleased changes.
 
 - [#1372](https://github.com/Zilliqa/zq2/pull/1372): Fix `code_hash` calculation and state delta application for empty EVM contracts.
 
+- [#1373](https://github.com/Zilliqa/zq2/pull/1373): Fix duplicated requests for blocks when a node connects to the network.
+
 ## [0.1.1] - 2024-08-14
 
 - [#1290](https://github.com/Zilliqa/zq2/pull/1281): Fix over-eager clean up of votes which could cause votes for pending blocks to get lost.
