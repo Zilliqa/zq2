@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 Unreleased changes.
-- [#1304](https://github.com/Zilliqa/zq2/pull/1304): Implement the following APIs for querying DS blocks:  `eth_getGasPrice`, `GetMinerInfo`, `GetNodeType`, `GetNumDSBlocks`, `GetNumPeers`, `GetNumTransactions`, `GetNumTxnsDSEpoch`, `GetNumTxnsTxEpoch`, `GetRecentTransactions`, `GetSmartContractSubState`, `GetSoftConfirmedTransaction`, `GetStateProof`, `GetTotalCoinSupply`, `GetTotalCoinSupplyAsInt`, `GetTransactionStatus`, `GetTransactionsForTxBlockEx`, `GetTxBlockRate`, `GetTxRate`, `GetTxnBodiesForTxBlockEx`, `TxBlockListing`
+- [#1304](https://github.com/Zilliqa/zq2/pull/1304): Implement the following APIs for querying DS blocks: `GetDSBlock`, `GetDSBlockVerbose`, `GetLatestDSBlock`, `GetCurrentDSComm`, `GetCurrentDSEpoch`, `DSBlockListing`, `GetDSBlockRate`,
 
 ## [0.1.1] - 2024-08-14
 
