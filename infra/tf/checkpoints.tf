@@ -113,7 +113,7 @@ resource "google_storage_bucket" "checkpoint" {
   location = var.region
   labels   = local.labels
 
-  force_destroy               = false
+  force_destroy               = var.checkpoint_bucket_force_destroy
   uniform_bucket_level_access = true
   public_access_prevention    = "inherited"
 
