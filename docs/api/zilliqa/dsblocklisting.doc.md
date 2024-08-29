@@ -6,15 +6,12 @@ DSBlockListing
 
 ds,block,listing
 
-# Status
-
-NotYetImplemented
-
 # Description
 
 Returns a paginated list of up to **10** Directory Service (DS) blocks and their
 block hashes for a specified page. The `maxPages` variable that specifies the
 maximum number of pages available is also returned.
+Deprecated in ZQ2; now returns a constant placeholder value.
 
 # Curl
 

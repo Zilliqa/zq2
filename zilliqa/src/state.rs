@@ -101,10 +101,6 @@ impl State {
             Some(contract_addr::INTERSHARD_BRIDGE),
         )?;
 
-        if config.consensus.genesis_accounts.is_empty() {
-            panic!("No genesis accounts provided");
-        }
-
         for (address, balance) in config.consensus.genesis_accounts {
             state.mutate_account(address, |a| a.balance = *balance)?;
         }

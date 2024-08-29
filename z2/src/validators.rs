@@ -103,27 +103,22 @@ impl ChainConfig {
 #[derive(Clone, Debug, ValueEnum)]
 // TODO: decomment when became available
 pub enum Chain {
-    // Devnet,
+    #[value(name = "zq2-devnet")]
+    Zq2Devnet,
     #[value(name = "zq2-prototestnet")]
     Zq2ProtoTestnet,
     // ProtoMainnet,
     // Testnet,
     // Mainnet,
-    #[value(name = "zq2-mr-prototestnet")]
-    Zq2MrProtoTestnet,
-    #[value(name = "zq2-protodevnet")]
-    Zq2ProtoDevnet,
 }
 
 #[allow(dead_code)]
 impl Chain {
     fn as_str(&self) -> &'static str {
         match self {
-            Chain::Zq2ProtoDevnet => "zq2-protodevnet",
+            Chain::Zq2Devnet => "zq2-devnet",
             Chain::Zq2ProtoTestnet => "zq2-prototestnet",
-            Chain::Zq2MrProtoTestnet => "zq2-mr-prototestnet",
             // Chain::ProtoMainnet => "protomainnet",
-            // Chain::Devnet => "devnet",
             // Chain::Testnet => "testnet",
             // Chain::Mainnet => "mainnet",
         }
@@ -131,11 +126,9 @@ impl Chain {
 
     fn get_endpoint(&self) -> Option<&'static str> {
         match self {
-            Chain::Zq2ProtoDevnet => Some("https://api.zq2-protodevnet.zilliqa.com"),
+            Chain::Zq2Devnet => Some("https://api.zq2-devnet.zilliqa.com"),
             Chain::Zq2ProtoTestnet => Some("https://api.zq2-prototestnet.zilliqa.com"),
-            Chain::Zq2MrProtoTestnet => Some("https://api.zq2-mr-prototestnet.zilstg.dev"),
             // Chain::ProtoMainnet => None,
-            // Chain::Devnet => Some("https://api.zq2-devnet.zilliqa.com"),
             // Chain::Testnet => None,
             // Chain::Mainnet => None,
         }
@@ -143,11 +136,9 @@ impl Chain {
 
     fn from_str(chain_name: &str) -> Result<Self, Error> {
         match chain_name {
-            "zq2-protodevnet" => Ok(Chain::Zq2ProtoDevnet),
+            "zq2-devnet" => Ok(Chain::Zq2Devnet),
             "zq2-prototestnet" => Ok(Chain::Zq2ProtoTestnet),
-            "zq2-mr-prototestnet" => Ok(Chain::Zq2MrProtoTestnet),
             // "protomainnet" => Ok(Chain::ProtoMainnet),
-            // "devnet" => Ok(Chain::Devnet),
             // "testnet" => Ok(Chain::Testnet),
             // "mainnet" => Ok(Chain::Mainnet),
             _ => Err(anyhow!("Chain not supported")),
@@ -156,14 +147,9 @@ impl Chain {
 
     pub fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
         match chain_name {
-            "zq2-protodevnet" => Ok(include_str!(
-                "../resources/chain-specs/zq2-protodevnet.toml"
-            )),
+            "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
             "zq2-prototestnet" => Ok(include_str!(
                 "../resources/chain-specs/zq2-prototestnet.toml"
-            )),
-            "zq2-mr-prototestnet" => Ok(include_str!(
-                "../resources/chain-specs/zq2-mr-prototestnet.toml"
             )),
             _ => Err(anyhow!("Configuration file for {} not found", chain_name)),
         }

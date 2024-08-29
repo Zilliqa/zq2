@@ -10,7 +10,7 @@ Unreleased changes.
 - [#1285](https://github.com/Zilliqa/zq2/pull/1285): Use `libp2p-autonat` to automatically determine a node's public addresses.
 - [#1281](https://github.com/Zilliqa/zq2/pull/1281): Emit an `ERROR` level log when a node panics.
 - [#1174](https://github.com/Zilliqa/zq2/pull/1174): Limit the returned size of `GetSmartContractState` when the `state_rpc_limit` configuration is set.
-
+- [#1304](https://github.com/Zilliqa/zq2/pull/1304): Implement DS block APIs by inventing placeholder blocks.
 ## [0.1.0] - 2024-08-01
 
 Initial release of Zilliqa 2.
