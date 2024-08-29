@@ -1,5 +1,5 @@
 pub mod api;
-mod block_store;
+pub mod block_store;
 mod blockhooks;
 pub mod cfg;
 pub mod consensus;
