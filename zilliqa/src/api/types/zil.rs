@@ -538,3 +538,8 @@ pub struct DSBlockListing {
     #[serde(rename = "Hash")]
     pub hash: String,
 }
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TXBlockRateResult {
+    pub rate: f64,
+}

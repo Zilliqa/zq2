@@ -629,5 +629,22 @@ async fn get_ds_block_rate(mut network: Network) {
         .await
         .expect("Failed to call GetDSBlockRate API");
 
-    zilliqa::api::types::zil::DSBlockRateResult::deserialize(&response).unwrap();
+    let returned = zilliqa::api::types::zil::DSBlockRateResult::deserialize(&response).unwrap();
+
+    assert!(returned.rate >= 0.0, "Block rate should be non-negative");
+}
+
+#[zilliqa_macros::test]
+async fn get_tx_block_rate(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxBlockRate", [""])
+        .await
+        .expect("Failed to call GetTxBlockRate API");
+
+    let returned = zilliqa::api::types::zil::TXBlockRateResult::deserialize(&response).unwrap();
+
+    assert!(returned.rate >= 0.0, "Block rate should be non-negative");
 }
