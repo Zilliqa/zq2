@@ -559,7 +559,7 @@ impl StateServer {
                 };
 
                 match active_call.fetch_blockchain_info(query_name, query_args) {
-                    Ok(value) => Ok(Value::Array(vec![true.into(), value.into()])),
+                    Ok((success, value)) => Ok(Value::Array(vec![success.into(), value.into()])),
                     Err(e) => Err(err(e)),
                 }
             }
@@ -788,16 +788,31 @@ impl ActiveCall {
         Ok(())
     }
 
-    fn fetch_blockchain_info(&self, name: String, _args: String) -> Result<String> {
+    fn fetch_blockchain_info(&self, name: String, args: String) -> Result<(bool, String)> {
         match name.as_str() {
-            "CHAINID" => Ok(self.state.get_zil_chain_id().to_string()),
-            "BLOCKNUMBER" => Ok(self.current_block.number.to_string()),
-            "TIMESTAMP" => Ok(self
-                .current_block
-                .timestamp
-                .duration_since(SystemTime::UNIX_EPOCH)?
-                .as_micros()
-                .to_string()),
+            "CHAINID" => Ok((true, self.state.get_zil_chain_id().to_string())),
+            "BLOCKNUMBER" => Ok((true, self.current_block.number.to_string())),
+            "BLOCKHASH" => {
+                let block_number: u64 = args.parse()?;
+                match self.state.get_block_by_number(block_number)? {
+                    Some(block) => Ok((true, block.hash().to_string())),
+                    None => Ok((false, "".to_string())),
+                }
+            }
+            "TIMESTAMP" => {
+                let block_number: u64 = args.parse()?;
+                match self.state.get_block_by_number(block_number)? {
+                    Some(block) => Ok((
+                        true,
+                        block
+                            .timestamp()
+                            .duration_since(SystemTime::UNIX_EPOCH)?
+                            .as_micros()
+                            .to_string(),
+                    )),
+                    None => Ok((false, "".to_string())),
+                }
+            }
             _ => Err(anyhow!(
                 "fetch_blockchain_info: `{name}` not implemented yet."
             )),

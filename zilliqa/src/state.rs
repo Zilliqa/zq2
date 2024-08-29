@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
+    block_store::BlockStore,
     cfg::NodeConfig,
     contracts, crypto,
     db::TrieStorage,
@@ -46,10 +47,11 @@ pub struct State {
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
     pub zil_chain_id: u64,
+    pub block_store: Arc<BlockStore>,
 }
 
 impl State {
-    pub fn new(trie: TrieStorage, config: &NodeConfig) -> State {
+    pub fn new(trie: TrieStorage, config: &NodeConfig, block_store: Arc<BlockStore>) -> State {
         let db = Arc::new(trie);
         let consensus_config = &config.consensus;
         Self {
@@ -62,6 +64,7 @@ impl State {
             block_gas_limit: consensus_config.eth_block_gas_limit,
             gas_price: *consensus_config.gas_price,
             zil_chain_id: ChainId::zil_chain_id(config.eth_chain_id),
+            block_store,
         }
     }
 
@@ -78,12 +81,21 @@ impl State {
             .unwrap()
     }
 
-    pub fn new_at_root(trie: TrieStorage, root_hash: B256, config: NodeConfig) -> Self {
-        Self::new(trie, &config).at_root(root_hash)
+    pub fn new_at_root(
+        trie: TrieStorage,
+        root_hash: B256,
+        config: NodeConfig,
+        block_store: Arc<BlockStore>,
+    ) -> Self {
+        Self::new(trie, &config, block_store).at_root(root_hash)
     }
 
-    pub fn new_with_genesis(trie: TrieStorage, config: NodeConfig) -> Result<State> {
-        let mut state = State::new(trie, &config);
+    pub fn new_with_genesis(
+        trie: TrieStorage,
+        config: NodeConfig,
+        block_store: Arc<BlockStore>,
+    ) -> Result<State> {
+        let mut state = State::new(trie, &config, block_store);
 
         if config.consensus.is_main {
             let shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
@@ -161,6 +173,7 @@ impl State {
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
             zil_chain_id: self.zil_chain_id,
+            block_store: self.block_store.clone(),
         }
     }
 

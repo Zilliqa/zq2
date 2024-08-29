@@ -239,10 +239,15 @@ impl Consensus {
                 db.state_trie()?,
                 latest_block.state_root_hash().into(),
                 config.clone(),
+                block_store.clone_read_only(),
             )
         } else {
             trace!("Contructing new state from genesis");
-            State::new_with_genesis(db.state_trie()?, config.clone())?
+            State::new_with_genesis(
+                db.state_trie()?,
+                config.clone(),
+                block_store.clone_read_only(),
+            )?
         };
 
         let (latest_block, latest_block_view) = match latest_block {

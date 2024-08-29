@@ -1021,6 +1021,10 @@ impl PendingState {
         self.pre_state.zil_chain_id
     }
 
+    pub fn get_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
+        self.pre_state.block_store.get_block_by_number(block_number)
+    }
+
     pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
         load_account(&self.pre_state, &mut self.new_state, address)
     }
