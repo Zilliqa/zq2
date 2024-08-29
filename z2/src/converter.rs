@@ -76,7 +76,7 @@ pub async fn convert_persistence(
     let db = Arc::new(zq2_db);
     let node_config = &zq2_config.nodes[0];
     let block_store = Arc::new(BlockStore::new(
-        &node_config,
+        node_config,
         db.clone(),
         message_sender.clone(),
     )?);
