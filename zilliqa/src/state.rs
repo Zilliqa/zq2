@@ -21,7 +21,7 @@ use crate::{
     exec::BaseFeeCheck,
     inspector,
     message::{BlockHeader, MAX_COMMITTEE_SIZE},
-    scilla::Scilla,
+    scilla::{Scilla, Transition},
     transaction::EvmGas,
 };
 
@@ -287,6 +287,7 @@ pub enum Code {
         code: String,
         init_data: String,
         types: BTreeMap<String, (String, u8)>,
+        transitions: Vec<Transition>,
     },
 }
 

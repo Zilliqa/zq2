@@ -26,7 +26,7 @@ use jsonrpsee::{
 use prost::Message as _;
 use serde::{
     de::{self, Unexpected},
-    Deserialize, Deserializer,
+    Deserialize, Deserializer, Serialize,
 };
 use serde_json::Value;
 use tokio::runtime;
@@ -344,9 +344,25 @@ pub struct Location {
 pub struct ContractInfo {
     pub scilla_major_version: String,
     pub fields: Vec<Param>,
+    pub transitions: Vec<Transition>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Transition {
+    #[serde(rename = "vname")]
+    pub name: String,
+    pub params: Vec<TransitionParam>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TransitionParam {
+    #[serde(rename = "vname")]
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Param {
     #[serde(rename = "vname")]
     pub name: String,
