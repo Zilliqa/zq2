@@ -16,28 +16,7 @@ use serde_json::{json, Value};
 use super::{
     to_hex::ToHex,
     types::zil::{
-        self,
-        BlockchainInfo,
-        DSBlock,
-        DSBlockHeaderVerbose,
-        DSBlockListing,
-        DSBlockListingResult,
-        DSBlockRateResult,
-        DSBlockVerbose,
-        GetCurrentDSCommResult,
-        MinerInfo,
-        RecentTransactionsResponse,
-        SWInfo,
-        ShardingStructure,
-        SmartContract,
-        SmartContractSubState,
-        StateProofResponse,
-        TransactionBody,
-        TransactionStatusResponse,
-        TxBlockListing,
-        TxBlockListingResult,
-        TxnBodiesForTxBlockExResponse,
-        TxnsForTxBlockExResponse,
+        self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult, DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo, RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, SmartContractSubState, StateProofResponse, TransactionBody, TransactionStatusResponse, TxBlockListing, TxBlockListingResult, TxRate, TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse
     },
 };
 use crate::{
@@ -907,12 +886,17 @@ pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlo
     })
 }
 
-pub fn get_ds_block_rate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<DSBlockRateResult> {
-    // Dummy implementation
+pub fn get_ds_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlockRateResult> {
+    let node = node.lock().unwrap();
+    let measurement_span = 60*60; // 1 hour
+    let tx_blocks_count = node.db.count_blocks_in_last_seconds(measurement_span)?;
+    let tx_block_rate = tx_blocks_count as f64 / measurement_span as f64;
+    let ds_block_rate = tx_block_rate / TX_BLOCKS_PER_DS_BLOCK as f64;
     Ok(DSBlockRateResult {
-        rate: 0.00014142137245459714,
+        rate: ds_block_rate,
     })
 }
+
 fn get_num_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u64> {
     let node = node.lock().unwrap();
     let num_peers = node.consensus.block_store.get_num_peers();
