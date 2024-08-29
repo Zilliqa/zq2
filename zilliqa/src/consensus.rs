@@ -1264,7 +1264,7 @@ impl Consensus {
         Ok(committee)
     }
 
-    pub fn new_view(&mut self, _: PeerId, new_view: NewView) -> Result<Option<Block>> {
+    pub fn new_view(&mut self, new_view: NewView) -> Result<Option<Block>> {
         trace!("Received new view for height: {:?}", new_view.view);
 
         // The leader for this view should be chosen according to the parent of the highest QC
