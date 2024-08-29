@@ -26,7 +26,7 @@ use jsonrpsee::{
 use prost::Message as _;
 use serde::{
     de::{self, Unexpected},
-    Deserialize, Deserializer,
+    Deserialize, Deserializer, Serialize,
 };
 use serde_json::Value;
 use tokio::runtime;
@@ -34,7 +34,6 @@ use tracing::trace;
 
 use crate::{
     exec::{PendingState, StorageValue},
-    message::BlockHeader,
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
     time::SystemTime,
@@ -192,7 +191,6 @@ impl Scilla {
         gas_limit: ScillaGas,
         value: ZilAmount,
         init: &[Value],
-        current_block: BlockHeader,
     ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
         let args = vec![
             "-i".to_owned(),
@@ -217,7 +215,7 @@ impl Scilla {
             self.state_server
                 .lock()
                 .unwrap()
-                .active_call(sender, state, current_block, || {
+                .active_call(sender, state, || {
                     self.request_tx.send(("run", params))?;
                     Ok(self.response_rx.lock().unwrap().recv()?)
                 })?;
@@ -262,7 +260,6 @@ impl Scilla {
         value: ZilAmount,
         init: &[Value],
         msg: &Value,
-        current_block: BlockHeader,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
         let args = vec![
             "-init".to_owned(),
@@ -287,15 +284,14 @@ impl Scilla {
         let mut params = ObjectParams::new();
         params.insert("argv", args)?;
 
-        let (response, state) = self.state_server.lock().unwrap().active_call(
-            contract,
-            state,
-            current_block,
-            || {
-                self.request_tx.send(("run", params))?;
-                Ok(self.response_rx.lock().unwrap().recv()?)
-            },
-        )?;
+        let (response, state) =
+            self.state_server
+                .lock()
+                .unwrap()
+                .active_call(contract, state, || {
+                    self.request_tx.send(("run", params))?;
+                    Ok(self.response_rx.lock().unwrap().recv()?)
+                })?;
 
         let response: Value = match response {
             Ok(r) => r,
@@ -350,9 +346,25 @@ pub struct Location {
 pub struct ContractInfo {
     pub scilla_major_version: String,
     pub fields: Vec<Param>,
+    pub transitions: Vec<Transition>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Transition {
+    #[serde(rename = "vname")]
+    pub name: String,
+    pub params: Vec<TransitionParam>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TransitionParam {
+    #[serde(rename = "vname")]
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Param {
     #[serde(rename = "vname")]
     pub name: String,
@@ -578,16 +590,11 @@ impl StateServer {
         &mut self,
         sender: Address, // TODO: rename
         state: PendingState,
-        current_block: BlockHeader,
         f: impl FnOnce() -> Result<R>,
     ) -> Result<(R, PendingState)> {
         {
             let mut active_call = self.active_call.lock().unwrap();
-            *active_call = Some(ActiveCall {
-                sender,
-                state,
-                current_block,
-            });
+            *active_call = Some(ActiveCall { sender, state });
         }
 
         let response = f()?;
@@ -630,7 +637,6 @@ pub fn split_storage_key(key: impl AsRef<[u8]>) -> Result<(String, Vec<Vec<u8>>)
 struct ActiveCall {
     sender: Address,
     state: PendingState,
-    current_block: BlockHeader,
 }
 
 impl ActiveCall {
@@ -791,7 +797,10 @@ impl ActiveCall {
     fn fetch_blockchain_info(&self, name: String, args: String) -> Result<(bool, String)> {
         match name.as_str() {
             "CHAINID" => Ok((true, self.state.get_zil_chain_id().to_string())),
-            "BLOCKNUMBER" => Ok((true, self.current_block.number.to_string())),
+            "BLOCKNUMBER" => match self.state.get_highest_block_number()? {
+                Some(block_number) => Ok((true, block_number.to_string())),
+                None => Ok((false, "".to_string())),
+            },
             "BLOCKHASH" => {
                 let block_number: u64 = args.parse()?;
                 match self.state.get_block_by_number(block_number)? {

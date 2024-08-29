@@ -23,7 +23,7 @@ use crate::{
     cfg::{ConsensusConfig, NodeConfig},
     crypto::{verify_messages, Hash, NodePublicKey, NodePublicKeyRaw, NodeSignature, SecretKey},
     db::Db,
-    exec::TransactionApplyResult,
+    exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockResponse,
@@ -717,7 +717,7 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn apply_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
+    pub fn apply_transaction<I: Inspector<PendingState> + ScillaInspector>(
         &mut self,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
@@ -729,7 +729,7 @@ impl Consensus {
         Self::apply_transaction_at(state, db, node_config, txn, current_block, inspector)
     }
 
-    pub fn apply_transaction_at<I: for<'s> Inspector<&'s State> + ScillaInspector>(
+    pub fn apply_transaction_at<I: Inspector<PendingState> + ScillaInspector>(
         state: &mut State,
         db: Arc<Db>,
         config: &NodeConfig,

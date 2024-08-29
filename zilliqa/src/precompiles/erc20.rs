@@ -8,7 +8,7 @@ use revm::{
     ContextStatefulPrecompile, InnerEvmContext,
 };
 
-use crate::state::State;
+use crate::exec::PendingState;
 
 pub struct ERC20Precompile;
 
@@ -16,7 +16,7 @@ impl ERC20Precompile {
     fn get_balance(
         input: &[u8],
         _gas_price: u64,
-        context: &mut InnerEvmContext<&State>,
+        context: &mut InnerEvmContext<PendingState>,
     ) -> PrecompileResult {
         let Ok(decoded) = decode(&[ParamType::Address], input) else {
             return Err(
@@ -38,7 +38,7 @@ impl ERC20Precompile {
         };
         let address = Address::new(address.0);
 
-        let Ok(account) = context.db.get_account(address) else {
+        let Ok(account) = context.db.pre_state.get_account(address) else {
             return Ok(PrecompileOutput::new(
                 0,
                 encode(&[Token::Uint(ethabi::Uint::from(0))]).into(),
@@ -53,12 +53,12 @@ impl ERC20Precompile {
     }
 }
 
-impl ContextStatefulPrecompile<&State> for ERC20Precompile {
+impl ContextStatefulPrecompile<PendingState> for ERC20Precompile {
     fn call(
         &self,
         input: &Bytes,
         gas_price: u64,
-        context: &mut InnerEvmContext<&State>,
+        context: &mut InnerEvmContext<PendingState>,
     ) -> PrecompileResult {
         if input.length() < 4 {
             return Err(PrecompileError::Other(

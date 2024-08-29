@@ -412,26 +412,35 @@ impl From<DSBlockVerbose> for DSBlock {
     }
 }
 
-#[allow(non_snake_case)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct DSBlockHeader {
-    pub BlockNum: String,
-    pub Difficulty: u64,
-    pub DifficultyDS: u64,
-    pub GasPrice: String,
-    pub PoWWinners: Vec<String>,
-    pub PrevHash: String,
-    pub Timestamp: String,
+    #[serde(rename = "BlockNum")]
+    pub block_num: String,
+    #[serde(rename = "Difficulty")]
+    pub difficulty: u64,
+    #[serde(rename = "DifficultyDS")]
+    pub difficulty_ds: u64,
+    #[serde(rename = "GasPrice")]
+    pub gas_price: String,
+    #[serde(rename = "PoWWinners")]
+    pub pow_winners: Vec<String>,
+    #[serde(rename = "PrevHash")]
+    pub prev_hash: String,
+    #[serde(rename = "Timestamp")]
+    pub timestamp: String,
 }
 
-#[allow(non_snake_case)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct DSBlockVerbose {
     // Sample fields based on given/expected data structure
-    pub B1: Vec<bool>,
-    pub B2: Vec<bool>,
-    pub CS1: String,
-    pub PrevDSHash: String,
+    #[serde(rename = "B1")]
+    pub b1: Vec<bool>,
+    #[serde(rename = "B2")]
+    pub b2: Vec<bool>,
+    #[serde(rename = "CS1")]
+    pub cs1: String,
+    #[serde(rename = "PrevDSHash")]
+    pub prev_dshash: String,
     pub header: DSBlockHeaderVerbose,
     pub signature: String,
 }
@@ -439,57 +448,74 @@ pub struct DSBlockVerbose {
 impl From<DSBlockHeaderVerbose> for DSBlockHeader {
     fn from(header: DSBlockHeaderVerbose) -> Self {
         DSBlockHeader {
-            BlockNum: header.BlockNum,
-            Difficulty: header.Difficulty,
-            DifficultyDS: header.DifficultyDS,
-            GasPrice: header.GasPrice,
-            PoWWinners: header.PoWWinners,
-            PrevHash: header.PrevHash,
-            Timestamp: header.Timestamp,
+            block_num: header.block_num,
+            difficulty: header.difficulty,
+            difficulty_ds: header.difficulty_ds,
+            gas_price: header.gas_price,
+            pow_winners: header.po_wwinners,
+            prev_hash: header.prev_hash,
+            timestamp: header.timestamp,
         }
     }
 }
 
-#[allow(non_snake_case)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct DSBlockHeaderVerbose {
-    pub BlockNum: String,
-    pub CommitteeHash: String,
-    pub Difficulty: u64,
-    pub DifficultyDS: u64,
-    pub EpochNum: String,
-    pub GasPrice: String,
-    pub MembersEjected: Vec<String>,
-    pub PoWWinners: Vec<String>,
-    pub PoWWinnersIP: Vec<PoWWinnerIP>,
-    pub PrevHash: String,
-    pub ReservedField: String,
-    pub SWInfo: SWInfo,
-    pub ShardingHash: String,
-    pub Timestamp: String,
-    pub Version: u32,
+    #[serde(rename = "BlockNum")]
+    pub block_num: String,
+    #[serde(rename = "CommitteeHash")]
+    pub committee_hash: String,
+    #[serde(rename = "Difficulty")]
+    pub difficulty: u64,
+    #[serde(rename = "DifficultyDS")]
+    pub difficulty_ds: u64,
+    #[serde(rename = "EpochNum")]
+    pub epoch_num: String,
+    #[serde(rename = "GasPrice")]
+    pub gas_price: String,
+    #[serde(rename = "MembersEjected")]
+    pub members_ejected: Vec<String>,
+    #[serde(rename = "PoWWinners")]
+    pub po_wwinners: Vec<String>,
+    #[serde(rename = "PoWWinnersIP")]
+    pub po_wwinners_ip: Vec<PoWWinnerIP>,
+    #[serde(rename = "PrevHash")]
+    pub prev_hash: String,
+    #[serde(rename = "ReservedField")]
+    pub reserved_field: String,
+    #[serde(rename = "SWInfo")]
+    pub swinfo: SWInfo,
+    #[serde(rename = "ShardingHash")]
+    pub sharding_hash: String,
+    #[serde(rename = "Timestamp")]
+    pub timestamp: String,
+    #[serde(rename = "Version")]
+    pub version: u32,
 }
 
-#[allow(non_snake_case)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PoWWinnerIP {
-    pub IP: String,
+    #[serde(rename = "IP")]
+    pub ip: String,
     pub port: u32,
 }
 
-#[allow(non_snake_case)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct SWInfo {
-    pub Scilla: Vec<u64>,
-    pub Zilliqa: Vec<u64>,
+    #[serde(rename = "Scilla")]
+    pub scilla: Vec<u64>,
+    #[serde(rename = "Zilliqa")]
+    pub zilliqa: Vec<u64>,
 }
 
-#[allow(non_snake_case)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct GetCurrentDSCommResult {
-    pub CurrentDSEpoch: String,
-    pub CurrentTxEpoch: String,
-    pub NumOfDSGuard: u32,
+    #[serde(rename = "CurrentDSEpoch")]
+    pub current_dsepoch: String,
+    #[serde(rename = "CurrentTxEpoch")]
+    pub current_tx_epoch: String,
+    #[serde(rename = "NumOfDSGuard")]
+    pub num_of_dsguard: u32,
     pub dscomm: Vec<String>,
 }
 
@@ -498,16 +524,17 @@ pub struct DSBlockRateResult {
     pub rate: f64,
 }
 
-#[allow(non_snake_case)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct DSBlockListingResult {
     pub data: Vec<DSBlockListing>,
-    pub maxPages: u32,
+    #[serde(rename = "maxPages")]
+    pub max_pages: u32,
 }
 
-#[allow(non_snake_case)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct DSBlockListing {
-    pub BlockNum: u64,
-    pub Hash: String,
+    #[serde(rename = "BlockNum")]
+    pub block_num: u64,
+    #[serde(rename = "Hash")]
+    pub hash: String,
 }

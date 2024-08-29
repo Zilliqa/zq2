@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     num::NonZeroUsize,
     sync::{Arc, RwLock},
     time::Duration,
@@ -59,7 +59,7 @@ pub struct BlockStore {
     /// newly created blocks that arrive while we are syncing.
     buffered: LruCache<Hash, Proposal>,
     /// Requests we would like to send, but haven't been able to (e.g. because we have no peers).
-    unserviceable_requests: Vec<(u64, u64)>,
+    unserviceable_requests: BTreeSet<(u64, u64)>,
     message_sender: MessageSender,
 }
 
@@ -100,7 +100,7 @@ impl BlockStore {
             buffered: LruCache::new(
                 NonZeroUsize::new(config.max_blocks_in_flight as usize + 100).unwrap(),
             ),
-            unserviceable_requests: vec![],
+            unserviceable_requests: BTreeSet::new(),
             message_sender,
         })
     }
@@ -118,7 +118,7 @@ impl BlockStore {
             batch_size: 0,
             failed_request_sleep_duration: Duration::ZERO,
             buffered: LruCache::new(NonZeroUsize::new(1).unwrap()),
-            unserviceable_requests: vec![],
+            unserviceable_requests: BTreeSet::new(),
             message_sender: self.message_sender.clone(),
         })
     }
@@ -177,11 +177,8 @@ impl BlockStore {
             self.requested_view = current_view;
         }
 
-        // Attempt to send pending requests if we can. Note that unserviceable requests are retried in LIFO order. This
-        // effectively means that requests for higher views are sent first. Also, we break early if a peer can't
-        // service the final request, despite the possibility that it could service a request for lower views. If this
-        // appears to be a problem in practice, we could use a `VecDeque` and retry requests in FIFO order.
-        while let Some((from, to)) = self.unserviceable_requests.pop() {
+        // Attempt to send pending requests if we can.
+        while let Some((from, to)) = self.unserviceable_requests.pop_first() {
             if !self.request_blocks(from, to)? {
                 // Stop trying to send requests if no peers are available.
                 break;
@@ -220,7 +217,7 @@ impl BlockStore {
     fn request_blocks(&mut self, from: u64, to: u64) -> Result<bool> {
         let Some(peer) = self.best_peer(from) else {
             warn!(from, "no peers to download missing blocks from");
-            self.unserviceable_requests.push((from, to));
+            self.unserviceable_requests.insert((from, to));
             return Ok(false);
         };
         trace!(%peer, from, to, "requesting blocks");
@@ -262,6 +259,10 @@ impl BlockStore {
             return Ok(None);
         };
         self.get_block(hash)
+    }
+
+    pub fn get_highest_block_number(&self) -> Result<Option<u64>> {
+        self.db.get_highest_block_number()
     }
 
     pub fn get_block_by_number(&self, number: u64) -> Result<Option<Block>> {

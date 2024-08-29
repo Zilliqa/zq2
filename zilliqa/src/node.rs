@@ -26,7 +26,7 @@ use crate::{
     consensus::Consensus,
     crypto::{Hash, SecretKey},
     db::Db,
-    exec::TransactionApplyResult,
+    exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
         Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InternalMessage,
@@ -444,7 +444,7 @@ impl Node {
         Err(anyhow!("transaction not found in block: {txn_hash}"))
     }
 
-    pub fn replay_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
+    pub fn replay_transaction<I: Inspector<PendingState> + ScillaInspector>(
         &self,
         txn_hash: Hash,
         inspector: I,

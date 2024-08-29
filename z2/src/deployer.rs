@@ -98,12 +98,12 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
 pub enum NodeRole {
     /// Virtual machine bootstrap
     Bootstrap,
+    /// Virtual machine validator
+    Validator,
     /// Virtual machine api
     Api,
     /// Virtual machine apps
     Apps,
-    /// Virtual machine validator
-    Validator,
     /// Virtual machine checkpoint
     Checkpoint,
     /// Virtual machine sentry
