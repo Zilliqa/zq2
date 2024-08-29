@@ -4,6 +4,8 @@
 
 Unreleased changes.
 
+[#1369](https://github.com/Zilliqa/zq2/pull/1369): Global variables in EVM refer to the current and not to the parent block
+
 ## [0.1.1] - 2024-08-14
 
 - [#1290](https://github.com/Zilliqa/zq2/pull/1281): Fix over-eager clean up of votes which could cause votes for pending blocks to get lost.

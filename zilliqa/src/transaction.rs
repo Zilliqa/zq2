@@ -366,11 +366,11 @@ impl SignedTransaction {
         &self,
         account: &Account,
         block_gas_limit: EvmGas,
-        chain_id: u64,
+        eth_chain_id: u64,
     ) -> Result<bool> {
         self.validate_input_size()?;
         self.validate_gas_limit(block_gas_limit)?;
-        self.validate_chain_id(chain_id)?;
+        self.validate_chain_id(eth_chain_id)?;
         self.validate_sender_account(account)
     }
 
@@ -453,12 +453,19 @@ impl SignedTransaction {
         Ok(true)
     }
 
-    fn validate_chain_id(&self, chain_id: u64) -> Result<bool> {
+    fn validate_chain_id(&self, eth_chain_id: u64) -> Result<bool> {
+        let node_chain_id = match &self {
+            SignedTransaction::Zilliqa {..} => {
+                eth_chain_id - 0x8000
+            },
+            _ => eth_chain_id
+        };
+
         if let Some(txn_chain_id) = self.chain_id() {
-            if chain_id != txn_chain_id {
+            if node_chain_id != txn_chain_id {
                 warn!(
                     "Chain_id provided in transaction: {} is different than node chain_id: {}",
-                    txn_chain_id, chain_id
+                    txn_chain_id, node_chain_id
                 );
                 return Ok(false);
             }

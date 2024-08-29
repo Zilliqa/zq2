@@ -477,6 +477,8 @@ impl Consensus {
             block.hash()
         );
 
+        info!("Handling proposal. Root hash: {:?}, block_root_hash: {:?}, block_num: {}, view: {}, txns: {}", self.state.root_hash()?, block.header.state_root_hash, block.number(), block.view(), transactions.len());
+
         if self.block_store.contains_block(block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
             return Ok(None);
@@ -1057,13 +1059,24 @@ impl Consensus {
 
         let node_config = &self.config;
 
+        // This is a partial header of a block that will be proposed with some sets of executed transactions.
+        // It is needed so that each transaction has a proper block number etc at the time the block is formed
+        // and also in the future when block is validated by other peers
+        let executed_block_header = BlockHeader {
+            view: self.view(),
+            number: parent.header.number + 1,
+            timestamp: SystemTime::max(SystemTime::now(), parent_header.timestamp),
+            gas_limit: gas_left,
+            ..BlockHeader::default()
+        };
+
         while let Some(tx) = transaction_pool.best_transaction() {
             let result = Self::apply_transaction_at(
                 state,
                 self.db.clone(),
                 node_config,
                 tx.clone(),
-                block.header,
+                executed_block_header,
                 inspector::noop(),
             )?;
 
@@ -1121,14 +1134,14 @@ impl Consensus {
 
         let proposal = Block::from_qc(
             self.secret_key,
-            self.view.get_view(),
+            executed_block_header.view,
             parent.header.number + 1,
             qc,
             state.root_hash()?,
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             applied_transaction_hashes.clone(),
-            SystemTime::max(SystemTime::now(), parent_header.timestamp),
+            executed_block_header.timestamp,
             self.config.consensus.eth_block_gas_limit - gas_left,
             self.config.consensus.eth_block_gas_limit,
         );
@@ -1168,7 +1181,11 @@ impl Consensus {
         self.transaction_pool = tx_pool;
         self.votes = votes;
 
-        result
+        let (block, vec) = result?.unwrap();
+
+        info!("Proposing new block. Root hash: {:?}, block_root_hash: {:?}, block_num: {}, view: {}, txns: {}", self.state.root_hash()?, block.header.state_root_hash, block.number(), block.view(), vec.len());
+
+        Ok(Some((block, vec)))
     }
 
     pub fn get_pending_block(&self) -> Result<Option<Block>> {
@@ -1398,12 +1415,12 @@ impl Consensus {
         }
 
         let account = self.state.get_account(txn.signer)?;
-        let chain_id = self.config.eth_chain_id;
+        let eth_chain_id = self.config.eth_chain_id;
 
         if !txn.tx.validate(
             &account,
             self.config.consensus.eth_block_gas_limit,
-            chain_id,
+            eth_chain_id,
         )? {
             return Ok(false);
         }
