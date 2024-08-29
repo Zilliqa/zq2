@@ -916,13 +916,24 @@ impl State {
         // Execute the while loop iff (max - min)/max < MINIMUM_PERCENT_RATIO [%]
         const MINIMUM_PERCENT_RATIO: u64 = 3;
 
+        warn!("Initial estimation succeeded with gas: {}", min);
+
         // result should be somewhere in (min, max]
         while min < max {
             let break_cond = (max - min) <= (max * MINIMUM_PERCENT_RATIO) / 100;
             if break_cond {
+                warn!(
+                    "Diff between max and min is: {}, breaking the loop!",
+                    max - min
+                );
                 break;
             }
             let mid = (min + max) / 2;
+
+            warn!(
+                "Trying better estimate with gas: {}, min: {}, max: {}",
+                mid, min, max
+            );
 
             let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
                 from_addr,
@@ -939,15 +950,24 @@ impl State {
             )?;
 
             match result {
-                ExecutionResult::Success { .. } => max = mid,
-                ExecutionResult::Revert { .. } => min = mid + 1,
+                ExecutionResult::Success { .. } => {
+                    warn!("Success, let's try with max = mid");
+                    max = mid
+                }
+                ExecutionResult::Revert { .. } => {
+                    warn!("Revert, let's try with min = mid + 1");
+                    min = mid + 1
+                }
                 ExecutionResult::Halt { reason, .. } => match reason {
-                    HaltReason::OutOfGas(_) | HaltReason::InvalidFEOpcode => min = mid + 1,
+                    HaltReason::OutOfGas(_) | HaltReason::InvalidFEOpcode => {
+                        warn!("Revert, let's try with min = mid + 1");
+                        min = mid + 1
+                    }
                     _ => return Err(anyhow!("halted due to: {reason:?}")),
                 },
             }
         }
-        debug!("Estimated gas: {}", max);
+        warn!("Finally, returned estimated gas is: {}", max);
         Ok(max)
     }
     #[allow(clippy::too_many_arguments)]
