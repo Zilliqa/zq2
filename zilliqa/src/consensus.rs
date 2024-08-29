@@ -477,8 +477,6 @@ impl Consensus {
             block.hash()
         );
 
-        info!("Handling proposal. Root hash: {:?}, block_root_hash: {:?}, block_num: {}, view: {}, txns: {}", self.state.root_hash()?, block.header.state_root_hash, block.number(), block.view(), transactions.len());
-
         if self.block_store.contains_block(block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
             return Ok(None);
@@ -1180,11 +1178,7 @@ impl Consensus {
         self.transaction_pool = tx_pool;
         self.votes = votes;
 
-        let (block, vec) = result?.unwrap();
-
-        info!("Proposing new block. Root hash: {:?}, block_root_hash: {:?}, block_num: {}, view: {}, txns: {}", self.state.root_hash()?, block.header.state_root_hash, block.number(), block.view(), vec.len());
-
-        Ok(Some((block, vec)))
+        result
     }
 
     pub fn get_pending_block(&self) -> Result<Option<Block>> {
