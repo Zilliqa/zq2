@@ -1134,7 +1134,7 @@ impl Consensus {
         let proposal = Block::from_qc(
             self.secret_key,
             executed_block_header.view,
-            parent.header.number + 1,
+            executed_block_header.number,
             qc,
             state.root_hash()?,
             Hash(transactions_trie.root_hash()?.into()),
