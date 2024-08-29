@@ -1059,9 +1059,8 @@ impl Consensus {
 
         let node_config = &self.config;
 
-        // This is a partial header of a block that will be proposed with some sets of executed transactions.
-        // It is needed so that each transaction has a proper block number etc at the time the block is formed
-        // and also in the future when block is validated by other peers
+        // This is a partial header of a block that will be proposed with some transactions executed below.
+        // It is needed so that each transaction is executed within proper block context (the block it belongs to)
         let executed_block_header = BlockHeader {
             view: self.view(),
             number: parent.header.number + 1,

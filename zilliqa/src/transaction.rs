@@ -455,10 +455,8 @@ impl SignedTransaction {
 
     fn validate_chain_id(&self, eth_chain_id: u64) -> Result<bool> {
         let node_chain_id = match &self {
-            SignedTransaction::Zilliqa {..} => {
-                eth_chain_id - 0x8000
-            },
-            _ => eth_chain_id
+            SignedTransaction::Zilliqa { .. } => eth_chain_id - 0x8000,
+            _ => eth_chain_id,
         };
 
         if let Some(txn_chain_id) = self.chain_id() {
