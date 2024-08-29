@@ -332,13 +332,12 @@ impl DatabaseRef for &State {
         }
 
         let account = self.get_account(address)?;
+        let code = Bytecode::new_raw(account.code.evm_code().unwrap_or_default().into());
         let account_info = AccountInfo {
             balance: U256::from(account.balance),
             nonce: account.nonce,
-            code_hash: KECCAK_EMPTY,
-            code: Some(Bytecode::new_raw(
-                account.code.evm_code().unwrap_or_default().into(),
-            )),
+            code_hash: code.hash_slow(),
+            code: Some(code),
         };
 
         Ok(Some(account_info))
@@ -685,18 +684,25 @@ impl State {
                 )?;
             }
 
+            // `account.info.code` might be `None`, even though we always return `Some` for the account code in our
+            // [DatabaseRef] implementation. However, this is only the case for empty code, so we handle this case
+            // separately.
+            let code = if account.info.code_hash == KECCAK_EMPTY {
+                vec![]
+            } else {
+                account
+                    .info
+                    .code
+                    .as_ref()
+                    .expect("code_by_hash is not used")
+                    .original_bytes()
+                    .to_vec()
+            };
+
             let account = Account {
                 nonce: account.info.nonce,
                 balance: account.info.balance.try_into()?,
-                code: Code::Evm(
-                    account
-                        .info
-                        .code
-                        .as_ref()
-                        .expect("code_by_hash is not used")
-                        .original_bytes()
-                        .to_vec(),
-                ),
+                code: Code::Evm(code),
                 storage_root: storage.root_hash()?,
             };
             trace!(?address, ?account, "update account");
