@@ -2141,7 +2141,7 @@ impl Consensus {
             }
         }
 
-        let state_at = self.state_for(&block);
+        let state_at = self.state_for(block);
 
         let public_key = state_at.leader_raw(view).unwrap();
         let peer_id = state_at
