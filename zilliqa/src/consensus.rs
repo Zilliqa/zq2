@@ -1728,7 +1728,7 @@ impl Consensus {
         }
 
         // Derive the proposer from the block's view
-        let proposer = self.leader_at_block(&parent, block.view()).unwrap();
+        let proposer = self.leader_at_block_infallable(&parent, block.view());
 
         // Verify the proposer's signature on the block
         let verified = proposer
@@ -1960,6 +1960,10 @@ impl Consensus {
             .ok_or_else(|| anyhow!("No block at height {number}"))
     }
 
+    pub fn state_for(&self, block: &Block) -> State {
+        self.state.at_root(block.state_root_hash().into())
+    }
+
     fn get_highest_from_agg(&self, agg: &AggregateQc) -> Result<QuorumCertificate> {
         agg.qcs
             .iter()
@@ -2123,6 +2127,32 @@ impl Consensus {
             .unwrap();
 
         Some((public_key, peer_id))
+    }
+
+    pub fn leader_at_block_infallable(&self, block: &Block, view: u64) -> Validator {
+        if let Some(CachedLeader {
+            block_number: cached_block_number,
+            view: cached_view,
+            next_leader,
+        }) = *self.latest_leader_cache.borrow()
+        {
+            if cached_block_number == block.number() && cached_view == view {
+                return next_leader;
+            }
+        }
+
+        let state_at = self.state_for(&block);
+
+        let public_key = state_at.leader_raw(view).unwrap();
+        let peer_id = state_at
+            .get_peer_id_raw(public_key.clone())
+            .unwrap()
+            .unwrap();
+
+        Validator {
+            public_key: public_key.try_into().unwrap(),
+            peer_id,
+        }
     }
 
     fn total_weight(&self, committee: &[NodePublicKey]) -> u128 {
