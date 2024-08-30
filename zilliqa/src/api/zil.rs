@@ -632,7 +632,7 @@ pub fn calculate_tx_block_rate(node: &Arc<Mutex<Node>>) -> Result<f64> {
     let node = node.lock().unwrap();
     let max_measurement_blocks = 5;
     let height = node.get_chain_tip();
-    if height <= 0 {
+    if height == 0 {
         return Ok(0.0);
     }
     let measurement_blocks = height.min(max_measurement_blocks);
