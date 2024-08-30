@@ -1728,7 +1728,7 @@ impl Consensus {
         }
 
         // Derive the proposer from the block's view
-        let proposer = self.leader_at_block_infallable(&parent, block.view());
+        let proposer = self.leader_at_block_infallible(&parent, block.view());
 
         // Verify the proposer's signature on the block
         let verified = proposer
@@ -2129,7 +2129,7 @@ impl Consensus {
         Some((public_key, peer_id))
     }
 
-    pub fn leader_at_block_infallable(&self, block: &Block, view: u64) -> Validator {
+    pub fn leader_at_block_infallible(&self, block: &Block, view: u64) -> Validator {
         if let Some(CachedLeader {
             block_number: cached_block_number,
             view: cached_view,
