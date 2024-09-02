@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy::primitives::{Address, U256};
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{MemoryDB, Trie};
 use itertools::Itertools;
@@ -1010,17 +1010,12 @@ impl Consensus {
     fn finish_early_proposal_at(
         &self,
         state: &mut State,
-        votes: &mut BTreeMap<Hash, BlockVotes>,
+        votes: &BTreeMap<Hash, BlockVotes>,
         proposal: Block,
     ) -> Result<Option<Block>> {
-        // Ensure proposal has Genesis QC.
-        ensure!(
-            proposal.header.qc == QuorumCertificate::genesis(),
-            "proposal QC mismatch"
-        );
-
         // Retrieve parent block data
         let parent_hash = proposal.parent_hash();
+        info!("parent_hash {}", parent_hash);
         let parent_block = self
             .get_block(&parent_hash)?
             .context("missing parent block")?;
@@ -1072,10 +1067,11 @@ impl Consensus {
         Ok(Some(proposal))
     }
 
-    fn propose_early_block_at(
+    fn assemble_early_block_at(
         &self,
         state: &mut State,
         transaction_pool: &mut TransactionPool,
+        votes: &BTreeMap<Hash, BlockVotes>,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         // Start with highest canonical block
         let num = self
@@ -1085,6 +1081,12 @@ impl Consensus {
         let block = self
             .get_block_by_number(num)?
             .context("missing canonical block")?; // retrieve highest canonical block
+
+        // Generate early QC
+        let (signatures, cosigned, _, _) = votes
+            .get(&block.hash())
+            .context("tried to create a proposal without any votes")?;
+        let early_qc = self.qc_from_bits(block.hash(), &signatures, *cosigned, block.view());
 
         // Ensure sane state
         let previous_state_root_hash = state.root_hash()?;
@@ -1173,8 +1175,8 @@ impl Consensus {
             self.secret_key,
             self.view.get_view(),
             block.header.number + 1,
-            QuorumCertificate::genesis(), // dummy QC for early proposal
-            state.root_hash()?,           // last state before rewards are applied
+            early_qc,           // dummy QC for early proposal
+            state.root_hash()?, // last state before rewards are applied
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             applied_transaction_hashes,
@@ -1384,15 +1386,19 @@ impl Consensus {
     fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         let mut state = self.state.clone();
         let mut tx_pool = self.transaction_pool.clone();
-        let mut votes = self.votes.clone();
 
-        let result = self.propose_new_block_at(&mut state, &mut tx_pool, &mut votes);
+        let (pending_block, applied_txs) = self
+            .assemble_early_block_at(&mut state, &mut tx_pool, &self.votes)?
+            .context("early proposal block")?;
+
+        let final_block = self
+            .finish_early_proposal_at(&mut state, &self.votes, pending_block)?
+            .context("final block failure")?;
 
         self.state = state;
         self.transaction_pool = tx_pool;
-        self.votes = votes;
 
-        result
+        Ok(Some((final_block, applied_txs)))
     }
 
     pub fn get_pending_block(&self) -> Result<Option<Block>> {
