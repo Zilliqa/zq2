@@ -1012,6 +1012,7 @@ impl Consensus {
         transaction_pool: &mut TransactionPool,
         votes: &mut BTreeMap<Hash, BlockVotes>,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+        // Start with highest canonical block
         let num = self
             .db
             .get_highest_block_number()?
@@ -1040,7 +1041,76 @@ impl Consensus {
             state.set_to_root(block.state_root_hash().into());
         }
 
-        // Start assembling new block, with whatever is in the mempool
+        // Assemble new block, with whatever is in the mempool
+        let node_config = &self.config;
+        let parent_header = block.header;
+
+        // Internal states
+        let mut gas_left = self.config.consensus.eth_block_gas_limit;
+        let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut updated_root_hash = state.root_hash()?;
+        let mut tx_index_in_block = 0;
+        let mut applied_transactions = Vec::<VerifiedTransaction>::new();
+
+        while let Some(tx) = transaction_pool.best_transaction() {
+            // First - check if we have time left to process txns and give enough time for block propagation
+            let (
+                time_since_last_view_change,
+                exponential_backoff_timeout,
+                minimum_time_left_for_empty_block,
+            ) = self.get_consensus_timeout_params();
+
+            if time_since_last_view_change + minimum_time_left_for_empty_block
+                >= exponential_backoff_timeout
+            {
+                break;
+            }
+
+            let result = Self::apply_transaction_at(
+                state,
+                self.db.clone(),
+                node_config,
+                tx.clone(),
+                parent_header,
+                inspector::noop(),
+            )?;
+
+            // Skip transactions whose execution resulted in an error and drop them.
+            let Some(result) = result else {
+                continue;
+            };
+
+            // Decrement gas and break loop if limit is exceeded
+            gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
+                g
+            } else {
+                // undo last transaction
+                transaction_pool.insert_ready_transaction(tx);
+                state.set_to_root(updated_root_hash.into());
+                break;
+            };
+
+            // Do necessary work to assemble the transaction
+            transaction_pool.mark_executed(&tx);            
+            transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
+
+            let receipt = Self::create_txn_receipt(
+                result.clone(),
+                tx.hash,
+                tx_index_in_block,
+                self.config.consensus.eth_block_gas_limit - gas_left,
+            );
+            let receipt_hash = receipt.compute_hash();
+            receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
+
+            tx_index_in_block += 1;
+            updated_root_hash = state.root_hash()?;
+            applied_transactions.push(tx);
+        }
+
+        // It is possible to propose an empty block.
+
 
         Ok(None)
     }
