@@ -42,6 +42,8 @@ enum Commands {
     /// Deposit stake amount to validators
     Deposit(DepositStruct),
     Kpi(KpiStruct),
+    /// Print out the ports in use (otherwise they scroll off the top too fast)
+    Ports(RunStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -410,6 +412,10 @@ async fn main() -> Result<()> {
                 arg.watch,
             )
             .await?;
+            Ok(())
+        }
+        Commands::Ports(ref arg) => {
+            plumbing::print_ports(&base_dir, arg.base_port, &arg.config_dir).await?;
             Ok(())
         }
         Commands::Run(ref arg) => {

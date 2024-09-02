@@ -9,13 +9,16 @@ use std::{
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use lru::LruCache;
+use serde::{Deserialize, Serialize};
+use std::ops::Range;
 use tracing::*;
 
 use crate::{
     cfg::NodeConfig,
+    constants,
     crypto::Hash,
     db::Db,
-    message::{Block, BlockRequest, ExternalMessage, Proposal},
+    message::{Block, BlockRequest, BlockStrategy, ExternalMessage, Proposal},
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
 };
@@ -51,6 +54,11 @@ pub struct BlockStore {
     batch_size: u64,
     /// When a request to a peer fails, do not send another request to this peer for this amount of time.
     failed_request_sleep_duration: Duration,
+    /// Our block strategies.
+    strategies: Vec<BlockStrategy>,
+    /// Last time we updated our availability - we do this at most once a second or so to avoid spam
+    available_blocks: Vec<BlockStrategy>,
+    available_blocks_updated: Option<SystemTime>,
     /// Buffered block proposals, indexed by their parent hash. These are proposals we've received, whose parents we
     /// haven't yet seen. We want to be careful about buffering too many proposals. There is no guarantee or proof that
     /// any of them will eventually form our canonical chain. Therefore we limit the number of buffered proposals to
@@ -63,10 +71,21 @@ pub struct BlockStore {
     message_sender: MessageSender,
 }
 
-#[derive(Clone, Debug)]
-struct PeerInfo {
+/// Data about block availability sent between peers
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BlockAvailability {
+    /// None means no information, Some([]) means the other node shouldn't be relied upon for any blocks at all.
+    strategies: Option<Vec<BlockStrategy>>,
     /// The largest view we've seen from a block that this peer sent us.
     highest_known_view: u64,
+}
+
+#[derive(Clone, Debug)]
+struct PeerInfo {
+    /// Availability from this peer
+    availability: BlockAvailability,
+    /// When did we last update availability?
+    availability_updated_at: Option<SystemTime>,
     /// The number of blocks we've requested from the peer.
     requested_blocks: u64,
     /// Requests we've sent to the peer.
@@ -78,10 +97,81 @@ struct PeerInfo {
 impl PeerInfo {
     fn new(request_capacity: NonZeroUsize) -> Self {
         Self {
-            highest_known_view: 0,
+            availability: BlockAvailability::new(),
+            availability_updated_at: None,
             requested_blocks: 0,
             pending_requests: LruCache::new(request_capacity),
             last_request_failed_at: None,
+        }
+    }
+}
+
+/// Data about a peer
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PeerInfoStatus {
+    availability: BlockAvailability,
+    availability_updated_at: Option<u64>,
+    requested_blocks: u64,
+    pending_requests: Vec<(String, u64, u64)>,
+    last_request_failed_at: Option<u64>,
+}
+
+/// Data about the block store, used for debugging.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct BlockStoreStatus {
+    highest_known_view: u64,
+    blocks_held: Vec<Range<u64>>,
+    peers: Vec<(String, PeerInfoStatus)>,
+    availability: Option<Vec<BlockStrategy>>,
+}
+
+impl BlockStoreStatus {
+    pub fn new(block_store: &mut BlockStore) -> Result<Self> {
+        let peers = block_store
+            .peers
+            .iter()
+            .map(|(k, v)| (format!("{:?}", k), PeerInfoStatus::new(&v)))
+            .collect::<Vec<_>>();
+
+        Ok(Self {
+            highest_known_view: block_store.highest_known_view,
+            blocks_held: block_store.db.get_block_ranges()?,
+            peers,
+            availability: block_store.availability()?,
+        })
+    }
+}
+
+impl PeerInfoStatus {
+    // Annoyingly, this can't (easily) be allowed to fail without making generating debug info hard.
+    fn new(info: &PeerInfo) -> Self {
+        fn s_from_time(q: Option<SystemTime>) -> Option<u64> {
+            q.map(|z| {
+                z.duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or(Duration::ZERO)
+                    .as_secs()
+            })
+        }
+        let pending_requests = info
+            .pending_requests
+            .iter()
+            .map(|(k, v)| (format!("{:?}", k), v.0, v.1))
+            .collect::<Vec<_>>();
+        Self {
+            availability: info.availability.clone(),
+            availability_updated_at: s_from_time(info.availability_updated_at),
+            requested_blocks: info.requested_blocks,
+            pending_requests,
+            last_request_failed_at: s_from_time(info.last_request_failed_at),
+        }
+    }
+}
+
+impl BlockAvailability {
+    pub fn new() -> Self {
+        Self {
+            strategies: None,
+            highest_known_view: 0,
         }
     }
 }
@@ -97,6 +187,9 @@ impl BlockStore {
             max_blocks_in_flight: config.max_blocks_in_flight,
             batch_size: config.block_request_batch_size,
             failed_request_sleep_duration: config.failed_request_sleep_duration,
+            strategies: vec![],
+            available_blocks: vec![],
+            available_blocks_updated: None,
             buffered: LruCache::new(
                 NonZeroUsize::new(config.max_blocks_in_flight as usize + 100).unwrap(),
             ),
@@ -117,10 +210,46 @@ impl BlockStore {
             max_blocks_in_flight: 0,
             batch_size: 0,
             failed_request_sleep_duration: Duration::ZERO,
+            strategies: self.strategies.clone(),
+            available_blocks: Vec::new(),
+            available_blocks_updated: None,
             buffered: LruCache::new(NonZeroUsize::new(1).unwrap()),
             unserviceable_requests: BTreeSet::new(),
             message_sender: self.message_sender.clone(),
         })
+    }
+
+    /// Update someone else's availability
+    pub fn update_availability(
+        &mut self,
+        from: PeerId,
+        avail: &Option<Vec<BlockStrategy>>,
+    ) -> Result<()> {
+        let the_peer = self.peer_info(from);
+        the_peer.availability.strategies = avail.clone();
+        the_peer.availability_updated_at = Some(SystemTime::now());
+        Ok(())
+    }
+
+    /// Retrieve our availability.
+    pub fn availability(&mut self) -> Result<Option<Vec<BlockStrategy>>> {
+        let mut to_return = self.strategies.clone();
+        let now = SystemTime::now();
+        if self.available_blocks_updated.map_or(false, |x| {
+            now.duration_since(x).unwrap_or(Duration::ZERO)
+                > Duration::from_secs(constants::RECOMPUTE_BLOCK_AVAILABILITY_AFTER_S)
+        }) {
+            trace!("Updating available blocks");
+            self.available_blocks = self
+                .db
+                .get_block_ranges()?
+                .iter()
+                .map(|x| BlockStrategy::CachedBlockRange(x.clone(), 0))
+                .collect();
+            self.available_blocks_updated = Some(now);
+        }
+        to_return.extend(self.available_blocks.iter().map(|x| x.clone()));
+        Ok(Some(to_return))
     }
 
     /// Buffer a block proposal whose parent we don't yet know about.
@@ -136,9 +265,9 @@ impl BlockStore {
         }
 
         let peer = self.peer_info(from);
-        if view > peer.highest_known_view {
+        if view > peer.availability.highest_known_view {
             trace!(%from, view, "new highest known view for peer");
-            peer.highest_known_view = view;
+            peer.availability.highest_known_view = view;
         }
 
         self.request_missing_blocks()?;
@@ -150,7 +279,7 @@ impl BlockStore {
         let (best, _) = self
             .peers
             .iter()
-            .filter(|(_, peer)| peer.highest_known_view >= view)
+            .filter(|(_, peer)| peer.availability.highest_known_view >= view)
             // If the last request failed, don't send requests to this peer for 10 seconds.
             .filter(|(_, peer)| {
                 peer.last_request_failed_at
@@ -285,9 +414,9 @@ impl BlockStore {
         if let Some(from) = from {
             let peer = self.peer_info(from);
             peer.requested_blocks = peer.requested_blocks.saturating_sub(1);
-            if block.view() > peer.highest_known_view {
+            if block.view() > peer.availability.highest_known_view {
                 trace!(%from, view = block.view(), "new highest known view for peer");
-                peer.highest_known_view = block.view();
+                peer.availability.highest_known_view = block.view();
             }
         }
 

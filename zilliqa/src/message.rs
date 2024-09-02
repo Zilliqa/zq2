@@ -4,19 +4,19 @@ use std::{
     path::Path,
 };
 
-use alloy::primitives::Address;
-use anyhow::{anyhow, Result};
-use bitvec::{bitarr, order::Msb0};
-use itertools::Either;
-use serde::{Deserialize, Serialize};
-use sha3::{Digest, Keccak256};
-
 use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
     db::TrieStorage,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
 };
+use alloy::primitives::Address;
+use anyhow::{anyhow, Result};
+use bitvec::{bitarr, order::Msb0};
+use itertools::Either;
+use serde::{Deserialize, Serialize};
+use sha3::{Digest, Keccak256};
+use std::ops::Range;
 
 /// The maximum number of validators in the consensus committee. This is passed to the deposit contract and we expect
 /// it to reject deposits which would make the committee larger than this.
@@ -187,6 +187,20 @@ impl NewView {
     }
 }
 
+/// Each node advertises one or more block strategies. Each strategy signifies a willingness to maintain
+/// some group of blocks; when we attempt to fetch a block or block range, we will try to pick a peer that
+/// maintains the blocks we are interested in.
+///
+/// This allows us to compute the blocks a peer is likely to have in its cache before having to be told.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum BlockStrategy {
+    /// "I have these blocks at the moment and I won't drop them until block .."
+    /// 0 == unlimited.
+    CachedBlockRange(Range<u64>, u64),
+    /// "I keep this number of blocks back from the last block I know about"
+    TrackLastN(u64),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockRequest {
     pub from_view: u64,
@@ -196,6 +210,9 @@ pub struct BlockRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
     pub proposals: Vec<Proposal>,
+    /// When we send a block response, we may also send data on what blocks we are prepared
+    /// to serve.
+    pub availability: Option<Vec<BlockStrategy>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,10 +264,16 @@ impl Display for ExternalMessage {
                 let first = views.next();
                 let last = views.last();
                 match (first, last) {
-                    (None, None) => write!(f, "BlockResponse([])"),
-                    (Some(first), None) => write!(f, "BlockResponse([{first}])"),
+                    (None, None) => write!(f, "BlockResponse([], avail={:?})", r.availability),
+                    (Some(first), None) => {
+                        write!(f, "BlockResponse([{first}, avail={:?}])", r.availability)
+                    }
                     (Some(first), Some(last)) => {
-                        write!(f, "BlockResponse([{first}, ..., {last}])")
+                        write!(
+                            f,
+                            "BlockResponse([{first}, ..., {last}, avail={:?}])",
+                            r.availability
+                        )
                     }
                     (None, Some(_)) => unreachable!(),
                 }

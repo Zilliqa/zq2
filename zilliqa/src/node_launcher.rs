@@ -116,7 +116,7 @@ impl NodeLauncher {
         )?;
         let node = Arc::new(Mutex::new(node));
 
-        let rpc_module = api::rpc_module(Arc::clone(&node));
+        let rpc_module = api::rpc_module(Arc::clone(&node), config.enable_debug_api);
 
         if !config.disable_rpc {
             trace!("Launching JSON-RPC server");

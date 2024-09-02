@@ -29,6 +29,7 @@ use crate::{
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt},
 };
+use std::ops::Range;
 
 macro_rules! sqlify_with_bincode {
     ($type: ty) => {
@@ -720,6 +721,16 @@ impl Db {
             .is_some())
     }
 
+    fn make_view_range(row: &Row) -> rusqlite::Result<Range<u64>> {
+        // Add one to end because the range returned from SQL is inclusive.
+        let start: u64 = row.get(0)?;
+        let end_inc: u64 = row.get(1)?;
+        Ok(Range {
+            start,
+            end: end_inc + 1,
+        })
+    }
+
     fn make_receipt(row: &Row) -> rusqlite::Result<TransactionReceipt> {
         Ok(TransactionReceipt {
             tx_hash: row.get(0)?,
@@ -785,6 +796,14 @@ impl Db {
             .unwrap()
             .execute("DELETE FROM receipts WHERE block_hash = ?1", [block_hash])?;
         Ok(())
+    }
+
+    /// Retrieve a list of ranges of blocks in our db.
+    pub fn get_block_ranges(&self) -> Result<Vec<Range<u64>>> {
+        // The island field is technically redundant, but it helps with debugging.
+        Ok(self.block_store.lock().unwrap()
+            .prepare_cached("SELECT MIN(view),MAX(view),view-rank AS island FROM ( SELECT view,ROW_NUMBER() OVER (ORDER BY view) AS rank FROM blocks ) GROUP BY island ORDER BY MIN(view) ASC")?
+           .query_map([], Self::make_view_range)?.collect::<Result<Vec<_>,_>>()?)
     }
 }
 

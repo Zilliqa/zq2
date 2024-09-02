@@ -235,6 +235,7 @@ impl Setup {
                 block_request_batch_size: block_request_batch_size_default(),
                 state_rpc_limit: state_rpc_limit_default(),
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
+                enable_debug_api: true,
             };
             println!("Node {i} has RPC port {0}", node_config.json_rpc_port);
             let data_dir_name = format!("{0}{1}", DATADIR_PREFIX, i);

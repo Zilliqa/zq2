@@ -12,6 +12,12 @@ const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
 
 use crate::{collector, components::Component, converter, deployer, docgen, perf, setup, zq1};
 
+pub async fn print_ports(base_dir: &str, base_port: u16, config_dir: &str) -> Result<()> {
+    let setup_obj = setup::Setup::new(4, config_dir, "", base_dir, base_port, true, false)?;
+    println!("{0}", setup_obj.get_port_map());
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_local_net(
     base_dir: &str,
@@ -200,7 +206,7 @@ pub async fn run_persistence_converter(
     let zq2_dir = PathBuf::from_str(zq2_data_dir)?;
     let config_file = PathBuf::from_str(zq2_config)?;
     let zq2_config = fs::read_to_string(config_file).await?;
-    let zq2_config: zilliqa::cfg::Config = toml::from_str(&zq2_config)?;
+    let zq2_config: zilliqdb:cfg::Config = toml::from_str(&zq2_config)?;
     let shard_id: u64 = zq2_config
         .nodes
         .first()

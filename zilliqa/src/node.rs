@@ -263,11 +263,15 @@ impl Node {
                     .collect::<Result<_>>()?;
 
                 trace!("responding to new blocks request of {request:?}");
+                let availability = self.consensus.block_store.availability()?;
 
                 // Send the response to this block request.
                 self.request_responses.send((
                     response_channel,
-                    ExternalMessage::BlockResponse(BlockResponse { proposals }),
+                    ExternalMessage::BlockResponse(BlockResponse {
+                        proposals,
+                        availability,
+                    }),
                 ))?;
             }
             // We don't usually expect a [BlockResponse] to be received as a request, however this can occur when our
@@ -876,7 +880,6 @@ impl Node {
                 self.message_sender.broadcast_external_message(message)?;
             }
         }
-
         Ok(())
     }
 
@@ -893,7 +896,8 @@ impl Node {
                     .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
             }
         }
-
+        self.consensus
+            .receive_availability(from, &response.availability)?;
         Ok(())
     }
 }

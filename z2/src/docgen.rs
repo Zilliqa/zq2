@@ -397,18 +397,20 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
         block_request_batch_size: block_request_batch_size_default(),
         state_rpc_limit: state_rpc_limit_default(),
         failed_request_sleep_duration: failed_request_sleep_duration_default(),
+        enable_debug_api: false,
     };
     let secret_key = SecretKey::new()?;
     let (s1, _) = tokio::sync::mpsc::unbounded_channel();
     let (s2, _) = tokio::sync::mpsc::unbounded_channel();
     let (s3, _) = tokio::sync::mpsc::unbounded_channel();
     let (s4, _) = tokio::sync::mpsc::unbounded_channel();
-    let peers = Arc::new(AtomicUsize::new(0));
+    let peers = Arc::new(AtomicUsize::new(0));nnode
 
     let my_node = Arc::new(Mutex::new(zilliqa::node::Node::new(
         config, secret_key, s1, s2, s3, s4, peers,
     )?));
-    let module = zilliqa::api::rpc_module(my_node.clone());
+    // @TODO We don't document the debug API (for now)
+    let module = zilliqa::api::rpc_module(my_node.clone(), false);
     for m in module.method_names() {
         methods.insert(
             ApiMethod::JsonRpc {

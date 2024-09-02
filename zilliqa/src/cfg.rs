@@ -77,6 +77,11 @@ pub struct NodeConfig {
     /// Defaults to 10 seconds.
     #[serde(default = "failed_request_sleep_duration_default")]
     pub failed_request_sleep_duration: Duration,
+    /// Enable the debugging API. NEVER ENABLE THIS IN PRODUCTION
+    /// this default is technically unnecessary, but included here to strongly emphasise that you should
+    /// never enable the debug API on a production system.
+    #[serde(default = "default_false")]
+    pub enable_debug_api: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,4 +283,8 @@ pub fn epochs_per_checkpoint_default() -> u64 {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_false() -> bool {
+    false
 }

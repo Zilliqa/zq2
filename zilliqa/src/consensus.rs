@@ -28,8 +28,8 @@ use crate::{
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockResponse,
-        ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
-        MAX_COMMITTEE_SIZE,
+        BlockStrategy, ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate,
+        Vote, MAX_COMMITTEE_SIZE,
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxPoolContent},
@@ -2039,6 +2039,20 @@ impl Consensus {
         Ok(())
     }
 
+    // Receives availability and passes it on to the block store.
+    pub fn receive_availability(
+        &mut self,
+        from: PeerId,
+        availability: &Option<Vec<BlockStrategy>>,
+    ) -> Result<()> {
+        trace!(
+            "Received block availability from {:?} avail {:?}",
+            from,
+            availability
+        );
+        self.block_store.update_availability(from, availability)
+    }
+
     // Checks for the validity of a block and adds it to our block store if valid.
     // Returns true when the block is valid and newly seen and false otherwise.
     // Optionally returns a proposal that should be sent as the result of this newly received block. This occurs when
@@ -2072,6 +2086,7 @@ impl Consensus {
                 self.peer_id(),
                 ExternalMessage::BlockResponse(BlockResponse {
                     proposals: vec![child_proposal],
+                    availability: self.block_store.availability()?,
                 }),
             )?;
         }

@@ -26,3 +26,6 @@ pub const ZIL_CONTRACT_CREATE_GAS: usize = 50;
 
 // Gas needed for making transfer using ZIL transaction
 pub const ZIL_NORMAL_TXN_GAS: usize = 50;
+
+// Recompute available blocks after this many seconds
+pub const RECOMPUTE_BLOCK_AVAILABILITY_AFTER_S: u64 = 2;
