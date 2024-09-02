@@ -13,6 +13,8 @@ Unreleased changes.
 
 - [#1369](https://github.com/Zilliqa/zq2/pull/1369): Global variables in EVM refer to the current and not to the parent block
 
+- [#1389](https://github.com/Zilliqa/zq2/pull/1389): Implement `TxBlockListing` API endpoint to return a paginated list of blocks
+
 
 ## [0.1.1] - 2024-08-14
 
