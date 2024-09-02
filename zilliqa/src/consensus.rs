@@ -1007,6 +1007,49 @@ impl Consensus {
         Ok(None)
     }
 
+    fn finish_early_proposal_at(
+        &self,
+        state: &mut State,
+        votes: &mut BTreeMap<Hash, BlockVotes>,
+        proposal: Block,
+        applied_transactions: Vec<VerifiedTransaction>,
+    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+        // Retrieve parent block data
+        let parent_hash = proposal.parent_hash();
+        let parent_block = self
+            .get_block(&parent_hash)?
+            .context("missing parent block")?;
+        let block_hash = parent_block.hash();
+        let block_view = parent_block.view();
+
+        // Retrieve the committee and QC.
+        // Should have supermajority by now.
+        let committee = state.get_stakers_at_block_raw(&parent_block)?;
+        let (signatures, cosigned, cosigned_weight, supermajority_reached) = votes
+            .get(&block_hash)
+            .context("tried to finalise a proposal without any votes")?;
+        let qc = self.qc_from_bits(block_hash, &signatures, *cosigned, block_view);
+            
+        // Retrieve the previous leader.
+        let proposer = self
+            .leader_at_block(&parent_block, block_view + 1)
+            .context("missing parent block leader")?
+            .public_key;
+
+        // Apply the rewards
+        Self::apply_rewards_raw_at(
+            state,
+            &self.config.consensus,
+            &committee,
+            proposer.into(),
+            block_view + 1,
+            &qc.cosigned,
+        )?;
+
+        // Finalise the proposal
+        Ok(Some((proposal, applied_transactions)))
+    }
+
     fn propose_early_block_at(
         &self,
         state: &mut State,
