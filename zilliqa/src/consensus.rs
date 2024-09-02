@@ -950,8 +950,8 @@ impl Consensus {
                     supermajority_reached,
                 ),
             );
+            // if we are already in the round in which the vote counts and have reached supermajority
             if supermajority_reached {
-                // if we are already in the round in which the vote counts and have reached supermajority
                 if block_view + 1 == self.view.get_view() {
                     // We propose new block immediately if there's something in mempool or it's the first view
                     // Otherwise the block will be proposed on timeout
@@ -984,6 +984,9 @@ impl Consensus {
                         trace!("Empty transaction pool, will create new block on timeout");
                     }
                 }
+            } else {
+                // Assemble early proposal if we're the leader but no super majority
+                self.assemble_early_block()?;
             }
         } else {
             self.votes.insert(
@@ -1054,7 +1057,7 @@ impl Consensus {
         // Finalise the proposal with final QC and state.
         let proposal = Block::from_qc(
             self.secret_key,
-            proposal.header.view,
+            self.view.get_view(), // update current view
             proposal.header.number,
             qc,                 // actual QC
             state.root_hash()?, // post-reward updated state
@@ -1394,7 +1397,7 @@ impl Consensus {
 
         // if no early proposal is found, then assemble the block now.
         if self.early_proposal.is_none() {
-            warn!("missing early proposal");
+            warn!("missing early proposal {}", self.view.get_view());
             self.early_proposal =
                 self.assemble_early_block_at(&mut state, &mut tx_pool, &self.votes)?;
         }
@@ -1412,13 +1415,17 @@ impl Consensus {
     }
 
     /// Assembles the Proposal block, but maybe with incorrect QC.
-    pub fn propose_early_block(&mut self) -> Result<()> {
-        let mut state = self.state.clone();
-        let mut tx_pool = self.transaction_pool.clone();
-        self.early_proposal =
-            self.assemble_early_block_at(&mut state, &mut tx_pool, &self.votes)?;
-        self.state = state;
-        self.transaction_pool = tx_pool;
+    pub fn assemble_early_block(&mut self) -> Result<()> {
+        // If no early_proposal, then assemble it
+        if self.early_proposal.is_none() {
+            info!("assembling early proposal {}", self.view.get_view());
+            let mut state = self.state.clone();
+            let mut tx_pool = self.transaction_pool.clone();
+            self.early_proposal =
+                self.assemble_early_block_at(&mut state, &mut tx_pool, &self.votes)?;
+            self.state = state;
+            self.transaction_pool = tx_pool;
+        }
         Ok(())
     }
 
@@ -1451,7 +1458,7 @@ impl Consensus {
             v.insert(votes);
         }
 
-        let pending_block = self.assemble_early_block_at(&mut state, &mut tx_pool, &mut votes)?;
+        let pending_block = self.assemble_early_block_at(&mut state, &mut tx_pool, &votes)?;
 
         let Some((pending_block, _)) = pending_block else {
             return Ok(None);
