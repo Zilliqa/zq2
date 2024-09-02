@@ -1012,42 +1012,44 @@ impl Consensus {
         state: &mut State,
         votes: &mut BTreeMap<Hash, BlockVotes>,
         proposal: Block,
-        applied_transactions: Vec<VerifiedTransaction>,
-    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    ) -> Result<Option<(Block)>> {
         // Retrieve parent block data
         let parent_hash = proposal.parent_hash();
         let parent_block = self
             .get_block(&parent_hash)?
             .context("missing parent block")?;
-        let block_hash = parent_block.hash();
-        let block_view = parent_block.view();
+        let parent_block_hash = parent_block.hash();
+        let parent_block_view = parent_block.view();
 
         // Retrieve the committee and QC.
-        // Should have supermajority by now.
+        // Must have supermajority by now.
         let committee = state.get_stakers_at_block_raw(&parent_block)?;
         let (signatures, cosigned, cosigned_weight, supermajority_reached) = votes
-            .get(&block_hash)
+            .get(&parent_block_hash)
             .context("tried to finalise a proposal without any votes")?;
-        let qc = self.qc_from_bits(block_hash, &signatures, *cosigned, block_view);
-            
-        // Retrieve the previous leader.
+        let qc = self.qc_from_bits(parent_block_hash, &signatures, *cosigned, parent_block_view);
+
+        // Retrieve the previous leader, for rewards.
         let proposer = self
-            .leader_at_block(&parent_block, block_view + 1)
+            .leader_at_block(&parent_block, parent_block_view + 1)
             .context("missing parent block leader")?
             .public_key;
 
-        // Apply the rewards
+        // Apply the rewards when exiting the round
+        state.set_to_root(proposal.state_root_hash().into()); // restore last proposal state
         Self::apply_rewards_raw_at(
             state,
             &self.config.consensus,
-            &committee,
-            proposer.into(),
-            block_view + 1,
-            &qc.cosigned,
+            &committee,      // QC committee
+            proposer.into(), // Last leader
+            parent_block_view + 1,
+            &qc.cosigned, // QC cosigners
         )?;
 
-        // Finalise the proposal
-        Ok(Some((proposal, applied_transactions)))
+        // Finalise the proposal with new QC and state.
+
+        // Return the final proposal
+        Ok(Some(proposal))
     }
 
     fn propose_early_block_at(
