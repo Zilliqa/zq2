@@ -397,7 +397,7 @@ impl Node {
                 state.apply_transaction(
                     other_txn,
                     self.get_chain_id(),
-                    parent.header,
+                    block.header,
                     inspector::noop(),
                 )?;
             } else {
@@ -408,7 +408,7 @@ impl Node {
                 let result = state.apply_transaction(
                     txn,
                     self.get_chain_id(),
-                    parent.header,
+                    block.header,
                     &mut inspector,
                 )?;
 
@@ -458,12 +458,12 @@ impl Node {
                 state.apply_transaction(
                     other_txn,
                     self.get_chain_id(),
-                    parent.header,
+                    block.header,
                     inspector::noop(),
                 )?;
             } else {
                 let result =
-                    state.apply_transaction(txn, self.get_chain_id(), parent.header, inspector)?;
+                    state.apply_transaction(txn, self.get_chain_id(), block.header, inspector)?;
 
                 return Ok(result);
             }
@@ -496,7 +496,6 @@ impl Node {
                 txn_hash,
                 index,
                 &block,
-                &parent,
                 trace_opts.clone(),
             ) {
                 traces.push(trace);
@@ -512,7 +511,6 @@ impl Node {
         txn_hash: Hash,
         txn_index: usize,
         block: &Block,
-        parent_block: &Block,
         trace_opts: GethDebugTracingOptions,
     ) -> Result<Option<TraceResult>> {
         let GethDebugTracingOptions {
@@ -530,12 +528,8 @@ impl Node {
             let inspector_config = TracingInspectorConfig::from_geth_config(&config);
             let mut inspector = TracingInspector::new(inspector_config);
 
-            let result = state.apply_transaction(
-                txn,
-                self.get_chain_id(),
-                parent_block.header,
-                &mut inspector,
-            )?;
+            let result =
+                state.apply_transaction(txn, self.get_chain_id(), block.header, &mut inspector)?;
 
             let TransactionApplyResult::Evm(result, ..) = result else {
                 return Ok(None);
@@ -564,7 +558,7 @@ impl Node {
                     let result = state.apply_transaction(
                         txn,
                         self.get_chain_id(),
-                        parent_block.header,
+                        block.header,
                         &mut inspector,
                     )?;
 
@@ -586,7 +580,7 @@ impl Node {
                     let result = state.apply_transaction(
                         txn,
                         self.get_chain_id(),
-                        parent_block.header,
+                        block.header,
                         &mut inspector,
                     )?;
 
@@ -606,7 +600,7 @@ impl Node {
                     let result = state.apply_transaction(
                         txn,
                         self.get_chain_id(),
-                        parent_block.header,
+                        block.header,
                         &mut inspector,
                     )?;
 
@@ -633,7 +627,7 @@ impl Node {
                     let result = state.apply_transaction(
                         txn,
                         self.get_chain_id(),
-                        parent_block.header,
+                        block.header,
                         &mut inspector,
                     )?;
 
@@ -668,7 +662,7 @@ impl Node {
                 let result = state.apply_transaction(
                     txn,
                     self.get_chain_id(),
-                    parent_block.header,
+                    block.header,
                     &mut inspector,
                 )?;
 
