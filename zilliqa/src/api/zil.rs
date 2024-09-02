@@ -20,7 +20,7 @@ use super::{
     types::zil::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, SWInfo, ShardingStructure,
-        SmartContract, TXBlockRateResult,
+        SmartContract, TXBlockRateResult, TxBlockListing, TxBlockListingResult,
     },
 };
 use crate::{
@@ -68,6 +68,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("DSBlockListing", ds_block_listing),
             ("GetDSBlockRate", get_ds_block_rate),
             ("GetTxBlockRate", get_tx_block_rate),
+            ("TxBlockListing", tx_block_listing),
         ],
     )
 }
@@ -653,5 +654,33 @@ fn get_tx_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<TXBlock
     let tx_block_rate = calculate_tx_block_rate(node)?;
     Ok(TXBlockRateResult {
         rate: tx_block_rate,
+    })
+}
+
+fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockListingResult> {
+    let page_number: u64 = params.one()?;
+
+    let node = node.lock().unwrap();
+    let num_tx_blocks = node.get_chain_tip();
+    let num_pages = (num_tx_blocks / 10) + if num_tx_blocks % 10 == 0 { 0 } else { 1 };
+
+    let start_block = page_number * 10;
+    let end_block = std::cmp::min(start_block + 10, num_tx_blocks);
+
+    let listings: Vec<TxBlockListing> = (start_block..end_block)
+        .filter_map(|block_number| {
+            node.get_block(block_number)
+                .ok()
+                .flatten()
+                .map(|block| TxBlockListing {
+                    block_num: block.number(),
+                    hash: block.hash().to_string(),
+                })
+        })
+        .collect();
+
+    Ok(TxBlockListingResult {
+        data: listings,
+        max_pages: num_pages,
     })
 }

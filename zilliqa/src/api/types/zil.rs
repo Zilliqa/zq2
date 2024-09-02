@@ -543,3 +543,18 @@ pub struct DSBlockListing {
 pub struct TXBlockRateResult {
     pub rate: f64,
 }
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TxBlockListing {
+    #[serde(rename = "BlockNum")]
+    pub block_num: u64,
+    #[serde(rename = "Hash")]
+    pub hash: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TxBlockListingResult {
+    pub data: Vec<TxBlockListing>,
+    #[serde(rename = "maxPages")]
+    pub max_pages: u64,
+}
