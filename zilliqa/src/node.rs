@@ -418,7 +418,7 @@ impl Node {
                 state.apply_transaction(
                     other_txn,
                     &self.chain_id,
-                    parent.header,
+                    block.header,
                     inspector::noop(),
                 )?;
             } else {
@@ -427,7 +427,7 @@ impl Node {
                 let pre_state = state.try_clone()?;
 
                 let result =
-                    state.apply_transaction(txn, &self.chain_id, parent.header, &mut inspector)?;
+                    state.apply_transaction(txn, &self.chain_id, block.header, &mut inspector)?;
 
                 let TransactionApplyResult::Evm(result, ..) = result else {
                     return Err(anyhow!("not an EVM transaction"));
@@ -480,7 +480,7 @@ impl Node {
                 )?;
             } else {
                 let result =
-                    state.apply_transaction(txn, &self.chain_id, parent.header, inspector)?;
+                    state.apply_transaction(txn, &self.chain_id, block.header, inspector)?;
 
                 return Ok(result);
             }
@@ -513,7 +513,6 @@ impl Node {
                 txn_hash,
                 index,
                 &block,
-                &parent,
                 trace_opts.clone(),
             ) {
                 traces.push(trace);
@@ -529,7 +528,6 @@ impl Node {
         txn_hash: Hash,
         txn_index: usize,
         block: &Block,
-        parent_block: &Block,
         trace_opts: GethDebugTracingOptions,
     ) -> Result<Option<TraceResult>> {
         let GethDebugTracingOptions {
@@ -547,12 +545,8 @@ impl Node {
             let inspector_config = TracingInspectorConfig::from_geth_config(&config);
             let mut inspector = TracingInspector::new(inspector_config);
 
-            let result = state.apply_transaction(
-                txn,
-                &self.chain_id,
-                parent_block.header,
-                &mut inspector,
-            )?;
+            let result =
+                state.apply_transaction(txn, &self.chain_id, block.header, &mut inspector)?;
 
             let TransactionApplyResult::Evm(result, ..) = result else {
                 return Ok(None);
@@ -581,7 +575,7 @@ impl Node {
                     let result = state.apply_transaction(
                         txn,
                         &self.chain_id,
-                        parent_block.header,
+                        block.header,
                         &mut inspector,
                     )?;
 
@@ -603,7 +597,7 @@ impl Node {
                     let result = state.apply_transaction(
                         txn,
                         &self.chain_id,
-                        parent_block.header,
+                        block.header,
                         &mut inspector,
                     )?;
 
@@ -623,7 +617,7 @@ impl Node {
                     let result = state.apply_transaction(
                         txn,
                         &self.chain_id,
-                        parent_block.header,
+                        block.header,
                         &mut inspector,
                     )?;
 
@@ -650,7 +644,7 @@ impl Node {
                     let result = state.apply_transaction(
                         txn,
                         &self.chain_id,
-                        parent_block.header,
+                        block.header,
                         &mut inspector,
                     )?;
 
@@ -682,12 +676,8 @@ impl Node {
                     JsInspector::with_transaction_context(js_code, config, transaction_context)
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
-                let result = state.apply_transaction(
-                    txn,
-                    &self.chain_id,
-                    parent_block.header,
-                    &mut inspector,
-                )?;
+                let result =
+                    state.apply_transaction(txn, &self.chain_id, block.header, &mut inspector)?;
 
                 let TransactionApplyResult::Evm(result, env) = result else {
                     return Ok(None);
