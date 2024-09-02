@@ -648,3 +648,46 @@ async fn get_tx_block_rate(mut network: Network) {
 
     assert!(returned.rate >= 0.0, "Block rate should be non-negative");
 }
+
+#[zilliqa_macros::test]
+async fn tx_block_listing(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    network.run_until_block(&wallet, 2.into(), 50).await;
+
+    let response: Value = wallet
+        .provider()
+        .request("TxBlockListing", [0])
+        .await
+        .expect("Failed to call TxBlockListing API");
+
+    let tx_block_listing: zilliqa::api::types::zil::TxBlockListingResult =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert_eq!(wallet.get_block_number().await.unwrap(), 2.into());
+    assert_eq!(
+        tx_block_listing.data.len(),
+        2,
+        "Expected 2 TxBlock listings"
+    );
+    assert!(
+        tx_block_listing.max_pages >= 1,
+        "Expected at least 1 page of TxBlock listings"
+    );
+
+    assert!(
+        tx_block_listing.data[0].block_num == 0,
+        "Expected BlockNum to be 0, got: {:?}",
+        tx_block_listing.data[0].block_num
+    );
+    assert!(
+        tx_block_listing.data[1].block_num > 0,
+        "Expected BlockNum to be greater than 0, got: {:?}",
+        tx_block_listing.data[1].block_num
+    );
+    assert!(
+        !tx_block_listing.data[1].hash.is_empty(),
+        "Expected Hash to be non-empty, got: {:?}",
+        tx_block_listing.data[1].hash
+    );
+}
