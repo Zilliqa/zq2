@@ -190,7 +190,10 @@ impl Setup {
         ];
 
         // Node vector
-        println!("Writing config files to {0}", &self.config_dir);
+        println!(
+            "Writing {0} config files to {1}",
+            self.how_many, &self.config_dir
+        );
         for i in 0..self.how_many {
             let mut cfg = zilliqa::cfg::Config {
                 otlp_collector_endpoint: Some("http://localhost:4317".to_string()),
@@ -266,6 +269,7 @@ impl Setup {
                 "http://localhost:{0}",
                 self.get_scilla_port(usize::try_into(i)?)
             );
+            node_config.state_rpc_limit = usize::try_from(i64::MAX)?;
             node_config.consensus.scilla_lib_dir =
                 scilla::Runner::get_scilla_lib_dir(&self.base_dir);
 
