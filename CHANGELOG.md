@@ -9,7 +9,10 @@ Unreleased changes.
 
 - [#1373](https://github.com/Zilliqa/zq2/pull/1373): Fix duplicated requests for blocks when a node connects to the network.
 
-[#1369](https://github.com/Zilliqa/zq2/pull/1369): Global variables in EVM refer to the current and not to the parent block
+- [#1379](https://github.com/Zilliqa/zq2/pull/1379): Add `GetTxBlockRate` API to return the current transaction block rate.
+
+- [#1369](https://github.com/Zilliqa/zq2/pull/1369): Global variables in EVM refer to the current and not to the parent block
+
 
 ## [0.1.1] - 2024-08-14
 

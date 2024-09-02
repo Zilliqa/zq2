@@ -20,7 +20,7 @@ use super::{
     types::zil::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, SWInfo, ShardingStructure,
-        SmartContract,
+        SmartContract, TXBlockRateResult,
     },
 };
 use crate::{
@@ -31,6 +31,7 @@ use crate::{
     schnorr,
     scilla::split_storage_key,
     state::Code,
+    time::SystemTime,
     transaction::{ScillaGas, SignedTransaction, TxZilliqa, ZilAmount, EVM_GAS_PER_SCILLA_GAS},
 };
 
@@ -66,6 +67,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetCurrentDSEpoch", get_current_ds_epoch),
             ("DSBlockListing", ds_block_listing),
             ("GetDSBlockRate", get_ds_block_rate),
+            ("GetTxBlockRate", get_tx_block_rate),
         ],
     )
 }
@@ -620,9 +622,36 @@ pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlo
     })
 }
 
-pub fn get_ds_block_rate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<DSBlockRateResult> {
-    // Dummy implementation
+pub fn calculate_tx_block_rate(node: &Arc<Mutex<Node>>) -> Result<f64> {
+    let node = node.lock().unwrap();
+    let max_measurement_blocks = 5;
+    let height = node.get_chain_tip();
+    if height == 0 {
+        return Ok(0.0);
+    }
+    let measurement_blocks = height.min(max_measurement_blocks);
+    let start_measure_block = node
+        .consensus
+        .get_block_by_number(height - measurement_blocks + 1)?
+        .ok_or(anyhow!("Unable to get block"))?;
+    let start_measure_time = start_measure_block.header.timestamp;
+    let end_measure_time = SystemTime::now();
+    let elapsed_time = end_measure_time.duration_since(start_measure_time)?;
+    let tx_block_rate = measurement_blocks as f64 / elapsed_time.as_secs_f64();
+    Ok(tx_block_rate)
+}
+
+pub fn get_ds_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlockRateResult> {
+    let tx_block_rate = calculate_tx_block_rate(node)?;
+    let ds_block_rate = tx_block_rate / TX_BLOCKS_PER_DS_BLOCK as f64;
     Ok(DSBlockRateResult {
-        rate: 0.00014142137245459714,
+        rate: ds_block_rate,
+    })
+}
+
+fn get_tx_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<TXBlockRateResult> {
+    let tx_block_rate = calculate_tx_block_rate(node)?;
+    Ok(TXBlockRateResult {
+        rate: tx_block_rate,
     })
 }
