@@ -11,6 +11,7 @@ use alloy::primitives::{Address, U256};
 use anyhow::{anyhow, Context, Result};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{MemoryDB, Trie};
+use itertools::Itertools;
 use libp2p::PeerId;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
@@ -1020,15 +1021,16 @@ impl Consensus {
         let block = self
             .get_block_by_number(num)?
             .context("missing canonical block")?; // retrieve highest canonical block
-        let block_hash = block.hash();
-        let block_view = block.view();
 
         // Check to ensure there is >= 1 vote for the highest canonical block.
         // TODO: Is it possible for it to be a malicious vote?
-        if votes.get(&block_hash).is_none() {
-            warn!(%block_hash, %block_view, "there should be at least one vote at this time");
-            return Ok(None);
-        };
+        // FIXME: Do we even care? The votes only matter for QC.
+        // let block_hash = block.hash();
+        // let block_view = block.view();
+        // if votes.get(&block_hash).is_none() {
+        //     warn!(%block_hash, %block_view, "there should be at least one vote at this time");
+        //     return Ok(None);
+        // };
 
         // Ensure sane state
         let previous_state_root_hash = state.root_hash()?;
@@ -1092,7 +1094,7 @@ impl Consensus {
             };
 
             // Do necessary work to assemble the transaction
-            transaction_pool.mark_executed(&tx);            
+            transaction_pool.mark_executed(&tx);
             transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
 
             let receipt = Self::create_txn_receipt(
@@ -1109,10 +1111,48 @@ impl Consensus {
             applied_transactions.push(tx);
         }
 
+        let applied_transaction_hashes =
+            applied_transactions.iter().map(|tx| tx.hash).collect_vec();
+
+        // Generate the early proposal
         // It is possible to propose an empty block.
+        // a. Majority QC is missing - exit condition.
+        // b. Rewards have not been applied - exit condition.
+        let proposal = Block::from_qc(
+            self.secret_key,
+            self.view.get_view(),
+            parent_header.number + 1,
+            QuorumCertificate::genesis(), // Insert dummy QC for now
+            state.root_hash()?,
+            Hash(transactions_trie.root_hash()?.into()),
+            Hash(receipts_trie.root_hash()?.into()),
+            applied_transaction_hashes,
+            SystemTime::max(SystemTime::now(), parent_header.timestamp),
+            self.config.consensus.eth_block_gas_limit - gas_left,
+            self.config.consensus.eth_block_gas_limit,
+        );
 
+        // Restore the state to previous sane state
+        state.set_to_root(previous_state_root_hash.into());
 
-        Ok(None)
+        // as a future improvement, process the proposal before broadcasting it
+        trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### proposing early block");
+        // intershard transactions are not meant to be broadcast
+        let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
+            applied_transactions
+                .into_iter()
+                .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
+        // however, for the transactions that we are NOT broadcasting, we re-insert
+        // them into the pool - this is because upon broadcasting the proposal, we will
+        // have to re-execute it ourselves (in order to vote on it) and thus will
+        // need those transactions again
+        for tx in opaque_transactions {
+            let account_nonce = self.state.get_account(tx.signer)?.nonce;
+            transaction_pool.insert_transaction(tx, account_nonce);
+        }
+
+        // Return the early proposal
+        Ok(Some((proposal, broadcasted_transactions)))
     }
 
     fn propose_new_block_at(
