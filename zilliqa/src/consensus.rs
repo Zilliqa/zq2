@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy::primitives::{Address, U256};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{MemoryDB, Trie};
 use itertools::Itertools;
@@ -1012,7 +1012,13 @@ impl Consensus {
         state: &mut State,
         votes: &mut BTreeMap<Hash, BlockVotes>,
         proposal: Block,
-    ) -> Result<Option<(Block)>> {
+    ) -> Result<Option<Block>> {
+        // Ensure proposal has Genesis QC.
+        ensure!(
+            proposal.header.qc == QuorumCertificate::genesis(),
+            "proposal QC mismatch"
+        );
+
         // Retrieve parent block data
         let parent_hash = proposal.parent_hash();
         let parent_block = self
@@ -1021,32 +1027,46 @@ impl Consensus {
         let parent_block_hash = parent_block.hash();
         let parent_block_view = parent_block.view();
 
-        // Retrieve the committee and QC.
         // Must have supermajority by now.
+        // Retrieve the committee - for rewards
         let committee = state.get_stakers_at_block_raw(&parent_block)?;
-        let (signatures, cosigned, cosigned_weight, supermajority_reached) = votes
+        let (signatures, cosigned, _, _) = votes
             .get(&parent_block_hash)
             .context("tried to finalise a proposal without any votes")?;
-        let qc = self.qc_from_bits(parent_block_hash, &signatures, *cosigned, parent_block_view);
-
-        // Retrieve the previous leader, for rewards.
+        // Retrieve the previous leader - for rewards.
         let proposer = self
             .leader_at_block(&parent_block, parent_block_view + 1)
             .context("missing parent block leader")?
             .public_key;
 
+        // Compute the majority QC
+        let qc = self.qc_from_bits(parent_block_hash, &signatures, *cosigned, parent_block_view);
+
         // Apply the rewards when exiting the round
-        state.set_to_root(proposal.state_root_hash().into()); // restore last proposal state
+        state.set_to_root(proposal.state_root_hash().into()); // restore proposal state to apply rewards
         Self::apply_rewards_raw_at(
             state,
             &self.config.consensus,
-            &committee,      // QC committee
+            &committee,
             proposer.into(), // Last leader
             parent_block_view + 1,
             &qc.cosigned, // QC cosigners
         )?;
 
-        // Finalise the proposal with new QC and state.
+        // Finalise the proposal with final QC and state.
+        let proposal = Block::from_qc(
+            self.secret_key,
+            proposal.header.view,
+            proposal.header.number,
+            qc,                 // actual QC
+            state.root_hash()?, // post-reward updated state
+            proposal.header.transactions_root_hash,
+            proposal.header.receipts_root_hash,
+            proposal.transactions,
+            proposal.header.timestamp,
+            proposal.header.gas_used,
+            proposal.header.gas_limit,
+        );
 
         // Return the final proposal
         Ok(Some(proposal))
@@ -1056,7 +1076,6 @@ impl Consensus {
         &self,
         state: &mut State,
         transaction_pool: &mut TransactionPool,
-        votes: &mut BTreeMap<Hash, BlockVotes>,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         // Start with highest canonical block
         let num = self
@@ -1066,16 +1085,6 @@ impl Consensus {
         let block = self
             .get_block_by_number(num)?
             .context("missing canonical block")?; // retrieve highest canonical block
-
-        // Check to ensure there is >= 1 vote for the highest canonical block.
-        // TODO: Is it possible for it to be a malicious vote?
-        // FIXME: Do we even care? The votes only matter for QC.
-        // let block_hash = block.hash();
-        // let block_view = block.view();
-        // if votes.get(&block_hash).is_none() {
-        //     warn!(%block_hash, %block_view, "there should be at least one vote at this time");
-        //     return Ok(None);
-        // };
 
         // Ensure sane state
         let previous_state_root_hash = state.root_hash()?;
@@ -1088,10 +1097,6 @@ impl Consensus {
             state.set_to_root(block.state_root_hash().into());
         }
 
-        // Assemble new block, with whatever is in the mempool
-        let node_config = &self.config;
-        let parent_header = block.header;
-
         // Internal states
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
@@ -1100,6 +1105,7 @@ impl Consensus {
         let mut tx_index_in_block = 0;
         let mut applied_transactions = Vec::<VerifiedTransaction>::new();
 
+        // Assemble new block with whatever is in the mempool
         while let Some(tx) = transaction_pool.best_transaction() {
             // First - check if we have time left to process txns and give enough time for block propagation
             let (
@@ -1117,9 +1123,9 @@ impl Consensus {
             let result = Self::apply_transaction_at(
                 state,
                 self.db.clone(),
-                node_config,
+                &self.config,
                 tx.clone(),
-                parent_header,
+                block.header,
                 inspector::noop(),
             )?;
 
@@ -1166,13 +1172,13 @@ impl Consensus {
         let proposal = Block::from_qc(
             self.secret_key,
             self.view.get_view(),
-            parent_header.number + 1,
-            QuorumCertificate::genesis(), // Insert dummy QC for now
-            state.root_hash()?,
+            block.header.number + 1,
+            QuorumCertificate::genesis(), // dummy QC for early proposal
+            state.root_hash()?,           // last state before rewards are applied
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             applied_transaction_hashes,
-            SystemTime::max(SystemTime::now(), parent_header.timestamp),
+            SystemTime::max(SystemTime::now(), block.header.timestamp),
             self.config.consensus.eth_block_gas_limit - gas_left,
             self.config.consensus.eth_block_gas_limit,
         );
