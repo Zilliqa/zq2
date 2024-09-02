@@ -1396,15 +1396,13 @@ impl Consensus {
     /// Produces the Proposal block.
     /// It must return a final Proposal with correct QC, regardless of whether it is empty or not.
     fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        let mut state = self.state.clone();
-        let mut tx_pool = self.transaction_pool.clone();
+        ensure!(
+            self.early_proposal.is_some(),
+            "missing early proposal {}",
+            self.view.get_view()
+        );
 
-        // if no early proposal is found, then assemble the block now.
-        if self.early_proposal.is_none() {
-            warn!("missing early proposal {}", self.view.get_view());
-            self.early_proposal =
-                self.assemble_early_block_at(&mut state, &mut tx_pool, &self.votes)?;
-        }
+        let mut state = self.state.clone();
         let (pending_block, applied_txs) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
 
         // finalise the proposal
@@ -1413,7 +1411,6 @@ impl Consensus {
             .context("final block failure")?;
 
         self.state = state;
-        self.transaction_pool = tx_pool;
 
         Ok(Some((final_block, applied_txs)))
     }
