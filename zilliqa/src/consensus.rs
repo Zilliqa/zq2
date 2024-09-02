@@ -156,6 +156,8 @@ pub struct Consensus {
     db: Arc<Db>,
     /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
+    /// Pending proposal
+    early_proposal: Option<(Block, Vec<VerifiedTransaction>)>,
     /// Flag indicating that block creation should be postponed due to empty mempool
     create_next_block_on_timeout: bool,
     pub new_blocks: broadcast::Sender<BlockHeader>,
@@ -293,6 +295,7 @@ impl Consensus {
             state,
             db,
             transaction_pool: Default::default(),
+            early_proposal: None,
             create_next_block_on_timeout: false,
             new_blocks: broadcast::Sender::new(4),
             receipts: broadcast::Sender::new(128),
@@ -1035,7 +1038,7 @@ impl Consensus {
             .public_key;
 
         // Compute the majority QC
-        let qc = self.qc_from_bits(parent_block_hash, &signatures, *cosigned, parent_block_view);
+        let qc = self.qc_from_bits(parent_block_hash, signatures, *cosigned, parent_block_view);
 
         // Apply the rewards when exiting the round
         state.set_to_root(proposal.state_root_hash().into()); // restore proposal state to apply rewards
@@ -1086,7 +1089,7 @@ impl Consensus {
         let (signatures, cosigned, _, _) = votes
             .get(&block.hash())
             .context("tried to create a proposal without any votes")?;
-        let early_qc = self.qc_from_bits(block.hash(), &signatures, *cosigned, block.view());
+        let early_qc = self.qc_from_bits(block.hash(), signatures, *cosigned, block.view());
 
         // Ensure sane state
         let previous_state_root_hash = state.root_hash()?;
@@ -1383,14 +1386,21 @@ impl Consensus {
         Ok(Some((proposal, broadcasted_transactions)))
     }
 
+    /// Produces the Proposal block.
+    /// It must return a final Proposal with correct QC, regardless of whether it is empty or not.
     fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         let mut state = self.state.clone();
         let mut tx_pool = self.transaction_pool.clone();
 
-        let (pending_block, applied_txs) = self
-            .assemble_early_block_at(&mut state, &mut tx_pool, &self.votes)?
-            .context("early proposal block")?;
+        // if no early proposal is found, then assemble the block now.
+        if self.early_proposal.is_none() {
+            warn!("missing early proposal");
+            self.early_proposal =
+                self.assemble_early_block_at(&mut state, &mut tx_pool, &self.votes)?;
+        }
+        let (pending_block, applied_txs) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
 
+        // finalise the proposal
         let final_block = self
             .finish_early_proposal_at(&mut state, &self.votes, pending_block)?
             .context("final block failure")?;
@@ -1399,6 +1409,17 @@ impl Consensus {
         self.transaction_pool = tx_pool;
 
         Ok(Some((final_block, applied_txs)))
+    }
+
+    /// Assembles the Proposal block, but maybe with incorrect QC.
+    pub fn propose_early_block(&mut self) -> Result<()> {
+        let mut state = self.state.clone();
+        let mut tx_pool = self.transaction_pool.clone();
+        self.early_proposal =
+            self.assemble_early_block_at(&mut state, &mut tx_pool, &self.votes)?;
+        self.state = state;
+        self.transaction_pool = tx_pool;
+        Ok(())
     }
 
     pub fn get_pending_block(&self) -> Result<Option<Block>> {
@@ -1430,7 +1451,7 @@ impl Consensus {
             v.insert(votes);
         }
 
-        let pending_block = self.propose_new_block_at(&mut state, &mut tx_pool, &mut votes)?;
+        let pending_block = self.assemble_early_block_at(&mut state, &mut tx_pool, &mut votes)?;
 
         let Some((pending_block, _)) = pending_block else {
             return Ok(None);
