@@ -15,6 +15,8 @@ Unreleased changes.
 
 - [#1389](https://github.com/Zilliqa/zq2/pull/1389): Implement `TxBlockListing` API endpoint to return a paginated list of blocks
 
+- [#1390](https://github.com/Zilliqa/zq2/pull/1390): Implement `GetNumPeers` API endpoint to get the current number of peers
+
 
 ## [0.1.1] - 2024-08-14
 
