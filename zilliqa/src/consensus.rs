@@ -462,7 +462,7 @@ impl Consensus {
             .minimum_time_left_for_empty_block
             .as_millis() as u64;
 
-        info!(
+        trace!(
             "({}:{}:{})",
             time_since_last_view_change,
             exponential_backoff_timeout,
@@ -1422,7 +1422,7 @@ impl Consensus {
     pub fn assemble_early_block(&mut self) -> Result<()> {
         // If no early_proposal, then assemble it
         if self.early_proposal.is_none() {
-            info!("assembling early proposal {}", self.view.get_view());
+            trace!("assembling early proposal {}", self.view.get_view());
             let mut state = self.state.clone();
             let mut tx_pool = self.transaction_pool.clone();
             self.early_proposal =
