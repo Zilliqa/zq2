@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy::primitives::{Address, U256};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{MemoryDB, Trie};
 use itertools::Itertools;
@@ -1031,9 +1031,13 @@ impl Consensus {
         // Must have supermajority by now.
         // Retrieve the committee - for rewards
         let committee = state.get_stakers_at_block_raw(&parent_block)?;
-        let (signatures, cosigned, _, _) = votes
+        let (signatures, cosigned, _, supermajority_reached) = votes
             .get(&parent_block_hash)
             .context("tried to finalise a proposal without any votes")?;
+        ensure!(
+            supermajority_reached,
+            "illegal to finalise early proposal without supermajority"
+        );
         // Retrieve the previous leader - for rewards.
         let proposer = self
             .leader_at_block(&parent_block, parent_block_view + 1)
