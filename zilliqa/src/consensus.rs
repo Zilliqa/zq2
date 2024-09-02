@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy::primitives::{Address, U256};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{MemoryDB, Trie};
 use libp2p::PeerId;
@@ -457,6 +457,13 @@ impl Consensus {
             .consensus
             .minimum_time_left_for_empty_block
             .as_millis() as u64;
+
+        info!(
+            "({}:{}:{})",
+            time_since_last_view_change,
+            exponential_backoff_timeout,
+            minimum_time_left_for_empty_block
+        );
 
         (
             time_since_last_view_change,
@@ -996,6 +1003,45 @@ impl Consensus {
                 )));
             };
         }
+        Ok(None)
+    }
+
+    fn propose_early_block_at(
+        &self,
+        state: &mut State,
+        transaction_pool: &mut TransactionPool,
+        votes: &mut BTreeMap<Hash, BlockVotes>,
+    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+        let num = self
+            .db
+            .get_highest_block_number()?
+            .context("no canonical blocks")?; // get highest canonical block number
+        let block = self
+            .get_block_by_number(num)?
+            .context("missing canonical block")?; // retrieve highest canonical block
+        let block_hash = block.hash();
+        let block_view = block.view();
+
+        // Check to ensure there is >= 1 vote for the highest canonical block.
+        // TODO: Is it possible for it to be a malicious vote?
+        if votes.get(&block_hash).is_none() {
+            warn!(%block_hash, %block_view, "there should be at least one vote at this time");
+            return Ok(None);
+        };
+
+        // Ensure sane state
+        let previous_state_root_hash = state.root_hash()?;
+        if previous_state_root_hash != block.state_root_hash() {
+            warn!(
+                "state root hash mismatch, expected: {:?}, actual: {:?}",
+                block.state_root_hash(),
+                previous_state_root_hash
+            );
+            state.set_to_root(block.state_root_hash().into());
+        }
+
+        // Start assembling new block, with whatever is in the mempool
+
         Ok(None)
     }
 
