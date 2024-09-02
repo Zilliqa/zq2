@@ -69,6 +69,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetDSBlockRate", get_ds_block_rate),
             ("GetTxBlockRate", get_tx_block_rate),
             ("TxBlockListing", tx_block_listing),
+            ("GetNumPeers", get_num_peers),
         ],
     )
 }
@@ -689,4 +690,10 @@ fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockLi
         data: listings,
         max_pages: num_pages,
     })
+}
+
+fn get_num_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u64> {
+    let node = node.lock().unwrap();
+    let num_peers = node.consensus.block_store.get_num_peers();
+    Ok(num_peers as u64)
 }

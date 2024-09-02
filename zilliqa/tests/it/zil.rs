@@ -691,3 +691,20 @@ async fn tx_block_listing(mut network: Network) {
         tx_block_listing.data[1].hash
     );
 }
+
+#[zilliqa_macros::test]
+async fn get_num_peers(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNumPeers", [""])
+        .await
+        .expect("Failed to call GetNumPeers API");
+
+    assert!(
+        response.is_number(),
+        "Expected response to be a number, got: {:?}",
+        response
+    );
+}
