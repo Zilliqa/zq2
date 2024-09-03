@@ -1097,6 +1097,9 @@ impl Consensus {
             .get(&block.hash())
             .context("tried to create a proposal without any votes")?;
         let early_qc = self.qc_from_bits(block.hash(), signatures, *cosigned, block.view());
+        let parent = self
+            .get_block(&early_qc.block_hash)?
+            .context("missing parent block")?;
 
         // Ensure sane state
         let previous_state_root_hash = state.root_hash()?;
@@ -1116,6 +1119,16 @@ impl Consensus {
         let mut updated_root_hash = state.root_hash()?;
         let mut tx_index_in_block = 0;
         let mut applied_transactions = Vec::<VerifiedTransaction>::new();
+
+        // This is a partial header of a block that will be proposed with some transactions executed below.
+        // It is needed so that each transaction is executed within proper block context (the block it belongs to)
+        let executed_block_header = BlockHeader {
+            view: self.view(),
+            number: parent.header.number + 1,
+            timestamp: SystemTime::max(SystemTime::now(), parent.header.timestamp),
+            gas_limit: gas_left,
+            ..BlockHeader::default()
+        };
 
         // Assemble new block with whatever is in the mempool
         while let Some(tx) = transaction_pool.best_transaction() {
@@ -1137,7 +1150,7 @@ impl Consensus {
                 self.db.clone(),
                 &self.config,
                 tx.clone(),
-                block.header,
+                executed_block_header,
                 inspector::noop(),
             )?;
 
@@ -1151,6 +1164,10 @@ impl Consensus {
                 g
             } else {
                 // undo last transaction
+                info!(
+                    nonce = tx.tx.nonce(),
+                    "gas limit reached, returning last transaction to pool",
+                );
                 transaction_pool.insert_ready_transaction(tx);
                 state.set_to_root(updated_root_hash.into());
                 break;
@@ -1183,14 +1200,14 @@ impl Consensus {
         // b. Rewards have not been applied - exit condition.
         let proposal = Block::from_qc(
             self.secret_key,
-            self.view.get_view(),
-            block.header.number + 1,
+            executed_block_header.view,
+            executed_block_header.number,
             early_qc,           // dummy QC for early proposal
             state.root_hash()?, // last state before rewards are applied
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             applied_transaction_hashes,
-            SystemTime::max(SystemTime::now(), block.header.timestamp),
+            executed_block_header.timestamp,
             self.config.consensus.eth_block_gas_limit - gas_left,
             self.config.consensus.eth_block_gas_limit,
         );
