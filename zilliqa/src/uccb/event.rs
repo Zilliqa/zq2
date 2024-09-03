@@ -53,14 +53,12 @@ impl RelayedEvent {
                 self.gas_limit,       //: U256,
                 self.nonce,           //: U256,
             )
-                .abi_encode(),
+                .abi_encode_params(),
         )
     }
 
     pub async fn sign(&self, signer: &PrivateKeySigner) -> Result<Signature> {
-        let data = self.hash();
-        let signature = signer.sign_message(data.as_slice()).await?;
-
+        let signature = signer.sign_hash(&self.hash()).await?;
         Ok(signature)
     }
 }
