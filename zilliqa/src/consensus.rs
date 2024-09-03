@@ -1029,18 +1029,12 @@ impl Consensus {
         // Should have supermajority by now.
         // Retrieve the committee - for rewards
         let committee = state.get_stakers_at_block_raw(&parent_block)?;
-        let (signatures, cosigned, _, supermajority_reached) = votes
+        let (signatures, cosigned, _, _) = votes
             .get(&parent_block_hash)
             .context("tried to finalise a proposal without any votes")?;
 
         // Compute the majority QC
         let qc = self.qc_from_bits(parent_block_hash, signatures, *cosigned, parent_block_view);
-
-        // allow timeout codepath, without supermajority
-        // ensure!(
-        //     supermajority_reached,
-        //     "illegal to finalise early proposal without supermajority"
-        // );
 
         // Retrieve the previous leader - for rewards.
         let proposer = self
@@ -1239,6 +1233,7 @@ impl Consensus {
         Ok(Some((proposal, broadcasted_transactions)))
     }
 
+    #[allow(dead_code)]
     fn propose_new_block_at(
         &self,
         state: &mut State,
