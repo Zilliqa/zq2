@@ -245,7 +245,7 @@ impl ValidatorNode {
             // Make the actual call
             match call_builder.send().await {
                 Ok(tx) => {
-                    println!(
+                    info!(
                         "Transaction sent {}.{} {:?}",
                         event.target_chain_id,
                         event.nonce,
