@@ -235,7 +235,7 @@ impl BlockStore {
     pub fn availability(&mut self) -> Result<Option<Vec<BlockStrategy>>> {
         let mut to_return = self.strategies.clone();
         let now = SystemTime::now();
-        if self.available_blocks_updated.map_or(false, |x| {
+        if self.available_blocks_updated.map_or(true, |x| {
             now.duration_since(x).unwrap_or(Duration::ZERO)
                 > Duration::from_secs(constants::RECOMPUTE_BLOCK_AVAILABILITY_AFTER_S)
         }) {
@@ -345,7 +345,8 @@ impl BlockStore {
 
     /// Make a request for a range of blocks. Returns `true` if a request was made and `false` if the request had to be
     /// buffered because no peers were available.
-    fn request_blocks(&mut self, from: u64, to: u64) -> Result<bool> {
+    /// Public so we can trigger it from the debug API
+    pub fn request_blocks(&mut self, from: u64, to: u64) -> Result<bool> {
         let Some(peer) = self.best_peer(from) else {
             warn!(from, "no peers to download missing blocks from");
             self.unserviceable_requests.insert((from, to));

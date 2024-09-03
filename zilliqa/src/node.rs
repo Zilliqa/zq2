@@ -888,6 +888,8 @@ impl Node {
             "Received blocks response of length {}",
             response.proposals.len()
         );
+        self.consensus
+            .receive_availability(from, &response.availability)?;
 
         for block in response.proposals {
             let proposal = self.consensus.receive_block(from, block)?;
@@ -896,8 +898,7 @@ impl Node {
                     .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
             }
         }
-        self.consensus
-            .receive_availability(from, &response.availability)?;
+
         Ok(())
     }
 }

@@ -22,6 +22,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("zdebug_echo", echo),
             ("zdebug_blockstore", blocks),
             ("zdebug_forget", forget),
+            ("zdebug_request", request)
         ]
     );
     module
@@ -58,4 +59,14 @@ fn forget(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         end: to + 1,
     })?;
     Ok("done".to_string())
+}
+
+fn request(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
+    let mut params = params.sequence();
+    let from: u64 = params.next()?;
+    let to: u64 = params.next()?;
+    let mut node = node.lock().unwrap();
+    trace!("Request blocks from {from} to {to}");
+    let result = node.consensus.block_store.request_blocks(from, to)?;
+    Ok(result)
 }
