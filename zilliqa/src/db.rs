@@ -811,7 +811,7 @@ impl Db {
     pub fn forget_block_range(&self, blocks: Range<u64>) -> Result<()> {
         self.with_sqlite_tx(move |tx| {
             // Remove everything!
-            tx.execute("DELETE FROM latest_finalized_view WHERE latest_finalized_view IN (SELECT view FROM main_chain_canonical_blocks WHERE height >= :low AND height <: high)",
+            tx.execute("DELETE FROM tip_info WHERE latest_finalized_view IN (SELECT view FROM blocks WHERE height >= :low AND height < :high)",
                        named_params! {
                            ":low" : blocks.start,
                            ":high" : blocks.end } )?;
