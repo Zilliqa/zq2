@@ -286,12 +286,12 @@ fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBloc
     Ok((&block).into())
 }
 
-fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<ZilAmount> {
+fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let price = node.lock().unwrap().get_gas_price();
     // `price` is the cost per unit of [EvmGas]. This API should return the cost per unit of [ScillaGas].
     let price = price * (EVM_GAS_PER_SCILLA_GAS as u128);
 
-    Ok(ZilAmount::from_amount(price))
+    Ok(ZilAmount::from_amount(price).to_string())
 }
 
 fn network_id(eth_chain_id: u64) -> u64 {

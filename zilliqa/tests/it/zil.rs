@@ -1,4 +1,4 @@
-use std::ops::DerefMut;
+use std::{ops::DerefMut, str::FromStr};
 
 use ethabi::{ParamType, Token};
 use ethers::{providers::Middleware, types::TransactionRequest, utils::keccak256};
@@ -68,11 +68,12 @@ async fn send_transaction(
     let public_key = secret_key.public_key();
 
     // Get the gas price via the Zilliqa API.
-    let gas_price: u128 = wallet
+    let gas_price_str: String = wallet
         .provider()
         .request("GetMinimumGasPrice", ())
         .await
         .unwrap();
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
 
     let chain_id = wallet.get_chainid().await.unwrap().as_u32() - 0x8000;
     let version = (chain_id << 16) | 1u32;
