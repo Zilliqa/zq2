@@ -1,7 +1,7 @@
 // ! taken from ZQ2
 
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     fmt::{self, Debug, Formatter},
 };
 
@@ -35,7 +35,7 @@ pub struct Dispatched {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dispatch {
     pub event: RelayedEvent,
-    pub signatures: HashMap<Address, Signature>,
+    pub signatures: BTreeMap<Address, Signature>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

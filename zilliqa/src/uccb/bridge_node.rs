@@ -219,7 +219,7 @@ impl BridgeNode {
         let nonce = event.nonce;
         let event_hash = event.hash();
 
-        let address = match signature.recover_address_from_msg(event_hash.as_slice()) {
+        let address = match signature.recover_address_from_prehash(&event_hash) {
             Ok(address) => {
                 debug!("Recovered address is: {address}");
                 address
@@ -288,7 +288,7 @@ impl BridgeNode {
                 self.outbound_message_sender
                     .send(OutboundBridgeMessage::Dispatch(Dispatch {
                         event: event.clone(),
-                        signatures: event_signatures.signatures,
+                        signatures: event_signatures.signatures.into_iter().collect(),
                     }))?;
             }
         }
