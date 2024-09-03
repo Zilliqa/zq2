@@ -287,6 +287,8 @@ pub async fn convert_persistence(
             };
 
             state.save_account(address, account)?;
+            // Flush any pending changes to db
+            let _ = state.root_hash()?;
         }
     }
 
@@ -328,6 +330,9 @@ pub async fn convert_persistence(
         return Err(anyhow!("setting stake failed: {result:?}"));
     }
     state.apply_delta_evm(&result_state)?;
+
+    // Flush any pending changes to db
+    let _ = state.root_hash()?;
 
     if !convert_blocks {
         println!("Accounts converted. Skipping blocks.");
