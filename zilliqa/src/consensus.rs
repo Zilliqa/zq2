@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy::primitives::{Address, U256};
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{MemoryDB, Trie};
 use itertools::Itertools;
@@ -1021,23 +1021,25 @@ impl Consensus {
     ) -> Result<Option<Block>> {
         // Retrieve parent block data
         let parent_hash = proposal.parent_hash();
-        info!("parent_hash {}", parent_hash);
         let parent_block = self
             .get_block(&parent_hash)?
             .context("missing parent block")?;
         let parent_block_hash = parent_block.hash();
         let parent_block_view = parent_block.view();
 
-        // Must have supermajority by now.
+        // Should have supermajority by now.
         // Retrieve the committee - for rewards
         let committee = state.get_stakers_at_block_raw(&parent_block)?;
         let (signatures, cosigned, _, supermajority_reached) = votes
             .get(&parent_block_hash)
             .context("tried to finalise a proposal without any votes")?;
-        ensure!(
-            supermajority_reached,
-            "illegal to finalise early proposal without supermajority"
-        );
+
+        // allow timeout codepath, without supermajority
+        // ensure!(
+        //     supermajority_reached,
+        //     "illegal to finalise early proposal without supermajority"
+        // );
+
         // Retrieve the previous leader - for rewards.
         let proposer = self
             .leader_at_block(&parent_block, parent_block_view + 1)
@@ -1063,8 +1065,10 @@ impl Consensus {
             self.secret_key,
             proposal.header.view,
             proposal.header.number,
-            qc,                 // majority QC
-            state.root_hash()?, // post-reward updated state
+            // majority QC
+            qc,
+            // post-reward updated state
+            state.root_hash()?,
             proposal.header.transactions_root_hash,
             proposal.header.receipts_root_hash,
             proposal.transactions,
