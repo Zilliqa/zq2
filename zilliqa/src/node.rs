@@ -243,9 +243,13 @@ impl Node {
         Ok(node)
     }
 
-    pub fn start(&mut self) -> Option<JoinHandle<Result<()>>> {
+    pub fn start(&mut self) -> Option<JoinHandle<()>> {
         if let Some(mut validator_node) = std::mem::take(&mut self.validator_node) {
-            Some(tokio::spawn(async move { validator_node.start().await }))
+            Some(tokio::spawn(async move {
+                if let Err(e) = validator_node.start().await {
+                    error!("UCCB bridge error: {e}");
+                }
+            }))
         } else {
             None
         }
