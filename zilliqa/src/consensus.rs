@@ -2430,6 +2430,7 @@ impl Consensus {
             self.db
                 .remove_transactions_executed_in_block(&head_block.hash())?;
 
+            
             // Persistence - since this block is no longer in the main chain, ensure it's not
             // recorded as such in the height mappings
             self.db

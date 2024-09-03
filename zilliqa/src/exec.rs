@@ -991,6 +991,19 @@ impl State {
         amount: u128,
         current_block: BlockHeader,
     ) -> Result<Vec<u8>> {
+        warn!(
+            "contract: from_addr {} to_addr {} data {:0x?} amount {} chain_id {:?} block {:?}",
+            format!("{:0x}", from_addr),
+            if let Some(v) = to_addr {
+                format!("{:0x}", v)
+            } else {
+                format!("null")
+            },
+            data,
+            amount,
+            self.chain_id,
+            current_block
+        );
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,

@@ -226,7 +226,7 @@ impl BlockStore {
         avail: &Option<Vec<BlockStrategy>>,
     ) -> Result<()> {
         let the_peer = self.peer_info(from);
-        the_peer.availability.strategies = avail.clone();
+        the_peer.availability.strategies.clone_from(avail);
         the_peer.availability_updated_at = Some(SystemTime::now());
         Ok(())
     }
@@ -248,7 +248,7 @@ impl BlockStore {
                 .collect();
             self.available_blocks_updated = Some(now);
         }
-        to_return.extend(self.available_blocks.iter().map(|x| x.clone()));
+        to_return.extend(self.available_blocks.iter().cloned());
         Ok(Some(to_return))
     }
 
@@ -320,6 +320,8 @@ impl BlockStore {
                 current_view,
                 self.highest_known_view,
                 self.requested_view,
+                self.max_blocks_in_flight,
+                self.batch_size,
                 "missing some blocks"
             );
             // The first condition checks that there are more blocks we haven't requested yet. The second condition
@@ -451,5 +453,9 @@ impl BlockStore {
         self.peers
             .entry(peer)
             .or_insert_with(|| PeerInfo::new(capacity))
+    }
+
+    pub fn forget_block_range(&mut self, blocks: Range<u64>) -> Result<()> {
+        Ok(self.db.forget_block_range(blocks)?)
     }
 }

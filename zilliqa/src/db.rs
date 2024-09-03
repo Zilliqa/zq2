@@ -802,8 +802,38 @@ impl Db {
     pub fn get_block_ranges(&self) -> Result<Vec<Range<u64>>> {
         // The island field is technically redundant, but it helps with debugging.
         Ok(self.block_store.lock().unwrap()
-            .prepare_cached("SELECT MIN(view),MAX(view),view-rank AS island FROM ( SELECT view,ROW_NUMBER() OVER (ORDER BY view) AS rank FROM blocks ) GROUP BY island ORDER BY MIN(view) ASC")?
+            .prepare_cached("SELECT MIN(height),MAX(height),height-rank AS island FROM ( SELECT height,ROW_NUMBER() OVER (ORDER BY height) AS rank FROM blocks ) GROUP BY island ORDER BY MIN(height) ASC")?
            .query_map([], Self::make_view_range)?.collect::<Result<Vec<_>,_>>()?)
+    }
+
+    /// Forget about a range of blocks; this saves space, but also allows us to test our block fetch algorithm.
+    /// If canonical is true, we'll forget the canonical block mappings for this range too - uses less space, but not so good for security.
+    pub fn forget_block_range(&self, blocks: Range<u64>) -> Result<()> {
+        self.with_sqlite_tx(move |tx| {
+            // Remove everything!
+            tx.execute("DELETE FROM latest_finalized_view WHERE latest_finalized_view IN (SELECT view FROM main_chain_canonical_blocks WHERE height >= :low AND height <: high)",
+                       named_params! {
+                           ":low" : blocks.start,
+                           ":high" : blocks.end } )?;
+            // @TODO can't yet remove transactions - we don't know the hashes.
+            tx.execute("DELETE FROM receipts WHERE block_hash IN (SELECT block_hash FROM main_chain_canonical_blocks WHERE height >= :low AND height < :high)",
+                       named_params! {
+                           ":low": blocks.start,
+                           ":high": blocks.end })?;
+            tx.execute(
+                "DELETE FROM main_chain_canonical_blocks WHERE height >= :low AND height < :high",
+                named_params! {
+                    ":low": blocks.start,
+                    ":high": blocks.end },
+            )?;
+            tx.execute(
+                "DELETE FROM blocks WHERE height >= :low AND height < :high",
+                named_params! {
+                ":low": blocks.start,
+                ":high" : blocks.end },
+            )?;
+            Ok(())
+        })
     }
 }
 

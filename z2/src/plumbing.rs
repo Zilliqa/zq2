@@ -206,7 +206,7 @@ pub async fn run_persistence_converter(
     let zq2_dir = PathBuf::from_str(zq2_data_dir)?;
     let config_file = PathBuf::from_str(zq2_config)?;
     let zq2_config = fs::read_to_string(config_file).await?;
-    let zq2_config: zilliqdb:cfg::Config = toml::from_str(&zq2_config)?;
+    let zq2_config: zilliqa::cfg::Config = toml::from_str(&zq2_config)?;
     let shard_id: u64 = zq2_config
         .nodes
         .first()
