@@ -1061,9 +1061,9 @@ impl Consensus {
         // Finalise the proposal with final QC and state.
         let proposal = Block::from_qc(
             self.secret_key,
-            self.view.get_view(), // update current view
+            proposal.header.view,
             proposal.header.number,
-            qc,                 // actual QC
+            qc,                 // majority QC
             state.root_hash()?, // post-reward updated state
             proposal.header.transactions_root_hash,
             proposal.header.receipts_root_hash,
@@ -1413,13 +1413,16 @@ impl Consensus {
     /// Produces the Proposal block.
     /// It must return a final Proposal with correct QC, regardless of whether it is empty or not.
     fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        ensure!(
-            self.early_proposal.is_some(),
-            "missing early proposal {}",
-            self.view.get_view()
-        );
-
         let mut state = self.state.clone();
+
+        // give it a last try, even if it results in an empty block
+        if self.early_proposal.is_none() {
+            warn!("missing early proposal {}", self.view.get_view());
+            let mut tx_pool = self.transaction_pool.clone();
+            self.early_proposal =
+                self.assemble_early_block_at(&mut state, &mut tx_pool, &self.votes)?;
+            self.transaction_pool = tx_pool;
+        }
         let (pending_block, applied_txs) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
 
         // finalise the proposal
@@ -1434,9 +1437,9 @@ impl Consensus {
 
     /// Assembles the Proposal block, but maybe with incorrect QC.
     pub fn assemble_early_block(&mut self) -> Result<()> {
-        // If no early_proposal, then assemble it
-        if self.early_proposal.is_none() {
-            trace!("assembling early proposal {}", self.view.get_view());
+        // If no early_proposal, then assemble with ready transactions available in pool.
+        if self.early_proposal.is_none() && self.transaction_pool.has_txn_ready() {
+            info!("assemble early proposal {}", self.view.get_view());
             let mut state = self.state.clone();
             let mut tx_pool = self.transaction_pool.clone();
             self.early_proposal =
