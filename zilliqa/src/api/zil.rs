@@ -694,6 +694,6 @@ fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockLi
 
 fn get_num_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u64> {
     let node = node.lock().unwrap();
-    let num_peers = node.consensus.block_store.get_num_peers();
+    let num_peers = node.get_peer_num();
     Ok(num_peers as u64)
 }
