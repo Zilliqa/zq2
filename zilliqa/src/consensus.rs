@@ -1020,9 +1020,8 @@ impl Consensus {
         proposal: Block,
     ) -> Result<Option<Block>> {
         // Retrieve parent block data
-        let parent_hash = proposal.parent_hash();
         let parent_block = self
-            .get_block(&parent_hash)?
+            .get_block(&proposal.parent_hash())?
             .context("missing parent block")?;
         let parent_block_hash = parent_block.hash();
         let parent_block_view = parent_block.view();
@@ -1033,6 +1032,9 @@ impl Consensus {
         let (signatures, cosigned, _, supermajority_reached) = votes
             .get(&parent_block_hash)
             .context("tried to finalise a proposal without any votes")?;
+
+        // Compute the majority QC
+        let qc = self.qc_from_bits(parent_block_hash, signatures, *cosigned, parent_block_view);
 
         // allow timeout codepath, without supermajority
         // ensure!(
@@ -1045,9 +1047,6 @@ impl Consensus {
             .leader_at_block(&parent_block, parent_block_view + 1)
             .context("missing parent block leader")?
             .public_key;
-
-        // Compute the majority QC
-        let qc = self.qc_from_bits(parent_block_hash, signatures, *cosigned, parent_block_view);
 
         // Apply the rewards when exiting the round
         state.set_to_root(proposal.state_root_hash().into()); // restore proposal state to apply rewards
@@ -1149,6 +1148,7 @@ impl Consensus {
                 break;
             }
 
+            // Apply specific txn
             let result = Self::apply_transaction_at(
                 state,
                 self.db.clone(),
@@ -1163,7 +1163,7 @@ impl Consensus {
                 continue;
             };
 
-            // Decrement gas and break loop if limit is exceeded
+            // Decrement gas price and break loop if limit is exceeded
             gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
                 g
             } else {
@@ -1199,9 +1199,9 @@ impl Consensus {
             applied_transactions.iter().map(|tx| tx.hash).collect_vec();
 
         // Generate the early proposal
-        // It is possible to propose an empty block.
-        // a. Majority QC is missing - exit condition.
-        // b. Rewards have not been applied - exit condition.
+        // Some critical parts are dummy/missing:
+        // a. Majority QC is missing
+        // b. Rewards have not been applied
         let proposal = Block::from_qc(
             self.secret_key,
             executed_block_header.view,
@@ -1212,12 +1212,12 @@ impl Consensus {
             Hash(receipts_trie.root_hash()?.into()),
             applied_transaction_hashes,
             executed_block_header.timestamp,
-            self.config.consensus.eth_block_gas_limit - gas_left,
-            self.config.consensus.eth_block_gas_limit,
+            executed_block_header.gas_limit - gas_left,
+            executed_block_header.gas_limit,
         );
 
         // Restore the state to previous sane state
-        state.set_to_root(previous_state_root_hash.into());
+        // state.set_to_root(previous_state_root_hash.into());
 
         // as a future improvement, process the proposal before broadcasting it
         trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### proposing early block");
