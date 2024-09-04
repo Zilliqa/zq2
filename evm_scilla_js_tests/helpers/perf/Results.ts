@@ -18,48 +18,80 @@ export interface ReadStatistics {
   latencies: number[];
 }
 
-export interface PerfStatistics {
-  readZilBalances: ReadStatistics;
-  readEvmBalances: ReadStatistics;
+export class PerfStatistics {
+  updateReadZilBalanceStats(stats: ReadStatistics) {
+    this.readZilBalances = this.updateReadStatistics(stats, this.readZilBalances);
+  }
 
-  evmTransfers: TransferStatistics;
-  zilTransfers: TransferStatistics;
+  updateReadEvmBalanceStats(stats: ReadStatistics) {
+    this.readEvmBalances = this.updateReadStatistics(stats, this.readEvmBalances);
+  }
 
-  evmFunctionCalls: TransitionCallStatistics;
-  scillaTransitionCalls: TransitionCallStatistics;
-}
+  updateEvmTransferStats(stats: TransferStatistics) {
+    this.evmTransfers = this.updateTransferStatistics(stats, this.evmTransfers);
+  }
 
-export function createEmptyPerfStatistics(): PerfStatistics {
-  return {
-    readZilBalances: {
-      count: 0,
-      latencies: []
-    },
-    readEvmBalances: {
-      count: 0,
-      latencies: []
-    },
-    evmTransfers: {
-      count: 0,
-      latencies: []
-    },
-    zilTransfers: {
-      count: 0,
-      latencies: []
-    },
-    evmFunctionCalls: {
-      count: 0,
-      transactionConfirmedLatencies: [],
-      receiptReceivedLatencies: [],
-      failedCalls: 0
-    },
-    scillaTransitionCalls: {
-      count: 0,
-      transactionConfirmedLatencies: [],
-      receiptReceivedLatencies: [],
-      failedCalls: 0
+  updateScillaTransitionCallStats(stats: TransitionCallStatistics) {
+    this.scillaTransitionCalls = this.updateTransitionCallStatistics(stats, this.scillaTransitionCalls);
+  }
+
+  updateEvmFunctionCallStats(stats: TransitionCallStatistics) {
+    this.evmFunctionCalls = this.updateTransitionCallStatistics(stats, this.evmFunctionCalls);
+  }
+
+  updateZilTransferStats(stats: TransferStatistics) {
+    this.zilTransfers = this.updateTransferStatistics(stats, this.zilTransfers);
+  }
+
+  private updateReadStatistics(incoming: ReadStatistics, current?: ReadStatistics): ReadStatistics {
+    if (current) {
+      return {
+        count: incoming.count + current.count,
+        latencies: [...incoming.latencies, ...current.latencies]
+      };
     }
-  };
+
+    return incoming;
+  }
+
+  private updateTransferStatistics(incoming: TransferStatistics, current?: TransferStatistics): TransferStatistics {
+    if (current) {
+      return {
+        count: incoming.count + current.count,
+        latencies: [...incoming.latencies, ...current.latencies]
+      };
+    }
+
+    return incoming;
+  }
+
+  private updateTransitionCallStatistics(
+    incoming: TransitionCallStatistics,
+    current?: TransitionCallStatistics
+  ): TransitionCallStatistics {
+    if (current) {
+      return {
+        count: incoming.count + current.count,
+        transactionConfirmedLatencies: [
+          ...incoming.transactionConfirmedLatencies,
+          ...current.transactionConfirmedLatencies
+        ],
+        receiptReceivedLatencies: [...incoming.receiptReceivedLatencies, ...current.receiptReceivedLatencies],
+        failedCalls: incoming.failedCalls + current.failedCalls
+      };
+    }
+
+    return incoming;
+  }
+
+  readZilBalances?: ReadStatistics;
+  readEvmBalances?: ReadStatistics;
+
+  evmTransfers?: TransferStatistics;
+  zilTransfers?: TransferStatistics;
+
+  evmFunctionCalls?: TransitionCallStatistics;
+  scillaTransitionCalls?: TransitionCallStatistics;
 }
 
 export function printBlocksInfo(blocks: Block[]) {
@@ -95,7 +127,7 @@ export function printBlocksInfo(blocks: Block[]) {
 export const printResults = (stats: PerfStatistics) => {
   const table = new Table();
 
-  if (stats.readZilBalances.count > 0) {
+  if (stats.readZilBalances) {
     table.addRow({
       Name: "Zil Balance Read",
       Count: stats.readZilBalances.count,
@@ -103,7 +135,7 @@ export const printResults = (stats: PerfStatistics) => {
     });
   }
 
-  if (stats.readEvmBalances.count > 0) {
+  if (stats.readEvmBalances) {
     table.addRow({
       Name: "Evm Balance Read",
       Count: stats.readEvmBalances.count,
@@ -111,14 +143,14 @@ export const printResults = (stats: PerfStatistics) => {
     });
   }
 
-  if (stats.zilTransfers.count > 0) {
+  if (stats.zilTransfers) {
     table.addRow({
       Name: "Simple Zil transfer",
       Count: stats.zilTransfers.count,
       Latency: calculateAverageLatency(stats.zilTransfers.latencies)
     });
   }
-  if (stats.scillaTransitionCalls.count > 0) {
+  if (stats.scillaTransitionCalls) {
     table.addRow({
       Name: "Scilla Transition Call",
       Count: stats.scillaTransitionCalls.count,
@@ -131,7 +163,7 @@ export const printResults = (stats: PerfStatistics) => {
     });
   }
 
-  if (stats.evmFunctionCalls.count > 0) {
+  if (stats.evmFunctionCalls) {
     table.addRow({
       Name: "EVM Function Call",
       Count: stats.evmFunctionCalls.count,

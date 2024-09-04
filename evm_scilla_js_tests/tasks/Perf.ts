@@ -7,7 +7,6 @@ import {
   Account,
   CallContractConfig,
   createAndFundAccounts,
-  createEmptyPerfStatistics,
   EvmOrZil,
   fundAccount,
   generateAccount,
@@ -24,11 +23,10 @@ import {
 import {perfConfig} from "./Perf.config";
 import {HardhatRuntimeEnvironment} from "hardhat/types";
 import {AddedAccount, TransactionReceipt} from "web3-core";
-import {Table} from "console-table-printer";
 import {Block} from "@ethersproject/providers";
 
 let web3Account: AddedAccount;
-let perfStatistics: PerfStatistics = createEmptyPerfStatistics();
+let perfStatistics: PerfStatistics = new PerfStatistics();
 
 task("perf", "A task to get balance of a private key").setAction(async (taskArgs, hre) => {
   let zilliqa = new Zilliqa(hre.getNetworkUrl());
@@ -118,8 +116,10 @@ subtask("perf:read-balance", "Read balance perf").setAction(
         return end - start;
       });
       const latencies = await Promise.all(promises);
-      perfStatistics.readZilBalances.latencies.push(...latencies);
-      perfStatistics.readZilBalances.count += latencies.length;
+      perfStatistics.updateReadZilBalanceStats({
+        count: latencies.length,
+        latencies
+      });
     } else {
       const promises: Promise<number>[] = Array.from({length: iterations}, async (_, i) => {
         const start = Date.now();
@@ -128,8 +128,10 @@ subtask("perf:read-balance", "Read balance perf").setAction(
         return end - start;
       });
       const latencies = await Promise.all(promises);
-      perfStatistics.readEvmBalances.latencies.push(...latencies);
-      perfStatistics.readEvmBalances.count += latencies.length;
+      perfStatistics.updateReadEvmBalanceStats({
+        count: latencies.length,
+        latencies
+      });
     }
   }
 );
@@ -155,8 +157,10 @@ subtask("perf:transfer", "Transfer perf").setAction(
     });
 
     const latencies = await Promise.all(promises);
-    perfStatistics.zilTransfers.latencies.push(...latencies);
-    perfStatistics.zilTransfers.count += promises.length;
+    perfStatistics.updateZilTransferStats({
+      count: promises.length,
+      latencies
+    });
   }
 );
 
@@ -264,16 +268,23 @@ subtask("perf:call-contract", "call contract perf").setAction(
     const results = await Promise.all(promises);
     const evmResults = results.filter((item) => item.type === EvmOrZil.Evm);
     const zilResults = results.filter((item) => item.type === EvmOrZil.Zil);
-    perfStatistics.evmFunctionCalls.count += evmResults.length;
-    perfStatistics.evmFunctionCalls.transactionConfirmedLatencies.push(...evmResults.map((item) => item.latency));
-    perfStatistics.evmFunctionCalls.receiptReceivedLatencies.push(...evmResults.map((item) => item.receiptLatency));
-    perfStatistics.evmFunctionCalls.failedCalls += evmResults.filter((item) => item.success === false).length;
 
-    perfStatistics.scillaTransitionCalls.count += zilResults.length;
-    perfStatistics.scillaTransitionCalls.transactionConfirmedLatencies.push(...zilResults.map((item) => item.latency));
-    perfStatistics.scillaTransitionCalls.receiptReceivedLatencies.push(
-      ...zilResults.map((item) => item.receiptLatency)
-    );
-    perfStatistics.scillaTransitionCalls.failedCalls += zilResults.filter((item) => item.success === false).length;
+    if (evmResults.length > 0) {
+      perfStatistics.updateEvmFunctionCallStats({
+        count: evmResults.length,
+        transactionConfirmedLatencies: evmResults.map((item) => item.latency),
+        receiptReceivedLatencies: evmResults.map((item) => item.receiptLatency),
+        failedCalls: evmResults.filter((item) => item.success === false).length
+      });
+    }
+
+    if (zilResults.length > 0) {
+      perfStatistics.updateScillaTransitionCallStats({
+        count: zilResults.length,
+        transactionConfirmedLatencies: zilResults.map((item) => item.latency),
+        receiptReceivedLatencies: zilResults.map((item) => item.receiptLatency),
+        failedCalls: zilResults.filter((item) => item.success === false).length
+      });
+    }
   }
 );
