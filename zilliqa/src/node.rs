@@ -1,4 +1,9 @@
-use std::{collections::HashSet, fmt::Debug, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    fmt::Debug,
+    sync::{atomic::AtomicUsize, Arc},
+    time::Duration,
+};
 
 use alloy::{
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
@@ -131,6 +136,7 @@ pub struct Node {
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub consensus: Consensus,
+    peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
 }
 
@@ -162,6 +168,7 @@ impl Node {
         message_sender_channel: UnboundedSender<OutboundMessageTuple>,
         local_sender_channel: UnboundedSender<LocalMessageTuple>,
         reset_timeout: UnboundedSender<Duration>,
+        peer_num: Arc<AtomicUsize>,
     ) -> Result<Node> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let message_sender = MessageSender {
@@ -180,6 +187,7 @@ impl Node {
             db: db.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
             consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
+            peer_num,
         };
         Ok(node)
     }
@@ -816,6 +824,10 @@ impl Node {
 
     pub fn txpool_content(&self) -> TxPoolContent {
         self.consensus.txpool_content()
+    }
+
+    pub fn get_peer_num(&self) -> usize {
+        self.peer_num.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Convenience function to convert a block to a proposal (add full txs)

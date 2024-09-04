@@ -1,6 +1,6 @@
 use std::{
     net::Ipv4Addr,
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicUsize, Arc, Mutex},
     time::Duration,
 };
 
@@ -55,6 +55,7 @@ impl NodeLauncher {
         config: NodeConfig,
         outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
         local_outbound_message_sender: UnboundedSender<LocalMessageTuple>,
+        peer_num: Arc<AtomicUsize>,
     ) -> Result<Self> {
         let (inbound_message_sender, inbound_message_receiver) = mpsc::unbounded_channel();
         let inbound_message_receiver = UnboundedReceiverStream::new(inbound_message_receiver);
@@ -71,6 +72,7 @@ impl NodeLauncher {
             outbound_message_sender.clone(),
             local_outbound_message_sender.clone(),
             reset_timeout_sender.clone(),
+            peer_num,
         )?;
         let node = Arc::new(Mutex::new(node));
 

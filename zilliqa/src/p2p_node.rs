@@ -1,6 +1,11 @@
 //! A node in the Zilliqa P2P network. May coordinate multiple shard nodes.
 
-use std::{collections::HashMap, iter, time::Duration};
+use std::{
+    collections::HashMap,
+    iter,
+    sync::{atomic::AtomicUsize, Arc},
+    time::Duration,
+};
 
 use anyhow::{anyhow, Result};
 use libp2p::{
@@ -79,6 +84,8 @@ pub struct P2pNode {
     local_message_receiver: UnboundedReceiverStream<LocalMessageTuple>,
     // Map of pending direct requests. Maps the libp2p request ID to our request ID.
     pending_requests: HashMap<request_response::OutboundRequestId, (u64, RequestId)>,
+    // Count of current peers for API
+    peer_num: Arc<AtomicUsize>,
 }
 
 impl P2pNode {
@@ -152,6 +159,7 @@ impl P2pNode {
             outbound_message_receiver,
             local_message_receiver,
             pending_requests: HashMap::new(),
+            peer_num: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -188,6 +196,7 @@ impl P2pNode {
             config,
             self.outbound_message_sender.clone(),
             self.local_message_sender.clone(),
+            self.peer_num.clone(),
         )
         .await?;
         self.shard_nodes.insert(
@@ -451,6 +460,10 @@ impl P2pNode {
                     break;
                 },
             }
+            self.peer_num.store(
+                self.swarm.network_info().num_peers(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
         Ok(())
     }
