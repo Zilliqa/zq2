@@ -6,30 +6,26 @@ export enum ScenarioType {
   CallContract
 }
 
-export enum TransferType {
+export enum EvmOrZil {
   Zil = "Zil",
-  Evm = "Evm",
-  Mixed = "Mixed"
+  Evm = "Evm"
 }
 
 export interface TransferConfig {
   iterations: number;
-  type: TransferType;
+  type: EvmOrZil;
 }
 
 export interface ReadBalanceConfig {
   iterations: number;
-}
-
-export enum TransitionType {
-  Zil = "Zil",
-  Evm = "Evm"
+  type: EvmOrZil;
+  accounts: string[];
 }
 
 export interface CallContract {
   name: string;
   address: string;
-  type: TransitionType;
+  type: EvmOrZil;
   transitions: TransitionCall[];
 }
 

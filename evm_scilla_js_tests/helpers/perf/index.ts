@@ -1,5 +1,6 @@
 export * from "./Config";
 export * from "./Account";
+export * from "./Results";
 
 import fs from "fs";
 import path from "path";

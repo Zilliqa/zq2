@@ -191,5 +191,4 @@ import "./tasks/ZilBalance";
 import "./tasks/Transfer";
 import "./tasks/InitSigners";
 import {initZilliqa} from "hardhat-scilla-plugin";
-import {PerfConfig, ScenarioType, TransferType} from "./helpers/perf";
 export default config;
