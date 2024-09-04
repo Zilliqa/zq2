@@ -731,6 +731,8 @@ pub fn calculate_tx_block_rate(node: &Arc<Mutex<Node>>) -> Result<f64> {
     let measurement_blocks = height.min(max_measurement_blocks);
     let start_measure_block = node
         .consensus
+        .lock()
+        .unwrap()
         .get_canonical_block_by_number(height - measurement_blocks + 1)?
         .ok_or(anyhow!("Unable to get block"))?;
     let start_measure_time = start_measure_block.header.timestamp;

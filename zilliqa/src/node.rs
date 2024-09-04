@@ -228,7 +228,7 @@ impl Node {
         };
 
         let node = Node {
-            config,
+            config: config.clone(),
             peer_id,
             message_sender,
             request_responses,
@@ -290,7 +290,7 @@ impl Node {
         debug!(%from, to = %self.peer_id, %id, %message, "handling request");
         match message {
             ExternalMessage::Vote(m) => {
-                if let Some((block, transactions)) = self.consensus.vote(*m)? {
+                if let Some((block, transactions)) = self.consensus.lock().unwrap().vote(*m)? {
                     self.message_sender
                         .broadcast_external_message(ExternalMessage::Proposal(
                             Proposal::from_parts(block, transactions),
@@ -301,7 +301,7 @@ impl Node {
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
             ExternalMessage::NewView(m) => {
-                if let Some((block, transactions)) = self.consensus.new_view(*m)? {
+                if let Some((block, transactions)) = self.consensus.lock().unwrap().new_view(*m)? {
                     self.message_sender
                         .broadcast_external_message(ExternalMessage::Proposal(
                             Proposal::from_parts(block, transactions),
@@ -329,6 +329,8 @@ impl Node {
                     .take(self.config.block_request_limit)
                     .filter_map(|view| {
                         self.consensus
+                            .lock()
+                            .unwrap()
                             .get_block_by_view(view)
                             .transpose()
                             .map(|block| Ok(self.block_to_proposal(block?)))
@@ -389,7 +391,10 @@ impl Node {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         debug!(from = %self.peer_id, %to, ?failure, "handling message failure");
-        self.consensus.report_outgoing_message_failure(failure)?;
+        self.consensus
+            .lock()
+            .unwrap()
+            .report_outgoing_message_failure(failure)?;
         Ok(())
     }
 
@@ -487,9 +492,17 @@ impl Node {
 
     pub fn resolve_block_number(&self, block_number: BlockNumberOrTag) -> Result<Option<Block>> {
         match block_number {
-            BlockNumberOrTag::Number(n) => self.consensus.lock().unwrap().get_canonical_block_by_number(n),
+            BlockNumberOrTag::Number(n) => self
+                .consensus
+                .lock()
+                .unwrap()
+                .get_canonical_block_by_number(n),
 
-            BlockNumberOrTag::Earliest => self.consensus.lock().unwrap().get_canonical_block_by_number(0),
+            BlockNumberOrTag::Earliest => self
+                .consensus
+                .lock()
+                .unwrap()
+                .get_canonical_block_by_number(0),
             BlockNumberOrTag::Latest => Ok(Some(self.consensus.lock().unwrap().head_block())),
             BlockNumberOrTag::Pending => self.consensus.lock().unwrap().get_pending_block(),
             BlockNumberOrTag::Finalized => {
@@ -997,7 +1010,12 @@ impl Node {
     }
 
     fn handle_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
-        if let Some((to, message)) = self.consensus.proposal(from, proposal, false)? {
+        if let Some((to, message)) = self
+            .consensus
+            .lock()
+            .unwrap()
+            .proposal(from, proposal, false)?
+        {
             self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
             if let Some(to) = to {
                 self.message_sender.send_external_message(to, message)?;
@@ -1023,7 +1041,10 @@ impl Node {
         for block in response.proposals {
             // Buffer the block so that we know we have it - in fact, add it to the cache so
             // that we can include it in the chain if necessary.
-            self.consensus.lock().unwrap().buffer_proposal(from, block)?;
+            self.consensus
+                .lock()
+                .unwrap()
+                .buffer_proposal(from, block)?;
         }
         trace!("block_store::handle_block_response: finished handling response");
         Ok(())

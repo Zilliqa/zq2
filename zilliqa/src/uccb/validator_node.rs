@@ -219,7 +219,6 @@ impl ValidatorNode {
                 call_builder.clone().gas(gas_estimate * 130 / 100) // Apply multiplier
             } else {
                 let call_builder = call_builder.clone();
-                // let already_dispatched_error = chain_gateway_contract.abi().error("AlreadyDispatched").unwrap().get(0).unwrap();
                 if let Err(contract_err) = call_builder.call().await {
                     use alloy::{contract::Error, transports::RpcError};
                     match contract_err {
