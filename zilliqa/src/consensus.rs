@@ -1057,13 +1057,23 @@ impl Consensus {
 
         let node_config = &self.config;
 
+        // This is a partial header of a block that will be proposed with some transactions executed below.
+        // It is needed so that each transaction is executed within proper block context (the block it belongs to)
+        let executed_block_header = BlockHeader {
+            view: self.view(),
+            number: parent.header.number + 1,
+            timestamp: SystemTime::max(SystemTime::now(), parent_header.timestamp),
+            gas_limit: gas_left,
+            ..BlockHeader::default()
+        };
+
         while let Some(tx) = transaction_pool.best_transaction() {
             let result = Self::apply_transaction_at(
                 state,
                 self.db.clone(),
                 node_config,
                 tx.clone(),
-                parent_header,
+                executed_block_header,
                 inspector::noop(),
             )?;
 
@@ -1121,14 +1131,14 @@ impl Consensus {
 
         let proposal = Block::from_qc(
             self.secret_key,
-            self.view.get_view(),
-            parent.header.number + 1,
+            executed_block_header.view,
+            executed_block_header.number,
             qc,
             state.root_hash()?,
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             applied_transaction_hashes.clone(),
-            SystemTime::max(SystemTime::now(), parent_header.timestamp),
+            executed_block_header.timestamp,
             self.config.consensus.eth_block_gas_limit - gas_left,
             self.config.consensus.eth_block_gas_limit,
         );
@@ -1398,12 +1408,12 @@ impl Consensus {
         }
 
         let account = self.state.get_account(txn.signer)?;
-        let chain_id = self.config.eth_chain_id;
+        let eth_chain_id = self.config.eth_chain_id;
 
         if !txn.tx.validate(
             &account,
             self.config.consensus.eth_block_gas_limit,
-            chain_id,
+            eth_chain_id,
         )? {
             return Ok(false);
         }
@@ -2314,7 +2324,7 @@ impl Consensus {
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = self
-                .apply_transaction(txn.clone(), parent.header, &mut inspector)?
+                .apply_transaction(txn.clone(), block.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
             self.transaction_pool.mark_executed(&txn);
             for address in inspector.touched {

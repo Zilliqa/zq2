@@ -1,4 +1,4 @@
-name: zq2-devnet
+name: zq2-perftest
 eth_chain_id: 33469
 project_id: prj-d-zq2-devnet-c83bkpsd
 roles:
@@ -8,6 +8,6 @@ roles:
 - apps
 - checkpoint
 versions:
-  zq2: e5b4d088
+  zq2: 9f66a16e
   otterscan: develop
   spout: main

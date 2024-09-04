@@ -20,7 +20,7 @@ use super::{
     types::zil::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, SWInfo, ShardingStructure,
-        SmartContract,
+        SmartContract, TXBlockRateResult, TxBlockListing, TxBlockListingResult,
     },
 };
 use crate::{
@@ -31,6 +31,7 @@ use crate::{
     schnorr,
     scilla::split_storage_key,
     state::Code,
+    time::SystemTime,
     transaction::{ScillaGas, SignedTransaction, TxZilliqa, ZilAmount, EVM_GAS_PER_SCILLA_GAS},
 };
 
@@ -66,6 +67,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetCurrentDSEpoch", get_current_ds_epoch),
             ("DSBlockListing", ds_block_listing),
             ("GetDSBlockRate", get_ds_block_rate),
+            ("GetTxBlockRate", get_tx_block_rate),
+            ("TxBlockListing", tx_block_listing),
         ],
     )
 }
@@ -283,12 +286,12 @@ fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBloc
     Ok((&block).into())
 }
 
-fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<ZilAmount> {
+fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let price = node.lock().unwrap().get_gas_price();
     // `price` is the cost per unit of [EvmGas]. This API should return the cost per unit of [ScillaGas].
     let price = price * (EVM_GAS_PER_SCILLA_GAS as u128);
 
-    Ok(ZilAmount::from_amount(price))
+    Ok(ZilAmount::from_amount(price).to_string())
 }
 
 fn network_id(eth_chain_id: u64) -> u64 {
@@ -626,9 +629,64 @@ pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlo
     })
 }
 
-pub fn get_ds_block_rate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<DSBlockRateResult> {
-    // Dummy implementation
+pub fn calculate_tx_block_rate(node: &Arc<Mutex<Node>>) -> Result<f64> {
+    let node = node.lock().unwrap();
+    let max_measurement_blocks = 5;
+    let height = node.get_chain_tip();
+    if height == 0 {
+        return Ok(0.0);
+    }
+    let measurement_blocks = height.min(max_measurement_blocks);
+    let start_measure_block = node
+        .consensus
+        .get_block_by_number(height - measurement_blocks + 1)?
+        .ok_or(anyhow!("Unable to get block"))?;
+    let start_measure_time = start_measure_block.header.timestamp;
+    let end_measure_time = SystemTime::now();
+    let elapsed_time = end_measure_time.duration_since(start_measure_time)?;
+    let tx_block_rate = measurement_blocks as f64 / elapsed_time.as_secs_f64();
+    Ok(tx_block_rate)
+}
+
+pub fn get_ds_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlockRateResult> {
+    let tx_block_rate = calculate_tx_block_rate(node)?;
+    let ds_block_rate = tx_block_rate / TX_BLOCKS_PER_DS_BLOCK as f64;
     Ok(DSBlockRateResult {
-        rate: 0.00014142137245459714,
+        rate: ds_block_rate,
+    })
+}
+
+fn get_tx_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<TXBlockRateResult> {
+    let tx_block_rate = calculate_tx_block_rate(node)?;
+    Ok(TXBlockRateResult {
+        rate: tx_block_rate,
+    })
+}
+
+fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockListingResult> {
+    let page_number: u64 = params.one()?;
+
+    let node = node.lock().unwrap();
+    let num_tx_blocks = node.get_chain_tip();
+    let num_pages = (num_tx_blocks / 10) + if num_tx_blocks % 10 == 0 { 0 } else { 1 };
+
+    let start_block = page_number * 10;
+    let end_block = std::cmp::min(start_block + 10, num_tx_blocks);
+
+    let listings: Vec<TxBlockListing> = (start_block..end_block)
+        .filter_map(|block_number| {
+            node.get_block(block_number)
+                .ok()
+                .flatten()
+                .map(|block| TxBlockListing {
+                    block_num: block.number(),
+                    hash: block.hash().to_string(),
+                })
+        })
+        .collect();
+
+    Ok(TxBlockListingResult {
+        data: listings,
+        max_pages: num_pages,
     })
 }

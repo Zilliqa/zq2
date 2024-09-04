@@ -1,4 +1,4 @@
-use std::ops::DerefMut;
+use std::{ops::DerefMut, str::FromStr};
 
 use ethabi::{ParamType, Token};
 use ethers::{providers::Middleware, types::TransactionRequest, utils::keccak256};
@@ -68,11 +68,12 @@ async fn send_transaction(
     let public_key = secret_key.public_key();
 
     // Get the gas price via the Zilliqa API.
-    let gas_price: u128 = wallet
+    let gas_price_str: String = wallet
         .provider()
         .request("GetMinimumGasPrice", ())
         .await
         .unwrap();
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
 
     let chain_id = wallet.get_chainid().await.unwrap().as_u32() - 0x8000;
     let version = (chain_id << 16) | 1u32;
@@ -629,5 +630,65 @@ async fn get_ds_block_rate(mut network: Network) {
         .await
         .expect("Failed to call GetDSBlockRate API");
 
-    zilliqa::api::types::zil::DSBlockRateResult::deserialize(&response).unwrap();
+    let returned = zilliqa::api::types::zil::DSBlockRateResult::deserialize(&response).unwrap();
+
+    assert!(returned.rate >= 0.0, "Block rate should be non-negative");
+}
+
+#[zilliqa_macros::test]
+async fn get_tx_block_rate(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxBlockRate", [""])
+        .await
+        .expect("Failed to call GetTxBlockRate API");
+
+    let returned = zilliqa::api::types::zil::TXBlockRateResult::deserialize(&response).unwrap();
+
+    assert!(returned.rate >= 0.0, "Block rate should be non-negative");
+}
+
+#[zilliqa_macros::test]
+async fn tx_block_listing(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    network.run_until_block(&wallet, 2.into(), 50).await;
+
+    let response: Value = wallet
+        .provider()
+        .request("TxBlockListing", [0])
+        .await
+        .expect("Failed to call TxBlockListing API");
+
+    let tx_block_listing: zilliqa::api::types::zil::TxBlockListingResult =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert_eq!(wallet.get_block_number().await.unwrap(), 2.into());
+    assert_eq!(
+        tx_block_listing.data.len(),
+        2,
+        "Expected 2 TxBlock listings"
+    );
+    assert!(
+        tx_block_listing.max_pages >= 1,
+        "Expected at least 1 page of TxBlock listings"
+    );
+
+    assert!(
+        tx_block_listing.data[0].block_num == 0,
+        "Expected BlockNum to be 0, got: {:?}",
+        tx_block_listing.data[0].block_num
+    );
+    assert!(
+        tx_block_listing.data[1].block_num > 0,
+        "Expected BlockNum to be greater than 0, got: {:?}",
+        tx_block_listing.data[1].block_num
+    );
+    assert!(
+        !tx_block_listing.data[1].hash.is_empty(),
+        "Expected Hash to be non-empty, got: {:?}",
+        tx_block_listing.data[1].hash
+    );
 }
