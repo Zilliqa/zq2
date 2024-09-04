@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 Unreleased changes.
-
+- [#1321](https://github.com/Zilliqa/zq2/issues/1321): Early block assembly before a supermajority vote is received.
 - [#1350](https://github.com/Zilliqa/zq2/pull/1350): Support `CHAINID`, `BLOCKNUMBER`, and `TIMESTAMP` in Scilla contracts.
 - [#1358](https://github.com/Zilliqa/zq2/pull/1358): Support `_codehash` in Scilla contracts.
 - [#1390](https://github.com/Zilliqa/zq2/pull/1390): Implement `GetNumPeers` API endpoint to get the current number of peers.
