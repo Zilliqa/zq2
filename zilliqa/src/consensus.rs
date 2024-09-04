@@ -1106,6 +1106,7 @@ impl Consensus {
             .public_key;
 
         // Apply the rewards when exiting the round
+        let previous_state_root_hash = state.root_hash()?;
         state.set_to_root(proposal.state_root_hash().into()); // proposal late state to apply rewards
         Self::apply_rewards_late_at(
             parent_block.state_root_hash(),
@@ -1133,6 +1134,8 @@ impl Consensus {
             proposal.header.gas_used,
             proposal.header.gas_limit,
         );
+
+        state.set_to_root(previous_state_root_hash.into());
 
         // Return the final proposal
         Ok(Some(proposal))
@@ -1275,7 +1278,7 @@ impl Consensus {
         );
 
         // Restore the state to previous sane state
-        // state.set_to_root(previous_state_root_hash.into());
+        state.set_to_root(previous_state_root_hash.into());
 
         // as a future improvement, process the proposal before broadcasting it
         trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### proposing early block");
@@ -1480,7 +1483,7 @@ impl Consensus {
 
         // give it a last try, even if it results in an empty block
         if self.early_proposal.is_none() {
-            warn!("missing early proposal {}", self.view.get_view());
+            trace!("missing early proposal {}", self.view.get_view());
             let mut tx_pool = self.transaction_pool.clone();
             self.early_proposal =
                 self.assemble_early_block_at(&mut state, &mut tx_pool, &self.votes)?;
