@@ -66,6 +66,7 @@ impl RelayedEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RelayEventSignatures {
     pub event: Option<RelayedEvent>,
+    pub has_supermajority: bool,
     pub dispatched: bool,
     pub signatures: HashMap<Address, Signature>,
 }
@@ -74,6 +75,7 @@ impl RelayEventSignatures {
     pub fn new(event: RelayedEvent, address: Address, signature: Signature) -> Self {
         RelayEventSignatures {
             event: Some(event),
+            has_supermajority: false,
             dispatched: false,
             signatures: HashMap::from([(address, signature)]),
         }

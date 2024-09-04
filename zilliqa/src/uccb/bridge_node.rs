@@ -263,6 +263,11 @@ impl BridgeNode {
                     return Ok(());
                 }
 
+                if event_signatures.has_supermajority {
+                    warn!("Ignoring a relay event that already has a supermajority {echo:?}");
+                    return Ok(());
+                }
+
                 event_signatures
                     .signatures
                     .add_signature(address, *signature);
@@ -285,6 +290,10 @@ impl BridgeNode {
             {
                 info!("Sending out dispatch request for {:?}", &echo);
 
+                self.event_signatures
+                    .get_mut(&nonce)
+                    .unwrap()
+                    .has_supermajority = true;
                 self.outbound_message_sender
                     .send(OutboundBridgeMessage::Dispatch(Dispatch {
                         event: event.clone(),
