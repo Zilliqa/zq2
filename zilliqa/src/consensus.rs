@@ -2080,7 +2080,9 @@ impl Consensus {
         }
 
         // Check if the co-signers of the block's QC represent the supermajority.
-        self.check_quorum_in_bits(&block.header.qc.cosigned, &committee)
+        let mut parent_state = self.state.clone();
+        parent_state.set_to_root(parent.state_root_hash().into());
+        self.check_quorum_in_bits(&block.header.qc.cosigned, &committee, parent_state)
             .map_err(|e| (e, false))?;
 
         let committee: Vec<_> = committee
@@ -2368,6 +2370,7 @@ impl Consensus {
         &self,
         cosigned: &BitSlice,
         committee: &[NodePublicKeyRaw],
+        parent_state: State,
     ) -> Result<()> {
         let (total_weight, cosigned_sum) = committee
             .iter()
@@ -2375,7 +2378,7 @@ impl Consensus {
             .map(|(i, public_key)| {
                 (
                     i,
-                    self.state
+                    parent_state
                         .get_stake_raw(public_key.clone())
                         .unwrap()
                         .unwrap()
