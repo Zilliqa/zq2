@@ -225,7 +225,7 @@ impl Node {
         };
 
         let node = Node {
-            config,
+            config: config.clone(),
             peer_id,
             message_sender,
             request_responses,
@@ -297,7 +297,7 @@ impl Node {
         debug!(%from, to = %self.peer_id, %message, "handling request");
         match message {
             ExternalMessage::Vote(m) => {
-                if let Some((block, transactions)) = self.consensus.vote(*m)? {
+                if let Some((block, transactions)) = self.consensus.lock().unwrap().vote(*m)? {
                     self.message_sender
                         .broadcast_external_message(ExternalMessage::Proposal(
                             Proposal::from_parts(block, transactions),
@@ -308,7 +308,7 @@ impl Node {
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
             ExternalMessage::NewView(m) => {
-                if let Some(block) = self.consensus.new_view(*m)? {
+                if let Some(block) = self.consensus.lock().unwrap().new_view(*m)? {
                     self.message_sender
                         .broadcast_external_message(ExternalMessage::Proposal(
                             Proposal::from_parts(block, vec![]),
@@ -328,6 +328,8 @@ impl Node {
                     .take(self.config.block_request_limit)
                     .filter_map(|view| {
                         self.consensus
+                            .lock()
+                            .unwrap()
                             .get_block_by_view(view)
                             .transpose()
                             .map(|block| Ok(self.block_to_proposal(block?)))
@@ -377,7 +379,10 @@ impl Node {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         debug!(from = %self.peer_id, %to, ?failure, "handling message failure");
-        self.consensus.report_outgoing_message_failure(failure)?;
+        self.consensus
+            .lock()
+            .unwrap()
+            .report_outgoing_message_failure(failure)?;
         Ok(())
     }
 
@@ -983,7 +988,12 @@ impl Node {
     }
 
     fn handle_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
-        if let Some((to, message)) = self.consensus.proposal(from, proposal, false)? {
+        if let Some((to, message)) = self
+            .consensus
+            .lock()
+            .unwrap()
+            .proposal(from, proposal, false)?
+        {
             self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
             if let Some(to) = to {
                 self.message_sender.send_external_message(to, message)?;
