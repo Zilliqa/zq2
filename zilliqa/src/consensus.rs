@@ -688,6 +688,59 @@ impl Consensus {
         Self::apply_rewards_raw_at(state, config, committee, proposer_bytes, view, cosigned)
     }
 
+    /// Apply the rewards at the tail-end of the Proposal.
+    /// This requires two `States`:
+    /// - late_state: where the rewards will be applied.
+    /// - parent_state: where the committee data is from.
+    fn apply_rewards_late_at(
+        parent_state: State,
+        late_state: &mut State,
+        config: &ConsensusConfig,
+        committee: &[NodePublicKeyRaw],
+        proposer_bytes: NodePublicKeyRaw,
+        view: u64,
+        cosigned: &BitSlice,
+    ) -> Result<()> {
+        debug!("apply late rewards in view {view}");
+
+        let rewards_per_block: u128 = *config.rewards_per_hour / config.blocks_per_hour as u128;
+
+        // Reward the proposer
+        if let Some(proposer_address) = parent_state.get_reward_address_raw(proposer_bytes)? {
+            let reward = rewards_per_block / 2;
+            late_state.mutate_account(proposer_address, |a| a.balance += reward)?;
+        }
+
+        let mut total_cosigner_stake = 0;
+
+        let cosigner_stake: Vec<_> = committee
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| cosigned[*i])
+            .map(|(_, pub_key)| {
+                let reward_address = parent_state.get_reward_address_raw(pub_key.clone()).unwrap();
+                let stake = parent_state
+                    .get_stake_raw(pub_key.clone())
+                    .unwrap()
+                    .unwrap()
+                    .get();
+                total_cosigner_stake += stake;
+                (reward_address, stake)
+            })
+            .collect();
+
+        // Reward the committee
+        for (reward_address, stake) in cosigner_stake {
+            if let Some(cosigner) = reward_address {
+                let reward = U256::from(rewards_per_block / 2) * U256::from(stake)
+                    / U256::from(total_cosigner_stake);
+                late_state.mutate_account(cosigner, |a| a.balance += reward.to::<u128>())?;
+            }
+        }
+
+        Ok(())
+    }
+
     fn apply_rewards_raw_at(
         at_state: &mut State,
         config: &ConsensusConfig,
@@ -697,7 +750,6 @@ impl Consensus {
         cosigned: &BitSlice,
     ) -> Result<()> {
         debug!("apply rewards in view {view}");
-
         let rewards_per_block = *config.rewards_per_hour / config.blocks_per_hour as u128;
 
         if let Some(proposer_address) = at_state.get_reward_address_raw(proposer_bytes)? {
@@ -1015,7 +1067,7 @@ impl Consensus {
 
     fn finish_early_proposal_at(
         &self,
-        state: &mut State,
+        late_state: &mut State,
         votes: &BTreeMap<Hash, BlockVotes>,
         proposal: Block,
     ) -> Result<Option<Block>> {
@@ -1028,10 +1080,13 @@ impl Consensus {
 
         // Should have supermajority by now.
         // Retrieve the committee - for rewards
-        let committee = state.get_stakers_at_block_raw(&parent_block)?;
+        let committee = late_state.get_stakers_at_block_raw(&parent_block)?;
         let (signatures, cosigned, _, _) = votes
             .get(&parent_block_hash)
             .context("tried to finalise a proposal without any votes")?;
+        // Retrieve the accounts - for rewards
+        let mut parent_state = late_state.clone();
+        parent_state.set_to_root(parent_block.state_root_hash().into());
 
         // Compute the majority QC
         let qc = self.qc_from_bits(parent_block_hash, signatures, *cosigned, parent_block_view);
@@ -1043,9 +1098,10 @@ impl Consensus {
             .public_key;
 
         // Apply the rewards when exiting the round
-        state.set_to_root(proposal.state_root_hash().into()); // restore proposal state to apply rewards
-        Self::apply_rewards_raw_at(
-            state,
+        late_state.set_to_root(proposal.state_root_hash().into()); // proposal late state to apply rewards
+        Self::apply_rewards_late_at(
+            parent_state,
+            late_state,
             &self.config.consensus,
             &committee,
             proposer.into(), // Last leader
@@ -1061,7 +1117,7 @@ impl Consensus {
             // majority QC
             qc,
             // post-reward updated state
-            state.root_hash()?,
+            late_state.root_hash()?,
             proposal.header.transactions_root_hash,
             proposal.header.receipts_root_hash,
             proposal.transactions,
