@@ -16,7 +16,9 @@ import {
   printBlocksInfo,
   printResults,
   ReadBalanceConfig,
+  ReadCallResult,
   ScenarioType,
+  TransactionCallResult,
   TransferConfig
 } from "../helpers/perf";
 
@@ -26,7 +28,6 @@ import {AddedAccount, TransactionReceipt} from "web3-core";
 import {Block} from "@ethersproject/providers";
 
 let web3Account: AddedAccount;
-let perfStatistics: PerfStatistics = new PerfStatistics();
 
 task("perf", "Performance measurement task").setAction(async (taskArgs, hre) => {
   let zilliqa = new Zilliqa(hre.getNetworkUrl());
@@ -45,30 +46,178 @@ task("perf", "Performance measurement task").setAction(async (taskArgs, hre) => 
   const testData: TestData = await hre.run("perf:init-test-data", {zilliqa});
 
   for (const scenario of perfConfig.scenarios) {
-    switch (scenario.type) {
-      case ScenarioType.Transfer: {
-        const transferConfig = scenario.config as TransferConfig;
-        await hre.run("perf:transfer", {zilliqa, testData, transferConfig});
-        break;
+    let readPromises: Promise<ReadCallResult>[] = [];
+    let transactionPromises: Promise<TransactionCallResult>[] = [];
+    console.log(`👽 Running ${scenario.name}...`);
+    for (const step of scenario.steps) {
+      switch (step.type) {
+        case ScenarioType.Transfer: {
+          const transferConfig = step.config as TransferConfig;
+          transactionPromises.push(...(await generateSimpleTransferTransactions(zilliqa, hre, transferConfig)));
+          break;
+        }
+        case ScenarioType.ReadBalance: {
+          const readBalanceConfig = step.config as ReadBalanceConfig;
+          readPromises.push(...generateBalanceReadRequests(zilliqa, hre, readBalanceConfig));
+          break;
+        }
+        case ScenarioType.CallContract: {
+          const callContractConfig = step.config as CallContractConfig;
+          transactionPromises.push(...(await generateCallContractTransactions(zilliqa, hre, callContractConfig)));
+          break;
+        }
+        default:
+          console.error(`  ☹️ ${step.type} is not implemented yet`);
       }
-      case ScenarioType.ReadBalance: {
-        const readBalanceConfig = scenario.config as ReadBalanceConfig;
-        await hre.run("perf:read-balance", {zilliqa, testData, readBalanceConfig, hre});
-        break;
-      }
-      case ScenarioType.CallContract: {
-        const callContractConfig = scenario.config as CallContractConfig;
-        await hre.run("perf:call-contract", {zilliqa, testData, callContractConfig, hre});
-        break;
-      }
-      default:
-        console.error(`${scenario.type} is not implemented yet`);
     }
+
+    const [reads, txns] = await Promise.all([Promise.all(readPromises), Promise.all(transactionPromises)]);
+    const perfStatistics = new PerfStatistics(reads, txns);
+    printResults(perfStatistics);
   }
 
-  printResults(perfStatistics);
   printBlocksInfo(blocks);
 });
+
+async function generateSimpleTransferTransactions(
+  zilliqa: Zilliqa,
+  hre: HardhatRuntimeEnvironment,
+  transferConfig: TransferConfig
+): Promise<Promise<TransactionCallResult>[]> {
+  const {iterations} = transferConfig;
+
+  let nonce = await getNonce(zilliqa, getAddressFromPrivateKey(perfConfig.sourceOfFunds));
+  const promises = Array.from({length: iterations}, async (_, i): Promise<TransactionCallResult> => {
+    const account = generateAccount();
+    const start = Date.now();
+    await fundAccount(zilliqa, account.zilAddress, units.toQa("0.001", units.Units.Zil), (nonce += 1));
+    return {
+      latency: Date.now() - start,
+      receiptLatency: 0,
+      success: true,
+      type: transferConfig.type,
+      scenario: ScenarioType.Transfer
+    };
+  });
+
+  return promises;
+}
+
+function generateBalanceReadRequests(
+  zilliqa: Zilliqa,
+  hre: HardhatRuntimeEnvironment,
+  readBalanceConfig: ReadBalanceConfig
+): Promise<ReadCallResult>[] {
+  const {iterations, type, accounts} = readBalanceConfig;
+
+  if (type === EvmOrZil.Zil) {
+    return Array.from({length: iterations}, async (_, i): Promise<ReadCallResult> => {
+      const start = Date.now();
+      await zilliqa.blockchain.getBalance(accounts[i % accounts.length]);
+      const end = Date.now();
+      return {
+        latency: end - start,
+        type: EvmOrZil.Zil,
+        scenario: ScenarioType.ReadBalance
+      };
+    });
+  } else {
+    return Array.from({length: iterations}, async (_, i): Promise<ReadCallResult> => {
+      const start = Date.now();
+      hre.ethers.provider.getBalance(accounts[i % accounts.length]);
+      const end = Date.now();
+      return {
+        latency: end - start,
+        type: EvmOrZil.Evm,
+        scenario: ScenarioType.ReadBalance
+      };
+    });
+  }
+}
+
+async function generateCallContractTransactions(
+  zilliqa: Zilliqa,
+  hre: HardhatRuntimeEnvironment,
+  callContractConfig: CallContractConfig
+): Promise<Promise<TransactionCallResult>[]> {
+  let nonce = await getNonce(zilliqa, getAddressFromPrivateKey(perfConfig.sourceOfFunds));
+  let promises: Promise<TransactionCallResult>[] = [];
+  for (const callContract of callContractConfig.calls) {
+    const contract = zilliqa.contracts.at(callContract.address);
+
+    callContract.transitions.forEach((transition) => {
+      if (callContract.type === EvmOrZil.Zil) {
+        promises.push(
+          ...Array.from({length: transition.iterations}, async (_, i): Promise<TransactionCallResult> => {
+            let start = Date.now();
+            let latency = 0;
+            let receiptLatency = 0;
+            const tx = await contract.call(transition.name, transition.args, {
+              version: bytes.pack(1, 1),
+              amount: new BN(0),
+              gasPrice: units.toQa("2000", units.Units.Li),
+              gasLimit: Long.fromNumber(8000),
+              nonce: (nonce += 1)
+            });
+            latency = Date.now() - start;
+            const receipt = await waitForReceipt(tx);
+            receiptLatency = Date.now() - start;
+            return {
+              latency,
+              receiptLatency,
+              success: receipt.success,
+              type: EvmOrZil.Zil,
+              scenario: ScenarioType.CallContract
+            };
+          })
+        );
+      } else if (callContract.type === EvmOrZil.Evm) {
+        const abi = getContractAbi(callContract.name);
+        if (abi === undefined) {
+          console.error(`Failed to get the contract ABI for ${callContract.name}`);
+          return;
+        }
+        const contract = new hre.web3.eth.Contract(abi, callContract.address, {
+          from: web3Account.address
+        });
+        const method = contract.methods[transition.name];
+        if (method === undefined) {
+          console.error(`Failed to get the method ${transition.name}`);
+          return;
+        }
+        promises.push(
+          ...Array.from({length: transition.iterations}, async (_, i) => {
+            let start = Date.now();
+            let success = false;
+            let latency = 0;
+            let receiptLatency = 0;
+            await method(...transition.args)
+              .send({gasLimit: 1000000})
+              .on("transactionHash", function () {
+                latency = Date.now() - start;
+              })
+              .on("receipt", function (receipt: TransactionReceipt) {
+                success = receipt.status;
+                receiptLatency = Date.now() - start;
+              })
+              .on("error", function () {
+                success = false;
+              });
+            return {
+              latency,
+              receiptLatency,
+              success,
+              type: EvmOrZil.Evm,
+              scenario: ScenarioType.CallContract
+            };
+          })
+        );
+      }
+    });
+  }
+
+  return promises;
+}
 
 subtask("perf:init-test-data", "Create or load test-data").setAction(
   async ({zilliqa, numberOfAccounts}): Promise<TestData> => {
@@ -94,85 +243,6 @@ interface TestData {
   accounts: Account[];
 }
 
-subtask("perf:read-balance", "Read balance perf").setAction(
-  async ({
-    zilliqa,
-    testData,
-    readBalanceConfig,
-    hre
-  }: {
-    zilliqa: Zilliqa;
-    testData: TestData;
-    readBalanceConfig: ReadBalanceConfig;
-    hre: HardhatRuntimeEnvironment;
-  }) => {
-    const {iterations, type, accounts} = readBalanceConfig;
-
-    if (type === EvmOrZil.Zil) {
-      const promises: Promise<number>[] = Array.from({length: iterations}, async (_, i) => {
-        const start = Date.now();
-        await zilliqa.blockchain.getBalance(accounts[i % accounts.length]);
-        const end = Date.now();
-        return end - start;
-      });
-      const latencies = await Promise.all(promises);
-      perfStatistics.updateReadZilBalanceStats({
-        count: latencies.length,
-        latencies
-      });
-    } else {
-      const promises: Promise<number>[] = Array.from({length: iterations}, async (_, i) => {
-        const start = Date.now();
-        hre.ethers.provider.getBalance(accounts[i % accounts.length]);
-        const end = Date.now();
-        return end - start;
-      });
-      const latencies = await Promise.all(promises);
-      perfStatistics.updateReadEvmBalanceStats({
-        count: latencies.length,
-        latencies
-      });
-    }
-  }
-);
-
-subtask("perf:transfer", "Transfer perf").setAction(
-  async ({
-    zilliqa,
-    testData,
-    transferConfig
-  }: {
-    zilliqa: Zilliqa;
-    testData: TestData;
-    transferConfig: TransferConfig;
-  }) => {
-    const {iterations} = transferConfig;
-
-    let nonce = await getNonce(zilliqa, getAddressFromPrivateKey(perfConfig.sourceOfFunds));
-    const promises = Array.from({length: iterations}, async (_, i) => {
-      const account = generateAccount();
-      const start = Date.now();
-      await fundAccount(zilliqa, account.zilAddress, units.toQa("0.001", units.Units.Zil), (nonce += 1));
-      return Date.now() - start;
-    });
-
-    const latencies = await Promise.all(promises);
-    perfStatistics.updateZilTransferStats({
-      count: promises.length,
-      transactionConfirmedLatencies: latencies,
-      failedCalls: 0, // FIXME:
-      receiptReceivedLatencies: [] // FIXME:
-    });
-  }
-);
-
-interface TransitionCallResult {
-  latency: number;
-  receiptLatency: number;
-  success: boolean;
-  type: EvmOrZil;
-}
-
 async function waitForReceipt(tx: Transaction) {
   let receipt = tx.getReceipt();
   while (!receipt) {
@@ -181,112 +251,3 @@ async function waitForReceipt(tx: Transaction) {
   }
   return receipt;
 }
-
-subtask("perf:call-contract", "call contract perf").setAction(
-  async ({
-    zilliqa,
-    testData,
-    callContractConfig,
-    hre
-  }: {
-    zilliqa: Zilliqa;
-    testData: TestData;
-    callContractConfig: CallContractConfig;
-    hre: HardhatRuntimeEnvironment;
-  }) => {
-    let nonce = await getNonce(zilliqa, getAddressFromPrivateKey(perfConfig.sourceOfFunds));
-    let promises: Promise<TransitionCallResult>[] = [];
-    for (const callContract of callContractConfig.calls) {
-      const contract = zilliqa.contracts.at(callContract.address);
-
-      callContract.transitions.forEach((transition) => {
-        if (callContract.type === EvmOrZil.Zil) {
-          promises.push(
-            ...Array.from({length: transition.iterations}, async (_, i): Promise<TransitionCallResult> => {
-              let start = Date.now();
-              let latency = 0;
-              let receiptLatency = 0;
-              const tx = await contract.call(transition.name, transition.args, {
-                version: bytes.pack(1, 1),
-                amount: new BN(0),
-                gasPrice: units.toQa("2000", units.Units.Li),
-                gasLimit: Long.fromNumber(8000),
-                nonce: (nonce += 1)
-              });
-              latency = Date.now() - start;
-              const receipt = await waitForReceipt(tx);
-              receiptLatency = Date.now() - start;
-              return {
-                latency,
-                receiptLatency,
-                success: receipt.success,
-                type: EvmOrZil.Zil
-              };
-            })
-          );
-        } else if (callContract.type === EvmOrZil.Evm) {
-          const abi = getContractAbi(callContract.name);
-          if (abi === undefined) {
-            console.error(`Failed to get the contract ABI for ${callContract.name}`);
-            return;
-          }
-          const contract = new hre.web3.eth.Contract(abi, callContract.address, {
-            from: web3Account.address
-          });
-          const method = contract.methods[transition.name];
-          if (method === undefined) {
-            console.error(`Failed to get the method ${transition.name}`);
-            return;
-          }
-          promises.push(
-            ...Array.from({length: transition.iterations}, async (_, i) => {
-              let start = Date.now();
-              let success = false;
-              let latency = 0;
-              let receiptLatency = 0;
-              let tx = await method(...transition.args)
-                .send({gasLimit: 1000000})
-                .on("transactionHash", function () {
-                  latency = Date.now() - start;
-                })
-                .on("receipt", function (receipt: TransactionReceipt) {
-                  success = receipt.status;
-                  receiptLatency = Date.now() - start;
-                })
-                .on("error", function () {
-                  success = false;
-                });
-              return {
-                latency,
-                receiptLatency,
-                success,
-                type: EvmOrZil.Evm
-              };
-            })
-          );
-        }
-      });
-    }
-    const results = await Promise.all(promises);
-    const evmResults = results.filter((item) => item.type === EvmOrZil.Evm);
-    const zilResults = results.filter((item) => item.type === EvmOrZil.Zil);
-
-    if (evmResults.length > 0) {
-      perfStatistics.updateEvmFunctionCallStats({
-        count: evmResults.length,
-        transactionConfirmedLatencies: evmResults.map((item) => item.latency),
-        receiptReceivedLatencies: evmResults.map((item) => item.receiptLatency),
-        failedCalls: evmResults.filter((item) => item.success === false).length
-      });
-    }
-
-    if (zilResults.length > 0) {
-      perfStatistics.updateScillaTransitionCallStats({
-        count: zilResults.length,
-        transactionConfirmedLatencies: zilResults.map((item) => item.latency),
-        receiptReceivedLatencies: zilResults.map((item) => item.receiptLatency),
-        failedCalls: zilResults.filter((item) => item.success === false).length
-      });
-    }
-  }
-);

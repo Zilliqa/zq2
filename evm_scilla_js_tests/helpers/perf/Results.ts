@@ -1,5 +1,6 @@
 import {Block} from "@ethersproject/providers";
 import {Table} from "console-table-printer";
+import {EvmOrZil, ScenarioType} from "./Config";
 
 export interface TransactionStatistics {
   count: number;
@@ -13,29 +14,82 @@ export interface ReadStatistics {
   latencies: number[];
 }
 
+export interface TransactionCallResult {
+  latency: number;
+  receiptLatency: number;
+  success: boolean;
+  type: EvmOrZil;
+  scenario: ScenarioType;
+}
+
+export interface ReadCallResult {
+  latency: number;
+  type: EvmOrZil;
+  scenario: ScenarioType;
+}
+
 export class PerfStatistics {
-  updateReadZilBalanceStats(stats: ReadStatistics) {
-    this.readZilBalances = this.updateReadStatistics(stats, this.readZilBalances);
-  }
+  constructor(reads: ReadCallResult[], transactions: TransactionCallResult[]) {
+    const readBalances = reads.filter((read) => read.scenario === ScenarioType.ReadBalance);
+    const zilReadBalances = readBalances.filter((read) => read.type === EvmOrZil.Zil);
+    if (zilReadBalances.length > 0) {
+      this.readZilBalances = {
+        count: zilReadBalances.length,
+        latencies: zilReadBalances.map((read) => read.latency)
+      };
+    }
 
-  updateReadEvmBalanceStats(stats: ReadStatistics) {
-    this.readEvmBalances = this.updateReadStatistics(stats, this.readEvmBalances);
-  }
+    const evmReadBalances = readBalances.filter((read) => read.type === EvmOrZil.Evm);
 
-  updateEvmTransferStats(stats: TransactionStatistics) {
-    this.evmTransfers = this.updateTransactionStatistics(stats, this.evmTransfers);
-  }
+    if (evmReadBalances.length > 0) {
+      this.readEvmBalances = {
+        count: evmReadBalances.length,
+        latencies: evmReadBalances.map((read) => read.latency)
+      };
+    }
 
-  updateScillaTransitionCallStats(stats: TransactionStatistics) {
-    this.scillaTransitionCalls = this.updateTransactionStatistics(stats, this.scillaTransitionCalls);
-  }
+    const simpleTransfers = transactions.filter((txn) => txn.scenario === ScenarioType.Transfer);
+    const zilTransfers = simpleTransfers.filter((txn) => txn.type === EvmOrZil.Zil);
+    if (zilTransfers.length > 0) {
+      this.zilTransfers = {
+        count: zilTransfers.length,
+        transactionConfirmedLatencies: zilTransfers.map((txn) => txn.latency),
+        receiptReceivedLatencies: zilTransfers.map((txn) => txn.receiptLatency),
+        failedCalls: zilTransfers.filter((txn) => !txn.success).length
+      };
+    }
 
-  updateEvmFunctionCallStats(stats: TransactionStatistics) {
-    this.evmFunctionCalls = this.updateTransactionStatistics(stats, this.evmFunctionCalls);
-  }
+    const evmTransfers = simpleTransfers.filter((txn) => txn.type === EvmOrZil.Evm);
 
-  updateZilTransferStats(stats: TransactionStatistics) {
-    this.zilTransfers = this.updateTransactionStatistics(stats, this.zilTransfers);
+    if (evmTransfers.length > 0) {
+      this.evmTransfers = {
+        count: evmTransfers.length,
+        transactionConfirmedLatencies: evmTransfers.map((txn) => txn.latency),
+        receiptReceivedLatencies: evmTransfers.map((txn) => txn.receiptLatency),
+        failedCalls: evmTransfers.filter((txn) => !txn.success).length
+      };
+    }
+
+    const functionCalls = transactions.filter((txn) => txn.scenario === ScenarioType.CallContract);
+    const scillaCalls = functionCalls.filter((txn) => txn.type === EvmOrZil.Zil);
+    if (scillaCalls.length > 0) {
+      this.scillaTransitionCalls = {
+        count: zilTransfers.length,
+        transactionConfirmedLatencies: scillaCalls.map((txn) => txn.latency),
+        receiptReceivedLatencies: scillaCalls.map((txn) => txn.receiptLatency),
+        failedCalls: scillaCalls.map((txn) => !txn.success).length
+      };
+    }
+
+    const evmCalls = functionCalls.filter((txn) => txn.type === EvmOrZil.Evm);
+    if (evmCalls.length > 0) {
+      this.evmFunctionCalls = {
+        count: evmCalls.length,
+        transactionConfirmedLatencies: evmCalls.map((txn) => txn.latency),
+        receiptReceivedLatencies: evmCalls.map((txn) => txn.receiptLatency),
+        failedCalls: evmCalls.map((txn) => !txn.success).length
+      };
+    }
   }
 
   private updateReadStatistics(incoming: ReadStatistics, current?: ReadStatistics): ReadStatistics {

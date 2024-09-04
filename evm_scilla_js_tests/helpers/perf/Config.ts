@@ -39,9 +39,14 @@ export interface CallContractConfig {
   calls: CallContract[];
 }
 
-export interface Scenario {
+export interface ScenarioStep {
   type: ScenarioType;
   config: TransferConfig | ReadBalanceConfig | CallContractConfig;
+}
+
+export interface Scenario {
+  name: string;
+  steps: ScenarioStep[];
 }
 
 export interface PerfConfig {
