@@ -1168,6 +1168,8 @@ impl Consensus {
             if time_since_last_view_change + minimum_time_left_for_empty_block
                 >= exponential_backoff_timeout
             {
+                // don't have time, reinsert txn.
+                transaction_pool.insert_ready_transaction(tx);
                 break;
             }
 
