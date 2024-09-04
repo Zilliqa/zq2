@@ -28,7 +28,7 @@ import {Block} from "@ethersproject/providers";
 let web3Account: AddedAccount;
 let perfStatistics: PerfStatistics = new PerfStatistics();
 
-task("perf", "A task to get balance of a private key").setAction(async (taskArgs, hre) => {
+task("perf", "Performance measurement task").setAction(async (taskArgs, hre) => {
   let zilliqa = new Zilliqa(hre.getNetworkUrl());
   web3Account = hre.web3.eth.accounts.wallet.add(perfConfig.sourceOfFunds);
 
@@ -159,7 +159,9 @@ subtask("perf:transfer", "Transfer perf").setAction(
     const latencies = await Promise.all(promises);
     perfStatistics.updateZilTransferStats({
       count: promises.length,
-      latencies
+      transactionConfirmedLatencies: latencies,
+      failedCalls: 0, // FIXME:
+      receiptReceivedLatencies: [] // FIXME:
     });
   }
 );

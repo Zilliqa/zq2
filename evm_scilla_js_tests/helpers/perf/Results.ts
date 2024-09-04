@@ -1,12 +1,7 @@
 import {Block} from "@ethersproject/providers";
 import {Table} from "console-table-printer";
 
-export interface TransferStatistics {
-  count: number;
-  latencies: number[];
-}
-
-export interface TransitionCallStatistics {
+export interface TransactionStatistics {
   count: number;
   transactionConfirmedLatencies: number[];
   receiptReceivedLatencies: number[];
@@ -27,20 +22,20 @@ export class PerfStatistics {
     this.readEvmBalances = this.updateReadStatistics(stats, this.readEvmBalances);
   }
 
-  updateEvmTransferStats(stats: TransferStatistics) {
-    this.evmTransfers = this.updateTransferStatistics(stats, this.evmTransfers);
+  updateEvmTransferStats(stats: TransactionStatistics) {
+    this.evmTransfers = this.updateTransactionStatistics(stats, this.evmTransfers);
   }
 
-  updateScillaTransitionCallStats(stats: TransitionCallStatistics) {
-    this.scillaTransitionCalls = this.updateTransitionCallStatistics(stats, this.scillaTransitionCalls);
+  updateScillaTransitionCallStats(stats: TransactionStatistics) {
+    this.scillaTransitionCalls = this.updateTransactionStatistics(stats, this.scillaTransitionCalls);
   }
 
-  updateEvmFunctionCallStats(stats: TransitionCallStatistics) {
-    this.evmFunctionCalls = this.updateTransitionCallStatistics(stats, this.evmFunctionCalls);
+  updateEvmFunctionCallStats(stats: TransactionStatistics) {
+    this.evmFunctionCalls = this.updateTransactionStatistics(stats, this.evmFunctionCalls);
   }
 
-  updateZilTransferStats(stats: TransferStatistics) {
-    this.zilTransfers = this.updateTransferStatistics(stats, this.zilTransfers);
+  updateZilTransferStats(stats: TransactionStatistics) {
+    this.zilTransfers = this.updateTransactionStatistics(stats, this.zilTransfers);
   }
 
   private updateReadStatistics(incoming: ReadStatistics, current?: ReadStatistics): ReadStatistics {
@@ -54,21 +49,10 @@ export class PerfStatistics {
     return incoming;
   }
 
-  private updateTransferStatistics(incoming: TransferStatistics, current?: TransferStatistics): TransferStatistics {
-    if (current) {
-      return {
-        count: incoming.count + current.count,
-        latencies: [...incoming.latencies, ...current.latencies]
-      };
-    }
-
-    return incoming;
-  }
-
-  private updateTransitionCallStatistics(
-    incoming: TransitionCallStatistics,
-    current?: TransitionCallStatistics
-  ): TransitionCallStatistics {
+  private updateTransactionStatistics(
+    incoming: TransactionStatistics,
+    current?: TransactionStatistics
+  ): TransactionStatistics {
     if (current) {
       return {
         count: incoming.count + current.count,
@@ -87,11 +71,11 @@ export class PerfStatistics {
   readZilBalances?: ReadStatistics;
   readEvmBalances?: ReadStatistics;
 
-  evmTransfers?: TransferStatistics;
-  zilTransfers?: TransferStatistics;
+  evmTransfers?: TransactionStatistics;
+  zilTransfers?: TransactionStatistics;
 
-  evmFunctionCalls?: TransitionCallStatistics;
-  scillaTransitionCalls?: TransitionCallStatistics;
+  evmFunctionCalls?: TransactionStatistics;
+  scillaTransitionCalls?: TransactionStatistics;
 }
 
 export function printBlocksInfo(blocks: Block[]) {
@@ -147,9 +131,24 @@ export const printResults = (stats: PerfStatistics) => {
     table.addRow({
       Name: "Simple Zil transfer",
       Count: stats.zilTransfers.count,
-      Latency: calculateAverageLatency(stats.zilTransfers.latencies)
+      "Confirm Latency": calculateAverageLatency(stats.zilTransfers.transactionConfirmedLatencies),
+      "Receipt Latency": calculateAverageLatency(stats.zilTransfers.receiptReceivedLatencies),
+      "Failed Calls": stats.zilTransfers.failedCalls,
+      "Success Rate": (stats.zilTransfers.count - stats.zilTransfers.failedCalls) / stats.zilTransfers.count
     });
   }
+
+  if (stats.evmTransfers) {
+    table.addRow({
+      Name: "Simple EVM transfer",
+      Count: stats.evmTransfers.count,
+      "Confirm Latency": calculateAverageLatency(stats.evmTransfers.transactionConfirmedLatencies),
+      "Receipt Latency": calculateAverageLatency(stats.evmTransfers.receiptReceivedLatencies),
+      "Failed Calls": stats.evmTransfers.failedCalls,
+      "Success Rate": (stats.evmTransfers.count - stats.evmTransfers.failedCalls) / stats.evmTransfers.count
+    });
+  }
+
   if (stats.scillaTransitionCalls) {
     table.addRow({
       Name: "Scilla Transition Call",
