@@ -393,7 +393,6 @@ impl State {
             0,
             creation_bytecode,
             None,
-            0,
             BlockHeader::genesis(Hash::ZERO),
             inspector::noop(),
             BaseFeeCheck::Ignore,
@@ -436,7 +435,6 @@ impl State {
         amount: u128,
         payload: Vec<u8>,
         nonce: Option<u64>,
-        chain_id: u64,
         current_block: BlockHeader,
         inspector: I,
         base_fee_check: BaseFeeCheck,
@@ -468,7 +466,7 @@ impl State {
             .append_handler_register(scilla_call_handle_register)
             .append_handler_register(inspector_handle_register)
             .modify_cfg_env(|c| {
-                c.chain_id = chain_id;
+                c.chain_id = self.chain_id.eth;
                 c.disable_base_fee = match base_fee_check {
                     BaseFeeCheck::Validate => false,
                     BaseFeeCheck::Ignore => true,
@@ -482,7 +480,7 @@ impl State {
                 value: U256::from(amount),
                 data: payload.clone().into(),
                 nonce,
-                chain_id: Some(chain_id),
+                chain_id: Some(self.chain_id.eth),
                 access_list: vec![],
                 gas_priority_fee: None,
                 blob_hashes: vec![],
@@ -507,8 +505,8 @@ impl State {
     fn apply_transaction_scilla(
         &mut self,
         from_addr: Address,
-        current_block: BlockHeader,
         txn: TxZilliqa,
+        current_block: BlockHeader,
         inspector: impl ScillaInspector,
     ) -> Result<ScillaResultAndState> {
         let mut state = PendingState::new(self.try_clone()?);
@@ -557,7 +555,6 @@ impl State {
     pub fn apply_transaction<I: Inspector<PendingState> + ScillaInspector>(
         &mut self,
         txn: VerifiedTransaction,
-        chain_id: u64,
         current_block: BlockHeader,
         inspector: I,
     ) -> Result<TransactionApplyResult> {
@@ -570,7 +567,7 @@ impl State {
         let txn = txn.tx.into_transaction();
         if let Transaction::Zilliqa(txn) = txn {
             let (result, state) =
-                self.apply_transaction_scilla(from_addr, current_block, txn, inspector)?;
+                self.apply_transaction_scilla(from_addr, txn, current_block, inspector)?;
 
             self.apply_delta_scilla(&state)?;
 
@@ -585,7 +582,6 @@ impl State {
                     txn.amount(),
                     txn.payload().to_vec(),
                     txn.nonce(),
-                    chain_id,
                     current_block,
                     inspector,
                     if blessed {
@@ -724,7 +720,6 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            0,
             BlockHeader::default(),
         )?;
 
@@ -763,9 +758,8 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
-            0,
             BlockHeader::default(),
         )?;
 
@@ -795,9 +789,8 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
-            0,
             BlockHeader::default(),
         )?;
 
@@ -819,9 +812,8 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
-            0,
             BlockHeader::default(),
         )?;
 
@@ -847,9 +839,8 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
-            0,
             BlockHeader::default(),
         )?;
 
@@ -869,9 +860,8 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
-            0,
             BlockHeader::default(),
         )?;
 
@@ -889,7 +879,6 @@ impl State {
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
-        chain_id: u64,
         current_block: BlockHeader,
         gas: Option<EvmGas>,
         gas_price: Option<u128>,
@@ -906,7 +895,6 @@ impl State {
             from_addr,
             to_addr,
             data.clone(),
-            chain_id,
             current_block,
             EvmGas(upper_bound),
             gas_price,
@@ -932,7 +920,6 @@ impl State {
                 value,
                 data.clone(),
                 None,
-                chain_id,
                 current_block,
                 inspector::noop(),
                 BaseFeeCheck::Validate,
@@ -956,7 +943,6 @@ impl State {
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
-        chain_id: u64,
         current_block: BlockHeader,
         gas: EvmGas,
         gas_price: u128,
@@ -970,7 +956,6 @@ impl State {
             value,
             data.clone(),
             None,
-            chain_id,
             current_block,
             inspector::noop(),
             BaseFeeCheck::Validate,
@@ -1004,7 +989,6 @@ impl State {
         to_addr: Option<Address>,
         data: Vec<u8>,
         amount: u128,
-        chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<Vec<u8>> {
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
@@ -1015,7 +999,6 @@ impl State {
             amount,
             data,
             None,
-            chain_id,
             current_block,
             inspector::noop(),
             BaseFeeCheck::Ignore,
@@ -1068,6 +1051,18 @@ impl PendingState {
             pre_state: state,
             new_state: HashMap::new(),
         }
+    }
+
+    pub fn zil_chain_id(&self) -> u64 {
+        self.pre_state.chain_id.zil()
+    }
+
+    pub fn get_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
+        self.pre_state.block_store.get_block_by_number(block_number)
+    }
+
+    pub fn get_highest_block_number(&self) -> Result<Option<u64>> {
+        self.pre_state.block_store.get_highest_block_number()
     }
 
     pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
