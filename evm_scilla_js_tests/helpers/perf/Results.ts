@@ -2,18 +2,19 @@ import {Block} from "@ethersproject/providers";
 import {Table} from "console-table-printer";
 
 export interface TransferStatistics {
-  totalTransfers: number;
+  count: number;
   latencies: number[];
 }
 
 export interface TransitionCallStatistics {
-  totalCalls: number;
+  count: number;
   transactionConfirmedLatencies: number[];
-  ReceiptReceivedLatencies: number[];
+  receiptReceivedLatencies: number[];
+  failedCalls: number;
 }
 
 export interface ReadStatistics {
-  totalCalls: number;
+  count: number;
   latencies: number[];
 }
 
@@ -25,36 +26,38 @@ export interface PerfStatistics {
   zilTransfers: TransferStatistics;
 
   evmFunctionCalls: TransitionCallStatistics;
-  scillaFunctionCalls: TransitionCallStatistics;
+  scillaTransitionCalls: TransitionCallStatistics;
 }
 
 export function createEmptyPerfStatistics(): PerfStatistics {
   return {
     readZilBalances: {
-      totalCalls: 0,
+      count: 0,
       latencies: []
     },
     readEvmBalances: {
-      totalCalls: 0,
+      count: 0,
       latencies: []
     },
     evmTransfers: {
-      totalTransfers: 0,
+      count: 0,
       latencies: []
     },
     zilTransfers: {
-      totalTransfers: 0,
+      count: 0,
       latencies: []
     },
     evmFunctionCalls: {
-      totalCalls: 0,
+      count: 0,
       transactionConfirmedLatencies: [],
-      ReceiptReceivedLatencies: []
+      receiptReceivedLatencies: [],
+      failedCalls: 0
     },
-    scillaFunctionCalls: {
-      totalCalls: 0,
+    scillaTransitionCalls: {
+      count: 0,
       transactionConfirmedLatencies: [],
-      ReceiptReceivedLatencies: []
+      receiptReceivedLatencies: [],
+      failedCalls: 0
     }
   };
 }
@@ -92,27 +95,56 @@ export function printBlocksInfo(blocks: Block[]) {
 export const printResults = (stats: PerfStatistics) => {
   const table = new Table();
 
-  table.addRows([
-    {
+  if (stats.readZilBalances.count > 0) {
+    table.addRow({
       Name: "Zil Balance Read",
-      Count: stats.readZilBalances.totalCalls,
-      Latency: calculateAverageLatency(stats.readZilBalances.latencies, stats.readZilBalances.totalCalls)
-    },
-    {
+      Count: stats.readZilBalances.count,
+      Latency: calculateAverageLatency(stats.readZilBalances.latencies)
+    });
+  }
+
+  if (stats.readEvmBalances.count > 0) {
+    table.addRow({
       Name: "Evm Balance Read",
-      Count: stats.readEvmBalances.totalCalls,
-      Latency: calculateAverageLatency(stats.readEvmBalances.latencies, stats.readEvmBalances.totalCalls)
-    },
-    {
-      Name: "Simple Zil transfers",
-      Count: stats.zilTransfers.totalTransfers,
-      Latency: calculateAverageLatency(stats.zilTransfers.latencies, stats.zilTransfers.totalTransfers)
-    }
-  ]);
+      Count: stats.readEvmBalances.count,
+      Latency: calculateAverageLatency(stats.readEvmBalances.latencies)
+    });
+  }
+
+  if (stats.zilTransfers.count > 0) {
+    table.addRow({
+      Name: "Simple Zil transfer",
+      Count: stats.zilTransfers.count,
+      Latency: calculateAverageLatency(stats.zilTransfers.latencies)
+    });
+  }
+  if (stats.scillaTransitionCalls.count > 0) {
+    table.addRow({
+      Name: "Scilla Transition Call",
+      Count: stats.scillaTransitionCalls.count,
+      "Confirm Latency": calculateAverageLatency(stats.scillaTransitionCalls.transactionConfirmedLatencies),
+      "Receipt Latency": calculateAverageLatency(stats.scillaTransitionCalls.receiptReceivedLatencies),
+      "Failed Calls": stats.scillaTransitionCalls.failedCalls,
+      "Success Rate":
+        (stats.scillaTransitionCalls.count - stats.scillaTransitionCalls.failedCalls) /
+        stats.scillaTransitionCalls.count
+    });
+  }
+
+  if (stats.evmFunctionCalls.count > 0) {
+    table.addRow({
+      Name: "EVM Function Call",
+      Count: stats.evmFunctionCalls.count,
+      "Confirm Latency": calculateAverageLatency(stats.evmFunctionCalls.transactionConfirmedLatencies),
+      "Receipt Latency": calculateAverageLatency(stats.evmFunctionCalls.receiptReceivedLatencies),
+      "Failed Calls": stats.evmFunctionCalls.failedCalls,
+      "Success Rate": (stats.evmFunctionCalls.count - stats.evmFunctionCalls.failedCalls) / stats.evmFunctionCalls.count
+    });
+  }
 
   table.printTable();
 };
 
-function calculateAverageLatency(latencies: number[], count: number): number {
-  return latencies.reduce((accumulator, currentValue) => accumulator + currentValue, 0) / count;
+function calculateAverageLatency(latencies: number[]): number {
+  return latencies.reduce((accumulator, currentValue) => accumulator + currentValue, 0) / latencies.length;
 }

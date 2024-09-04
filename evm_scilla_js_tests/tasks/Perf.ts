@@ -119,7 +119,7 @@ subtask("perf:read-balance", "Read balance perf").setAction(
       });
       const latencies = await Promise.all(promises);
       perfStatistics.readZilBalances.latencies.push(...latencies);
-      perfStatistics.readZilBalances.totalCalls += latencies.length;
+      perfStatistics.readZilBalances.count += latencies.length;
     } else {
       const promises: Promise<number>[] = Array.from({length: iterations}, async (_, i) => {
         const start = Date.now();
@@ -129,7 +129,7 @@ subtask("perf:read-balance", "Read balance perf").setAction(
       });
       const latencies = await Promise.all(promises);
       perfStatistics.readEvmBalances.latencies.push(...latencies);
-      perfStatistics.readEvmBalances.totalCalls += latencies.length;
+      perfStatistics.readEvmBalances.count += latencies.length;
     }
   }
 );
@@ -156,7 +156,7 @@ subtask("perf:transfer", "Transfer perf").setAction(
 
     const latencies = await Promise.all(promises);
     perfStatistics.zilTransfers.latencies.push(...latencies);
-    perfStatistics.zilTransfers.totalTransfers += promises.length;
+    perfStatistics.zilTransfers.count += promises.length;
   }
 );
 
@@ -164,6 +164,7 @@ interface TransitionCallResult {
   latency: number;
   receiptLatency: number;
   success: boolean;
+  type: EvmOrZil;
 }
 
 async function waitForReceipt(tx: Transaction) {
@@ -212,7 +213,8 @@ subtask("perf:call-contract", "call contract perf").setAction(
               return {
                 latency,
                 receiptLatency,
-                success: receipt.success
+                success: receipt.success,
+                type: EvmOrZil.Zil
               };
             })
           );
@@ -251,7 +253,8 @@ subtask("perf:call-contract", "call contract perf").setAction(
               return {
                 latency,
                 receiptLatency,
-                success
+                success,
+                type: EvmOrZil.Evm
               };
             })
           );
@@ -259,25 +262,18 @@ subtask("perf:call-contract", "call contract perf").setAction(
       });
     }
     const results = await Promise.all(promises);
-    const latencies = results.reduce((accumulator, currentValue) => accumulator + currentValue.latency, 0);
-    const receiptLtencies = results.reduce((accumulator, currentValue) => accumulator + currentValue.receiptLatency, 0);
-    const rejectedCount = results.reduce(
-      (accumulator, currentValue) => accumulator + (currentValue.success ? 0 : 1),
-      0
+    const evmResults = results.filter((item) => item.type === EvmOrZil.Evm);
+    const zilResults = results.filter((item) => item.type === EvmOrZil.Zil);
+    perfStatistics.evmFunctionCalls.count += evmResults.length;
+    perfStatistics.evmFunctionCalls.transactionConfirmedLatencies.push(...evmResults.map((item) => item.latency));
+    perfStatistics.evmFunctionCalls.receiptReceivedLatencies.push(...evmResults.map((item) => item.receiptLatency));
+    perfStatistics.evmFunctionCalls.failedCalls += evmResults.filter((item) => item.success === false).length;
+
+    perfStatistics.scillaTransitionCalls.count += zilResults.length;
+    perfStatistics.scillaTransitionCalls.transactionConfirmedLatencies.push(...zilResults.map((item) => item.latency));
+    perfStatistics.scillaTransitionCalls.receiptReceivedLatencies.push(
+      ...zilResults.map((item) => item.receiptLatency)
     );
-
-    const averageLatency = latencies / promises.length;
-    const averageReceiptLatency = receiptLtencies / promises.length;
-    const rejectRate = rejectedCount / promises.length;
-
-    const table = new Table();
-    table.addRows([
-      {name: "Total Calls", value: promises.length},
-      {name: "Average Latency (ms)", value: averageLatency},
-      {name: "Average Receipt Latency (ms)", value: averageReceiptLatency}
-    ]);
-    table.addRow({name: "Reject Rate", value: rejectRate}, {color: rejectRate === 0 ? "green" : "yellow"});
-
-    table.printTable();
+    perfStatistics.scillaTransitionCalls.failedCalls += zilResults.filter((item) => item.success === false).length;
   }
 );
