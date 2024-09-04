@@ -685,16 +685,21 @@ impl Consensus {
         let state = &mut self.state;
         state.set_to_root(parent_block.state_root_hash().into());
         let config = &self.config.consensus;
-        Self::apply_rewards_raw_at(state, config, committee, proposer_bytes, view, cosigned)
+        Self::apply_rewards_late_at(
+            parent_block.state_root_hash(),
+            state,
+            config,
+            committee,
+            proposer_bytes,
+            view,
+            cosigned,
+        )
     }
 
     /// Apply the rewards at the tail-end of the Proposal.
-    /// This requires two `States`:
-    /// - late_state: where the rewards will be applied.
-    /// - parent_state: where the committee data is from.
     fn apply_rewards_late_at(
-        parent_state: State,
-        late_state: &mut State,
+        parent_state_hash: Hash,
+        state: &mut State,
         config: &ConsensusConfig,
         committee: &[NodePublicKeyRaw],
         proposer_bytes: NodePublicKeyRaw,
@@ -702,45 +707,51 @@ impl Consensus {
         cosigned: &BitSlice,
     ) -> Result<()> {
         debug!("apply late rewards in view {view}");
-
         let rewards_per_block: u128 = *config.rewards_per_hour / config.blocks_per_hour as u128;
 
-        // Reward the proposer
-        if let Some(proposer_address) = parent_state.get_reward_address_raw(proposer_bytes)? {
-            let reward = rewards_per_block / 2;
-            late_state.mutate_account(proposer_address, |a| a.balance += reward)?;
-        }
+        // Store the current point of the State.
+        let last_hash = state.root_hash()?;
+
+        // Get the reward addresses from the parent state
+        state.set_to_root(parent_state_hash.into());
+
+        let proposer_address = state.get_reward_address_raw(proposer_bytes)?;
 
         let mut total_cosigner_stake = 0;
-
         let cosigner_stake: Vec<_> = committee
             .iter()
             .enumerate()
             .filter(|(i, _)| cosigned[*i])
             .map(|(_, pub_key)| {
-                let reward_address = parent_state.get_reward_address_raw(pub_key.clone()).unwrap();
-                let stake = parent_state
-                    .get_stake_raw(pub_key.clone())
-                    .unwrap()
-                    .unwrap()
-                    .get();
+                let reward_address = state.get_reward_address_raw(pub_key.clone()).unwrap();
+                let stake = state.get_stake_raw(pub_key.clone()).unwrap().unwrap().get();
                 total_cosigner_stake += stake;
                 (reward_address, stake)
             })
             .collect();
+
+        // Restore the last state
+        state.set_to_root(last_hash.into());
+
+        // Reward the Proposer
+        if let Some(proposer_address) = proposer_address {
+            let reward = rewards_per_block / 2;
+            state.mutate_account(proposer_address, |a| a.balance += reward)?;
+        }
 
         // Reward the committee
         for (reward_address, stake) in cosigner_stake {
             if let Some(cosigner) = reward_address {
                 let reward = U256::from(rewards_per_block / 2) * U256::from(stake)
                     / U256::from(total_cosigner_stake);
-                late_state.mutate_account(cosigner, |a| a.balance += reward.to::<u128>())?;
+                state.mutate_account(cosigner, |a| a.balance += reward.to::<u128>())?;
             }
         }
 
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn apply_rewards_raw_at(
         at_state: &mut State,
         config: &ConsensusConfig,
@@ -1067,7 +1078,7 @@ impl Consensus {
 
     fn finish_early_proposal_at(
         &self,
-        late_state: &mut State,
+        state: &mut State,
         votes: &BTreeMap<Hash, BlockVotes>,
         proposal: Block,
     ) -> Result<Option<Block>> {
@@ -1080,13 +1091,10 @@ impl Consensus {
 
         // Should have supermajority by now.
         // Retrieve the committee - for rewards
-        let committee = late_state.get_stakers_at_block_raw(&parent_block)?;
+        let committee = state.get_stakers_at_block_raw(&parent_block)?;
         let (signatures, cosigned, _, _) = votes
             .get(&parent_block_hash)
             .context("tried to finalise a proposal without any votes")?;
-        // Retrieve the accounts - for rewards
-        let mut parent_state = late_state.clone();
-        parent_state.set_to_root(parent_block.state_root_hash().into());
 
         // Compute the majority QC
         let qc = self.qc_from_bits(parent_block_hash, signatures, *cosigned, parent_block_view);
@@ -1098,10 +1106,10 @@ impl Consensus {
             .public_key;
 
         // Apply the rewards when exiting the round
-        late_state.set_to_root(proposal.state_root_hash().into()); // proposal late state to apply rewards
+        state.set_to_root(proposal.state_root_hash().into()); // proposal late state to apply rewards
         Self::apply_rewards_late_at(
-            parent_state,
-            late_state,
+            parent_block.state_root_hash(),
+            state,
             &self.config.consensus,
             &committee,
             proposer.into(), // Last leader
@@ -1117,7 +1125,7 @@ impl Consensus {
             // majority QC
             qc,
             // post-reward updated state
-            late_state.root_hash()?,
+            state.root_hash()?,
             proposal.header.transactions_root_hash,
             proposal.header.receipts_root_hash,
             proposal.transactions,
@@ -1493,6 +1501,8 @@ impl Consensus {
     /// Assembles the Proposal block, but maybe with incorrect QC.
     pub fn assemble_early_block(&mut self) -> Result<()> {
         // If no early_proposal, then assemble with ready transactions available in pool.
+        // This avoids assembling empty blocks, too early.
+        // If this called on each Vote, the Proposer can try several times if the pool is empty.
         if self.early_proposal.is_none() && self.transaction_pool.has_txn_ready() {
             info!("assemble early proposal {}", self.view.get_view());
             let mut state = self.state.clone();
@@ -2024,7 +2034,11 @@ impl Consensus {
 
     /// Check the validity of a block. Returns `Err(_, true)` if this block could become valid in the future and
     /// `Err(_, false)` if this block could never be valid.
-    fn check_block(&self, block: &Block, during_sync: bool) -> Result<(), (anyhow::Error, bool)> {
+    fn check_block(
+        &mut self,
+        block: &Block,
+        during_sync: bool,
+    ) -> Result<(), (anyhow::Error, bool)> {
         block.verify_hash().map_err(|e| (e, false))?;
 
         if block.view() == 0 {
@@ -2080,10 +2094,12 @@ impl Consensus {
         }
 
         // Check if the co-signers of the block's QC represent the supermajority.
-        let mut parent_state = self.state.clone();
-        parent_state.set_to_root(parent.state_root_hash().into());
-        self.check_quorum_in_bits(&block.header.qc.cosigned, &committee, parent_state)
-            .map_err(|e| (e, false))?;
+        self.check_quorum_in_bits(
+            &block.header.qc.cosigned,
+            &committee,
+            parent.state_root_hash(),
+        )
+        .map_err(|e| (e, false))?;
 
         let committee: Vec<_> = committee
             .into_iter()
@@ -2367,18 +2383,21 @@ impl Consensus {
     // TODO: Consider if these checking functions should be implemented at the deposit contract level instead?
 
     fn check_quorum_in_bits(
-        &self,
+        &mut self,
         cosigned: &BitSlice,
         committee: &[NodePublicKeyRaw],
-        parent_state: State,
+        parent_state_hash: Hash,
     ) -> Result<()> {
+        let last_hash = self.state.root_hash()?;
+
+        self.state.set_to_root(parent_state_hash.into());
         let (total_weight, cosigned_sum) = committee
             .iter()
             .enumerate()
             .map(|(i, public_key)| {
                 (
                     i,
-                    parent_state
+                    self.state
                         .get_stake_raw(public_key.clone())
                         .unwrap()
                         .unwrap()
@@ -2391,6 +2410,7 @@ impl Consensus {
                     cosigned_sum + cosigned[i].then_some(stake).unwrap_or_default(),
                 )
             });
+        self.state.set_to_root(last_hash.into());
 
         if cosigned_sum * 3 <= total_weight * 2 {
             return Err(anyhow!("no quorum"));
