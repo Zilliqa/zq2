@@ -1,20 +1,21 @@
 import "@nomicfoundation/hardhat-toolbox";
 import "@nomiclabs/hardhat-web3";
-import { HardhatUserConfig } from "hardhat/types";
+import {HardhatUserConfig} from "hardhat/types";
 import "dotenv/config";
-import { ENV_VARS } from "./helpers/EnvVarParser";
+import {ENV_VARS} from "./helpers/EnvVarParser";
 
 import "./tasks/ZilBalance";
 import "./tasks/Transfer";
 import "./tasks/InitSigners";
 import "./tasks/SetRewards";
+import "./tasks/Perf";
 
 import fs from "fs";
 
 if (ENV_VARS.scilla) {
   require("hardhat-scilla-plugin");
   const chai = require("chai");
-  const { scillaChaiEventMatcher } = require("hardhat-scilla-plugin");
+  const {scillaChaiEventMatcher} = require("hardhat-scilla-plugin");
   chai.use(scillaChaiEventMatcher);
 }
 
@@ -75,7 +76,7 @@ const config: HardhatUserConfig = {
         "410b0e0a86625a10c554f8248a77c7198917bd9135c15bb28922684826bb9f14",
         ...loadFromSignersFile("zblockchain")
       ],
-      chainId: 0x82BC,
+      chainId: 0x82bc,
       web3ClientVersion: "Zilliqa/v8.2",
       protocolVersion: 0x41,
       zilliqaNetwork: true,
@@ -105,7 +106,7 @@ const config: HardhatUserConfig = {
         // This could lead to false tests failures when checks are made against balance changes
         "0000000000000000000000000000000000000000000000000000000000000002",
         "0000000000000000000000000000000000000000000000000000000000000003",
-        "0000000000000000000000000000000000000000000000000000000000000004",
+        "0000000000000000000000000000000000000000000000000000000000000004"
       ],
       chainId: 0x8001,
       web3ClientVersion: "Zilliqa/v8.2",
@@ -171,7 +172,7 @@ const config: HardhatUserConfig = {
 
 // Extend hardhat runtime environment to have some utility functions and variables.
 import "./AddConfigHelpersToHre";
-import { extendEnvironment } from "hardhat/config";
+import {extendEnvironment} from "hardhat/config";
 import SignerPool from "./helpers/parallel-tests/SignerPool";
 extendEnvironment(async (hre) => {
   const private_keys: string[] = hre.network["config"]["accounts"] as string[];
@@ -189,5 +190,6 @@ import "./tasks/Test";
 import "./tasks/ZilBalance";
 import "./tasks/Transfer";
 import "./tasks/InitSigners";
-import { initZilliqa } from "hardhat-scilla-plugin";
+import {initZilliqa} from "hardhat-scilla-plugin";
+import {PerfConfig, ScenarioType, TransferType} from "./helpers/perf";
 export default config;

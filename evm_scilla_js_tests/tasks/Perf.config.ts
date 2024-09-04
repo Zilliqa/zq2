@@ -1,0 +1,69 @@
+import {PerfConfig, ScenarioType, TransferType, TransitionType} from "../helpers/perf";
+
+export const perfConfig: PerfConfig = {
+  sourceOfFunds: "0000000000000000000000000000000000000000000000000000000000000002",
+  scenarios: [
+    {
+      type: ScenarioType.CallContract,
+      config: {
+        calls: [
+          //   {
+          //     name: "Chain id contract",
+          //     iterations: 10,
+          //     transition: "EventChainID",
+          //     address: "0xBd13D9eE89487ccC296FbD7021773519d9E1686C",
+          //     args: []
+          //   },
+          //   {
+          //     name: "ForwardZil",
+          //     address: "0x3a4BF00f4713761a02AbA0b918B925381F6EaBd0",
+          //     type: TransitionType.Evm,
+          //     transitions: [
+          //       {
+          //         iterations: 10,
+          //         name: "transfer",
+          //         args: ["0x6813eb9362372eef6200f3b1dbc3f819671cba69", 1_000_000]
+          //       }
+          //     ]
+          //   }
+          {
+            name: "Hello world",
+            address: "0x02296cc2dA71C19D8Bb4bCa01C2fc5564593B7aa",
+            type: TransitionType.Zil,
+            transitions: [
+              {
+                iterations: 100,
+                name: "getHello",
+                args: []
+              },
+              {
+                iterations: 100,
+                name: "setHello",
+                args: [
+                  {
+                    vname: "msg",
+                    value: "Hello",
+                    type: "String"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      type: ScenarioType.Transfer,
+      config: {
+        iterations: 5,
+        type: TransferType.Zil
+      }
+    }
+    // {
+    //   type: ScenarioType.ReadBalance,
+    //   config: {
+    //     iterations: 5
+    //   }
+    // }
+  ]
+};
