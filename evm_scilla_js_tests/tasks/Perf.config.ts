@@ -4,7 +4,7 @@ export const perfConfig: PerfConfig = {
   sourceOfFunds: "0000000000000000000000000000000000000000000000000000000000000002",
   scenarios: [
     {
-      name: "Ghormesabzi",
+      name: "Scenario 1",
       steps: [
         {
           type: ScenarioType.Transfer,
@@ -27,6 +27,60 @@ export const perfConfig: PerfConfig = {
             type: EvmOrZil.Evm,
             iterations: 5,
             accounts: ["0x9cb422d2fabe9622ed706ad5d9d3ffd2cdd1c001", "0xace5f1e883d3e02a1b2c78f6909a8c0430c6fb12"]
+          }
+        }
+      ]
+    },
+    {
+      name: "Scenario 2",
+      steps: [
+        {
+          type: ScenarioType.CallContract,
+          config: {
+            calls: [
+              {
+                name: "ForwardZil",
+                address: "0x153b84F377C6C7a7D93Bd9a717E48097Ca6Cfd11",
+                type: EvmOrZil.Evm,
+                transitions: [
+                  {
+                    iterations: 10,
+                    name: "transfer",
+                    args: ["0x6813eb9362372eef6200f3b1dbc3f819671cba69", 1_000_000]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          type: ScenarioType.CallContract,
+          config: {
+            calls: [
+              {
+                name: "Hello world",
+                address: "0xBd13D9eE89487ccC296FbD7021773519d9E1686C",
+                type: EvmOrZil.Zil,
+                transitions: [
+                  {
+                    iterations: 100,
+                    name: "getHello",
+                    args: []
+                  },
+                  {
+                    iterations: 100,
+                    name: "setHello",
+                    args: [
+                      {
+                        vname: "msg",
+                        value: "Hello",
+                        type: "String"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
           }
         }
       ]

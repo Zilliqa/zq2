@@ -74,10 +74,10 @@ export class PerfStatistics {
     const scillaCalls = functionCalls.filter((txn) => txn.type === EvmOrZil.Zil);
     if (scillaCalls.length > 0) {
       this.scillaTransitionCalls = {
-        count: zilTransfers.length,
+        count: scillaCalls.length,
         transactionConfirmedLatencies: scillaCalls.map((txn) => txn.latency),
         receiptReceivedLatencies: scillaCalls.map((txn) => txn.receiptLatency),
-        failedCalls: scillaCalls.map((txn) => !txn.success).length
+        failedCalls: scillaCalls.filter((txn) => !txn.success).length
       };
     }
 
@@ -87,7 +87,7 @@ export class PerfStatistics {
         count: evmCalls.length,
         transactionConfirmedLatencies: evmCalls.map((txn) => txn.latency),
         receiptReceivedLatencies: evmCalls.map((txn) => txn.receiptLatency),
-        failedCalls: evmCalls.map((txn) => !txn.success).length
+        failedCalls: evmCalls.filter((txn) => !txn.success).length
       };
     }
   }

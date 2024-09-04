@@ -41,11 +41,13 @@ export interface CallContractConfig {
 
 export interface ScenarioStep {
   type: ScenarioType;
+  disabled?: boolean;
   config: TransferConfig | ReadBalanceConfig | CallContractConfig;
 }
 
 export interface Scenario {
   name: string;
+  disabled?: boolean;
   steps: ScenarioStep[];
 }
 

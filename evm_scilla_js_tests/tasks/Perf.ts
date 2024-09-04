@@ -48,8 +48,16 @@ task("perf", "Performance measurement task").setAction(async (taskArgs, hre) => 
   for (const scenario of perfConfig.scenarios) {
     let readPromises: Promise<ReadCallResult>[] = [];
     let transactionPromises: Promise<TransactionCallResult>[] = [];
+    if (scenario.disabled && scenario.disabled === true) {
+      console.log(`🫤 Skipping ${scenario.name}...`);
+      continue;
+    }
     console.log(`👽 Running ${scenario.name}...`);
     for (const step of scenario.steps) {
+      if (step.disabled && step.disabled === true) {
+        continue;
+      }
+
       switch (step.type) {
         case ScenarioType.Transfer: {
           const transferConfig = step.config as TransferConfig;
