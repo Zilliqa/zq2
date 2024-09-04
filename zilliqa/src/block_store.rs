@@ -299,8 +299,4 @@ impl BlockStore {
             .entry(peer)
             .or_insert_with(|| PeerInfo::new(capacity))
     }
-
-    pub fn get_num_peers(&self) -> usize {
-        self.peers.len()
-    }
 }
