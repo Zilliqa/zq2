@@ -30,7 +30,7 @@ use crate::{
         ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
         MAX_COMMITTEE_SIZE,
     },
-    node::{ChainId, MessageSender, NetworkMessage, OutgoingMessageFailure},
+    node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxPoolContent},
     state::State,
     time::SystemTime,
@@ -316,7 +316,11 @@ impl Consensus {
     }
 
     pub fn head_block(&self) -> Block {
-        let highest_block_number = self.db.get_highest_block_number().unwrap().unwrap();
+        let highest_block_number = self
+            .block_store
+            .get_highest_block_number()
+            .unwrap()
+            .unwrap();
         self.block_store
             .get_block_by_number(highest_block_number)
             .unwrap()
@@ -725,14 +729,12 @@ impl Consensus {
     ) -> Result<Option<TransactionApplyResult>> {
         let db = self.db.clone();
         let state = &mut self.state;
-        let node_config = &self.config;
-        Self::apply_transaction_at(state, db, node_config, txn, current_block, inspector)
+        Self::apply_transaction_at(state, db, txn, current_block, inspector)
     }
 
     pub fn apply_transaction_at<I: Inspector<PendingState> + ScillaInspector>(
         state: &mut State,
         db: Arc<Db>,
-        config: &NodeConfig,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
@@ -743,12 +745,7 @@ impl Consensus {
             db.insert_transaction(&txn.hash, &txn.tx)?;
         }
 
-        let result = state.apply_transaction(
-            txn.clone(),
-            &ChainId::new(config.eth_chain_id),
-            current_block,
-            inspector,
-        );
+        let result = state.apply_transaction(txn.clone(), current_block, inspector);
         let result = match result {
             Ok(r) => r,
             Err(error) => {
@@ -1008,7 +1005,11 @@ impl Consensus {
         transaction_pool: &mut TransactionPool,
         votes: &mut BTreeMap<Hash, BlockVotes>,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        let num = self.db.get_highest_block_number().unwrap().unwrap();
+        let num = self
+            .block_store
+            .get_highest_block_number()
+            .unwrap()
+            .unwrap();
         let block = self.get_block_by_number(num).unwrap().unwrap();
 
         let block_hash = block.hash();
@@ -1064,8 +1065,6 @@ impl Consensus {
             &qc.cosigned,
         )?;
 
-        let node_config = &self.config;
-
         // This is a partial header of a block that will be proposed with some transactions executed below.
         // It is needed so that each transaction is executed within proper block context (the block it belongs to)
         let executed_block_header = BlockHeader {
@@ -1080,7 +1079,6 @@ impl Consensus {
             let result = Self::apply_transaction_at(
                 state,
                 self.db.clone(),
-                node_config,
                 tx.clone(),
                 executed_block_header,
                 inspector::noop(),
@@ -1195,7 +1193,7 @@ impl Consensus {
         let mut tx_pool = self.transaction_pool.clone();
         let mut votes = self.votes.clone();
 
-        let head_height = self.db.get_highest_block_number()?.unwrap();
+        let head_height = self.block_store.get_highest_block_number()?.unwrap();
         let head_block = self.get_block_by_number(head_height)?.unwrap();
 
         // If there are no votes for highest block then we have to create artificial vote

@@ -160,7 +160,6 @@ pub async fn convert_persistence(
         0,
         data,
         None,
-        0,
         BlockHeader::default(),
         inspector::noop(),
         BaseFeeCheck::Ignore,

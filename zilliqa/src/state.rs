@@ -46,7 +46,7 @@ pub struct State {
     scilla_lib_dir: String,
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
-    pub zil_chain_id: u64,
+    pub chain_id: ChainId,
     pub block_store: Arc<BlockStore>,
 }
 
@@ -63,7 +63,7 @@ impl State {
             scilla_lib_dir: consensus_config.scilla_lib_dir.clone(),
             block_gas_limit: consensus_config.eth_block_gas_limit,
             gas_price: *consensus_config.gas_price,
-            zil_chain_id: ChainId::zil_chain_id(config.eth_chain_id),
+            chain_id: ChainId::new(config.eth_chain_id),
             block_store,
         }
     }
@@ -148,7 +148,6 @@ impl State {
                 0,
                 data,
                 None,
-                0,
                 BlockHeader::default(),
                 inspector::noop(),
                 BaseFeeCheck::Ignore,
@@ -172,7 +171,7 @@ impl State {
             scilla_lib_dir: self.scilla_lib_dir.clone(),
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
-            zil_chain_id: self.zil_chain_id,
+            chain_id: self.chain_id,
             block_store: self.block_store.clone(),
         }
     }

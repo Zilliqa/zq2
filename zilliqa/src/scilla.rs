@@ -182,7 +182,6 @@ impl Scilla {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn create_contract(
         &self,
         state: PendingState,
@@ -571,7 +570,7 @@ impl StateServer {
                 };
 
                 match active_call.fetch_blockchain_info(query_name, query_args) {
-                    Ok((success, value)) => Ok(Value::Array(vec![success.into(), value.into()])),
+                    Ok((present, value)) => Ok(Value::Array(vec![present.into(), value.into()])),
                     Err(e) => Err(err(e)),
                 }
             }
@@ -796,7 +795,7 @@ impl ActiveCall {
 
     fn fetch_blockchain_info(&self, name: String, args: String) -> Result<(bool, String)> {
         match name.as_str() {
-            "CHAINID" => Ok((true, self.state.get_zil_chain_id().to_string())),
+            "CHAINID" => Ok((true, self.state.zil_chain_id().to_string())),
             "BLOCKNUMBER" => match self.state.get_highest_block_number()? {
                 Some(block_number) => Ok((true, block_number.to_string())),
                 None => Ok((false, "".to_string())),

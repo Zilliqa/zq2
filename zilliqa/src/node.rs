@@ -140,22 +140,17 @@ pub struct Node {
     pub chain_id: ChainId,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct ChainId {
     pub eth: u64,
-    pub zil: u64,
 }
 
 impl ChainId {
     pub fn new(eth_chain_id: u64) -> Self {
-        ChainId {
-            eth: eth_chain_id,
-            zil: Self::zil_chain_id(eth_chain_id),
-        }
+        ChainId { eth: eth_chain_id }
     }
-
-    pub fn zil_chain_id(eth_chain_id: u64) -> u64 {
-        eth_chain_id - 0x8000
+    pub fn zil(&self) -> u64 {
+        self.eth - 0x8000
     }
 }
 
@@ -423,19 +418,13 @@ impl Node {
                 let other_txn = self
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(
-                    other_txn,
-                    &self.chain_id,
-                    block.header,
-                    inspector::noop(),
-                )?;
+                state.apply_transaction(other_txn, block.header, inspector::noop())?;
             } else {
                 let config = TracingInspectorConfig::from_parity_config(trace_types);
                 let mut inspector = TracingInspector::new(config);
                 let pre_state = state.try_clone()?;
 
-                let result =
-                    state.apply_transaction(txn, &self.chain_id, block.header, &mut inspector)?;
+                let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
                 let TransactionApplyResult::Evm(result, ..) = result else {
                     return Err(anyhow!("not an EVM transaction"));
@@ -480,15 +469,9 @@ impl Node {
                 let other_txn = self
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(
-                    other_txn,
-                    &self.chain_id,
-                    parent.header,
-                    inspector::noop(),
-                )?;
+                state.apply_transaction(other_txn, parent.header, inspector::noop())?;
             } else {
-                let result =
-                    state.apply_transaction(txn, &self.chain_id, block.header, inspector)?;
+                let result = state.apply_transaction(txn, block.header, inspector)?;
 
                 return Ok(result);
             }
@@ -553,8 +536,7 @@ impl Node {
             let inspector_config = TracingInspectorConfig::from_geth_config(&config);
             let mut inspector = TracingInspector::new(inspector_config);
 
-            let result =
-                state.apply_transaction(txn, &self.chain_id, block.header, &mut inspector)?;
+            let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
             let TransactionApplyResult::Evm(result, ..) = result else {
                 return Ok(None);
@@ -580,12 +562,7 @@ impl Node {
                         TracingInspectorConfig::from_geth_call_config(&call_config),
                     );
 
-                    let result = state.apply_transaction(
-                        txn,
-                        &self.chain_id,
-                        block.header,
-                        &mut inspector,
-                    )?;
+                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -602,12 +579,7 @@ impl Node {
                 }
                 GethDebugBuiltInTracerType::FourByteTracer => {
                     let mut inspector = FourByteInspector::default();
-                    let result = state.apply_transaction(
-                        txn,
-                        &self.chain_id,
-                        block.header,
-                        &mut inspector,
-                    )?;
+                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
                     let TransactionApplyResult::Evm(_, _) = result else {
                         return Ok(None);
@@ -622,12 +594,7 @@ impl Node {
                     let mux_config = tracer_config.into_mux_config()?;
 
                     let mut inspector = MuxInspector::try_from_config(mux_config)?;
-                    let result = state.apply_transaction(
-                        txn,
-                        &self.chain_id,
-                        block.header,
-                        &mut inspector,
-                    )?;
+                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -649,12 +616,7 @@ impl Node {
                     let mut inspector = TracingInspector::new(
                         TracingInspectorConfig::from_geth_prestate_config(&prestate_config),
                     );
-                    let result = state.apply_transaction(
-                        txn,
-                        &self.chain_id,
-                        block.header,
-                        &mut inspector,
-                    )?;
+                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -684,8 +646,7 @@ impl Node {
                     JsInspector::with_transaction_context(js_code, config, transaction_context)
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
-                let result =
-                    state.apply_transaction(txn, &self.chain_id, block.header, &mut inspector)?;
+                let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
                 let TransactionApplyResult::Evm(result, env) = result else {
                     return Ok(None);
@@ -718,14 +679,7 @@ impl Node {
             .state()
             .at_root(block.state_root_hash().into());
 
-        state.call_contract(
-            from_addr,
-            to_addr,
-            data,
-            amount,
-            self.chain_id.eth,
-            block.header,
-        )
+        state.call_contract(from_addr, to_addr, data, amount, block.header)
     }
 
     pub fn get_proposer_reward_address(&self, header: BlockHeader) -> Result<Option<Address>> {
@@ -774,7 +728,6 @@ impl Node {
             from_addr,
             to_addr,
             data,
-            self.chain_id.eth,
             block.header,
             gas,
             gas_price,

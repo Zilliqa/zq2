@@ -147,10 +147,10 @@ fn create_transaction(
     let version = transaction.version & 0xffff;
     let chain_id = transaction.version >> 16;
 
-    if (chain_id as u64) != (node.chain_id.zil) {
+    if (chain_id as u64) != (node.chain_id.zil()) {
         return Err(anyhow!(
             "unexpected chain ID, expected: {}, got: {chain_id}",
-            node.chain_id.zil
+            node.chain_id.zil()
         ));
     }
 
@@ -296,7 +296,7 @@ fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_network_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    let network_id = node.lock().unwrap().chain_id.zil;
+    let network_id = node.lock().unwrap().chain_id.zil();
     Ok(network_id.to_string())
 }
 
