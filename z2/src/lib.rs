@@ -1,4 +1,5 @@
 mod address;
+pub mod chain;
 pub mod collector;
 pub mod components;
 pub mod converter;
