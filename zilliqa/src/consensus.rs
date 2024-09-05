@@ -463,10 +463,9 @@ impl Consensus {
             .as_millis() as u64;
 
         trace!(
-            "({}:{}:{})",
             time_since_last_view_change,
             exponential_backoff_timeout,
-            minimum_time_left_for_empty_block
+            minimum_time_left_for_empty_block,
         );
 
         (
