@@ -558,3 +558,9 @@ pub struct TxBlockListingResult {
     #[serde(rename = "maxPages")]
     pub max_pages: u64,
 }
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TxRate {
+    pub tx_block_rate: f64,
+    pub transaction_rate: f64,
+}

@@ -709,3 +709,26 @@ async fn get_num_peers(mut network: Network) {
         response
     );
 }
+
+#[zilliqa_macros::test]
+async fn get_tx_rate(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxRate", [""])
+        .await
+        .expect("Failed to call GetTxRate API");
+
+    let tx_rate: zilliqa::api::types::zil::TxRate =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert!(
+        tx_rate.tx_block_rate >= 0.0,
+        "Transaction block rate should be non-negative"
+    );
+    assert!(
+        tx_rate.transaction_rate >= 0.0,
+        "Transaction rate should be non-negative"
+    );
+}
