@@ -9465,6 +9465,7 @@ dependencies = [
  "bs58",
  "bytes",
  "cbor4ii",
+ "cfg-if",
  "clap",
  "criterion",
  "crypto-bigint",
