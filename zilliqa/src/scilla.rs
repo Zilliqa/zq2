@@ -38,7 +38,8 @@ use crate::{
     exec::{PendingState, StorageValue},
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
-    state::Code, time::SystemTime,
+    state::Code,
+    time::SystemTime,
     transaction::{ScillaGas, ZilAmount},
 };
 
