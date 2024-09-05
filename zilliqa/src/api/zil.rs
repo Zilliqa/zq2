@@ -6,8 +6,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_eips::BlockId;
-use alloy_primitives::{Address, B256};
+use alloy::{
+    eips::BlockId,
+    primitives::{Address, B256},
+};
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use serde::{Deserialize, Deserializer};
@@ -15,7 +17,11 @@ use serde_json::{json, Value};
 
 use super::{
     to_hex::ToHex,
-    types::zil::{self, BlockchainInfo, ShardingStructure, SmartContract},
+    types::zil::{
+        self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
+        DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, SWInfo, ShardingStructure,
+        SmartContract, TXBlockRateResult, TxBlockListing, TxBlockListingResult,
+    },
 };
 use crate::{
     api::types::zil::{CreateTransactionResponse, GetTxResponse, RPCErrorCode},
@@ -24,6 +30,8 @@ use crate::{
     node::Node,
     schnorr,
     scilla::split_storage_key,
+    state::Code,
+    time::SystemTime,
     transaction::{ScillaGas, SignedTransaction, TxZilliqa, ZilAmount, EVM_GAS_PER_SCILLA_GAS},
 };
 
@@ -52,7 +60,50 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetTxBlock", |p, n| get_tx_block(p, n, false)),
             ("GetTxBlockVerbose", |p, n| get_tx_block(p, n, true)),
             ("GetSmartContracts", get_smart_contracts),
+            ("GetDSBlock", get_ds_block),
+            ("GetDSBlockVerbose", get_ds_block_verbose),
+            ("GetLatestDSBlock", get_latest_ds_block),
+            ("GetCurrentDSComm", get_current_ds_comm),
+            ("GetCurrentDSEpoch", get_current_ds_epoch),
+            ("DSBlockListing", ds_block_listing),
+            ("GetDSBlockRate", get_ds_block_rate),
+            ("GetTxBlockRate", get_tx_block_rate),
+            ("TxBlockListing", tx_block_listing),
+            ("GetNumPeers", get_num_peers),
         ],
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct ZilAddress {
+    #[serde(deserialize_with = "deserialize_zil_address")]
+    inner: Address,
+}
+
+impl From<ZilAddress> for Address {
+    fn from(value: ZilAddress) -> Self {
+        value.inner
+    }
+}
+
+fn deserialize_zil_address<'de, D>(deserializer: D) -> Result<Address, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error as E;
+
+    let s = String::deserialize(deserializer)?;
+
+    bech32::decode(&s).map_or_else(
+        |_| s.parse().map_err(E::custom),
+        |(hrp, data)| {
+            if hrp.as_str() == "zil" {
+                (&data[..]).try_into().map_err(E::custom)
+            } else {
+                Err(E::custom("Invalid HRP, expected 'zil'"))
+            }
+        },
     )
 }
 
@@ -96,10 +147,10 @@ fn create_transaction(
     let version = transaction.version & 0xffff;
     let chain_id = transaction.version >> 16;
 
-    if (chain_id as u64) != (node.config.eth_chain_id - 0x8000) {
+    if (chain_id as u64) != (node.chain_id.zil()) {
         return Err(anyhow!(
             "unexpected chain ID, expected: {}, got: {chain_id}",
-            node.config.eth_chain_id - 0x8000
+            node.chain_id.zil()
         ));
     }
 
@@ -196,7 +247,8 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<GetTxRespo
 }
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let address: Address = params.one()?;
+    let address: ZilAddress = params.one()?;
+    let address: Address = address.into();
 
     let node = node.lock().unwrap();
     let block = node
@@ -235,22 +287,16 @@ fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBloc
     Ok((&block).into())
 }
 
-fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<ZilAmount> {
+fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let price = node.lock().unwrap().get_gas_price();
     // `price` is the cost per unit of [EvmGas]. This API should return the cost per unit of [ScillaGas].
     let price = price * (EVM_GAS_PER_SCILLA_GAS as u128);
 
-    Ok(ZilAmount::from_amount(price))
-}
-
-fn network_id(eth_chain_id: u64) -> u64 {
-    // We fix the convention the Zilliqa network ID is equal to the Ethereum chain ID minus 0x8000. This is true for
-    // all current Zilliqa networks.
-    eth_chain_id - 0x8000
+    Ok(ZilAmount::from_amount(price).to_string())
 }
 
 fn get_network_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    let network_id = network_id(node.lock().unwrap().config.eth_chain_id);
+    let network_id = node.lock().unwrap().chain_id.zil();
     Ok(network_id.to_string())
 }
 
@@ -292,7 +338,9 @@ fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let address: Address = params.one()?;
+    let address: ZilAddress = params.one()?;
+    let address: Address = address.into();
+
     let node = node.lock().unwrap();
 
     // First get the account and check that its a scilla account
@@ -312,18 +360,28 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
 
     let is_scilla = account.code.scilla_code_and_init_data().is_some();
     if is_scilla {
+        let limit = node.config.state_rpc_limit;
+
         let trie = state.get_account_trie(address)?;
-        for (k, v) in trie.iter() {
+        for (i, (k, v)) in trie.iter().enumerate() {
+            if i >= limit {
+                return Err(anyhow!(
+                    "State of contract returned has size greater than the allowed maximum"
+                ));
+            }
+
             let (var_name, indices) = split_storage_key(&k)?;
-            let mut var = result.entry(var_name);
+            let mut var = result.entry(var_name.clone());
+
             for index in indices {
                 let next = var.or_insert_with(|| Value::Object(Default::default()));
                 let Value::Object(next) = next else {
                     unreachable!()
                 };
                 let key: String = serde_json::from_slice(&index)?;
-                var = next.entry(key);
+                var = next.entry(key.clone());
             }
+
             var.or_insert(serde_json::from_slice(&v)?);
         }
     }
@@ -332,31 +390,32 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
 }
 
 fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let smart_contract_address: Address = params.one()?;
+    let address: ZilAddress = params.one()?;
+    let address: Address = address.into();
+
     let node = node.lock().unwrap();
     let block = node
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
-    let account = node
-        .get_state(&block)?
-        .get_account(smart_contract_address)?;
+    let account = node.get_state(&block)?.get_account(address)?;
 
-    let Some((code, _)) = account.code.scilla_code_and_init_data() else {
-        return Err(anyhow!("Address not contract address"));
+    let (code, type_) = match account.code {
+        Code::Evm(ref bytes) => (hex::encode(bytes), "evm"),
+        Code::Scilla { code, .. } => (code, "scilla"),
     };
 
-    Ok(json!({ "code": code }))
+    Ok(json!({ "code": code, "type": type_ }))
 }
 
 fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let smart_contract_address: Address = params.one()?;
+    let address: ZilAddress = params.one()?;
+    let address: Address = address.into();
+
     let node = node.lock().unwrap();
     let block = node
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
-    let account = node
-        .get_state(&block)?
-        .get_account(smart_contract_address)?;
+    let account = node.get_state(&block)?.get_account(address)?;
 
     let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address not contract address"));
@@ -417,7 +476,8 @@ fn get_tx_block(
 }
 
 fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<SmartContract>> {
-    let address: Address = params.one()?;
+    let address: ZilAddress = params.one()?;
+    let address: Address = address.into();
 
     let block = node
         .lock()
@@ -455,4 +515,179 @@ fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Sm
     }
 
     Ok(contracts)
+}
+
+fn get_example_ds_block_verbose(dsblocknum: u64, txblocknum: u64) -> DSBlockVerbose {
+    DSBlockVerbose {
+        b1: vec![false, false, false],
+        b2: vec![false, false],
+        cs1: String::from("FBA696961142862169D03EED67DD302EAB91333CBC4EEFE7EDB230515DA31DC1B9746EEEE5E7C105685E22C483B1021867B3775D30215CA66D5D81543E9FE8B5"),
+        prev_dshash: String::from("585373fb2c607b324afbe8f592e43b40d0091bbcef56c158e0879ced69648c8e"),
+        header: DSBlockHeaderVerbose {
+            block_num: dsblocknum.to_string(),
+            committee_hash: String::from("da38b3b21b26b71835bb1545246a0a248f97003de302ae20d70aeaf854403029"),
+            difficulty: 95,
+            difficulty_ds: 156,
+            epoch_num: txblocknum.to_string(),
+            gas_price: String::from("2000000000"),
+            members_ejected: vec![],
+            po_wwinners: vec![],
+            po_wwinners_ip: vec![],
+            prev_hash: String::from("585373fb2c607b324afbe8f592e43b40d0091bbcef56c158e0879ced69648c8e"),
+            reserved_field: String::from("0000000000000000000000000000000000000000000000000000000000000000"),
+            swinfo: SWInfo { scilla: vec![], zilliqa: vec![] },
+            sharding_hash: String::from("3216a33bfd4801e1907e72c7d529cef99c38d57cd281d0e9d726639fd9882d25"),
+            timestamp: String::from("1606443830834512"),
+            version: 2,
+        },
+        signature: String::from("7EE023C56602A17F2C8ABA2BEF290386D7C2CE1ABD8E3621573802FA67B243DE60B3EBEE5C4CCFDB697C80127B99CB384DAFEB44F70CD7569F2816DB950877BB"),
+    }
+}
+
+fn get_example_ds_block(dsblocknum: u64, txblocknum: u64) -> DSBlock {
+    get_example_ds_block_verbose(dsblocknum, txblocknum).into()
+}
+
+pub fn get_ds_block(params: Params, _node: &Arc<Mutex<Node>>) -> Result<DSBlock> {
+    // Dummy implementation
+    let block_number: String = params.one()?;
+    let block_number: u64 = block_number.parse()?;
+    Ok(get_example_ds_block(
+        block_number,
+        block_number * TX_BLOCKS_PER_DS_BLOCK,
+    ))
+}
+
+pub fn get_ds_block_verbose(params: Params, _node: &Arc<Mutex<Node>>) -> Result<DSBlockVerbose> {
+    // Dummy implementation
+    let block_number: String = params.one()?;
+    let block_number: u64 = block_number.parse()?;
+    Ok(get_example_ds_block_verbose(
+        block_number,
+        block_number * TX_BLOCKS_PER_DS_BLOCK,
+    ))
+}
+
+pub fn get_latest_ds_block(_params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlock> {
+    // Dummy implementation
+    let node = node.lock().unwrap();
+    let num_tx_blocks = node.get_chain_tip();
+    let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
+    Ok(get_example_ds_block(num_ds_blocks, num_tx_blocks))
+}
+
+pub fn get_current_ds_comm(
+    _params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<GetCurrentDSCommResult> {
+    // Dummy implementation
+    let node = node.lock().unwrap();
+    let num_tx_blocks = node.get_chain_tip();
+    let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
+    Ok(GetCurrentDSCommResult {
+        current_dsepoch: num_ds_blocks.to_string(),
+        current_tx_epoch: num_tx_blocks.to_string(),
+        num_of_dsguard: 420,
+        dscomm: vec![],
+    })
+}
+
+pub fn get_current_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    // Dummy implementation
+    let node = node.lock().unwrap();
+    let num_tx_blocks = node.get_chain_tip();
+    let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
+    Ok(num_ds_blocks.to_string())
+}
+
+pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlockListingResult> {
+    // Dummy implementation
+    let node = node.lock().unwrap();
+    let num_tx_blocks = node.get_chain_tip();
+    let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
+    let max_pages = num_ds_blocks / 10;
+    let page_requested: String = params.one()?;
+    let page_requested: u64 = page_requested.parse()?;
+
+    let base_blocknum = page_requested * 10;
+    let end_blocknum = num_ds_blocks.min(base_blocknum + 10);
+    let listings: Vec<DSBlockListing> = (base_blocknum..end_blocknum)
+        .map(|blocknum| DSBlockListing {
+            block_num: blocknum,
+            hash: "4DEED80AFDCC89D5B691DCB54CCB846AD9D823D448A56ACAC4DBE5E1213244C7".to_string(),
+        })
+        .collect();
+
+    Ok(DSBlockListingResult {
+        data: listings,
+        max_pages: max_pages.try_into()?,
+    })
+}
+
+pub fn calculate_tx_block_rate(node: &Arc<Mutex<Node>>) -> Result<f64> {
+    let node = node.lock().unwrap();
+    let max_measurement_blocks = 5;
+    let height = node.get_chain_tip();
+    if height == 0 {
+        return Ok(0.0);
+    }
+    let measurement_blocks = height.min(max_measurement_blocks);
+    let start_measure_block = node
+        .consensus
+        .get_block_by_number(height - measurement_blocks + 1)?
+        .ok_or(anyhow!("Unable to get block"))?;
+    let start_measure_time = start_measure_block.header.timestamp;
+    let end_measure_time = SystemTime::now();
+    let elapsed_time = end_measure_time.duration_since(start_measure_time)?;
+    let tx_block_rate = measurement_blocks as f64 / elapsed_time.as_secs_f64();
+    Ok(tx_block_rate)
+}
+
+pub fn get_ds_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlockRateResult> {
+    let tx_block_rate = calculate_tx_block_rate(node)?;
+    let ds_block_rate = tx_block_rate / TX_BLOCKS_PER_DS_BLOCK as f64;
+    Ok(DSBlockRateResult {
+        rate: ds_block_rate,
+    })
+}
+
+fn get_tx_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<TXBlockRateResult> {
+    let tx_block_rate = calculate_tx_block_rate(node)?;
+    Ok(TXBlockRateResult {
+        rate: tx_block_rate,
+    })
+}
+
+fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockListingResult> {
+    let page_number: u64 = params.one()?;
+
+    let node = node.lock().unwrap();
+    let num_tx_blocks = node.get_chain_tip();
+    let num_pages = (num_tx_blocks / 10) + if num_tx_blocks % 10 == 0 { 0 } else { 1 };
+
+    let start_block = page_number * 10;
+    let end_block = std::cmp::min(start_block + 10, num_tx_blocks);
+
+    let listings: Vec<TxBlockListing> = (start_block..end_block)
+        .filter_map(|block_number| {
+            node.get_block(block_number)
+                .ok()
+                .flatten()
+                .map(|block| TxBlockListing {
+                    block_num: block.number(),
+                    hash: block.hash().to_string(),
+                })
+        })
+        .collect();
+
+    Ok(TxBlockListingResult {
+        data: listings,
+        max_pages: num_pages,
+    })
+}
+
+fn get_num_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u64> {
+    let node = node.lock().unwrap();
+    let num_peers = node.get_peer_num();
+    Ok(num_peers as u64)
 }

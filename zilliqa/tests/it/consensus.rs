@@ -1,4 +1,4 @@
-use alloy_eips::BlockId;
+use alloy::eips::BlockId;
 use ethabi::Token;
 use ethers::{
     abi::FunctionExt, prelude::DeploymentTxFactory, providers::Middleware,
@@ -185,7 +185,7 @@ async fn create_shard(
         });
     }
 
-    network.run_until_block(wallet, 10.into(), 100).await;
+    network.run_until_block(wallet, 10.into(), 200).await;
     assert_eq!(
         network.nodes.len(),
         initial_main_shard_nodes + child_shard_nodes

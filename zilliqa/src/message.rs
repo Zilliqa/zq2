@@ -4,9 +4,10 @@ use std::{
     path::Path,
 };
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
-use bitvec::{bitvec, order::Msb0};
+use bitvec::{bitarr, order::Msb0};
+use itertools::Either;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -17,7 +18,10 @@ use crate::{
     transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
 };
 
-pub type BitVec = bitvec::vec::BitVec<u8, Msb0>;
+/// The maximum number of validators in the consensus committee. This is passed to the deposit contract and we expect
+/// it to reject deposits which would make the committee larger than this.
+pub const MAX_COMMITTEE_SIZE: usize = 256;
+pub type BitArray = bitvec::BitArr!(for MAX_COMMITTEE_SIZE, in u8, Msb0);
 pub type BitSlice = bitvec::slice::BitSlice<u8, Msb0>;
 
 /// A block proposal. The only difference between this and [Block] is that `transactions` contains the full transaction
@@ -25,7 +29,6 @@ pub type BitSlice = bitvec::slice::BitSlice<u8, Msb0>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Proposal {
     pub header: BlockHeader,
-    pub qc: QuorumCertificate,
     pub agg: Option<AggregateQc>,
     pub transactions: Vec<SignedTransaction>,
     pub opaque_transactions: Vec<Hash>,
@@ -64,7 +67,6 @@ impl Proposal {
             full_transactions.into_iter().unzip();
         Proposal {
             header: block.header,
-            qc: block.qc,
             agg: block.agg,
             transactions: tx_bodies,
             opaque_transactions: block
@@ -79,7 +81,6 @@ impl Proposal {
         (
             Block {
                 header: self.header,
-                qc: self.qc,
                 agg: self.agg,
                 transactions: self
                     .transactions
@@ -217,7 +218,9 @@ pub enum ExternalMessage {
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
     NewTransaction(SignedTransaction),
-    RequestResponse,
+    /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
+    /// require any data in the response.
+    Acknowledgement,
 }
 
 impl ExternalMessage {
@@ -253,7 +256,7 @@ impl Display for ExternalMessage {
                 }
             }
             ExternalMessage::NewTransaction(_) => write!(f, "NewTransaction"),
-            ExternalMessage::RequestResponse => write!(f, "RequestResponse"),
+            ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
         }
     }
 }
@@ -288,20 +291,20 @@ impl Display for InternalMessage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub struct QuorumCertificate {
     /// An aggregated signature from `n - f` distinct replicas, built by signing a block hash in a specific view.
     pub signature: NodeSignature,
-    pub cosigned: BitVec,
+    pub cosigned: BitArray,
     pub block_hash: Hash,
     pub view: u64,
 }
 
 impl QuorumCertificate {
-    pub fn genesis(committee_size: usize) -> Self {
+    pub fn genesis() -> Self {
         Self {
             signature: NodeSignature::identity(),
-            cosigned: bitvec![u8, bitvec::order::Msb0; 1; committee_size],
+            cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
             block_hash: Hash::ZERO,
             view: 0,
         }
@@ -309,7 +312,7 @@ impl QuorumCertificate {
 
     pub fn new(
         signatures: &[NodeSignature],
-        cosigned: BitVec,
+        cosigned: BitArray,
         block_hash: Hash,
         view: u64,
     ) -> Self {
@@ -347,11 +350,12 @@ impl QuorumCertificate {
     }
 
     pub fn compute_hash(&self) -> Hash {
-        Hash::compute([
-            &self.signature.to_bytes(),
-            &self.cosigned.clone().into_vec(), // FIXME: What does this do when `self.cosigned.len() % 8 != 0`?
-            self.block_hash.as_bytes(),
-        ])
+        Hash::builder()
+            .with(self.signature.to_bytes())
+            .with(self.cosigned.as_raw_slice()) // FIXME: What does this do when `self.cosigned.len() % 8 != 0`?
+            .with(self.block_hash.as_bytes())
+            .with(self.view.to_be_bytes())
+            .finalize()
     }
 }
 
@@ -365,10 +369,10 @@ impl Display for QuorumCertificate {
 }
 
 /// A collection of `n - f` [QuorumCertificate]s.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AggregateQc {
     pub signature: NodeSignature,
-    pub cosigned: BitVec,
+    pub cosigned: BitArray,
     pub view: u64,
     pub qcs: Vec<QuorumCertificate>,
 }
@@ -376,18 +380,13 @@ pub struct AggregateQc {
 impl AggregateQc {
     pub fn compute_hash(&self) -> Hash {
         let hashes: Vec<_> = self.qcs.iter().map(|qc| qc.compute_hash()).collect();
-        let signers = self.cosigned.as_raw_slice();
-        Hash::compute([
-            &self.signature.to_bytes(),
-            signers,
-            Hash::compute(
-                hashes
-                    .iter()
-                    .map(|hash| hash.as_bytes())
-                    .collect::<Vec<_>>(),
-            )
-            .as_bytes(),
-        ])
+
+        Hash::builder()
+            .with(self.signature.to_bytes())
+            .with(self.cosigned.as_raw_slice())
+            .with(self.view.to_be_bytes())
+            .with_iter(hashes.iter().map(|hash| hash.as_bytes()))
+            .finalize()
     }
 }
 
@@ -399,12 +398,14 @@ pub enum BlockRef {
 }
 
 /// The [Copy]-able subset of a block.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlockHeader {
     pub view: u64, // only useful to consensus: the proposer can be derived from the block's view
     pub number: u64, // distinct from view, this is the normal incrementing block number
     pub hash: Hash,
-    pub parent_hash: Hash,
+    /// A block's quorum certificate (QC) is proof that more than `2n/3` nodes (out of `n`) have voted for this block.
+    /// It also includes a pointer to the parent block.
+    pub qc: QuorumCertificate,
     pub signature: NodeSignature,
     pub state_root_hash: Hash,
     pub transactions_root_hash: Hash,
@@ -417,7 +418,10 @@ pub struct BlockHeader {
 
 impl BlockHeader {
     pub fn genesis_hash() -> Hash {
-        Hash::compute([&0_u64.to_be_bytes(), Hash::ZERO.as_bytes()])
+        Hash::builder()
+            .with(0_u64.to_be_bytes())
+            .with(Hash::ZERO.as_bytes())
+            .finalize()
     }
 
     pub fn genesis(state_root_hash: Hash) -> Self {
@@ -425,7 +429,7 @@ impl BlockHeader {
             view: 0,
             number: 0,
             hash: BlockHeader::genesis_hash(),
-            parent_hash: Hash::ZERO,
+            qc: QuorumCertificate::genesis(),
             signature: NodeSignature::identity(),
             state_root_hash,
             transactions_root_hash: Hash::ZERO,
@@ -444,9 +448,9 @@ impl Default for BlockHeader {
             view: 0,
             number: 0,
             hash: Hash::ZERO,
-            parent_hash: Hash::ZERO,
+            qc: QuorumCertificate::genesis(),
             signature: NodeSignature::identity(),
-            state_root_hash: Hash(Keccak256::digest([alloy_rlp::EMPTY_STRING_CODE]).into()),
+            state_root_hash: Hash(Keccak256::digest([alloy::rlp::EMPTY_STRING_CODE]).into()),
             transactions_root_hash: Hash::ZERO,
             receipts_root_hash: Hash::ZERO,
             timestamp: SystemTime::UNIX_EPOCH,
@@ -456,12 +460,9 @@ impl Default for BlockHeader {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Block {
     pub header: BlockHeader,
-    /// A block's quorum certificate (QC) is proof that more than `2n/3` nodes (out of `n`) have voted for this block.
-    /// It also includes a pointer to the parent block.
-    pub qc: QuorumCertificate,
     /// The block will include an [AggregateQc] if the previous leader failed, meaning we couldn't construct a QC. When
     /// this is not `None`, `qc` will contain a clone of the highest QC within this [AggregateQc];
     pub agg: Option<AggregateQc>,
@@ -470,90 +471,20 @@ pub struct Block {
 
 impl Block {
     pub fn genesis(state_root_hash: Hash) -> Block {
-        let view = 0u64;
-        let number = 0u64;
-        let qc = QuorumCertificate {
-            signature: NodeSignature::identity(),
-            cosigned: bitvec![u8, bitvec::order::Msb0; 1; 0],
-            block_hash: Hash::ZERO,
-            view: 0,
-        };
-        let parent_hash = Hash::ZERO;
-        let timestamp = SystemTime::UNIX_EPOCH;
-        let gas_used = EvmGas(0);
-        let gas_limit = EvmGas(0);
-
-        let digest = Hash::compute([
-            &view.to_be_bytes(),
-            &number.to_be_bytes(),
-            qc.compute_hash().as_bytes(),
-            // hash of agg missing here intentionally
-            parent_hash.as_bytes(),
-            state_root_hash.as_bytes(),
-            &Hash::ZERO.0,
-            &Hash::ZERO.0,
-            &gas_used.0.to_be_bytes(),
-            &gas_limit.0.to_be_bytes(),
-        ]);
-
-        Block {
-            header: BlockHeader {
-                view,
-                number,
-                hash: digest,
-                parent_hash,
-                signature: NodeSignature::identity(),
-                state_root_hash,
-                transactions_root_hash: Hash::ZERO,
-                receipts_root_hash: Hash::ZERO,
-                timestamp,
-                gas_used,
-                gas_limit,
-            },
-            qc: QuorumCertificate {
-                signature: NodeSignature::identity(),
-                cosigned: bitvec![u8, bitvec::order::Msb0; 1; 0],
-                block_hash: Hash::ZERO,
-                view: 0,
-            },
-            agg: None,
-            transactions: vec![],
-        }
-    }
-
-    pub fn verify_hash(&self) -> Result<()> {
-        let computed_hash = if let Some(agg) = &self.agg {
-            Hash::compute([
-                &self.view().to_be_bytes(),
-                &self.number().to_be_bytes(),
-                self.qc.compute_hash().as_bytes(),
-                agg.compute_hash().as_bytes(),
-                self.parent_hash().as_bytes(),
-                self.state_root_hash().as_bytes(),
-                self.transactions_root_hash().as_bytes(),
-                self.receipts_root_hash().as_bytes(),
-                &self.gas_used().0.to_be_bytes(),
-                &self.gas_limit().0.to_be_bytes(),
-            ])
-        } else {
-            Hash::compute([
-                &self.view().to_be_bytes(),
-                &self.number().to_be_bytes(),
-                self.qc.compute_hash().as_bytes(),
-                self.parent_hash().as_bytes(),
-                self.state_root_hash().as_bytes(),
-                self.transactions_root_hash().as_bytes(),
-                self.receipts_root_hash().as_bytes(),
-                &self.gas_used().0.to_be_bytes(),
-                &self.gas_limit().0.to_be_bytes(),
-            ])
-        };
-
-        if computed_hash != self.hash() {
-            return Err(anyhow!("invalid hash"));
-        }
-
-        Ok(())
+        Self::new(
+            0u64,
+            0u64,
+            QuorumCertificate::genesis(),
+            None,
+            state_root_hash,
+            Hash::ZERO,
+            Hash::ZERO,
+            vec![],
+            SystemTime::UNIX_EPOCH,
+            EvmGas(0),
+            EvmGas(0),
+            Either::Right(NodeSignature::identity()),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -562,7 +493,6 @@ impl Block {
         view: u64,
         number: u64,
         qc: QuorumCertificate,
-        parent_hash: Hash,
         state_root_hash: Hash,
         transactions_root_hash: Hash,
         receipts_root_hash: Hash,
@@ -571,37 +501,20 @@ impl Block {
         gas_used: EvmGas,
         gas_limit: EvmGas,
     ) -> Block {
-        let digest = Hash::compute([
-            &view.to_be_bytes(),
-            &number.to_be_bytes(),
-            qc.compute_hash().as_bytes(),
-            // hash of agg missing here intentionally
-            parent_hash.as_bytes(),
-            state_root_hash.as_bytes(),
-            transactions_root_hash.as_bytes(),
-            receipts_root_hash.as_bytes(),
-            &gas_used.0.to_be_bytes(),
-            &gas_limit.0.to_be_bytes(),
-        ]);
-        let signature = secret_key.sign(digest.as_bytes());
-        Block {
-            header: BlockHeader {
-                view,
-                number,
-                hash: digest,
-                parent_hash,
-                signature,
-                state_root_hash,
-                transactions_root_hash,
-                receipts_root_hash,
-                timestamp,
-                gas_used,
-                gas_limit,
-            },
+        Self::new(
+            view,
+            number,
             qc,
-            agg: None,
+            None,
+            state_root_hash,
+            transactions_root_hash,
+            receipts_root_hash,
             transactions,
-        }
+            timestamp,
+            gas_used,
+            gas_limit,
+            Either::Left(secret_key),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -611,43 +524,81 @@ impl Block {
         number: u64,
         qc: QuorumCertificate,
         agg: AggregateQc,
-        parent_hash: Hash,
         state_root_hash: Hash,
         transactions_root_hash: Hash,
         receipts_root_hash: Hash,
         timestamp: SystemTime,
     ) -> Block {
-        let digest = Hash::compute([
-            &view.to_be_bytes(),
-            &number.to_be_bytes(),
-            qc.compute_hash().as_bytes(),
-            agg.compute_hash().as_bytes(),
-            parent_hash.as_bytes(),
-            state_root_hash.as_bytes(),
-            transactions_root_hash.as_bytes(),
-            receipts_root_hash.as_bytes(),
-            &EvmGas(0).0.to_be_bytes(),
-            &EvmGas(0).0.to_be_bytes(),
-        ]);
-        let signature = secret_key.sign(digest.as_bytes());
-        Block {
+        Self::new(
+            view,
+            number,
+            qc,
+            Some(agg),
+            state_root_hash,
+            transactions_root_hash,
+            receipts_root_hash,
+            vec![],
+            timestamp,
+            EvmGas(0),
+            EvmGas(0),
+            Either::Left(secret_key),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        view: u64,
+        number: u64,
+        qc: QuorumCertificate,
+        agg: Option<AggregateQc>,
+        state_root_hash: Hash,
+        transactions_root_hash: Hash,
+        receipts_root_hash: Hash,
+        transactions: Vec<Hash>,
+        timestamp: SystemTime,
+        gas_used: EvmGas,
+        gas_limit: EvmGas,
+        secret_key_or_signature: Either<SecretKey, NodeSignature>,
+    ) -> Self {
+        let block = Block {
             header: BlockHeader {
                 view,
                 number,
-                hash: digest,
-                parent_hash,
-                signature,
+                hash: Hash::ZERO,
+                qc,
+                signature: NodeSignature::identity(),
                 state_root_hash,
                 transactions_root_hash,
                 receipts_root_hash,
                 timestamp,
-                gas_used: EvmGas(0),
-                gas_limit: EvmGas(0),
+                gas_used,
+                gas_limit,
             },
-            qc,
-            agg: Some(agg),
-            transactions: vec![],
+            agg,
+            transactions,
+        };
+
+        let hash = block.compute_hash();
+        let signature = secret_key_or_signature
+            .map_left(|key| key.sign(hash.as_bytes()))
+            .into_inner();
+
+        Block {
+            header: BlockHeader {
+                hash,
+                signature,
+                ..block.header
+            },
+            ..block
         }
+    }
+
+    pub fn verify_hash(&self) -> Result<()> {
+        if self.compute_hash() != self.hash() {
+            return Err(anyhow!("invalid hash"));
+        }
+
+        Ok(())
     }
 
     pub fn verify(&self, public_key: NodePublicKey) -> Result<()> {
@@ -671,7 +622,7 @@ impl Block {
     }
 
     pub fn parent_hash(&self) -> Hash {
-        self.header.parent_hash
+        self.header.qc.block_hash
     }
 
     pub fn signature(&self) -> NodeSignature {
@@ -698,5 +649,33 @@ impl Block {
     }
     pub fn gas_limit(&self) -> EvmGas {
         self.header.gas_limit
+    }
+}
+
+impl Block {
+    pub fn compute_hash(&self) -> Hash {
+        Hash::builder()
+            .with(self.view().to_be_bytes())
+            .with(self.number().to_be_bytes())
+            .with(self.state_root_hash().as_bytes())
+            .with(self.transactions_root_hash().as_bytes())
+            .with(self.receipts_root_hash().as_bytes())
+            .with(
+                self.timestamp()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+                    .to_be_bytes(),
+            )
+            .with(self.gas_used().0.to_be_bytes())
+            .with(self.gas_limit().0.to_be_bytes())
+            .with(self.header.qc.compute_hash().as_bytes())
+            .with_optional(
+                self.agg
+                    .as_ref()
+                    .map(|agg| agg.compute_hash().as_bytes().to_vec()),
+            )
+            .with_iter(self.transactions.iter().map(|hash| hash.as_bytes()))
+            .finalize()
     }
 }

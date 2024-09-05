@@ -1,7 +1,9 @@
 use std::{fmt::Debug, ops::DerefMut};
 
-use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{hex, Address, B256};
+use alloy::{
+    eips::BlockNumberOrTag,
+    primitives::{hex, Address, B256},
+};
 use ethabi::{ethereum_types::U64, Token};
 use ethers::{
     abi::FunctionExt,
@@ -168,6 +170,118 @@ async fn get_block_transaction_count(mut network: Network) {
     // appeared. So the latest block should also have a count of one.
     let count = count_by_number(provider, "latest").await;
     assert_eq!(count, 1);
+}
+
+#[zilliqa_macros::test]
+async fn get_transaction_count_pending(mut network: Network) {
+    let wallet_1 = network.genesis_wallet().await;
+    let wallet_2 = network.random_wallet().await;
+
+    let provider = wallet_1.provider();
+
+    async fn get_count<T: Debug + Serialize + Send + Sync>(
+        address: H160,
+        provider: &Provider<LocalRpcClient>,
+        number: T,
+    ) -> u64 {
+        provider
+            .request::<_, U64>("eth_getTransactionCount", (address, number))
+            .await
+            .unwrap()
+            .as_u64()
+    }
+
+    // Both wallets should have no transactions pending.
+    let count = get_count(wallet_1.address(), provider, "pending").await;
+    assert_eq!(count, 0);
+    let count = get_count(wallet_2.address(), provider, "pending").await;
+    assert_eq!(count, 0);
+
+    // Send a transaction from wallet 1 to wallet 2.
+    let _hash_1 = wallet_1
+        .send_transaction(
+            TransactionRequest::pay(wallet_2.address(), 10).nonce(0),
+            None,
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Wallet 1 should now have 1 transaction pending, and no transactions in the latest block.
+    let count = get_count(wallet_1.address(), provider, "pending").await;
+    assert_eq!(count, 1);
+    let count = get_count(wallet_1.address(), provider, "latest").await;
+    assert_eq!(count, 0);
+
+    // Send a transaction from wallet 1 to wallet 2.
+    let hash_2 = wallet_1
+        .send_transaction(
+            TransactionRequest::pay(wallet_2.address(), 10).nonce(1),
+            None,
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Wallet 1 should now have 2 transactions pending, and still no transactions in the latest block.
+    let count = get_count(wallet_1.address(), provider, "pending").await;
+    assert_eq!(count, 2);
+    let count = get_count(wallet_1.address(), provider, "latest").await;
+    assert_eq!(count, 0);
+
+    // Ensure transaction count is account specific.
+    let count = get_count(wallet_2.address(), provider, "pending").await;
+    assert_eq!(count, 0);
+
+    // Process pending transaction
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(hash_2)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Wallet 1 should no longer have any pending transactions, and should have 2 transactions in the
+    // latest block, leading to 2 returned for both "pending" and "latest".
+    let count = get_count(wallet_1.address(), provider, "pending").await;
+    assert_eq!(count, 2);
+    let count = get_count(wallet_1.address(), provider, "latest").await;
+    assert_eq!(count, 2);
+
+    // Send a transaction from wallet 1 to wallet 2.
+    wallet_1
+        .send_transaction(
+            TransactionRequest::pay(wallet_2.address(), 10).nonce(3),
+            None,
+        )
+        .await
+        .unwrap();
+
+    // Wallet 1 should no longer have any pending transactions, and should have 2 transactions in the
+    // latest block, leading to 2 returned for both "pending" and "latest".
+    let count = get_count(wallet_1.address(), provider, "pending").await;
+    assert_eq!(count, 2);
+
+    // Send a transaction from wallet 1 to wallet 2.
+    wallet_1
+        .send_transaction(
+            TransactionRequest::pay(wallet_2.address(), 10).nonce(2),
+            None,
+        )
+        .await
+        .unwrap();
+
+    // Wallet 1 should no longer have any pending transactions, and should have 2 transactions in the
+    // latest block, leading to 2 returned for both "pending" and "latest".
+    let count = get_count(wallet_1.address(), provider, "pending").await;
+    assert_eq!(count, 4);
 }
 
 #[zilliqa_macros::test]

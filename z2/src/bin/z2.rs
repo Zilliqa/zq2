@@ -1,6 +1,6 @@
 use std::{collections::HashSet, env, fmt};
 
-use alloy_primitives::B256;
+use alloy::primitives::B256;
 use anyhow::{anyhow, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use z2lib::{components::Component, deployer, plumbing, validators};
@@ -62,6 +62,8 @@ enum DeployerCommands {
     Install(DeployerUpgradeArgs),
     /// Perfom the network upgrade
     Upgrade(DeployerUpgradeArgs),
+    /// Provide the deposit commands for the validator nodes
+    GetDepositCommands(DeployerUpgradeArgs),
 }
 
 #[derive(Args, Debug)]
@@ -69,6 +71,9 @@ pub struct DeployerNewArgs {
     #[clap(long)]
     /// ZQ2 network name
     network_name: Option<String>,
+    #[clap(long)]
+    /// ZQ2 EVM chain ID
+    eth_chain_id: Option<u64>,
     #[clap(long)]
     /// GCP project-id where the network is running
     project_id: Option<String>,
@@ -274,15 +279,18 @@ struct DepositStruct {
     /// Specify the Validator PeerId
     #[clap(long)]
     peer_id: String,
-    /// Specify the wallet address to fund the deposit
+    /// Specify the private_key to fund the deposit
     #[clap(long, short)]
-    wallet: String,
+    private_key: String,
     /// Specify the stake amount you want provide
     #[clap(long, short)]
     amount: u8,
     /// Specify the staking reward address
     #[clap(long, short)]
     reward_address: String,
+    /// Specify the Validator Proof-of-Possession
+    #[clap(long)]
+    pop_signature: String,
 }
 
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
@@ -427,8 +435,11 @@ async fn main() -> Result<()> {
                     .roles
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("--roles is a mandatory argument"))?;
+                let eth_chain_id = arg
+                    .eth_chain_id
+                    .ok_or_else(|| anyhow::anyhow!("--eth-chain-id is a mandatory argument"))?;
 
-                plumbing::run_deployer_new(&network_name, &project_id, roles)
+                plumbing::run_deployer_new(&network_name, eth_chain_id, &project_id, roles)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer new command: {}", err)
@@ -458,6 +469,22 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::GetDepositCommands(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_deposit_commands(&config_file)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to run deployer get-deposit-commands command: {}",
+                            err
+                        )
                     })?;
                 Ok(())
             }
@@ -508,12 +535,13 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Deposit(ref args) => {
-            let node = validators::Validator::new(&args.peer_id, &args.public_key)?;
+            let node =
+                validators::Validator::new(&args.peer_id, &args.public_key, &args.pop_signature)?;
             let stake = validators::StakeDeposit::new(
                 node,
                 args.amount,
                 args.chain_name.clone(),
-                &args.wallet,
+                &args.private_key,
                 &args.reward_address,
             )?;
             validators::deposit_stake(&stake).await

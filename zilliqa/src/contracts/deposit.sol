@@ -16,12 +16,16 @@ contract Deposit {
     uint256 public totalStake;
 
     uint256 public _minimumStake;
+    uint256 public _maximumStakers;
 
-    constructor(uint256 minimumStake) {
+    constructor(uint256 minimumStake, uint256 maximumStakers) {
         _minimumStake = minimumStake;
+        _maximumStakers = maximumStakers;
     }
 
-    function leaderFromRandomness(uint256 randomness) private view returns (bytes memory) {
+    function leaderFromRandomness(
+        uint256 randomness
+    ) private view returns (bytes memory) {
         // Get a random number in the inclusive range of 0 to (totalStake - 1)
         uint256 position = randomness % totalStake;
         uint256 cummulative_stake = 0;
@@ -44,8 +48,12 @@ contract Deposit {
         return leaderFromRandomness(uint256(block.prevrandao));
     }
 
-    function leaderAtView(uint256 viewNumber) public view returns (bytes memory) {
-        uint256 randomness = uint256(keccak256(bytes.concat(bytes32(viewNumber))));
+    function leaderAtView(
+        uint256 viewNumber
+    ) public view returns (bytes memory) {
+        uint256 randomness = uint256(
+            keccak256(bytes.concat(bytes32(viewNumber)))
+        );
         return leaderFromRandomness(randomness);
     }
 
@@ -53,19 +61,24 @@ contract Deposit {
     // 10% stake. Will be removed later in development.
     function tempRemoveStaker(bytes calldata blsPubKey) public {
         require(blsPubKey.length == 48);
-        
+
         // Inefficient, but its fine because this is temporary.
         for (uint256 i = 0; i < _stakerKeys.length; i++) {
             bytes storage stakerKey = _stakerKeys[i];
             Staker storage staker = _stakersMap[stakerKey];
 
             // Check if the call is authorised.
-            if (msg.sender == staker.rewardAddress && staker.balance > (totalStake / 10)) {
+            if (
+                msg.sender == staker.rewardAddress &&
+                staker.balance > (totalStake / 10)
+            ) {
                 // The call is authorised, so we can delete the specified staker.
                 Staker storage stakerToDelete = _stakersMap[blsPubKey];
 
                 // Delete this staker's key from `_stakerKeys`. Swap the last element in the array into the deleted position.
-                bytes storage swappedStakerKey = _stakerKeys[_stakerKeys.length - 1];
+                bytes storage swappedStakerKey = _stakerKeys[
+                    _stakerKeys.length - 1
+                ];
                 Staker storage swappedStaker = _stakersMap[swappedStakerKey];
                 _stakerKeys[stakerToDelete.keyIndex - 1] = swappedStakerKey;
                 swappedStaker.keyIndex = stakerToDelete.keyIndex;
@@ -82,22 +95,60 @@ contract Deposit {
                 return;
             }
         }
-        revert("call must come from a reward address corresponding to a staker with more than 10% stake");
+        revert(
+            "call must come from a reward address corresponding to a staker with more than 10% stake"
+        );
     }
 
-    function deposit(bytes calldata blsPubKey, bytes calldata peerId, bytes calldata /* signature */, address rewardAddress) public payable {
+    // keep in-sync with zilliqa/src/precompiles.rs
+    function _popVerify(
+        bytes memory pubkey,
+        bytes memory signature
+    ) private view returns (bool) {
+        bytes memory input = abi.encodeWithSelector(
+            hex"bfd24965", // bytes4(keccak256("popVerify(bytes,bytes)"))
+            signature,
+            pubkey
+        );
+        uint inputLength = input.length;
+        bytes memory output = new bytes(32);
+        bool success;
+        assembly {
+            success := staticcall(
+                gas(),
+                0x5a494c80, // "ZIL\x80"
+                add(input, 0x20),
+                inputLength,
+                add(output, 0x20),
+                32
+            )
+        }
+        require(success, "popVerify");
+        bool result = abi.decode(output, (bool));
+        return result;
+    }
+
+    function deposit(
+        bytes calldata blsPubKey,
+        bytes calldata peerId,
+        bytes calldata signature,
+        address rewardAddress
+    ) public payable {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
-        // TODO: Verify signature as a proof-of-possession of the private key.
+        require(signature.length == 96);
+
+        require(_stakerKeys.length < _maximumStakers, "too many stakers");
+
+        // Verify signature as a proof-of-possession of the private key.
+        bool pop = _popVerify(blsPubKey, signature);
+        require(pop, "rogue key check");
 
         uint256 keyIndex = _stakersMap[blsPubKey].keyIndex;
         if (keyIndex == 0) {
             // The staker will be at index `_stakerKeys.length`. We also need to add 1 to avoid the 0 sentinel value.
             _stakersMap[blsPubKey].keyIndex = _stakerKeys.length + 1;
             _stakerKeys.push(blsPubKey);
-        } else {
-            // TODO: Remove the following check once the verification of the BLS signature has been implemented.
-            require(msg.sender == _stakersMap[blsPubKey].rewardAddress);
         }
 
         _stakersMap[blsPubKey].balance += msg.value;
@@ -111,7 +162,12 @@ contract Deposit {
         _stakersMap[blsPubKey].peerId = peerId;
     }
 
-    function setStake(bytes calldata blsPubKey, bytes calldata peerId, address rewardAddress, uint256 amount) public {
+    function setStake(
+        bytes calldata blsPubKey,
+        bytes calldata peerId,
+        address rewardAddress,
+        uint256 amount
+    ) public {
         require(msg.sender == address(0));
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
@@ -139,7 +195,9 @@ contract Deposit {
         return _stakersMap[blsPubKey].balance;
     }
 
-    function getRewardAddress(bytes calldata blsPubKey) public view returns (address) {
+    function getRewardAddress(
+        bytes calldata blsPubKey
+    ) public view returns (address) {
         require(blsPubKey.length == 48);
         if (_stakersMap[blsPubKey].rewardAddress == address(0)) {
             revert("not staked");
@@ -151,7 +209,9 @@ contract Deposit {
         return _stakerKeys;
     }
 
-    function getPeerId(bytes calldata blsPubKey) public view returns (bytes memory) {
+    function getPeerId(
+        bytes calldata blsPubKey
+    ) public view returns (bytes memory) {
         require(blsPubKey.length == 48);
         if (_stakersMap[blsPubKey].rewardAddress == address(0)) {
             revert("not staked");

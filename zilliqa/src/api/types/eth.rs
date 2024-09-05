@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use alloy_consensus::TxEip1559;
-use alloy_primitives::{Address, B256, U128, U256, U64};
+use alloy::{
+    consensus::TxEip1559,
+    primitives::{Address, B256, U128, U256, U64},
+};
 use serde::{
     de::{self, Unexpected},
     Deserialize, Deserializer, Serialize,
@@ -12,8 +14,7 @@ use super::{bool_as_int, hex, option_hex, vec_hex};
 use crate::{
     api::types::ser_display,
     crypto::Hash,
-    message,
-    message::BitVec,
+    message::{self, BitArray},
     time::SystemTime,
     transaction::{self, EvmGas, EvmLog},
 };
@@ -31,7 +32,7 @@ pub struct QuorumCertificate {
     #[serde(serialize_with = "hex")]
     pub signature: Vec<u8>,
     #[serde(serialize_with = "ser_display")]
-    pub cosigned: BitVec,
+    pub cosigned: BitArray,
     #[serde(serialize_with = "hex")]
     pub view: u64,
     #[serde(serialize_with = "hex")]
@@ -42,7 +43,7 @@ impl QuorumCertificate {
     pub fn from_qc(qc: &message::QuorumCertificate) -> Self {
         Self {
             signature: qc.signature.to_bytes(),
-            cosigned: qc.cosigned.clone(),
+            cosigned: qc.cosigned,
             view: qc.view,
             block_hash: qc.block_hash.into(),
         }
@@ -54,7 +55,7 @@ pub struct AggregateQc {
     #[serde(serialize_with = "hex")]
     pub signature: Vec<u8>,
     #[serde(serialize_with = "ser_display")]
-    pub cosigned: BitVec,
+    pub cosigned: BitArray,
     #[serde(serialize_with = "hex")]
     pub view: u64,
     pub quorum_certificates: Vec<QuorumCertificate>,
@@ -64,7 +65,7 @@ impl AggregateQc {
     pub fn from_agg(agg_qc: &Option<message::AggregateQc>) -> Option<Self> {
         return agg_qc.as_ref().map(|agg_qc| Self {
             signature: agg_qc.signature.to_bytes(),
-            cosigned: agg_qc.cosigned.clone(),
+            cosigned: agg_qc.cosigned,
             view: agg_qc.view,
             quorum_certificates: agg_qc.qcs.iter().map(QuorumCertificate::from_qc).collect(),
         });
@@ -97,7 +98,7 @@ impl Block {
                 .map(|h| HashOrTransaction::Hash((*h).into()))
                 .collect(),
             uncles: vec![],
-            quorum_certificate: QuorumCertificate::from_qc(&block.qc),
+            quorum_certificate: QuorumCertificate::from_qc(&block.header.qc),
             aggregate_quorum_certificate: AggregateQc::from_agg(&block.agg),
         }
     }
@@ -155,7 +156,7 @@ impl Header {
             number: header.number,
             view: header.view,
             hash: header.hash.into(),
-            parent_hash: header.parent_hash.into(),
+            parent_hash: header.qc.block_hash.into(),
             mix_hash: B256::ZERO,
             nonce: [0; 8],
             sha_3_uncles: B256::ZERO,
@@ -443,7 +444,7 @@ pub struct TxPoolContent {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
+    use alloy::primitives::B256;
 
     use super::Log;
 

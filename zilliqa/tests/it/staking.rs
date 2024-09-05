@@ -1,5 +1,6 @@
 use std::ops::DerefMut;
 
+use blsful::{vsss_rs::ShareIdentifier, Bls12381G2Impl};
 use ethabi::Token;
 use ethers::{
     middleware::SignerMiddleware,
@@ -40,6 +41,7 @@ async fn deposit_stake(
     peer_id: PeerId,
     stake: u128,
     reward_address: H160,
+    pop: blsful::ProofOfPossession<Bls12381G2Impl>,
 ) {
     // Transfer the new validator enough ZIL to stake.
     let tx = TransactionRequest::pay(reward_address, stake);
@@ -55,7 +57,7 @@ async fn deposit_stake(
                 .encode_input(&[
                     Token::Bytes(key.as_bytes()),
                     Token::Bytes(peer_id.to_bytes()),
-                    Token::Bytes(vec![]),
+                    Token::Bytes(pop.0.to_compressed().to_vec()),
                     Token::Address(reward_address),
                 ])
                 .unwrap(),
@@ -155,6 +157,8 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     assert_eq!(stakers.len(), 4);
     assert!(!stakers.contains(&new_validator_key.node_public_key()));
 
+    let pop = new_validator_key.pop_prove();
+
     deposit_stake(
         &mut network,
         &wallet,
@@ -162,6 +166,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         new_validator_key.to_libp2p_keypair().public().to_peer_id(),
         32 * 10u128.pow(18),
         reward_address,
+        pop,
     )
     .await;
 
@@ -200,6 +205,8 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     let new_validator_key = network.get_node_raw(index).secret_key;
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
 
+    let pop = new_validator_key.pop_prove();
+
     deposit_stake(
         &mut network,
         &wallet,
@@ -207,6 +214,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
         new_validator_key.to_libp2p_keypair().public().to_peer_id(),
         1024 * 10u128.pow(18),
         reward_address,
+        pop,
     )
     .await;
 
@@ -277,8 +285,8 @@ async fn validators_can_leave(mut network: Network) {
         .wallet_from_key(
             network
                 .get_node_raw(validator_sending_removal)
-                .secret_key
-                .as_ecdsa(),
+                .onchain_key
+                .clone(),
         )
         .await;
     fund_wallet(&mut network, &genesis_wallet, &wallet_sending_removal).await;

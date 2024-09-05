@@ -3,7 +3,7 @@ use std::{
     collections::{BTreeMap, BinaryHeap, HashSet},
 };
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 
 use crate::{
     crypto::Hash,
@@ -49,7 +49,7 @@ impl MempoolIndex for VerifiedTransaction {
 /// A pool that manages uncommitted transactions.
 ///
 /// It provides transactions to the chain via [`TransactionPool::best_transaction`].
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct TransactionPool {
     /// All transactions in the pool. These transactions are all valid, or might become
     /// valid at some point in the future.
@@ -185,6 +185,17 @@ impl TransactionPool {
         TxPoolContent { pending, queued }
     }
 
+    pub fn pending_transaction_count(&self, account: Address, mut account_nonce: u64) -> u64 {
+        while self
+            .transactions
+            .contains_key(&TxIndex::Nonced(account, account_nonce))
+        {
+            account_nonce += 1;
+        }
+
+        account_nonce
+    }
+
     pub fn insert_transaction(&mut self, txn: VerifiedTransaction, account_nonce: u64) -> bool {
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
             // This transaction is permanently invalid, so there is nothing to do.
@@ -278,8 +289,10 @@ impl TransactionPool {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::TxLegacy;
-    use alloy_primitives::{Address, Bytes, Parity, Signature, TxKind, U256};
+    use alloy::{
+        consensus::TxLegacy,
+        primitives::{Address, Bytes, Parity, Signature, TxKind, U256},
+    };
     use rand::{seq::SliceRandom, thread_rng};
 
     use super::TransactionPool;
@@ -308,7 +321,10 @@ mod tests {
                 .unwrap(),
             },
             signer: from_addr,
-            hash: Hash::compute([from_addr.as_slice(), &[nonce]]),
+            hash: Hash::builder()
+                .with(from_addr.as_slice())
+                .with([nonce])
+                .finalize(),
         }
     }
 
@@ -331,7 +347,10 @@ mod tests {
                 from: Address::ZERO,
             },
             signer: Address::ZERO,
-            hash: Hash::compute([[shard_nonce], [from_shard]]),
+            hash: Hash::builder()
+                .with([shard_nonce])
+                .with([from_shard])
+                .finalize(),
         }
     }
 

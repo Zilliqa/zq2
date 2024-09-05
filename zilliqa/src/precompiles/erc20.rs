@@ -1,34 +1,24 @@
-use std::sync::Arc;
-
-use ethabi::{encode, ParamType, Token};
+use ethabi::{decode, encode, short_signature, ParamType, Token};
 use revm::{
     precompile::PrecompileError,
     primitives::{
         alloy_primitives::private::alloy_rlp::Encodable, Address, Bytes, PrecompileOutput,
         PrecompileResult,
     },
-    ContextPrecompile, ContextStatefulPrecompile, InnerEvmContext,
+    ContextStatefulPrecompile, InnerEvmContext,
 };
-use sha3::{Digest, Keccak256};
 
-use crate::state::State;
+use crate::exec::PendingState;
 
-pub(crate) fn get_custom_precompiles<'a>() -> Vec<(Address, ContextPrecompile<&'a State>)> {
-    vec![(
-        Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL"),
-        ContextPrecompile::ContextStateful(Arc::new(ERC20Precompile)),
-    )]
-}
-
-pub(crate) struct ERC20Precompile;
+pub struct ERC20Precompile;
 
 impl ERC20Precompile {
     fn get_balance(
         input: &[u8],
         _gas_price: u64,
-        context: &mut InnerEvmContext<&State>,
+        context: &mut InnerEvmContext<PendingState>,
     ) -> PrecompileResult {
-        let Ok(decoded) = ethabi::decode(&[ParamType::Address], input) else {
+        let Ok(decoded) = decode(&[ParamType::Address], input) else {
             return Err(
                 PrecompileError::Other("Unable to decode provided account address".into()).into(),
             );
@@ -48,7 +38,7 @@ impl ERC20Precompile {
         };
         let address = Address::new(address.0);
 
-        let Ok(account) = context.db.get_account(address) else {
+        let Ok(account) = context.db.pre_state.get_account(address) else {
             return Ok(PrecompileOutput::new(
                 0,
                 encode(&[Token::Uint(ethabi::Uint::from(0))]).into(),
@@ -63,19 +53,12 @@ impl ERC20Precompile {
     }
 }
 
-fn make_selector(signature: &str) -> [u8; 4] {
-    let signature = Keccak256::digest(signature).to_vec();
-    let slice = signature.as_slice();
-    let res: [u8; 4] = slice[..4].try_into().unwrap();
-    res
-}
-
-impl ContextStatefulPrecompile<&State> for ERC20Precompile {
+impl ContextStatefulPrecompile<PendingState> for ERC20Precompile {
     fn call(
         &self,
         input: &Bytes,
         gas_price: u64,
-        context: &mut InnerEvmContext<&State>,
+        context: &mut InnerEvmContext<PendingState>,
     ) -> PrecompileResult {
         if input.length() < 4 {
             return Err(PrecompileError::Other(
@@ -84,8 +67,10 @@ impl ContextStatefulPrecompile<&State> for ERC20Precompile {
             .into());
         }
 
-        let dispatch_table: [([u8; 4], _); 1] =
-            [(make_selector("balanceOf(address)"), Self::get_balance)];
+        let dispatch_table: [([u8; 4], _); 1] = [(
+            short_signature("balanceOf", &[ParamType::Address]),
+            Self::get_balance,
+        )];
 
         let Some(handler) = dispatch_table
             .iter()

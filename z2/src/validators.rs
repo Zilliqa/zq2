@@ -3,6 +3,7 @@ use std::env;
 use std::{convert::TryFrom, str::FromStr};
 
 use anyhow::{anyhow, Context as _, Error, Result};
+use blsful::{vsss_rs::ShareIdentifier, Bls12381G2Impl};
 use clap::ValueEnum;
 use ethabi::Token;
 use ethers::{
@@ -25,14 +26,18 @@ use crate::github;
 pub struct Validator {
     peer_id: libp2p::PeerId,
     public_key: zilliqa::crypto::NodePublicKey,
+    pop: blsful::ProofOfPossession<Bls12381G2Impl>,
 }
 
 impl Validator {
-    pub fn new(peer_id: &str, public_key: &str) -> Result<Self> {
+    pub fn new(peer_id: &str, public_key: &str, pop_signature: &str) -> Result<Self> {
         Ok(Self {
             peer_id: PeerId::from_str(peer_id).unwrap(),
             public_key: NodePublicKey::from_bytes(hex::decode(public_key).unwrap().as_slice())
                 .unwrap(),
+            pop: blsful::ProofOfPossession::<Bls12381G2Impl>::try_from(
+                hex::decode(pop_signature).unwrap().as_slice(),
+            )?,
         })
     }
 }
@@ -42,7 +47,7 @@ pub struct StakeDeposit {
     validator: Validator,
     amount: u8,
     chain_name: Chain,
-    wallet: String,
+    private_key: String,
     reward_address: H160,
 }
 
@@ -51,14 +56,14 @@ impl StakeDeposit {
         validator: Validator,
         amount: u8,
         chain_name: Chain,
-        wallet: &str,
+        private_key: &str,
         reward_address: &str,
     ) -> Result<Self> {
         Ok(Self {
             validator,
             amount,
             chain_name,
-            wallet: wallet.to_owned(),
+            private_key: private_key.to_owned(),
             reward_address: H160(hex_string_to_u8_20(reward_address).unwrap()),
         })
     }
@@ -96,9 +101,10 @@ impl ChainConfig {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug, ValueEnum)]
-/// To-do: decomment when became available
+// TODO: decomment when became available
 pub enum Chain {
-    // Devnet,
+    #[value(name = "zq2-devnet")]
+    Zq2Devnet,
     #[value(name = "zq2-prototestnet")]
     Zq2ProtoTestnet,
     // ProtoMainnet,
@@ -110,7 +116,7 @@ pub enum Chain {
 impl Chain {
     fn as_str(&self) -> &'static str {
         match self {
-            // Chain::Devnet => "devnet",
+            Chain::Zq2Devnet => "zq2-devnet",
             Chain::Zq2ProtoTestnet => "zq2-prototestnet",
             // Chain::ProtoMainnet => "protomainnet",
             // Chain::Testnet => "testnet",
@@ -120,7 +126,7 @@ impl Chain {
 
     fn get_endpoint(&self) -> Option<&'static str> {
         match self {
-            // Chain::Devnet => Some("https://api.zq2-devnet.zilliqa.com"),
+            Chain::Zq2Devnet => Some("https://api.zq2-devnet.zilliqa.com"),
             Chain::Zq2ProtoTestnet => Some("https://api.zq2-prototestnet.zilliqa.com"),
             // Chain::ProtoMainnet => None,
             // Chain::Testnet => None,
@@ -128,9 +134,9 @@ impl Chain {
         }
     }
 
-    fn from_str(s: &str) -> Result<Self, Error> {
-        match s {
-            // "devnet" => Ok(Chain::Devnet),
+    fn from_str(chain_name: &str) -> Result<Self, Error> {
+        match chain_name {
+            "zq2-devnet" => Ok(Chain::Zq2Devnet),
             "zq2-prototestnet" => Ok(Chain::Zq2ProtoTestnet),
             // "protomainnet" => Ok(Chain::ProtoMainnet),
             // "testnet" => Ok(Chain::Testnet),
@@ -138,14 +144,15 @@ impl Chain {
             _ => Err(anyhow!("Chain not supported")),
         }
     }
-}
 
-fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
-    match chain_name {
-        "zq2-prototestnet" => Ok(include_str!(
-            "../resources/chain-specs/zq2-prototestnet.toml"
-        )),
-        _ => Err(anyhow!("Configuration file for {} not found", chain_name)),
+    pub fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
+        match chain_name {
+            "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
+            "zq2-prototestnet" => Ok(include_str!(
+                "../resources/chain-specs/zq2-prototestnet.toml"
+            )),
+            _ => Err(anyhow!("Configuration file for {} not found", chain_name)),
+        }
     }
 }
 
@@ -165,9 +172,10 @@ fn hex_string_to_u8_20(hex_str: &str) -> Result<[u8; 20], &'static str> {
 }
 
 pub async fn get_chain_spec_config(chain_name: &str) -> Result<Value> {
-    let contents = get_toml_contents(chain_name)?;
+    let spec_config = Chain::get_toml_contents(chain_name)?;
+
     let config: Value =
-        toml::from_str(contents).map_err(|_| anyhow!("Unable to parse TOML".to_string()))?;
+        toml::from_str(spec_config).map_err(|_| anyhow!("Unable to parse TOML".to_string()))?;
     Ok(config)
 }
 
@@ -214,7 +222,7 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
     let chain_id = provider.get_chainid().await?;
 
     let wallet: LocalWallet = stake
-        .wallet
+        .private_key
         .as_str()
         .parse::<LocalWallet>()?
         .with_chain_id(chain_id.as_u64());
@@ -230,7 +238,7 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
                 .encode_input(&[
                     Token::Bytes(stake.validator.public_key.as_bytes()),
                     Token::Bytes(stake.validator.peer_id.to_bytes()),
-                    Token::Bytes(vec![]),
+                    Token::Bytes(stake.validator.pop.0.to_compressed().to_vec()),
                     Token::Address(stake.reward_address),
                 ])
                 .unwrap(),

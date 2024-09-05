@@ -3,13 +3,11 @@ import {ScillaContract} from "hardhat-scilla-plugin";
 import hre from "hardhat";
 import {Account} from "@zilliqa-js/zilliqa";
 
-xdescribe("ChainId contract #parallel", () => {
+describe("ChainId contract #parallel", () => {
   let contract: ScillaContract;
-  let signer: Account;
 
   before(async () => {
-    signer = hre.allocateZilSigner();
-    contract = await hre.deployScillaContractWithSigner("ChainId", signer);
+    contract = await hre.deployScillaContract2("ChainId");
   });
 
   it("Deploy chainId contract @block-1", async () => {

@@ -5,13 +5,15 @@ use std::{
     time::Instant,
 };
 
-use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy};
-use alloy_eips::{eip2930::AccessList, BlockId, BlockNumberOrTag, RpcBlockHash};
-use alloy_primitives::{Address, Bytes, Parity, Signature, TxKind, B256, U256, U64};
-use alloy_rlp::{Decodable, Header};
-use alloy_rpc_types::{
-    pubsub::{self, SubscriptionKind},
-    FilteredParams,
+use alloy::{
+    consensus::{TxEip1559, TxEip2930, TxLegacy},
+    eips::{eip2930::AccessList, BlockId, BlockNumberOrTag, RpcBlockHash},
+    primitives::{Address, Bytes, Parity, Signature, TxKind, B256, U256, U64},
+    rlp::{Decodable, Header},
+    rpc::types::{
+        pubsub::{self, SubscriptionKind},
+        FilteredParams,
+    },
 };
 use anyhow::{anyhow, Result};
 use itertools::{Either, Itertools};
@@ -305,10 +307,17 @@ fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     expect_end_of_params(&mut params, 3, 3)?;
 
     let node = node.lock().unwrap();
+
     let block = node.get_block(block_id)?;
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
-    Ok(node.get_state(&block)?.get_account(address)?.nonce.to_hex())
+    let nonce = node.get_state(&block)?.get_account(address)?.nonce;
+
+    if matches!(block_id, BlockId::Number(BlockNumberOrTag::Pending)) {
+        Ok(node.consensus.pending_transaction_count(address).to_hex())
+    } else {
+        Ok(nonce.to_hex())
+    }
 }
 
 fn get_gas_price(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -780,10 +789,6 @@ fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         return Err(anyhow!("Too many topics provided, maximum 4"));
     }
 
-    if node.config.max_filters > 0 && node.filters.len() as u64 > node.config.max_filters {
-        return Err(anyhow!("Too many filters already registered"));
-    }
-
     let mut topics = [None, None, None, None];
     topics[..params.topics.len()].swap_with_slice(&mut params.topics[..]);
 
@@ -834,10 +839,6 @@ fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     let mut node = node.lock().unwrap();
 
-    if node.config.max_filters > 0 && node.filters.len() as u64 > node.config.max_filters {
-        return Err(anyhow!("Too many filters already registered"));
-    }
-
     let first_block = node
         .resolve_block_number(BlockNumberOrTag::Latest)?
         .unwrap()
@@ -861,10 +862,6 @@ fn new_pending_transaction_filter(params: Params, node: &Arc<Mutex<Node>>) -> Re
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
 
     let mut node = node.lock().unwrap();
-
-    if node.config.max_filters > 0 && node.filters.len() as u64 > node.config.max_filters {
-        return Err(anyhow!("Too many filters already registered"));
-    }
 
     let first_block = node
         .resolve_block_number(BlockNumberOrTag::Latest)?
@@ -1007,7 +1004,7 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
     let result = match filter {
         Filter::General(GeneralFilter {
             address, topics, ..
-        }) => serde_json::to_value(filter_logs(&node, blocks, address, &topics[..])?).unwrap(),
+        }) => serde_json::to_value(filter_logs(&node, blocks, &address, &topics[..])?).unwrap(),
         Filter::Block => serde_json::to_value(
             blocks
                 .map(|block: Result<_>| block.map(|block| block.hash().to_string()))
@@ -1104,7 +1101,7 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json
     let result = match filter {
         Filter::General(GeneralFilter {
             address, topics, ..
-        }) => serde_json::to_value(filter_logs(&node, blocks, address, &topics[..])?).unwrap(),
+        }) => serde_json::to_value(filter_logs(&node, blocks, &address, &topics[..])?).unwrap(),
         Filter::Block => serde_json::to_value(
             blocks
                 .map(|block: Result<_>| block.map(|block| block.hash().to_string()))
@@ -1214,10 +1211,10 @@ async fn subscribe(
                         continue 'outer;
                     }
 
-                    let log = alloy_rpc_types::Log {
-                        inner: alloy_primitives::Log {
+                    let log = alloy::rpc::types::Log {
+                        inner: alloy::primitives::Log {
                             address: log.address,
-                            data: alloy_primitives::LogData::new_unchecked(
+                            data: alloy::primitives::LogData::new_unchecked(
                                 log.topics,
                                 log.data.into(),
                             ),

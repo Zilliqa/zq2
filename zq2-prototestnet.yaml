@@ -1,14 +1,12 @@
 name: zq2-prototestnet
+eth_chain_id: 33103
 project_id: prj-d-zq2-testnet-g13pnaa8
-regions:
-- asia-southeast1
-- europe-west1
-- europe-west2
 roles:
 - bootstrap
-- apps
 - validator
+- api
+- apps
 versions:
-  zq2: d8f7bfdc
+  zq2: 013dc8c0
   otterscan: develop
-  spout: v1.3.75
+  spout: main

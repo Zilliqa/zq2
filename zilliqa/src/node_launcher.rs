@@ -1,6 +1,6 @@
 use std::{
     net::Ipv4Addr,
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicUsize, Arc, Mutex},
     time::Duration,
 };
 
@@ -32,21 +32,55 @@ pub struct NodeLauncher {
     pub node: Arc<Mutex<Node>>,
     pub config: NodeConfig,
     pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
-    /// The following two message streams are used for networked messages.
-    /// The sender is provided to the p2p coordinator, to forward messages to the node.
-    pub inbound_message_sender:
-        UnboundedSender<(PeerId, Result<ExternalMessage, OutgoingMessageFailure>)>,
-    /// The corresponding receiver is handled here, forwarding messages to the node struct.
-    pub inbound_message_receiver:
-        UnboundedReceiverStream<(PeerId, Result<ExternalMessage, OutgoingMessageFailure>)>,
-    /// The following two message streams are used for local messages.
-    /// The sender is provided to the p2p coordinator, to forward cross-shard messages to the node.
-    pub local_inbound_message_sender: UnboundedSender<(u64, InternalMessage)>,
-    /// The corresponding receiver is handled here, forwarding messages to the node struct.
-    pub local_inbound_message_receiver: UnboundedReceiverStream<(u64, InternalMessage)>,
+    pub broadcasts: UnboundedReceiverStream<(PeerId, ExternalMessage)>,
+    pub requests: UnboundedReceiverStream<(PeerId, ExternalMessage, ResponseChannel)>,
+    pub request_failures: UnboundedReceiverStream<(PeerId, OutgoingMessageFailure)>,
+    pub responses: UnboundedReceiverStream<(PeerId, ExternalMessage)>,
+    pub local_messages: UnboundedReceiverStream<(u64, InternalMessage)>,
     /// Channel used to steer next sleep time
     pub reset_timeout_receiver: UnboundedReceiverStream<Duration>,
     node_launched: bool,
+}
+
+// If the `fake_response_channel` feature is enabled, swap out the libp2p ResponseChannel for a `u64`. In our
+// integration tests we are not able to construct a ResponseChannel manually, so we need an alternative way of linking
+// a request and a response.
+#[cfg(not(feature = "fake_response_channel"))]
+type ChannelType = libp2p::request_response::ResponseChannel<ExternalMessage>;
+#[cfg(feature = "fake_response_channel")]
+type ChannelType = u64;
+
+/// A wrapper around [libp2p::request_response::ResponseChannel] which also handles the case where the node has sent a
+/// request to itself. In this case, we don't require a response.
+#[derive(Debug)]
+#[cfg_attr(feature = "fake_response_channel", derive(Clone, Hash, PartialEq, Eq))]
+pub enum ResponseChannel {
+    Local,
+    Remote(ChannelType),
+}
+
+impl ResponseChannel {
+    pub fn into_inner(self) -> Option<ChannelType> {
+        match self {
+            ResponseChannel::Local => None,
+            ResponseChannel::Remote(c) => Some(c),
+        }
+    }
+}
+
+/// The collection of channels used to send messages to a [NodeLauncher].
+pub struct NodeInputChannels {
+    /// Send broadcast messages (received via gossipsub) down this channel.
+    pub broadcasts: UnboundedSender<(PeerId, ExternalMessage)>,
+    /// Send direct requests down this channel. The `ResponseChannel` must be used by the receiver to respond to this
+    /// request.
+    pub requests: UnboundedSender<(PeerId, ExternalMessage, ResponseChannel)>,
+    /// Send failed requests down this channel.
+    pub request_failures: UnboundedSender<(PeerId, OutgoingMessageFailure)>,
+    /// Send direct responses to direct requests down this channel.
+    pub responses: UnboundedSender<(PeerId, ExternalMessage)>,
+    /// Send local messages down this channel. This is used to forward cross-shard messages to the node.
+    pub local_messages: UnboundedSender<(u64, InternalMessage)>,
 }
 
 impl NodeLauncher {
@@ -55,22 +89,30 @@ impl NodeLauncher {
         config: NodeConfig,
         outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
         local_outbound_message_sender: UnboundedSender<LocalMessageTuple>,
-    ) -> Result<Self> {
-        let (inbound_message_sender, inbound_message_receiver) = mpsc::unbounded_channel();
-        let inbound_message_receiver = UnboundedReceiverStream::new(inbound_message_receiver);
-        let (local_inbound_message_sender, local_inbound_message_receiver) =
-            mpsc::unbounded_channel();
-        let local_inbound_message_receiver =
-            UnboundedReceiverStream::new(local_inbound_message_receiver);
-        let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
-        let reset_timeout_receiver = UnboundedReceiverStream::new(reset_timeout_receiver);
+        request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
+        peer_num: Arc<AtomicUsize>,
+    ) -> Result<(Self, NodeInputChannels)> {
+        /// Helper to create a (sender, receiver) pair for a channel.
+        fn sender_receiver<T>() -> (UnboundedSender<T>, UnboundedReceiverStream<T>) {
+            let (sender, receiver) = mpsc::unbounded_channel();
+            (sender, UnboundedReceiverStream::new(receiver))
+        }
+
+        let (broadcasts_sender, broadcasts_receiver) = sender_receiver();
+        let (requests_sender, requests_receiver) = sender_receiver();
+        let (request_failures_sender, request_failures_receiver) = sender_receiver();
+        let (responses_sender, responses_receiver) = sender_receiver();
+        let (local_messages_sender, local_messages_receiver) = sender_receiver();
+        let (reset_timeout_sender, reset_timeout_receiver) = sender_receiver();
 
         let node = Node::new(
             config.clone(),
             secret_key,
-            outbound_message_sender.clone(),
-            local_outbound_message_sender.clone(),
+            outbound_message_sender,
+            local_outbound_message_sender,
+            request_responses_sender,
             reset_timeout_sender.clone(),
+            peer_num,
         )?;
         let node = Arc::new(Mutex::new(node));
 
@@ -103,27 +145,27 @@ impl NodeLauncher {
             }
         }
 
-        Ok(Self {
+        let launcher = NodeLauncher {
             node,
             rpc_module,
-            inbound_message_sender,
-            inbound_message_receiver,
+            broadcasts: broadcasts_receiver,
+            requests: requests_receiver,
+            request_failures: request_failures_receiver,
+            responses: responses_receiver,
+            local_messages: local_messages_receiver,
             reset_timeout_receiver,
-            local_inbound_message_sender,
-            local_inbound_message_receiver,
             node_launched: false,
             config,
-        })
-    }
+        };
+        let input_channels = NodeInputChannels {
+            broadcasts: broadcasts_sender,
+            requests: requests_sender,
+            request_failures: request_failures_sender,
+            responses: responses_sender,
+            local_messages: local_messages_sender,
+        };
 
-    pub fn message_input(
-        &self,
-    ) -> UnboundedSender<(PeerId, Result<ExternalMessage, OutgoingMessageFailure>)> {
-        self.inbound_message_sender.clone()
-    }
-
-    pub fn local_message_input(&self) -> UnboundedSender<(u64, InternalMessage)> {
-        self.local_inbound_message_sender.clone()
+        Ok((launcher, input_channels))
     }
 
     pub async fn start_shard_node(&mut self) -> Result<()> {
@@ -140,14 +182,26 @@ impl NodeLauncher {
 
         loop {
             select! {
-                _message = self.local_inbound_message_receiver.next() => {
-                    let (_source, _message) = _message.expect("message stream should be infinite");
+                message = self.broadcasts.next() => {
+                    let (source, message) = message.expect("message stream should be infinite");
+                    self.node.lock().unwrap().handle_broadcast(source, message).unwrap();
+                }
+                message = self.requests.next() => {
+                    let (source, message, response_channel) = message.expect("message stream should be infinite");
+                    self.node.lock().unwrap().handle_request(source, message, response_channel).unwrap();
+                }
+                message = self.request_failures.next() => {
+                    let (source, message) = message.expect("message stream should be infinite");
+                    self.node.lock().unwrap().handle_request_failure(source, message).unwrap();
+                }
+                message = self.responses.next() => {
+                    let (source, message) = message.expect("message stream should be infinite");
+                    self.node.lock().unwrap().handle_response(source, message).unwrap();
+                }
+                message = self.local_messages.next() => {
+                    let (_source, _message) = message.expect("message stream should be infinite");
                     todo!("Local messages will need to be handled once cross-shard messaging is implemented");
                 }
-                message = self.inbound_message_receiver.next() => {
-                    let (source, message) = message.expect("message stream should be infinite");
-                    self.node.lock().unwrap().handle_network_message(source, message).unwrap();
-                },
                 () = &mut sleep => {
                     // No messages for a while, so check if consensus wants to timeout
                     self.node.lock().unwrap().handle_timeout().unwrap();

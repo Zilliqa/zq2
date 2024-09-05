@@ -3,8 +3,10 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
-use alloy_consensus::EMPTY_ROOT_HASH;
-use alloy_primitives::{Address, B256};
+use alloy::{
+    consensus::EMPTY_ROOT_HASH,
+    primitives::{Address, B256},
+};
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
@@ -13,11 +15,19 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    cfg::ConsensusConfig, contracts, crypto, db::TrieStorage, exec::BaseFeeCheck, inspector,
-    message::BlockHeader, scilla::Scilla, transaction::EvmGas,
+    block_store::BlockStore,
+    cfg::NodeConfig,
+    contracts, crypto,
+    db::TrieStorage,
+    exec::BaseFeeCheck,
+    inspector,
+    message::{BlockHeader, MAX_COMMITTEE_SIZE},
+    node::ChainId,
+    scilla::{Scilla, Transition},
+    transaction::EvmGas,
 };
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 /// The state of the blockchain, consisting of:
 /// -  state - a database of Map<Address, Map<key,value>>
 /// -  accounts, Map<Address, Account>
@@ -36,20 +46,25 @@ pub struct State {
     scilla_lib_dir: String,
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
+    pub chain_id: ChainId,
+    pub block_store: Arc<BlockStore>,
 }
 
 impl State {
-    pub fn new(trie: TrieStorage, config: &ConsensusConfig) -> State {
+    pub fn new(trie: TrieStorage, config: &NodeConfig, block_store: Arc<BlockStore>) -> State {
         let db = Arc::new(trie);
+        let consensus_config = &config.consensus;
         Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
             scilla: Arc::new(OnceLock::new()),
-            scilla_address: config.scilla_address.clone(),
-            local_address: config.local_address.clone(),
-            scilla_lib_dir: config.scilla_lib_dir.clone(),
-            block_gas_limit: config.eth_block_gas_limit,
-            gas_price: *config.gas_price,
+            scilla_address: consensus_config.scilla_address.clone(),
+            local_address: consensus_config.local_address.clone(),
+            scilla_lib_dir: consensus_config.scilla_lib_dir.clone(),
+            block_gas_limit: consensus_config.eth_block_gas_limit,
+            gas_price: *consensus_config.gas_price,
+            chain_id: ChainId::new(config.eth_chain_id),
+            block_store,
         }
     }
 
@@ -66,17 +81,28 @@ impl State {
             .unwrap()
     }
 
-    pub fn new_at_root(trie: TrieStorage, root_hash: B256, config: ConsensusConfig) -> Self {
-        Self::new(trie, &config).at_root(root_hash)
+    pub fn new_at_root(
+        trie: TrieStorage,
+        root_hash: B256,
+        config: NodeConfig,
+        block_store: Arc<BlockStore>,
+    ) -> Self {
+        Self::new(trie, &config, block_store).at_root(root_hash)
     }
 
-    pub fn new_with_genesis(trie: TrieStorage, config: ConsensusConfig) -> Result<State> {
-        let mut state = State::new(trie, &config);
+    pub fn new_with_genesis(
+        trie: TrieStorage,
+        config: NodeConfig,
+        block_store: Arc<BlockStore>,
+    ) -> Result<State> {
+        let mut state = State::new(trie, &config, block_store);
 
-        if config.is_main {
+        if config.consensus.is_main {
             let shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
                 contracts::shard_registry::BYTECODE.to_vec(),
-                &[Token::Uint(config.consensus_timeout.as_millis().into())],
+                &[Token::Uint(
+                    config.consensus.consensus_timeout.as_millis().into(),
+                )],
             )?;
             state.force_deploy_contract_evm(shard_data, Some(contract_addr::SHARD_REGISTRY))?;
         };
@@ -87,22 +113,21 @@ impl State {
             Some(contract_addr::INTERSHARD_BRIDGE),
         )?;
 
-        if config.genesis_accounts.is_empty() {
-            panic!("No genesis accounts provided");
-        }
-
-        for (address, balance) in config.genesis_accounts {
+        for (address, balance) in config.consensus.genesis_accounts {
             state.mutate_account(address, |a| a.balance = *balance)?;
         }
 
         let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
             contracts::deposit::BYTECODE.to_vec(),
-            &[Token::Uint((*config.minimum_stake).into())],
+            &[
+                Token::Uint((*config.consensus.minimum_stake).into()),
+                Token::Uint(MAX_COMMITTEE_SIZE.into()),
+            ],
         )?;
 
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
 
-        for (pub_key, peer_id, stake, reward_address) in config.genesis_deposits {
+        for (pub_key, peer_id, stake, reward_address) in config.consensus.genesis_deposits {
             let data = contracts::deposit::SET_STAKE.encode_input(&[
                 Token::Bytes(pub_key.as_bytes()),
                 Token::Bytes(peer_id.to_bytes()),
@@ -119,11 +144,10 @@ impl State {
                 Address::ZERO,
                 Some(contract_addr::DEPOSIT),
                 0,
-                config.eth_block_gas_limit,
+                config.consensus.eth_block_gas_limit,
                 0,
                 data,
                 None,
-                0,
                 BlockHeader::default(),
                 inspector::noop(),
                 BaseFeeCheck::Ignore,
@@ -147,6 +171,8 @@ impl State {
             scilla_lib_dir: self.scilla_lib_dir.clone(),
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
+            chain_id: self.chain_id,
+            block_store: self.block_store.clone(),
         }
     }
 
@@ -245,7 +271,7 @@ impl State {
 }
 
 pub mod contract_addr {
-    use alloy_primitives::Address;
+    use alloy::primitives::Address;
 
     /// For intershard transactions, call this address
     pub const INTERSHARD_BRIDGE: Address = Address::new(*b"\0\0\0\0\0\0\0\0ZQINTERSHARD");
@@ -280,6 +306,7 @@ pub enum Code {
         code: String,
         init_data: String,
         types: BTreeMap<String, (String, u8)>,
+        transitions: Vec<Transition>,
     },
 }
 

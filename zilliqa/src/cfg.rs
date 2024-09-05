@@ -1,6 +1,6 @@
 use std::{ops::Deref, str::FromStr, time::Duration};
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use libp2p::{Multiaddr, PeerId};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
@@ -73,9 +73,9 @@ pub struct NodeConfig {
     /// Maximum amount of time since a filter was last used before it is automatically removed.
     #[serde(default = "filter_expiry_default")]
     pub filter_expiry: Duration,
-    /// Maximum amount of filters registered at once. Set to 0 for no limit.
-    #[serde(default = "max_filters_default")]
-    pub max_filters: u64,
+    /// The maximum number of key value pairs allowed to be returned withing the response of the `GetSmartContractState` RPC. Defaults to no limit.
+    #[serde(default = "state_rpc_limit_default")]
+    pub state_rpc_limit: usize,
     /// When a block request to a peer fails, do not send another request to this peer for this amount of time.
     /// Defaults to 10 seconds.
     #[serde(default = "failed_request_sleep_duration_default")]
@@ -145,8 +145,8 @@ pub fn filter_expiry_default() -> Duration {
     Duration::from_secs(300)
 }
 
-pub fn max_filters_default() -> u64 {
-    256
+pub fn state_rpc_limit_default() -> usize {
+    usize::MAX
 }
 
 pub fn failed_request_sleep_duration_default() -> Duration {

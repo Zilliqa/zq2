@@ -1,8 +1,9 @@
-use std::fs;
+use std::{fs, ops::DerefMut};
 
-use alloy_eips::BlockId;
+use alloy::eips::BlockId;
 use ethabi::Token;
 use ethers::{providers::Middleware, types::TransactionRequest};
+use k256::ecdsa::SigningKey;
 use primitive_types::H160;
 use rand::Rng;
 use tracing::*;
@@ -11,9 +12,8 @@ use zilliqa::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
         failed_request_sleep_duration_default, filter_expiry_default, json_rpc_port_default,
-        max_blocks_in_flight_default, max_filters_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
-        Checkpoint,
+        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
+        scilla_address_default, scilla_lib_dir_default, state_rpc_limit_default, Checkpoint,
     },
     crypto::{Hash, SecretKey},
     transaction::EvmGas,
@@ -113,17 +113,24 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         max_blocks_in_flight: max_blocks_in_flight_default(),
         block_request_batch_size: block_request_batch_size_default(),
         filter_expiry: filter_expiry_default(),
-        max_filters: max_filters_default(),
+        state_rpc_limit: state_rpc_limit_default(),
         failed_request_sleep_duration: failed_request_sleep_duration_default(),
     };
-    let result = crate::node(config, SecretKey::new().unwrap(), 0, Some(dir));
+    let mut rng = network.rng.lock().unwrap();
+    let result = crate::node(
+        config,
+        SecretKey::new_from_rng(rng.deref_mut()).unwrap(),
+        SigningKey::random(rng.deref_mut()),
+        0,
+        Some(dir),
+    );
 
     // Sometimes, the dropping Arc<Node> (by dropping the TestNode above) does not actually drop
     // the underlying Node. See: https://github.com/Zilliqa/zq2/issues/299
     // As this is very painful to debug, should only ever be relevant for tests like these, and CI
     // should run enough samples to still have decent test coverage, we simply skip the rest of the
     // test if this happens.
-    let Ok((newnode, _, _)) = result else {
+    let Ok((newnode, _, _, _)) = result else {
         warn!(
             "Failed to release database lock. Skipping test, with seed {}.",
             network.seed

@@ -1,0 +1,27 @@
+p2p_port = 3333
+
+{%- if role != "bootstrap" %}
+bootstrap_address = [ "{{ bootstrap_peer_id }}", "/ip4/{{ bootstrap_public_ip }}/tcp/3333" ]
+{%- endif %}
+
+[[nodes]]
+eth_chain_id = {{ eth_chain_id }}
+allowed_timestamp_skew = { secs = 60, nanos = 0 }
+data_dir = "/data"
+consensus.genesis_accounts = [ ["{{ genesis_address }}", "21_000_000_000_000_000_000_000_000_000"] ]
+consensus.genesis_deposits = [ ["{{ bootstrap_bls_public_key }}", "{{ bootstrap_peer_id }}", "100_000_000_000_000_000_000_000_000", "{{ genesis_address }}"] ]
+
+# Reward parameters
+consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
+consensus.blocks_per_hour = 3600
+consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
+# Gas parameters
+consensus.eth_block_gas_limit = 84000000
+consensus.gas_price = "4_761_904_800_000"
+
+{%- if role == "checkpoint" %}
+# Checkpoint configuration
+do_checkpoints=true
+consensus.blocks_per_epoch=3600
+consensus.epochs_per_checkpoint=24
+{%- endif %}

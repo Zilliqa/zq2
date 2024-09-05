@@ -3,15 +3,13 @@ import {expect} from "chai";
 import hre from "hardhat";
 import {Account} from "@zilliqa-js/zilliqa";
 
-xdescribe("Scilla ByStr Functionality #parallel", function () {
+describe("Scilla ByStr Functionality #parallel", function () {
   let contract: ScillaContract;
-  let signer: Account;
   let BYSTR5_VALUE = "0x1234567890";
   let BYSTR6_VALUE = "0x223344556677";
 
   before(async function () {
-    signer = hre.allocateZilSigner();
-    contract = await hre.deployScillaContractWithSigner("ByStrFunctionality", signer);
+    contract = await hre.deployScillaContract2("ByStrFunctionality");
   });
 
   it("Should be deployed successfully @block-1", async function () {

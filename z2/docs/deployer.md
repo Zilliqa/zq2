@@ -44,11 +44,12 @@ Options:
           Virtual Machine roles
 
           Possible values:
-          - validator:  Virtual machine validator
-          - apps:       Virtual machine apps
           - bootstrap:  Virtual machine bootstrap
-          - sentry:     Virtual machine sentry
+          - api:        Virtual machine api
+          - apps:       Virtual machine apps
+          - validator:  Virtual machine validator
           - checkpoint: Virtual machine checkpoint
+          - sentry:     Virtual machine sentry
 
   -h, --help
           Print help (see a summary with '-h')
@@ -75,8 +76,6 @@ Output: `zq2-prototestnet.yaml`
 ```yaml
 name: zq2-prototestnet
 project_id: gcp-tests
-regions:
-- asia-southeast1
 roles:
 - validator
 versions:
@@ -102,8 +101,6 @@ Output: `zq2-prototestnet.yaml`
 ```yaml
 name: zq2-prototestnet
 project_id: gcp-tests
-regions:
-- asia-southeast1
 roles:
 - apps
 versions:
@@ -130,8 +127,6 @@ Output: `zq2-prototestnet.yaml`
 ```yaml
 name: zq2-prototestnet
 project_id: gcp-tests
-regions:
-- asia-southeast1
 roles:
 - validator
 - apps
@@ -173,4 +168,33 @@ Configuration file: `zq2-prototestnet.yaml`
 
 ```bash
 z2 deployer upgrade zq2-prototestnet.yaml
+```
+
+## Retrieve the `z2 deposit` commands for the validator nodes
+
+```bash
+z2 deployer get-deposit-commands --help
+```
+
+```bash
+Provide the deposit commands for the validator nodes
+
+Usage: z2 deployer get-deposit-commands [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]
+
+Options:
+  -h, --help  Print help
+```
+
+### Usage example
+
+#### Scenario
+
+Network name: `zq2-prototestnet`
+Configuration file: `zq2-prototestnet.yaml`
+
+```bash
+z2 deployer get-deposit-commands zq2-prototestnet.yaml
 ```
