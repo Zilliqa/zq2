@@ -4,6 +4,7 @@
 
 Unreleased changes.
 
+- [#1403](https://github.com/Zilliqa/zq2/pull/1403): Implement getTxRate API call
 - [#1350](https://github.com/Zilliqa/zq2/pull/1350): Support `CHAINID`, `BLOCKNUMBER`, and `TIMESTAMP` in Scilla contracts.
 - [#1358](https://github.com/Zilliqa/zq2/pull/1358): Support `_codehash` in Scilla contracts.
 - [#1390](https://github.com/Zilliqa/zq2/pull/1390): Implement `GetNumPeers` API endpoint to get the current number of peers.
@@ -19,7 +20,6 @@ Unreleased changes.
 - [#1304](https://github.com/Zilliqa/zq2/pull/1304): Implement the following APIs for querying DS blocks: `GetDSBlock`, `GetDSBlockVerbose`, `GetLatestDSBlock`, `GetCurrentDSComm`, `GetCurrentDSEpoch`, `DSBlockListing`, `GetDSBlockRate`,
 - [#1334](https://github.com/Zilliqa/zq2/pull/1334): Avoid sleeping for unnecessarily long before proposing an empty block.
 - [#1310](https://github.com/Zilliqa/zq2/pull/1310): Fix nodes trying to propose a block without any votes for that block.
-- [#1403](https://github.com/Zilliqa/zq2/pull/1403): Implement getTxRate API call
 
 ## [0.1.1] - 2024-08-14
 
