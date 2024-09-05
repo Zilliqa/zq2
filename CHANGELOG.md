@@ -5,6 +5,7 @@
 Unreleased changes.
 
 - [#1350](https://github.com/Zilliqa/zq2/pull/1350): Support `CHAINID`, `BLOCKNUMBER`, and `TIMESTAMP` in Scilla contracts.
+- [#1358](https://github.com/Zilliqa/zq2/pull/1358): Support `_codehash` in Scilla contracts.
 - [#1390](https://github.com/Zilliqa/zq2/pull/1390): Implement `GetNumPeers` API endpoint to get the current number of peers.
 - [#1391](https://github.com/Zilliqa/zq2/pull/1391): Change response type of `GetMinimumGasPrice` to a string.
 - [#1389](https://github.com/Zilliqa/zq2/pull/1389): Implement `TxBlockListing` API endpoint to return a paginated list of blocks.
