@@ -716,19 +716,15 @@ async fn get_tx_rate(mut network: Network) {
 
     let response: Value = wallet
         .provider()
-        .request("GetTxRate", [""])
+        .request("GetTransactionRate", [""])
         .await
         .expect("Failed to call GetTxRate API");
 
-    let tx_rate: zilliqa::api::types::zil::TxRate =
-        serde_json::from_value(response).expect("Failed to deserialize response");
+    let tx_rate: f64 = serde_json::from_value(response).expect("Failed to deserialize response");
 
     assert!(
-        tx_rate.tx_block_rate >= 0.0,
+        tx_rate >= 0.0,
         "Transaction block rate should be non-negative"
     );
-    assert!(
-        tx_rate.transaction_rate >= 0.0,
-        "Transaction rate should be non-negative"
-    );
+    assert!(tx_rate >= 0.0, "Transaction rate should be non-negative");
 }

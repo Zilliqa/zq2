@@ -20,7 +20,7 @@ use super::{
     types::zil::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, SWInfo, ShardingStructure,
-        SmartContract, TXBlockRateResult, TxBlockListing, TxBlockListingResult, TxRate,
+        SmartContract, TXBlockRateResult, TxBlockListing, TxBlockListingResult,
     },
 };
 use crate::{
@@ -70,7 +70,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetTxBlockRate", get_tx_block_rate),
             ("TxBlockListing", tx_block_listing),
             ("GetNumPeers", get_num_peers),
-            ("GetTxRate", get_tx_rate),
+            ("GetTransactionRate", get_tx_rate),
         ],
     )
 }
@@ -694,15 +694,11 @@ fn get_num_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u64> {
 }
 
 // Calculates transaction rate over the most recent block
-fn get_tx_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<TxRate> {
-    let tx_block_rate = calculate_tx_block_rate(node)?;
+fn get_tx_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<f64> {
     let node = node.lock().unwrap();
     let head_block_num = node.get_chain_tip();
     if head_block_num <= 1 {
-        return Ok(TxRate {
-            transaction_rate: 0.0,
-            tx_block_rate: 0.0,
-        });
+        return Ok(0.0);
     }
     let prev_block_num = head_block_num - 1;
     let head_block = node
@@ -717,8 +713,5 @@ fn get_tx_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<TxRate> {
         .timestamp
         .duration_since(prev_block.header.timestamp)?;
     let transaction_rate = transactions_between / time_between.as_secs_f64();
-    Ok(TxRate {
-        transaction_rate,
-        tx_block_rate,
-    })
+    Ok(transaction_rate)
 }
