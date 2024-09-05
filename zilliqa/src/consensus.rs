@@ -1177,7 +1177,6 @@ impl Consensus {
             let result = Self::apply_transaction_at(
                 state,
                 self.db.clone(),
-                &self.config,
                 tx.clone(),
                 executed_block_header,
                 inspector::noop(),
