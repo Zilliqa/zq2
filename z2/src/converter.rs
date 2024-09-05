@@ -204,6 +204,7 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
             .map_err(|err| anyhow!("Unable to convert scilla code into string: {err}"))?,
         init_data,
         types: BTreeMap::default(),
+        transitions: vec![],
     })
 }
 
@@ -230,15 +231,18 @@ pub async fn convert_persistence(
         request_id: RequestId::default(),
     };
 
-    let db = Arc::new(zq2_db);
+    let zq2_db = Arc::new(zq2_db);
     let node_config = &zq2_config.nodes[0];
     let block_store = Arc::new(BlockStore::new(
         node_config,
-        db.clone(),
+        zq2_db.clone(),
         message_sender.clone(),
     )?);
-    let mut state =
-        State::new_with_genesis(db.clone().state_trie()?, node_config.clone(), block_store)?;
+    let mut state = State::new_with_genesis(
+        zq2_db.clone().state_trie()?,
+        node_config.clone(),
+        block_store,
+    )?;
 
     if convert_accounts {
         // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
@@ -293,6 +297,8 @@ pub async fn convert_persistence(
                             code,
                             init_data,
                             types,
+                            // TODO: transitions were not part of zq1 storage (they have to be recreated with scilla-checker)
+                            transitions: vec![],
                         },
                         storage_root,
                     )
