@@ -1,10 +1,11 @@
-use std::ops::DerefMut;
+use std::{ops::DerefMut, str::FromStr};
 
 use ethabi::{ParamType, Token};
-use ethers::{providers::Middleware, types::TransactionRequest};
+use ethers::{providers::Middleware, types::TransactionRequest, utils::keccak256};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use primitive_types::{H160, H256};
 use prost::Message;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use zilliqa::{
@@ -67,11 +68,12 @@ async fn send_transaction(
     let public_key = secret_key.public_key();
 
     // Get the gas price via the Zilliqa API.
-    let gas_price: u128 = wallet
+    let gas_price_str: String = wallet
         .provider()
         .request("GetMinimumGasPrice", ())
         .await
         .unwrap();
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
 
     let chain_id = wallet.get_chainid().await.unwrap().as_u32() - 0x8000;
     let version = (chain_id << 16) | 1u32;
@@ -348,7 +350,7 @@ async fn create_contract(mut network: Network) {
 }
 
 #[zilliqa_macros::test(restrict_concurrency)]
-async fn scilla_read_precompile(mut network: Network) {
+async fn scilla_precompiles(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network).await;
 
@@ -375,6 +377,12 @@ async fn scilla_read_precompile(mut network: Network) {
           let inner = builtin put emp1 addr one in
           let emp2 = Emp ByStr20 (Map ByStr20 Uint128) in
           builtin put emp2 addr inner
+
+        transition InsertIntoMap(a: ByStr20, b: Uint128)
+          addr_to_int[a] := b;
+          e = {_eventname : "Inserted"; a : a; b : b};
+          event e
+        end
     "#;
 
     let data = r#"[
@@ -467,4 +475,237 @@ async fn scilla_read_precompile(mut network: Network) {
     .into_uint()
     .unwrap();
     assert_eq!(val, 1.into());
+
+    // Construct a transaction which uses the scilla_call precompile.
+    let function = abi.function("callScilla").unwrap();
+    let input = &[
+        Token::Address(scilla_contract_address),
+        Token::String("InsertIntoMap".to_owned()),
+        Token::String("addr_to_int".to_owned()),
+        Token::Address(key),
+        Token::Uint(5.into()),
+    ];
+    let tx = TransactionRequest::new()
+        .to(receipt.contract_address.unwrap())
+        .data(function.encode_input(input).unwrap())
+        .gas(84_000_000);
+
+    // First execute the transaction with `eth_call` and assert that updating a value in a Scilla contract, then
+    // reading that value in the same transaction gives us the correct value.
+    let response = wallet.call(&tx.clone().into(), None).await.unwrap();
+    let response = ethabi::decode(&[ParamType::Uint(128)], &response)
+        .unwrap()
+        .remove(0)
+        .into_uint()
+        .unwrap()
+        .as_u32();
+    assert_eq!(response, 5);
+
+    // Now actually run the transaction and assert that the EVM logs include the Scilla log from the internal Scilla
+    // call.
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+    assert_eq!(receipt.logs.len(), 1);
+    let log = &receipt.logs[0];
+    assert_eq!(log.address, scilla_contract_address);
+    assert_eq!(
+        log.topics[0],
+        H256(keccak256("event Inserted(string)".as_bytes()))
+    );
+    let data = ethabi::decode(&[ParamType::String], &log.data).unwrap()[0]
+        .clone()
+        .into_string()
+        .unwrap();
+    let scilla_log: Value = serde_json::from_str(&data).unwrap();
+    assert_eq!(
+        scilla_log["address"],
+        format!("{scilla_contract_address:?}")
+    );
+    assert_eq!(scilla_log["_eventname"], "Inserted");
+    assert_eq!(scilla_log["params"][0]["type"], "ByStr20");
+    assert_eq!(scilla_log["params"][0]["vname"], "a");
+    assert_eq!(scilla_log["params"][0]["value"], format!("{key:?}"));
+    assert_eq!(scilla_log["params"][1]["type"], "Uint128");
+    assert_eq!(scilla_log["params"][1]["vname"], "b");
+    assert_eq!(scilla_log["params"][1]["value"], "5");
+
+    // Assert that the value has been permanently updated for good measure.
+    let val = read(
+        "readMapUint128",
+        "addr_to_int",
+        &[key],
+        ParamType::Uint(128),
+    )
+    .await
+    .into_uint()
+    .unwrap();
+    assert_eq!(val, 5.into());
+}
+
+#[zilliqa_macros::test]
+async fn get_ds_block(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetDSBlock", ["9000"])
+        .await
+        .expect("Failed to call GetDSBlock API");
+
+    zilliqa::api::types::zil::DSBlock::deserialize(&response).unwrap();
+}
+
+#[zilliqa_macros::test]
+async fn get_ds_block_verbose(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetDSBlockVerbose", ["9000"])
+        .await
+        .expect("Failed to call GetDSBlockVerbose API");
+
+    zilliqa::api::types::zil::DSBlockVerbose::deserialize(&response).unwrap();
+}
+
+#[zilliqa_macros::test]
+async fn get_latest_ds_block(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetLatestDSBlock", [""])
+        .await
+        .expect("Failed to call GetLatestDSBlock API");
+
+    zilliqa::api::types::zil::DSBlock::deserialize(&response).unwrap();
+}
+
+#[zilliqa_macros::test]
+async fn get_current_ds_comm(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetCurrentDSComm", [""])
+        .await
+        .expect("Failed to call GetCurrentDSComm API");
+
+    zilliqa::api::types::zil::GetCurrentDSCommResult::deserialize(&response).unwrap();
+}
+
+#[zilliqa_macros::test]
+async fn get_current_ds_epoch(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetCurrentDSEpoch", [""])
+        .await
+        .expect("Failed to call GetCurrentDSEpoch API");
+
+    assert!(response.is_string());
+}
+
+#[zilliqa_macros::test]
+async fn ds_block_listing(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("DSBlockListing", ["1"])
+        .await
+        .expect("Failed to call DSBlockListing API");
+
+    zilliqa::api::types::zil::DSBlockListingResult::deserialize(&response).unwrap();
+}
+
+#[zilliqa_macros::test]
+async fn get_ds_block_rate(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetDSBlockRate", [""])
+        .await
+        .expect("Failed to call GetDSBlockRate API");
+
+    let returned = zilliqa::api::types::zil::DSBlockRateResult::deserialize(&response).unwrap();
+
+    assert!(returned.rate >= 0.0, "Block rate should be non-negative");
+}
+
+#[zilliqa_macros::test]
+async fn get_tx_block_rate(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxBlockRate", [""])
+        .await
+        .expect("Failed to call GetTxBlockRate API");
+
+    let returned = zilliqa::api::types::zil::TXBlockRateResult::deserialize(&response).unwrap();
+
+    assert!(returned.rate >= 0.0, "Block rate should be non-negative");
+}
+
+#[zilliqa_macros::test]
+async fn tx_block_listing(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    network.run_until_block(&wallet, 2.into(), 50).await;
+
+    let response: Value = wallet
+        .provider()
+        .request("TxBlockListing", [0])
+        .await
+        .expect("Failed to call TxBlockListing API");
+
+    let tx_block_listing: zilliqa::api::types::zil::TxBlockListingResult =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert_eq!(wallet.get_block_number().await.unwrap(), 2.into());
+    assert_eq!(
+        tx_block_listing.data.len(),
+        2,
+        "Expected 2 TxBlock listings"
+    );
+    assert!(
+        tx_block_listing.max_pages >= 1,
+        "Expected at least 1 page of TxBlock listings"
+    );
+
+    assert!(
+        tx_block_listing.data[0].block_num == 0,
+        "Expected BlockNum to be 0, got: {:?}",
+        tx_block_listing.data[0].block_num
+    );
+    assert!(
+        tx_block_listing.data[1].block_num > 0,
+        "Expected BlockNum to be greater than 0, got: {:?}",
+        tx_block_listing.data[1].block_num
+    );
+    assert!(
+        !tx_block_listing.data[1].hash.is_empty(),
+        "Expected Hash to be non-empty, got: {:?}",
+        tx_block_listing.data[1].hash
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_num_peers(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNumPeers", [""])
+        .await
+        .expect("Failed to call GetNumPeers API");
+
+    assert!(
+        response.is_number(),
+        "Expected response to be a number, got: {:?}",
+        response
+    );
 }

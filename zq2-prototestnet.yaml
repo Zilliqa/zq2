@@ -3,10 +3,10 @@ eth_chain_id: 33103
 project_id: prj-d-zq2-testnet-g13pnaa8
 roles:
 - bootstrap
+- validator
 - api
 - apps
-- validator
 versions:
-  zq2: 884a67be
+  zq2: 013dc8c0
   otterscan: develop
   spout: main

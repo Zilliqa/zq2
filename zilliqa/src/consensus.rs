@@ -23,7 +23,7 @@ use crate::{
     cfg::{ConsensusConfig, NodeConfig},
     crypto::{verify_messages, Hash, NodePublicKey, NodePublicKeyRaw, NodeSignature, SecretKey},
     db::Db,
-    exec::TransactionApplyResult,
+    exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockResponse,
@@ -240,11 +240,16 @@ impl Consensus {
             State::new_at_root(
                 db.state_trie()?,
                 latest_block.state_root_hash().into(),
-                config.consensus.clone(),
+                config.clone(),
+                block_store.clone_read_only(),
             )
         } else {
             trace!("Contructing new state from genesis");
-            State::new_with_genesis(db.state_trie()?, config.consensus.clone())?
+            State::new_with_genesis(
+                db.state_trie()?,
+                config.clone(),
+                block_store.clone_read_only(),
+            )?
         };
 
         let (latest_block, latest_block_view) = match latest_block {
@@ -345,7 +350,11 @@ impl Consensus {
     }
 
     pub fn head_block(&self) -> Block {
-        let highest_block_number = self.db.get_highest_block_number().unwrap().unwrap();
+        let highest_block_number = self
+            .block_store
+            .get_highest_block_number()
+            .unwrap()
+            .unwrap();
         self.block_store
             .get_block_by_number(highest_block_number)
             .unwrap()
@@ -765,7 +774,7 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn apply_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
+    pub fn apply_transaction<I: Inspector<PendingState> + ScillaInspector>(
         &mut self,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
@@ -773,14 +782,12 @@ impl Consensus {
     ) -> Result<Option<TransactionApplyResult>> {
         let db = self.db.clone();
         let state = &mut self.state;
-        let node_config = &self.config;
-        Self::apply_transaction_at(state, db, node_config, txn, current_block, inspector)
+        Self::apply_transaction_at(state, db, txn, current_block, inspector)
     }
 
-    pub fn apply_transaction_at<I: for<'s> Inspector<&'s State> + ScillaInspector>(
+    pub fn apply_transaction_at<I: Inspector<PendingState> + ScillaInspector>(
         state: &mut State,
         db: Arc<Db>,
-        config: &NodeConfig,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
@@ -791,8 +798,7 @@ impl Consensus {
             db.insert_transaction(&txn.hash, &txn.tx)?;
         }
 
-        let result =
-            state.apply_transaction(txn.clone(), config.eth_chain_id, current_block, inspector);
+        let result = state.apply_transaction(txn.clone(), current_block, inspector);
         let result = match result {
             Ok(r) => r,
             Err(error) => {
@@ -1052,7 +1058,11 @@ impl Consensus {
         transaction_pool: &mut TransactionPool,
         votes: &mut BTreeMap<Hash, BlockVotes>,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        let num = self.db.get_highest_block_number().unwrap().unwrap();
+        let num = self
+            .block_store
+            .get_highest_block_number()
+            .unwrap()
+            .unwrap();
         let block = self.get_block_by_number(num).unwrap().unwrap();
 
         let block_hash = block.hash();
@@ -1108,15 +1118,22 @@ impl Consensus {
             &qc.cosigned,
         )?;
 
-        let node_config = &self.config;
+        // This is a partial header of a block that will be proposed with some transactions executed below.
+        // It is needed so that each transaction is executed within proper block context (the block it belongs to)
+        let executed_block_header = BlockHeader {
+            view: self.view(),
+            number: parent.header.number + 1,
+            timestamp: SystemTime::max(SystemTime::now(), parent_header.timestamp),
+            gas_limit: gas_left,
+            ..BlockHeader::default()
+        };
 
         while let Some(tx) = transaction_pool.best_transaction() {
             let result = Self::apply_transaction_at(
                 state,
                 self.db.clone(),
-                node_config,
                 tx.clone(),
-                parent_header,
+                executed_block_header,
                 inspector::noop(),
             )?;
 
@@ -1174,14 +1191,14 @@ impl Consensus {
 
         let proposal = Block::from_qc(
             self.secret_key,
-            self.view.get_view(),
-            parent.header.number + 1,
+            executed_block_header.view,
+            executed_block_header.number,
             qc,
             state.root_hash()?,
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             applied_transaction_hashes.clone(),
-            SystemTime::max(SystemTime::now(), parent_header.timestamp),
+            executed_block_header.timestamp,
             self.config.consensus.eth_block_gas_limit - gas_left,
             self.config.consensus.eth_block_gas_limit,
         );
@@ -1229,7 +1246,7 @@ impl Consensus {
         let mut tx_pool = self.transaction_pool.clone();
         let mut votes = self.votes.clone();
 
-        let head_height = self.db.get_highest_block_number()?.unwrap();
+        let head_height = self.block_store.get_highest_block_number()?.unwrap();
         let head_block = self.get_block_by_number(head_height)?.unwrap();
 
         // If there are no votes for highest block then we have to create artificial vote
@@ -1449,12 +1466,12 @@ impl Consensus {
         }
 
         let account = self.state.get_account(txn.signer)?;
-        let chain_id = self.config.eth_chain_id;
+        let eth_chain_id = self.config.eth_chain_id;
 
         if !txn.tx.validate(
             &account,
             self.config.consensus.eth_block_gas_limit,
-            chain_id,
+            eth_chain_id,
         )? {
             return Ok(false);
         }
@@ -2370,7 +2387,7 @@ impl Consensus {
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = self
-                .apply_transaction(txn.clone(), parent.header, &mut inspector)?
+                .apply_transaction(txn.clone(), block.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
             self.transaction_pool.mark_executed(&txn);
             for address in inspector.touched {

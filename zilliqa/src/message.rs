@@ -289,7 +289,7 @@ impl Display for InternalMessage {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub struct QuorumCertificate {
     /// An aggregated signature from `n - f` distinct replicas, built by signing a block hash in a specific view.
     pub signature: NodeSignature,
@@ -367,7 +367,7 @@ impl Display for QuorumCertificate {
 }
 
 /// A collection of `n - f` [QuorumCertificate]s.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AggregateQc {
     pub signature: NodeSignature,
     pub cosigned: BitArray,
@@ -396,7 +396,7 @@ pub enum BlockRef {
 }
 
 /// The [Copy]-able subset of a block.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlockHeader {
     pub view: u64, // only useful to consensus: the proposer can be derived from the block's view
     pub number: u64, // distinct from view, this is the normal incrementing block number
@@ -458,7 +458,7 @@ impl Default for BlockHeader {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Block {
     pub header: BlockHeader,
     /// The block will include an [AggregateQc] if the previous leader failed, meaning we couldn't construct a QC. When

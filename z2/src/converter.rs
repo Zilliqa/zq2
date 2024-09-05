@@ -21,14 +21,17 @@ use ethabi::Token;
 use git2::Repository;
 use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
 use itertools::Itertools;
+use libp2p::PeerId;
 use revm::primitives::ResultAndState;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sha3::Keccak256;
 use tempfile::TempDir;
+use tokio::sync::mpsc;
 use tracing::{info, trace, warn};
 use zilliqa::{
+    block_store::BlockStore,
     cfg::Config,
     consensus::Validator,
     contracts,
@@ -37,6 +40,7 @@ use zilliqa::{
     exec::BaseFeeCheck,
     inspector,
     message::{Block, BlockHeader, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
+    node::{MessageSender, RequestId},
     schnorr,
     scilla::storage_key,
     state::{contract_addr, Account, Code, State},
@@ -216,8 +220,25 @@ pub async fn convert_persistence(
     )
     .unwrap();
 
+    let (outbound_message_sender, _a) = mpsc::unbounded_channel();
+    let (local_message_sender, _b) = mpsc::unbounded_channel();
+    let message_sender = MessageSender {
+        our_shard: 0,
+        our_peer_id: PeerId::random(),
+        outbound_channel: outbound_message_sender,
+        local_channel: local_message_sender,
+        request_id: RequestId::default(),
+    };
+
+    let db = Arc::new(zq2_db);
     let node_config = &zq2_config.nodes[0];
-    let mut state = State::new_with_genesis(zq2_db.state_trie()?, node_config.consensus.clone())?;
+    let block_store = Arc::new(BlockStore::new(
+        node_config,
+        db.clone(),
+        message_sender.clone(),
+    )?);
+    let mut state =
+        State::new_with_genesis(db.clone().state_trie()?, node_config.clone(), block_store)?;
 
     if convert_accounts {
         // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
@@ -321,7 +342,6 @@ pub async fn convert_persistence(
         0,
         data,
         None,
-        0,
         BlockHeader::default(),
         inspector::noop(),
         BaseFeeCheck::Ignore,
