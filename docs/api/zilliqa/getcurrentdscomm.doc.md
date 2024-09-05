@@ -6,13 +6,10 @@ GetCurrentDSComm
 
 DS,committee,get,current
 
-# Status
-
-NotYetDocumented
-
 # Description
 
 Gives information on the public keys of DS committee members. Also, returns a parameter indicating the number of dsguards in the network.
+Deprecated in ZQ2; now returns a constant placeholder value.
 
 # Curl
 
@@ -52,4 +49,3 @@ curl -d '{
 | `jsonrpc` | string | Required | `"2.0"`              |
 | `method`  | string | Required | `"GetCurrentDSComm"` |
 | `params`  | string | Required | Empty string `""`    |
-

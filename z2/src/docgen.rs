@@ -7,7 +7,7 @@ use std::{
     convert::TryFrom,
     fmt,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicUsize, Arc, Mutex},
 };
 
 use alloy::primitives::{address, Address};
@@ -285,22 +285,11 @@ pub struct ApiCallStatus {
 
 pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus>> {
     let mut methods = HashMap::new();
-    // Construct an empty node so we can check for the existence of RPC methods without constructing a full node.
-    let genesis_accounts: Vec<(Address, Amount)> = vec![
-        (
-            address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"),
-            5000000000000000000000u128.into(),
-        ),
-        // privkey db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3
-        (
-            address!("cb57ec3f064a16cadb36c7c712f4c9fa62b77415"),
-            5000000000000000000000u128.into(),
-        ),
-    ];
 
+    // Construct an empty node so we can check for the existence of RPC methods without constructing a full node.
     let config = NodeConfig {
         consensus: ConsensusConfig {
-            genesis_accounts,
+            genesis_accounts: vec![],
             rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
             blocks_per_hour: 3600,
             is_main: true,
@@ -308,7 +297,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
             minimum_stake: 10_000_000_000_000_000_000_000_000u128.into(),
             gas_price: 4_761_904_800_000u128.into(),
             eth_block_gas_limit: EvmGas(84000000),
-            genesis_deposits: Vec::new(),
+            genesis_deposits: vec![],
             consensus_timeout: consensus_timeout_default(),
             local_address: local_address_default(),
             scilla_lib_dir: scilla_lib_dir_default(),
@@ -335,9 +324,10 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
     let (s1, _) = tokio::sync::mpsc::unbounded_channel();
     let (s2, _) = tokio::sync::mpsc::unbounded_channel();
     let (s3, _) = tokio::sync::mpsc::unbounded_channel();
+    let peers = Arc::new(AtomicUsize::new(0));
 
     let my_node = Arc::new(Mutex::new(zilliqa::node::Node::new(
-        config, secret_key, s1, s2, s3,
+        config, secret_key, s1, s2, s3, peers,
     )?));
     let module = zilliqa::api::rpc_module(my_node.clone());
     for m in module.method_names() {

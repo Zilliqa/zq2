@@ -282,18 +282,6 @@ impl Db {
         let input = File::open(path)?;
         let mut reader = BufReader::with_capacity(8192 * 1024, input); // 8 MiB read chunks
         let trie_storage = Arc::new(self.state_trie()?);
-        if !trie_storage.db.is_empty() || self.get_highest_block_number()?.is_some() {
-            // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
-            // values not part of any state trie of any known block. With some effort, this could
-            // even be supported.
-            // However, without such explicit support, having old blocks MAY in fact cause
-            // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
-            // a node that already contains previous state, until (and unless) there's ever a
-            // usecase for going through the effort to support it and ensure it works as expected.
-            return Err(anyhow!(
-                "Node state must be empty when loading a checkpoint."
-            ));
-        }
         let mut state_trie = EthTrie::new(trie_storage.clone());
 
         // Decode and validate header
@@ -335,6 +323,23 @@ impl Db {
 
         if block.parent_hash() != parent.hash() {
             return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
+        }
+
+        if !trie_storage.db.is_empty() || self.get_highest_block_number()?.is_some() {
+            // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
+            // values not part of any state trie of any known block. With some effort, this could
+            // even be supported.
+            // However, without such explicit support, having old blocks MAY in fact cause
+            // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
+            // a node that already contains previous state, until (and unless) there's ever a
+            // usecase for going through the effort to support it and ensure it works as expected.
+            if let Some(db_block) = self.get_block_by_hash(&block.hash())? {
+                if db_block != block {
+                    return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"));
+                }
+            } else {
+                return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint file does not exist in non-empty database"));
+            }
         }
 
         // then decode state

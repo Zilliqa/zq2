@@ -10,6 +10,7 @@ use alloy::{
     consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy},
     primitives::{keccak256, Address, Signature, TxKind, B256, U256},
     rlp::{Encodable, Header, EMPTY_STRING_CODE},
+    sol_types::SolValue,
 };
 use anyhow::{anyhow, Result};
 use bytes::{BufMut, BytesMut};
@@ -366,11 +367,11 @@ impl SignedTransaction {
         &self,
         account: &Account,
         block_gas_limit: EvmGas,
-        chain_id: u64,
+        eth_chain_id: u64,
     ) -> Result<bool> {
         self.validate_input_size()?;
         self.validate_gas_limit(block_gas_limit)?;
-        self.validate_chain_id(chain_id)?;
+        self.validate_chain_id(eth_chain_id)?;
         self.validate_sender_account(account)
     }
 
@@ -453,12 +454,17 @@ impl SignedTransaction {
         Ok(true)
     }
 
-    fn validate_chain_id(&self, chain_id: u64) -> Result<bool> {
+    fn validate_chain_id(&self, eth_chain_id: u64) -> Result<bool> {
+        let node_chain_id = match &self {
+            SignedTransaction::Zilliqa { .. } => eth_chain_id - 0x8000,
+            _ => eth_chain_id,
+        };
+
         if let Some(txn_chain_id) = self.chain_id() {
-            if chain_id != txn_chain_id {
+            if node_chain_id != txn_chain_id {
                 warn!(
                     "Chain_id provided in transaction: {} is different than node chain_id: {}",
-                    txn_chain_id, chain_id
+                    txn_chain_id, node_chain_id
                 );
                 return Ok(false);
             }
@@ -693,6 +699,8 @@ pub struct TxZilliqa {
 pub struct ZilAmount(u128);
 
 impl ZilAmount {
+    pub const ZERO: ZilAmount = ZilAmount(0);
+
     /// Construct a [ZilAmount] from an amount in (10^-18) ZILs. The value will be truncated and rounded down.
     pub fn from_amount(amount: u128) -> ZilAmount {
         ZilAmount(amount / 10u128.pow(6))
@@ -868,6 +876,20 @@ pub struct ScillaLog {
     #[serde(rename = "_eventname")]
     pub event_name: String,
     pub params: Vec<ScillaParam>,
+}
+
+impl ScillaLog {
+    pub fn into_evm(self) -> EvmLog {
+        // Unwrap is safe because [ScillaLog::Serialize] is infallible.
+        let data = serde_json::to_string(&self).unwrap().abi_encode();
+        EvmLog {
+            address: self.address,
+            topics: vec![keccak256(
+                format!("event {}(string)", self.event_name).into_bytes(),
+            )],
+            data,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

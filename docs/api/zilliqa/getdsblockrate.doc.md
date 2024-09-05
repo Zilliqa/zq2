@@ -6,13 +6,10 @@ GetDSBlockRate
 
 DS,block,get,rate
 
-# Status
-
-NotYetDocumented
-
 # Description
 
 Returns the current Directory Service blockrate per second.
+Deprecated in ZQ2; now returns a constant placeholder value.
 
 # Curl
 

@@ -26,7 +26,7 @@ use jsonrpsee::{
 use prost::Message as _;
 use serde::{
     de::{self, Unexpected},
-    Deserialize, Deserializer,
+    Deserialize, Deserializer, Serialize,
 };
 use serde_json::Value;
 use sha2::Sha256;
@@ -38,7 +38,7 @@ use crate::{
     exec::{PendingState, StorageValue},
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
-    state::Code,
+    state::Code, time::SystemTime,
     transaction::{ScillaGas, ZilAmount},
 };
 
@@ -347,9 +347,25 @@ pub struct Location {
 pub struct ContractInfo {
     pub scilla_major_version: String,
     pub fields: Vec<Param>,
+    pub transitions: Vec<Transition>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Transition {
+    #[serde(rename = "vname")]
+    pub name: String,
+    pub params: Vec<TransitionParam>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TransitionParam {
+    #[serde(rename = "vname")]
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Param {
     #[serde(rename = "vname")]
     pub name: String,
@@ -555,9 +571,10 @@ impl StateServer {
                     return Err(err("no active call"));
                 };
 
-                active_call.fetch_blockchain_info(query_name, query_args);
-
-                Ok::<_, ErrorObject>(())
+                match active_call.fetch_blockchain_info(query_name, query_args) {
+                    Ok((present, value)) => Ok(Value::Array(vec![present.into(), value.into()])),
+                    Err(e) => Err(err(e)),
+                }
             }
         })?;
 
@@ -790,7 +807,37 @@ impl ActiveCall {
         Ok(())
     }
 
-    fn fetch_blockchain_info(&self, name: String, args: String) {
-        eprintln!("fetch_blockchain_info - {name}, {args}");
+    fn fetch_blockchain_info(&self, name: String, args: String) -> Result<(bool, String)> {
+        match name.as_str() {
+            "CHAINID" => Ok((true, self.state.zil_chain_id().to_string())),
+            "BLOCKNUMBER" => match self.state.get_highest_block_number()? {
+                Some(block_number) => Ok((true, block_number.to_string())),
+                None => Ok((false, "".to_string())),
+            },
+            "BLOCKHASH" => {
+                let block_number: u64 = args.parse()?;
+                match self.state.get_block_by_number(block_number)? {
+                    Some(block) => Ok((true, block.hash().to_string())),
+                    None => Ok((false, "".to_string())),
+                }
+            }
+            "TIMESTAMP" => {
+                let block_number: u64 = args.parse()?;
+                match self.state.get_block_by_number(block_number)? {
+                    Some(block) => Ok((
+                        true,
+                        block
+                            .timestamp()
+                            .duration_since(SystemTime::UNIX_EPOCH)?
+                            .as_micros()
+                            .to_string(),
+                    )),
+                    None => Ok((false, "".to_string())),
+                }
+            }
+            _ => Err(anyhow!(
+                "fetch_blockchain_info: `{name}` not implemented yet."
+            )),
+        }
     }
 }

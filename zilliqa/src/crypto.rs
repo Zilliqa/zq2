@@ -21,7 +21,7 @@ use serde::{
 use sha3::{Digest, Keccak256};
 
 /// The signature type used internally in consensus, to e.g. sign block proposals.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NodeSignature(Signature<Bls12381G2Impl>);
 
 impl NodeSignature {
