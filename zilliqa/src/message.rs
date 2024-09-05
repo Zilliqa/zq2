@@ -218,7 +218,9 @@ pub enum ExternalMessage {
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
     NewTransaction(SignedTransaction),
-    RequestResponse,
+    /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
+    /// require any data in the response.
+    Acknowledgement,
 }
 
 impl ExternalMessage {
@@ -254,7 +256,7 @@ impl Display for ExternalMessage {
                 }
             }
             ExternalMessage::NewTransaction(_) => write!(f, "NewTransaction"),
-            ExternalMessage::RequestResponse => write!(f, "RequestResponse"),
+            ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
         }
     }
 }
