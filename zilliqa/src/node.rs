@@ -34,9 +34,10 @@ use crate::{
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
-        Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InternalMessage,
-        IntershardCall, Proposal,
+        Block, BlockHeader, BlockResponse, ExternalMessage, InternalMessage, IntershardCall,
+        Proposal,
     },
+    node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     pool::TxPoolContent,
     state::State,
@@ -134,6 +135,9 @@ pub struct Node {
     pub db: Arc<Db>,
     peer_id: PeerId,
     message_sender: MessageSender,
+    /// Send responses to requests down this channel. The `ResponseChannel` passed must correspond to a
+    /// `ResponseChannel` received via `handle_request`.
+    request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
     reset_timeout: UnboundedSender<Duration>,
     pub consensus: Consensus,
     peer_num: Arc<AtomicUsize>,
@@ -162,6 +166,7 @@ impl Node {
         secret_key: SecretKey,
         message_sender_channel: UnboundedSender<OutboundMessageTuple>,
         local_sender_channel: UnboundedSender<LocalMessageTuple>,
+        request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         reset_timeout: UnboundedSender<Duration>,
         peer_num: Arc<AtomicUsize>,
     ) -> Result<Node> {
@@ -178,6 +183,7 @@ impl Node {
             config: config.clone(),
             peer_id,
             message_sender: message_sender.clone(),
+            request_responses,
             reset_timeout: reset_timeout.clone(),
             db: db.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
@@ -187,62 +193,13 @@ impl Node {
         Ok(node)
     }
 
-    // TODO: Multithreading - `&mut self` -> `&self`
-    pub fn handle_network_message(
-        &mut self,
-        from: PeerId,
-        message: Result<ExternalMessage, OutgoingMessageFailure>,
-    ) -> Result<()> {
-        let to = self.peer_id;
-        let to_self = from == to;
-        let message = match message {
-            Ok(message) => message,
-            Err(failure) => {
-                debug!(?failure, "handling message failure");
-                self.consensus.report_outgoing_message_failure(failure)?;
-
-                return Ok(());
-            }
-        };
-        debug!(%from, %to, %message, "handling message");
+    pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
+        debug!(%from, to = %self.peer_id, %message, "handling broadcast");
+        // We only expect `Proposal`s and `NewTransaction`s to be broadcast.
         match message {
             ExternalMessage::Proposal(m) => {
-                if let Some((to, message)) = self.consensus.proposal(from, m, false)? {
-                    self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
-                    if let Some(to) = to {
-                        self.message_sender.send_external_message(to, message)?;
-                    } else {
-                        self.message_sender.broadcast_external_message(message)?;
-                    }
-                }
+                self.handle_proposal(from, m)?;
             }
-            ExternalMessage::Vote(m) => {
-                if let Some((block, transactions)) = self.consensus.vote(*m)? {
-                    self.message_sender
-                        .broadcast_external_message(ExternalMessage::Proposal(
-                            Proposal::from_parts(block, transactions),
-                        ))?;
-                }
-            }
-            ExternalMessage::NewView(m) => {
-                if let Some(block) = self.consensus.new_view(from, *m)? {
-                    self.message_sender
-                        .broadcast_external_message(ExternalMessage::Proposal(
-                            Proposal::from_parts(block, vec![]),
-                        ))?;
-                }
-            }
-            ExternalMessage::BlockRequest(m) => {
-                if !to_self {
-                    self.handle_block_request(from, m)?;
-                } else {
-                    debug!("ignoring blocks request to self");
-                }
-            }
-            ExternalMessage::BlockResponse(m) => {
-                self.handle_block_response(from, m)?;
-            }
-            ExternalMessage::RequestResponse => {}
             ExternalMessage::NewTransaction(t) => {
                 let inserted = self.consensus.new_transaction(t.verify()?)?;
                 if inserted {
@@ -250,6 +207,115 @@ impl Node {
                         self.message_sender.broadcast_external_message(message)?;
                     }
                 }
+            }
+            _ => {
+                warn!("unexpected message type");
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn handle_request(
+        &mut self,
+        from: PeerId,
+        message: ExternalMessage,
+        response_channel: ResponseChannel,
+    ) -> Result<()> {
+        debug!(%from, to = %self.peer_id, %message, "handling request");
+        match message {
+            ExternalMessage::Vote(m) => {
+                if let Some((block, transactions)) = self.consensus.vote(*m)? {
+                    self.message_sender
+                        .broadcast_external_message(ExternalMessage::Proposal(
+                            Proposal::from_parts(block, transactions),
+                        ))?;
+                }
+                // Acknowledge this vote.
+                self.request_responses
+                    .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            ExternalMessage::NewView(m) => {
+                if let Some(block) = self.consensus.new_view(*m)? {
+                    self.message_sender
+                        .broadcast_external_message(ExternalMessage::Proposal(
+                            Proposal::from_parts(block, vec![]),
+                        ))?;
+                }
+                // Acknowledge this new view.
+                self.request_responses
+                    .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            ExternalMessage::BlockRequest(request) => {
+                if from == self.peer_id {
+                    debug!("ignoring blocks request to self");
+                    return Ok(());
+                }
+
+                let proposals = (request.from_view..=request.to_view)
+                    .take(self.config.block_request_limit)
+                    .filter_map(|view| {
+                        self.consensus
+                            .get_block_by_view(view)
+                            .transpose()
+                            .map(|block| Ok(self.block_to_proposal(block?)))
+                    })
+                    .collect::<Result<_>>()?;
+
+                trace!("responding to new blocks request of {request:?}");
+
+                // Send the response to this block request.
+                self.request_responses.send((
+                    response_channel,
+                    ExternalMessage::BlockResponse(BlockResponse { proposals }),
+                ))?;
+            }
+            // We don't usually expect a [BlockResponse] to be received as a request, however this can occur when our
+            // [BlockStore] has re-sent a previously unusable block because we didn't (yet) have the block's parent.
+            // Having knowledge of this here breaks our abstraction boundaries slightly, but it also keeps things
+            // simple.
+            ExternalMessage::BlockResponse(m) => {
+                self.handle_block_response(from, m)?;
+                // Acknowledge this block response. This does nothing because the `BlockResponse` request was sent by
+                // us, but we keep it here for symmetry with the other handlers.
+                self.request_responses
+                    .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            // Handle requests which just contain a block proposal. This shouldn't actually happen in production, but
+            // annoyingly we have some test cases which trigger this (by rewriting broadcasts to direct messages) and
+            // the easiest fix is just to handle requests with proposals gracefully.
+            ExternalMessage::Proposal(m) => {
+                self.handle_proposal(from, m)?;
+
+                // Acknowledge the proposal.
+                self.request_responses
+                    .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            _ => {
+                warn!("unexpected message type");
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn handle_request_failure(
+        &mut self,
+        from: PeerId,
+        failure: OutgoingMessageFailure,
+    ) -> Result<()> {
+        debug!(%from, to = %self.peer_id, ?failure, "handling message failure");
+        self.consensus.report_outgoing_message_failure(failure)?;
+        Ok(())
+    }
+
+    pub fn handle_response(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
+        debug!(%from, to = %self.peer_id, %message, "handling response");
+        match message {
+            ExternalMessage::BlockResponse(m) => self.handle_block_response(from, m)?,
+            ExternalMessage::Acknowledgement => {}
+            _ => {
+                warn!("unexpected message type");
             }
         }
 
@@ -801,23 +867,15 @@ impl Node {
         Proposal::from_parts(block, txs)
     }
 
-    fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
-        let proposals = (request.from_view..=request.to_view)
-            .take(self.config.block_request_limit)
-            .filter_map(|view| {
-                self.consensus
-                    .get_block_by_view(view)
-                    .transpose()
-                    .map(|block| Ok(self.block_to_proposal(block?)))
-            })
-            .collect::<Result<_>>()?;
-
-        trace!("responding to new blocks request of {request:?}");
-
-        self.message_sender.send_external_message(
-            source,
-            ExternalMessage::BlockResponse(BlockResponse { proposals }),
-        )?;
+    fn handle_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
+        if let Some((to, message)) = self.consensus.proposal(from, proposal, false)? {
+            self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
+            if let Some(to) = to {
+                self.message_sender.send_external_message(to, message)?;
+            } else {
+                self.message_sender.broadcast_external_message(message)?;
+            }
+        }
 
         Ok(())
     }
