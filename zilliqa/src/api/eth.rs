@@ -775,7 +775,7 @@ fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         FilterBlockOption::AtBlockHash(_) => 0,
     };
 
-    Ok(create_filter(&mut node, Filter::General(params), first_block).to_hex())
+    Ok(create_filter(&mut node, Filter::General(Box::new(params)), first_block).to_hex())
 }
 
 fn uninstall_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
@@ -901,29 +901,31 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<FilterC
     };
 
     let last_block = match filter {
-        Filter::General(GeneralFilter {
-            block_option: FilterBlockOption::AtBlockHash(hash),
-            ..
-        }) => match node.get_block(BlockId::hash(*hash))? {
-            Some(block) => block.number(),
-            None => return Ok(FilterChanges::Empty),
+        Filter::General(filter) => match &**filter {
+            GeneralFilter {
+                block_option: FilterBlockOption::AtBlockHash(hash),
+                ..
+            } => match node.get_block(BlockId::hash(*hash))? {
+                Some(block) => block.number(),
+                None => return Ok(FilterChanges::Empty),
+            },
+            GeneralFilter {
+                block_option: FilterBlockOption::Range { to_block, .. },
+                ..
+            } => node
+                .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
+                .unwrap_or_else(|| {
+                    node.resolve_block_number(BlockNumberOrTag::Latest)
+                        .unwrap()
+                        .unwrap()
+                })
+                .number()
+                .min(
+                    node.resolve_block_number(BlockNumberOrTag::Latest)?
+                        .unwrap()
+                        .number(),
+                ),
         },
-        Filter::General(GeneralFilter {
-            block_option: FilterBlockOption::Range { to_block, .. },
-            ..
-        }) => node
-            .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
-            .unwrap_or_else(|| {
-                node.resolve_block_number(BlockNumberOrTag::Latest)
-                    .unwrap()
-                    .unwrap()
-            })
-            .number()
-            .min(
-                node.resolve_block_number(BlockNumberOrTag::Latest)?
-                    .unwrap()
-                    .number(),
-            ),
         Filter::Block => node
             .resolve_block_number(BlockNumberOrTag::Latest)?
             .unwrap()
@@ -945,9 +947,12 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<FilterC
     });
 
     let result = match filter {
-        Filter::General(GeneralFilter {
-            address, topics, ..
-        }) => FilterChanges::Logs(filter_logs(&node, blocks, address, &topics[..])?),
+        Filter::General(filter) => {
+            let GeneralFilter {
+                address, topics, ..
+            } = &**filter;
+            FilterChanges::Logs(filter_logs(&node, blocks, address, &topics[..])?)
+        }
         Filter::Block => FilterChanges::Hashes(
             blocks
                 .map(|block: Result<_>| block.map(|block| block.hash().0.into()))
@@ -984,54 +989,56 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<FilterChan
     };
 
     let (first_block, last_block) = match filter {
-        Filter::General(GeneralFilter {
-            block_option:
-                FilterBlockOption::Range {
-                    from_block,
-                    to_block,
-                },
-            ..
-        }) => {
-            let last_block = node
-                .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
-                .unwrap_or_else(|| {
-                    node.resolve_block_number(BlockNumberOrTag::Latest)
-                        .unwrap()
-                        .unwrap()
-                })
-                .number()
-                .min(
-                    node.resolve_block_number(BlockNumberOrTag::Latest)?
-                        .unwrap()
-                        .number(),
-                );
-
-            if let Some(first_block) = node
-                .resolve_block_number(from_block.unwrap_or(BlockNumberOrTag::Latest))?
-                .map(|first_block| {
-                    first_block.number().max(
-                        node.resolve_block_number(BlockNumberOrTag::Earliest)
+        Filter::General(filter) => match &**filter {
+            GeneralFilter {
+                block_option:
+                    FilterBlockOption::Range {
+                        from_block,
+                        to_block,
+                    },
+                ..
+            } => {
+                let last_block = node
+                    .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
+                    .unwrap_or_else(|| {
+                        node.resolve_block_number(BlockNumberOrTag::Latest)
                             .unwrap()
+                            .unwrap()
+                    })
+                    .number()
+                    .min(
+                        node.resolve_block_number(BlockNumberOrTag::Latest)?
                             .unwrap()
                             .number(),
-                    )
-                })
-            {
-                (first_block, last_block)
-            } else {
-                return Ok(FilterChanges::Empty);
-            }
-        }
-        Filter::General(GeneralFilter {
-            block_option: FilterBlockOption::AtBlockHash(hash),
-            ..
-        }) => {
-            let Some(block) = node.get_block(*hash)? else {
-                return Ok(FilterChanges::Empty);
-            };
+                    );
 
-            (block.number(), block.number())
-        }
+                if let Some(first_block) = node
+                    .resolve_block_number(from_block.unwrap_or(BlockNumberOrTag::Latest))?
+                    .map(|first_block| {
+                        first_block.number().max(
+                            node.resolve_block_number(BlockNumberOrTag::Earliest)
+                                .unwrap()
+                                .unwrap()
+                                .number(),
+                        )
+                    })
+                {
+                    (first_block, last_block)
+                } else {
+                    return Ok(FilterChanges::Empty);
+                }
+            }
+            GeneralFilter {
+                block_option: FilterBlockOption::AtBlockHash(hash),
+                ..
+            } => {
+                let Some(block) = node.get_block(*hash)? else {
+                    return Ok(FilterChanges::Empty);
+                };
+
+                (block.number(), block.number())
+            }
+        },
         Filter::PendingTransaction | Filter::Block => {
             let first_block = node
                 .resolve_block_number(BlockNumberOrTag::Earliest)?
@@ -1053,9 +1060,12 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<FilterChan
     });
 
     let result = match filter {
-        Filter::General(GeneralFilter {
-            address, topics, ..
-        }) => FilterChanges::Logs(filter_logs(&node, blocks, address, &topics[..])?),
+        Filter::General(filter) => {
+            let GeneralFilter {
+                address, topics, ..
+            } = &**filter;
+            FilterChanges::Logs(filter_logs(&node, blocks, address, &topics[..])?)
+        }
         Filter::Block => FilterChanges::Hashes(
             blocks
                 .map(|block: Result<_>| block.map(|block| block.hash().0.into()))

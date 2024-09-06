@@ -124,7 +124,7 @@ pub type NetworkMessage = (Option<PeerId>, ExternalMessage);
 pub enum Filter {
     Block,
     PendingTransaction,
-    General(GeneralFilter),
+    General(Box<GeneralFilter>),
 }
 
 /// The central data structure for a blockchain node.
