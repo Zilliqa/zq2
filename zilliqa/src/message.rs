@@ -310,6 +310,15 @@ impl QuorumCertificate {
         }
     }
 
+    pub fn new_with_identity(block_hash: Hash, view: u64) -> Self {
+        QuorumCertificate {
+            signature: NodeSignature::identity(),
+            cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
+            block_hash,
+            view,
+        }
+    }
+
     pub fn new(
         signatures: &[NodeSignature],
         cosigned: BitArray,
