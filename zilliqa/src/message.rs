@@ -194,11 +194,11 @@ impl NewView {
 /// This allows us to compute the blocks a peer is likely to have in its cache before having to be told.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum BlockStrategy {
-    /// "I have these blocks at the moment and I won't drop them until block .."
+    /// "I have these blocks at the moment and I won't drop them until view .."
     /// 0 == unlimited.
-    CachedBlockRange(Range<u64>, u64),
-    /// "I keep this number of blocks back from the last block I know about"
-    TrackLastN(u64),
+    CachedViewRange(Range<u64>, u64),
+    /// "Everything from .0 to the head"
+    Opportunistic(u64),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

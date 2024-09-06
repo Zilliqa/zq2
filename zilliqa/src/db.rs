@@ -798,11 +798,11 @@ impl Db {
         Ok(())
     }
 
-    /// Retrieve a list of ranges of blocks in our db.
-    pub fn get_block_ranges(&self) -> Result<Vec<Range<u64>>> {
+    /// Retrieve a list of ranges of views in our db.
+    pub fn get_view_ranges(&self) -> Result<Vec<Range<u64>>> {
         // The island field is technically redundant, but it helps with debugging.
         Ok(self.block_store.lock().unwrap()
-            .prepare_cached("SELECT MIN(height),MAX(height),height-rank AS island FROM ( SELECT height,ROW_NUMBER() OVER (ORDER BY height) AS rank FROM blocks ) GROUP BY island ORDER BY MIN(height) ASC")?
+            .prepare_cached("SELECT MIN(view),MAX(view),view-rank AS island FROM ( SELECT view,ROW_NUMBER() OVER (ORDER BY view) AS rank FROM blocks ) GROUP BY island ORDER BY MIN(view) ASC")?
            .query_map([], Self::make_view_range)?.collect::<Result<Vec<_>,_>>()?)
     }
 
