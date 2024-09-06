@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, fmt::Debug, ops::DerefMut, time::SystemTime};
+use std::{fmt::Debug, ops::DerefMut};
 
 use alloy::{
     eips::BlockNumberOrTag,

@@ -861,14 +861,14 @@ fn filter_logs(
             topics
                 .iter()
                 .zip(log.data.topics().iter())
-                .all(|(filter_topic, log_topic)| filter_topic.matches(&log_topic))
+                .all(|(filter_topic, log_topic)| filter_topic.matches(log_topic))
         });
 
     // Finally convert the iterator to our response format.
     let logs = logs.map(|l: Result<_>| {
         let (i, log, (txn_index, txn_hash, block_number, block_hash, timestamp)) = l?;
         Ok(alloy::rpc::types::Log {
-            inner: log.into(),
+            inner: log,
             block_number: Some(block_number),
             block_hash: Some(block_hash.0.into()),
             block_timestamp: Some(
@@ -947,7 +947,7 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<FilterC
     let result = match filter {
         Filter::General(GeneralFilter {
             address, topics, ..
-        }) => FilterChanges::Logs(filter_logs(&node, blocks, &address, &topics[..])?),
+        }) => FilterChanges::Logs(filter_logs(&node, blocks, address, &topics[..])?),
         Filter::Block => FilterChanges::Hashes(
             blocks
                 .map(|block: Result<_>| block.map(|block| block.hash().0.into()))
@@ -1055,7 +1055,7 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<FilterChan
     let result = match filter {
         Filter::General(GeneralFilter {
             address, topics, ..
-        }) => FilterChanges::Logs(filter_logs(&node, blocks, &address, &topics[..])?),
+        }) => FilterChanges::Logs(filter_logs(&node, blocks, address, &topics[..])?),
         Filter::Block => FilterChanges::Hashes(
             blocks
                 .map(|block: Result<_>| block.map(|block| block.hash().0.into()))
