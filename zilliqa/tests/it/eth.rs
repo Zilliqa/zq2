@@ -1,10 +1,11 @@
-use std::{fmt::Debug, ops::DerefMut};
+use std::{borrow::Borrow, fmt::Debug, ops::DerefMut, time::SystemTime};
 
 use alloy::{
     eips::BlockNumberOrTag,
     primitives::{hex, Address, B256},
+    rpc::types::Filter as GeneralFilter,
 };
-use ethabi::{ethereum_types::U64, Token};
+use ethabi::{ethereum_types::U64, Contract, Token};
 use ethers::{
     abi::FunctionExt,
     core::types::Signature,
@@ -22,7 +23,6 @@ use ethers::{
 use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
 use serde::Serialize;
-use zilliqa::{api::types::eth::OneOrMany, node::GeneralFilter};
 
 use crate::{deploy_contract, LocalRpcClient, Network};
 
@@ -555,6 +555,15 @@ async fn evm_filters(mut network: Network) {
             .unwrap()
     }
 
+    fn event(contract: &Contract, name: &str) -> B256 {
+        contract
+            .event(name)
+            .unwrap()
+            .signature()
+            .to_fixed_bytes()
+            .into()
+    }
+
     let (hash, contract) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
         "EmitEvents",
@@ -613,13 +622,13 @@ async fn evm_filters(mut network: Network) {
     // Make sure only the logs since the last call are returned.
     assert_eq!(get_filter_changes(provider, base_id).await.len(), 0);
 
-    let address_wallet_filter = base_filter.clone().address(Some(OneOrMany::One(Address(
-        wallet.address().as_fixed_bytes().into(),
-    ))));
+    let address_wallet_filter = base_filter
+        .clone()
+        .address(Address(wallet.address().as_fixed_bytes().into()));
 
-    let contract_address_filter = base_filter.clone().address(Some(OneOrMany::One(Address(
-        contract_address.as_fixed_bytes().into(),
-    ))));
+    let contract_address_filter = base_filter
+        .clone()
+        .address(Address(contract_address.as_fixed_bytes().into()));
 
     let address_wallet_filter_id = new_filter(provider, &address_wallet_filter).await;
 
@@ -640,33 +649,23 @@ async fn evm_filters(mut network: Network) {
     );
 
     // Make sure filtering by topic works.
-    let transfer = contract.event("Transfer").unwrap().signature();
-    let approval = contract.event("Approval").unwrap().signature();
-    let nonsense = H256::from_low_u64_be(123);
+    let transfer = event(&contract, "Transfer");
+    let approval = event(&contract, "Approval");
+    let nonsense = B256::with_last_byte(123);
 
-    let transfer_filter = base_filter
+    let transfer_filter = base_filter.clone().event_signature(transfer);
+
+    let approval_filter = base_filter.clone().event_signature(approval);
+
+    let nonsense_filter = base_filter.clone().event_signature(vec![nonsense]);
+
+    let transfer_approval_filter = base_filter
         .clone()
-        .topic0(Some(OneOrMany::One(transfer.as_fixed_bytes().into())));
+        .event_signature(vec![transfer, approval]);
 
-    let approval_filter = base_filter
+    let transfer_approval_nonsense_filter = base_filter
         .clone()
-        .topic0(Some(OneOrMany::One(approval.as_fixed_bytes().into())));
-
-    let nonsense_filter = base_filter
-        .clone()
-        .topic0(Some(OneOrMany::One(nonsense.as_fixed_bytes().into())));
-
-    let transfer_approval_filter = base_filter.clone().topic0(Some(OneOrMany::Many(vec![
-        transfer.as_fixed_bytes().into(),
-        approval.as_fixed_bytes().into(),
-    ])));
-
-    let transfer_approval_nonsense_filter =
-        base_filter.clone().topic0(Some(OneOrMany::Many(vec![
-            transfer.as_fixed_bytes().into(),
-            approval.as_fixed_bytes().into(),
-            nonsense.as_fixed_bytes().into(),
-        ])));
+        .event_signature(vec![transfer, approval, nonsense]);
 
     let transfer_filter_id = new_filter(provider, &transfer_filter).await;
     let approval_filter_id = new_filter(provider, &approval_filter).await;
@@ -704,31 +703,22 @@ async fn evm_filters(mut network: Network) {
     );
 
     // Filter by topic1 (same value for both logs).
-    let one = H256::from_low_u64_be(1);
-    let one_filter = base_filter
-        .clone()
-        .topic1(Some(OneOrMany::One(one.as_fixed_bytes().into())));
+    let one = B256::with_last_byte(1);
+    let one_filter = base_filter.clone().topic1(one);
 
     let one_filter_id = new_filter(provider, &one_filter).await;
 
     assert_eq!(get_filter_changes(provider, one_filter_id).await.len(), 2);
 
     // Filter by topic2 (different value for each log).
-    let two = H256::from_low_u64_be(2);
-    let three = H256::from_low_u64_be(3);
+    let two = B256::with_last_byte(2);
+    let three = B256::with_last_byte(3);
 
-    let two_filter = base_filter
-        .clone()
-        .topic2(Some(OneOrMany::One(two.as_fixed_bytes().into())));
+    let two_filter = base_filter.clone().topic2(two);
 
-    let three_filter = base_filter
-        .clone()
-        .topic2(Some(OneOrMany::One(three.as_fixed_bytes().into())));
+    let three_filter = base_filter.clone().topic2(three);
 
-    let two_three_filter = base_filter.clone().topic2(Some(OneOrMany::Many(vec![
-        two.as_fixed_bytes().into(),
-        three.as_fixed_bytes().into(),
-    ])));
+    let two_three_filter = base_filter.clone().topic2(vec![two, three]);
 
     let two_filter_id = new_filter(provider, &two_filter).await;
     let three_filter_id = new_filter(provider, &three_filter).await;
@@ -745,15 +735,9 @@ async fn evm_filters(mut network: Network) {
 
     let all_filter = base_filter
         .clone()
-        .topic0(Some(OneOrMany::Many(vec![
-            transfer.as_fixed_bytes().into(),
-            approval.as_fixed_bytes().into(),
-        ])))
-        .topic1(Some(OneOrMany::One(one.as_fixed_bytes().into())))
-        .topic2(Some(OneOrMany::Many(vec![
-            two.as_fixed_bytes().into(),
-            three.as_fixed_bytes().into(),
-        ])));
+        .event_signature(vec![transfer, approval])
+        .topic1(one)
+        .topic2(vec![two, three]);
 
     let all_filter_id = new_filter(provider, &all_filter).await;
 

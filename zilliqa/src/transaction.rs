@@ -870,6 +870,13 @@ pub struct EvmLog {
     pub data: Vec<u8>,
 }
 
+impl From<EvmLog> for alloy::primitives::Log {
+    fn from(value: EvmLog) -> Self {
+        // Will not panic, allows creation of logs with >4 topics, but this should not happen
+        alloy::primitives::Log::new_unchecked(value.address, value.topics, value.data.into())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScillaLog {
     pub address: Address,
@@ -892,10 +899,25 @@ impl ScillaLog {
     }
 }
 
+impl From<ScillaLog> for alloy::primitives::Log {
+    fn from(value: ScillaLog) -> Self {
+        value.into_evm().into()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Log {
     Evm(EvmLog),
     Scilla(ScillaLog),
+}
+
+impl From<Log> for alloy::primitives::Log {
+    fn from(value: Log) -> Self {
+        match value {
+            Log::Evm(evm) => evm.into(),
+            Log::Scilla(scilla) => scilla.into(),
+        }
+    }
 }
 
 impl Log {

@@ -2,18 +2,21 @@ use std::{
     collections::HashSet,
     fmt::Debug,
     sync::{atomic::AtomicUsize, Arc},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use alloy::{
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
     primitives::{Address, B256},
-    rpc::types::trace::{
-        geth::{
-            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
-            GethDebugTracingOptions, GethTrace, NoopFrame, TraceResult,
+    rpc::types::{
+        trace::{
+            geth::{
+                FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
+                GethDebugTracingOptions, GethTrace, NoopFrame, TraceResult,
+            },
+            parity::{TraceResults, TraceType},
         },
-        parity::{TraceResults, TraceType},
+        Filter as GeneralFilter,
     },
 };
 use anyhow::{anyhow, Result};
@@ -24,12 +27,10 @@ use revm_inspectors::tracing::{
     js::{JsInspector, TransactionContext},
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
 };
-use serde::Serialize;
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
-    api::types::eth::OneOrMany,
     cfg::NodeConfig,
     consensus::Consensus,
     crypto::{Hash, SecretKey},
@@ -44,6 +45,7 @@ use crate::{
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     pool::TxPoolContent,
     state::State,
+    time::SystemTime,
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
@@ -118,64 +120,6 @@ impl MessageSender {
 /// Tuple of (destination, message).
 pub type NetworkMessage = (Option<PeerId>, ExternalMessage);
 
-#[derive(Debug, Clone, Serialize)]
-pub struct GeneralFilter {
-    pub from_block: BlockNumberOrTag,
-    pub to_block: BlockNumberOrTag,
-    pub address: Option<OneOrMany<Address>>,
-    // Boxed as enum variant size difference is too large otherwise
-    pub topics: Box<[Option<OneOrMany<B256>>; 4]>,
-}
-
-impl Default for GeneralFilter {
-    fn default() -> Self {
-        GeneralFilter {
-            from_block: BlockNumberOrTag::Latest,
-            to_block: BlockNumberOrTag::Latest,
-            address: None,
-            topics: Box::new([None, None, None, None]),
-        }
-    }
-}
-
-impl GeneralFilter {
-    pub fn from_block(mut self, block: BlockNumberOrTag) -> Self {
-        self.from_block = block;
-
-        self
-    }
-
-    pub fn to_block(mut self, block: BlockNumberOrTag) -> Self {
-        self.to_block = block;
-
-        self
-    }
-
-    pub fn address(mut self, address: Option<OneOrMany<Address>>) -> Self {
-        self.address = address;
-
-        self
-    }
-
-    pub fn topic0(mut self, topic: Option<OneOrMany<B256>>) -> Self {
-        self.topics[0] = topic;
-
-        self
-    }
-
-    pub fn topic1(mut self, topic: Option<OneOrMany<B256>>) -> Self {
-        self.topics[1] = topic;
-
-        self
-    }
-
-    pub fn topic2(mut self, topic: Option<OneOrMany<B256>>) -> Self {
-        self.topics[2] = topic;
-
-        self
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum Filter {
     Block,
@@ -210,7 +154,7 @@ pub struct Node {
     pub consensus: Consensus,
     /// Tuple arguments correspond to filter, block number last time `eth_getFilterChanges` was called, and `Instant` at last time
     /// the filter was used was called.
-    pub filters: LruCache<B256, (Filter, u64, Instant)>,
+    pub filters: LruCache<B256, (Filter, u64, SystemTime)>,
     peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
 }
@@ -415,10 +359,10 @@ impl Node {
     }
 
     pub fn handle_filter_interval(&mut self) {
-        let now = Instant::now();
+        let now = SystemTime::now();
 
         while let Some((_, (_, _, last_used))) = self.filters.peek_lru() {
-            if now.duration_since(*last_used) < self.config.filter_expiry {
+            if now.duration_since(*last_used).unwrap() < self.config.filter_expiry {
                 break;
             }
 

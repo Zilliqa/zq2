@@ -1,9 +1,6 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
-use std::{
-    sync::{Arc, Mutex, MutexGuard},
-    time::Instant,
-};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use alloy::{
     consensus::{TxEip1559, TxEip2930, TxLegacy},
@@ -12,7 +9,7 @@ use alloy::{
     rlp::{Decodable, Header},
     rpc::types::{
         pubsub::{self, SubscriptionKind},
-        FilteredParams,
+        Filter as GeneralFilter, FilterBlockOption, FilterChanges, FilterSet, FilteredParams,
     },
 };
 use anyhow::{anyhow, Result};
@@ -23,17 +20,16 @@ use jsonrpsee::{
     PendingSubscriptionSink, RpcModule, SubscriptionMessage,
 };
 use rand::Rng;
-use serde::Deserialize;
 use tracing::*;
 
 use super::{
     to_hex::ToHex,
-    types::eth::{self, CallParams, HashOrTransaction, OneOrMany},
+    types::eth::{self, CallParams, HashOrTransaction},
 };
 use crate::{
     crypto::Hash,
     message::Block,
-    node::{Filter, GeneralFilter, Node},
+    node::{Filter, Node},
     state::Code,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction},
@@ -413,48 +409,28 @@ fn get_block_transaction_count_by_number(
     ))
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
-struct GetLogsParams {
-    from_block: Option<BlockNumberOrTag>,
-    to_block: Option<BlockNumberOrTag>,
-    address: Option<OneOrMany<Address>>,
-
-    /// elements represent an alternative that matches any of the contained topics.
-    ///
-    /// Examples (from Erigon):
-    /// * `[]`                          matches any topic list
-    /// * `[[A]]`                       matches topic A in first position
-    /// * `[[], [B]]` or `[None, [B]]`  matches any topic in first position AND B in second position
-    /// * `[[A], [B]]`                  matches topic A in first position AND B in second position
-    /// * `[[A, B], [C, D]]`            matches topic (A OR B) in first position AND (C OR D) in second position
-    topics: Vec<Option<OneOrMany<B256>>>,
-    block_hash: Option<B256>,
-}
-
-fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
+fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<alloy::rpc::types::Log>> {
     let mut seq = params.sequence();
-    let params: GetLogsParams = seq.next()?;
+    let params: GeneralFilter = seq.next()?;
     expect_end_of_params(&mut seq, 1, 1)?;
 
     let node = node.lock().unwrap();
 
-    // Find the range of blocks we care about. This is an iterator of blocks.
-    let blocks = match (params.block_hash, params.from_block, params.to_block) {
-        (Some(block_hash), None, None) => Either::Left(std::iter::once(Ok(node
-            .get_block(block_hash)?
-            .ok_or_else(|| anyhow!("block not found"))?))),
-        (None, from, to) => {
-            let Some(from) = node
-                .resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest))?
+    let blocks = match params.block_option {
+        FilterBlockOption::Range {
+            from_block,
+            to_block,
+        } => {
+            let Some(from_block) = node
+                .resolve_block_number(from_block.unwrap_or(BlockNumberOrTag::Latest))?
                 .as_ref()
                 .map(Block::number)
             else {
                 return Ok(vec![]);
             };
 
-            let to = node
-                .resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?
+            let to_block = node
+                .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
                 .unwrap_or_else(|| {
                     node.resolve_block_number(BlockNumberOrTag::Latest)
                         .unwrap()
@@ -462,20 +438,20 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
                 })
                 .number();
 
-            if from > to {
-                return Err(anyhow!("`from` is greater than `to` ({from} > {to})"));
+            if from_block > to_block {
+                return Err(anyhow!(
+                    "`from` is greater than `to` ({from_block} > {to_block})"
+                ));
             }
 
-            Either::Right((from..=to).map(|number| {
+            Either::Right((from_block..=to_block).map(|number| {
                 node.get_block(number)?
                     .ok_or_else(|| anyhow!("missing block: {number}"))
             }))
         }
-        _ => {
-            return Err(anyhow!(
-                "only one of `blockHash` or (`fromBlock` and/or `toBlock`) are allowed"
-            ));
-        }
+        FilterBlockOption::AtBlockHash(block_hash) => Either::Left(std::iter::once(Ok(node
+            .get_block(block_hash)?
+            .ok_or_else(|| anyhow!("block not found"))?))),
     };
 
     filter_logs(&node, blocks, &params.address, &params.topics)
@@ -768,38 +744,7 @@ fn get_uncle(_: Params, _: &Arc<Mutex<Node>>) -> Result<Option<String>> {
     Ok(None)
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
-struct NewFilterParams {
-    from_block: Option<BlockNumberOrTag>,
-    to_block: Option<BlockNumberOrTag>,
-    address: Option<OneOrMany<Address>>,
-    topics: Vec<Option<OneOrMany<B256>>>,
-}
-
-fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    let mut seq = params.sequence();
-    let mut params: NewFilterParams = seq.next()?;
-    expect_end_of_params(&mut seq, 1, 1)?;
-
-    let mut node = node.lock().unwrap();
-
-    if params.topics.len() > 4 {
-        // Too many topics provided, max of 4
-        return Err(anyhow!("Too many topics provided, maximum 4"));
-    }
-
-    let mut topics = [None, None, None, None];
-    topics[..params.topics.len()].swap_with_slice(&mut params.topics[..]);
-
-    let from_block = params.from_block.unwrap_or(BlockNumberOrTag::Latest);
-    // let first_block = node.resolve_block_number(from_block)?.unwrap().number();
-
-    let first_block = match params.from_block.unwrap_or(BlockNumberOrTag::Latest) {
-        BlockNumberOrTag::Number(n) => n,
-        tag => node.resolve_block_number(tag)?.unwrap().number(),
-    };
-
+fn create_filter(node: &mut Node, filter: Filter, first_block: u64) -> B256 {
     let mut rng = rand::thread_rng();
 
     let mut id = [0u8; 32];
@@ -807,21 +752,30 @@ fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     let id = B256::from_slice(&id);
 
-    node.filters.put(
-        id,
-        (
-            Filter::General(GeneralFilter {
-                from_block,
-                to_block: params.to_block.unwrap_or(BlockNumberOrTag::Latest),
-                address: params.address,
-                topics: Box::new(topics),
-            }),
-            first_block,
-            Instant::now(),
-        ),
-    );
+    node.filters
+        .put(id, (filter, first_block, SystemTime::now()));
 
-    Ok(id.to_hex())
+    id
+}
+
+fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let mut seq = params.sequence();
+    let params: GeneralFilter = seq.next()?;
+    expect_end_of_params(&mut seq, 1, 1)?;
+
+    let mut node = node.lock().unwrap();
+
+    let first_block = match params.block_option {
+        FilterBlockOption::Range { from_block, .. } => {
+            match from_block.unwrap_or(BlockNumberOrTag::Latest) {
+                BlockNumberOrTag::Number(n) => n,
+                tag => node.resolve_block_number(tag)?.unwrap().number(),
+            }
+        }
+        FilterBlockOption::AtBlockHash(_) => 0,
+    };
+
+    Ok(create_filter(&mut node, Filter::General(params), first_block).to_hex())
 }
 
 fn uninstall_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
@@ -845,17 +799,7 @@ fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         .number()
         + 1;
 
-    let mut rng = rand::thread_rng();
-
-    let mut id = [0u8; 32];
-    rng.fill(&mut id);
-
-    let id = B256::from_slice(&id);
-
-    node.filters
-        .put(id, (Filter::Block, first_block, Instant::now()));
-
-    Ok(id.to_hex())
+    Ok(create_filter(&mut node, Filter::Block, first_block).to_hex())
 }
 
 fn new_pending_transaction_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -869,33 +813,22 @@ fn new_pending_transaction_filter(params: Params, node: &Arc<Mutex<Node>>) -> Re
         .number()
         + 1;
 
-    let mut rng = rand::thread_rng();
-
-    let mut id = [0u8; 32];
-    rng.fill(&mut id);
-
-    let id = B256::from_slice(&id);
-
-    node.filters.put(
-        id,
-        (Filter::PendingTransaction, first_block, Instant::now()),
-    );
-
-    Ok(id.to_hex())
+    Ok(create_filter(&mut node, Filter::PendingTransaction, first_block).to_hex())
 }
 
 fn filter_logs(
     node: &Node,
     blocks: impl Iterator<Item = Result<Block>>,
-    address: &Option<OneOrMany<Address>>,
-    topics: &[Option<OneOrMany<B256>>],
-) -> Result<Vec<eth::Log>> {
+    address: &FilterSet<Address>,
+    topics: &[FilterSet<B256>],
+) -> Result<Vec<alloy::rpc::types::Log>> {
     // Get the receipts for each transaction. This is an iterator of (receipt, txn_index, txn_hash, block_number, block_hash).
     let receipts = blocks
         .map(|block: Result<_>| {
             let block = block?;
             let block_number = block.number();
             let block_hash = block.hash();
+            let timestamp = block.timestamp();
             let receipts = node.get_transaction_receipts_in_block(block_hash)?;
 
             Ok(block
@@ -904,7 +837,10 @@ fn filter_logs(
                 .enumerate()
                 .zip(receipts)
                 .map(move |((txn_index, txn_hash), receipt)| {
-                    (receipt, txn_index, txn_hash, block_number, block_hash)
+                    (
+                        receipt,
+                        (txn_index, txn_hash, block_number, block_hash, timestamp),
+                    )
                 }))
         })
         .flatten_ok();
@@ -912,49 +848,46 @@ fn filter_logs(
     // Get the logs from each receipt and filter them based on the provided parameters. This is an iterator of (log, log_index, txn_index, txn_hash, block_number, block_hash).
     let logs = receipts
         .map(|r: Result<_>| {
-            let (receipt, txn_index, txn_hash, block_number, block_hash) = r?;
+            let (receipt, other) = r?;
             Ok(receipt
                 .logs
                 .into_iter()
-                .filter_map(|l| l.into_evm())
                 .enumerate()
-                .map(move |(i, l)| (l, i, txn_index, txn_hash, block_number, block_hash)))
+                .map(move |(i, l)| (i, <alloy::primitives::Log as From<Log>>::from(l), other)))
         })
         .flatten_ok()
-        .filter_ok(|(log, _, _, _, _, _)| {
-            address
-                .as_ref()
-                .map_or(true, |address| address.contains(&log.address))
-        })
-        .filter_ok(|(log, _, _, _, _, _)| {
+        .filter_ok(|(_, log, _)| address.matches(&log.address))
+        .filter_ok(|(_, log, _)| {
             topics
                 .iter()
-                .zip(log.topics.iter())
-                .all(|(filter_topic, log_topic)| {
-                    filter_topic
-                        .as_ref()
-                        .map_or(true, |topic| topic.contains(log_topic))
-                    // filter_topic.is_empty() || filter_topic.contains(log_topic)
-                })
+                .zip(log.data.topics().iter())
+                .all(|(filter_topic, log_topic)| filter_topic.matches(&log_topic))
         });
 
     // Finally convert the iterator to our response format.
     let logs = logs.map(|l: Result<_>| {
-        let (log, log_index, txn_index, txn_hash, block_number, block_hash) = l?;
-        Ok(eth::Log::new(
-            log,
-            log_index,
-            txn_index,
-            txn_hash,
-            block_number,
-            block_hash,
-        ))
+        let (i, log, (txn_index, txn_hash, block_number, block_hash, timestamp)) = l?;
+        Ok(alloy::rpc::types::Log {
+            inner: log.into(),
+            block_number: Some(block_number),
+            block_hash: Some(block_hash.0.into()),
+            block_timestamp: Some(
+                timestamp
+                    .duration_since(crate::time::SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            ),
+            log_index: Some(i as u64),
+            transaction_index: Some(txn_index as u64),
+            transaction_hash: Some(txn_hash.0.into()),
+            removed: false,
+        })
     });
 
     logs.collect()
 }
 
-fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<FilterChanges<B256>> {
     let mut seq = params.sequence();
     let filter_id: B256 = seq.next()?;
     expect_end_of_params(&mut seq, 1, 1)?;
@@ -964,12 +897,22 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
     node.filters.promote(&filter_id);
     let Some((filter, next_block, _)) = node.filters.peek(&filter_id) else {
         // Filter does not exist
-        return Ok(serde_json::Value::Array(vec![]));
+        return Ok(FilterChanges::Empty);
     };
 
     let last_block = match filter {
-        Filter::General(GeneralFilter { to_block, .. }) => node
-            .resolve_block_number(*to_block)?
+        Filter::General(GeneralFilter {
+            block_option: FilterBlockOption::AtBlockHash(hash),
+            ..
+        }) => match node.get_block(BlockId::hash(*hash))? {
+            Some(block) => block.number(),
+            None => return Ok(FilterChanges::Empty),
+        },
+        Filter::General(GeneralFilter {
+            block_option: FilterBlockOption::Range { to_block, .. },
+            ..
+        }) => node
+            .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
             .unwrap_or_else(|| {
                 node.resolve_block_number(BlockNumberOrTag::Latest)
                     .unwrap()
@@ -993,7 +936,7 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
 
     if &last_block < next_block {
         // No new updates
-        return Ok(serde_json::Value::Array(vec![]));
+        return Ok(FilterChanges::Empty);
     }
 
     let blocks = (*next_block..=last_block).map(|number| {
@@ -1004,34 +947,30 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
     let result = match filter {
         Filter::General(GeneralFilter {
             address, topics, ..
-        }) => serde_json::to_value(filter_logs(&node, blocks, &address, &topics[..])?).unwrap(),
-        Filter::Block => serde_json::to_value(
+        }) => FilterChanges::Logs(filter_logs(&node, blocks, &address, &topics[..])?),
+        Filter::Block => FilterChanges::Hashes(
             blocks
-                .map(|block: Result<_>| block.map(|block| block.hash().to_string()))
+                .map(|block: Result<_>| block.map(|block| block.hash().0.into()))
                 .collect::<Result<Vec<_>>>()?,
-        )
-        .unwrap(),
-        Filter::PendingTransaction => serde_json::to_value(
+        ),
+        Filter::PendingTransaction => FilterChanges::Transactions(
             blocks
                 .map(|block: Result<_>| block.map(|block| block.transactions.into_iter()))
                 .flatten_ok()
-                .map(|transaction: Result<_>| {
-                    transaction.map(|transaction| transaction.to_string())
-                })
-                .collect::<Result<Vec<_>>>()?,
-        )
-        .unwrap(),
+                .map(|transaction: Result<_>| transaction.map(|transaction| transaction.into()))
+                .collect::<Result<Vec<B256>>>()?,
+        ),
     };
 
     if let Some((_, next_block, last_use)) = node.filters.get_mut(&filter_id) {
         *next_block = last_block + 1;
-        *last_use = Instant::now();
+        *last_use = SystemTime::now();
     }
 
     Ok(result)
 }
 
-fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<FilterChanges<B256>> {
     let mut seq = params.sequence();
     let filter_id: B256 = seq.next()?;
     expect_end_of_params(&mut seq, 1, 1)?;
@@ -1041,56 +980,71 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json
     node.filters.promote(&filter_id);
     let Some((filter, _, _)) = node.filters.peek(&filter_id) else {
         // Filter does not exist
-        return Ok(serde_json::Value::Array(vec![]));
+        return Ok(FilterChanges::Empty);
     };
 
-    let last_block = match filter {
-        Filter::General(GeneralFilter { to_block, .. }) => node
-            .resolve_block_number(*to_block)?
-            .unwrap_or_else(|| {
-                node.resolve_block_number(BlockNumberOrTag::Latest)
-                    .unwrap()
-                    .unwrap()
-            })
-            .number()
-            .min(
-                node.resolve_block_number(BlockNumberOrTag::Latest)?
-                    .unwrap()
-                    .number(),
-            ),
-        Filter::Block => node
-            .resolve_block_number(BlockNumberOrTag::Latest)?
-            .unwrap()
-            .number(),
-        Filter::PendingTransaction => node
-            .resolve_block_number(BlockNumberOrTag::Latest)?
-            .unwrap()
-            .number(),
-    };
-
-    let first_block = match filter {
-        Filter::General(GeneralFilter { from_block, .. }) => {
-            if let Some(first_block) = node.resolve_block_number(*from_block)?.map(|first_block| {
-                first_block.number().max(
-                    node.resolve_block_number(BlockNumberOrTag::Earliest)
+    let (first_block, last_block) = match filter {
+        Filter::General(GeneralFilter {
+            block_option:
+                FilterBlockOption::Range {
+                    from_block,
+                    to_block,
+                },
+            ..
+        }) => {
+            let last_block = node
+                .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
+                .unwrap_or_else(|| {
+                    node.resolve_block_number(BlockNumberOrTag::Latest)
                         .unwrap()
+                        .unwrap()
+                })
+                .number()
+                .min(
+                    node.resolve_block_number(BlockNumberOrTag::Latest)?
                         .unwrap()
                         .number(),
-                )
-            }) {
-                first_block
+                );
+
+            if let Some(first_block) = node
+                .resolve_block_number(from_block.unwrap_or(BlockNumberOrTag::Latest))?
+                .map(|first_block| {
+                    first_block.number().max(
+                        node.resolve_block_number(BlockNumberOrTag::Earliest)
+                            .unwrap()
+                            .unwrap()
+                            .number(),
+                    )
+                })
+            {
+                (first_block, last_block)
             } else {
-                return Ok(serde_json::Value::Array(vec![]));
+                return Ok(FilterChanges::Empty);
             }
         }
-        Filter::Block => node
-            .resolve_block_number(BlockNumberOrTag::Earliest)?
-            .unwrap()
-            .number(),
-        Filter::PendingTransaction => node
-            .resolve_block_number(BlockNumberOrTag::Earliest)?
-            .unwrap()
-            .number(),
+        Filter::General(GeneralFilter {
+            block_option: FilterBlockOption::AtBlockHash(hash),
+            ..
+        }) => {
+            let Some(block) = node.get_block(*hash)? else {
+                return Ok(FilterChanges::Empty);
+            };
+
+            (block.number(), block.number())
+        }
+        Filter::PendingTransaction | Filter::Block => {
+            let first_block = node
+                .resolve_block_number(BlockNumberOrTag::Earliest)?
+                .unwrap()
+                .number();
+
+            let last_block = node
+                .resolve_block_number(BlockNumberOrTag::Latest)?
+                .unwrap()
+                .number();
+
+            (first_block, last_block)
+        }
     };
 
     let blocks = (first_block..=last_block).map(|number| {
@@ -1101,27 +1055,23 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json
     let result = match filter {
         Filter::General(GeneralFilter {
             address, topics, ..
-        }) => serde_json::to_value(filter_logs(&node, blocks, &address, &topics[..])?).unwrap(),
-        Filter::Block => serde_json::to_value(
+        }) => FilterChanges::Logs(filter_logs(&node, blocks, &address, &topics[..])?),
+        Filter::Block => FilterChanges::Hashes(
             blocks
-                .map(|block: Result<_>| block.map(|block| block.hash().to_string()))
+                .map(|block: Result<_>| block.map(|block| block.hash().0.into()))
                 .collect::<Result<Vec<_>>>()?,
-        )
-        .unwrap(),
-        Filter::PendingTransaction => serde_json::to_value(
+        ),
+        Filter::PendingTransaction => FilterChanges::Transactions(
             blocks
                 .map(|block: Result<_>| block.map(|block| block.transactions.into_iter()))
                 .flatten_ok()
-                .map(|transaction: Result<_>| {
-                    transaction.map(|transaction| transaction.to_string())
-                })
-                .collect::<Result<Vec<_>>>()?,
-        )
-        .unwrap(),
+                .map(|transaction: Result<_>| transaction.map(|transaction| transaction.into()))
+                .collect::<Result<Vec<B256>>>()?,
+        ),
     };
 
     if let Some((_, _, last_use)) = node.filters.get_mut(&filter_id) {
-        *last_use = Instant::now();
+        *last_use = SystemTime::now();
     }
 
     Ok(result)
