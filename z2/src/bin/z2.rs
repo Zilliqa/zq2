@@ -27,7 +27,7 @@ enum Commands {
     /// Test
     Perf(PerfStruct),
     #[clap(subcommand)]
-    /// Deploy Zilliqa 2
+    /// Group of subcommands to deploy and configure a Zilliqa 2 network
     Deployer(DeployerCommands),
     #[clap(subcommand)]
     /// Convert Zilliqa 1 to Zilliqa 2 persistnce
@@ -63,13 +63,13 @@ pub struct DependsUpdateOptions {
 enum DeployerCommands {
     /// Generate the deployer config file
     New(DeployerNewArgs),
-    /// Perfom the network install
+    /// Install the network defined in the deployer config file
     Install(DeployerUpgradeArgs),
-    /// Perfom the network upgrade
+    /// Update the network defined in the deployer config file
     Upgrade(DeployerUpgradeArgs),
-    /// Provide the deposit commands for the validator nodes
+    /// Generate in output the commands to deposit stake amount to all the validators
     GetDepositCommands(DeployerUpgradeArgs),
-    /// Deposit the stake amounts to the network validator nodes
+    /// Deposit the stake amounts to all the validators
     Deposit(DeployerUpgradeArgs),
 }
 
@@ -91,6 +91,7 @@ pub struct DeployerNewArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerUpgradeArgs {
+    /// The network deployer config file
     config_file: Option<String>,
 }
 
