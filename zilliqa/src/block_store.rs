@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     num::NonZeroUsize,
     sync::{Arc, RwLock},
     time::Duration,
@@ -68,7 +68,7 @@ pub struct BlockStore {
     /// newly created blocks that arrive while we are syncing.
     buffered: LruCache<Hash, Proposal>,
     /// Requests we would like to send, but haven't been able to (e.g. because we have no peers).
-    unserviceable_requests: BTreeSet<(u64, u64)>,
+    unserviceable_requests: RangeMap,
     message_sender: MessageSender,
 
     /// Clock pointer - see request_blocks()
@@ -90,6 +90,8 @@ struct PeerInfo {
     availability: BlockAvailability,
     /// When did we last update availability?
     availability_updated_at: Option<SystemTime>,
+    /// Last availability query - don't send them too often.
+    availability_requested_at: Option<SystemTime>,
     /// The number of blocks we've requested from the peer.
     requested_blocks: u64,
     /// Requests we've sent to the peer.
@@ -103,27 +105,45 @@ impl PeerInfo {
         Self {
             availability: BlockAvailability::new(),
             availability_updated_at: None,
+            availability_requested_at: None,
             requested_blocks: 0,
             pending_requests: LruCache::new(request_capacity),
             last_request_failed_at: None,
         }
     }
 
+    /// Do we have (recent) availability, or should we get it again?
+    fn have_recent_availability(&self) -> bool {
+        self.availability_updated_at.is_some()
+    }
+
     /// Converts a set of block strategies into a rangemap
-    fn get_ranges(&self, max_view: u64) -> RangeMap {
+    fn get_ranges(&self, max_view: Option<u64>) -> RangeMap {
         let mut result = RangeMap::new();
         if let Some(strat) = &self.availability.strategies {
+            let mut max_end: Option<u64> = None;
+            let mut is_opportunistic = false;
             for s in strat {
                 match s {
                     BlockStrategy::CachedViewRange(views, until_view) => {
                         if self.availability.highest_known_view <= *until_view {
                             result.with_range(&views);
+                            max_end = Some(
+                                max_end.map_or(views.end - 1, |v| std::cmp::max(v, views.end - 1)),
+                            );
                         }
                     }
-                    BlockStrategy::Opportunistic(from) => {
+                    BlockStrategy::Opportunistic => {
+                        is_opportunistic = true;
+                    }
+                }
+            }
+            if is_opportunistic {
+                if let Some(v) = max_end {
+                    if let Some(w) = max_view {
                         result.with_range(&Range {
-                            start: *from,
-                            end: max_view + 1,
+                            start: v,
+                            end: w + 1,
                         });
                     }
                 }
@@ -214,13 +234,13 @@ impl BlockStore {
             max_blocks_in_flight: config.max_blocks_in_flight,
             batch_size: config.block_request_batch_size,
             failed_request_sleep_duration: config.failed_request_sleep_duration,
-            strategies: vec![],
+            strategies: vec![BlockStrategy::Opportunistic],
             available_blocks: vec![],
             available_blocks_updated: None,
             buffered: LruCache::new(
                 NonZeroUsize::new(config.max_blocks_in_flight as usize + 100).unwrap(),
             ),
-            unserviceable_requests: BTreeSet::new(),
+            unserviceable_requests: RangeMap::new(),
             message_sender,
             clock: 0,
         })
@@ -233,7 +253,7 @@ impl BlockStore {
             db: self.db.clone(),
             block_cache: self.block_cache.clone(),
             highest_known_view: 0,
-            peers: HashMap::new(),
+            peers: BTreeMap::new(),
             requested_view: 0,
             max_blocks_in_flight: 0,
             batch_size: 0,
@@ -242,8 +262,9 @@ impl BlockStore {
             available_blocks: Vec::new(),
             available_blocks_updated: None,
             buffered: LruCache::new(NonZeroUsize::new(1).unwrap()),
-            unserviceable_requests: BTreeSet::new(),
+            unserviceable_requests: RangeMap::new(),
             message_sender: self.message_sender.clone(),
+            clock: 0,
         })
     }
 
@@ -319,7 +340,18 @@ impl BlockStore {
         Some(*best)
     }
 
+    pub fn retry_us_requests(&mut self) -> Result<()> {
+        // Attempt to send pending requests if we can.
+        // TODO: find a better way to move this.
+        let us_requests = self.unserviceable_requests.clone();
+        trace!("re-attempting u/s requests {us_requests:?}");
+        self.unserviceable_requests = RangeMap::new();
+        self.request_blocks(&us_requests)?;
+        Ok(())
+    }
+
     pub fn request_missing_blocks(&mut self) -> Result<()> {
+        trace!("request_missing_blocks");
         // Get the highest view we currently have committed to our chain.
         let current_view = self
             .get_block_by_number(
@@ -334,13 +366,7 @@ impl BlockStore {
             self.requested_view = current_view;
         }
 
-        // Attempt to send pending requests if we can.
-        while let Some((from, to)) = self.unserviceable_requests.pop_first() {
-            if !self.request_blocks(from, to)? {
-                // Stop trying to send requests if no peers are available.
-                break;
-            }
-        }
+        self.retry_us_requests()?;
 
         // If we think the network might be ahead of where we currently are, attempt to download the missing blocks.
         if self.highest_known_view > current_view {
@@ -364,7 +390,9 @@ impl BlockStore {
                     self.requested_view + self.batch_size,
                     self.highest_known_view,
                 );
-                self.request_blocks(from, to)?;
+                trace!("requesting blocks {from} to {to}");
+                self.request_blocks(&RangeMap::from_closed_interval(from, to))?;
+                self.requested_view = to;
             }
         }
 
@@ -374,13 +402,11 @@ impl BlockStore {
     /// Make a request for the blocks associated with a range of views. Returns `true` if a request was made and `false` if the request had to be
     /// buffered because no peers were available.
     /// Public so we can trigger it from the debug API
-    pub fn request_blocks(&mut self, from: u64, to: u64) -> Result<bool> {
-        let mut remain = RangeMap::from_range(&Range {
-            start: from,
-            end: to + 1,
-        });
+    pub fn request_blocks(&mut self, req: &RangeMap) -> Result<bool> {
+        let mut remain = req.clone();
+        let to = req.max();
 
-        trace!("request_blocks for {:?}", remain);
+        trace!("request_blocks for {:?} clock {}", remain, self.clock);
         // If it's in flight, don't request it again.
         for (_, peer) in &self.peers {
             for (_, (_, start, end)) in &peer.pending_requests {
@@ -396,6 +422,11 @@ impl BlockStore {
         let failed_request_sleep_duration = self.failed_request_sleep_duration;
         trace!("after removing in_flight {:?}", remain);
         for chance in 0..2 {
+            trace!(
+                "chance = {chance} clock = {} peers = {}",
+                self.clock,
+                self.peers.len()
+            );
             self.clock = (self.clock + 1) % self.peers.len();
             // Slightly horrid - generate a list of peers which is the BTreeMap's list, shifted by clock.
             let peers = self
@@ -407,9 +438,10 @@ impl BlockStore {
                 .collect::<Vec<PeerId>>();
 
             for peer in &peers {
+                trace!("peer = {peer}");
                 // If the last request failed < 10s or so ago, skip this peer, unless we're second-chance in
                 // which case, hey, why not?
-                let (requests, remain) = {
+                let (requests, remain, query_availability) = {
                     let peer_info = self.peer_info(*peer);
                     if chance == 0
                         && !peer_info
@@ -418,13 +450,46 @@ impl BlockStore {
                             .map(|time_since| time_since > failed_request_sleep_duration)
                             .unwrap_or(true)
                     {
+                        trace!(".. Last request failed");
                         continue;
                     }
 
                     // Split ..
-                    peer_info.get_ranges(to).diff_inter(&remain)
+                    let ranges = peer_info.get_ranges(to);
+                    trace!("ranges {ranges:?}");
+                    let (req, rem) = ranges.diff_inter(&remain);
+                    trace!("req {req:?} rem {rem:?}");
+                    // If we are not about to make a request, and we do not have recent availability then
+                    // make a synthetic request to get that availability.
+                    let query_availability = req.is_empty()
+                        && !peer_info.have_recent_availability()
+                        && peer_info.availability_requested_at.map_or(true, |x| {
+                            x.elapsed()
+                                .map(|v| {
+                                    v > Duration::from_millis(
+                                        constants::REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE_MS,
+                                    )
+                                })
+                                .unwrap_or(true)
+                        });
+                    (req, rem, query_availability)
                 };
 
+                if chance == 0 && query_availability {
+                    trace!("Querying availability");
+                    // Executive decision: Don't ask for any blocks here, because we are about to do so in duplicate
+                    // later and we don't want to duplicate work - you could viably go for a slightly faster
+                    // sync by just asking for all the blocks and letting the peer send what it has.
+                    let message = ExternalMessage::BlockRequest(BlockRequest {
+                        from_view: 0,
+                        to_view: 0,
+                    });
+                    let peer_info = self.peer_info(*peer);
+                    peer_info.availability_requested_at = Some(now);
+                    let _ = self.message_sender.send_external_message(*peer, message);
+                }
+
+                trace!(" .. Requests to send: {:?}", requests);
                 for request in requests.ranges.iter() {
                     if !request.is_empty() {
                         trace!(
@@ -448,8 +513,10 @@ impl BlockStore {
                 }
             }
         }
+        trace!("All done");
         if !remain.is_empty() {
             warn!("Could not find peers for views {:?}", remain);
+            self.unserviceable_requests.with_range_map(&remain);
         }
         Ok(true)
     }
@@ -524,7 +591,8 @@ impl BlockStore {
         };
         peer_info.last_request_failed_at = Some(SystemTime::now());
 
-        self.request_blocks(from, to)?;
+        trace!("outgoing_message_failure: re-requesting {from} - {to}");
+        self.request_blocks(&RangeMap::from_closed_interval(from, to))?;
 
         Ok(())
     }

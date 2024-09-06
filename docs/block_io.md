@@ -14,14 +14,6 @@ In order to do this we need to know:
  - Who has what views
  - (when there is a choice) from whom to request them.
 
-## Availability advertisements
-
-Each node broadcasts an availability message at random intervals. This
-allows every other node to have some idea of what blocks that node
-holds.  (we don't want to put these in proposals, because it is quite
-possible that eg. archive nodes will never send proposals - but they
-do have blocks we might want).
-
 ## Block request scheduling
 
 This is a bit of a horrid problem.
@@ -52,6 +44,19 @@ the time they come in is noted.
 We then compute `(delay / blocks_supplied)` as a metric for how well
 the node is doing. This gets AIMD'd into a score for the node - the
 lower the better.
+
+## Availability adverts
+
+When we want to send a block request, and a peer has an empty list of
+available blocks, we will send a request for an availability list.
+
+When we receive a block request, we always reply with an availability
+list, even if we don't have those blocks.
+
+This hopefully keeps us in sync at least on the second try.
+
+(`unserviceable_requests` will then get filled when
+`request_missing_blocks()` is next called)
 
 ## Data structures
 

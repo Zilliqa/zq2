@@ -29,3 +29,6 @@ pub const ZIL_NORMAL_TXN_GAS: usize = 50;
 
 // Recompute available blocks after this many seconds
 pub const RECOMPUTE_BLOCK_AVAILABILITY_AFTER_S: u64 = 2;
+
+// Maximum rate at which to send availability requests
+pub const REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE_MS: u64 = 1000;

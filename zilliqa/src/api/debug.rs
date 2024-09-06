@@ -3,6 +3,7 @@
 #![allow(unused_imports)]
 use crate::block_store::BlockStoreStatus;
 use crate::node::Node;
+use crate::range_map::RangeMap;
 use anyhow::{anyhow, Result};
 use jsonrpsee::{
     core::StringError,
@@ -15,7 +16,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::trace;
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
-    let mut module = super::declare_module!(
+    super::declare_module!(
         node,
         [
             ("zdebug_fish", fish),
@@ -24,8 +25,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("zdebug_forget", forget),
             ("zdebug_request", request)
         ]
-    );
-    module
+    )
 }
 
 fn echo(params: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
@@ -42,7 +42,7 @@ fn fish(params: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(msg)
 }
 
-fn blocks(params: Params, node: &Arc<Mutex<Node>>) -> Result<BlockStoreStatus> {
+fn blocks(_params: Params, node: &Arc<Mutex<Node>>) -> Result<BlockStoreStatus> {
     trace!("blocks");
     let mut node = node.lock().unwrap();
     Ok(BlockStoreStatus::new(&mut node.consensus.block_store)?)
@@ -67,6 +67,9 @@ fn request(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
     let to: u64 = params.next()?;
     let mut node = node.lock().unwrap();
     trace!("Request blocks from {from} to {to}");
-    let result = node.consensus.block_store.request_blocks(from, to)?;
+    let result = node
+        .consensus
+        .block_store
+        .request_blocks(&RangeMap::from_closed_interval(from, to))?;
     Ok(result)
 }

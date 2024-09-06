@@ -2050,7 +2050,8 @@ impl Consensus {
             from,
             availability
         );
-        self.block_store.update_availability(from, availability)
+        self.block_store.update_availability(from, availability)?;
+        self.block_store.retry_us_requests()
     }
 
     // Checks for the validity of a block and adds it to our block store if valid.
