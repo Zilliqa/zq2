@@ -280,6 +280,12 @@ pub mod contract_addr {
     pub const DEPOSIT: Address = Address::new(*b"\0\0\0\0\0\0\0\0\0\0ZILDEPOSIT");
 }
 
+pub mod account_addr {
+    use alloy::primitives::Address;
+
+    pub const NULL: Address = Address::new([0; 20]);
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub nonce: u64,

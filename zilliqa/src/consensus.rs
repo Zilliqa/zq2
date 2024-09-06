@@ -33,7 +33,7 @@ use crate::{
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxPoolContent},
-    state::State,
+    state::{account_addr, State},
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
@@ -732,10 +732,13 @@ impl Consensus {
             })
             .collect();
 
+        let mut total_rewards_given = 0;
+
         // Reward the Proposer
         if let Some(proposer_address) = proposer_address {
             let reward = rewards_per_block / 2;
             at_state.mutate_account(proposer_address, |a| a.balance += reward)?;
+            total_rewards_given += reward;
         }
 
         // Reward the committee
@@ -744,10 +747,16 @@ impl Consensus {
                 let reward = U256::from(rewards_per_block / 2) * U256::from(stake)
                     / U256::from(total_cosigner_stake);
                 at_state.mutate_account(cosigner, |a| a.balance += reward.to::<u128>())?;
+                total_rewards_given += reward.to::<u128>();
             }
         }
 
-        Ok(())
+        at_state.mutate_account(account_addr::NULL, |a| {
+            a.balance
+                .checked_sub(total_rewards_given)
+                .map(|new_balance| a.balance = new_balance)
+                .ok_or(anyhow!("Tried to remove rewards from NULL account, however the NULL account does not have enough funds"))
+        })?
     }
 
     pub fn apply_transaction<I: Inspector<PendingState> + ScillaInspector>(

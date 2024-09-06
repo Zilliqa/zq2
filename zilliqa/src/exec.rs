@@ -29,7 +29,7 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    contracts,
+    contracts::{self, deposit},
     crypto::{Hash, NodePublicKey, NodePublicKeyRaw},
     db::TrieStorage,
     eth_helpers::extract_revert_msg,
@@ -37,7 +37,7 @@ use crate::{
     message::{Block, BlockHeader},
     precompiles::{get_custom_precompiles, scilla_call_handle_register},
     scilla::{self, split_storage_key, storage_key, Scilla},
-    state::{contract_addr, Account, Code, State},
+    state::{account_addr, contract_addr, Account, Code, State},
     time::SystemTime,
     transaction::{
         total_scilla_gas_price, EvmGas, EvmLog, Log, ScillaGas, ScillaLog, ScillaParam,
@@ -499,6 +499,12 @@ impl State {
 
         let e = evm.transact()?;
         let (mut state, cfg) = evm.into_db_and_env_with_handler_cfg();
+
+        {
+            let null_account = state.load_account(account_addr::NULL)?;
+            null_account.account.balance += e.result.gas_used() as u128;
+        }
+
         Ok((e, state.finalize(), cfg.env))
     }
 
@@ -514,6 +520,11 @@ impl State {
         let deposit = total_scilla_gas_price(txn.gas_limit, txn.gas_price);
         if let Some(result) = state.deduct_from_account(from_addr, deposit)? {
             return Ok((result, state.finalize()));
+        }
+
+        {
+            let null_account = state.load_account(account_addr::NULL)?;
+            null_account.account.balance += deposit.get();
         }
 
         let gas_limit = txn.gas_limit;
@@ -547,6 +558,14 @@ impl State {
             total_scilla_gas_price(gas_limit - ScillaGas::from(result.gas_used), gas_price);
         from.account.balance += refund.get();
         from.account.nonce += 1;
+
+        {
+            let null_account = state.load_account(account_addr::NULL)?;
+            let Some(new_balance) = null_account.account.balance.checked_sub(refund.get()) else {
+                return Err(anyhow!("Tried to remove rewards from NULL account, however the NULL account does not have enough funds"));
+            };
+            null_account.account.balance = new_balance;
+        }
 
         Ok((result, state.finalize()))
     }
