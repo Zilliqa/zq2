@@ -427,7 +427,8 @@ impl BlockStore {
                 self.clock,
                 self.peers.len()
             );
-            self.clock = (self.clock + 1) % self.peers.len();
+            // There may be no peers ...
+            self.clock = (self.clock + 1) % std::cmp::max(1, self.peers.len());
             // Slightly horrid - generate a list of peers which is the BTreeMap's list, shifted by clock.
             let peers = self
                 .peers
