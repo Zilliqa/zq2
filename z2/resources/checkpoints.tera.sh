@@ -19,11 +19,12 @@ log_message() {
 find "$CHECKPOINT_DIR" -type f ! -name '*.part' -printf "%T@ %p\n" | sort -n | awk '{print $2}' | while IFS= read -r CHECKPOINT_FILE; do
     log_message "Processing $CHECKPOINT_FILE"
     FILENAME=$(basename $CHECKPOINT_FILE)
+    FORMATTED_FILENAME=$(printf "%09u" "$FILENAME")
 
-    gsutil mv "${GCS_BUCKET}/*.block" "${GCS_BUCKET}/previous/"
+    gsutil mv "${GCS_BUCKET}/*.dat" "${GCS_BUCKET}/previous/"
 
     # Copy the checkpoint file to GCS
-    if gsutil cp "$CHECKPOINT_FILE" "${GCS_BUCKET}/${FILENAME}.block"; then
+    if gsutil cp "$CHECKPOINT_FILE" "${GCS_BUCKET}/${FORMATTED_FILENAME}.dat"; then
         log_message "Uploaded $CHECKPOINT_FILE to GCS"
 
         # Delete the file from the local directory
@@ -35,5 +36,5 @@ find "$CHECKPOINT_DIR" -type f ! -name '*.part' -printf "%T@ %p\n" | sort -n | a
 done
 
 # Keep only the most recent 30 checkpoints in the GCS bucket
-gsutil ls -l "$GCS_BUCKET/previous/*.block" | sort -k2 -r | tail -n +30 | xargs -I {} gsutil rm {}
+gsutil ls -l "$GCS_BUCKET/previous/*.dat" | sort -k2 -r | tail -n +30 | xargs -I {} gsutil rm {}
 log_message "Cleanup completed"
