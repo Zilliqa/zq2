@@ -4,7 +4,7 @@
 CHECKPOINT_DIR="/data/{{ eth_chain_id }}/checkpoints"
 
 # GCS bucket where checkpoints will be uploaded
-GCS_BUCKET="gs://{{ network_name }}-checkpoint/data/"
+GCS_BUCKET="gs://{{ network_name }}-checkpoint"
 
 # Log name in Google Cloud Logging
 LOG_NAME="{{ network_name }}-checkpoint-cron-log"
@@ -18,9 +18,12 @@ log_message() {
 # Watch for completed checkpoint files (excluding .part files)
 find "$CHECKPOINT_DIR" -type f ! -name '*.part' -printf "%T@ %p\n" | sort -n | awk '{print $2}' | while IFS= read -r CHECKPOINT_FILE; do
     log_message "Processing $CHECKPOINT_FILE"
+    FILENAME=$(basename $CHECKPOINT_FILE)
+
+    gsutil mv "${GCS_BUCKET}/*.block" "${GCS_BUCKET}/previous/"
 
     # Copy the checkpoint file to GCS
-    if gsutil cp "$CHECKPOINT_FILE" "$GCS_BUCKET"; then
+    if gsutil cp "$CHECKPOINT_FILE" "${GCS_BUCKET}/${FILENAME}.block"; then
         log_message "Uploaded $CHECKPOINT_FILE to GCS"
 
         # Delete the file from the local directory
@@ -31,10 +34,6 @@ find "$CHECKPOINT_DIR" -type f ! -name '*.part' -printf "%T@ %p\n" | sort -n | a
     fi
 done
 
-# Keep only the most recent 50 checkpoints in the GCS bucket
-gsutil ls "$GCS_BUCKET" | sort | head -n -50 | xargs -I {} gsutil rm {}
+# Keep only the most recent 30 checkpoints in the GCS bucket
+gsutil ls -l "$GCS_BUCKET/previous/*.block" | sort -k2 -r | tail -n +30 | xargs -I {} gsutil rm {}
 log_message "Cleanup completed"
-
-# Copy the most recent checkpoint as latest
-gsutil ls -l $GCS_BUCKET | grep -v "TOTAL" | grep -v latest | sort -k 2 -n |  tail -1 | awk '{print $3}' | xargs -I {} gsutil cp {} "${GCS_BUCKET}latest"
-log_message "Updated latest checkpoint"
