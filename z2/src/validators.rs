@@ -2,9 +2,8 @@
 use std::env;
 use std::{convert::TryFrom, str::FromStr};
 
-use anyhow::{anyhow, Context as _, Error, Result};
+use anyhow::{anyhow, Context as _, Result};
 use blsful::{vsss_rs::ShareIdentifier, Bls12381G2Impl};
-use clap::ValueEnum;
 use ethabi::Token;
 use ethers::{
     core::types::TransactionRequest,
@@ -20,7 +19,7 @@ use tokio::{fs::File, io::AsyncWriteExt};
 use toml::Value;
 use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
 
-use crate::github;
+use crate::{chain::Chain, github};
 
 #[derive(Debug)]
 pub struct Validator {
@@ -78,11 +77,11 @@ pub struct ChainConfig {
 
 impl ChainConfig {
     pub async fn new(chain_name: &Chain) -> Result<Self> {
-        let spec = get_chain_spec_config(chain_name.as_str()).await?;
+        let spec = get_chain_spec_config(&chain_name.to_string()).await?;
         let version = github::get_release_or_commit("zq2").await?;
 
         Ok(ChainConfig {
-            name: chain_name.as_str().to_owned(),
+            name: chain_name.to_string(),
             version,
             spec,
         })
@@ -96,63 +95,6 @@ impl ChainConfig {
             .await?;
         println!("💾 Validator config: {}", file_path.to_string_lossy());
         Ok(())
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, ValueEnum)]
-// TODO: decomment when became available
-pub enum Chain {
-    #[value(name = "zq2-devnet")]
-    Zq2Devnet,
-    #[value(name = "zq2-prototestnet")]
-    Zq2ProtoTestnet,
-    // ProtoMainnet,
-    // Testnet,
-    // Mainnet,
-}
-
-#[allow(dead_code)]
-impl Chain {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Chain::Zq2Devnet => "zq2-devnet",
-            Chain::Zq2ProtoTestnet => "zq2-prototestnet",
-            // Chain::ProtoMainnet => "protomainnet",
-            // Chain::Testnet => "testnet",
-            // Chain::Mainnet => "mainnet",
-        }
-    }
-
-    fn get_endpoint(&self) -> Option<&'static str> {
-        match self {
-            Chain::Zq2Devnet => Some("https://api.zq2-devnet.zilliqa.com"),
-            Chain::Zq2ProtoTestnet => Some("https://api.zq2-prototestnet.zilliqa.com"),
-            // Chain::ProtoMainnet => None,
-            // Chain::Testnet => None,
-            // Chain::Mainnet => None,
-        }
-    }
-
-    fn from_str(chain_name: &str) -> Result<Self, Error> {
-        match chain_name {
-            "zq2-devnet" => Ok(Chain::Zq2Devnet),
-            "zq2-prototestnet" => Ok(Chain::Zq2ProtoTestnet),
-            // "protomainnet" => Ok(Chain::ProtoMainnet),
-            // "testnet" => Ok(Chain::Testnet),
-            // "mainnet" => Ok(Chain::Mainnet),
-            _ => Err(anyhow!("Chain not supported")),
-        }
-    }
-
-    pub fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
-        match chain_name {
-            "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
-            "zq2-prototestnet" => Ok(include_str!(
-                "../resources/chain-specs/zq2-prototestnet.toml"
-            )),
-            _ => Err(anyhow!("Configuration file for {} not found", chain_name)),
-        }
     }
 }
 

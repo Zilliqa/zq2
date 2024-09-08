@@ -114,9 +114,15 @@ pub async fn run_deployer_upgrade(config_file: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_deployer_deposit_commands(config_file: &str) -> Result<()> {
+pub async fn run_deployer_get_deposit_commands(config_file: &str) -> Result<()> {
     println!("🦆 Getting node deposit commands for {config_file} .. ");
     deployer::get_deposit_commands(config_file).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_deposit(config_file: &str) -> Result<()> {
+    println!("🦆 Running deposit for {config_file} .. ");
+    deployer::run_deposit(config_file).await?;
     Ok(())
 }
 
