@@ -414,6 +414,19 @@ impl Consensus {
         let next_exponential_backoff_timeout =
             consensus_timeout_ms * 2u64.pow((view_difference + 1) as u32);
 
+        let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
+            anyhow!("missing block corresponding to our high qc - this should never happen")
+        })?;
+
+        let stakers = self.state.get_stakers_at_block(&block)?;
+        if !stakers.iter().any(|v| *v == self.public_key()) {
+            debug!(
+                "can't vote for new view, we aren't in the committee of length {:?}",
+                stakers.len()
+            );
+            return Ok(None);
+        }
+
         info!(
             "***** TIMEOUT: View is now {} -> {}. Next view change in {}ms",
             self.view.get_view(),
@@ -422,10 +435,6 @@ impl Consensus {
         );
 
         self.view.set_view(self.view.get_view() + 1);
-
-        let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
-            anyhow!("missing block corresponding to our high qc - this should never happen")
-        })?;
         let Some(leader) = self.leader_at_block(&block, self.view.get_view()) else {
             return Ok(None);
         };

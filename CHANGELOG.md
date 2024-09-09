@@ -4,7 +4,8 @@
 
 Unreleased changes.
 
-- [#1321](https://github.com/Zilliqa/zq2/issues/1321): Begin assembling a block proposal before a supermajority of votes is received.
+- [#1419](https://github.com/Zilliqa/zq2/pull/1419): Nodes outside the consensus commitee will no longer vote for a new view if a proposal is missed.
+- [#1393](https://github.com/Zilliqa/zq2/pull/1393): Begin assembling a block proposal before a supermajority of votes is received.
 
 ## [0.2.0] - 2024-09-05
 
@@ -21,7 +22,7 @@ Unreleased changes.
 - [#1270](https://github.com/Zilliqa/zq2/pull/1270): Implement first half of `scilla_call` precompile for EVM->Scilla interop.
 - [#1366](https://github.com/Zilliqa/zq2/pull/1366): Avoid failing if a checkpoint is configured and the node has already been started from that checkpoint.
 - [#1356](https://github.com/Zilliqa/zq2/pull/1356): Accept bech32 addresses for some existing Zilliqa APIs.
-- [#1304](https://github.com/Zilliqa/zq2/pull/1304): Implement the following APIs for querying DS blocks: `GetDSBlock`, `GetDSBlockVerbose`, `GetLatestDSBlock`, `GetCurrentDSComm`, `GetCurrentDSEpoch`, `DSBlockListing`, `GetDSBlockRate`,
+- [#1304](https://github.com/Zilliqa/zq2/pull/1304): Implement the following APIs for querying DS blocks: `GetDSBlock`, `GetDSBlockVerbose`, `GetLatestDSBlock`, `GetCurrentDSComm`, `GetCurrentDSEpoch`, `DSBlockListing`, `GetDSBlockRate`.
 - [#1334](https://github.com/Zilliqa/zq2/pull/1334): Avoid sleeping for unnecessarily long before proposing an empty block.
 - [#1310](https://github.com/Zilliqa/zq2/pull/1310): Fix nodes trying to propose a block without any votes for that block.
 
