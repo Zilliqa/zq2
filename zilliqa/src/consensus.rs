@@ -2034,7 +2034,7 @@ impl Consensus {
 
     fn epoch_number(&self, block_number: u64) -> u64 {
         // This will need additonal tracking if we ever allow blocks_per_epoch to be changed
-        block_number & self.config.consensus.blocks_per_epoch
+        block_number / self.config.consensus.blocks_per_epoch
     }
 
     fn epoch_is_checkpoint(&self, epoch_number: u64) -> bool {
