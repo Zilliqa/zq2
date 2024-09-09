@@ -7,6 +7,6 @@ roles:
 - api
 - apps
 versions:
-  zq2: 9f66a16e
+  zq2: v0.2.0
   otterscan: develop
   spout: main
