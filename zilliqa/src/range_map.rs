@@ -1,11 +1,30 @@
 use std::cmp::{max, min};
 use std::default::Default;
 use std::ops::Range;
+use std::{fmt, fmt::Display};
 
 /// A block map - a reasonably efficient, easily implementable representation of a collection of ranges.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RangeMap {
     pub ranges: Vec<Range<u64>>,
+}
+
+impl Display for RangeMap {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut got_one = false;
+        for r in &self.ranges {
+            if got_one {
+                write!(f, ",")?;
+            }
+            if r.start > r.end + 1 {
+                write!(f, "{}-{}", r.start, r.end - 1)?;
+            } else {
+                write!(f, "{}", r.start)?;
+            }
+            got_one = true;
+        }
+        Ok(())
+    }
 }
 
 fn merge_ranges(r1: &Range<u64>, r2: &Range<u64>) -> Option<Range<u64>> {
@@ -22,9 +41,48 @@ fn merge_ranges(r1: &Range<u64>, r2: &Range<u64>) -> Option<Range<u64>> {
     }
 }
 
-impl Default for RangeMap {
-    fn default() -> Self {
-        Self { ranges: vec![] }
+pub struct ItemIterator<'a> {
+    map: &'a RangeMap,
+    index: usize,
+    value: u64,
+}
+
+impl<'a> ItemIterator<'a> {
+    pub fn new(map: &'a RangeMap) -> Self {
+        let value = if !map.ranges.is_empty() {
+            map.ranges[0].start
+        } else {
+            0
+        };
+        Self {
+            map,
+            index: 0,
+            value,
+        }
+    }
+}
+
+impl<'a> Iterator for ItemIterator<'a> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        if self.index < self.map.ranges.len() {
+            let range = &self.map.ranges[self.index];
+            if self.value < range.end {
+                let result = self.value;
+                self.value += 1;
+                return Some(result);
+            } else {
+                self.index += 1;
+                if self.index < self.map.ranges.len() {
+                    // All our ranges are at least 1 long
+                    let result = &self.map.ranges[self.index].start;
+                    self.value = result + 1;
+                    return Some(*result);
+                }
+            }
+        }
+        None
     }
 }
 
@@ -32,6 +90,10 @@ impl RangeMap {
     /// A new, empty blockmap.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn iter_values(&self) -> ItemIterator {
+        ItemIterator::new(self)
     }
 
     /// From a single interval
@@ -74,6 +136,30 @@ impl RangeMap {
             });
         }
         result
+    }
+
+    /// Add a tuple
+    pub fn with_closed_tuple(&mut self, tuple: (u64, u64)) -> &mut Self {
+        self.with_range(&Range {
+            start: tuple.0,
+            end: tuple.1 + 1,
+        })
+    }
+
+    /// Add a single number
+    pub fn with_number(&mut self, val: u64) -> &mut Self {
+        self.with_range(&Range {
+            start: val,
+            end: val + 1,
+        })
+    }
+
+    /// Add a single element
+    pub fn with_elem(&mut self, val: u64) -> &mut Self {
+        self.with_range(&Range {
+            start: val,
+            end: val + 1,
+        })
     }
 
     /// Add a range
@@ -221,6 +307,15 @@ mod tests {
         assert_eq!(
             rem,
             RangeMap::from_tuple_vec(&vec![(1, 2), (3, 8), (10, 11), (20, 33)])
+        );
+    }
+
+    #[test]
+    fn iterator() {
+        let map3 = RangeMap::from_tuple_vec(&vec![(1, 4), (6, 8), (9, 10)]);
+        assert_eq!(
+            map3.iter_values().collect::<Vec<u64>>(),
+            vec![1, 2, 3, 6, 7, 9]
         );
     }
 }

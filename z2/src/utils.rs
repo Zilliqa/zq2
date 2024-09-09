@@ -1,4 +1,5 @@
 use core::convert::AsRef;
+use std::env;
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
@@ -65,4 +66,31 @@ pub async fn get_public_ip() -> Result<String> {
 
     let stdout = output.stdout;
     Ok(std::str::from_utf8(&stdout)?.trim().to_owned())
+}
+
+pub fn compute_log_string(
+    log_level: &str,
+    debug_modules: &Vec<String>,
+    trace_modules: &Vec<String>,
+) -> Result<String> {
+    // Now build the log string. If there already was one, use that ..
+    let log_var = env::var("RUST_LOG");
+    let log_spec = match log_var {
+        Ok(val) => {
+            println!("Using RUST_LOG from environment");
+            val
+        }
+        _ => {
+            let mut val = log_level.to_string();
+            for i in debug_modules {
+                val.push_str(&format!(",{i}=debug"));
+            }
+            for i in trace_modules {
+                val.push_str(&format!(",{i}=trace"));
+            }
+            val.push_str(",opentelemetry=trace,opentelemetry_otlp=trace");
+            val
+        }
+    };
+    Ok(log_spec)
 }
