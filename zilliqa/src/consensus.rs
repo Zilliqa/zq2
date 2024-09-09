@@ -362,9 +362,9 @@ impl Consensus {
         // We never want to timeout while on view 1
         if self.view.get_view() == 1 {
             let block = self
-                    .get_block_by_view(0)
-                    .unwrap()
-                    .ok_or_else(|| anyhow!("missing block"))?;
+                .get_block_by_view(0)
+                .unwrap()
+                .ok_or_else(|| anyhow!("missing block"))?;
             // If we're in the genesis committee, vote again.
             let stakers = self.state.get_stakers()?;
             if stakers.iter().any(|v| *v == self.public_key()) {

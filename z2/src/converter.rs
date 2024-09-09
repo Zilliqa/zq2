@@ -185,7 +185,7 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
         return Ok(Code::Evm(vec![]));
     };
 
-    let evm_prefix = [b'E', b'V', b'M'];
+    let evm_prefix = b"EVM";
 
     if code.len() > 3 && code[0..3] == evm_prefix[0..3] {
         return Ok(Code::Evm(code[3..].to_vec()));
