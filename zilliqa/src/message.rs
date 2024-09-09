@@ -218,7 +218,9 @@ pub enum ExternalMessage {
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
     NewTransaction(SignedTransaction),
-    RequestResponse,
+    /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
+    /// require any data in the response.
+    Acknowledgement,
 }
 
 impl ExternalMessage {
@@ -254,7 +256,7 @@ impl Display for ExternalMessage {
                 }
             }
             ExternalMessage::NewTransaction(_) => write!(f, "NewTransaction"),
-            ExternalMessage::RequestResponse => write!(f, "RequestResponse"),
+            ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
         }
     }
 }
@@ -305,6 +307,15 @@ impl QuorumCertificate {
             cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
             block_hash: Hash::ZERO,
             view: 0,
+        }
+    }
+
+    pub fn new_with_identity(block_hash: Hash, view: u64) -> Self {
+        QuorumCertificate {
+            signature: NodeSignature::identity(),
+            cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
+            block_hash,
+            view,
         }
     }
 
