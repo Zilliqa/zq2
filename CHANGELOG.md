@@ -3,9 +3,14 @@
 ## [Unreleased]
 
 Unreleased changes.
+
 - [#1321](https://github.com/Zilliqa/zq2/issues/1321): Begin assembling a block proposal before a supermajority of votes is received.
-- [#1350](https://github.com/Zilliqa/zq2/pull/1350): Support `CHAINID`, `BLOCKNUMBER`, and `TIMESTAMP` in Scilla contracts.
+
+## [0.2.0] - 2024-09-05
+
 - [#1358](https://github.com/Zilliqa/zq2/pull/1358): Support `_codehash` in Scilla contracts.
+- [#1398](https://github.com/Zilliqa/zq2/pull/1398): Improve syncing reliability by retrying requests for blocks that never receive a response.
+- [#1350](https://github.com/Zilliqa/zq2/pull/1350): Support `CHAINID`, `BLOCKNUMBER`, and `TIMESTAMP` in Scilla contracts.
 - [#1390](https://github.com/Zilliqa/zq2/pull/1390): Implement `GetNumPeers` API endpoint to get the current number of peers.
 - [#1391](https://github.com/Zilliqa/zq2/pull/1391): Change response type of `GetMinimumGasPrice` to a string.
 - [#1389](https://github.com/Zilliqa/zq2/pull/1389): Implement `TxBlockListing` API endpoint to return a paginated list of blocks.
@@ -32,6 +37,7 @@ Unreleased changes.
 
 Initial release of Zilliqa 2.
 
-[unreleased]: https://github.com/zilliqa/zq2/compare/v0.1.1...HEAD
+[unreleased]: https://github.com/zilliqa/zq2/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/zilliqa/zq2/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/zilliqa/zq2/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/zilliqa/zq2/releases/tag/v0.1.0
