@@ -157,8 +157,6 @@ pub struct Consensus {
     transaction_pool: TransactionPool,
     /// Flag indicating that block creation should be postponed due to empty mempool
     create_next_block_on_timeout: bool,
-    /// Flag indicating if the node has just started
-    is_fresh_launch: bool,
     pub new_blocks: broadcast::Sender<BlockHeader>,
     pub receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
@@ -260,7 +258,7 @@ impl Consensus {
             }
         };
 
-        let (start_view, high_qc, is_fresh_launch) = {
+        let (start_view, high_qc) = {
             match db.get_high_qc()? {
                 Some(qc) => {
                     let high_block = block_store
@@ -300,11 +298,11 @@ impl Consensus {
                     let start_view = std::cmp::max(high_block.view(), finalzied_block.view()) + 1;
 
                     info!("During recovery, starting consensus at view {}", start_view);
-                    (start_view, qc, true)
+                    (start_view, qc)
                 }
                 None => {
                     let start_view = 1;
-                    (start_view, QuorumCertificate::genesis(), false)
+                    (start_view, QuorumCertificate::genesis())
                 }
             }
         };
@@ -326,7 +324,6 @@ impl Consensus {
             db,
             transaction_pool: Default::default(),
             create_next_block_on_timeout: false,
-            is_fresh_launch,
             new_blocks: broadcast::Sender::new(4),
             receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
@@ -363,29 +360,11 @@ impl Consensus {
 
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
         // We never want to timeout while on view 1
-        if self.view.get_view() == 1 || self.is_fresh_launch {
-            self.is_fresh_launch = false;
-
-            let block = match self.view.get_view() {
-                1 => self
+        if self.view.get_view() == 1 {
+            let block = self
                     .get_block_by_view(0)
                     .unwrap()
-                    .ok_or_else(|| anyhow!("missing block"))?,
-                _ => {
-                    let high_block = self
-                        .block_store
-                        .get_block(self.high_qc.block_hash)?
-                        .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
-                    let finalized_block = self
-                        .get_block_by_view(self.finalized_view)?
-                        .ok_or_else(|| anyhow!("missing finalized block!"))?;
-                    if finalized_block.number() > high_block.number() {
-                        finalized_block
-                    } else {
-                        high_block
-                    }
-                }
-            };
+                    .ok_or_else(|| anyhow!("missing block"))?;
             // If we're in the genesis committee, vote again.
             let stakers = self.state.get_stakers()?;
             if stakers.iter().any(|v| *v == self.public_key()) {
