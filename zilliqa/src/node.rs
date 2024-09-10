@@ -20,8 +20,8 @@ use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
 use revm::Inspector;
 use revm_inspectors::tracing::{
-    js::{JsInspector, TransactionContext},
-    FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
+    js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
+    TransactionContext,
 };
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
@@ -119,16 +119,16 @@ pub type NetworkMessage = (Option<PeerId>, ExternalMessage);
 ///
 /// # Transaction Lifecycle
 /// 1. New transactions are created with a call to [`Node::new_transaction()`].
-/// The node gossips the transaction to the network and itself via a [`Message::NewTransaction`] message.
-/// This initial node also stores the transaction hash in `new_transactions`.
+///    The node gossips the transaction to the network and itself via a [`Message::NewTransaction`] message.
+///    This initial node also stores the transaction hash in `new_transactions`.
 ///
 /// 1. When a node recieves a [`NewTransaction`] via [`Node::handle_message()`], it stores it in `new_transactions`.
-/// This contains all transactions which have been receieved, but not yet executed.
+///    This contains all transactions which have been receieved, but not yet executed.
 ///
 /// 2. When the initial node is a leader of a block, it adds all transaction hashes in `new_transactions` to the block.
 ///
 /// 3. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
-/// Successfully executed transactions are added to `transactions` so they can be returned via APIs.
+///    Successfully executed transactions are added to `transactions` so they can be returned via APIs.
 #[derive(Debug)]
 pub struct Node {
     pub config: NodeConfig,
@@ -652,7 +652,7 @@ impl Node {
                     };
 
                     Ok(Some(TraceResult::Success {
-                        result: FourByteFrame::from(inspector).into(),
+                        result: FourByteFrame::from(&inspector).into(),
                         tx_hash: Some(txn_hash.0.into()),
                     }))
                 }
@@ -690,7 +690,7 @@ impl Node {
                     let state_ref = &(*state);
                     let trace = inspector.into_geth_builder().geth_prestate_traces(
                         &result,
-                        prestate_config,
+                        &prestate_config,
                         state_ref,
                     )?;
 

@@ -57,7 +57,7 @@ impl Runner {
             args.extend_from_slice(cargo_cmd);
         }
         cmd.args(args);
-        cmd.current_dir(&format!("{base_dir}/zq2"));
+        cmd.current_dir(format!("{base_dir}/zq2"));
         if let Some(val) = debug_spec {
             cmd.env("RUST_LOG", val);
         }
