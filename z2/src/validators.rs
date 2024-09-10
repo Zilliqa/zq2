@@ -131,7 +131,7 @@ pub async fn gen_validator_startup_script(config: &ChainConfig) -> Result<()> {
     let mut context = tera::Context::new();
 
     tera_template.add_raw_template(
-        "start_validator",
+        "start_node",
         include_str!("../resources/start_node.tera.sh"),
     )?;
 
@@ -139,11 +139,11 @@ pub async fn gen_validator_startup_script(config: &ChainConfig) -> Result<()> {
     context.insert("chain_name", &config.name);
 
     let script = tera_template
-        .render("start_validator", &context)
-        .context("Whilst rendering start_validator.sh script")?;
+        .render("start_node", &context)
+        .context("Whilst rendering start_node.sh script")?;
     config.write().await?;
 
-    file_path.push("start_validator.sh");
+    file_path.push("start_node.sh");
     let mut fh = File::create(file_path.clone()).await?;
     fh.write_all(script.as_bytes()).await?;
 
