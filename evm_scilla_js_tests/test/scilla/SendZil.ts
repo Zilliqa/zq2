@@ -56,7 +56,7 @@ describe("Move Zil #parallel", function () {
 
   xit("Should be possible to fund a user with an AddFunds message", async function () {
     const account = ethers.Wallet.createRandom();
-    await contract.fundUserWithTag(account.address, 1_000_000);
+    const result = await contract.fundUserWithTag(account.address, 1_000_000);
     const balanceResponse = await zilliqa.blockchain.getBalance(account.address);
     const balance = Number.parseInt(balanceResponse.result.balance);
     expect(balance).to.be.eq(1_000_000);
@@ -74,7 +74,7 @@ describe("Move Zil #parallel", function () {
     expect(balance).to.be.eq(0);
   });
 
-  xit("Should be possible to call a contract transition through another contract", async function () {
+  it("Should be possible to call a contract transition through another contract", async function () {
     await contract.callOtherContract(to_be_funded_contract.address, "updateTestField", 1234);
 
     expect(await to_be_funded_contract.test_field()).to.be.eq(1234);
