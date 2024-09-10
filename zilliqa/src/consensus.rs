@@ -268,7 +268,38 @@ impl Consensus {
                         .get_block(qc.block_hash)?
                         .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
 
-                    let start_view = high_block.view() + 1;
+                    let finalized_number = db
+                        .get_latest_finalized_view()?
+                        .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
+                    let finalzied_block = db
+                        .get_block_by_view(&finalized_number)?
+                        .ok_or_else(|| anyhow!("missing finalized block!"))?;
+
+                    let highest_block_number = db
+                        .get_highest_block_number()?
+                        .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
+
+                    let head_block = block_store
+                        .get_block_by_number(highest_block_number)?
+                        .ok_or_else(|| anyhow!("missing head block!"))?;
+
+                    if finalized_number > high_block.number() {
+                        state.set_to_root(finalzied_block.header.state_root_hash.into());
+                    } else {
+                        state.set_to_root(high_block.header.state_root_hash.into());
+                    }
+
+                    // If there was a newer block proposed - it's no longer valid because not every participant could have received it
+                    if head_block.number() > high_block.number()
+                        && head_block.number() > finalized_number
+                    {
+                        db.revert_canonical_block_number(head_block.number())?;
+                        db.remove_transactions_executed_in_block(&head_block.hash())?;
+                        db.remove_block(&head_block)?;
+                    }
+
+                    let start_view = std::cmp::max(high_block.view(), finalzied_block.view()) + 1;
+
                     info!("During recovery, starting consensus at view {}", start_view);
                     (start_view, qc)
                 }
@@ -334,24 +365,25 @@ impl Consensus {
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
         // We never want to timeout while on view 1
         if self.view.get_view() == 1 {
-            let genesis = self
+            let block = self
                 .get_block_by_view(0)
                 .unwrap()
                 .ok_or_else(|| anyhow!("missing block"))?;
             // If we're in the genesis committee, vote again.
             let stakers = self.state.get_stakers()?;
             if stakers.iter().any(|v| *v == self.public_key()) {
-                info!("timeout in view 1, we will vote for genesis block rather than incrementing view, genesis hash: {}", genesis.hash());
-                let leader = self
-                    .leader_at_block(&genesis, self.view.get_view())
-                    .unwrap();
-                let vote = self.vote_from_block(&genesis);
+                info!("timeout in view: {:?}, we will vote for block rather than incrementing view, block hash: {}", self.view.get_view(), block.hash());
+                let leader = self.leader_at_block(&block, self.view.get_view()).unwrap();
+                let vote = self.vote_from_block(&block);
                 return Ok(Some((
                     Some(leader.peer_id),
                     ExternalMessage::Vote(Box::new(vote)),
                 )));
             } else {
-                info!("We are on view 1 but we are not a validator, so we are waiting.");
+                info!(
+                    "We are on view: {:?} but we are not a validator, so we are waiting.",
+                    self.view.get_view()
+                );
             }
 
             return Ok(None);
@@ -1509,8 +1541,6 @@ impl Consensus {
 
                     self.state.set_to_root(previous_state_root_hash.into());
 
-                    trace!("Our high QC is {:?}", self.high_qc);
-
                     trace!(proposal_hash = ?proposal.hash(), view = self.view.get_view(), height = proposal.header.number, "######### creating proposal block from new view");
 
                     // as a future improvement, process the proposal before broadcasting it
@@ -1776,7 +1806,12 @@ impl Consensus {
 
     /// Saves the finalized tip view, and runs all hooks for the newly finalized block
     fn finalize_block(&mut self, block: Block) -> Result<()> {
-        trace!("Finalizing block {} at view {}", block.hash(), block.view());
+        trace!(
+            "Finalizing block {} at view {} num {}",
+            block.hash(),
+            block.view(),
+            block.number()
+        );
         self.finalize_view(block.view())?;
 
         let receipts = self.db.get_transaction_receipts_in_block(&block.hash())?;

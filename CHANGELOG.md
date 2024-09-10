@@ -4,6 +4,7 @@
 
 Unreleased changes.
 
+- [#1024](https://github.com/Zilliqa/zq2/issues/1024): Convert contract code and state from ZQ1 persistence.
 - [#1419](https://github.com/Zilliqa/zq2/pull/1419): Nodes outside the consensus commitee will no longer vote for a new view if a proposal is missed.
 - [#1393](https://github.com/Zilliqa/zq2/pull/1393): Begin assembling a block proposal before a supermajority of votes is received.
 
