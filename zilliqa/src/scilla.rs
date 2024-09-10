@@ -256,7 +256,7 @@ impl Scilla {
         contract: Address,
         code: &str,
         gas_limit: ScillaGas,
-        value: ZilAmount,
+        contract_balance: ZilAmount,
         init: &[Value],
         msg: &Value,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
@@ -272,7 +272,7 @@ impl Scilla {
             "-gaslimit".to_owned(),
             gas_limit.to_string(),
             "-balance".to_owned(),
-            value.to_string(),
+            contract_balance.to_string(),
             "-libdir".to_owned(),
             self.lib_dir.clone(),
             "-jsonerrors".to_owned(),

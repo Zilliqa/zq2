@@ -1502,17 +1502,18 @@ pub fn scilla_call(
         None
     };
 
-    let mut call_stack = vec![(0, sender, to_addr, amount, message)];
+    let mut call_stack = vec![(0, sender, to_addr, message)];
     let mut logs = vec![];
     let mut transitions = vec![];
     let mut root_contract_accepted = false;
 
     let mut state = Some(state);
 
-    while let Some((depth, sender, to_addr, amount, message)) = call_stack.pop() {
+    while let Some((depth, sender, to_addr, message)) = call_stack.pop() {
         let mut current_state = state.take().expect("missing state");
 
-        let code_and_data = match &current_state.load_account(to_addr)?.account.code {
+        let contract = current_state.load_account(to_addr)?;
+        let code_and_data = match &contract.account.code {
             // EOAs are currently represented by [Code::Evm] with no code.
             Code::Evm(code) if code.is_empty() => None,
             Code::Scilla {
@@ -1564,13 +1565,14 @@ pub fn scilla_call(
 
             let code = code.clone();
             let init_data = serde_json::from_str::<Vec<_>>(init_data)?;
+            let balance = contract.account.balance;
 
             let (output, mut new_state) = scilla.invoke_contract(
                 current_state,
                 to_addr,
                 &code,
                 gas,
-                amount,
+                ZilAmount::from_amount(balance),
                 &init_data,
                 message
                     .as_ref()
@@ -1635,13 +1637,7 @@ pub fn scilla_call(
                     "_origin": format!("{from_addr:#x}"),
                     "params": message.params,
                 });
-                call_stack.push((
-                    depth + 1,
-                    to_addr,
-                    message.recipient,
-                    message.amount,
-                    Some(next_message),
-                ));
+                call_stack.push((depth + 1, to_addr, message.recipient, Some(next_message)));
             }
 
             logs.reserve(output.events.len());
