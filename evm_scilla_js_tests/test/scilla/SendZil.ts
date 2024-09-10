@@ -24,13 +24,13 @@ describe("Move Zil #parallel", function () {
       ]);
     } else {
       contract = await parallelizer.deployScillaContract("SendZil");
-      // to_be_funded_contract = await parallelizer.deployScillaContract("SendZil");
+      to_be_funded_contract = await parallelizer.deployScillaContract("SendZil");
     }
   });
 
   it("Should be deployed successfully @block-1", async function () {
     expect(contract.address).to.be.properAddress;
-    // expect(to_be_funded_contract.address).to.be.properAddress;
+    expect(to_be_funded_contract.address).to.be.properAddress;
   });
 
   it("Should have updated balance if accept is called @block-1", async function () {
@@ -56,7 +56,7 @@ describe("Move Zil #parallel", function () {
 
   xit("Should be possible to fund a user with an AddFunds message", async function () {
     const account = ethers.Wallet.createRandom();
-    const result = await contract.fundUserWithTag(account.address, 1_000_000);
+    await contract.fundUserWithTag(account.address, 1_000_000);
     const balanceResponse = await zilliqa.blockchain.getBalance(account.address);
     const balance = Number.parseInt(balanceResponse.result.balance);
     expect(balance).to.be.eq(1_000_000);
