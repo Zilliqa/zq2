@@ -63,7 +63,7 @@ impl Runner {
         channel: &mpsc::Sender<collector::Message>,
     ) -> Result<JoinAll<tokio::task::JoinHandle<()>>> {
         let mut cmd = Command::new("docker");
-        cmd.args(&vec!["compose", "-f", "otel-compose.yaml", "up"]);
+        cmd.args(vec!["compose", "-f", "otel-compose.yaml", "up"]);
         cmd.current_dir(config_dir);
         println!("> {cmd:?}");
         collector::spawn(
