@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+use cfg_if::cfg_if;
 use libp2p::{
     autonat,
     core::upgrade,
@@ -26,7 +27,7 @@ use libp2p::{
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
-    sync::{mpsc, mpsc::UnboundedSender},
+    sync::mpsc::{self, error::SendError, UnboundedSender},
     task::JoinSet,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -38,7 +39,7 @@ use crate::{
     db,
     message::{ExternalMessage, InternalMessage},
     node::{OutgoingMessageFailure, RequestId},
-    node_launcher::NodeLauncher,
+    node_launcher::{NodeInputChannels, NodeLauncher, ResponseChannel},
 };
 
 /// Messages are a tuple of the destination shard ID and the actual message.
@@ -46,7 +47,7 @@ type DirectMessage = (u64, ExternalMessage);
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
-    request_response: request_response::cbor::Behaviour<DirectMessage, DirectMessage>,
+    request_response: request_response::cbor::Behaviour<DirectMessage, ExternalMessage>,
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
     autonat: libp2p::autonat::Behaviour,
@@ -62,11 +63,6 @@ pub type OutboundMessageTuple = (Option<(PeerId, RequestId)>, u64, ExternalMessa
 /// (source_shard, destination_shard, message)
 pub type LocalMessageTuple = (u64, u64, InternalMessage);
 
-struct NodeInputChannels {
-    external: UnboundedSender<(PeerId, Result<ExternalMessage, OutgoingMessageFailure>)>,
-    internal: UnboundedSender<(u64, InternalMessage)>,
-}
-
 pub struct P2pNode {
     shard_nodes: HashMap<TopicHash, NodeInputChannels>,
     shard_threads: JoinSet<Result<()>>,
@@ -78,11 +74,13 @@ pub struct P2pNode {
     /// Shard nodes get a copy of these senders to propagate messages.
     outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
     local_message_sender: UnboundedSender<LocalMessageTuple>,
+    request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
     /// The p2p node keeps a handle to these receivers, to obtain messages from shards and propagate
     /// them as necessary.
     outbound_message_receiver: UnboundedReceiverStream<OutboundMessageTuple>,
     local_message_receiver: UnboundedReceiverStream<LocalMessageTuple>,
-    // Map of pending direct requests. Maps the libp2p request ID to our request ID.
+    request_responses_receiver: UnboundedReceiverStream<(ResponseChannel, ExternalMessage)>,
+    /// Map of pending direct requests. Maps the libp2p request ID to our request ID.
     pending_requests: HashMap<request_response::OutboundRequestId, (u64, RequestId)>,
     // Count of current peers for API
     peer_num: Arc<AtomicUsize>,
@@ -95,6 +93,9 @@ impl P2pNode {
 
         let (local_message_sender, local_message_receiver) = mpsc::unbounded_channel();
         let local_message_receiver = UnboundedReceiverStream::new(local_message_receiver);
+
+        let (request_responses_sender, request_responses_receiver) = mpsc::unbounded_channel();
+        let request_responses_receiver = UnboundedReceiverStream::new(request_responses_receiver);
 
         let key_pair = secret_key.to_libp2p_keypair();
         let peer_id = PeerId::from(key_pair.public());
@@ -156,8 +157,10 @@ impl P2pNode {
             task_threads: JoinSet::new(),
             outbound_message_sender,
             local_message_sender,
+            request_responses_sender,
             outbound_message_receiver,
             local_message_receiver,
+            request_responses_receiver,
             pending_requests: HashMap::new(),
             peer_num: Arc::new(AtomicUsize::new(0)),
         })
@@ -191,67 +194,32 @@ impl P2pNode {
             info!("LaunchShard message received for a shard we're already running. Ignoring...");
             return Ok(());
         }
-        let mut node = NodeLauncher::new(
+        let (mut node, input_channels) = NodeLauncher::new(
             self.secret_key,
             config,
             self.outbound_message_sender.clone(),
             self.local_message_sender.clone(),
+            self.request_responses_sender.clone(),
             self.peer_num.clone(),
         )
         .await?;
-        self.shard_nodes.insert(
-            topic.hash(),
-            NodeInputChannels {
-                external: node.message_input(),
-                internal: node.local_message_input(),
-            },
-        );
+        self.shard_nodes.insert(topic.hash(), input_channels);
         self.shard_threads
             .spawn(async move { node.start_shard_node().await });
         self.swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
         Ok(())
     }
 
-    fn forward_external_message_to_node(
+    fn send_to<T: Send + Sync + 'static>(
         &self,
         topic_hash: &TopicHash,
-        source: PeerId,
-        message: Result<ExternalMessage, OutgoingMessageFailure>,
+        sender: impl FnOnce(&NodeInputChannels) -> Result<(), SendError<T>>,
     ) -> Result<()> {
-        match self.shard_nodes.get(topic_hash) {
-            Some(inbound_message_sender) => {
-                inbound_message_sender.external.send((source, message))?
-            }
-            None => warn!(
-                ?topic_hash,
-                ?source,
-                ?message,
-                "Message received for unknown shard/topic"
-            ),
+        let Some(channels) = self.shard_nodes.get(topic_hash) else {
+            warn!(?topic_hash, "message received for unknown shard or topic");
+            return Ok(());
         };
-        Ok(())
-    }
-
-    fn forward_local_message_to_shard(
-        &self,
-        topic_hash: &TopicHash,
-        source_shard: u64,
-        message: InternalMessage,
-    ) -> Result<()> {
-        match self.shard_nodes.get(topic_hash) {
-            Some(inbound_message_sender) => inbound_message_sender
-                .internal
-                .send((source_shard, message))?,
-            None => {
-                warn!(
-                    ?topic_hash,
-                    ?source_shard,
-                    ?message,
-                    "Message received for unknown shard/topic"
-                )
-            }
-        };
-        Ok(())
+        Ok(sender(channels)?)
     }
 
     pub async fn start(&mut self) -> Result<()> {
@@ -348,21 +316,30 @@ impl P2pNode {
                             let message = cbor4ii::serde::from_slice::<ExternalMessage>(&data).unwrap();
                             let to = self.peer_id;
                             debug!(%source, %to, %message, "broadcast recieved");
-                            self.forward_external_message_to_node(&topic_hash, source, Ok(message))?;
+                            self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
                         }
 
-                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: source })) => {
+                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source })) => {
                             match message {
-                                request_response::Message::Request { request, channel, .. } => {
+                                request_response::Message::Request { request, channel: _channel, .. } => {
                                     let to = self.peer_id;
-                                    let (shard_id, external_message) = request;
-                                    debug!(%source, %to, %external_message, "message received");
-                                    let topic = Self::shard_id_to_topic(shard_id);
-                                    self.forward_external_message_to_node(&topic.hash(), source, Ok(external_message))?;
-                                    let _ = self.swarm.behaviour_mut().request_response.send_response(channel, (shard_id, ExternalMessage::RequestResponse));
+                                    let (shard_id, _external_message) = request;
+                                    debug!(source = %_source, %to, external_message = %_external_message, "message received");
+                                    let _topic = Self::shard_id_to_topic(shard_id);
+                                    cfg_if! {
+                                        if #[cfg(not(feature = "fake_response_channel"))] {
+                                            self.send_to(&_topic.hash(), |c| c.requests.send((_source, _external_message, ResponseChannel::Remote(_channel))))?;
+                                        } else {
+                                            panic!("fake_response_channel is enabled and you are trying to use a real libp2p network");
+                                        }
+                                    }
                                 }
-                                request_response::Message::Response { request_id, .. } => {
-                                    self.pending_requests.remove(&request_id);
+                                request_response::Message::Response { request_id, response } => {
+                                    if let Some((shard_id, _)) = self.pending_requests.remove(&request_id) {
+                                        self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.responses.send((_source, response)))?;
+                                    } else {
+                                        return Err(anyhow!("response to request with no id"));
+                                    }
                                 }
                             }
                         }
@@ -377,7 +354,7 @@ impl P2pNode {
 
                             if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
                                 let error = OutgoingMessageFailure { peer, request_id, error };
-                                self.forward_external_message_to_node(&Self::shard_id_to_topic(shard_id).hash(), peer, Err(error))?;
+                                self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.request_failures.send((peer, error)))?;
                             } else {
                                 return Err(anyhow!("request without id failed"));
                             }
@@ -401,13 +378,25 @@ impl P2pNode {
                             self.add_shard_node(shard_config.clone()).await?;
                         },
                         InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
-                            self.forward_local_message_to_shard(&Self::shard_id_to_topic(destination).hash(), source, message)?;
+                            self.send_to(&Self::shard_id_to_topic(destination).hash(), |c| c.local_messages.send((source, message)))?;
                         }
                         InternalMessage::ExportBlockCheckpoint(block, parent, trie_storage, path) => {
                             self.task_threads.spawn(async move { db::checkpoint_block_with_state(&block, &parent, trie_storage, source, path) });
                         }
                     }
                 },
+                message = self.request_responses_receiver.next() => {
+                    let (ch, _rs) = message.expect("message stream should be infinite");
+                    if let Some(_ch) = ch.into_inner() {
+                        cfg_if! {
+                            if #[cfg(not(feature = "fake_response_channel"))] {
+                                let _ = self.swarm.behaviour_mut().request_response.send_response(_ch, _rs);
+                            } else {
+                                panic!("fake_response_channel is enabled and you are trying to use a real libp2p network");
+                            }
+                        }
+                    }
+                }
                 message = self.outbound_message_receiver.next() => {
                     let (dest, shard_id, message) = message.expect("message stream should be infinite");
                     let data = cbor4ii::serde::to_vec(Vec::new(), &message).unwrap();
@@ -417,9 +406,9 @@ impl P2pNode {
 
                     match dest {
                         Some((dest, request_id)) => {
-                            debug!(%from, %dest, %message, "sending direct message");
+                            debug!(%from, %dest, %message, ?request_id, "sending direct message");
                             if from == dest {
-                                self.forward_external_message_to_node(&topic.hash(), from, Ok(message))?;
+                                self.send_to(&topic.hash(), |c| c.requests.send((from, message, ResponseChannel::Local)))?;
                             } else {
                                 let libp2p_request_id = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
                                 self.pending_requests.insert(libp2p_request_id, (shard_id, request_id));
@@ -434,7 +423,7 @@ impl P2pNode {
                                 }
                             }
                             // Also broadcast the message to ourselves.
-                            self.forward_external_message_to_node(&topic.hash(), from, Ok(message))?;
+                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
                         },
                     }
                 },

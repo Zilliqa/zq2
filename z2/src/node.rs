@@ -8,6 +8,7 @@ use tokio::{fs::File, io::AsyncWriteExt};
 
 use crate::{
     address::EthereumAddress,
+    chain::Chain,
     deployer::{docker_image, Machine, NodeRole},
 };
 
@@ -46,6 +47,11 @@ impl ChainNode {
         }
     }
 
+    pub fn chain(&self) -> Result<Chain> {
+        let chain_name = &self.chain_name;
+        chain_name.parse()
+    }
+
     pub fn name(&self) -> String {
         self.machine.name.clone()
     }
@@ -70,11 +76,7 @@ impl ChainNode {
         self.run_provisioning_script().await?;
 
         // Check the node is making progress
-        if self.role == NodeRole::Bootstrap
-            || self.role == NodeRole::Validator
-            || self.role == NodeRole::Api
-            || self.role == NodeRole::Checkpoint
-        {
+        if self.role != NodeRole::Apps {
             let first_block_number = self.machine.get_local_block_number().await?;
             loop {
                 let next_block_number = self.machine.get_local_block_number().await?;
