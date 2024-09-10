@@ -9,13 +9,8 @@ use alloy::{
     primitives::{Address, FixedBytes},
     providers::Provider,
     pubsub::PubSubFrontend,
-    rpc::types::{
-        eth::{TransactionInput, TransactionRequest},
-        Filter,
-    },
+    rpc::types::Filter,
     signers::local::PrivateKeySigner,
-    signers::{Signer, SignerSync},
-    sol_types::{sol, SolCall},
 };
 use anyhow::Result;
 use clap::Parser;

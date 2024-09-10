@@ -207,38 +207,43 @@ impl ValidatorNode {
         for i in 1..self.config.max_dispatch_attempts {
             info!("Dispatch attempt {:?}", i);
 
-            let call_builder = if chain_client.legacy_gas_estimation {
-                let gas_estimate = match call_builder.estimate_gas().await {
-                    Ok(estimate) => estimate,
-                    Err(err) => {
-                        error!("Failed to estimate gas, {:?}", err);
-                        return Ok(());
-                    }
-                };
-                info!("Gas estimate {:?}", gas_estimate);
-                call_builder.clone().gas(gas_estimate * 130 / 100) // Apply multiplier
-            } else {
-                let call_builder = call_builder.clone();
-                if let Err(contract_err) = call_builder.call().await {
-                    use alloy::{contract::Error, transports::RpcError};
-                    match contract_err {
-                        Error::TransportError(RpcError::ErrorResp(e)) => {
-                            if let Ok(revert_code) = e.deser_data::<String>() {
-                                // TODO: how to properly decipher this specific error?
-                                warn!(
-                                    "Event {event:?} already dispatched {}.{} (error: {revert_code})",
-                                    event.target_chain_id, event.nonce
-                                );
-                            }
+            let call_builder = if chain_client.estimate_gas {
+                let call_builder = if chain_client.legacy_gas_estimation {
+                    let gas_estimate = match call_builder.estimate_gas().await {
+                        Ok(estimate) => estimate,
+                        Err(err) => {
+                            error!("Failed to estimate gas, {:?}", err);
                             return Ok(());
                         }
-                        _ => {
-                            tokio::time::sleep(Duration::from_secs(1)).await;
-                            continue;
+                    };
+                    info!("Gas estimate {:?}", gas_estimate);
+                    call_builder.clone().gas(gas_estimate * 130 / 100) // Apply multiplier
+                } else {
+                    let call_builder = call_builder.clone();
+                    if let Err(contract_err) = call_builder.call().await {
+                        use alloy::{contract::Error, transports::RpcError};
+                        match contract_err {
+                            Error::TransportError(RpcError::ErrorResp(e)) => {
+                                if let Ok(revert_code) = e.deser_data::<String>() {
+                                    // TODO: how to properly decipher this specific error?
+                                    warn!(
+                                                "Event {event:?} already dispatched {}.{} (error: {revert_code})",
+                                                event.target_chain_id, event.nonce
+                                            );
+                                }
+                                return Ok(());
+                            }
+                            _ => {
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                                continue;
+                            }
                         }
                     }
-                }
+                    call_builder
+                };
                 call_builder
+            } else {
+                call_builder.clone()
             };
 
             // Make the actual call
