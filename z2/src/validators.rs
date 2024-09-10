@@ -124,7 +124,7 @@ pub async fn get_chain_spec_config(chain_name: &str) -> Result<Value> {
 pub async fn gen_validator_startup_script(config: &ChainConfig) -> Result<()> {
     println!("✌️ Generating the validator startup scripts and configuration");
     println!("📋 Chain specification: {}", config.name);
-    println!("👤 Role: External Validator");
+    println!("👤 Role: Node");
 
     let mut file_path = env::current_dir()?;
     let mut tera_template: Tera = Default::default();
