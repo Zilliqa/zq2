@@ -5,8 +5,8 @@
 Unreleased changes.
 
 - [#1321](https://github.com/Zilliqa/zq2/issues/1321): Begin assembling a block proposal before a supermajority of votes is received.
-- [#1024](https://github.com/Zilliqa/zq2/issues/1024): Convert contract code and state from ZQ1 persistence
-- 
+- [#1024](https://github.com/Zilliqa/zq2/issues/1024): Convert contract code and state from ZQ1 persistence.
+
 ## [0.2.0] - 2024-09-05
 
 - [#1358](https://github.com/Zilliqa/zq2/pull/1358): Support `_codehash` in Scilla contracts.
