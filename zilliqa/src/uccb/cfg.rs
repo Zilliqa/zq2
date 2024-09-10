@@ -7,15 +7,18 @@ pub struct ZQ2Config {
     pub rpc_url: String,
     pub chain_gateway_address: Address,
     pub validator_manager_address: Address,
-    #[serde(default)]
-    pub legacy_gas_estimation: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChainConfig {
+    // Must be ws:// to support subscriptions.
     pub rpc_url: String,
     pub chain_gateway_address: Address,
+    #[serde(default)]
+    pub estimate_gas: bool,
+    #[serde(default)]
+    pub legacy_gas_estimation: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

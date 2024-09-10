@@ -1,4 +1,5 @@
-use crate::uccb::cfg::ChainConfig;
+use std::sync::Arc;
+
 use alloy::{
     network::{Ethereum, EthereumWallet},
     primitives::{Address, U256},
@@ -7,7 +8,8 @@ use alloy::{
     signers::local::PrivateKeySigner,
 };
 use anyhow::Result;
-use std::sync::Arc;
+
+use crate::uccb::cfg::ChainConfig;
 
 pub type ChainProvider = FillProvider<
     JoinFill<
@@ -27,6 +29,8 @@ pub struct ChainClient {
     pub chain_gateway_address: Address,
     pub chain_id: U256,
     pub signer: PrivateKeySigner,
+    pub estimate_gas: bool,
+    pub legacy_gas_estimation: bool,
 }
 
 impl ChainClient {
@@ -62,6 +66,8 @@ impl ChainClient {
             signer,
             chain_id: U256::from(chain_id),
             chain_gateway_address,
+            estimate_gas: config.estimate_gas,
+            legacy_gas_estimation: config.legacy_gas_estimation,
         })
     }
 }
