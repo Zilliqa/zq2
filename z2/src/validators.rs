@@ -132,7 +132,7 @@ pub async fn gen_validator_startup_script(config: &ChainConfig) -> Result<()> {
 
     tera_template.add_raw_template(
         "start_validator",
-        include_str!("../resources/start_validator.tera.sh"),
+        include_str!("../resources/start_node.tera.sh"),
     )?;
 
     context.insert("version", &config.version);
