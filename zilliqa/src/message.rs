@@ -39,12 +39,12 @@ impl Proposal {
     /// ```Arguments```
     ///
     /// * `block`: the Block, including the header and the full list of transaction hashes
-    /// included in the block (and proposal)
+    ///   included in the block (and proposal)
     ///
     /// * `full_transactions`: the transactions whose full `Transaction` bodies will be
-    /// included in the proposal. The difference between `block.transactions` and
-    /// `full_transactions` make up the `opaque_transactions` (i.e. transactions only known
-    /// by their hash).
+    ///   included in the proposal. The difference between `block.transactions` and
+    ///   `full_transactions` make up the `opaque_transactions` (i.e. transactions only known
+    ///   by their hash).
     pub fn from_parts(block: Block, full_transactions: Vec<VerifiedTransaction>) -> Self {
         Self::from_parts_with_hashes(
             block,

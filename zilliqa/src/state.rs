@@ -31,6 +31,7 @@ use crate::{
 /// The state of the blockchain, consisting of:
 /// -  state - a database of Map<Address, Map<key,value>>
 /// -  accounts, Map<Address, Account>
+///
 /// where an address is a 20-byte array representing a user.
 /// where Account is (nonce, code, storage_root)
 /// the storage root is used to index into the state
