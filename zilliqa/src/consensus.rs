@@ -409,11 +409,6 @@ impl Consensus {
 
         trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", self.view.get_view(), time_since_last_view_change, exponential_backoff_timeout, self.high_qc.view, head_block.hash());
 
-        let view_difference = self.view.get_view().saturating_sub(self.high_qc.view);
-        let consensus_timeout_ms = self.config.consensus.consensus_timeout.as_millis() as u64;
-        let next_exponential_backoff_timeout =
-            consensus_timeout_ms * 2u64.pow((view_difference + 1) as u32);
-
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
             anyhow!("missing block corresponding to our high qc - this should never happen")
         })?;
@@ -427,6 +422,10 @@ impl Consensus {
             return Ok(None);
         }
 
+        let view_difference = self.view.get_view().saturating_sub(self.high_qc.view);
+        let consensus_timeout_ms = self.config.consensus.consensus_timeout.as_millis() as u64;
+        let next_exponential_backoff_timeout =
+            consensus_timeout_ms * 2u64.pow(((view_difference + 1) as u32).saturating_sub(2));
         info!(
             "***** TIMEOUT: View is now {} -> {}. Next view change in {}ms",
             self.view.get_view(),
