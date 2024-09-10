@@ -20,8 +20,8 @@ use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
 use revm::Inspector;
 use revm_inspectors::tracing::{
-    js::{JsInspector, TransactionContext},
-    FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
+    js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
+    TransactionContext,
 };
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
@@ -652,7 +652,7 @@ impl Node {
                     };
 
                     Ok(Some(TraceResult::Success {
-                        result: FourByteFrame::from(inspector).into(),
+                        result: FourByteFrame::from(&inspector).into(),
                         tx_hash: Some(txn_hash.0.into()),
                     }))
                 }
@@ -690,7 +690,7 @@ impl Node {
                     let state_ref = &(*state);
                     let trace = inspector.into_geth_builder().geth_prestate_traces(
                         &result,
-                        prestate_config,
+                        &prestate_config,
                         state_ref,
                     )?;
 

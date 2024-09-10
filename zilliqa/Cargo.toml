@@ -26,7 +26,7 @@ anyhow = { version = "1.0.87", features = ["backtrace"] }
 vergen = { version = "8.3.1", features = ["git", "git2"] }
 
 [dependencies]
-alloy = { version = "0.2.1", default-features = false, features = ["consensus", "eips", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
+alloy = { version = "0.3.2", default-features = false, features = ["consensus", "eips", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 anyhow = { version = "1.0.87", features = ["backtrace"] }
 async-trait = "0.1.81"
 base64 = "0.22.1"
@@ -56,8 +56,8 @@ prost = "0.13.1"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rand_core = "0.6.4"
-revm = { version = "12.1.0", features = ["optional_no_base_fee"] }
-revm-inspectors = { version = "0.5.5", features = ["js-tracer"] }
+revm = { version = "14.0.1", features = ["optional_no_base_fee"] }
+revm-inspectors = { version = "0.6.0", features = ["js-tracer"] }
 rusqlite = { version = "0.32.1", features = ["bundled", "trace"] }
 serde = { version = "1.0.210", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"
@@ -76,16 +76,16 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 cbor4ii = "0.3.2"
 scilla-parser = "1.0.0"
-blsful = "2.5.7"
+blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
 bech32 = "0.11.0"
 cfg-if = "1.0.0"
 
 [dev-dependencies]
-alloy = { version = "0.2.1", default-features = false, features = ["rand"] }
+alloy = { version = "0.3.2", default-features = false, features = ["rand"] }
 async-trait = "0.1.81"
 criterion = "0.5.1"
 ethers = { version = "2.0.14", default-features = false, features = ["legacy"] }
-foundry-compilers = { version = "0.10.3", features = ["svm-solc"] }
+foundry-compilers = { version = "0.11.0", features = ["svm-solc"] }
 fs_extra = "1.3.0"
 indicatif = "0.17.8"
 primitive-types = { version = "0.12.2" }
