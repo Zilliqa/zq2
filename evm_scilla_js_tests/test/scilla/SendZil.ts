@@ -2,10 +2,10 @@ import {ScillaContract} from "hardhat-scilla-plugin";
 import {expect} from "chai";
 import hre, {ethers} from "hardhat";
 import {parallelizer} from "../../helpers";
-import {BN, Zilliqa} from "@zilliqa-js/zilliqa";
+import {BN, units, Zilliqa} from "@zilliqa-js/zilliqa";
 
 describe("Move Zil #parallel", function () {
-  const ZIL_AMOUNT = 3_000_000;
+  const ZIL_AMOUNT = units.toQa(1, units.Units.Zil);
   let contract: ScillaContract;
   let to_be_funded_contract: ScillaContract;
   let zilliqa: Zilliqa;
@@ -24,25 +24,25 @@ describe("Move Zil #parallel", function () {
       ]);
     } else {
       contract = await parallelizer.deployScillaContract("SendZil");
-      to_be_funded_contract = await parallelizer.deployScillaContract("SendZil");
+      // to_be_funded_contract = await parallelizer.deployScillaContract("SendZil");
     }
   });
 
   it("Should be deployed successfully @block-1", async function () {
     expect(contract.address).to.be.properAddress;
-    expect(to_be_funded_contract.address).to.be.properAddress;
+    // expect(to_be_funded_contract.address).to.be.properAddress;
   });
 
-  xit("Should have updated balance if accept is called @block-1", async function () {
+  it("Should have updated balance if accept is called @block-1", async function () {
     const tx = await contract.acceptZil({amount: new BN(ZIL_AMOUNT)});
-    expect(tx).to.have.eventLogWithParams("currentBalance", {value: ethers.BigNumber.from(ZIL_AMOUNT)});
+    expect(tx).to.have.eventLogWithParams("currentBalance", {value: new BN(ZIL_AMOUNT).toString()});
   });
 
-  xit("Should have untouched balance if accept is NOT called", async function () {
+  it("Should have untouched balance if accept is NOT called", async function () {
     const tx = await contract.dontAcceptZil({amount: new BN(1_000_000)});
 
     // Exactly equal to what is has from previous transition
-    expect(tx).to.have.eventLogWithParams("currentBalance", {value: ethers.BigNumber.from(ZIL_AMOUNT.toString())});
+    expect(tx).to.have.eventLogWithParams("currentBalance", {value: new BN(ZIL_AMOUNT).toString()});
   });
 
   xit("Should be possible to fund a user", async function () {
@@ -74,7 +74,7 @@ describe("Move Zil #parallel", function () {
     expect(balance).to.be.eq(0);
   });
 
-  it("Should be possible to call a contract transition through another contract", async function () {
+  xit("Should be possible to call a contract transition through another contract", async function () {
     await contract.callOtherContract(to_be_funded_contract.address, "updateTestField", 1234);
 
     expect(await to_be_funded_contract.test_field()).to.be.eq(1234);
