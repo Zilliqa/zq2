@@ -1,6 +1,7 @@
 //! A debugging API.
 
 #![allow(unused_imports)]
+use super::to_hex::ToHex;
 use crate::block_store::BlockStoreStatus;
 use crate::node::Node;
 use crate::range_map::RangeMap;
@@ -19,24 +20,25 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
         node,
         [
-            ("zdebug_fish", fish),
-            ("zdebug_echo", echo),
-            ("zdebug_blockstore", blocks),
-            ("zdebug_forget", forget),
-            ("zdebug_request", request)
+            ("zdbg_echo", echo),
+            ("zdbg_blockstore", blocks),
+            ("zdbg_forget", forget),
+            ("zdbg_request", request),
+            ("zdbg_checkpoint", checkpoint)
         ]
     )
 }
 
-fn echo(params: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("echo: params: {:?}", params);
-    let mut params = params.sequence();
-    let msg: String = params.next()?;
-    Ok(msg)
+fn checkpoint(_params: Params, node: &Arc<Mutex<Node>>) -> Result<(String, String, String)> {
+    let mut node = node.lock().unwrap();
+    let block = node.number();
+    let (file_name, hash) = node.consensus.checkpoint_at(block)?;
+    // Horrid, but better than making changes all over the code just to support this.
+    Ok((file_name, hash, block.to_hex()))
 }
 
-fn fish(params: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("fish: params: {:?}", params);
+fn echo(params: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
+    trace!("echo: params: {:?}", params);
     let mut params = params.sequence();
     let msg: String = params.next()?;
     Ok(msg)

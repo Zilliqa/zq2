@@ -351,6 +351,7 @@ impl Setup {
                 "Node {node_index} has RPC port {0}",
                 node_config.json_rpc_port
             );
+
             let data_dir_name = format!("{0}{1}", DATADIR_PREFIX, node_index);
             let mut path = PathBuf::from(&self.config_dir);
             path.push(&data_dir_name);
@@ -366,6 +367,9 @@ impl Setup {
             let mut full_node_data_path = PathBuf::from(&self.config_dir);
             full_node_data_path.push(&data_dir_name);
             full_node_data_path.push("data");
+            //let mut checkpoint_data_path = PathBuf::from(&self.config_dir);
+            //checkpoint_data_path.push(&data_dir_name);
+            //checkpoint_data_path.push("checkpoints");
             // Create if doesn't exist
             tokio::fs::create_dir(&full_node_data_path).await?;
             node_config.disable_rpc = false;

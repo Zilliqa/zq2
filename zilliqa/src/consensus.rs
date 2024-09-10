@@ -23,7 +23,7 @@ use crate::{
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
     crypto::{verify_messages, Hash, NodePublicKey, NodePublicKeyRaw, NodeSignature, SecretKey},
-    db::Db,
+    db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
@@ -1872,6 +1872,34 @@ impl Consensus {
         }
 
         Ok(())
+    }
+
+    /// Trigger a checkpoint, for debugging.
+    /// Returns (file_name, block_hash). At some time after you call this function, hopefully a checkpoint will end up in the file
+    pub fn checkpoint_at(&mut self, block_number: u64) -> Result<(String, String)> {
+        let block = self
+            .get_block_by_number(block_number)?
+            .ok_or(anyhow!("No such block number {block_number}"))?;
+        let parent = self
+            .db
+            .get_block_by_hash(&block.parent_hash())?
+            .ok_or(anyhow!(
+                "Trying to checkpoint block, but we don't have its parent"
+            ))?;
+        let checkpoint_dir = self
+            .db
+            .get_checkpoint_dir()?
+            .ok_or(anyhow!("No checkpoint directory configured"))?;
+        let file_name = db::get_checkpoint_filename(checkpoint_dir.clone(), &block)?;
+        let hash = block.hash();
+        self.message_sender
+            .send_message_to_coordinator(InternalMessage::ExportBlockCheckpoint(
+                Box::new(block),
+                Box::new(parent),
+                self.db.state_trie()?.clone(),
+                checkpoint_dir,
+            ))?;
+        Ok((file_name.display().to_string(), hash.to_string()))
     }
 
     /// Check the validity of a block. Returns `Err(_, true)` if this block could become valid in the future and
