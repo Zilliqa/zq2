@@ -124,26 +124,26 @@ pub async fn get_chain_spec_config(chain_name: &str) -> Result<Value> {
 pub async fn gen_validator_startup_script(config: &ChainConfig) -> Result<()> {
     println!("✌️ Generating the validator startup scripts and configuration");
     println!("📋 Chain specification: {}", config.name);
-    println!("👤 Role: External Validator");
+    println!("👤 Role: Node");
 
     let mut file_path = env::current_dir()?;
     let mut tera_template: Tera = Default::default();
     let mut context = tera::Context::new();
 
     tera_template.add_raw_template(
-        "start_validator",
-        include_str!("../resources/start_validator.tera.sh"),
+        "start_node",
+        include_str!("../resources/start_node.tera.sh"),
     )?;
 
     context.insert("version", &config.version);
     context.insert("chain_name", &config.name);
 
     let script = tera_template
-        .render("start_validator", &context)
-        .context("Whilst rendering start_validator.sh script")?;
+        .render("start_node", &context)
+        .context("Whilst rendering start_node.sh script")?;
     config.write().await?;
 
-    file_path.push("start_validator.sh");
+    file_path.push("start_node.sh");
     let mut fh = File::create(file_path.clone()).await?;
     fh.write_all(script.as_bytes()).await?;
 
