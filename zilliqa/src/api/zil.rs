@@ -70,6 +70,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetTxBlockRate", get_tx_block_rate),
             ("TxBlockListing", tx_block_listing),
             ("GetNumPeers", get_num_peers),
+            ("GetTransactionRate", get_tx_rate),
         ],
     )
 }
@@ -690,4 +691,27 @@ fn get_num_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u64> {
     let node = node.lock().unwrap();
     let num_peers = node.get_peer_num();
     Ok(num_peers as u64)
+}
+
+// Calculates transaction rate over the most recent block
+fn get_tx_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<f64> {
+    let node = node.lock().unwrap();
+    let head_block_num = node.get_chain_tip();
+    if head_block_num <= 1 {
+        return Ok(0.0);
+    }
+    let prev_block_num = head_block_num - 1;
+    let head_block = node
+        .get_block(head_block_num)?
+        .ok_or(anyhow!("Unable to get block"))?;
+    let prev_block = node
+        .get_block(prev_block_num)?
+        .ok_or(anyhow!("Unable to get block"))?;
+    let transactions_between = head_block.transactions.len() as f64;
+    let time_between = head_block
+        .header
+        .timestamp
+        .duration_since(prev_block.header.timestamp)?;
+    let transaction_rate = transactions_between / time_between.as_secs_f64();
+    Ok(transaction_rate)
 }
