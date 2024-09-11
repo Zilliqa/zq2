@@ -5,7 +5,7 @@ import {parallelizer} from "../../helpers";
 import {BN, units, Zilliqa} from "@zilliqa-js/zilliqa";
 
 describe("Move Zil #parallel", function () {
-  const ZIL_AMOUNT = units.toQa(1, units.Units.Zil);
+  const ZIL_AMOUNT = units.toQa(0.1, units.Units.Zil);
   let contract: ScillaContract;
   let to_be_funded_contract: ScillaContract;
   let zilliqa: Zilliqa;
@@ -39,7 +39,7 @@ describe("Move Zil #parallel", function () {
   });
 
   it("Should have untouched balance if accept is NOT called", async function () {
-    const tx = await contract.dontAcceptZil({amount: new BN(1_000_000)});
+    const tx = await contract.dontAcceptZil({amount: ZIL_AMOUNT});
 
     // Exactly equal to what is has from previous transition
     expect(tx).to.have.eventLogWithParams("currentBalance", {value: new BN(ZIL_AMOUNT).toString()});
@@ -47,27 +47,27 @@ describe("Move Zil #parallel", function () {
 
   it("Should be possible to fund a user", async function () {
     const account = ethers.Wallet.createRandom();
-    await contract.fundUser(account.address, 1_000_000);
+    await contract.fundUser(account.address, ZIL_AMOUNT);
 
     const balanceResponse = await zilliqa.blockchain.getBalance(account.address);
     const balance = Number.parseInt(balanceResponse.result.balance);
-    expect(balance).to.be.eq(1_000_000);
+    expect(balance).to.be.eq(ZIL_AMOUNT);
   });
 
   it("Should be possible to fund a user with an AddFunds message", async function () {
     const account = ethers.Wallet.createRandom();
-    const result = await contract.fundUserWithTag(account.address, 1_000_000);
+    const result = await contract.fundUserWithTag(account.address, ZIL_AMOUNT);
     const balanceResponse = await zilliqa.blockchain.getBalance(account.address);
     const balance = Number.parseInt(balanceResponse.result.balance);
-    expect(balance).to.be.eq(1_000_000);
+    expect(balance).to.be.eq(ZIL_AMOUNT);
   });
 
-  xit("Should be possible to fund a contract", async function () {
-    await contract.fundContract(to_be_funded_contract.address, 1_000_000);
+  it("Should be possible to fund a contract", async function () {
+    await contract.fundContract(to_be_funded_contract.address, ZIL_AMOUNT);
 
     let balanceResponse = await zilliqa.blockchain.getBalance(to_be_funded_contract.address!);
     let balance = Number.parseInt(balanceResponse.result.balance);
-    expect(balance).to.be.eq(1_000_000);
+    expect(balance).to.be.eq(ZIL_AMOUNT);
 
     balanceResponse = await zilliqa.blockchain.getBalance(contract.address!);
     balance = Number.parseInt(balanceResponse.result.balance);
