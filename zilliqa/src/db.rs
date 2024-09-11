@@ -246,6 +246,7 @@ impl Db {
                 accepted INTEGER,
                 errors BLOB,
                 exceptions BLOB);
+            CREATE INDEX IF NOT EXISTS block_hash_index ON receipts (block_hash);
             CREATE TABLE IF NOT EXISTS touched_address_index (
                 address BLOB,
                 tx_hash BLOB REFERENCES transactions (tx_hash) ON DELETE CASCADE,
@@ -632,6 +633,14 @@ impl Db {
 
     pub fn insert_block(&self, block: &Block) -> Result<()> {
         self.insert_block_with_db_tx(&self.block_store.lock().unwrap(), block)
+    }
+
+    pub fn remove_block(&self, block: &Block) -> Result<()> {
+        self.block_store.lock().unwrap().execute(
+            "DELETE FROM blocks WHERE block_hash = ?1",
+            [block.header.hash],
+        )?;
+        Ok(())
     }
 
     fn get_transactionless_block(&self, key: Either<&Hash, &u64>) -> Result<Option<Block>> {

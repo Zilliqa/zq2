@@ -43,7 +43,7 @@ impl Runner {
         cmd.current_dir(&dir);
         cmd.env("NO_CHECKOUT", "1");
         cmd.env("USE_ZQ2_FROM", &zq2_dir);
-        cmd.env("SERVEOPTS", &format!("-a {listen_hostport}"));
+        cmd.env("SERVEOPTS", format!("-a {listen_hostport}"));
         let join_handlers = collector::spawn(
             &mut cmd,
             &dir,
