@@ -7,6 +7,7 @@ use std::{
     path::PathBuf,
     process::{self, Stdio},
     str::FromStr,
+    sync::Arc,
 };
 
 use anyhow::{anyhow, Result};
@@ -22,14 +23,16 @@ use tera::{Context, Tera};
 use tokio::{
     fs::{self, File},
     io::AsyncWriteExt,
+    sync::Semaphore,
     task,
 };
 use zilliqa::node::Node;
 
 use crate::{
     address::EthereumAddress,
+    chain::Chain,
     github::{self, get_release_or_commit},
-    node::get_nodes,
+    node::{get_nodes, ChainNode},
     validators,
 };
 
@@ -315,59 +318,100 @@ pub async fn install_or_upgrade(config_file: &str, is_upgrade: bool) -> Result<(
     let mut node_roles = config.roles.clone();
     node_roles.sort();
 
-    for node_role in node_roles {
-        // Create a list of instances we need to update
-        let nodes = get_nodes(
-            &config.name,
-            config.eth_chain_id,
-            &config.project_id,
-            node_role.clone(),
-            versions.clone(),
-        )
-        .await?;
+    let mut bootstrap_nodes = vec![];
+    let mut chain_nodes = vec![];
+    let mut apps_nodes = vec![];
 
-        let futures = nodes
-            .into_iter()
-            .map(|node| {
-                task::spawn(async move {
-                    let result = if is_upgrade {
-                        node.upgrade().await
-                    } else {
-                        node.install().await
-                    };
-                    (node, result)
-                })
-            })
-            .collect::<Vec<_>>();
+    for node_role in node_roles.clone() {
+        match node_role {
+            NodeRole::Bootstrap => bootstrap_nodes.extend(
+                get_nodes(
+                    &config.name,
+                    config.eth_chain_id,
+                    &config.project_id,
+                    node_role.clone(),
+                    versions.clone(),
+                )
+                .await?,
+            ),
+            NodeRole::Apps => apps_nodes.extend(
+                get_nodes(
+                    &config.name,
+                    config.eth_chain_id,
+                    &config.project_id,
+                    node_role.clone(),
+                    versions.clone(),
+                )
+                .await?,
+            ),
+            _ => chain_nodes.extend(
+                get_nodes(
+                    &config.name,
+                    config.eth_chain_id,
+                    &config.project_id,
+                    node_role.clone(),
+                    versions.clone(),
+                )
+                .await?,
+            ),
+        }
+    }
 
-        let results = futures::future::join_all(futures).await;
+    let _ = execute_install_or_upgrade(bootstrap_nodes, is_upgrade).await;
+    let _ = execute_install_or_upgrade(chain_nodes, is_upgrade).await;
+    let _ = execute_install_or_upgrade(apps_nodes, is_upgrade).await;
 
-        let mut successes = vec![];
-        let mut failures = vec![];
+    Ok(())
+}
 
-        for result in results {
-            match result? {
-                (node, Ok(())) => successes.push(node.name()),
-                (node, Err(err)) => {
-                    println!("Node {} failed with error: {}", node.name(), err);
-                    failures.push(node.name());
-                }
+async fn execute_install_or_upgrade(nodes: Vec<ChainNode>, is_upgrade: bool) -> Result<()> {
+    let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
+    let mut futures = vec![];
+
+    for node in nodes {
+        let permit = semaphore.clone().acquire_owned().await?;
+        let future = task::spawn(async move {
+            let result = if is_upgrade {
+                node.upgrade().await
+            } else {
+                node.install().await
+            };
+            drop(permit); // Release the permit when the task is done
+            (node, result)
+        });
+        futures.push(future);
+    }
+
+    let results = futures::future::join_all(futures).await;
+
+    let mut successes = vec![];
+    let mut failures = vec![];
+
+    for result in results {
+        match result? {
+            (node, Ok(())) => successes.push(node.name()),
+            (node, Err(err)) => {
+                println!("Node {} failed with error: {}", node.name(), err);
+                failures.push(node.name());
             }
         }
+    }
 
-        if !successes.is_empty() {
-            println!("Successes: {}", successes.join(" "));
-        }
+    for success in successes {
+        log::info!("SUCCESS: {}", success);
+    }
 
-        if !failures.is_empty() {
-            println!("Failures: {}", failures.join(" "));
-        }
+    for failure in failures {
+        log::error!("FAILURE: {}", failure);
     }
 
     Ok(())
 }
 
 pub async fn get_deposit_commands(config_file: &str) -> Result<()> {
+    let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
+    let mut futures = vec![];
+
     let config = fs::read_to_string(config_file).await?;
     let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
     let versions = config.versions;
@@ -389,6 +433,76 @@ pub async fn get_deposit_commands(config_file: &str) -> Result<()> {
     );
 
     for node in nodes {
+        let permit = semaphore.clone().acquire_owned().await?;
+        let future = task::spawn(async move {
+            let result = get_node_deposit_commands(&node).await;
+            drop(permit); // Release the permit when the task is done
+            (node, result)
+        });
+        futures.push(future);
+    }
+
+    let results = futures::future::join_all(futures).await;
+
+    for result in results {
+        if let (node, Err(err)) = result? {
+            log::error!("Node {} failed with error: {}", node.name(), err);
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn get_node_deposit_commands(node: &ChainNode) -> Result<()> {
+    let genesis_private_key = node.get_genesis_key();
+    let private_keys = node.get_private_key().await?;
+    let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
+    let reward_private_keys = node.get_wallet_private_key().await?;
+    let node_reward_ethereum_address = EthereumAddress::from_private_key(&reward_private_keys)?;
+
+    println!("Validator {}:", node.get_node_name());
+    println!("z2 deposit --chain {} \\", node.chain()?);
+    println!("\t--peer-id {} \\", node_ethereum_address.peer_id);
+    println!("\t--public-key {} \\", node_ethereum_address.bls_public_key);
+    println!(
+        "\t--pop-signature {} \\",
+        node_ethereum_address.bls_pop_signature
+    );
+    println!("\t--private-key {} \\", genesis_private_key);
+    println!(
+        "\t--reward-address {} \\",
+        node_reward_ethereum_address.address
+    );
+    println!("\t--amount 100\n");
+
+    Ok(())
+}
+
+pub async fn run_deposit(config_file: &str) -> Result<()> {
+    let config = fs::read_to_string(config_file).await?;
+    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let versions = config.versions;
+    let chain_name = &config.name;
+
+    // Create a list of validators instances
+    let nodes = get_nodes(
+        chain_name,
+        config.eth_chain_id,
+        &config.project_id,
+        NodeRole::Validator,
+        versions.clone(),
+    )
+    .await?;
+
+    println!(
+        "Running stake deposit for the validators in the chain {}",
+        chain_name
+    );
+
+    let mut successes = vec![];
+    let mut failures = vec![];
+
+    for node in nodes {
         let genesis_private_key = node.get_genesis_key();
         let private_keys = node.get_private_key().await?;
         let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
@@ -396,19 +510,40 @@ pub async fn get_deposit_commands(config_file: &str) -> Result<()> {
         let node_reward_ethereum_address = EthereumAddress::from_private_key(&reward_private_keys)?;
 
         println!("Validator {}:", node.get_node_name());
-        println!("z2 deposit --chain {} \\", chain_name);
-        println!("\t--peer-id {} \\", node_ethereum_address.peer_id);
-        println!("\t--public-key {} \\", node_ethereum_address.bls_public_key);
-        println!(
-            "\t--pop-signature {} \\",
-            node_ethereum_address.bls_pop_signature
-        );
-        println!("\t--private-key {} \\", genesis_private_key);
-        println!(
-            "\t--reward-address {} \\",
-            node_reward_ethereum_address.address
-        );
-        println!("\t--amount 100\n");
+
+        let validator = validators::Validator::new(
+            &node_ethereum_address.peer_id,
+            &node_ethereum_address.bls_public_key,
+            &node_ethereum_address.bls_pop_signature,
+        )?;
+        let stake = validators::StakeDeposit::new(
+            validator,
+            100,
+            chain_name.parse()?,
+            &genesis_private_key,
+            &node_reward_ethereum_address.address,
+        )?;
+
+        let result = validators::deposit_stake(&stake).await;
+
+        match result {
+            Ok(()) => successes.push(node.name()),
+            Err(err) => {
+                println!("Node {} failed with error: {}", node.name(), err);
+                failures.push(node.name());
+            }
+        }
+    }
+
+    for success in successes {
+        log::info!("SUCCESS: {}", success);
+    }
+
+    if !failures.is_empty() {
+        for failure in failures {
+            log::error!("FAILURE: {}", failure);
+        }
+        log::error!("Run `z2 deployer get-deposit-commands <chain_file>` to get the deposit command each node");
     }
 
     Ok(())
