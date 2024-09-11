@@ -1,6 +1,6 @@
 # Title
 
-GetTxRate
+GetTransactionRate
 
 # Keywords
 
@@ -77,6 +77,3 @@ func GetTransactionRate() {
 | `jsonrpc` | string | Required | `"2.0"`                |
 | `method`  | string | Required | `"GetTransactionRate"` |
 | `params`  | string | Required | Empty string `""`      |
-
-
-
