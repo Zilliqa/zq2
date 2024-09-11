@@ -213,7 +213,7 @@ impl TransactionPool {
             // keeping the same nonce. So for those, it will always discard the new (identical)
             // one.
             if ReadyItem::from(existing_txn) >= ReadyItem::from(&txn) {
-                debug!("Received txn with the same nonce but lower gas. Txn hash: {:?}, from: {:?}, nonce: {:?}, gas_limit: {:?}", txn.hash, txn.signer, txn.tx.nonce(), txn.tx.gas_limit());
+                debug!("Received txn with the same nonce but lower gas price. Txn hash: {:?}, from: {:?}, nonce: {:?}, gas_price: {:?}", txn.hash, txn.signer, txn.tx.nonce(), txn.tx.gas_price_per_evm_gas());
                 return false;
             }
             // Remove the existing transaction from `hash_to_index` if we're about to replace it.
