@@ -45,7 +45,7 @@ describe("Move Zil #parallel", function () {
     expect(tx).to.have.eventLogWithParams("currentBalance", {value: new BN(ZIL_AMOUNT).toString()});
   });
 
-  xit("Should be possible to fund a user", async function () {
+  it("Should be possible to fund a user", async function () {
     const account = ethers.Wallet.createRandom();
     await contract.fundUser(account.address, 1_000_000);
 
@@ -54,7 +54,7 @@ describe("Move Zil #parallel", function () {
     expect(balance).to.be.eq(1_000_000);
   });
 
-  xit("Should be possible to fund a user with an AddFunds message", async function () {
+  it("Should be possible to fund a user with an AddFunds message", async function () {
     const account = ethers.Wallet.createRandom();
     const result = await contract.fundUserWithTag(account.address, 1_000_000);
     const balanceResponse = await zilliqa.blockchain.getBalance(account.address);
