@@ -36,10 +36,12 @@ transition fundUser (user : ByStr20, amount : Uint128)
   send msgs
 end
 
-transition fundContract (contract_address : ByStr20, amount : Uint128)
-  msg = { _tag : "acceptZil" ; _recipient : contract_address ; _amount : amount };
+transition fundContracts (contract_address1 : ByStr20, amount1 : Uint128, contract_address2 : ByStr20, amount2 : Uint128)
+  msg1 = { _tag : "acceptZil" ; _recipient : contract_address1 ; _amount : amount1 };
+  msg2 = { _tag : "acceptZil" ; _recipient : contract_address2 ; _amount : amount2 };
   no_msg = Nil {Message};
-  msgs = Cons {Message} msg no_msg;
+  msgs = Cons {Message} msg2 no_msg;
+  msgs = Cons {Message} msg1 msgs;
   send msgs
 end
 
