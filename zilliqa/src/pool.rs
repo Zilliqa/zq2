@@ -4,6 +4,7 @@ use std::{
 };
 
 use alloy::primitives::Address;
+use tracing::debug;
 
 use crate::{
     crypto::Hash,
@@ -198,6 +199,7 @@ impl TransactionPool {
 
     pub fn insert_transaction(&mut self, txn: VerifiedTransaction, account_nonce: u64) -> bool {
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
+            debug!("Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}", txn.hash, txn.signer, txn.tx.nonce());
             // This transaction is permanently invalid, so there is nothing to do.
             return false;
         }
@@ -211,6 +213,7 @@ impl TransactionPool {
             // keeping the same nonce. So for those, it will always discard the new (identical)
             // one.
             if ReadyItem::from(existing_txn) >= ReadyItem::from(&txn) {
+                debug!("Received txn with the same nonce but lower gas. Txn hash: {:?}, from: {:?}, nonce: {:?}, gas_limit: {:?}", txn.hash, txn.signer, txn.tx.nonce(), txn.tx.gas_limit());
                 return false;
             }
             // Remove the existing transaction from `hash_to_index` if we're about to replace it.
@@ -224,10 +227,11 @@ impl TransactionPool {
             self.ready.push((&txn).into());
         }
 
+        debug!("Txn added to mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}", txn.hash, txn.signer, txn.tx.nonce());
+
         // Finally we insert it into the tx store and the hash reverse-index
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
         self.transactions.insert(txn.mempool_index(), txn);
-
         true
     }
 
