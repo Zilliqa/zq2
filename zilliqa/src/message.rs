@@ -255,7 +255,20 @@ impl Display for ExternalMessage {
                     (None, Some(_)) => unreachable!(),
                 }
             }
-            ExternalMessage::NewTransaction(_) => write!(f, "NewTransaction"),
+            ExternalMessage::NewTransaction(txn) => match txn.clone().verify() {
+                Ok(txn) => {
+                    write!(
+                        f,
+                        "NewTransaction(Hash: {:?}, from: {:?}, nonce: {:?})",
+                        txn.hash,
+                        txn.signer,
+                        txn.tx.nonce()
+                    )
+                }
+                Err(err) => {
+                    write!(f, "NewTransaction(Unable to verify txn due to: {:?})", err)
+                }
+            },
             ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
         }
     }
