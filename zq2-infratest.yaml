@@ -8,6 +8,6 @@ roles:
 - apps
 - checkpoint
 versions:
-  zq2: 9f66a16e
+  zq2: b5ea0782
   otterscan: develop
   spout: main

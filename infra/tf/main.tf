@@ -213,8 +213,8 @@ resource "google_compute_health_check" "api" {
   name = "${var.network_name}-jsonrpc"
 
   http_health_check {
-    port_name          = "jsonrpc"
-    port_specification = "USE_NAMED_PORT"
+    port               = "8080"
+    port_specification = "USE_FIXED_PORT"
     request_path       = "/health"
   }
 }
