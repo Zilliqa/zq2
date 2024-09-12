@@ -2,10 +2,14 @@
 
 ## [Unreleased]
 
-Unreleased changes.
+Unreleased changes, in reverse chronological order. New entries are added at the top of this list.
 
-- [#1403](https://github.com/Zilliqa/zq2/pull/1403): Implement getTxRate API call
-- [#1024](https://github.com/Zilliqa/zq2/issues/1024): Convert contract code and state from ZQ1 persistence.
+- [#1423](https://github.com/Zilliqa/zq2/pull/1423): Fix invalid value returned by calling `_balance` in a scilla transition.
+
+## [0.3.0] - 2024-09-12
+
+- [#1403](https://github.com/Zilliqa/zq2/pull/1403): Add `GetTransactionRate` API.
+- [#1359](https://github.com/Zilliqa/zq2/pull/1359): Add tool to convert ZQ1 persistence into a ZQ2 data directory.
 - [#1419](https://github.com/Zilliqa/zq2/pull/1419): Nodes outside the consensus commitee will no longer vote for a new view if a proposal is missed.
 - [#1393](https://github.com/Zilliqa/zq2/pull/1393): Begin assembling a block proposal before a supermajority of votes is received.
 
@@ -40,7 +44,8 @@ Unreleased changes.
 
 Initial release of Zilliqa 2.
 
-[unreleased]: https://github.com/zilliqa/zq2/compare/v0.2.0...HEAD
+[unreleased]: https://github.com/zilliqa/zq2/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/zilliqa/zq2/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/zilliqa/zq2/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/zilliqa/zq2/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/zilliqa/zq2/releases/tag/v0.1.0

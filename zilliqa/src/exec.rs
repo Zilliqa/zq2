@@ -1532,7 +1532,8 @@ pub fn scilla_call(
     while let Some((depth, sender, to_addr, amount, message)) = call_stack.pop() {
         let mut current_state = state.take().expect("missing state");
 
-        let code_and_data = match &current_state.load_account(to_addr)?.account.code {
+        let contract = current_state.load_account(to_addr)?;
+        let code_and_data = match &contract.account.code {
             // EOAs are currently represented by [Code::Evm] with no code.
             Code::Evm(code) if code.is_empty() => None,
             Code::Scilla {
@@ -1584,13 +1585,14 @@ pub fn scilla_call(
 
             let code = code.clone();
             let init_data = serde_json::from_str::<Vec<_>>(init_data)?;
+            let contract_balance = contract.account.balance;
 
             let (output, mut new_state) = scilla.invoke_contract(
                 current_state,
                 to_addr,
                 &code,
                 gas,
-                amount,
+                ZilAmount::from_amount(contract_balance),
                 &init_data,
                 message
                     .as_ref()
