@@ -252,6 +252,7 @@ impl Node {
                     return Ok(());
                 }
 
+                trace!("Received a block request");
                 let proposals = (request.from_view..=request.to_view)
                     .take(self.config.block_request_limit)
                     .filter_map(|view| {
@@ -262,8 +263,8 @@ impl Node {
                     })
                     .collect::<Result<_>>()?;
 
-                trace!("responding to new blocks request of {request:?}");
                 let availability = self.consensus.block_store.availability()?;
+                trace!("responding to new blocks request of {request:?} with availability {availability:?}");
 
                 // Send the response to this block request.
                 self.request_responses.send((
@@ -901,5 +902,4 @@ impl Node {
 
         Ok(())
     }
-
 }

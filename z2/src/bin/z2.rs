@@ -206,7 +206,7 @@ struct DocStruct {
 struct RunStruct {
     config_dir: String,
 
-    /// An optional node spec - <nr_to_run_now>>/<total_nodes_to_provision>
+    /// An optional node spec - use node numbers as comma-separated ranges - <network>/<nodes> - eg. 0-3/0-3
     nodespec: Option<String>,
 
     #[clap(long)]

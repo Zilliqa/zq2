@@ -3,6 +3,7 @@
 #![allow(unused_imports)]
 use super::to_hex::ToHex;
 use crate::block_store::BlockStoreStatus;
+use crate::message::BlockStrategy;
 use crate::node::Node;
 use crate::range_map::RangeMap;
 use anyhow::{anyhow, Result};
@@ -44,10 +45,16 @@ fn echo(params: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(msg)
 }
 
-fn blocks(_params: Params, node: &Arc<Mutex<Node>>) -> Result<BlockStoreStatus> {
+fn blocks(
+    _params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<(BlockStoreStatus, Option<Vec<BlockStrategy>>)> {
     trace!("blocks");
     let mut node = node.lock().unwrap();
-    Ok(BlockStoreStatus::new(&mut node.consensus.block_store)?)
+    Ok((
+        BlockStoreStatus::new(&mut node.consensus.block_store)?,
+        node.consensus.block_store.availability()?,
+    ))
 }
 
 fn forget(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {

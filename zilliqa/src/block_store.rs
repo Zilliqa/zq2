@@ -68,7 +68,7 @@ pub struct BlockStore {
     /// newly created blocks that arrive while we are syncing.
     buffered: LruCache<Hash, Proposal>,
     /// Requests we would like to send, but haven't been able to (e.g. because we have no peers).
-    unserviceable_requests: RangeMap,
+    unserviceable_requests: Option<RangeMap>,
     message_sender: MessageSender,
 
     /// Clock pointer - see request_blocks()
@@ -126,7 +126,7 @@ impl PeerInfo {
             for s in strat {
                 match s {
                     BlockStrategy::CachedViewRange(views, until_view) => {
-                        if self.availability.highest_known_view <= *until_view {
+                        if until_view.map_or(true, |x| self.availability.highest_known_view <= x) {
                             result.with_range(&views);
                             max_end = Some(
                                 max_end.map_or(views.end - 1, |v| std::cmp::max(v, views.end - 1)),
@@ -240,7 +240,7 @@ impl BlockStore {
             buffered: LruCache::new(
                 NonZeroUsize::new(config.max_blocks_in_flight as usize + 100).unwrap(),
             ),
-            unserviceable_requests: RangeMap::new(),
+            unserviceable_requests: None,
             message_sender,
             clock: 0,
         })
@@ -262,7 +262,7 @@ impl BlockStore {
             available_blocks: Vec::new(),
             available_blocks_updated: None,
             buffered: LruCache::new(NonZeroUsize::new(1).unwrap()),
-            unserviceable_requests: RangeMap::new(),
+            unserviceable_requests: None,
             message_sender: self.message_sender.clone(),
             clock: 0,
         })
@@ -293,7 +293,7 @@ impl BlockStore {
                 .db
                 .get_view_ranges()?
                 .iter()
-                .map(|x| BlockStrategy::CachedViewRange(x.clone(), 0))
+                .map(|x| BlockStrategy::CachedViewRange(x.clone(), None))
                 .collect();
             self.available_blocks_updated = Some(now);
         }
@@ -343,10 +343,12 @@ impl BlockStore {
     pub fn retry_us_requests(&mut self) -> Result<()> {
         // Attempt to send pending requests if we can.
         // TODO: find a better way to move this.
-        let us_requests = self.unserviceable_requests.clone();
-        trace!("re-attempting u/s requests {us_requests:?}");
-        self.unserviceable_requests = RangeMap::new();
-        self.request_blocks(&us_requests)?;
+        if let Some(us_requests) = self.unserviceable_requests.take() {
+            trace!(">>> re-attempting u/s requests {us_requests:?}");
+            self.request_blocks(&us_requests)?;
+            trace!("<<< completed re-attempting u/s requests");
+        }
+        self.unserviceable_requests = None;
         Ok(())
     }
 
@@ -456,15 +458,16 @@ impl BlockStore {
                     }
 
                     // Split ..
+                    trace!("peer availability {0:?}", peer_info.availability);
                     let ranges = peer_info.get_ranges(to);
-                    trace!("ranges {ranges:?}");
+                    trace!("I want {remain:?} ({remain}) peer has ranges {ranges:?} ({ranges})");
                     let (req, rem) = ranges.diff_inter(&remain);
                     trace!("req {req:?} rem {rem:?}");
                     // If we are not about to make a request, and we do not have recent availability then
                     // make a synthetic request to get that availability.
                     let query_availability = req.is_empty()
-                        && !peer_info.have_recent_availability()
-                        && peer_info.availability_requested_at.map_or(true, |x| {
+                        && (!peer_info.have_recent_availability())
+                        || peer_info.availability_requested_at.map_or(true, |x| {
                             x.elapsed()
                                 .map(|v| {
                                     v > Duration::from_millis(
@@ -517,7 +520,11 @@ impl BlockStore {
         trace!("All done");
         if !remain.is_empty() {
             warn!("Could not find peers for views {:?}", remain);
-            self.unserviceable_requests.with_range_map(&remain);
+            if let Some(us) = &mut self.unserviceable_requests {
+                us.with_range_map(&remain);
+            } else {
+                self.unserviceable_requests = Some(remain);
+            }
         }
         Ok(true)
     }

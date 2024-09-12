@@ -195,8 +195,8 @@ impl NewView {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum BlockStrategy {
     /// "I have these blocks at the moment and I won't drop them until view .."
-    /// 0 == unlimited.
-    CachedViewRange(Range<u64>, u64),
+    /// None == unlimited
+    CachedViewRange(Range<u64>, Option<u64>),
     /// "We keep everything from the latest cached view to the head"
     Opportunistic,
 }

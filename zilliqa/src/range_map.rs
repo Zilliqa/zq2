@@ -16,7 +16,7 @@ impl Display for RangeMap {
             if got_one {
                 write!(f, ",")?;
             }
-            if r.start > r.end + 1 {
+            if r.start < r.end + 1 {
                 write!(f, "{}-{}", r.start, r.end - 1)?;
             } else {
                 write!(f, "{}", r.start)?;
@@ -126,7 +126,7 @@ impl RangeMap {
         result
     }
 
-    /// Again, mostly for testing
+    /// Again, mostly for testing - from a vector of (half-open!) range tuples.
     pub fn from_tuple_vec(vec: &Vec<(u64, u64)>) -> Self {
         let mut result = Self::new();
         for v in vec {
@@ -214,52 +214,90 @@ impl RangeMap {
         self.ranges.last().map(|x| x.end - 1)
     }
 
-    /// Set difference - remove to_remove from self and return a pair of
-    /// ( intersection, remain )
+    /// Set difference
+    /// Returns (intersection, diff) where
+    /// intersection is the set of things in both self and to_remove
+    /// diff is the set of things in self with the set of things in to_remove removed.
     pub fn diff_inter(&self, to_remove: &Self) -> (Self, Self) {
         //  We proceed in lock-step between the sets.
         let mut intersection = RangeMap::new();
-        let mut remain = RangeMap::new();
+        let mut diff = RangeMap::new();
         let mut self_iter = self.ranges.iter();
         let mut remove_iter = to_remove.ranges.iter();
-        // When we have run out of ranges in self,
-        // no more can ever be in the overlap.
-        // no more can ever be in the things in self that are not in the overlap.
-        // .. so we're done.
-        while let Some(next_self) = self_iter.next() {
-            if let Some(next_remove) = remove_iter.next() {
-                let early = Range {
-                    start: next_self.start,
-                    end: next_remove.start,
-                };
-                let mid = Range {
-                    start: max(next_self.start, next_remove.start),
-                    end: min(next_self.end, next_remove.end),
-                };
-                let late = Range {
-                    start: next_remove.end,
-                    end: next_self.end,
-                };
+        let mut current_remove_iter: Option<Range<u64>> = remove_iter.next().cloned();
+        // Termination: the outer loop terminates when we're through self.
+        // Every step of the inner loop either
+        //  - breaks, or
+        //  - advances remain by one, or
+        //  - breaks remain into a smaller range than it was before.
+        'skip_self: while let Some(next_self) = self_iter.next() {
+            loop {
+                if let Some(current_remove) = &current_remove_iter {
+                    //println!("next_self {next_self:?} current_remove {current_remove:?}");
+                    if current_remove.end <= next_self.start {
+                        // remove is less than the whole of next_self - can't remove any of it.
+                        diff.with_range(current_remove);
+                        current_remove_iter = remove_iter.next().cloned();
+                        // Try again with the next to_remove.
+                        //println!(" .. current_remove > next_self - going around");
+                        continue;
+                    } else if current_remove.start >= next_self.end {
+                        // remove is greater than the whole of self - skip self on.
+                        //println!(" .. current_remove < next_self - pick the next next_self");
+                        break;
+                    } else {
+                        // They overlap.
 
-                if !early.is_empty() {
-                    remain.with_range(&early);
+                        // Early is the things in to_remove that not yet in start.
+                        let early = Range {
+                            start: current_remove.start,
+                            end: next_self.start,
+                        };
+
+                        // mid is the overlap.
+                        let mid = Range {
+                            start: max(next_self.start, current_remove.start),
+                            end: min(next_self.end, current_remove.end),
+                        };
+
+                        // late is the range after current_remove ends.
+                        let late = Range {
+                            start: next_self.end,
+                            end: current_remove.end,
+                        };
+
+                        if !early.is_empty() {
+                            diff.with_range(&early);
+                        }
+                        if !mid.is_empty() {
+                            intersection.with_range(&mid);
+                        }
+
+                        println!(" .. overlap early {early:?} middle {mid:?} late {late:?} .. ");
+                        if late.is_empty() {
+                            // No remaining current range - move on.
+                            //  println!(" ... late is empty. Move remain on.");
+                            current_remove_iter = remove_iter.next().cloned();
+                        } else {
+                            //  println!(" ... late is not empty. Using it next.");
+                            // otherwise we need to work out what the remaining range is and use that instead - it might
+                            // overlap the next range in self.
+                            current_remove_iter = Some(late);
+                        }
+                    }
+                } else {
+                    //println!(" .. nothing more to remove.");
+                    // There is nothing more to remove.
+                    // The rest of self goes into the diff list
+                    self_iter.for_each(|x| {
+                        diff.with_range(x);
+                    });
+                    break 'skip_self;
                 }
-                if !mid.is_empty() {
-                    intersection.with_range(&mid);
-                }
-                if !late.is_empty() {
-                    remain.with_range(&late);
-                }
-            } else {
-                // There is nothing more to remove.
-                // The rest of self goes into the remain list
-                self_iter.for_each(|x| {
-                    remain.with_range(x);
-                });
-                break;
             }
         }
-        (intersection, remain)
+        // println!("Done! {intersection:?} {diff:?}");
+        (intersection, diff)
     }
 }
 
@@ -295,18 +333,46 @@ mod tests {
 
     #[test]
     fn int_diff() {
-        let map1 = RangeMap::from_tuple_vec(&vec![(1, 8), (10, 12), (14, 33)]);
-        let map2 = RangeMap::from_tuple_vec(&vec![(2, 3), (11, 14), (14, 20)]);
+        let have = RangeMap::from_tuple_vec(&vec![(1, 8), (10, 12), (14, 33)]);
+        let want = RangeMap::from_tuple_vec(&vec![(2, 3), (11, 14), (14, 20)]);
 
         println!("----------------------");
-        let (int, rem) = map1.diff_inter(&map2);
+        let (int, rem) = have.diff_inter(&want);
         assert_eq!(
             int,
             RangeMap::from_tuple_vec(&vec![(2, 3), (11, 12), (14, 20)])
         );
+        assert_eq!(rem, RangeMap::from_tuple_vec(&vec![(12, 14)]));
+    }
+
+    #[test]
+    fn int_diff_2() {
+        let have = RangeMap::from_tuple_vec(&vec![
+            (0, 5),
+            (6, 9),
+            (10, 13),
+            (15, 18),
+            (19, 20),
+            (22, 45),
+            (46, 47),
+        ]);
+        let want = RangeMap::from_tuple_vec(&vec![(6, 47)]);
+        let (get, still_want) = have.diff_inter(&want);
+
         assert_eq!(
-            rem,
-            RangeMap::from_tuple_vec(&vec![(1, 2), (3, 8), (10, 11), (20, 33)])
+            get,
+            RangeMap::from_tuple_vec(&vec![
+                (6, 9),
+                (10, 13),
+                (15, 18),
+                (19, 20),
+                (22, 45),
+                (46, 47)
+            ])
+        );
+        assert_eq!(
+            still_want,
+            RangeMap::from_tuple_vec(&vec![(9, 10), (13, 15), (18, 19), (20, 22), (45, 46)])
         );
     }
 

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use alloy::primitives::{address, Address};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
 use serde_yaml;
@@ -169,7 +169,7 @@ impl Setup {
         let config = if let Some(val) = &network {
             // One was specified.
             if loaded_config.is_some() {
-                return Err(anyhow!("{config_dir} already has a configuration saved; please delete it if you want to change the network config (for now!)"));
+                return Err(anyhow!("{config_dir} already has a configuration saved; please delete it if you want to change the network config (for now!), or you can rerun without the explicit network config argument to restart the existing network."));
             } else {
                 Config::from_spec(val, base_port)?
             }
@@ -306,6 +306,7 @@ impl Setup {
             &self.config_dir
         );
         for (node_index, _node_desc) in self.config.shape.nodes.iter() {
+            println!("🎱 Generating configuration for node {node_index}...");
             let mut cfg = zilliqa::cfg::Config {
                 otlp_collector_endpoint: Some("http://localhost:4317".to_string()),
                 bootstrap_address: None,
@@ -349,7 +350,7 @@ impl Setup {
                 enable_debug_api: true,
             };
             println!(
-                "Node {node_index} has RPC port {0}",
+                "🧩  Node {node_index} has RPC port {0}",
                 node_config.json_rpc_port
             );
 
@@ -396,7 +397,7 @@ impl Setup {
             let mut path = PathBuf::from(&self.config_dir);
             path.push(&data_dir_name);
             path.push(ZQ2_CONFIG_FILE_NAME);
-            println!("Writing node {0} .. ", node_index);
+            println!("🪅 Writing configuration file for node {0} .. ", node_index);
             let config_str = toml::to_string(&cfg)?;
             fs::write(path, config_str).await?;
         }
@@ -420,7 +421,9 @@ impl Setup {
         checkpoint: Option<&zilliqa::cfg::Checkpoint>,
     ) -> Result<()> {
         // Load the config file, modify it and save it back.
-        let loaded_config_str = fs::read_to_string(&config_file).await?;
+        let loaded_config_str = fs::read_to_string(&config_file)
+            .await
+            .context(format!("Cannot read from {config_file} - are you sure you are trying to start a node that actually exists?"))?;
         let mut loaded_config: zilliqa::cfg::Config = toml::from_str(&loaded_config_str)?;
         for node in loaded_config.nodes.iter_mut() {
             if let Some(cp) = checkpoint {
