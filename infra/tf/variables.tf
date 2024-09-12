@@ -15,17 +15,11 @@ variable "region" {
 }
 
 variable "node_zone" {
-  description = "The zone where to provision to"
+  description = "(Optional) The GCP zone to provision the node in"
   type        = string
   nullable    = true
   default     = ""
 }
-
-# variable "eth_chain_id" {
-#   description = "ZQ2 EVM Chain ID"
-#   type        = number
-#   nullable    = false
-# }
 
 variable "nodes_dns_zone_name" {
   description = "Nodes DNS zone name"
@@ -65,18 +59,6 @@ variable "vpc_main_subnet_name" {
   nullable    = false
 }
 
-# variable "genesis_key" {
-#   description = "(Optional) Genesis private key"
-#   type        = string
-#   nullable    = false
-# }
-
-# variable "bootstrap_key" {
-#   description = "(Optional) Boostrap node private key"
-#   type        = string
-#   nullable    = false
-# }
-
 variable "apps_node_count" {
   description = "(Optional) ZQ2 Node apps count"
   type        = number
@@ -98,42 +80,12 @@ variable "validator_node_count" {
   default     = 3
 }
 
-# variable "api_node_private_keys" {
-#   description = "(Optional) API node private key"
-#   type        = list(string)
-#   nullable    = false
-# }
-
-# variable "validator_node_private_keys" {
-#   description = "(Optional) ZQ2 Nodes secret keys"
-#   type        = list(string)
-#   nullable    = false
-# }
-
 variable "persistence_url" {
   description = "(Optional) ZQ2 Recovery persistence URL"
   type        = string
   nullable    = true
   default     = ""
 }
-
-# variable "docker_image" {
-#   description = "ZQ2 Docker image URL"
-#   type        = string
-#   default     = ""
-# }
-
-# variable "otterscan_image" {
-#   description = "Otterscan Docker image URL"
-#   type        = string
-#   default     = ""
-# }
-
-# variable "spout_image" {
-#   description = "Spout Docker image URL"
-#   type        = string
-#   default     = ""
-# }
 
 variable "gcp_docker_registry_project_id" {
   description = "(Optional) ZQ2 Artifact Registry project id"
@@ -148,19 +100,21 @@ variable "distributed_validators" {
     vm_num          = number
     vpc_subnet_name = string
     vm_type         = optional(string)
-    # node_keys       = list(string)
-    vm_zone = optional(string)
+    vm_zone         = optional(string)
   }))
   default = []
-  # validation {
-  #   condition     = alltrue([for v in var.distributed_validators : (length(v.node_keys) == v.vm_num)])
-  #   error_message = "ERROR: num of vms and number of keys mismatch"
-  # }
 }
 
 variable "apps_node_type" {
   description = "(Optional) The size of the nodes."
   type        = string
   default     = "e2-standard-2"
+  nullable    = false
+}
+
+variable "checkpoint_bucket_force_destroy" {
+  description = "(Optional) Whether force destroying the checkpoint bucket deprovisioning the infrastructure."
+  type        = bool
+  default     = true
   nullable    = false
 }

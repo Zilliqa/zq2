@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use alloy::primitives::Address;
-use bitvec::bitvec;
+use bitvec::{bitarr, order::Msb0};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use eth_trie::{MemoryDB, Trie};
 use libp2p::PeerId;
@@ -10,7 +10,7 @@ use zilliqa::{
     consensus::Consensus,
     crypto::{Hash, SecretKey},
     db::Db,
-    message::{Block, Proposal, QuorumCertificate, Vote},
+    message::{Block, Proposal, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
     time::SystemTime,
     transaction::EvmGas,
@@ -87,7 +87,7 @@ pub fn process_blocks(c: &mut Criterion) {
         );
         let qc = QuorumCertificate::new(
             &[vote.signature()],
-            bitvec![u8, bitvec::order::Msb0; 1; 1],
+            bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
             parent_hash,
             view - 1,
         );
@@ -100,7 +100,6 @@ pub fn process_blocks(c: &mut Criterion) {
             view,
             view,
             qc,
-            parent_hash,
             state.root_hash().unwrap(),
             empty_root_hash,
             empty_root_hash,

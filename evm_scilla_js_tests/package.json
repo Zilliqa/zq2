@@ -55,6 +55,7 @@
     "@types/terminal-kit": "^2.5.2",
     "@zilliqa-js/zilliqa": "^3.4.4",
     "cli-color": "^2.0.3",
+    "console-table-printer": "^2.12.1",
     "deep-equal-in-any-order": "^2.0.6",
     "dotenv": "^16.3.1",
     "ora": "^3.4.0",

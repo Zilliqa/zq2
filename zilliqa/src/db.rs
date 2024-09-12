@@ -218,7 +218,6 @@ impl Db {
                 block_hash BLOB NOT NULL PRIMARY KEY,
                 view INTEGER NOT NULL UNIQUE,
                 height INTEGER NOT NULL,
-                parent_hash BLOB NOT NULL,
                 signature BLOB NOT NULL,
                 state_root_hash BLOB NOT NULL,
                 transactions_root_hash BLOB NOT NULL,
@@ -247,6 +246,7 @@ impl Db {
                 accepted INTEGER,
                 errors BLOB,
                 exceptions BLOB);
+            CREATE INDEX IF NOT EXISTS block_hash_index ON receipts (block_hash);
             CREATE TABLE IF NOT EXISTS touched_address_index (
                 address BLOB,
                 tx_hash BLOB REFERENCES transactions (tx_hash) ON DELETE CASCADE,
@@ -283,18 +283,6 @@ impl Db {
         let input = File::open(path)?;
         let mut reader = BufReader::with_capacity(8192 * 1024, input); // 8 MiB read chunks
         let trie_storage = Arc::new(self.state_trie()?);
-        if !trie_storage.db.is_empty() || self.get_highest_block_number()?.is_some() {
-            // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
-            // values not part of any state trie of any known block. With some effort, this could
-            // even be supported.
-            // However, without such explicit support, having old blocks MAY in fact cause
-            // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
-            // a node that already contains previous state, until (and unless) there's ever a
-            // usecase for going through the effort to support it and ensure it works as expected.
-            return Err(anyhow!(
-                "Node state must be empty when loading a checkpoint."
-            ));
-        }
         let mut state_trie = EthTrie::new(trie_storage.clone());
 
         // Decode and validate header
@@ -338,6 +326,28 @@ impl Db {
             return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
         }
 
+        if !trie_storage.db.is_empty() || self.get_highest_block_number()?.is_some() {
+            // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
+            // values not part of any state trie of any known block. With some effort, this could
+            // even be supported.
+            // However, without such explicit support, having old blocks MAY in fact cause
+            // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
+            // a node that already contains previous state, until (and unless) there's ever a
+            // usecase for going through the effort to support it and ensure it works as expected.
+            if let Some(db_block) = self.get_block_by_hash(&block.hash())? {
+                if db_block != block {
+                    return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"));
+                } else {
+                    // In this case, the database already has the block contained in this checkpoint. We assume the
+                    // database contains the full state for that block too and thus return early, without actually
+                    // loading the checkpoint file.
+                    return Ok(db_block);
+                }
+            } else {
+                return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint file does not exist in non-empty database"));
+            }
+        }
+
         // then decode state
         for (idx, line) in lines.enumerate() {
             let idx = idx + 2; // +1 because first line is just serialised block, +1 for 1-indexing
@@ -377,7 +387,7 @@ impl Db {
             self.insert_block_with_db_tx(tx, block_ref)?;
             self.insert_block_with_db_tx(tx, &parent)?;
             self.set_latest_finalized_view_with_db_tx(tx, block_ref.view())?;
-            self.set_high_qc_with_db_tx(tx, block_ref.qc.clone())?;
+            self.set_high_qc_with_db_tx(tx, block_ref.header.qc)?;
             self.set_canonical_block_number_with_db_tx(tx, block_ref.number(), block_ref.hash())?;
             self.set_canonical_block_number_with_db_tx(tx, parent.number(), parent.hash())?;
             Ok(())
@@ -607,13 +617,13 @@ impl Db {
     pub fn insert_block_with_db_tx(&self, sqlite_tx: &Connection, block: &Block) -> Result<()> {
         sqlite_tx.execute(
             "INSERT INTO blocks
-                (block_hash, view, height, parent_hash, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, qc, agg)
-            VALUES (:block_hash, :view, :height, :parent_hash, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :qc, :agg)",
+                (block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg)
+            VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg)",
             named_params! {
                 ":block_hash": block.header.hash,
                 ":view": block.header.view,
                 ":height": block.header.number,
-                ":parent_hash": block.header.parent_hash,
+                ":qc": block.header.qc,
                 ":signature": block.header.signature,
                 ":state_root_hash": block.header.state_root_hash,
                 ":transactions_root_hash": block.header.transactions_root_hash,
@@ -621,7 +631,6 @@ impl Db {
                 ":timestamp": SystemTimeSqlable(block.header.timestamp),
                 ":gas_used": block.header.gas_used,
                 ":gas_limit": block.header.gas_limit,
-                ":qc": block.qc,
                 ":agg": block.agg,
             })?;
         Ok(())
@@ -631,6 +640,14 @@ impl Db {
         self.insert_block_with_db_tx(&self.block_store.lock().unwrap(), block)
     }
 
+    pub fn remove_block(&self, block: &Block) -> Result<()> {
+        self.block_store.lock().unwrap().execute(
+            "DELETE FROM blocks WHERE block_hash = ?1",
+            [block.header.hash],
+        )?;
+        Ok(())
+    }
+
     fn get_transactionless_block(&self, key: Either<&Hash, &u64>) -> Result<Option<Block>> {
         fn make_block(row: &Row) -> rusqlite::Result<Block> {
             Ok(Block {
@@ -638,7 +655,7 @@ impl Db {
                     hash: row.get(0)?,
                     view: row.get(1)?,
                     number: row.get(2)?,
-                    parent_hash: row.get(3)?,
+                    qc: row.get(3)?,
                     signature: row.get(4)?,
                     state_root_hash: row.get(5)?,
                     transactions_root_hash: row.get(6)?,
@@ -647,14 +664,13 @@ impl Db {
                     gas_used: row.get(9)?,
                     gas_limit: row.get(10)?,
                 },
-                qc: row.get(11)?,
-                agg: row.get(12)?,
+                agg: row.get(11)?,
                 transactions: vec![],
             })
         }
         macro_rules! query_block {
             ($cond: tt, $key: tt) => {
-                self.block_store.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, parent_hash, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, qc, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
+                self.block_store.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
             };
         }
         Ok(match key {
@@ -950,7 +966,7 @@ mod tests {
         let state_hash = root_trie.root_hash().unwrap();
         let parent_block = Block::genesis(state_hash.into());
         // bit of a hack to generate a successor block
-        let mut qc2 = QuorumCertificate::genesis(0);
+        let mut qc2 = QuorumCertificate::genesis();
         qc2.block_hash = parent_block.hash();
         qc2.view = 1;
         let checkpoint_block = Block::from_qc(
@@ -958,7 +974,6 @@ mod tests {
             1,
             1,
             qc2,
-            parent_block.hash(),
             state_hash.into(),
             EMPTY_ROOT_HASH.into(),
             EMPTY_ROOT_HASH.into(),
@@ -981,12 +996,24 @@ mod tests {
         )
         .unwrap();
 
-        // now parse the checkpoint
-        db.load_trusted_checkpoint(
-            checkpoint_path.join(checkpoint_block.number().to_string()),
-            &checkpoint_block.hash(),
-            SHARD_ID,
-        )
-        .unwrap();
+        // now load the checkpoint
+        let block = db
+            .load_trusted_checkpoint(
+                checkpoint_path.join(checkpoint_block.number().to_string()),
+                &checkpoint_block.hash(),
+                SHARD_ID,
+            )
+            .unwrap();
+        assert_eq!(checkpoint_block, block);
+
+        // load the checkpoint again, to ensure idempotency
+        let block = db
+            .load_trusted_checkpoint(
+                checkpoint_path.join(checkpoint_block.number().to_string()),
+                &checkpoint_block.hash(),
+                SHARD_ID,
+            )
+            .unwrap();
+        assert_eq!(checkpoint_block, block);
     }
 }

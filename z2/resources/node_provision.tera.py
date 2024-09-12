@@ -48,6 +48,58 @@ def query_metadata_ext_ip() -> str:
         "Metadata-Flavor" : "Google" })
     return r.text
 
+API_HEALTHCHECK_SCRIPT="""from flask import Flask
+import requests
+from time import time
+
+app = Flask(__name__)
+
+latest_block_number = 0
+latest_block_number_obtained_at = 0
+
+@app.route("/health")
+def health():
+    global latest_block_number
+    global latest_block_number_obtained_at
+    response = requests.post(
+        "http://localhost:4201",
+        json={"jsonrpc":"2.0", "id": 1, "method": "eth_blockNumber"},
+    ).json()
+    block_number = int(response["result"], 16)
+    current_time = int(time())
+    print (f"block {block_number} latest {latest_block_number}")
+
+    if block_number > latest_block_number:
+        latest_block_number = block_number
+        latest_block_number_obtained_at = current_time
+
+    
+    if latest_block_number_obtained_at + 30 < current_time:
+        # no blocks for 30 seconds
+        return ("no blocks for more than 30 seconds", 500)
+    else:
+        return (f"block {latest_block_number} since {latest_block_number_obtained_at}", 200)
+
+if __name__ == "__main__":
+    app.run(debug=True, port=8080, host="0.0.0.0")
+"""
+
+API_HEALTHCHECK_SERVICE_DESC="""
+[Unit]
+Description=Zilliqa Node Healthcheck
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'python3 /api_healthcheck.py'
+ExecStop=pkill -f /api_healthcheck.py
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+
 ZQ2_SCRIPT="""#!/bin/bash
 echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
@@ -372,13 +424,23 @@ def go(role):
     install_ops_agent()
     install_gcloud()
     match role:
-        case "validator" | "bootstrap" | "api":
+        case "validator" | "bootstrap" | "checkpoint":
             log("Configuring a validator node")
             configure_logrotate()
             stop_zq2()
             install_zilliqa()
             download_persistence()
             start_zq2()
+        case "api":
+            log("Configuring an API node")
+            stop_api_checkpoint()
+            install_api_checkpoint()
+            configure_logrotate()
+            stop_zq2()
+            install_zilliqa()
+            download_persistence()
+            start_zq2()
+            start_api_checkpoint()
         case "apps":
             log("Configuring the blockchain app node")
             stop_apps()
@@ -531,6 +593,27 @@ def start_zq2():
 def stop_zq2():
     if os.path.exists("/etc/systemd/system/zilliqa.service"):
         run_or_die(["sudo", "systemctl", "stop", "zilliqa"])
+    pass
+
+def install_api_checkpoint():
+    run_or_die(["sudo", "pip3", "install", "flask", "requests"])
+    with open("/api_healthcheck.py", "w") as f:
+        f.write(API_HEALTHCHECK_SCRIPT)
+
+    with open("/tmp/api_healthcheck.service", "w") as f:
+        f.write(API_HEALTHCHECK_SERVICE_DESC)
+    run_or_die(["sudo","cp","/tmp/api_healthcheck.service","/etc/systemd/system/api_healthcheck.service"])
+    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/api_healthcheck.service"])
+    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/api_healthcheck.service", "/etc/systemd/system/multi-user.target.wants/api_healthcheck.service"])
+    run_or_die(["sudo", "systemctl", "enable", "api_healthcheck.service"])
+
+
+def start_api_checkpoint():
+    run_or_die(["sudo", "systemctl", "start", "api_healthcheck.service"])
+
+def stop_api_checkpoint():
+    if os.path.exists("/etc/systemd/system/api_healthcheck.service"):
+        run_or_die(["sudo", "systemctl", "stop", "api_healthcheck"])
     pass
 
 if __name__ == "__main__":

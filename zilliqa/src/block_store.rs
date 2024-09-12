@@ -1,4 +1,10 @@
-use std::{cell::RefCell, cmp, collections::{BTreeSet, HashMap}, num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{
+    cmp,
+    collections::{BTreeSet, HashMap},
+    num::NonZeroUsize,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
@@ -32,7 +38,7 @@ use crate::{
 #[derive(Debug)]
 pub struct BlockStore {
     db: Arc<Db>,
-    block_cache: RefCell<LruCache<Hash, Block>>,
+    block_cache: Arc<RwLock<LruCache<Hash, Block>>>,
     /// The maximum view of any proposal we have received, even if it is not part of our chain yet.
     highest_known_view: u64,
     /// Information we keep about our peers' state.
@@ -53,7 +59,6 @@ pub struct BlockStore {
     /// newly created blocks that arrive while we are syncing.
     buffered: LruCache<Hash, Proposal>,
     /// Requests we would like to send, but haven't been able to (e.g. because we have no peers).
-    //unserviceable_requests: Vec<(u64, u64)>,
     unserviceable_requests: BTreeSet<(u64, u64)>,
     message_sender: MessageSender,
 }
@@ -85,7 +90,7 @@ impl BlockStore {
     pub fn new(config: &NodeConfig, db: Arc<Db>, message_sender: MessageSender) -> Result<Self> {
         Ok(BlockStore {
             db,
-            block_cache: RefCell::new(LruCache::new(NonZeroUsize::new(5).unwrap())),
+            block_cache: Arc::new(RwLock::new(LruCache::new(NonZeroUsize::new(5).unwrap()))),
             highest_known_view: 0,
             peers: HashMap::new(),
             requested_view: 0,
@@ -100,11 +105,29 @@ impl BlockStore {
         })
     }
 
+    /// Create a read-only clone of this [BlockStore]. The read-only property must be upheld by the caller - Calling
+    /// any `&mut self` methods on the returned [BlockStore] will lead to problems. This clone is cheap.
+    pub fn clone_read_only(&self) -> Arc<Self> {
+        Arc::new(BlockStore {
+            db: self.db.clone(),
+            block_cache: self.block_cache.clone(),
+            highest_known_view: 0,
+            peers: HashMap::new(),
+            requested_view: 0,
+            max_blocks_in_flight: 0,
+            batch_size: 0,
+            failed_request_sleep_duration: Duration::ZERO,
+            buffered: LruCache::new(NonZeroUsize::new(1).unwrap()),
+            unserviceable_requests: BTreeSet::new(),
+            message_sender: self.message_sender.clone(),
+        })
+    }
+
     /// Buffer a block proposal whose parent we don't yet know about.
     pub fn buffer_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
         let view = proposal.view();
 
-        self.buffered.push(proposal.header.parent_hash, proposal);
+        self.buffered.push(proposal.header.qc.block_hash, proposal);
 
         // If this is the highest block we've seen, remember its view.
         if view > self.highest_known_view {
@@ -217,7 +240,10 @@ impl BlockStore {
     }
 
     pub fn get_block(&self, hash: Hash) -> Result<Option<Block>> {
-        let mut block_cache = self.block_cache.borrow_mut();
+        let mut block_cache = self
+            .block_cache
+            .write()
+            .map_err(|e| anyhow!("Failed to get write access to block cache: {e}"))?;
         if let Some(block) = block_cache.get(&hash) {
             return Ok(Some(block.clone()));
         }
@@ -233,6 +259,10 @@ impl BlockStore {
             return Ok(None);
         };
         self.get_block(hash)
+    }
+
+    pub fn get_highest_block_number(&self) -> Result<Option<u64>> {
+        self.db.get_highest_block_number()
     }
 
     pub fn get_block_by_number(&self, number: u64) -> Result<Option<Block>> {

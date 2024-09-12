@@ -35,7 +35,7 @@ use crate::{
     eth_helpers::extract_revert_msg,
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
-    precompiles::get_custom_precompiles,
+    precompiles::{get_custom_precompiles, scilla_call_handle_register},
     scilla::{self, split_storage_key, storage_key, Scilla},
     state::{contract_addr, Account, Code, State},
     time::SystemTime,
@@ -263,6 +263,46 @@ impl Error for DatabaseError {
     }
 }
 
+impl Database for PendingState {
+    type Error = DatabaseError;
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        (&self.pre_state).basic_ref(address)
+    }
+
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        (&self.pre_state).code_by_hash_ref(code_hash)
+    }
+
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        (&self.pre_state).storage_ref(address, index)
+    }
+
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
+        (&self.pre_state).block_hash_ref(number)
+    }
+}
+
+impl DatabaseRef for PendingState {
+    type Error = DatabaseError;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        (&self.pre_state).basic_ref(address)
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        (&self.pre_state).code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        (&self.pre_state).storage_ref(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        (&self.pre_state).block_hash_ref(number)
+    }
+}
+
 impl Database for &State {
     type Error = DatabaseError;
 
@@ -324,9 +364,9 @@ impl DatabaseRef for &State {
 // As per EIP-150
 pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_500_000);
 
-const SCILLA_TRANSFER: ScillaGas = ScillaGas(50);
-const SCILLA_INVOKE_CHECKER: ScillaGas = ScillaGas(100);
-const SCILLA_INVOKE_RUNNER: ScillaGas = ScillaGas(300);
+pub const SCILLA_TRANSFER: ScillaGas = ScillaGas(50);
+pub const SCILLA_INVOKE_CHECKER: ScillaGas = ScillaGas(100);
+pub const SCILLA_INVOKE_RUNNER: ScillaGas = ScillaGas(300);
 
 const SPEC_ID: SpecId = SpecId::SHANGHAI;
 
@@ -353,7 +393,6 @@ impl State {
             0,
             creation_bytecode,
             None,
-            0,
             BlockHeader::genesis(Hash::ZERO),
             inspector::noop(),
             BaseFeeCheck::Ignore,
@@ -387,7 +426,7 @@ impl State {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn apply_transaction_evm<I: for<'s> Inspector<&'s State>>(
+    pub fn apply_transaction_evm<I: Inspector<PendingState> + ScillaInspector>(
         &self,
         from_addr: Address,
         to_addr: Option<Address>,
@@ -396,16 +435,16 @@ impl State {
         amount: u128,
         payload: Vec<u8>,
         nonce: Option<u64>,
-        chain_id: u64,
         current_block: BlockHeader,
         inspector: I,
         base_fee_check: BaseFeeCheck,
-    ) -> Result<(ResultAndState, Box<Env>)> {
+    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
 
+        let pending_state = PendingState::new(self.clone());
         let mut evm = Evm::builder()
-            .with_db(self)
+            .with_db(pending_state)
             .with_block_env(BlockEnv {
                 number: U256::from(current_block.number),
                 coinbase: Address::ZERO,
@@ -424,9 +463,10 @@ impl State {
             })
             .with_external_context(inspector)
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
+            .append_handler_register(scilla_call_handle_register)
             .append_handler_register(inspector_handle_register)
             .modify_cfg_env(|c| {
-                c.chain_id = chain_id;
+                c.chain_id = self.chain_id.eth;
                 c.disable_base_fee = match base_fee_check {
                     BaseFeeCheck::Validate => false,
                     BaseFeeCheck::Ignore => true,
@@ -440,7 +480,7 @@ impl State {
                 value: U256::from(amount),
                 data: payload.clone().into(),
                 nonce,
-                chain_id: Some(chain_id),
+                chain_id: Some(self.chain_id.eth),
                 access_list: vec![],
                 gas_priority_fee: None,
                 blob_hashes: vec![],
@@ -458,14 +498,15 @@ impl State {
             .build();
 
         let e = evm.transact()?;
-        Ok((e, evm.context.evm.env.clone()))
+        let (mut state, cfg) = evm.into_db_and_env_with_handler_cfg();
+        Ok((e, state.finalize(), cfg.env))
     }
 
     fn apply_transaction_scilla(
         &mut self,
         from_addr: Address,
-        current_block: BlockHeader,
         txn: TxZilliqa,
+        current_block: BlockHeader,
         inspector: impl ScillaInspector,
     ) -> Result<ScillaResultAndState> {
         let mut state = PendingState::new(self.try_clone()?);
@@ -488,7 +529,17 @@ impl State {
                 inspector,
             )
         } else {
-            scilla_call(state, self.scilla(), from_addr, txn, inspector)
+            scilla_call(
+                state,
+                self.scilla(),
+                from_addr,
+                from_addr,
+                txn.gas_limit,
+                txn.to_addr,
+                txn.amount,
+                txn.data,
+                inspector,
+            )
         }?;
 
         let from = state.load_account(from_addr)?;
@@ -501,10 +552,9 @@ impl State {
     }
 
     /// Apply a transaction to the account state.
-    pub fn apply_transaction<I: for<'s> Inspector<&'s State> + ScillaInspector>(
+    pub fn apply_transaction<I: Inspector<PendingState> + ScillaInspector>(
         &mut self,
         txn: VerifiedTransaction,
-        chain_id: u64,
         current_block: BlockHeader,
         inspector: I,
     ) -> Result<TransactionApplyResult> {
@@ -517,31 +567,32 @@ impl State {
         let txn = txn.tx.into_transaction();
         if let Transaction::Zilliqa(txn) = txn {
             let (result, state) =
-                self.apply_transaction_scilla(from_addr, current_block, txn, inspector)?;
+                self.apply_transaction_scilla(from_addr, txn, current_block, inspector)?;
 
             self.apply_delta_scilla(&state)?;
 
             Ok(TransactionApplyResult::Scilla((result, state)))
         } else {
-            let (ResultAndState { result, state }, env) = self.apply_transaction_evm(
-                from_addr,
-                txn.to_addr(),
-                txn.max_fee_per_gas(),
-                txn.gas_limit(),
-                txn.amount(),
-                txn.payload().to_vec(),
-                txn.nonce(),
-                chain_id,
-                current_block,
-                inspector,
-                if blessed {
-                    BaseFeeCheck::Ignore
-                } else {
-                    BaseFeeCheck::Validate
-                },
-            )?;
+            let (ResultAndState { result, state }, scilla_state, env) = self
+                .apply_transaction_evm(
+                    from_addr,
+                    txn.to_addr(),
+                    txn.max_fee_per_gas(),
+                    txn.gas_limit(),
+                    txn.amount(),
+                    txn.payload().to_vec(),
+                    txn.nonce(),
+                    current_block,
+                    inspector,
+                    if blessed {
+                        BaseFeeCheck::Ignore
+                    } else {
+                        BaseFeeCheck::Validate
+                    },
+                )?;
 
             self.apply_delta_evm(&state)?;
+            self.apply_delta_scilla(&scilla_state)?;
 
             Ok(TransactionApplyResult::Evm(
                 ResultAndState { result, state },
@@ -616,7 +667,6 @@ impl State {
         state: &HashMap<Address, revm::primitives::Account>,
     ) -> Result<()> {
         for (&address, account) in state {
-            trace!(?address, ?account, "preparing to update account");
             let mut storage = self.get_account_trie(address)?;
 
             for (index, value) in account.changed_storage_slots() {
@@ -636,7 +686,13 @@ impl State {
             let code = if account.info.code_hash == KECCAK_EMPTY {
                 vec![]
             } else {
-                account.info.code.as_ref().expect("code_by_hash is not used").original_bytes().to_vec()
+                account
+                    .info
+                    .code
+                    .as_ref()
+                    .expect("code_by_hash is not used")
+                    .original_bytes()
+                    .to_vec()
             };
 
             let account = Account {
@@ -663,7 +719,6 @@ impl State {
             Address::ZERO,
             Some(contract_addr::DEPOSIT),
             data,
-            0,
             0,
             BlockHeader::default(),
         )?;
@@ -703,9 +758,8 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
-            0,
             BlockHeader::default(),
         )?;
 
@@ -735,9 +789,8 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
-            0,
             BlockHeader::default(),
         )?;
 
@@ -759,9 +812,8 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
-            0,
             BlockHeader::default(),
         )?;
 
@@ -787,9 +839,8 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
-            0,
             BlockHeader::default(),
         )?;
 
@@ -809,9 +860,8 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            // The chain ID and current block are not accessed when the native balance is read, so we just pass in some
+            // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
-            0,
             BlockHeader::default(),
         )?;
 
@@ -829,7 +879,6 @@ impl State {
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
-        chain_id: u64,
         current_block: BlockHeader,
         gas: Option<EvmGas>,
         gas_price: Option<u128>,
@@ -846,7 +895,6 @@ impl State {
             from_addr,
             to_addr,
             data.clone(),
-            chain_id,
             current_block,
             EvmGas(upper_bound),
             gas_price,
@@ -883,7 +931,6 @@ impl State {
                 value,
                 data.clone(),
                 None,
-                chain_id,
                 current_block,
                 inspector::noop(),
                 BaseFeeCheck::Validate,
@@ -916,7 +963,6 @@ impl State {
         from_addr: Address,
         to_addr: Option<Address>,
         data: Vec<u8>,
-        chain_id: u64,
         current_block: BlockHeader,
         gas: EvmGas,
         gas_price: u128,
@@ -930,7 +976,6 @@ impl State {
             value,
             data.clone(),
             None,
-            chain_id,
             current_block,
             inspector::noop(),
             BaseFeeCheck::Validate,
@@ -964,7 +1009,6 @@ impl State {
         to_addr: Option<Address>,
         data: Vec<u8>,
         amount: u128,
-        chain_id: u64,
         current_block: BlockHeader,
     ) -> Result<Vec<u8>> {
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
@@ -975,7 +1019,6 @@ impl State {
             amount,
             data,
             None,
-            chain_id,
             current_block,
             inspector::noop(),
             BaseFeeCheck::Ignore,
@@ -1001,8 +1044,8 @@ pub fn zil_contract_address(sender: Address, nonce: u64) -> Address {
 /// The account state during the execution of a Scilla transaction. Changes to the original state are kept in memory.
 #[derive(Debug)]
 pub struct PendingState {
-    pre_state: State,
-    new_state: HashMap<Address, PendingAccount>,
+    pub pre_state: State,
+    pub new_state: HashMap<Address, PendingAccount>,
 }
 
 /// Private helper function for `PendingState::load_account`. The only difference is that the fields of `PendingState`
@@ -1028,6 +1071,18 @@ impl PendingState {
             pre_state: state,
             new_state: HashMap::new(),
         }
+    }
+
+    pub fn zil_chain_id(&self) -> u64 {
+        self.pre_state.chain_id.zil()
+    }
+
+    pub fn get_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
+        self.pre_state.block_store.get_block_by_number(block_number)
+    }
+
+    pub fn get_highest_block_number(&self) -> Result<Option<u64>> {
+        self.pre_state.block_store.get_highest_block_number()
     }
 
     pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
@@ -1365,12 +1420,15 @@ fn scilla_create(
         .map(|p| (p.name, (p.ty, p.depth as u8)))
         .collect();
 
+    let transitions = check_output.contract_info.transitions;
+
     let account = state.load_account(contract_address)?;
     account.account.balance = txn.amount.get();
     account.account.code = Code::Scilla {
         code: txn.code.clone(),
         init_data: serde_json::to_string(&init_data)?,
         types,
+        transitions,
     };
 
     let Some(gas) = gas.checked_sub(SCILLA_INVOKE_RUNNER) else {
@@ -1440,26 +1498,31 @@ fn scilla_create(
     ))
 }
 
-fn scilla_call(
+#[allow(clippy::too_many_arguments)]
+pub fn scilla_call(
     state: PendingState,
     scilla: MutexGuard<'_, Scilla>,
     from_addr: Address,
-    txn: TxZilliqa,
+    sender: Address,
+    gas_limit: ScillaGas,
+    to_addr: Address,
+    amount: ZilAmount,
+    data: String,
     mut inspector: impl ScillaInspector,
 ) -> Result<(ScillaResult, PendingState)> {
-    let mut gas = txn.gas_limit;
+    let mut gas = gas_limit;
 
-    let message = if !txn.data.is_empty() {
-        let mut m: Value = serde_json::from_str(&txn.data)?;
-        m["_amount"] = txn.amount.to_string().into();
-        m["_sender"] = format!("{from_addr:#x}").into();
+    let message = if !data.is_empty() {
+        let mut m: Value = serde_json::from_str(&data)?;
+        m["_amount"] = amount.to_string().into();
+        m["_sender"] = format!("{sender:#x}").into();
         m["_origin"] = format!("{from_addr:#x}").into();
         Some(m)
     } else {
         None
     };
 
-    let mut call_stack = vec![(0, from_addr, txn.to_addr, txn.amount, message)];
+    let mut call_stack = vec![(0, sender, to_addr, amount, message)];
     let mut logs = vec![];
     let mut transitions = vec![];
     let mut root_contract_accepted = false;
@@ -1482,7 +1545,7 @@ fn scilla_call(
                         success: false,
                         contract_address: None,
                         logs: vec![],
-                        gas_used: (txn.gas_limit - gas).into(),
+                        gas_used: (gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
                         errors: [(depth, vec![ScillaError::CallFailed])]
@@ -1508,7 +1571,7 @@ fn scilla_call(
                         success: false,
                         contract_address: None,
                         logs: vec![],
-                        gas_used: (txn.gas_limit - gas).into(),
+                        gas_used: (gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
                         errors: [(depth, vec![ScillaError::OutOfGas])].into_iter().collect(),
@@ -1545,7 +1608,7 @@ fn scilla_call(
                             success: false,
                             contract_address: None,
                             logs: vec![],
-                            gas_used: (txn.gas_limit - gas).into(),
+                            gas_used: (gas_limit - gas).into(),
                             transitions: vec![],
                             accepted: Some(false),
                             errors: [(0, vec![ScillaError::CallFailed])].into_iter().collect(),
@@ -1566,7 +1629,7 @@ fn scilla_call(
                 }
 
                 let to = new_state.load_account(to_addr)?;
-                to.account.balance += txn.amount.get();
+                to.account.balance += amount.get();
 
                 if depth == 0 {
                     root_contract_accepted = true;
@@ -1636,7 +1699,7 @@ fn scilla_call(
                         success: false,
                         contract_address: None,
                         logs: vec![],
-                        gas_used: (txn.gas_limit - gas).into(),
+                        gas_used: (gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
                         errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
@@ -1647,14 +1710,14 @@ fn scilla_call(
             };
             gas = g;
 
-            if let Some(result) = current_state.deduct_from_account(from_addr, txn.amount)? {
+            if let Some(result) = current_state.deduct_from_account(from_addr, amount)? {
                 return Ok((result, current_state));
             }
 
-            let to = current_state.load_account(txn.to_addr)?;
-            to.account.balance += txn.amount.get();
+            let to = current_state.load_account(to_addr)?;
+            to.account.balance += amount.get();
 
-            inspector.transfer(from_addr, txn.to_addr, txn.amount.get(), depth);
+            inspector.transfer(from_addr, to_addr, amount.get(), depth);
 
             state = Some(current_state);
         }
@@ -1665,7 +1728,7 @@ fn scilla_call(
             success: true,
             contract_address: None,
             logs,
-            gas_used: (txn.gas_limit - gas).into(),
+            gas_used: (gas_limit - gas).into(),
             transitions,
             accepted: Some(root_contract_accepted),
             errors: BTreeMap::new(),
