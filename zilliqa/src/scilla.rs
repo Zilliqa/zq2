@@ -50,7 +50,7 @@ pub struct Scilla {
     response_rx: Mutex<Receiver<Result<Value, ClientError>>>,
     state_server: Arc<Mutex<StateServer>>,
     local_address: String,
-    lib_dir: String,
+    lib_dirs: Vec<String>,
 }
 
 impl Scilla {
@@ -73,7 +73,7 @@ impl Scilla {
     ///
     /// After creating the [StateServer], we wrap it in an `Arc<Mutex<T>>` and send a clone back to the main thread,
     /// to enable shared access to the server.
-    pub fn new(address: String, local_address: String, lib_dir: String) -> Scilla {
+    pub fn new(address: String, local_address: String, lib_dirs: Vec<String>) -> Scilla {
         let (request_tx, request_rx) = channel();
         let (response_tx, response_rx) = channel();
 
@@ -120,7 +120,7 @@ impl Scilla {
             response_rx: Mutex::new(response_rx),
             state_server,
             local_address,
-            lib_dir,
+            lib_dirs,
         }
     }
 
@@ -147,7 +147,7 @@ impl Scilla {
             "-init".to_owned(),
             serde_json::to_string(&init)?,
             "-libdir".to_owned(),
-            format!("{}:{}", self.lib_dir.clone(), "/contracts/"),
+            self.lib_dirs.join(":"),
             code.to_owned(),
             "-gaslimit".to_owned(),
             gas_limit.to_string(),
@@ -219,7 +219,7 @@ impl Scilla {
             "-balance".to_owned(),
             value.to_string(),
             "-libdir".to_owned(),
-            format!("{}:{}", self.lib_dir.clone(), "/contracts/"),
+            self.lib_dirs.join(":"),
             "-jsonerrors".to_owned(),
             "-islibrary".to_owned(),
             format!("{is_library}"),
@@ -292,7 +292,7 @@ impl Scilla {
             "-balance".to_owned(),
             contract_balance.to_string(),
             "-libdir".to_owned(),
-            self.lib_dir.clone(),
+            self.lib_dirs.join(":"),
             "-jsonerrors".to_owned(),
             "-pplit".to_owned(),
             "true".to_owned(),

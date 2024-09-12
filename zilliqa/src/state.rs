@@ -44,7 +44,7 @@ pub struct State {
     scilla: Arc<OnceLock<Mutex<Scilla>>>,
     scilla_address: String,
     local_address: String,
-    scilla_lib_dir: String,
+    scilla_lib_dirs: Vec<String>,
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
     pub chain_id: ChainId,
@@ -61,7 +61,7 @@ impl State {
             scilla: Arc::new(OnceLock::new()),
             scilla_address: consensus_config.scilla_address.clone(),
             local_address: consensus_config.local_address.clone(),
-            scilla_lib_dir: consensus_config.scilla_lib_dir.clone(),
+            scilla_lib_dirs: consensus_config.scilla_lib_dirs.clone(),
             block_gas_limit: consensus_config.eth_block_gas_limit,
             gas_price: *consensus_config.gas_price,
             chain_id: ChainId::new(config.eth_chain_id),
@@ -75,7 +75,7 @@ impl State {
                 Mutex::new(Scilla::new(
                     self.scilla_address.clone(),
                     self.local_address.clone(),
-                    self.scilla_lib_dir.clone(),
+                    self.scilla_lib_dirs.clone(),
                 ))
             })
             .lock()
@@ -169,7 +169,7 @@ impl State {
             scilla: self.scilla.clone(),
             scilla_address: self.scilla_address.clone(),
             local_address: self.local_address.clone(),
-            scilla_lib_dir: self.scilla_lib_dir.clone(),
+            scilla_lib_dirs: self.scilla_lib_dirs.clone(),
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
             chain_id: self.chain_id,

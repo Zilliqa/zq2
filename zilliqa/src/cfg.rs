@@ -216,8 +216,8 @@ pub struct ConsensusConfig {
     #[serde(default = "scilla_address_default")]
     pub scilla_address: String,
     /// Where (in the Scilla server's filesystem) is the library directory containing Scilla library functions?
-    #[serde(default = "scilla_lib_dir_default")]
-    pub scilla_lib_dir: String,
+    #[serde(default = "scilla_lib_dirs_default")]
+    pub scilla_lib_dirs: Vec<String>,
     /// Hostname at which this process is accessible by the Scilla process. Defaults to "localhost". If running the
     /// Scilla process in Docker and this process on the host, you probably want to pass
     /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
@@ -259,8 +259,8 @@ pub fn scilla_address_default() -> String {
     String::from("http://localhost:3000")
 }
 
-pub fn scilla_lib_dir_default() -> String {
-    String::from("/scilla/0/_build/default/src/stdlib/")
+pub fn scilla_lib_dirs_default() -> Vec<String> {
+    vec![String::from("/scilla/0/_build/default/src/stdlib/")]
 }
 
 pub fn local_address_default() -> String {
