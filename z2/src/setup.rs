@@ -34,7 +34,8 @@ use std::collections::HashMap;
 
 const GENESIS_DEPOSIT: u128 = 10000000000000000000000000;
 const DATADIR_PREFIX: &str = "z2_node_";
-const CONFIG_FILE_NAME: &str = "network.yaml";
+const NETWORK_CONFIG_FILE_NAME: &str = "network.yaml";
+const ZQ2_CONFIG_FILE_NAME: &str = "config.toml";
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeData {
@@ -72,7 +73,7 @@ pub struct Setup {
 
 impl Config {
     pub fn get_config_file_name(config_dir: &str) -> Result<String> {
-        let file_name = format!("{}/{}", config_dir, CONFIG_FILE_NAME);
+        let file_name = format!("{}/{}", config_dir, NETWORK_CONFIG_FILE_NAME);
         Ok(file_name.to_string())
     }
 
@@ -367,9 +368,6 @@ impl Setup {
             let mut full_node_data_path = PathBuf::from(&self.config_dir);
             full_node_data_path.push(&data_dir_name);
             full_node_data_path.push("data");
-            //let mut checkpoint_data_path = PathBuf::from(&self.config_dir);
-            //checkpoint_data_path.push(&data_dir_name);
-            //checkpoint_data_path.push("checkpoints");
             // Create if doesn't exist
             tokio::fs::create_dir(&full_node_data_path).await?;
             node_config.disable_rpc = false;
@@ -397,7 +395,7 @@ impl Setup {
             // Now write the config.
             let mut path = PathBuf::from(&self.config_dir);
             path.push(&data_dir_name);
-            path.push("config.yaml");
+            path.push(ZQ2_CONFIG_FILE_NAME);
             println!("Writing node {0} .. ", node_index);
             let config_str = toml::to_string(&cfg)?;
             fs::write(path, config_str).await?;
@@ -417,12 +415,37 @@ impl Setup {
         }
     }
 
+    pub async fn preprocess_config_file(
+        config_file: &str,
+        checkpoint: Option<&zilliqa::cfg::Checkpoint>,
+    ) -> Result<()> {
+        // Load the config file, modify it and save it back.
+        let loaded_config_str = fs::read_to_string(&config_file).await?;
+        let mut loaded_config: zilliqa::cfg::Config = toml::from_str(&loaded_config_str)?;
+        for node in loaded_config.nodes.iter_mut() {
+            if let Some(cp) = checkpoint {
+                println!(
+                    " 😇 Configuring Zilliqa to load a checkpoint from {}:{} .. ",
+                    cp.file,
+                    hex::encode(cp.hash.0)
+                );
+                node.load_checkpoint = Some(cp.clone());
+            } else {
+                node.load_checkpoint = None
+            }
+        }
+        let config_str = toml::to_string(&loaded_config)?;
+        fs::write(config_file, config_str).await?;
+        Ok(())
+    }
+
     /// for_nodes restricts which nodes start.
     pub async fn run_component(
         &mut self,
         component: &Component,
         collector: &mut Collector,
         for_nodes: &Composition,
+        checkpoints: &Option<HashMap<u64, zilliqa::cfg::Checkpoint>>,
     ) -> Result<()> {
         match component {
             Component::Scilla => {
@@ -442,9 +465,15 @@ impl Setup {
             Component::ZQ2 => {
                 for idx in for_nodes.nodes.keys() {
                     let config_file = format!(
-                        "{0}/{1}{2}/config.yaml",
+                        "{0}/{1}{2}/{ZQ2_CONFIG_FILE_NAME}",
                         self.config_dir, DATADIR_PREFIX, idx
                     );
+                    // Now, we need to rewrite the config file to take account of checkpoints...
+                    Self::preprocess_config_file(
+                        &config_file,
+                        checkpoints.as_ref().and_then(|x| x.get(idx)),
+                    )
+                    .await?;
                     let node_data = self
                         .config
                         .node_data

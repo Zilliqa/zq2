@@ -1,4 +1,7 @@
-use std::{collections::HashSet, env, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    env, fmt,
+};
 
 use alloy::primitives::B256;
 use anyhow::{anyhow, Result};
@@ -11,7 +14,7 @@ use z2lib::{
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };
-use zilliqa::crypto::SecretKey;
+use zilliqa::crypto::{Hash, SecretKey};
 
 #[derive(Parser, Debug)]
 #[clap(about)]
@@ -350,6 +353,10 @@ struct NodesStruct {
 
     /// This is a composition (/-separated) string which tells us which nodes to start - eg '2,3/4/1,5'
     nodes: String,
+
+    /// From a checkpoint? Syntax is file_name:hash
+    checkpoint: Option<String>,
+
     #[clap(long)]
     #[clap(default_value = "warn")]
     log_level: LogLevel,
@@ -407,6 +414,12 @@ fn nodespec_from_arg(arg: &Option<String>) -> Result<Option<NodeSpec>> {
     } else {
         Ok(None)
     }
+}
+
+fn hash_from_hex(in_str: &str) -> Result<Hash> {
+    let bytes = hex::decode(in_str)?;
+    let result = Hash::try_from(bytes.as_slice())?;
+    Ok(result)
 }
 
 #[tokio::main]
@@ -471,6 +484,7 @@ async fn main() -> Result<()> {
                 &to_run,
                 keep_old_network,
                 arg.watch,
+                &None,
             )
             .await?;
             Ok(())
@@ -520,6 +534,7 @@ async fn main() -> Result<()> {
                 &to_run,
                 keep_old_network,
                 arg.watch,
+                &None,
             )
             .await?;
             Ok(())
@@ -692,6 +707,28 @@ async fn main() -> Result<()> {
             if args.scilla {
                 to_run.insert(Component::Scilla);
             }
+            let checkpoints = if let Some(v) = &args.checkpoint {
+                let components = v.split(':').collect::<Vec<&str>>();
+                if components.len() != 2 {
+                    return Err(anyhow!(
+                        "Checkpoint spec is not in form <file>:<hash> - {v}"
+                    ));
+                } else {
+                    let mut c = HashMap::new();
+                    for id in spec.nodes.keys() {
+                        c.insert(
+                            *id,
+                            zilliqa::cfg::Checkpoint {
+                                file: components[0].to_string(),
+                                hash: hash_from_hex(components[1])?,
+                            },
+                        );
+                    }
+                    Some(c)
+                }
+            } else {
+                None
+            };
             plumbing::run_extra_nodes(
                 &spec,
                 &args.config_dir,
@@ -699,6 +736,7 @@ async fn main() -> Result<()> {
                 &log_spec,
                 &to_run,
                 args.watch,
+                &checkpoints,
             )
             .await?;
             Ok(())

@@ -1,4 +1,9 @@
-use std::{collections::HashSet, path::PathBuf, str::FromStr};
+#![allow(unused_imports)]
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    str::FromStr,
+};
 
 use crate::{
     chain::node::NodeRole,
@@ -29,6 +34,7 @@ pub async fn run_extra_nodes(
     log_spec: &str,
     components: &HashSet<Component>,
     watch: bool,
+    checkpoints: &Option<HashMap<u64, zilliqa::cfg::Checkpoint>>,
 ) -> Result<()> {
     println!("🎈 Loading network configuration from {config_dir} .. ");
     let mut setup_obj = setup::Setup::load(config_dir, log_spec, base_dir, watch).await?;
@@ -37,7 +43,9 @@ pub async fn run_extra_nodes(
     let mut collector = collector::Collector::new(log_spec, base_dir).await?;
     for c in Component::in_dependency_order().iter() {
         if components.contains(c) && c.is_instanced() {
-            setup_obj.run_component(c, &mut collector, spec).await?;
+            setup_obj
+                .run_component(c, &mut collector, spec, checkpoints)
+                .await?;
         }
     }
     collector.complete().await?;
@@ -54,6 +62,7 @@ pub async fn run_local_net(
     components: &HashSet<Component>,
     keep_old_network: bool,
     watch: bool,
+    checkpoints: &Option<HashMap<u64, zilliqa::cfg::Checkpoint>>,
 ) -> Result<()> {
     println!("RUST_LOG = {log_spec}");
     println!("Running network with nodespec = {spec:?}");
@@ -87,7 +96,7 @@ pub async fn run_local_net(
         if components.contains(c) {
             println!("Start {c}");
             setup_obj
-                .run_component(c, &mut collector, actually_start)
+                .run_component(c, &mut collector, actually_start, checkpoints)
                 .await?;
         } else {
             println!("Skipping {c}");
