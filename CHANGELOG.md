@@ -4,6 +4,8 @@
 
 Unreleased changes, in reverse chronological order. New entries are added at the top of this list.
 
+- [#1423](https://github.com/Zilliqa/zq2/pull/1423): Fix invalid value returned by calling `_balance` in a scilla transition.
+
 ## [0.3.0] - 2024-09-12
 
 - [#1403](https://github.com/Zilliqa/zq2/pull/1403): Add `GetTransactionRate` API.
