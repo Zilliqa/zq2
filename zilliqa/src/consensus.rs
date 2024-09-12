@@ -2419,6 +2419,8 @@ impl Consensus {
             // recorded as such in the height mappings
             self.db
                 .revert_canonical_block_number(head_block.header.number)?;
+
+            self.db.remove_block(&head_block)?;
         }
 
         // Now, we execute forward from the common ancestor to the new block parent which can

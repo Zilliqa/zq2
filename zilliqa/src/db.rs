@@ -217,7 +217,7 @@ impl Db {
             "CREATE TABLE IF NOT EXISTS blocks (
                 block_hash BLOB NOT NULL PRIMARY KEY,
                 view INTEGER NOT NULL UNIQUE,
-                height INTEGER NOT NULL,
+                height INTEGER NOT NULL UNIQUE,
                 signature BLOB NOT NULL,
                 state_root_hash BLOB NOT NULL,
                 transactions_root_hash BLOB NOT NULL,
