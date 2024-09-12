@@ -1568,6 +1568,7 @@ impl Consensus {
     /// Returns true if the transaction was new.
     pub fn new_transaction(&mut self, txn: VerifiedTransaction) -> Result<bool> {
         if self.db.contains_transaction(&txn.hash)? {
+            debug!("Transaction {:?} already in mempool", txn.hash);
             return Ok(false);
         }
 
@@ -1579,6 +1580,12 @@ impl Consensus {
             self.config.consensus.eth_block_gas_limit,
             eth_chain_id,
         )? {
+            debug!(
+                "Unable to validate txn with hash: {:?}, from: {:?}, nonce: {:?}",
+                txn.hash,
+                txn.signer,
+                txn.tx.nonce()
+            );
             return Ok(false);
         }
 

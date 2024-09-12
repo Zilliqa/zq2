@@ -3,19 +3,12 @@ id: {{ _id }}
 title: Supported APIs
 keywords: api,support,level,documented,implemented
 ---
----
-# Supported APIs
 
-## Consistency
+# APIs
 
-Zilliqa 2, in common with other blockchains, has a strict consistency model for individual nodes and historical transactions, but eventual consistency for pending transactions and the network as a whole.
+## Zilliqa 2 APIs
 
- * Once a node has seen a transaction - pending or finalised - it will always be present at that node.
- * Nodes can be assumed to have knowledge of all transactions at or before their last seen finalised block.
- * Different nodes will have different last seen finalized blocks (though at least 2/3 of nodes will have seen the latest finalised block at any consensus round)
- * Pending transactions flow through the network and may never be seen at all nodes (they may not reach a node before they are included in a block).
-
-This means that if you want to rely on the properties of pending transactions (eg. for monitoring the account nonce), you will need to communicate with a single node.
+The APIs implemented in Zilliqa 2 aim to provide the greatest possible compatibility with applications running on other EVM chains, as well as with applications developed for Zilliqa 1. Expand the menu on the left to navigate through the detailed documentation of the supported API methods.
 
 ## Supported APIs
 
@@ -33,22 +26,14 @@ Zilliqa 2 supports APIs from a number of sources:
    and intended to be compatible with Zilliqa 1,
    [geth](https://geth.ethereum.org/) and
    [erigon](https://erigon.tech/).  Some reference material is also
-   taken from [quicknode](https://www.quicknode.com/docs/ethereum),
-   [infura](https://docs.infura.io/) and
-   [alchemy](https://docs.alchemy.com/reference).
+   taken from [QuickNode](https://www.quicknode.com/docs/ethereum),
+   [Infura](https://docs.infura.io/) and
+   [Alchemy](https://docs.alchemy.com/reference).
 
-  * Zilliqa APIs are intended, as far as possible, to be compatible
+  * Zilliqa legacy APIs are intended, as far as possible, to be compatible
     with existing Zilliqa 1 applications. There are various
     differences due to the different construction of Zilliqa 2 which
     are noted on the individual API pages.
-
-## Unsupported APIs
-
-Zilliqa 2 does not support the ethereum node to node protocol. You cannot sync transactions between Zilliqa 2 and Ethereum nodes.
-
-## Differences from other ethereum implementations and from Zilliqa 1
-
- * D0001: Zilliqa 1 maintained balances in Qa and multiplied by 10^6 to get Wei. Zilliqa 2 maintains balances in Wei and divides them to get Qa. This means that there will be slight rounding differences in the behaviour of the two chains when switching between Zilliqa native and EVM APIs.
 
 ## List of entry points
 
