@@ -131,23 +131,35 @@ impl Scilla {
         format!("{local_addr}:{}", addr.port())
     }
 
+    fn is_library(init: &[Value]) -> bool {
+        init.iter()
+            .any(|v| v["vname"].as_str().is_some_and(|v| v == "_library"))
+    }
+
     pub fn check_contract(
         &self,
         code: &str,
         gas_limit: ScillaGas,
         init: &[Value],
     ) -> Result<Result<CheckOutput, ErrorResponse>> {
-        let args = vec![
+        let is_library = Self::is_library(init);
+        let mut args = vec![
             "-init".to_owned(),
             serde_json::to_string(&init)?,
             "-libdir".to_owned(),
-            self.lib_dir.clone(),
+            format!("{}:{}", self.lib_dir.clone(), "/contracts/"),
             code.to_owned(),
             "-gaslimit".to_owned(),
             gas_limit.to_string(),
             "-contractinfo".to_owned(),
             "-jsonerrors".to_owned(),
         ];
+
+        println!("args: {args:#?}");
+
+        if is_library {
+            args.push("-islibrary".to_owned());
+        }
 
         let mut params = ObjectParams::new();
         params.insert("argv", args)?;
@@ -194,6 +206,7 @@ impl Scilla {
         value: ZilAmount,
         init: &[Value],
     ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
+        let is_library = Self::is_library(init);
         let args = vec![
             "-i".to_owned(),
             code.to_owned(),
@@ -206,8 +219,10 @@ impl Scilla {
             "-balance".to_owned(),
             value.to_string(),
             "-libdir".to_owned(),
-            self.lib_dir.clone(),
+            format!("{}:{}", self.lib_dir.clone(), "/contracts/"),
             "-jsonerrors".to_owned(),
+            "-islibrary".to_owned(),
+            format!("{is_library}"),
         ];
 
         let mut params = ObjectParams::new();
@@ -330,7 +345,7 @@ impl Scilla {
 pub struct CheckOutput {
     #[serde(with = "num_as_str")]
     pub gas_remaining: ScillaGas,
-    pub contract_info: ContractInfo,
+    pub contract_info: Option<ContractInfo>, // It's not included in the response for scilla libraries.
 }
 
 #[derive(Debug, Deserialize)]
@@ -344,21 +359,21 @@ pub struct Location {
     pub line: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct ContractInfo {
     pub scilla_major_version: String,
     pub fields: Vec<Param>,
     pub transitions: Vec<Transition>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct Transition {
     #[serde(rename = "vname")]
     pub name: String,
     pub params: Vec<TransitionParam>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct TransitionParam {
     #[serde(rename = "vname")]
     pub name: String,

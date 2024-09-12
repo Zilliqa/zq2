@@ -1393,14 +1393,14 @@ fn scilla_create(
 
     let gas = gas.min(check_output.gas_remaining);
 
-    let types = check_output
-        .contract_info
+    let contract_info = check_output.contract_info.unwrap_or_default();
+    let types = contract_info
         .fields
         .into_iter()
         .map(|p| (p.name, (p.ty, p.depth as u8)))
         .collect();
 
-    let transitions = check_output.contract_info.transitions;
+    let transitions = contract_info.transitions;
 
     let account = state.load_account(contract_address)?;
     account.account.balance = txn.amount.get();
