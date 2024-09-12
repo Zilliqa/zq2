@@ -267,7 +267,7 @@ impl Consensus {
                         .get_latest_finalized_view()?
                         .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
                     let finalzied_block = db
-                        .get_block_by_view(&finalized_number)?
+                        .get_block_by_view(finalized_number)?
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
                     let highest_block_number = db
@@ -288,7 +288,6 @@ impl Consensus {
                     if head_block.number() > high_block.number()
                         && head_block.number() > finalized_number
                     {
-                        db.revert_canonical_block_number(head_block.number())?;
                         db.remove_transactions_executed_in_block(&head_block.hash())?;
                         db.remove_block(&head_block)?;
                     }
@@ -1943,12 +1942,12 @@ impl Consensus {
                 && self.epoch_is_checkpoint(self.epoch_number(block.number()))
             {
                 if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
-                    let parent =
-                        self.db
-                            .get_block_by_hash(&block.parent_hash())?
-                            .ok_or(anyhow!(
-                                "Trying to checkpoint block, but we don't have its parent"
-                            ))?;
+                    let parent = self
+                        .db
+                        .get_block_by_hash(block.parent_hash())?
+                        .ok_or(anyhow!(
+                            "Trying to checkpoint block, but we don't have its parent"
+                        ))?;
                     self.message_sender.send_message_to_coordinator(
                         InternalMessage::ExportBlockCheckpoint(
                             Box::new(block),
@@ -2505,10 +2504,8 @@ impl Consensus {
             self.db
                 .remove_transactions_executed_in_block(&head_block.hash())?;
 
-            // Persistence - since this block is no longer in the main chain, ensure it's not
-            // recorded as such in the height mappings
-            self.db
-                .revert_canonical_block_number(head_block.header.number)?;
+            // this block is no longer in the main chain
+            self.db.mark_block_as_non_canonical(head_block.hash())?;
         }
 
         // Now, we execute forward from the common ancestor to the new block parent which can
@@ -2690,9 +2687,6 @@ impl Consensus {
                 Ok(())
             })?;
         }
-
-        self.db
-            .set_canonical_block_number(block.number(), block.hash())?;
 
         // Tell the block store to request more blocks if it can.
         self.block_store.request_missing_blocks()?;
