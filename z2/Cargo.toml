@@ -21,15 +21,17 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy = { version = "0.2.1", default-features = false, features = ["consensus", "rlp", "serde"] }
-anyhow = "1.0.86"
+alloy = { version = "0.3.2", default-features = false, features = ["consensus", "rlp", "serde"] }
+anyhow = "1.0.87"
 async-trait = "0.1.81"
 base64 = "0.22.0"
 bitvec = "1.0.1"
-blsful = "2.5.7"
-clap = {version = "4.5.15", features = ["derive"]}
+blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
+clap = {version = "4.5.17", features = ["derive"]}
+clap-verbosity-flag = "2.2.1"
 colored = "2.1.0"
 crypto-bigint = "=0.5.5"
+env_logger = "0.11.5"
 eth_trie = {version = "0.1.0", path = "../eth-trie.rs"}
 ethabi = "18.0.0"
 ethereum = "0.15.0"
@@ -44,6 +46,7 @@ jsonrpsee = {version = "0.22.4", features = ["client"]}
 k256 = "0.13.3"
 lazy_static = "1.5.0"
 libp2p = {version = "0.54.0", features = ["identify"]}
+log = "0.4.22"
 octocrab = "0.39.0"
 primitive-types = "0.12.2"
 prost = "0.13.1"
@@ -51,10 +54,10 @@ rand = "0.8.5"
 rand_core = "0.6.4"
 regex = "1.10.6"
 reqwest = {version = "0.12.3", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
-revm = {version = "12.1.0", features = ["optional_balance_check"]}
+revm = {version = "14.0.1", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
-serde = {version = "1.0.206", features = ["derive"]}
-serde_json = "1.0.124"
+serde = {version = "1.0.210", features = ["derive"]}
+serde_json = "1.0.128"
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
@@ -62,7 +65,7 @@ tempfile = "3.12.0"
 tera = "1.19.1"
 thiserror = "1.0.63"
 tokio = {version = "1.39.2", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
-tokio-stream = "0.1.15"
+tokio-stream = "0.1.16"
 toml = "0.8.19"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"

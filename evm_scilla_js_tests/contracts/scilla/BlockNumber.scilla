@@ -1,0 +1,9 @@
+scilla_version 0
+  
+contract BlockNumber()
+
+transition EventBlockNumber ()
+  bid <-& BLOCKNUMBER;
+  e = { _eventname : "BlockNumber"; block_number : bid };
+  event e
+end

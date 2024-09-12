@@ -39,12 +39,12 @@ impl Proposal {
     /// ```Arguments```
     ///
     /// * `block`: the Block, including the header and the full list of transaction hashes
-    /// included in the block (and proposal)
+    ///   included in the block (and proposal)
     ///
     /// * `full_transactions`: the transactions whose full `Transaction` bodies will be
-    /// included in the proposal. The difference between `block.transactions` and
-    /// `full_transactions` make up the `opaque_transactions` (i.e. transactions only known
-    /// by their hash).
+    ///   included in the proposal. The difference between `block.transactions` and
+    ///   `full_transactions` make up the `opaque_transactions` (i.e. transactions only known
+    ///   by their hash).
     pub fn from_parts(block: Block, full_transactions: Vec<VerifiedTransaction>) -> Self {
         Self::from_parts_with_hashes(
             block,
@@ -218,7 +218,9 @@ pub enum ExternalMessage {
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
     NewTransaction(SignedTransaction),
-    RequestResponse,
+    /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
+    /// require any data in the response.
+    Acknowledgement,
 }
 
 impl ExternalMessage {
@@ -253,8 +255,21 @@ impl Display for ExternalMessage {
                     (None, Some(_)) => unreachable!(),
                 }
             }
-            ExternalMessage::NewTransaction(_) => write!(f, "NewTransaction"),
-            ExternalMessage::RequestResponse => write!(f, "RequestResponse"),
+            ExternalMessage::NewTransaction(txn) => match txn.clone().verify() {
+                Ok(txn) => {
+                    write!(
+                        f,
+                        "NewTransaction(Hash: {:?}, from: {:?}, nonce: {:?})",
+                        txn.hash,
+                        txn.signer,
+                        txn.tx.nonce()
+                    )
+                }
+                Err(err) => {
+                    write!(f, "NewTransaction(Unable to verify txn due to: {:?})", err)
+                }
+            },
+            ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
         }
     }
 }
@@ -305,6 +320,15 @@ impl QuorumCertificate {
             cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
             block_hash: Hash::ZERO,
             view: 0,
+        }
+    }
+
+    pub fn new_with_identity(block_hash: Hash, view: u64) -> Self {
+        QuorumCertificate {
+            signature: NodeSignature::identity(),
+            cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
+            block_hash,
+            view,
         }
     }
 

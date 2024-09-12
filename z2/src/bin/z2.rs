@@ -3,14 +3,19 @@ use std::{collections::HashSet, env, fmt};
 use alloy::primitives::B256;
 use anyhow::{anyhow, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
-use z2lib::{components::Component, deployer, plumbing, validators};
+use clap_verbosity_flag::{InfoLevel, Verbosity};
+use z2lib::{chain, components::Component, deployer, plumbing, validators};
 use zilliqa::crypto::SecretKey;
 
 #[derive(Parser, Debug)]
 #[clap(about)]
 struct Cli {
+    /// The subcommand to run
     #[clap(subcommand)]
     command: Commands,
+    /// Define the console output verbosity. Default is info. Use -v to enable `debug` and -vv to enable `trace`
+    #[command(flatten)]
+    verbose: Verbosity<InfoLevel>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -22,7 +27,7 @@ enum Commands {
     /// Test
     Perf(PerfStruct),
     #[clap(subcommand)]
-    /// Deploy Zilliqa 2
+    /// Group of subcommands to deploy and configure a Zilliqa 2 network
     Deployer(DeployerCommands),
     #[clap(subcommand)]
     /// Convert Zilliqa 1 to Zilliqa 2 persistnce
@@ -58,12 +63,14 @@ pub struct DependsUpdateOptions {
 enum DeployerCommands {
     /// Generate the deployer config file
     New(DeployerNewArgs),
-    /// Perfom the network install
+    /// Install the network defined in the deployer config file
     Install(DeployerUpgradeArgs),
-    /// Perfom the network upgrade
+    /// Update the network defined in the deployer config file
     Upgrade(DeployerUpgradeArgs),
-    /// Provide the deposit commands for the validator nodes
+    /// Generate in output the commands to deposit stake amount to all the validators
     GetDepositCommands(DeployerUpgradeArgs),
+    /// Deposit the stake amounts to all the validators
+    Deposit(DeployerUpgradeArgs),
 }
 
 #[derive(Args, Debug)]
@@ -84,6 +91,7 @@ pub struct DeployerNewArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerUpgradeArgs {
+    /// The network deployer config file
     config_file: Option<String>,
 }
 
@@ -104,8 +112,18 @@ struct ConvertConfigStruct {
     zq2_config_file: String,
     #[arg(value_parser = SecretKey::from_hex)]
     secret_key: SecretKey,
+    #[clap(flatten)]
+    convert_type_group: ConvertTypeGroup,
+}
+#[derive(Args, Debug)]
+#[group(required = true, multiple = false)]
+pub struct ConvertTypeGroup {
     #[clap(long)]
-    skip_accounts: bool,
+    #[arg(default_value_t = false)]
+    convert_accounts: bool,
+    #[clap(long)]
+    #[arg(default_value_t = false)]
+    convert_blocks: bool,
 }
 
 #[derive(Args, Debug)]
@@ -265,14 +283,14 @@ struct OnlyStruct {
 struct JoinStruct {
     /// Specify the ZQ2 chain you want join
     #[clap(long = "chain")]
-    chain_name: validators::Chain,
+    chain_name: chain::Chain,
 }
 
 #[derive(Args, Debug)]
 struct DepositStruct {
     /// Specify the ZQ2 deposit chain
     #[clap(long = "chain")]
-    chain_name: validators::Chain,
+    chain_name: chain::Chain,
     /// Specify the Validator Public Key
     #[clap(long)]
     public_key: String,
@@ -331,6 +349,10 @@ async fn main() -> Result<()> {
         }
     };
     let cli = Cli::parse();
+
+    env_logger::Builder::new()
+        .filter_level(cli.verbose.log_level_filter())
+        .init();
 
     match &cli.command {
         Commands::Only(ref arg) => {
@@ -478,13 +500,26 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_deposit_commands(&config_file)
+                plumbing::run_deployer_get_deposit_commands(&config_file)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!(
                             "Failed to run deployer get-deposit-commands command: {}",
                             err
                         )
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Deposit(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_deposit(&config_file)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer deposit command: {}", err)
                     })?;
                 Ok(())
             }
@@ -496,7 +531,8 @@ async fn main() -> Result<()> {
                     &arg.zq2_data_dir,
                     &arg.zq2_config_file,
                     arg.secret_key,
-                    arg.skip_accounts,
+                    arg.convert_type_group.convert_accounts,
+                    arg.convert_type_group.convert_blocks,
                 )
                 .await?;
                 Ok(())

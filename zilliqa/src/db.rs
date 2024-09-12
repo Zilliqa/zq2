@@ -246,6 +246,7 @@ impl Db {
                 accepted INTEGER,
                 errors BLOB,
                 exceptions BLOB);
+            CREATE INDEX IF NOT EXISTS block_hash_index ON receipts (block_hash);
             CREATE TABLE IF NOT EXISTS touched_address_index (
                 address BLOB,
                 tx_hash BLOB REFERENCES transactions (tx_hash) ON DELETE CASCADE,
@@ -336,6 +337,11 @@ impl Db {
             if let Some(db_block) = self.get_block_by_hash(&block.hash())? {
                 if db_block != block {
                     return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"));
+                } else {
+                    // In this case, the database already has the block contained in this checkpoint. We assume the
+                    // database contains the full state for that block too and thus return early, without actually
+                    // loading the checkpoint file.
+                    return Ok(db_block);
                 }
             } else {
                 return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint file does not exist in non-empty database"));
@@ -632,6 +638,14 @@ impl Db {
 
     pub fn insert_block(&self, block: &Block) -> Result<()> {
         self.insert_block_with_db_tx(&self.block_store.lock().unwrap(), block)
+    }
+
+    pub fn remove_block(&self, block: &Block) -> Result<()> {
+        self.block_store.lock().unwrap().execute(
+            "DELETE FROM blocks WHERE block_hash = ?1",
+            [block.header.hash],
+        )?;
+        Ok(())
     }
 
     fn get_transactionless_block(&self, key: Either<&Hash, &u64>) -> Result<Option<Block>> {
@@ -982,12 +996,24 @@ mod tests {
         )
         .unwrap();
 
-        // now parse the checkpoint
-        db.load_trusted_checkpoint(
-            checkpoint_path.join(checkpoint_block.number().to_string()),
-            &checkpoint_block.hash(),
-            SHARD_ID,
-        )
-        .unwrap();
+        // now load the checkpoint
+        let block = db
+            .load_trusted_checkpoint(
+                checkpoint_path.join(checkpoint_block.number().to_string()),
+                &checkpoint_block.hash(),
+                SHARD_ID,
+            )
+            .unwrap();
+        assert_eq!(checkpoint_block, block);
+
+        // load the checkpoint again, to ensure idempotency
+        let block = db
+            .load_trusted_checkpoint(
+                checkpoint_path.join(checkpoint_block.number().to_string()),
+                &checkpoint_block.hash(),
+                SHARD_ID,
+            )
+            .unwrap();
+        assert_eq!(checkpoint_block, block);
     }
 }

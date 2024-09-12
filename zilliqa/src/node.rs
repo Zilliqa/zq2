@@ -1,4 +1,9 @@
-use std::{collections::HashSet, fmt::Debug, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    fmt::Debug,
+    sync::{atomic::AtomicUsize, Arc},
+    time::Duration,
+};
 
 use alloy::{
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
@@ -15,8 +20,8 @@ use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
 use revm::Inspector;
 use revm_inspectors::tracing::{
-    js::{JsInspector, TransactionContext},
-    FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
+    js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
+    TransactionContext,
 };
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
@@ -29,9 +34,10 @@ use crate::{
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
-        Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InternalMessage,
-        IntershardCall, Proposal,
+        Block, BlockHeader, BlockResponse, ExternalMessage, InternalMessage, IntershardCall,
+        Proposal,
     },
+    node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     pool::TxPoolContent,
     state::State,
@@ -113,24 +119,43 @@ pub type NetworkMessage = (Option<PeerId>, ExternalMessage);
 ///
 /// # Transaction Lifecycle
 /// 1. New transactions are created with a call to [`Node::new_transaction()`].
-/// The node gossips the transaction to the network and itself via a [`Message::NewTransaction`] message.
-/// This initial node also stores the transaction hash in `new_transactions`.
+///    The node gossips the transaction to the network and itself via a [`Message::NewTransaction`] message.
+///    This initial node also stores the transaction hash in `new_transactions`.
 ///
 /// 1. When a node recieves a [`NewTransaction`] via [`Node::handle_message()`], it stores it in `new_transactions`.
-/// This contains all transactions which have been receieved, but not yet executed.
+///    This contains all transactions which have been receieved, but not yet executed.
 ///
 /// 2. When the initial node is a leader of a block, it adds all transaction hashes in `new_transactions` to the block.
 ///
 /// 3. When a node recieves a block proposal, it looks up the transactions in `new_transactions` and executes them against its `state`.
-/// Successfully executed transactions are added to `transactions` so they can be returned via APIs.
+///    Successfully executed transactions are added to `transactions` so they can be returned via APIs.
 #[derive(Debug)]
 pub struct Node {
     pub config: NodeConfig,
     pub db: Arc<Db>,
     peer_id: PeerId,
     message_sender: MessageSender,
+    /// Send responses to requests down this channel. The `ResponseChannel` passed must correspond to a
+    /// `ResponseChannel` received via `handle_request`.
+    request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
     reset_timeout: UnboundedSender<Duration>,
     pub consensus: Consensus,
+    peer_num: Arc<AtomicUsize>,
+    pub chain_id: ChainId,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct ChainId {
+    pub eth: u64,
+}
+
+impl ChainId {
+    pub fn new(eth_chain_id: u64) -> Self {
+        ChainId { eth: eth_chain_id }
+    }
+    pub fn zil(&self) -> u64 {
+        self.eth - 0x8000
+    }
 }
 
 const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
@@ -141,7 +166,9 @@ impl Node {
         secret_key: SecretKey,
         message_sender_channel: UnboundedSender<OutboundMessageTuple>,
         local_sender_channel: UnboundedSender<LocalMessageTuple>,
+        request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         reset_timeout: UnboundedSender<Duration>,
+        peer_num: Arc<AtomicUsize>,
     ) -> Result<Node> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let message_sender = MessageSender {
@@ -156,69 +183,23 @@ impl Node {
             config: config.clone(),
             peer_id,
             message_sender: message_sender.clone(),
+            request_responses,
             reset_timeout: reset_timeout.clone(),
             db: db.clone(),
+            chain_id: ChainId::new(config.eth_chain_id),
             consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
+            peer_num,
         };
         Ok(node)
     }
 
-    // TODO: Multithreading - `&mut self` -> `&self`
-    pub fn handle_network_message(
-        &mut self,
-        from: PeerId,
-        message: Result<ExternalMessage, OutgoingMessageFailure>,
-    ) -> Result<()> {
-        let to = self.peer_id;
-        let to_self = from == to;
-        let message = match message {
-            Ok(message) => message,
-            Err(failure) => {
-                debug!(?failure, "handling message failure");
-                self.consensus.report_outgoing_message_failure(failure)?;
-
-                return Ok(());
-            }
-        };
-        debug!(%from, %to, %message, "handling message");
+    pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
+        debug!(%from, to = %self.peer_id, %message, "handling broadcast");
+        // We only expect `Proposal`s and `NewTransaction`s to be broadcast.
         match message {
             ExternalMessage::Proposal(m) => {
-                if let Some((to, message)) = self.consensus.proposal(from, m, false)? {
-                    self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
-                    if let Some(to) = to {
-                        self.message_sender.send_external_message(to, message)?;
-                    } else {
-                        self.message_sender.broadcast_external_message(message)?;
-                    }
-                }
+                self.handle_proposal(from, m)?;
             }
-            ExternalMessage::Vote(m) => {
-                if let Some((block, transactions)) = self.consensus.vote(*m)? {
-                    self.message_sender
-                        .broadcast_external_message(ExternalMessage::Proposal(
-                            Proposal::from_parts(block, transactions),
-                        ))?;
-                }
-            }
-            ExternalMessage::NewView(m) => {
-                if let Some(block) = self.consensus.new_view(from, *m)? {
-                    self.message_sender
-                        .broadcast_external_message(ExternalMessage::Proposal(
-                            Proposal::from_parts(block, vec![]),
-                        ))?;
-                }
-            }
-            ExternalMessage::BlockRequest(m) => {
-                if !to_self {
-                    self.handle_block_request(from, m)?;
-                } else {
-                    debug!("ignoring blocks request to self");
-                }
-            }
-            ExternalMessage::BlockResponse(m) => {
-                self.handle_block_response(from, m)?;
-            }
-            ExternalMessage::RequestResponse => {}
             ExternalMessage::NewTransaction(t) => {
                 let inserted = self.consensus.new_transaction(t.verify()?)?;
                 if inserted {
@@ -227,13 +208,122 @@ impl Node {
                     }
                 }
             }
+            _ => {
+                warn!("unexpected message type");
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn handle_request(
+        &mut self,
+        from: PeerId,
+        message: ExternalMessage,
+        response_channel: ResponseChannel,
+    ) -> Result<()> {
+        debug!(%from, to = %self.peer_id, %message, "handling request");
+        match message {
+            ExternalMessage::Vote(m) => {
+                if let Some((block, transactions)) = self.consensus.vote(*m)? {
+                    self.message_sender
+                        .broadcast_external_message(ExternalMessage::Proposal(
+                            Proposal::from_parts(block, transactions),
+                        ))?;
+                }
+                // Acknowledge this vote.
+                self.request_responses
+                    .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            ExternalMessage::NewView(m) => {
+                if let Some(block) = self.consensus.new_view(*m)? {
+                    self.message_sender
+                        .broadcast_external_message(ExternalMessage::Proposal(
+                            Proposal::from_parts(block, vec![]),
+                        ))?;
+                }
+                // Acknowledge this new view.
+                self.request_responses
+                    .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            ExternalMessage::BlockRequest(request) => {
+                if from == self.peer_id {
+                    debug!("ignoring blocks request to self");
+                    return Ok(());
+                }
+
+                let proposals = (request.from_view..=request.to_view)
+                    .take(self.config.block_request_limit)
+                    .filter_map(|view| {
+                        self.consensus
+                            .get_block_by_view(view)
+                            .transpose()
+                            .map(|block| Ok(self.block_to_proposal(block?)))
+                    })
+                    .collect::<Result<_>>()?;
+
+                trace!("responding to new blocks request of {request:?}");
+
+                // Send the response to this block request.
+                self.request_responses.send((
+                    response_channel,
+                    ExternalMessage::BlockResponse(BlockResponse { proposals }),
+                ))?;
+            }
+            // We don't usually expect a [BlockResponse] to be received as a request, however this can occur when our
+            // [BlockStore] has re-sent a previously unusable block because we didn't (yet) have the block's parent.
+            // Having knowledge of this here breaks our abstraction boundaries slightly, but it also keeps things
+            // simple.
+            ExternalMessage::BlockResponse(m) => {
+                self.handle_block_response(from, m)?;
+                // Acknowledge this block response. This does nothing because the `BlockResponse` request was sent by
+                // us, but we keep it here for symmetry with the other handlers.
+                self.request_responses
+                    .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            // Handle requests which just contain a block proposal. This shouldn't actually happen in production, but
+            // annoyingly we have some test cases which trigger this (by rewriting broadcasts to direct messages) and
+            // the easiest fix is just to handle requests with proposals gracefully.
+            ExternalMessage::Proposal(m) => {
+                self.handle_proposal(from, m)?;
+
+                // Acknowledge the proposal.
+                self.request_responses
+                    .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            _ => {
+                warn!("unexpected message type");
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn handle_request_failure(
+        &mut self,
+        from: PeerId,
+        failure: OutgoingMessageFailure,
+    ) -> Result<()> {
+        debug!(%from, to = %self.peer_id, ?failure, "handling message failure");
+        self.consensus.report_outgoing_message_failure(failure)?;
+        Ok(())
+    }
+
+    pub fn handle_response(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
+        debug!(%from, to = %self.peer_id, %message, "handling response");
+        match message {
+            ExternalMessage::BlockResponse(m) => self.handle_block_response(from, m)?,
+            ExternalMessage::Acknowledgement => {}
+            _ => {
+                warn!("unexpected message type");
+            }
         }
 
         Ok(())
     }
 
     pub fn handle_internal_message(&mut self, from: u64, message: InternalMessage) -> Result<()> {
-        let to = self.config.eth_chain_id;
+        let to = self.chain_id.eth;
         tracing::debug!(%from, %to, %message, "handling message");
         match message {
             InternalMessage::IntershardCall(intershard_call) => {
@@ -255,7 +345,7 @@ impl Node {
     fn inject_intershard_transaction(&mut self, intershard_call: IntershardCall) -> Result<()> {
         let tx = SignedTransaction::Intershard {
             tx: TxIntershard {
-                chain_id: self.config.eth_chain_id,
+                chain_id: self.chain_id.eth,
                 bridge_nonce: intershard_call.bridge_nonce,
                 source_chain: intershard_call.source_chain_id,
                 gas_price: intershard_call.gas_price,
@@ -394,23 +484,13 @@ impl Node {
                 let other_txn = self
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(
-                    other_txn,
-                    self.get_chain_id(),
-                    parent.header,
-                    inspector::noop(),
-                )?;
+                state.apply_transaction(other_txn, block.header, inspector::noop())?;
             } else {
                 let config = TracingInspectorConfig::from_parity_config(trace_types);
                 let mut inspector = TracingInspector::new(config);
                 let pre_state = state.try_clone()?;
 
-                let result = state.apply_transaction(
-                    txn,
-                    self.get_chain_id(),
-                    parent.header,
-                    &mut inspector,
-                )?;
+                let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
                 let TransactionApplyResult::Evm(result, ..) = result else {
                     return Err(anyhow!("not an EVM transaction"));
@@ -455,15 +535,9 @@ impl Node {
                 let other_txn = self
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(
-                    other_txn,
-                    self.get_chain_id(),
-                    parent.header,
-                    inspector::noop(),
-                )?;
+                state.apply_transaction(other_txn, parent.header, inspector::noop())?;
             } else {
-                let result =
-                    state.apply_transaction(txn, self.get_chain_id(), parent.header, inspector)?;
+                let result = state.apply_transaction(txn, block.header, inspector)?;
 
                 return Ok(result);
             }
@@ -496,7 +570,6 @@ impl Node {
                 txn_hash,
                 index,
                 &block,
-                &parent,
                 trace_opts.clone(),
             ) {
                 traces.push(trace);
@@ -512,7 +585,6 @@ impl Node {
         txn_hash: Hash,
         txn_index: usize,
         block: &Block,
-        parent_block: &Block,
         trace_opts: GethDebugTracingOptions,
     ) -> Result<Option<TraceResult>> {
         let GethDebugTracingOptions {
@@ -530,12 +602,7 @@ impl Node {
             let inspector_config = TracingInspectorConfig::from_geth_config(&config);
             let mut inspector = TracingInspector::new(inspector_config);
 
-            let result = state.apply_transaction(
-                txn,
-                self.get_chain_id(),
-                parent_block.header,
-                &mut inspector,
-            )?;
+            let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
             let TransactionApplyResult::Evm(result, ..) = result else {
                 return Ok(None);
@@ -561,12 +628,7 @@ impl Node {
                         TracingInspectorConfig::from_geth_call_config(&call_config),
                     );
 
-                    let result = state.apply_transaction(
-                        txn,
-                        self.get_chain_id(),
-                        parent_block.header,
-                        &mut inspector,
-                    )?;
+                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -583,19 +645,14 @@ impl Node {
                 }
                 GethDebugBuiltInTracerType::FourByteTracer => {
                     let mut inspector = FourByteInspector::default();
-                    let result = state.apply_transaction(
-                        txn,
-                        self.get_chain_id(),
-                        parent_block.header,
-                        &mut inspector,
-                    )?;
+                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
                     let TransactionApplyResult::Evm(_, _) = result else {
                         return Ok(None);
                     };
 
                     Ok(Some(TraceResult::Success {
-                        result: FourByteFrame::from(inspector).into(),
+                        result: FourByteFrame::from(&inspector).into(),
                         tx_hash: Some(txn_hash.0.into()),
                     }))
                 }
@@ -603,12 +660,7 @@ impl Node {
                     let mux_config = tracer_config.into_mux_config()?;
 
                     let mut inspector = MuxInspector::try_from_config(mux_config)?;
-                    let result = state.apply_transaction(
-                        txn,
-                        self.get_chain_id(),
-                        parent_block.header,
-                        &mut inspector,
-                    )?;
+                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -630,12 +682,7 @@ impl Node {
                     let mut inspector = TracingInspector::new(
                         TracingInspectorConfig::from_geth_prestate_config(&prestate_config),
                     );
-                    let result = state.apply_transaction(
-                        txn,
-                        self.get_chain_id(),
-                        parent_block.header,
-                        &mut inspector,
-                    )?;
+                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -643,7 +690,7 @@ impl Node {
                     let state_ref = &(*state);
                     let trace = inspector.into_geth_builder().geth_prestate_traces(
                         &result,
-                        prestate_config,
+                        &prestate_config,
                         state_ref,
                     )?;
 
@@ -665,12 +712,7 @@ impl Node {
                     JsInspector::with_transaction_context(js_code, config, transaction_context)
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
-                let result = state.apply_transaction(
-                    txn,
-                    self.get_chain_id(),
-                    parent_block.header,
-                    &mut inspector,
-                )?;
+                let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
                 let TransactionApplyResult::Evm(result, env) = result else {
                     return Ok(None);
@@ -703,14 +745,7 @@ impl Node {
             .state()
             .at_root(block.state_root_hash().into());
 
-        state.call_contract(
-            from_addr,
-            to_addr,
-            data,
-            amount,
-            self.config.eth_chain_id,
-            block.header,
-        )
+        state.call_contract(from_addr, to_addr, data, amount, block.header)
     }
 
     pub fn get_proposer_reward_address(&self, header: BlockHeader) -> Result<Option<Address>> {
@@ -759,7 +794,6 @@ impl Node {
             from_addr,
             to_addr,
             data,
-            self.config.eth_chain_id,
             block.header,
             gas,
             gas_price,
@@ -782,10 +816,6 @@ impl Node {
 
     pub fn subscribe_to_new_transaction_hashes(&self) -> broadcast::Receiver<Hash> {
         self.consensus.new_transaction_hashes.subscribe()
-    }
-
-    pub fn get_chain_id(&self) -> u64 {
-        self.config.eth_chain_id
     }
 
     pub fn get_chain_tip(&self) -> u64 {
@@ -815,6 +845,10 @@ impl Node {
         self.consensus.txpool_content()
     }
 
+    pub fn get_peer_num(&self) -> usize {
+        self.peer_num.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Convenience function to convert a block to a proposal (add full txs)
     /// NOTE: Includes intershard transactions. Should only be used for syncing history,
     /// not for consensus messages regarding new blocks.
@@ -833,23 +867,15 @@ impl Node {
         Proposal::from_parts(block, txs)
     }
 
-    fn handle_block_request(&mut self, source: PeerId, request: BlockRequest) -> Result<()> {
-        let proposals = (request.from_view..=request.to_view)
-            .take(self.config.block_request_limit)
-            .filter_map(|view| {
-                self.consensus
-                    .get_block_by_view(view)
-                    .transpose()
-                    .map(|block| Ok(self.block_to_proposal(block?)))
-            })
-            .collect::<Result<_>>()?;
-
-        trace!("responding to new blocks request of {request:?}");
-
-        self.message_sender.send_external_message(
-            source,
-            ExternalMessage::BlockResponse(BlockResponse { proposals }),
-        )?;
+    fn handle_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
+        if let Some((to, message)) = self.consensus.proposal(from, proposal, false)? {
+            self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
+            if let Some(to) = to {
+                self.message_sender.send_external_message(to, message)?;
+            } else {
+                self.message_sender.broadcast_external_message(message)?;
+            }
+        }
 
         Ok(())
     }
