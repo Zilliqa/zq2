@@ -18,7 +18,7 @@ use rusqlite::{
     Connection, OptionalExtension, Row, ToSql,
 };
 use serde::{Deserialize, Serialize};
-use sled::{Batch, Tree};
+use sled::{transaction::TransactionError, Batch, Tree};
 use tracing::warn;
 
 use crate::{
@@ -888,7 +888,19 @@ impl eth_trie::DB for TrieStorage {
         for (key, value) in keys.into_iter().zip(values) {
             batch.insert(key, value);
         }
-        self.db.apply_batch(batch)?;
+        if let Err(e) = self.db.transaction(|db| {
+            db.apply_batch(&batch)?;
+            Ok(())
+        }) {
+            match e {
+                TransactionError::Abort(()) => {
+                    unreachable!("we don't call `abort` during this transaction")
+                }
+                TransactionError::Storage(e) => {
+                    return Err(e);
+                }
+            }
+        }
         Ok(())
     }
 

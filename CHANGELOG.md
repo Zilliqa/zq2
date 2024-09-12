@@ -4,6 +4,7 @@
 
 Unreleased changes, in reverse chronological order. New entries are added at the top of this list.
 
+- [#1445](https://github.com/Zilliqa/zq2/pull/1445): Apply state changes from transactions atomically.
 - [#1448](https://github.com/Zilliqa/zq2/pull/1448): Fail gracefully if we are unable to parse a gossipsub message.
 - [#1423](https://github.com/Zilliqa/zq2/pull/1423): Fix invalid value returned by calling `_balance` in a scilla transition.
 
