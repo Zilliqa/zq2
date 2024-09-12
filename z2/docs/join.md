@@ -49,8 +49,9 @@ On the Ubuntu 20.04LTS run:
 ```bash
 chmod +x /path/to/zq2/start_node.sh
 
-/path/to/zq2/start_node.sh  -c $PRIVATE_KEY -p <checkpoint_file.dat>
+/path/to/zq2/start_node.sh  -k $PRIVATE_KEY -p <checkpoint_file.dat>
 ```
+> **Note:** `-p <checkpoint_file.dat>` is optional and should only be used when the node is syncing from a checkpoint.
 
 # How-to use a custom docker image
 
