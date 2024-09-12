@@ -313,7 +313,14 @@ impl P2pNode {
                             }, ..
                         })) => {
                             let source = source.expect("message should have a source");
-                            let message = cbor4ii::serde::from_slice::<ExternalMessage>(&data).unwrap();
+                            let message = match cbor4ii::serde::from_slice::<ExternalMessage>(&data) {
+                                Ok(m) => m,
+                                Err(e) => {
+                                    let data = hex::encode(&data);
+                                    error!(?e, data, "message parsing failed");
+                                    continue;
+                                }
+                            };
                             let to = self.peer_id;
                             debug!(%source, %to, %message, "broadcast recieved");
                             self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
