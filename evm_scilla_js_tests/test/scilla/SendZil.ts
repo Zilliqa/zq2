@@ -87,4 +87,16 @@ describe("Move Zil #parallel", function () {
 
     expect(await contract2.test_field()).to.be.eq(1234);
   });
+
+  it("Shouldn't fund the recipient contract if the calling transition doesn't exist", async function () {
+    let balanceResponse = await zilliqa.blockchain.getBalance(contract2.address!);
+    const oldBalance = new BN(balanceResponse.result.balance);
+
+    await contract.callOtherContractWithAmount(contract2.address, "non_existent", 1_000_000);
+
+    balanceResponse = await zilliqa.blockchain.getBalance(contract2.address!);
+    const newBalance = new BN(balanceResponse.result.balance);
+
+    expect(oldBalance).to.be.eq(newBalance);
+  });
 });

@@ -51,3 +51,10 @@ transition callOtherContract (contract_address : ByStr20, tag : String, value : 
   msgs = Cons {Message} msg no_msg;
   send msgs
 end
+
+transition callOtherContractWithAmount (contract_address : ByStr20, tag : String, amount: Uint128)
+  msg = { _tag : tag ; _recipient : contract_address ; _amount : amount};
+  no_msg = Nil {Message};
+  msgs = Cons {Message} msg no_msg;
+  send msgs
+end
