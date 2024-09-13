@@ -26,3 +26,4 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
 consensus.local_address = "host.docker.internal"
+consensus.scilla_lib_dirs = ["/scilla/0/_build/default/src/stdlib/", "/scilla-libs"]
