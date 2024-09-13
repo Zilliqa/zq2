@@ -1166,7 +1166,7 @@ impl Consensus {
         }
 
         // Internal states
-        let gas_left = self.config.consensus.eth_block_gas_limit;
+        let mut gas_left = self.config.consensus.eth_block_gas_limit;
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut updated_root_hash = state.root_hash()?;
@@ -1206,7 +1206,7 @@ impl Consensus {
             // 2. Transaction is successful and fits into block
             // 3. Transaction failed and cannot fit into block due to gas limit - return it back to mempool
             // 4. Transaction failed but can be included in a block (marked as failed). There's cost incurred.
-            let (gas_left, receipt) = {
+            let (gas_exceeded, receipt) = {
                 match Self::apply_transaction_at(
                     state,
                     self.db.clone(),
@@ -1216,8 +1216,9 @@ impl Consensus {
                 ) {
                     Ok(result) => {
                         if let Some(g) = gas_left.checked_sub(result.gas_used()) {
+                            gas_left = g;
                             (
-                                Some(g),
+                                false,
                                 Some(Self::create_txn_receipt(
                                     result.clone(),
                                     tx.hash,
@@ -1226,7 +1227,7 @@ impl Consensus {
                                 )),
                             )
                         } else {
-                            (None, None)
+                            (true, None)
                         }
                     }
                     Err(_) => {
@@ -1237,21 +1238,23 @@ impl Consensus {
                                 account.balance.saturating_sub(gas_cost)
                             })?;
                             state.mutate_account(tx.signer, |account| account.nonce += 1)?;
+                            gas_left = g;
                             (
-                                Some(g),
+                                false,
                                 Some(Self::create_failed_txn_receipt(
                                     tx.clone(),
                                     tx_index_in_block,
+                                    self.config.consensus.eth_block_gas_limit - gas_left,
                                 )),
                             )
                         } else {
-                            (None, None)
+                            (true, None)
                         }
                     }
                 }
             };
 
-            if gas_left.is_none() {
+            if gas_exceeded {
                 info!(
                     nonce = tx.tx.nonce(),
                     "gas limit reached, returning last transaction to pool",
@@ -2658,7 +2661,11 @@ impl Consensus {
         }
     }
 
-    fn create_failed_txn_receipt(txn: VerifiedTransaction, tx_index: usize) -> TransactionReceipt {
+    fn create_failed_txn_receipt(
+        txn: VerifiedTransaction,
+        tx_index: usize,
+        cumulative_gas_used: EvmGas,
+    ) -> TransactionReceipt {
         TransactionReceipt {
             tx_hash: txn.hash,
             block_hash: Hash::ZERO,
@@ -2668,7 +2675,7 @@ impl Consensus {
             logs: vec![],
             transitions: vec![],
             gas_used: txn.tx.gas_limit(),
-            cumulative_gas_used: txn.tx.gas_limit(),
+            cumulative_gas_used,
             accepted: Some(false),
             errors: BTreeMap::default(),
             exceptions: vec![],
