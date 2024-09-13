@@ -141,7 +141,7 @@ impl Scilla {
         code: &str,
         gas_limit: ScillaGas,
         init: &[Value],
-    ) -> Result<Result<CheckOutput, ErrorResponse>> {
+    ) -> Result<Result<CheckOutput, CheckError>> {
         let is_library = Self::is_library(init);
         let mut args = vec![
             "-init".to_owned(),
@@ -187,7 +187,7 @@ impl Scilla {
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum OutputOrError {
-            Err(ErrorResponse),
+            Err(CheckError),
             Output(CheckOutput),
         }
 
@@ -394,6 +394,11 @@ pub struct Param {
 pub struct CreateOutput {
     #[serde(with = "num_as_str")]
     pub gas_remaining: ScillaGas,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CheckError {
+    pub errors: Vec<Error>,
 }
 
 #[derive(Debug, Deserialize)]
