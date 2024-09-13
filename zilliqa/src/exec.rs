@@ -26,7 +26,7 @@ use revm::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tracing::{debug, info, trace, warn};
+use tracing::{info, trace, warn};
 
 use crate::{
     contracts,
@@ -904,23 +904,27 @@ impl State {
         // Execute the while loop iff (max - min)/max < MINIMUM_PERCENT_RATIO [%]
         const MINIMUM_PERCENT_RATIO: u64 = 3;
 
-        warn!("Initial estimation succeeded with gas: {}", min);
+        warn!(
+            "Initial estimation succeeded with gas: {} from {:?}",
+            min, from_addr
+        );
 
         // result should be somewhere in (min, max]
         while min < max {
             let break_cond = (max - min) <= (max * MINIMUM_PERCENT_RATIO) / 100;
             if break_cond {
                 warn!(
-                    "Diff between max and min is: {}, breaking the loop!",
-                    max - min
+                    "Diff between max and min is: {} from: {:?}, breaking the loop!",
+                    max - min,
+                    from_addr
                 );
                 break;
             }
             let mid = (min + max) / 2;
 
             warn!(
-                "Trying better estimate with gas: {}, min: {}, max: {}",
-                mid, min, max
+                "Trying better estimate with gas: {}, min: {}, max: {}, from: {:?}",
+                mid, min, max, from_addr
             );
 
             let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
@@ -938,23 +942,32 @@ impl State {
 
             match result {
                 ExecutionResult::Success { .. } => {
-                    warn!("Success, let's try with max = mid");
+                    warn!("Success, let's try with max = mid, from: {:?}", from_addr);
                     max = mid
                 }
                 ExecutionResult::Revert { .. } => {
-                    warn!("Revert, let's try with min = mid + 1");
+                    warn!(
+                        "Revert, let's try with min = mid + 1, from: {:?}",
+                        from_addr
+                    );
                     min = mid + 1
                 }
                 ExecutionResult::Halt { reason, .. } => match reason {
                     HaltReason::OutOfGas(_) | HaltReason::InvalidFEOpcode => {
-                        warn!("Revert, let's try with min = mid + 1");
+                        warn!(
+                            "Revert, let's try with min = mid + 1, from: {:?}",
+                            from_addr
+                        );
                         min = mid + 1
                     }
                     _ => return Err(anyhow!("halted due to: {reason:?}")),
                 },
             }
         }
-        warn!("Finally, returned estimated gas is: {}", max);
+        warn!(
+            "Finally, returned estimated gas is: {} from: {:?}",
+            max, from_addr
+        );
         Ok(max)
     }
     #[allow(clippy::too_many_arguments)]
