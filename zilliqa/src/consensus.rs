@@ -795,7 +795,7 @@ impl Consensus {
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
-    ) -> Result<Option<TransactionApplyResult>> {
+    ) -> Result<TransactionApplyResult> {
         let db = self.db.clone();
         let state = &mut self.state;
         Self::apply_transaction_at(state, db, txn, current_block, inspector)
@@ -807,27 +807,17 @@ impl Consensus {
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
-    ) -> Result<Option<TransactionApplyResult>> {
-        let hash = txn.hash;
-
+    ) -> Result<TransactionApplyResult> {
         if !db.contains_transaction(&txn.hash)? {
             db.insert_transaction(&txn.hash, &txn.tx)?;
         }
 
-        let result = state.apply_transaction(txn.clone(), current_block, inspector);
-        let result = match result {
-            Ok(r) => r,
-            Err(error) => {
-                warn!(?hash, ?error, "transaction failed to execute");
-                return Ok(None);
-            }
-        };
-
+        let result = state.apply_transaction(txn.clone(), current_block, inspector)?;
         if !result.success() {
             info!("Transaction was a failure...");
         }
 
-        Ok(Some(result))
+        Ok(result)
     }
 
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
@@ -1176,7 +1166,7 @@ impl Consensus {
         }
 
         // Internal states
-        let mut gas_left = self.config.consensus.eth_block_gas_limit;
+        let gas_left = self.config.consensus.eth_block_gas_limit;
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut updated_root_hash = state.root_hash()?;
@@ -1211,24 +1201,57 @@ impl Consensus {
             }
 
             // Apply specific txn
-            let result = Self::apply_transaction_at(
-                state,
-                self.db.clone(),
-                tx.clone(),
-                executed_block_header,
-                inspector::noop(),
-            )?;
-
-            // Skip transactions whose execution resulted in an error and drop them.
-            let Some(result) = result else {
-                continue;
+            // Depending on the outcome of apply_transaction:
+            // 1. Transaction is successful but cannot fit into block due to gas limit - return it back to mempool
+            // 2. Transaction is successful and fits into block
+            // 3. Transaction failed and cannot fit into block due to gas limit - return it back to mempool
+            // 4. Transaction failed but can be included in a block (marked as failed). There's cost incurred.
+            let (gas_left, receipt) = {
+                match Self::apply_transaction_at(
+                    state,
+                    self.db.clone(),
+                    tx.clone(),
+                    executed_block_header,
+                    inspector::noop(),
+                ) {
+                    Ok(result) => {
+                        if let Some(g) = gas_left.checked_sub(result.gas_used()) {
+                            (
+                                Some(g),
+                                Some(Self::create_txn_receipt(
+                                    result.clone(),
+                                    tx.hash,
+                                    tx_index_in_block,
+                                    self.config.consensus.eth_block_gas_limit - gas_left,
+                                )),
+                            )
+                        } else {
+                            (None, None)
+                        }
+                    }
+                    Err(_) => {
+                        debug!(?tx, "Failed to execute!");
+                        if let Some(g) = gas_left.checked_sub(tx.tx.gas_limit()) {
+                            let gas_cost = tx.tx.gas_cost()?;
+                            state.mutate_account(tx.signer, |account| {
+                                account.balance.saturating_sub(gas_cost)
+                            })?;
+                            state.mutate_account(tx.signer, |account| account.nonce += 1)?;
+                            (
+                                Some(g),
+                                Some(Self::create_failed_txn_receipt(
+                                    tx.clone(),
+                                    tx_index_in_block,
+                                )),
+                            )
+                        } else {
+                            (None, None)
+                        }
+                    }
+                }
             };
 
-            // Decrement gas price and break loop if limit is exceeded
-            gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
-                g
-            } else {
-                // undo last transaction
+            if gas_left.is_none() {
                 info!(
                     nonce = tx.tx.nonce(),
                     "gas limit reached, returning last transaction to pool",
@@ -1236,18 +1259,15 @@ impl Consensus {
                 transaction_pool.insert_ready_transaction(tx);
                 state.set_to_root(updated_root_hash.into());
                 break;
-            };
+            }
+
+            // Receipt must be valid at this point
+            let receipt = receipt.unwrap();
 
             // Do necessary work to assemble the transaction
             transaction_pool.mark_executed(&tx);
             transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
 
-            let receipt = Self::create_txn_receipt(
-                result.clone(),
-                tx.hash,
-                tx_index_in_block,
-                self.config.consensus.eth_block_gas_limit - gas_left,
-            );
             let receipt_hash = receipt.compute_hash();
             receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
@@ -2506,9 +2526,9 @@ impl Consensus {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
-            let result = self
-                .apply_transaction(txn.clone(), block.header, &mut inspector)?
-                .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
+
+            let result = self.apply_transaction(txn.clone(), block.header, &mut inspector)?;
+
             self.transaction_pool.mark_executed(&txn);
             for address in inspector.touched {
                 self.db.add_touched_address(address, tx_hash)?;
@@ -2635,6 +2655,23 @@ impl Consensus {
             accepted,
             errors,
             exceptions,
+        }
+    }
+
+    fn create_failed_txn_receipt(txn: VerifiedTransaction, tx_index: usize) -> TransactionReceipt {
+        TransactionReceipt {
+            tx_hash: txn.hash,
+            block_hash: Hash::ZERO,
+            index: tx_index as u64,
+            success: false,
+            contract_address: None,
+            logs: vec![],
+            transitions: vec![],
+            gas_used: txn.tx.gas_limit(),
+            cumulative_gas_used: txn.tx.gas_limit(),
+            accepted: Some(false),
+            errors: BTreeMap::default(),
+            exceptions: vec![],
         }
     }
 
