@@ -197,8 +197,8 @@ pub enum BlockStrategy {
     /// "I have these blocks at the moment and I won't drop them until view .."
     /// None == unlimited
     CachedViewRange(Range<u64>, Option<u64>),
-    /// "We keep everything from the latest cached view to the head"
-    Opportunistic,
+    /// Latest N blocks.
+    Latest(u64),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

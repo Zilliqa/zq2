@@ -168,11 +168,15 @@ impl Setup {
         let loaded_config = Config::from_config_dir(&config_dir).await?;
         let config = if let Some(val) = &network {
             // One was specified.
-            if loaded_config.is_some() {
-                return Err(anyhow!("{config_dir} already has a configuration saved; please delete it if you want to change the network config (for now!), or you can rerun without the explicit network config argument to restart the existing network."));
+            if let Some(val2) = loaded_config {
+                println!("WARNING: You've specified a network configuration; we'll ignore this and take the config from the existing loaded configuration file");
+                val2
             } else {
                 Config::from_spec(val, base_port)?
             }
+        } else if let Some(val2) = loaded_config {
+            println!("Starting previously saved config in {config_dir}");
+            val2
         } else {
             // Set up a default network
             println!(">> No network specified or loaded; using default 4-node network for legacy reasons.");
@@ -182,7 +186,7 @@ impl Setup {
             Config::from_spec(&Composition::small_network(), base_port)?
         };
         // Whatever we did, save it!
-        config.save_to_config_dir(&config_dir).await?;
+        config.save_to_config_dir(config_dir).await?;
         Ok(Self {
             config,
             collector: None,

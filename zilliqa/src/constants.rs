@@ -32,3 +32,12 @@ pub const RECOMPUTE_BLOCK_AVAILABILITY_AFTER_S: u64 = 2;
 
 // Maximum rate at which to send availability requests
 pub const REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE_MS: u64 = 1000;
+
+// We assume that every node has the last ALWAYS_RETAIN_LAST_N_BLOCKS blocks, otherwise
+// it's hard ever to catch up. Set this too large and syncing will be hard because we will
+// keep asking recently started nodes for blocks they don't have. Set it too small and
+// it will be hard because we'll need to keep waiting for availability.
+pub const RETAINS_LAST_N_BLOCKS: u64 = 10;
+
+// How long do we wait before retrying a request to a peer?
+pub const BLOCK_REQUEST_RESPONSE_TIMEOUT_MS: u64 = 10000;

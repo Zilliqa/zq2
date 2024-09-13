@@ -214,6 +214,26 @@ impl RangeMap {
         self.ranges.last().map(|x| x.end - 1)
     }
 
+    pub fn with_closed_upper_limit(&mut self, limit: u64) -> &mut Self {
+        let mut new_ranges: Vec<Range<u64>> = Vec::new();
+        for r in self.ranges.iter() {
+            if r.end > limit {
+                if r.start < limit {
+                    new_ranges.push(Range {
+                        start: r.start,
+                        end: limit + 1,
+                    });
+                }
+                // Otherwise we start after the limit; nothing to do.
+            } else {
+                // Below the limit
+                new_ranges.push(r.clone());
+            }
+        }
+        self.ranges = new_ranges;
+        self
+    }
+
     /// Set difference
     /// Returns (intersection, diff) where
     /// intersection is the set of things in both self and to_remove
@@ -383,5 +403,38 @@ mod tests {
             map3.iter_values().collect::<Vec<u64>>(),
             vec![1, 2, 3, 6, 7, 9]
         );
+    }
+
+    #[test]
+    fn limit() {
+        let the_map = RangeMap::from_tuple_vec(&vec![
+            (1, 5),
+            (6, 9),
+            (10, 13),
+            (15, 18),
+            (19, 20),
+            (22, 45),
+            (46, 47),
+        ]);
+        assert_eq!(
+            the_map.clone().with_closed_upper_limit(20),
+            RangeMap::from_tuple_vec(&vec![(1, 5), (6, 9), (10, 13), (15, 18), (19, 20)])
+        );
+        assert_eq!(
+            the_map.clone().with_closed_upper_limit(23),
+            RangeMap::from_tuple_vec(&vec![
+                (1, 5),
+                (6, 9),
+                (10, 13),
+                (15, 18),
+                (19, 20),
+                (22, 24)
+            ])
+        );
+        assert_eq!(
+            the_map.clone().with_closed_upper_limit(1),
+            RangeMap::from_tuple_vec(&vec![])
+        );
+        assert_eq!(the_map.clone().with_closed_upper_limit(9999), the_map);
     }
 }

@@ -48,12 +48,17 @@ fn echo(params: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
 fn blocks(
     _params: Params,
     node: &Arc<Mutex<Node>>,
-) -> Result<(BlockStoreStatus, Option<Vec<BlockStrategy>>)> {
+) -> Result<(
+    BlockStoreStatus,
+    Option<Vec<BlockStrategy>>,
+    Vec<(u64, u64, String)>,
+)> {
     trace!("blocks");
     let mut node = node.lock().unwrap();
     Ok((
         BlockStoreStatus::new(&mut node.consensus.block_store)?,
         node.consensus.block_store.availability()?,
+        node.consensus.block_store.get_buffered()?,
     ))
 }
 
