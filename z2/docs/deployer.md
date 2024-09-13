@@ -290,3 +290,40 @@ Configuration file: zq2-prototestnet.yaml
 ```bash
 z2 deployer deposit zq2-prototestnet.yaml
 ```
+
+## Run RPC calls over all the nodes
+
+```bash
+z2 deployer rpc --help
+```
+
+```bash
+Run RPC calls over the internal network nodes
+
+Usage: z2 deployer rpc [OPTIONS] --method <METHOD> <CONFIG_FILE>
+
+Arguments:
+  <CONFIG_FILE>  The network deployer config file
+
+Options:
+  -m, --method <METHOD>  Method to run
+  -p, --params <PARAMS>  List of parameters for the method. ie "["string_value", true]"
+  -v, --verbose...       Increase logging verbosity
+  -q, --quiet...         Decrease logging verbosity
+  -h, --help             Print help
+```
+
+### Usage example
+
+#### Scenario
+
+Get the current block height in the `zq2-prototestnet` nodes
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer rpc -m eth_blockNumber zq2-prototestnet.yaml
+```

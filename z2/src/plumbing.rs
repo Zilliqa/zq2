@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 use std::{collections::HashSet, env, path::PathBuf, str::FromStr};
 
 use alloy::primitives::B256;
@@ -12,8 +11,8 @@ use crate::{kpi, utils};
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
 
 use crate::{
-    collector, components::Component, converter, deployer, deployer::NodeRole, docgen, otel,
-    otterscan, perf, setup, spout, zq1,
+    collector, components::Component, converter, deployer, deployer::NodeRole, docgen, perf, setup,
+    zq1,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -123,6 +122,12 @@ pub async fn run_deployer_get_deposit_commands(config_file: &str) -> Result<()> 
 pub async fn run_deployer_deposit(config_file: &str) -> Result<()> {
     println!("🦆 Running deposit for {config_file} .. ");
     deployer::run_deposit(config_file).await?;
+    Ok(())
+}
+
+pub async fn run_rpc_call(method: &str, params: &Option<String>, config_file: &str) -> Result<()> {
+    println!("🦆 Running RPC call for {config_file}' .. ");
+    deployer::run_rpc_call(method, params, config_file).await?;
     Ok(())
 }
 
