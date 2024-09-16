@@ -349,7 +349,7 @@ impl ChainNode {
     }
 }
 
-pub async fn get_nodes(
+pub async fn get_nodes_by_role(
     chain_name: &str,
     eth_chain_id: u64,
     project_id: &str,
@@ -358,70 +358,12 @@ pub async fn get_nodes(
 ) -> Result<Vec<ChainNode>> {
     println!("Create the instance list for {node_role}");
 
-    // Create a list of instances we need to update
-    let output = zqutils::commands::CommandBuilder::new()
-        .silent()
-        .cmd(
-            "gcloud",
-            &[
-                "--project",
-                project_id,
-                "compute",
-                "instances",
-                "list",
-                "--format=json",
-            ],
-        )
-        .run()
-        .await?;
-
-    if !output.success {
-        return Err(anyhow!("listing instances failed"));
-    }
-
-    let j_output: Value = serde_json::from_slice(&output.stdout)?;
-
-    let instances = j_output
-        .as_array()
-        .ok_or_else(|| anyhow!("instances is not an array"))?;
-
-    let role_instances = instances
-        .iter()
-        .map(|i| {
-            let name = i
-                .get("name")
-                .and_then(|n| n.as_str())
-                .ok_or_else(|| anyhow!("name is missing or not a string"))?;
-            let zone = i
-                .get("zone")
-                .and_then(|z| z.as_str())
-                .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
-            let labels: BTreeMap<String, String> = i
-                .get("labels")
-                .and_then(|z| serde_json::from_value(z.clone()).unwrap_or_default())
-                .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
-            let external_address = i["networkInterfaces"]
-                .get(0)
-                .and_then(|ni| ni["accessConfigs"].get(0))
-                .and_then(|ac| ac["natIP"].as_str())
-                .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
-            Ok(Machine {
-                project_id: project_id.to_string(),
-                zone: zone.to_string(),
-                name: name.to_string(),
-                labels,
-                external_address: external_address.to_string(),
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let role_instances = get_network_machines(chain_name, project_id).await?;
 
     let bootstrap_instances: Vec<Machine> = role_instances
         .clone()
         .into_iter()
-        .filter(|m| {
-            m.labels.get("zq2-network") == Some(&chain_name.to_owned())
-                && m.labels.get("role") == Some(&"bootstrap".to_string())
-        })
+        .filter(|m| m.labels.get("role") == Some(&"bootstrap".to_string()))
         .collect();
 
     if bootstrap_instances.is_empty() {
@@ -430,10 +372,7 @@ pub async fn get_nodes(
 
     let role_instances: Vec<Machine> = role_instances
         .into_iter()
-        .filter(|m| {
-            m.labels.get("zq2-network") == Some(&chain_name.to_owned())
-                && m.labels.get("role") == Some(&node_role.to_string())
-        })
+        .filter(|m| m.labels.get("role") == Some(&node_role.to_string()))
         .collect();
 
     if role_instances.is_empty() {
@@ -481,6 +420,70 @@ pub async fn get_nodes(
             )
         })
         .collect::<Vec<_>>())
+}
+
+pub async fn get_network_machines(chain_name: &str, project_id: &str) -> Result<Vec<Machine>> {
+    println!("Create the instance list for {chain_name}");
+
+    let output = zqutils::commands::CommandBuilder::new()
+        .silent()
+        .cmd(
+            "gcloud",
+            &[
+                "--project",
+                project_id,
+                "compute",
+                "instances",
+                "list",
+                "--format=json",
+                "--filter",
+                &format!("labels.zq2-network={chain_name}"),
+            ],
+        )
+        .run()
+        .await?;
+
+    if !output.success {
+        return Err(anyhow!("Listing {chain_name} instances failed"));
+    }
+
+    let j_output: Value = serde_json::from_slice(&output.stdout)?;
+
+    let instances = j_output
+        .as_array()
+        .ok_or_else(|| anyhow!("instances is not an array"))?;
+
+    let machines = instances
+        .iter()
+        .map(|i| {
+            let name = i
+                .get("name")
+                .and_then(|n| n.as_str())
+                .ok_or_else(|| anyhow!("name is missing or not a string"))?;
+            let zone = i
+                .get("zone")
+                .and_then(|z| z.as_str())
+                .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
+            let labels: BTreeMap<String, String> = i
+                .get("labels")
+                .and_then(|z| serde_json::from_value(z.clone()).unwrap_or_default())
+                .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
+            let external_address = i["networkInterfaces"]
+                .get(0)
+                .and_then(|ni| ni["accessConfigs"].get(0))
+                .and_then(|ac| ac["natIP"].as_str())
+                .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
+            Ok(Machine {
+                project_id: project_id.to_string(),
+                zone: zone.to_string(),
+                name: name.to_string(),
+                labels,
+                external_address: external_address.to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(machines)
 }
 
 async fn retrieve_secret_by_role(
