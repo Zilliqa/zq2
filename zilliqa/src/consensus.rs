@@ -1292,7 +1292,7 @@ impl Consensus {
         // have to re-execute it ourselves (in order to vote on it) and thus will
         // need those transactions again
         for tx in opaque_transactions {
-            let account_nonce = self.state.get_account(tx.signer)?.nonce;
+            let account_nonce = state.get_account(tx.signer)?.nonce;
             transaction_pool.insert_transaction(tx, account_nonce);
         }
 
