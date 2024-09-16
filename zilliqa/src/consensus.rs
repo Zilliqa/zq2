@@ -24,7 +24,7 @@ use crate::{
     cfg::{ConsensusConfig, NodeConfig},
     crypto::{verify_messages, Hash, NodePublicKey, NodePublicKeyRaw, NodeSignature, SecretKey},
     db::Db,
-    exec::{PendingState, TransactionApplyResult},
+    exec::{deduct_cost_for_failed_txn, PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockResponse,
@@ -1233,11 +1233,7 @@ impl Consensus {
                     Err(_) => {
                         debug!(?tx, "Failed to execute!");
                         if let Some(g) = gas_left.checked_sub(tx.tx.gas_limit()) {
-                            let gas_cost = tx.tx.gas_cost()?;
-                            state.mutate_account(tx.signer, |account| {
-                                account.balance.saturating_sub(gas_cost)
-                            })?;
-                            state.mutate_account(tx.signer, |account| account.nonce += 1)?;
+                            deduct_cost_for_failed_txn(state, &tx)?;
                             gas_left = g;
                             (
                                 false,
@@ -2530,22 +2526,28 @@ impl Consensus {
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
 
-            let result = self.apply_transaction(txn.clone(), block.header, &mut inspector)?;
+            let receipt = match self.apply_transaction(txn.clone(), block.header, &mut inspector) {
+                Ok(result) => {
+                    cumulative_gas_used += result.gas_used();
+                    Self::create_txn_receipt(result.clone(), tx_hash, tx_index, cumulative_gas_used)
+                }
+                Err(_) => {
+                    debug!("Got failed transaction in block!");
+                    deduct_cost_for_failed_txn(&mut self.state, &txn)?;
+                    cumulative_gas_used += txn.tx.gas_limit();
+                    Self::create_failed_txn_receipt(txn.clone(), tx_index, cumulative_gas_used)
+                }
+            };
 
             self.transaction_pool.mark_executed(&txn);
             for address in inspector.touched {
                 self.db.add_touched_address(address, tx_hash)?;
             }
 
-            let gas_used = result.gas_used();
-            cumulative_gas_used += gas_used;
-
             if cumulative_gas_used > block.gas_limit() {
                 warn!("Cumulative gas used by executing transactions exceeded block limit!");
                 return Ok(());
             }
-
-            let receipt = Self::create_txn_receipt(result, tx_hash, tx_index, cumulative_gas_used);
 
             let receipt_hash = receipt.compute_hash();
             receipts_trie

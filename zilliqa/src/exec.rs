@@ -958,7 +958,7 @@ impl State {
             None,
             current_block,
             inspector::noop(),
-            BaseFeeCheck::Validate,
+            BaseFeeCheck::Ignore,
         )?;
 
         match result {
@@ -1731,3 +1731,12 @@ const BLESSED_TRANSACTIONS: [Hash; 1] = [
         "eddf9e61fb9d8f5111840daef55e5fde0041f5702856532cdbb5a02998033d26"
     )),
 ];
+
+pub fn deduct_cost_for_failed_txn(state: &mut State, txn: &VerifiedTransaction) -> Result<()> {
+    let gas_cost = txn.tx.gas_cost()?;
+    state.mutate_account(txn.signer, |account| {
+        account.balance.saturating_sub(gas_cost)
+    })?;
+    state.mutate_account(txn.signer, |account| account.nonce += 1)?;
+    Ok(())
+}
