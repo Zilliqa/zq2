@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::{btree_map::Entry, BTreeMap},
+    collections::{BTreeMap},
     error::Error,
     fmt::Display,
     sync::Arc,
@@ -1349,33 +1349,9 @@ impl Consensus {
 
     pub fn get_pending_block(&self) -> Result<Option<Block>> {
         let mut state = self.state.clone();
-        let mut votes = self.votes.clone();
-        let head_height = self.block_store.get_highest_block_number()?.unwrap();
-        let head_block = self.get_block_by_number(head_height)?.unwrap();
-
-        // If there are no votes for highest block then we have to create artificial vote
-        // This is needed to satisfy aggregate signature (otherwise there's nothing agg signature can be built on)
-
-        if let Entry::Vacant(v) = votes.entry(head_block.hash()) {
-            let my_vote = Vote::new(
-                self.secret_key,
-                head_block.hash(),
-                self.public_key(),
-                self.view.get_view(),
-            );
-
-            let votes = (
-                vec![my_vote.signature()],
-                // Lets pretend everyone has signed this block.
-                bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
-                0,
-                false,
-            );
-            v.insert(votes);
-        }
 
         let early_proposal = self.assemble_early_block_at(&mut state)?;
-        
+
         if let Some((pending_block, mut applied_txs)) = early_proposal {
             // Recover the proposed transactions into the pool.
             let mut tx_pool = self.transaction_pool.borrow_mut();
