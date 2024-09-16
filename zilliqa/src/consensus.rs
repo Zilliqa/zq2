@@ -1,10 +1,5 @@
 use std::{
-    cell::RefCell,
-    collections::{BTreeMap},
-    error::Error,
-    fmt::Display,
-    sync::Arc,
-    time::Duration,
+    cell::RefCell, collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration,
 };
 
 use alloy::primitives::{Address, U256};
@@ -1347,6 +1342,7 @@ impl Consensus {
         Ok(())
     }
 
+    /// Provides a preview of the early proposal.
     pub fn get_pending_block(&self) -> Result<Option<Block>> {
         let mut state = self.state.clone();
 
