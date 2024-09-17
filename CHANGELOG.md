@@ -4,6 +4,8 @@
 
 Unreleased changes, in reverse chronological order. New entries are added at the top of this list.
 
+## [0.3.1] - 2024-09-13
+
 - [#1445](https://github.com/Zilliqa/zq2/pull/1445): Apply state changes from transactions atomically.
 - [#1448](https://github.com/Zilliqa/zq2/pull/1448): Fail gracefully if we are unable to parse a gossipsub message.
 - [#1423](https://github.com/Zilliqa/zq2/pull/1423): Fix invalid value returned by calling `_balance` in a scilla transition.
@@ -46,7 +48,8 @@ Unreleased changes, in reverse chronological order. New entries are added at the
 
 Initial release of Zilliqa 2.
 
-[unreleased]: https://github.com/zilliqa/zq2/compare/v0.3.0...HEAD
+[unreleased]: https://github.com/zilliqa/zq2/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/zilliqa/zq2/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/zilliqa/zq2/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/zilliqa/zq2/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/zilliqa/zq2/compare/v0.1.0...v0.1.1

@@ -71,6 +71,8 @@ enum DeployerCommands {
     GetDepositCommands(DeployerUpgradeArgs),
     /// Deposit the stake amounts to all the validators
     Deposit(DeployerUpgradeArgs),
+    /// Run RPC calls over the internal network nodes
+    Rpc(DeployerRpcArgs),
 }
 
 #[derive(Args, Debug)]
@@ -93,6 +95,18 @@ pub struct DeployerNewArgs {
 pub struct DeployerUpgradeArgs {
     /// The network deployer config file
     config_file: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerRpcArgs {
+    /// Method to run
+    #[clap(long, short, about)]
+    method: String,
+    /// List of parameters for the method. ie "["string_value", true]"
+    #[clap(long, short, about)]
+    params: Option<String>,
+    /// The network deployer config file
+    config_file: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -520,6 +534,14 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer deposit command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Rpc(ref args) => {
+                plumbing::run_rpc_call(&args.method, &args.params, &args.config_file)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer rpc command: {}", err)
                     })?;
                 Ok(())
             }
