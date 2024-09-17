@@ -1081,3 +1081,27 @@ async fn tx_block_listing(mut network: Network) {
         );
     }
 }
+
+#[zilliqa_macros::test]
+async fn get_txns_for_tx_block_ex(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let block_number = "1002353";
+    let page_number = "2";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTransactionsForTxBlockEx", [block_number, page_number])
+        .await
+        .expect("Failed to call GetTransactionsForTxBlockEx API");
+
+    let txns: zilliqa::api::types::zil::TxnsForTxBlockExResponse =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert_eq!(txns.CurrPage, page_number.parse::<u64>().unwrap());
+    assert!(txns.NumPages > 0, "Expected NumPages to be greater than 0");
+    assert!(
+        txns.Transactions.len() <= 2500,
+        "Expected Transactions length to be less than or equal to 2500"
+    );
+}
