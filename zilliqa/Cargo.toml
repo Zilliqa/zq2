@@ -48,7 +48,7 @@ k256 = {version = "0.13.3", features = ["serde", "pem"] }
 libp2p = { version = "0.54.0", features = ["cbor", "dns", "gossipsub", "macros", "tcp", "tokio", "noise", "mdns", "request-response", "kad", "identify", "serde", "yamux", "autonat"] }
 lru = "0.12"
 once_cell = "1.19.0"
-opentelemetry = { version = "0.24.0", features = ["metrics"] }
+opentelemetry = { version = "0.25.0", features = ["metrics"] }
 opentelemetry_sdk = { version = "0.24.1", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.17.0", features = ["metrics"] }
 paste = "1.0.15"
