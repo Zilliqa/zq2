@@ -55,7 +55,7 @@ macro_rules! declare_module {
                 .with_unit("ms")
                 .init();
             module
-                .register_method($name, move |params, context| {
+                .register_method($name, move |params, context, _| {
                     let mut attributes = vec![
                         opentelemetry::KeyValue::new("rpc.system", "jsonrpc"),
                         opentelemetry::KeyValue::new("rpc.service", "zilliqa.eth"),

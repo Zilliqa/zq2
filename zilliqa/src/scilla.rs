@@ -462,7 +462,7 @@ impl StateServer {
         module.register_method("fetchStateValueB64", {
             let active_call = Arc::clone(&active_call);
             let b64 = base64::engine::general_purpose::STANDARD;
-            move |params, ()| {
+            move |params, (), _| {
                 #[derive(Deserialize)]
                 struct Params {
                     #[serde(deserialize_with = "de_b64")]
@@ -491,7 +491,7 @@ impl StateServer {
         module.register_method("fetchExternalStateValueB64", {
             let active_call = Arc::clone(&active_call);
             let b64 = base64::engine::general_purpose::STANDARD;
-            move |params, ()| {
+            move |params, (), _| {
                 #[derive(Deserialize)]
                 struct Params {
                     addr: Address,
@@ -524,7 +524,7 @@ impl StateServer {
         })?;
         module.register_method("updateStateValueB64", {
             let active_call = Arc::clone(&active_call);
-            move |params, ()| {
+            move |params, (), _| {
                 #[derive(Deserialize)]
                 struct Params {
                     #[serde(deserialize_with = "de_b64")]
@@ -555,7 +555,7 @@ impl StateServer {
         })?;
         module.register_method("fetchBlockchainInfo", {
             let active_call = Arc::clone(&active_call);
-            move |params, ()| {
+            move |params, (), _| {
                 #[derive(Deserialize)]
                 struct Params {
                     query_name: String,
