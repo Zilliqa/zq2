@@ -12,7 +12,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum TxIndex {
+enum TxIndex {
     /// from_address, nonce (unique for that address)
     Nonced(Address, u64),
     /// source_shard, nonce (unique for the bridge from that shard)
@@ -54,7 +54,7 @@ impl MempoolIndex for VerifiedTransaction {
 pub struct TransactionPool {
     /// All transactions in the pool. These transactions are all valid, or might become
     /// valid at some point in the future.
-    pub transactions: BTreeMap<TxIndex, VerifiedTransaction>,
+    transactions: BTreeMap<TxIndex, VerifiedTransaction>,
     /// Indices into `transactions`, sorted by gas price. This contains indices of transactions which are immediately
     /// executable, because they have a nonce equal to the account's nonce or are nonceless.
     /// It may also contain stale (invalidated) transactions, which are evicted lazily.
@@ -132,6 +132,43 @@ impl TransactionPool {
         }
     }
 
+    /// Returns a list of txns that are pending for inclusion in the next block
+    pub fn pending_hashes(&self) -> Vec<Hash> {
+        let mut pending_hash = Vec::<Hash>::new();
+        let mut pending_set = HashSet::new();
+        let mut ready = self.ready.clone();
+        // Find all transactions that are pending for inclusion in the next block
+        while let Some(ReadyItem { tx_index, .. }) = ready.pop() {
+            // We don't include nonceless txns because the way we present results on API level requires having proper nonce
+            if let TxIndex::Intershard(_, _) = tx_index {
+                continue;
+            }
+
+            // A transaction might have been ready, but it might have gotten popped
+            // or the sender's nonce might have increased, making it invalid. In this case,
+            // we will have a stale reference would still exist in the heap.
+            let Some(txn) = self.transactions.get(&tx_index) else {
+                continue;
+            };
+
+            if !pending_set.insert(txn.hash) {
+                continue;
+            }
+
+            pending_hash.push(txn.hash);
+
+            let Some(next) = tx_index.next() else {
+                continue;
+            };
+
+            if let Some(next_txn) = self.transactions.get(&next) {
+                ready.push(next_txn.into());
+            }
+        }
+
+        pending_hash
+    }
+
     pub fn preview_content(&self) -> TxPoolContent {
         // First make a copy of 'ready' transactions
         let mut ready = self.ready.clone();
@@ -154,12 +191,11 @@ impl TransactionPool {
                 continue;
             };
 
-            if pending_set.contains(&txn.hash) {
+            if !pending_set.insert(&txn.hash) {
                 continue;
             }
 
             pending.push(txn.clone());
-            pending_set.insert(txn.hash);
 
             let Some(next) = tx_index.next() else {
                 continue;

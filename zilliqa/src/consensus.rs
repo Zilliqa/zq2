@@ -1340,9 +1340,10 @@ impl Consensus {
             ..BlockHeader::default()
         };
 
-        // Assemble new block with whatever is in the mempool
-        for (_, txn) in self.transaction_pool.transactions.iter() {
-            // First - check if we have time left to process txns and give enough time for block propagation
+        let pending = self.transaction_pool.pending_hashes();
+
+        for hash in pending.into_iter() {
+            // First - check for time
             let (
                 time_since_last_view_change,
                 exponential_backoff_timeout,
@@ -1354,6 +1355,10 @@ impl Consensus {
             {
                 break;
             }
+
+            let Some(txn) = self.transaction_pool.get_transaction(hash) else {
+                continue;
+            };
 
             // Apply specific txn
             let result = Self::apply_transaction_at(
@@ -1369,7 +1374,7 @@ impl Consensus {
                 continue;
             };
 
-            // Decrement gas price and break loop if limit is exceeded
+            // Second - check for gas
             gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
                 g
             } else {
