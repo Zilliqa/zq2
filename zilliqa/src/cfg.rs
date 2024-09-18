@@ -219,6 +219,12 @@ pub struct ConsensusConfig {
     /// Where (in the Scilla server's filesystem) is the library directory containing Scilla library functions?
     #[serde(default = "scilla_lib_dirs_default")]
     pub scilla_lib_dirs: Vec<String>,
+    /// Where (in the ZQ2 server's filesystem) are the external libraries cached so that scilla server can find them?
+    #[serde(default = "scilla_ext_libs_cache_folder_default")]
+    pub scilla_ext_libs_cache_folder: String,
+    /// Extension of scilla libraries. Defaults to ".scillib"
+    #[serde(default = "scilla_lib_extension_default")]
+    pub scilla_lib_extension: String,
     /// Hostname at which this process is accessible by the Scilla process. Defaults to "localhost". If running the
     /// Scilla process in Docker and this process on the host, you probably want to pass
     /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
@@ -262,6 +268,14 @@ pub fn scilla_address_default() -> String {
 
 pub fn scilla_lib_dirs_default() -> Vec<String> {
     vec![String::from("/scilla/0/_build/default/src/stdlib/")]
+}
+
+pub fn scilla_ext_libs_cache_folder_default() -> String {
+    String::from("scilla_ext_libs")
+}
+
+pub fn scilla_lib_extension_default() -> String {
+    String::from(".scillib")
 }
 
 pub fn local_address_default() -> String {
