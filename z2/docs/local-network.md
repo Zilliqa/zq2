@@ -7,7 +7,7 @@ The `z2` tool allows you to run a simple Zilliqa 2 network locally for debugging
 Install dependencies
 
 ```bash
-    sudo apt install mitmproxy
+    sudo apt install mitmproxy npm
 ```
 
 Create a new directory and pull zq2
@@ -58,9 +58,9 @@ faucet without the otterscan polls getting in the way.
 
 ```
 🦏  JSON-RPC ports are at 4201+<node_index>
-🦏  Otterscan: http://localhost:6000/
 🦏  Spout is at http://localhost:6001/
 🦏  mitmproxy port at http://localhost:6002/
+🦏  Otterscan: http://localhost:6003/
 ```
 
 In the future, we will also have the ability to manage persistence: watch this space.
