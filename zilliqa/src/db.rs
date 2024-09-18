@@ -798,11 +798,14 @@ impl Db {
         Ok(())
     }
 
-    /// Retrieve a list of ranges of views in our db.
+    /// Retrieve a list of the views in our db.
+    /// This is a bit horrific. What we actually do here is to find the view lower and upper bounds for the contiguous block ranges in the database.
+    /// See block_store.rs::availability() for details.
     pub fn get_view_ranges(&self) -> Result<Vec<Range<u64>>> {
         // The island field is technically redundant, but it helps with debugging.
         Ok(self.block_store.lock().unwrap()
-            .prepare_cached("SELECT MIN(view),MAX(view),view-rank AS island FROM ( SELECT view,ROW_NUMBER() OVER (ORDER BY view) AS rank FROM blocks ) GROUP BY island ORDER BY MIN(view) ASC")?
+            .prepare_cached("SELECT MIN(vlb), MAX(vub), MIN(height),MAX(height),height-rank AS island FROM ( SELECT height,vlb,vub,ROW_NUMBER() OVER (ORDER BY height) AS rank FROM
+ (SELECT height,MIN(view) as vlb, MAX(view) as vub from blocks GROUP BY height ) )  GROUP BY island ORDER BY MIN(height) ASC")?
            .query_map([], Self::make_view_range)?.collect::<Result<Vec<_>,_>>()?)
     }
 

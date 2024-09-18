@@ -1,7 +1,8 @@
-use std::cmp::{max, min};
+use std::cmp::{max, min, Ordering};
 use std::default::Default;
 use std::ops::Range;
 use std::{fmt, fmt::Display};
+use tracing::*;
 
 /// A block map - a reasonably efficient, easily implementable representation of a collection of ranges.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -243,6 +244,7 @@ impl RangeMap {
         let mut intersection = RangeMap::new();
         let mut diff = RangeMap::new();
         let mut self_iter = self.ranges.iter();
+        let mut current_self_iter: Option<Range<u64>> = self_iter.next().cloned();
         let mut remove_iter = to_remove.ranges.iter();
         let mut current_remove_iter: Option<Range<u64>> = remove_iter.next().cloned();
         // Termination: the outer loop terminates when we're through self.
@@ -250,73 +252,70 @@ impl RangeMap {
         //  - breaks, or
         //  - advances remain by one, or
         //  - breaks remain into a smaller range than it was before.
-        'skip_self: while let Some(next_self) = self_iter.next() {
-            loop {
-                if let Some(current_remove) = &current_remove_iter {
-                    //println!("next_self {next_self:?} current_remove {current_remove:?}");
-                    if current_remove.end <= next_self.start {
-                        // remove is less than the whole of next_self - can't remove any of it.
-                        diff.with_range(current_remove);
-                        current_remove_iter = remove_iter.next().cloned();
-                        // Try again with the next to_remove.
-                        //println!(" .. current_remove > next_self - going around");
-                        continue;
-                    } else if current_remove.start >= next_self.end {
-                        // remove is greater than the whole of self - skip self on.
-                        //println!(" .. current_remove < next_self - pick the next next_self");
-                        break;
-                    } else {
-                        // They overlap.
+        while let Some(next_self) = &current_self_iter {
+            if let Some(current_remove) = &current_remove_iter {
+                // Things in self which are too small to remove - these will always
+                // be too small to remove, because current_remove is nondecreasing.
+                let early = Range {
+                    start: next_self.start,
+                    end: min(next_self.end, current_remove.start),
+                };
 
-                        // Early is the things in to_remove that not yet in start.
-                        let early = Range {
-                            start: current_remove.start,
-                            end: next_self.start,
-                        };
+                // Things in both self and to_remove - these will always be removed.
+                let mid = Range {
+                    start: max(next_self.start, current_remove.start),
+                    end: min(next_self.end, current_remove.end),
+                };
 
-                        // mid is the overlap.
-                        let mid = Range {
-                            start: max(next_self.start, current_remove.start),
-                            end: min(next_self.end, current_remove.end),
-                        };
-
-                        // late is the range after current_remove ends.
-                        let late = Range {
-                            start: next_self.end,
-                            end: current_remove.end,
-                        };
-
-                        if !early.is_empty() {
-                            diff.with_range(&early);
-                        }
-                        if !mid.is_empty() {
-                            intersection.with_range(&mid);
-                        }
-
-                        println!(" .. overlap early {early:?} middle {mid:?} late {late:?} .. ");
-                        if late.is_empty() {
-                            // No remaining current range - move on.
-                            //  println!(" ... late is empty. Move remain on.");
-                            current_remove_iter = remove_iter.next().cloned();
-                        } else {
-                            //  println!(" ... late is not empty. Using it next.");
-                            // otherwise we need to work out what the remaining range is and use that instead - it might
-                            // overlap the next range in self.
-                            current_remove_iter = Some(late);
-                        }
-                    }
-                } else {
-                    //println!(" .. nothing more to remove.");
-                    // There is nothing more to remove.
-                    // The rest of self goes into the diff list
-                    self_iter.for_each(|x| {
-                        diff.with_range(x);
-                    });
-                    break 'skip_self;
+                if !early.is_empty() {
+                    // This means that there is a space between next_self.start (what we have) and
+                    // current_remove.start (what we want to remove). Once remove is removed, it will
+                    // therefore still be here.
+                    diff.with_range(&early);
                 }
+
+                if !mid.is_empty() {
+                    intersection.with_range(&mid);
+                }
+
+                trace!(" .. self {next_self:?} remove {current_remove:?} overlap early {early:?} middle {mid:?} .. ");
+                // now, either there are still things in self that too large for to_remove
+                match next_self.end.cmp(&current_remove.end) {
+                    Ordering::Greater => {
+                        current_self_iter = Some(Range {
+                            start: max(next_self.start, current_remove.end),
+                            end: next_self.end,
+                        });
+                        trace!("self remains {current_self_iter:?}");
+                        // But next_self starts after current_remove.end, so we know that nothing in
+                        // current_remove can possibly overlap this, so
+                        current_remove_iter = remove_iter.next().cloned();
+                    }
+                    Ordering::Less => {
+                        // or there are things still in to_remove that are not in self
+                        current_remove_iter = Some(Range {
+                            start: max(current_remove.start, next_self.end),
+                            end: current_remove.end,
+                        });
+                        trace!("remove remains {current_remove_iter:?}");
+                        // But current_remove now starts after next_self, so we can advance self
+                        current_self_iter = self_iter.next().cloned();
+                    }
+                    _ => {
+                        // If we get here, then the two ended precisely at the same place. Advance both iterators.
+                        trace!("self and remove both empty; moving on");
+                        current_self_iter = self_iter.next().cloned();
+                        current_remove_iter = remove_iter.next().cloned();
+                    }
+                }
+            } else {
+                // We've run out of things to remove. Everything else must therefore remain.
+                diff.with_range(next_self);
+                current_self_iter = self_iter.next().cloned();
             }
         }
-        // println!("Done! {intersection:?} {diff:?}");
+        // We've run out of things; anything left to remove will therefore not be removed and we're done.
+        trace!("Done! {intersection:?} {diff:?}");
         (intersection, diff)
     }
 }
@@ -353,16 +352,20 @@ mod tests {
 
     #[test]
     fn int_diff() {
-        let have = RangeMap::from_tuple_vec(&vec![(1, 8), (10, 12), (14, 33)]);
-        let want = RangeMap::from_tuple_vec(&vec![(2, 3), (11, 14), (14, 20)]);
+        let available = RangeMap::from_tuple_vec(&vec![(1, 8), (10, 12), (14, 33)]);
+        let wanted = RangeMap::from_tuple_vec(&vec![(2, 3), (11, 14), (14, 20)]);
 
         println!("----------------------");
-        let (int, rem) = have.diff_inter(&want);
+        let (can_get, still_need) = wanted.diff_inter(&available);
+
+        // Things we want that we have also got.
         assert_eq!(
-            int,
+            can_get,
             RangeMap::from_tuple_vec(&vec![(2, 3), (11, 12), (14, 20)])
         );
-        assert_eq!(rem, RangeMap::from_tuple_vec(&vec![(12, 14)]));
+
+        // Things we still want.
+        assert_eq!(still_need, RangeMap::from_tuple_vec(&vec![(12, 14)]));
     }
 
     #[test]
@@ -377,7 +380,7 @@ mod tests {
             (46, 47),
         ]);
         let want = RangeMap::from_tuple_vec(&vec![(6, 47)]);
-        let (get, still_want) = have.diff_inter(&want);
+        let (get, still_want) = want.diff_inter(&have);
 
         assert_eq!(
             get,
@@ -393,6 +396,37 @@ mod tests {
         assert_eq!(
             still_want,
             RangeMap::from_tuple_vec(&vec![(9, 10), (13, 15), (18, 19), (20, 22), (45, 46)])
+        );
+    }
+
+    #[test]
+    fn int_diff_3() {
+        let have = RangeMap::from_tuple_vec(&vec![(208, 8000)]);
+        let to_remove = RangeMap::from_tuple_vec(&vec![(7820, 7827), (7889, 7903)]);
+        println!("have = {:?} to_remove = {:?}", have, to_remove);
+        let (get, still_want) = have.diff_inter(&to_remove);
+        println!("get = {:?} still_want = {:?}", get, still_want);
+        assert_eq!(
+            get,
+            RangeMap::from_tuple_vec(&vec![(7820, 7827), (7889, 7903)])
+        );
+        assert_eq!(
+            still_want,
+            RangeMap::from_tuple_vec(&vec![(208, 7820), (7827, 7889), (7903, 8000)])
+        );
+    }
+
+    #[test]
+    fn int_diff_4() {
+        let have = RangeMap::from_tuple_vec(&vec![(0, 660), (661, 753), (1935, 1945)]);
+        let to_remove = RangeMap::from_tuple_vec(&vec![(1871, 1872)]);
+        println!("have = {:?} to_remove = {:?}", have, to_remove);
+        let (get, still_want) = have.diff_inter(&to_remove);
+        println!("get = {:?} still_want = {:?}", get, still_want);
+        assert_eq!(get, RangeMap::from_tuple_vec(&vec![]));
+        assert_eq!(
+            still_want,
+            RangeMap::from_tuple_vec(&vec![(0, 660), (661, 753), (1935, 1945)])
         );
     }
 
@@ -418,11 +452,11 @@ mod tests {
         ]);
         assert_eq!(
             the_map.clone().with_closed_upper_limit(20),
-            RangeMap::from_tuple_vec(&vec![(1, 5), (6, 9), (10, 13), (15, 18), (19, 20)])
+            &RangeMap::from_tuple_vec(&vec![(1, 5), (6, 9), (10, 13), (15, 18), (19, 20)])
         );
         assert_eq!(
             the_map.clone().with_closed_upper_limit(23),
-            RangeMap::from_tuple_vec(&vec![
+            &RangeMap::from_tuple_vec(&vec![
                 (1, 5),
                 (6, 9),
                 (10, 13),
@@ -433,8 +467,8 @@ mod tests {
         );
         assert_eq!(
             the_map.clone().with_closed_upper_limit(1),
-            RangeMap::from_tuple_vec(&vec![])
+            &RangeMap::from_tuple_vec(&vec![])
         );
-        assert_eq!(the_map.clone().with_closed_upper_limit(9999), the_map);
+        assert_eq!(the_map.clone().with_closed_upper_limit(9999), &the_map);
     }
 }

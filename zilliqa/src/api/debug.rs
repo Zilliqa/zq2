@@ -51,7 +51,11 @@ fn blocks(
 ) -> Result<(
     BlockStoreStatus,
     Option<Vec<BlockStrategy>>,
-    Vec<(u64, u64, String)>,
+    (
+        Vec<(String, u64, String)>,
+        Vec<(String, u64, String)>,
+        Vec<(String, String)>,
+    ),
 )> {
     trace!("blocks");
     let mut node = node.lock().unwrap();

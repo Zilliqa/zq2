@@ -46,7 +46,7 @@ mod time_impl {
         }
 
         pub fn checked_sub(&self, duration: Duration) -> Option<Self> {
-            self.0.checked_sub(duration)
+            self.0.checked_sub(duration).map(Self)
         }
     }
 

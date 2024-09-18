@@ -40,4 +40,18 @@ pub const REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE_MS: u64 = 1000;
 pub const RETAINS_LAST_N_BLOCKS: u64 = 10;
 
 // How long do we wait before retrying a request to a peer?
-pub const BLOCK_REQUEST_RESPONSE_TIMEOUT_MS: u64 = 10000;
+
+// WARNING: these must be at least 1000*max_blocks_in_flight.
+// All requests get this number of ms.
+pub const BLOCK_REQUEST_RESPONSE_TIMEOUT_MIN_MS: u64 = 100;
+// This is an estimate of our catch-up rate such that we give requests for blocks significantly
+// in advance of our head this many extra us per block to appear, or we retry. Intended to ensure
+// that if a peer does not respond, we neither flood the network nor run try.
+pub const BLOCK_REQUEST_RESPONSE_TIMEOUT_PER_BLOCK_US: u64 = 4000;
+
+// log2 of the number of ways in the block cache. Max 8.
+pub const BLOCK_CACHE_LOG2_WAYS: usize = 4;
+/// The block cache will deliberately keep this number of entries near the highest known view
+/// so that it can catch up quickly when it reaches the current head of the chain.
+/// Not required for correctness.
+pub const BLOCK_CACHE_TAIL_BUFFER_ENTRIES: usize = 16;

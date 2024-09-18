@@ -2649,7 +2649,7 @@ impl Consensus {
             .set_canonical_block_number(block.number(), block.hash())?;
 
         // Tell the block store to request more blocks if it can.
-        self.block_store.request_missing_blocks()?;
+        //self.block_store.request_missing_blocks()?;
 
         Ok(())
     }
@@ -2687,5 +2687,10 @@ impl Consensus {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         self.block_store.report_outgoing_message_failure(failure)
+    }
+
+    pub fn request_missing_blocks(&mut self) -> Result<()> {
+        self.block_store.request_missing_blocks()?;
+        Ok(())
     }
 }

@@ -253,7 +253,7 @@ impl Node {
                 }
 
                 trace!("Received a block request");
-                let proposals = (request.from_view..=request.to_view)
+                let proposals: Vec<Proposal> = (request.from_view..=request.to_view)
                     .take(self.config.block_request_limit)
                     .filter_map(|view| {
                         self.consensus
@@ -264,7 +264,8 @@ impl Node {
                     .collect::<Result<_>>()?;
 
                 let availability = self.consensus.block_store.availability()?;
-                trace!("responding to new blocks request of {request:?} with availability {availability:?}");
+                trace!("responding to new blocks request of {request:?} with props {0:?} availability {availability:?}",
+                       proposals.iter().fold("".to_string(), |state, x| format!("{},{}", state, x.header.view)));
 
                 // Send the response to this block request.
                 self.request_responses.send((
@@ -881,6 +882,8 @@ impl Node {
                 self.message_sender.broadcast_external_message(message)?;
             }
         }
+        // Request any missing blocks.
+        self.consensus.request_missing_blocks()?;
         Ok(())
     }
 
@@ -893,12 +896,19 @@ impl Node {
             .receive_availability(from, &response.availability)?;
 
         for block in response.proposals {
+            trace!("Handling proposal for view {0}", block.header.view);
             let proposal = self.consensus.receive_block(from, block)?;
             if let Some(proposal) = proposal {
+                trace!(
+                    " ... broadcasting proposal for view {0}",
+                    proposal.header.view
+                );
                 self.message_sender
                     .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
             }
         }
+        // Now we're done, request any missing blocks.
+        self.consensus.request_missing_blocks()?;
 
         Ok(())
     }
