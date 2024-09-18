@@ -395,8 +395,10 @@ impl P2pNode {
                 message = self.request_responses_receiver.next() => {
                     let (ch, _rs) = message.expect("message stream should be infinite");
                     if let Some(_ch) = ch.into_inner() {
+                        // let a = self.swarm.behaviour_mut().request_response.send_response(_ch, _rs);
                         cfg_if! {
                             if #[cfg(not(feature = "fake_response_channel"))] {
+                                // TODOtomos response here may be returned as Err if channel is closed. handle it
                                 let _ = self.swarm.behaviour_mut().request_response.send_response(_ch, _rs);
                             } else {
                                 panic!("fake_response_channel is enabled and you are trying to use a real libp2p network");
@@ -417,6 +419,7 @@ impl P2pNode {
                             if from == dest {
                                 self.send_to(&topic.hash(), |c| c.requests.send((from, message, ResponseChannel::Local)))?;
                             } else {
+                                // TODOtomos catch panic here. we attempt to connect with the receiver or add to pending_requests if unsuccessful 
                                 let libp2p_request_id = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
                                 self.pending_requests.insert(libp2p_request_id, (shard_id, request_id));
                             }
