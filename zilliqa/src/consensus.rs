@@ -1294,9 +1294,7 @@ impl Consensus {
         Ok(Some((proposal, broadcasted_transactions)))
     }
 
-    /// Assembles the Proposal block early.
-    /// This is performed before the majority QC is available.
-    /// It does all the needed work but with a dummy QC.
+    /// Assembles a Pending block.
     fn assemble_pending_block_at(&self, state: &mut State) -> Result<Option<Block>> {
         // Start with highest canonical block
         let num = self
@@ -1330,7 +1328,7 @@ impl Consensus {
         let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut updated_root_hash = state.root_hash()?;
         let mut tx_index_in_block = 0;
-        let mut applied_transactions = Vec::<VerifiedTransaction>::new();
+        let mut applied_transaction_hashes = Vec::<Hash>::new();
 
         // This is a partial header of a block that will be proposed with some transactions executed below.
         // It is needed so that each transaction is executed within proper block context (the block it belongs to)
@@ -1343,12 +1341,7 @@ impl Consensus {
         };
 
         // Assemble new block with whatever is in the mempool
-        for ready in self.transaction_pool.ready.iter().rev() {
-            let Some(txn) = self.transaction_pool.get_transaction_idx(ready.get_index()) else {
-                // We loop until we find a transaction that hasn't been made invalid.
-                continue;
-            };
-
+        for (_, txn) in self.transaction_pool.transactions.iter() {
             // First - check if we have time left to process txns and give enough time for block propagation
             let (
                 time_since_last_view_change,
@@ -1371,7 +1364,7 @@ impl Consensus {
                 inspector::noop(),
             )?;
 
-            // Skip transactions whose execution resulted in an error and drop them.
+            // Skip transactions whose execution resulted in an error
             let Some(result) = result else {
                 continue;
             };
@@ -1380,11 +1373,6 @@ impl Consensus {
             gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
                 g
             } else {
-                // undo last transaction
-                info!(
-                    nonce = txn.tx.nonce(),
-                    "gas limit reached, returning last transaction to pool",
-                );
                 state.set_to_root(updated_root_hash.into());
                 break;
             };
@@ -1403,16 +1391,10 @@ impl Consensus {
 
             tx_index_in_block += 1;
             updated_root_hash = state.root_hash()?;
-            applied_transactions.push(txn.clone());
+            applied_transaction_hashes.push(txn.hash);
         }
 
-        let applied_transaction_hashes =
-            applied_transactions.iter().map(|tx| tx.hash).collect_vec();
-
-        // Generate the early proposal
-        // Some critical parts are dummy/missing:
-        // a. Majority QC is missing
-        // b. Rewards have not been applied
+        // Generate the pending proposal, with dummy data
         let proposal = Block::from_qc(
             self.secret_key,
             executed_block_header.view,
@@ -1484,9 +1466,7 @@ impl Consensus {
     pub fn get_pending_block(&self) -> Result<Option<Block>> {
         let mut state = self.state.clone();
 
-        let early_proposal = self.assemble_pending_block_at(&mut state)?;
-
-        let Some(pending_block) = early_proposal else {
+        let Some(pending_block) = self.assemble_pending_block_at(&mut state)? else {
             return Ok(None);
         };
 
