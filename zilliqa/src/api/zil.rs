@@ -745,7 +745,7 @@ fn get_transactions_for_tx_block_ex(
         });
 
     // Ensure page is within bounds
-    if page_number > num_pages {
+    if page_number >= num_pages {
         return Ok(TxnsForTxBlockExResponse {
             curr_page: page_number as u64,
             num_pages: num_pages as u64,
