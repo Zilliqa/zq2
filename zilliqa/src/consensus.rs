@@ -106,7 +106,7 @@ struct CachedLeader {
 
 /// The consensus algorithm is pipelined fast-hotstuff, as given in this paper: https://arxiv.org/pdf/2010.11454.pdf
 ///
-/// The algorithm can be condensed down into the following explaination:
+/// The algorithm can be condensed down into the following explanation:
 /// - Blocks must contain either a QuorumCertificate (QC), or an aggregated QuorumCertificate (aggQC).
 /// - A QuorumCertificate is an aggregation of signatures of threshold validators against a block hash (the previous block)
 /// - An aggQC is an aggregation of threshold QC.
@@ -143,7 +143,7 @@ pub struct Consensus {
     pub block_store: BlockStore,
     latest_leader_cache: RefCell<Option<CachedLeader>>,
     votes: BTreeMap<Hash, BlockVotes>,
-    /// Votes for a block we don't have stored. They are retained in case we recieve the block later.
+    /// Votes for a block we don't have stored. They are retained in case we receive the block later.
     // TODO(#719): Consider how to limit the size of this.
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
     new_views: BTreeMap<u64, NewViewVote>,

@@ -190,6 +190,7 @@ impl NodeLauncher {
                 }
                 message = self.request_failures.next() => {
                     let (source, message) = message.expect("message stream should be infinite");
+                    // TODOtomos here we handle request failures. there is opporunity to panic. 
                     self.node.lock().unwrap().handle_request_failure(source, message).unwrap();
                 }
                 message = self.responses.next() => {
