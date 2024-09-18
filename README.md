@@ -24,28 +24,10 @@ You may also want to set `RUST_LOG=zilliqa=trace` to see the most detailed level
 
 ### Running with z2
 
-The `z2` program in this repository will run a small local Zilliqa
-network for you, for debugging. This will include `otterscan`,
-`spout`, a mitmweb API proxy and the documentation. Do:
+The `z2` program in this repository will run a small local Zilliqa network for you, for debugging. This will include `otterscan`, `spout`, a mitmweb API proxy and the documentation.
 
-```bash
-./scripts/z2 depends print
-./scripts/z2 depends update
-```
+`z2` utility tool usage instructions can be found [here](./z2/docs/README.md). Instructions for running a local network using z2 are [here](./z2/docs/local-network.md).
 
-To print or update dependencies, and
-
-```bash
-./scripts/z2 run /tmp/c
-```
-
-To run the network, where `/tmp/c` is a directory in which `z2` will place configuration files. You can run:
-
-```bash
-./scripts/z2
-```
-
-for help.
 
 ### Bootstrap with docker-compose
 
