@@ -4,6 +4,8 @@
 
 Unreleased changes, in reverse chronological order. New entries are added at the top of this list.
 
+- [#1443](https://github.com/Zilliqa/zq2/pull/1451): Include failed transaction in blocks
+- 
 ## [0.3.1] - 2024-09-13
 
 - [#1445](https://github.com/Zilliqa/zq2/pull/1445): Apply state changes from transactions atomically.
