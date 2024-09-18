@@ -2,7 +2,7 @@ use std::{error::Error, pin::Pin};
 
 use futures::Future;
 use http::{Method, Request, Response, StatusCode};
-use hyper::Body;
+use hyper::body::Body;
 use tower::{layer::Layer, Service};
 
 /// [Layer] that responds to `GET /health` calls with a 200 status code.
@@ -16,16 +16,18 @@ impl<S> Layer<S> for HealthLayer {
     }
 }
 
+#[derive(Clone)]
 pub struct HealthRequest<S> {
     inner: S,
 }
 
-impl<S> Service<Request<Body>> for HealthRequest<S>
+impl<S, B> Service<Request<B>> for HealthRequest<S>
 where
-    S: Service<Request<Body>, Response = Response<Body>>,
+    S: Service<Request<B>, Response = Response<B>>,
     S::Response: 'static,
     S::Error: Into<Box<dyn Error + Send + Sync>> + 'static,
     S::Future: Send + 'static,
+    B: Body + Default + Send + 'static,
 {
     type Response = S::Response;
     type Error = Box<dyn Error + Send + Sync + 'static>;
@@ -39,11 +41,11 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
+    fn call(&mut self, req: Request<B>) -> Self::Future {
         if req.uri() == "/health" && req.method() == Method::GET {
             let response = hyper::Response::builder()
                 .status(StatusCode::OK)
-                .body(Body::empty())
+                .body(B::default())
                 .unwrap();
             let res_fut = async move { Ok(response) };
 

@@ -1,38 +1,22 @@
-#![allow(unused_imports)]
-
 use std::{
     collections::{BTreeMap, HashMap},
-    fmt::{self, Display},
-    io::Write,
-    path::PathBuf,
-    process::{self, Stdio},
+    fmt,
     str::FromStr,
     sync::Arc,
 };
 
 use anyhow::{anyhow, Result};
-use bitvec::order::verify_for_type;
 use clap::ValueEnum;
-use git2::Repository;
+use colored::Colorize;
 use regex::Regex;
-use revm::handler::validation;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tempfile::{NamedTempFile, TempDir};
-use tera::{Context, Tera};
-use tokio::{
-    fs::{self, File},
-    io::AsyncWriteExt,
-    sync::Semaphore,
-    task,
-};
-use zilliqa::node::Node;
+use tokio::{fs, sync::Semaphore, task};
 
 use crate::{
     address::EthereumAddress,
-    chain::Chain,
-    github::{self, get_release_or_commit},
-    node::{get_nodes, ChainNode},
+    github,
+    node::{get_network_machines, get_nodes_by_role, ChainNode},
     validators,
 };
 
@@ -325,7 +309,7 @@ pub async fn install_or_upgrade(config_file: &str, is_upgrade: bool) -> Result<(
     for node_role in node_roles.clone() {
         match node_role {
             NodeRole::Bootstrap => bootstrap_nodes.extend(
-                get_nodes(
+                get_nodes_by_role(
                     &config.name,
                     config.eth_chain_id,
                     &config.project_id,
@@ -335,7 +319,7 @@ pub async fn install_or_upgrade(config_file: &str, is_upgrade: bool) -> Result<(
                 .await?,
             ),
             NodeRole::Apps => apps_nodes.extend(
-                get_nodes(
+                get_nodes_by_role(
                     &config.name,
                     config.eth_chain_id,
                     &config.project_id,
@@ -345,7 +329,7 @@ pub async fn install_or_upgrade(config_file: &str, is_upgrade: bool) -> Result<(
                 .await?,
             ),
             _ => chain_nodes.extend(
-                get_nodes(
+                get_nodes_by_role(
                     &config.name,
                     config.eth_chain_id,
                     &config.project_id,
@@ -418,7 +402,7 @@ pub async fn get_deposit_commands(config_file: &str) -> Result<()> {
     let chain_name = &config.name;
 
     // Create a list of validators instances
-    let nodes = get_nodes(
+    let nodes = get_nodes_by_role(
         chain_name,
         config.eth_chain_id,
         &config.project_id,
@@ -485,7 +469,7 @@ pub async fn run_deposit(config_file: &str) -> Result<()> {
     let chain_name = &config.name;
 
     // Create a list of validators instances
-    let nodes = get_nodes(
+    let nodes = get_nodes_by_role(
         chain_name,
         config.eth_chain_id,
         &config.project_id,
@@ -547,4 +531,103 @@ pub async fn run_deposit(config_file: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub async fn run_rpc_call(method: &str, params: &Option<String>, config_file: &str) -> Result<()> {
+    let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
+    let mut futures = vec![];
+
+    let config = fs::read_to_string(config_file).await?;
+    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let chain_name = &config.name;
+
+    // Create a list of chain instances
+    let mut machines = get_network_machines(chain_name, &config.project_id).await?;
+
+    machines.retain(|m| m.labels.get("role") != Some(&"apps".to_string()));
+
+    println!("Running RPC call on {} nodes", chain_name);
+    println!("🦆 Running the RPC call - Method: '{method}' .. ");
+    println!(
+        "🦆 Params: {} .. ",
+        params.clone().unwrap_or("[]".to_owned())
+    );
+
+    let column_width = machines
+        .iter()
+        .map(|m| m.name.len())
+        .max()
+        .unwrap_or_default();
+
+    for machine in machines {
+        let current_method = method.to_owned();
+        let current_params = params.to_owned();
+        let permit = semaphore.clone().acquire_owned().await?;
+        let future = task::spawn(async move {
+            let result =
+                run_node_rpc_call(&current_method, &current_params, &machine.external_address)
+                    .await;
+            drop(permit); // Release the permit when the task is done
+            (machine, result)
+        });
+        futures.push(future);
+    }
+
+    let results = futures::future::join_all(futures).await;
+
+    for result in results {
+        match result? {
+            (machine, Ok(value)) => {
+                println!(
+                    "{:<width$} => {}",
+                    machine.name.bold(),
+                    value,
+                    width = column_width
+                );
+            }
+            (machine, Err(err)) => {
+                log::error!("Node {} failed with error: {}", machine.name, err);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_node_rpc_call(
+    method: &str,
+    params: &Option<String>,
+    endpoint: &str,
+) -> Result<String> {
+    let body = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"{}\",\"params\":{}}}",
+        method,
+        params.clone().unwrap_or("[]".to_string()),
+    );
+
+    let args = &[
+        "-X",
+        "POST",
+        "-H",
+        "Content-Type:application/json",
+        "-H",
+        "accept:application/json,*/*;q=0.5",
+        "--data",
+        &body,
+        &format!("http://{endpoint}:4201"),
+    ];
+
+    let output = zqutils::commands::CommandBuilder::new()
+        .silent()
+        .cmd("curl", args)
+        .run_for_output()
+        .await?;
+    if !output.success {
+        return Err(anyhow!(
+            "getting local block number failed: {:?}",
+            output.stderr
+        ));
+    }
+
+    Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
 }

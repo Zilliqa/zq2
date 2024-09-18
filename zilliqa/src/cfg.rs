@@ -139,7 +139,8 @@ pub fn block_request_batch_size_default() -> u64 {
 }
 
 pub fn state_rpc_limit_default() -> usize {
-    usize::MAX
+    // isize maximum because toml serialisation supports i64 integers
+    isize::MAX as usize
 }
 
 pub fn failed_request_sleep_duration_default() -> Duration {
