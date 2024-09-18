@@ -135,7 +135,11 @@ impl ToScillaType for NodeMetaIdentifier {
 /// equivalent Scilla value which could be used to look up this key in a map.
 fn read_index(ty: ScillaType, d: &mut Decoder) -> Result<Vec<u8>> {
     let index = match ty {
-        ScillaType::ByStr20 => serde_json::to_vec(&Address::detokenize(d.decode()?).to_string())?,
+        // Note we use the `Debug` impl of `Address`, rather than `Display` because we don't want to include the EIP-55
+        // checksum.
+        ScillaType::ByStr20 => {
+            serde_json::to_vec(&format!("{:?}", Address::detokenize(d.decode()?)))?
+        }
         ScillaType::Int32 => serde_json::to_vec(&i32::detokenize(d.decode()?).to_string())?,
         ScillaType::Int64 => serde_json::to_vec(&i64::detokenize(d.decode()?).to_string())?,
         ScillaType::Int128 => serde_json::to_vec(&i128::detokenize(d.decode()?).to_string())?,
