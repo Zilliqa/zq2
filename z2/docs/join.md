@@ -26,7 +26,7 @@ z2 join --chain zq2-prototestnet
 
 ## Run the node
 
-To run the node you need to create a PRIVATE KEY for you node.
+To run the node you need to create a PRIVATE KEY for your node.
 Any 32 byte Hex string is valid. Ensure you save it after on a safe place, in case you need
 to restart your node.
 
