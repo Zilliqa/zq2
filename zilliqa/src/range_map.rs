@@ -29,8 +29,8 @@ impl Display for RangeMap {
 }
 
 fn merge_ranges(r1: &Range<u64>, r2: &Range<u64>) -> Option<Range<u64>> {
-    // <= / >= because std::ops:Range is half-open.
-    if r1.end <= r2.start || r1.start >= r2.end {
+    // < and > because the ranges are half-open.
+    if r1.end < r2.start || r1.start > r2.end {
         // Ranges are disjoint
         None
     } else {
@@ -333,6 +333,13 @@ mod tests {
 
         assert_eq!(map1.max(), Some(10));
         assert_eq!(map2.max(), Some(22));
+    }
+
+    #[test]
+    fn canonical() {
+        let mut map = RangeMap::new();
+        map.with_number(1).with_number(2).with_number(3);
+        assert_eq!(map.to_tuple_vec(), vec![(1, 4)]);
     }
 
     #[test]

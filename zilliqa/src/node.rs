@@ -35,7 +35,7 @@ use crate::{
     inspector::{self, ScillaInspector},
     message::{
         Block, BlockHeader, BlockResponse, ExternalMessage, InternalMessage, IntershardCall,
-        Proposal,
+        ProcessProposal, Proposal,
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -286,6 +286,11 @@ impl Node {
                 // us, but we keep it here for symmetry with the other handlers.
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            // This just breaks down group block messages into individual messages to stop them blocking threads
+            // for long periods.
+            ExternalMessage::ProcessProposal(m) => {
+                self.handle_process_proposal(from, m)?;
             }
             // Handle requests which just contain a block proposal. This shouldn't actually happen in production, but
             // annoyingly we have some test cases which trigger this (by rewriting broadcasts to direct messages) and
@@ -882,8 +887,6 @@ impl Node {
                 self.message_sender.broadcast_external_message(message)?;
             }
         }
-        // Request any missing blocks.
-        self.consensus.request_missing_blocks()?;
         Ok(())
     }
 
@@ -896,20 +899,28 @@ impl Node {
             .receive_availability(from, &response.availability)?;
 
         for block in response.proposals {
-            trace!("Handling proposal for view {0}", block.header.view);
-            let proposal = self.consensus.receive_block(from, block)?;
-            if let Some(proposal) = proposal {
-                trace!(
-                    " ... broadcasting proposal for view {0}",
-                    proposal.header.view
-                );
-                self.message_sender
-                    .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
-            }
+            // Buffer the block so that we know we have it - in fact, add it to the cache so
+            // that we can include it in the chain if necessary.
+            self.consensus.buffer_proposal(from, block)?;
         }
-        // Now we're done, request any missing blocks.
-        self.consensus.request_missing_blocks()?;
+        Ok(())
+    }
 
+    fn handle_process_proposal(&mut self, from: PeerId, req: ProcessProposal) -> Result<()> {
+        if from != self.consensus.peer_id() {
+            warn!("Someone ({from}) sent me a ProcessProposal; illegal- ignoring");
+            return Ok(());
+        }
+        trace!("Handling proposal for view {0}", req.block.header.view);
+        let proposal = self.consensus.receive_block(from, req.block)?;
+        if let Some(proposal) = proposal {
+            trace!(
+                " ... broadcasting proposal for view {0}",
+                proposal.header.view
+            );
+            self.message_sender
+                .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
+        }
         Ok(())
     }
 }

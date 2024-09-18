@@ -43,7 +43,7 @@ pub const RETAINS_LAST_N_BLOCKS: u64 = 10;
 
 // WARNING: these must be at least 1000*max_blocks_in_flight.
 // All requests get this number of ms.
-pub const BLOCK_REQUEST_RESPONSE_TIMEOUT_MIN_MS: u64 = 100;
+pub const BLOCK_REQUEST_RESPONSE_TIMEOUT_MIN_MS: u64 = 4000;
 // This is an estimate of our catch-up rate such that we give requests for blocks significantly
 // in advance of our head this many extra us per block to appear, or we retry. Intended to ensure
 // that if a peer does not respond, we neither flood the network nor run try.

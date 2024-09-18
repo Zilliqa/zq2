@@ -14,6 +14,7 @@ use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
 use bitvec::{bitarr, order::Msb0};
 use itertools::Either;
+use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::ops::Range;
@@ -215,6 +216,14 @@ pub struct BlockResponse {
     pub availability: Option<Vec<BlockStrategy>>,
 }
 
+/// Used to convey proposal processing internally, to avoid blocking threads for too long.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessProposal {
+    // An encoded PeerId
+    pub from: Vec<u8>,
+    pub block: Proposal,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntershardCall {
     pub source_address: Address,
@@ -234,6 +243,7 @@ pub enum ExternalMessage {
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
+    ProcessProposal(ProcessProposal),
     NewTransaction(SignedTransaction),
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
@@ -258,6 +268,16 @@ impl Display for ExternalMessage {
             ExternalMessage::NewView(_) => write!(f, "NewView"),
             ExternalMessage::BlockRequest(r) => {
                 write!(f, "BlockRequest({}..={})", r.from_view, r.to_view)
+            }
+            ExternalMessage::ProcessProposal(r) => {
+                write!(
+                    f,
+                    "ProcessProposal({}, view={} num={})",
+                    PeerId::from_bytes(&r.from)
+                        .map_or("(undecodable)".to_string(), |x| x.to_base58()),
+                    r.block.header.view,
+                    r.block.header.number
+                )
             }
             ExternalMessage::BlockResponse(r) => {
                 let mut views = r.proposals.iter().map(|p| p.view());

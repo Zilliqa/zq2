@@ -27,8 +27,8 @@ use crate::{
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
-        AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockResponse,
-        BlockStrategy, ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate,
+        AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
+        ExternalMessage, InternalMessage, NewView, ProcessProposal, Proposal, QuorumCertificate,
         Vote, MAX_COMMITTEE_SIZE,
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
@@ -2113,9 +2113,9 @@ impl Consensus {
         if let Some(child_proposal) = self.block_store.process_block(from, block)? {
             self.message_sender.send_external_message(
                 self.peer_id(),
-                ExternalMessage::BlockResponse(BlockResponse {
-                    proposals: vec![child_proposal],
-                    availability: self.block_store.availability()?,
+                ExternalMessage::ProcessProposal(ProcessProposal {
+                    from: from.unwrap_or(self.peer_id()).to_bytes(),
+                    block: child_proposal,
                 }),
             )?;
         }
@@ -2689,8 +2689,26 @@ impl Consensus {
         self.block_store.report_outgoing_message_failure(failure)
     }
 
-    pub fn request_missing_blocks(&mut self) -> Result<()> {
+    pub fn tick(&mut self) -> Result<()> {
+        trace!("consensus::tick()");
+        trace!("request_missing_blocks from timer");
         self.block_store.request_missing_blocks()?;
+        // Is it likely that the next thing in the buffer could be the next block?
+        if let Some((from, block)) = self.block_store.next_proposal_if_likely()? {
+            trace!("buffer may contain the next block");
+            self.message_sender.send_external_message(
+                self.peer_id(),
+                ExternalMessage::ProcessProposal(ProcessProposal {
+                    from: from.to_bytes(),
+                    block,
+                }),
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn buffer_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
+        self.block_store.buffer_proposal(from, proposal)?;
         Ok(())
     }
 }

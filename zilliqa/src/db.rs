@@ -502,6 +502,19 @@ impl Db {
             .optional()?)
     }
 
+    pub fn get_highest_block_hash(&self) -> Result<Option<Hash>> {
+        Ok(self
+            .block_store
+            .lock()
+            .unwrap()
+            .query_row_and_then(
+                "select block_hash from blocks where height=(select height from main_chain_canonical_blocks ORDER BY height DESC LIMIT 1)",
+                (),
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
     pub fn set_high_qc_with_db_tx(
         &self,
         sqlite_tx: &Connection,

@@ -27,13 +27,15 @@ use crate::{
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BlockCacheEntry {
     pub parent_hash: Hash,
+    pub from: PeerId,
     pub proposal: Proposal,
 }
 
 impl BlockCacheEntry {
-    pub fn new(parent_hash: Hash, proposal: Proposal) -> Self {
+    pub fn new(parent_hash: Hash, from: PeerId, proposal: Proposal) -> Self {
         Self {
             parent_hash,
+            from,
             proposal,
         }
     }
@@ -88,13 +90,16 @@ impl BlockCache {
         highest_key - u128::try_from(constants::BLOCK_CACHE_TAIL_BUFFER_ENTRIES).unwrap()
     }
 
-    pub fn destructive_proposal_from_parent_hash(&mut self, hash: &Hash) -> Option<Proposal> {
+    pub fn destructive_proposal_from_parent_hash(
+        &mut self,
+        hash: &Hash,
+    ) -> Option<(PeerId, Proposal)> {
         if let Some(key) = self.by_parent_hash.remove(hash) {
             let maybe = self
                 .cache
                 .remove(&key)
                 .or_else(|| self.tail.remove(&key))
-                .map(|x| x.proposal);
+                .map(|x| (x.from, x.proposal));
             maybe
         } else {
             None
@@ -107,7 +112,7 @@ impl BlockCache {
         let lowest_ignored_key = self.min_key_for_view(highest_confirmed_view);
         let cache_entries = max_blocks_in_flight << constants::BLOCK_CACHE_LOG2_WAYS;
         debug!("trim: lowest_ignored_key = {0}", lowest_ignored_key);
-        debug!("trim: cache had: {0}", self.extant_block_ranges()?);
+        // debug!("trim: cache had: {0}", self.extant_block_ranges()?);
         while did_anything {
             did_anything = false;
 
@@ -141,7 +146,7 @@ impl BlockCache {
                 .and_then(|(_, v)| self.by_parent_hash.remove(&v.parent_hash));
         }
 
-        debug!("cache now has: {0}", self.extant_block_ranges()?);
+        // debug!("cache now has: {0}", self.extant_block_ranges()?);
         // Both caches are now at most the "right" number of entries long.
         Ok(())
     }
@@ -149,7 +154,7 @@ impl BlockCache {
     /// Insert this proposal into the cache.
     pub fn insert(
         &mut self,
-        peer: &PeerId,
+        from: &PeerId,
         parent_hash: &Hash,
         proposal: Proposal,
         highest_confirmed_view: u64,
@@ -159,11 +164,12 @@ impl BlockCache {
         fn insert_with_replacement(
             into: &mut BTreeMap<u128, BlockCacheEntry>,
             by_parent_hash: &mut HashMap<Hash, u128>,
+            from: &PeerId,
             parent_hash: &Hash,
             key: u128,
             value: Proposal,
         ) {
-            into.insert(key, BlockCacheEntry::new(*parent_hash, value))
+            into.insert(key, BlockCacheEntry::new(*parent_hash, from.clone(), value))
                 .map(|entry| by_parent_hash.remove(&entry.parent_hash));
             by_parent_hash.insert(*parent_hash, key);
         }
@@ -173,11 +179,12 @@ impl BlockCache {
             return Ok(());
         }
         // First, insert us.
-        let key = self.key_from_number(peer, proposal.header.view);
+        let key = self.key_from_number(from, proposal.header.view);
         if key > self.min_tail_key(highest_known_view) {
             insert_with_replacement(
                 &mut self.tail,
                 &mut self.by_parent_hash,
+                &from,
                 parent_hash,
                 key,
                 proposal,
@@ -186,6 +193,7 @@ impl BlockCache {
             insert_with_replacement(
                 &mut self.cache,
                 &mut self.by_parent_hash,
+                &from,
                 parent_hash,
                 key,
                 proposal,
@@ -193,12 +201,6 @@ impl BlockCache {
         }
         // Now evict the worst entry
         self.trim(highest_confirmed_view, max_blocks_in_flight)?;
-        //debug!(
-        //    "after insert of {0:?} with highest_confirmed {2}, cache = {1:?}",
-        //    parent_hash,
-        //    &self.summarise(),
-        //    highest_confirmed_view
-        //);
         Ok(())
     }
 
@@ -561,9 +563,6 @@ impl BlockStore {
             peer.availability.highest_known_view = view;
         }
 
-        // Try to re-request any missing blocks.
-        self.request_missing_blocks()?;
-
         Ok(())
     }
 
@@ -717,7 +716,14 @@ impl BlockStore {
         self.prune_pending_requests()?;
 
         trace!("request_blocks for {:?} clock {}", remain, self.clock);
-        trace!("cache has {:?}", self.buffered.extant_block_ranges());
+
+        // If it's already buffered, don't request it again - wait for us to reject it and
+        // then we can re-request.
+        let extant = self.buffered.extant_block_ranges()?;
+        trace!("cache has {:?}", extant);
+        (_, remain) = remain.diff_inter(&extant);
+        trace!(" .. after cache removal {remain:?}");
+
         // If it's in flight, don't request it again.
         let mut in_flight = RangeMap::new();
         for peer in self.peers.values() {
@@ -903,7 +909,7 @@ impl BlockStore {
             }
         }
 
-        let result = if let Some(child) = self
+        let result = if let Some((_, child)) = self
             .buffered
             .destructive_proposal_from_parent_hash(&block.hash())
         {
@@ -953,5 +959,15 @@ impl BlockStore {
 
     pub fn contains_block(&mut self, block_hash: &Hash) -> Result<bool> {
         Ok(self.db.contains_block(block_hash)?)
+    }
+
+    pub fn next_proposal_if_likely(&mut self) -> Result<Option<(PeerId, Proposal)>> {
+        if let Some(current_hash) = self.db.get_highest_block_hash()? {
+            Ok(self
+                .buffered
+                .destructive_proposal_from_parent_hash(&current_hash))
+        } else {
+            Ok(None)
+        }
     }
 }

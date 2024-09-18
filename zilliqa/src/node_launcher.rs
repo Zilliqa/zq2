@@ -201,6 +201,8 @@ impl NodeLauncher {
                     todo!("Local messages will need to be handled once cross-shard messaging is implemented");
                 }
                 () = &mut sleep => {
+                    // Send any missing blocks.
+                    self.node.lock().unwrap().consensus.tick().unwrap();
                     // No messages for a while, so check if consensus wants to timeout
                     self.node.lock().unwrap().handle_timeout().unwrap();
                     sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
