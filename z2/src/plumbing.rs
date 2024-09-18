@@ -6,14 +6,11 @@ use colored::Colorize;
 use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
 
-use crate::{kpi, utils};
+use crate::{chain::node::NodeRole, kpi, utils};
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
 
-use crate::{
-    collector, components::Component, converter, deployer, deployer::NodeRole, docgen, perf, setup,
-    zq1,
-};
+use crate::{collector, components::Component, converter, deployer, docgen, perf, setup, zq1};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_local_net(
@@ -101,27 +98,30 @@ pub async fn run_deployer_new(
     Ok(())
 }
 
-pub async fn run_deployer_install(config_file: &str) -> Result<()> {
+pub async fn run_deployer_install(config_file: &str, only_selected_nodes: bool) -> Result<()> {
     println!("🦆 Installing {config_file} .. ");
-    deployer::install_or_upgrade(config_file, false).await?;
+    deployer::install_or_upgrade(config_file, false, only_selected_nodes).await?;
     Ok(())
 }
 
-pub async fn run_deployer_upgrade(config_file: &str) -> Result<()> {
+pub async fn run_deployer_upgrade(config_file: &str, only_selected_nodes: bool) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
-    deployer::install_or_upgrade(config_file, true).await?;
+    deployer::install_or_upgrade(config_file, true, only_selected_nodes).await?;
     Ok(())
 }
 
-pub async fn run_deployer_get_deposit_commands(config_file: &str) -> Result<()> {
+pub async fn run_deployer_get_deposit_commands(
+    config_file: &str,
+    only_selected_nodes: bool,
+) -> Result<()> {
     println!("🦆 Getting node deposit commands for {config_file} .. ");
-    deployer::get_deposit_commands(config_file).await?;
+    deployer::get_deposit_commands(config_file, only_selected_nodes).await?;
     Ok(())
 }
 
-pub async fn run_deployer_deposit(config_file: &str) -> Result<()> {
+pub async fn run_deployer_deposit(config_file: &str, only_selected_nodes: bool) -> Result<()> {
     println!("🦆 Running deposit for {config_file} .. ");
-    deployer::run_deposit(config_file).await?;
+    deployer::run_deposit(config_file, only_selected_nodes).await?;
     Ok(())
 }
 
