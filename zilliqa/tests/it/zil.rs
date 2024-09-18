@@ -744,3 +744,27 @@ async fn get_tx_rate(mut network: Network) {
     );
     assert!(tx_rate >= 0.0, "Transaction rate should be non-negative");
 }
+
+#[zilliqa_macros::test]
+async fn get_txns_for_tx_block_ex(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    network.run_until_block(&wallet, 2.into(), 50).await;
+
+    let block_number = "1";
+    let page_number = "1";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTransactionsForTxBlockEx", [block_number, page_number])
+        .await
+        .expect("Failed to call GetTransactionsForTxBlockEx API");
+
+    let txns: zilliqa::api::types::zil::TxnsForTxBlockExResponse =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert_eq!(txns.curr_page, page_number.parse::<u64>().unwrap());
+    assert!(
+        txns.transactions.len() <= 2500,
+        "Expected Transactions length to be less than or equal to 2500"
+    );
+}
