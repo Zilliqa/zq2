@@ -5,6 +5,7 @@
 Unreleased changes, in reverse chronological order. New entries are added at the top of this list.
 
 - Add `GetTransactionsForTxBlockEx` API.
+- [#1469](https://github.com/Zilliqa/zq2/pull/1469): Calculate block state roots earlier to avoid database inconsistency.
 
 ## [0.3.1] - 2024-09-13
 

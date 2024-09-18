@@ -2,7 +2,6 @@ use anyhow::Result;
 pub use config::Config;
 use ethers::providers::{Middleware, Provider, Ws};
 use futures::StreamExt;
-use primitive_types::U256;
 use serde::Serialize;
 use tokio::sync::oneshot;
 
@@ -43,7 +42,7 @@ pub struct Kpi;
 
 #[derive(Debug, Serialize)]
 struct BlockInfo {
-    timestamp_delta: U256,
+    timestamp_delta: u128,
     num_transactions: usize,
     gas_used: u64,
 }
@@ -61,8 +60,8 @@ fn spawn_block_info_collector(
             tokio::select! {
                 block =  stream.next() => {
                     if let Some(block) = block {
-                        let timestamp_delta = block.timestamp - previous_timestamp.unwrap_or(block.timestamp);
-                        previous_timestamp = Some(block.timestamp);
+                        let timestamp_delta = block.timestamp.as_u128() - previous_timestamp.unwrap_or(block.timestamp.as_u128());
+                        previous_timestamp = Some(block.timestamp.as_u128());
 
                         let num_transactions = block.transactions.len();
                         let gas_used = block.gas_used;
