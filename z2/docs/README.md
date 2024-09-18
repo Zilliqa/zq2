@@ -5,12 +5,12 @@ This directory is the house of the `z2` utility documentation.
 `z2` is the in-house built tool to operate the Zilliqa's team Zilliqa 2.0 (ake `zq2`) operated network, and much more.
 
 Using the tool you are able to:
-- run a `local` copy of `zq2`
-- execute performance and comformancy tests on a given `zq2` network
-- convert the Zilliqa 1.0 persistences into a `zq2` persistence format
-- generate the `zq2` API documentation
-- generate the script to start a `zq2` validator for the supported network, see: `z2 join` for details.
-- upgrade the `zq2` validators and the apps.
+- Run a `local` copy of `zq2`
+- Execute performance and comformancy tests on a given `zq2` network
+- Convert the Zilliqa 1.0 persistences into a `zq2` persistence format
+- Generate the `zq2` API documentation
+- Generate the script to start a `zq2` validator for the supported network, see: `z2 join` for details.
+- Upgrade the `zq2` validators and the apps.
 
 ## Requirements
 
@@ -33,7 +33,7 @@ To use it:
 
 ## What to run
 
-- to join as `zq2` validator: [`z2 join`](./join.md)
-- install / upgrade a `zq2` network: [`z2 deployer`](./deployer.md)
-- convert `zq1` to `zq2` persistence: [`z2 converter` ](./converter.md)
-- promote a node as validator by $ZILs deposit: [`z2 deposit` ](./deposit.md)
+- Join a network as `zq2` validator: [`z2 join`](./join.md)
+- Install / upgrade a `zq2` network: [`z2 deployer`](./deployer.md)
+- Convert `zq1` to `zq2` persistence: [`z2 converter` ](./converter.md)
+- Promote a node as validator via `$ZIL` deposit: [`z2 deposit` ](./deposit.md)
