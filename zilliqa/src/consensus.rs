@@ -2560,6 +2560,20 @@ impl Consensus {
             return Ok(());
         }
 
+        if self.state.root_hash()? != block.state_root_hash() {
+            warn!(
+                "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}",
+                self.state.root_hash()?,
+                block.state_root_hash(),
+                block
+            );
+            return Err(anyhow!(
+                "state root hash mismatch, expected: {:?}, actual: {:?}",
+                block.state_root_hash(),
+                self.state.root_hash()
+            ));
+        }
+
         for (receipt, tx_index) in &mut block_receipts {
             receipt.block_hash = block.hash();
             // Avoid cloning the receipt if there are no subscriptions to send it to.
@@ -2589,20 +2603,6 @@ impl Consensus {
 
         self.db
             .set_canonical_block_number(block.number(), block.hash())?;
-
-        if self.state.root_hash()? != block.state_root_hash() {
-            warn!(
-                "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}",
-                self.state.root_hash()?,
-                block.state_root_hash(),
-                block
-            );
-            return Err(anyhow!(
-                "state root hash mismatch, expected: {:?}, actual: {:?}",
-                block.state_root_hash(),
-                self.state.root_hash()
-            ));
-        }
 
         // Tell the block store to request more blocks if it can.
         self.block_store.request_missing_blocks()?;
