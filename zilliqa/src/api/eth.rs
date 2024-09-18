@@ -13,6 +13,7 @@ use alloy::{
     },
 };
 use anyhow::{anyhow, Result};
+use http::Extensions;
 use itertools::{Either, Itertools};
 use jsonrpsee::{
     core::StringError,
@@ -843,6 +844,7 @@ async fn subscribe(
     params: Params<'_>,
     pending: PendingSubscriptionSink,
     node: Arc<Arc<Mutex<Node>>>,
+    _: Extensions,
 ) -> Result<(), StringError> {
     let mut params = params.sequence();
     let kind: SubscriptionKind = params.next()?;
