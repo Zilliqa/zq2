@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, BinaryHeap, HashSet},
+    collections::{BTreeMap, HashSet},
 };
 
 use alloy::primitives::Address;
@@ -12,7 +12,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum TxIndex {
+pub enum TxIndex {
     /// from_address, nonce (unique for that address)
     Nonced(Address, u64),
     /// source_shard, nonce (unique for the bridge from that shard)
@@ -58,7 +58,7 @@ pub struct TransactionPool {
     /// Indices into `transactions`, sorted by gas price. This contains indices of transactions which are immediately
     /// executable, because they have a nonce equal to the account's nonce or are nonceless.
     /// It may also contain stale (invalidated) transactions, which are evicted lazily.
-    ready: BinaryHeap<ReadyItem>,
+    pub ready: Vec<ReadyItem>,
     /// A map of transaction hash to index into `transactions`.
     /// Used for querying transactions from the pool by their hash.
     hash_to_index: BTreeMap<Hash, TxIndex>,
@@ -67,7 +67,7 @@ pub struct TransactionPool {
 /// A wrapper for (gas price, sender, nonce), stored in the `ready` heap of [TransactionPool].
 /// The [PartialEq], [PartialOrd] and [Ord] implementations only consider the gas price.
 #[derive(Clone, Copy, Debug)]
-struct ReadyItem {
+pub struct ReadyItem {
     gas_price: u128,
     tx_index: TxIndex,
 }
@@ -98,6 +98,12 @@ impl From<&VerifiedTransaction> for ReadyItem {
             gas_price: txn.tx.gas_price_per_evm_gas(),
             tx_index: txn.mempool_index(),
         }
+    }
+}
+
+impl ReadyItem {
+    pub fn get_index(&self) -> TxIndex {
+        self.tx_index
     }
 }
 
@@ -226,6 +232,7 @@ impl TransactionPool {
         if txn.tx.nonce().is_none() || txn.tx.nonce().is_some_and(|n| n == account_nonce) {
             self.ready.push((&txn).into());
         }
+        self.ready.sort(); // TODO: Lazy sort
 
         debug!("Txn added to mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}", txn.hash, txn.signer, txn.tx.nonce());
 
@@ -240,6 +247,7 @@ impl TransactionPool {
     /// transaction from `best_transaction` and have the same account state as when you made that call.
     pub fn insert_ready_transaction(&mut self, txn: VerifiedTransaction) {
         self.ready.push((&txn).into());
+        self.ready.sort(); // TODO: Lazy sort
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
         self.transactions.insert(txn.mempool_index(), txn);
     }
@@ -247,6 +255,10 @@ impl TransactionPool {
     pub fn get_transaction(&self, hash: Hash) -> Option<&VerifiedTransaction> {
         let tx_index = self.hash_to_index.get(&hash)?;
         self.transactions.get(tx_index)
+    }
+
+    pub fn get_transaction_idx(&self, tx_index: TxIndex) -> Option<&VerifiedTransaction> {
+        self.transactions.get(&tx_index)
     }
 
     pub fn pop_transaction(&mut self, hash: Hash) -> Option<VerifiedTransaction> {
@@ -496,9 +508,9 @@ mod tests {
             .parse()
             .unwrap();
 
-        pool.insert_transaction(transaction(from, 0, 1), 0);
-        pool.insert_transaction(transaction(from, 1, 1), 1);
-        pool.insert_transaction(transaction(from, 2, 1), 2);
+        pool.insert_transaction(transaction(from, 0, 4), 0);
+        pool.insert_transaction(transaction(from, 1, 3), 1);
+        pool.insert_transaction(transaction(from, 2, 2), 2);
         pool.insert_transaction(transaction(from, 10, 1), 3);
 
         let content = pool.preview_content();

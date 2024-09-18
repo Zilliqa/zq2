@@ -150,7 +150,7 @@ pub struct Consensus {
     /// The persistence database
     db: Arc<Db>,
     /// Actions that act on newly created blocks
-    transaction_pool: RefCell<TransactionPool>,
+    transaction_pool: TransactionPool,
     /// Pending proposal
     early_proposal: Option<(Block, Vec<VerifiedTransaction>)>,
     /// Flag indicating that block creation should be postponed due to empty mempool
@@ -397,7 +397,7 @@ impl Consensus {
             let empty_block_timeout_ms =
                 self.config.consensus.empty_block_timeout.as_millis() as u64;
 
-            let has_txns_for_next_block = self.transaction_pool.borrow().has_txn_ready();
+            let has_txns_for_next_block = self.transaction_pool.has_txn_ready();
 
             // Check if enough time elapsed or there's something in mempool or we don't have enough
             // time but let's try at least until new view can happen
@@ -827,7 +827,7 @@ impl Consensus {
 
     pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
-        std::iter::from_fn(|| self.transaction_pool.borrow_mut().best_transaction())
+        std::iter::from_fn(|| self.transaction_pool.best_transaction())
             .filter(|txn| {
                 let account_nonce = self.state.must_get_account(txn.signer).nonce;
                 // Ignore this transaction if it is no longer valid.
@@ -850,7 +850,7 @@ impl Consensus {
     }
 
     pub fn txpool_content(&self) -> TxPoolContent {
-        let mut content = self.transaction_pool.borrow().preview_content();
+        let mut content = self.transaction_pool.preview_content();
         // Ignore txns having too low nonces
         content.pending.retain(|txn| {
             let account_nonce = self.state.must_get_account(txn.signer).nonce;
@@ -868,7 +868,6 @@ impl Consensus {
         let current_nonce = self.state.must_get_account(account).nonce;
 
         self.transaction_pool
-            .borrow()
             .pending_transaction_count(account, current_nonce)
     }
 
@@ -1008,7 +1007,7 @@ impl Consensus {
             if supermajority_reached {
                 // We propose new block immediately if there's something in mempool or it's the first view
                 // Otherwise the block will be proposed on timeout
-                if self.view.get_view() == 1 || self.transaction_pool.borrow().has_txn_ready() {
+                if self.view.get_view() == 1 || self.transaction_pool.has_txn_ready() {
                     return self.propose_new_block();
                 } else {
                     // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
@@ -1052,7 +1051,7 @@ impl Consensus {
     pub fn try_to_propose_new_block(&mut self) -> Result<Option<NetworkMessage>> {
         // We try to propose next block here iff this action has already been postponed and there's any txn in the mempool
         // that will be included in the next block
-        if self.create_next_block_on_timeout && self.transaction_pool.borrow().has_txn_ready() {
+        if self.create_next_block_on_timeout && self.transaction_pool.has_txn_ready() {
             if let Ok(Some((block, transactions))) = self.propose_new_block() {
                 self.create_next_block_on_timeout = false;
                 return Ok(Some((
@@ -1141,7 +1140,7 @@ impl Consensus {
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
     fn assemble_early_block_at(
-        &self,
+        &mut self,
         state: &mut State,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         // Start with highest canonical block
@@ -1188,11 +1187,8 @@ impl Consensus {
             ..BlockHeader::default()
         };
 
-        // Internal txn_pool - to mutate self.transaction_pool
-        let mut txn_pool = self.transaction_pool.borrow_mut();
-
         // Assemble new block with whatever is in the mempool
-        while let Some(tx) = txn_pool.best_transaction() {
+        while let Some(tx) = self.transaction_pool.best_transaction() {
             // First - check if we have time left to process txns and give enough time for block propagation
             let (
                 time_since_last_view_change,
@@ -1204,7 +1200,7 @@ impl Consensus {
                 >= exponential_backoff_timeout
             {
                 // don't have time, reinsert txn.
-                txn_pool.insert_ready_transaction(tx);
+                self.transaction_pool.insert_ready_transaction(tx);
                 break;
             }
 
@@ -1231,13 +1227,13 @@ impl Consensus {
                     nonce = tx.tx.nonce(),
                     "gas limit reached, returning last transaction to pool",
                 );
-                txn_pool.insert_ready_transaction(tx);
+                self.transaction_pool.insert_ready_transaction(tx);
                 state.set_to_root(updated_root_hash.into());
                 break;
             };
 
             // Do necessary work to assemble the transaction
-            txn_pool.mark_executed(&tx);
+            self.transaction_pool.mark_executed(&tx);
             transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
 
             let receipt = Self::create_txn_receipt(
@@ -1291,11 +1287,154 @@ impl Consensus {
         // need those transactions again
         for tx in opaque_transactions {
             let account_nonce = state.get_account(tx.signer)?.nonce;
-            txn_pool.insert_transaction(tx, account_nonce);
+            self.transaction_pool.insert_transaction(tx, account_nonce);
         }
 
         // Return the early proposal
         Ok(Some((proposal, broadcasted_transactions)))
+    }
+
+    /// Assembles the Proposal block early.
+    /// This is performed before the majority QC is available.
+    /// It does all the needed work but with a dummy QC.
+    fn assemble_pending_block_at(&self, state: &mut State) -> Result<Option<Block>> {
+        // Start with highest canonical block
+        let num = self
+            .db
+            .get_highest_block_number()?
+            .context("no canonical blocks")?; // get highest canonical block number
+        let block = self
+            .get_block_by_number(num)?
+            .context("missing canonical block")?; // retrieve highest canonical block
+
+        // Generate early QC
+        let early_qc = QuorumCertificate::new_with_identity(block.hash(), block.view());
+        let parent = self
+            .get_block(&early_qc.block_hash)?
+            .context("missing parent block")?;
+
+        // Ensure sane state
+        let previous_state_root_hash = state.root_hash()?;
+        if previous_state_root_hash != block.state_root_hash() {
+            warn!(
+                "state root hash mismatch, expected: {:?}, actual: {:?}",
+                block.state_root_hash(),
+                previous_state_root_hash
+            );
+            state.set_to_root(block.state_root_hash().into());
+        }
+
+        // Internal states
+        let mut gas_left = self.config.consensus.eth_block_gas_limit;
+        let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut updated_root_hash = state.root_hash()?;
+        let mut tx_index_in_block = 0;
+        let mut applied_transactions = Vec::<VerifiedTransaction>::new();
+
+        // This is a partial header of a block that will be proposed with some transactions executed below.
+        // It is needed so that each transaction is executed within proper block context (the block it belongs to)
+        let executed_block_header = BlockHeader {
+            view: self.view(),
+            number: parent.header.number + 1,
+            timestamp: SystemTime::max(SystemTime::now(), parent.header.timestamp),
+            gas_limit: gas_left,
+            ..BlockHeader::default()
+        };
+
+        // Assemble new block with whatever is in the mempool
+        for ready in self.transaction_pool.ready.iter().rev() {
+            let Some(txn) = self.transaction_pool.get_transaction_idx(ready.get_index()) else {
+                // We loop until we find a transaction that hasn't been made invalid.
+                continue;
+            };
+
+            // First - check if we have time left to process txns and give enough time for block propagation
+            let (
+                time_since_last_view_change,
+                exponential_backoff_timeout,
+                minimum_time_left_for_empty_block,
+            ) = self.get_consensus_timeout_params();
+
+            if time_since_last_view_change + minimum_time_left_for_empty_block
+                >= exponential_backoff_timeout
+            {
+                break;
+            }
+
+            // Apply specific txn
+            let result = Self::apply_transaction_at(
+                state,
+                self.db.clone(),
+                txn.clone(),
+                executed_block_header,
+                inspector::noop(),
+            )?;
+
+            // Skip transactions whose execution resulted in an error and drop them.
+            let Some(result) = result else {
+                continue;
+            };
+
+            // Decrement gas price and break loop if limit is exceeded
+            gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
+                g
+            } else {
+                // undo last transaction
+                info!(
+                    nonce = txn.tx.nonce(),
+                    "gas limit reached, returning last transaction to pool",
+                );
+                state.set_to_root(updated_root_hash.into());
+                break;
+            };
+
+            // Do necessary work to assemble the transaction
+            transactions_trie.insert(txn.hash.as_bytes(), txn.hash.as_bytes())?;
+
+            let receipt = Self::create_txn_receipt(
+                result.clone(),
+                txn.hash,
+                tx_index_in_block,
+                self.config.consensus.eth_block_gas_limit - gas_left,
+            );
+            let receipt_hash = receipt.compute_hash();
+            receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
+
+            tx_index_in_block += 1;
+            updated_root_hash = state.root_hash()?;
+            applied_transactions.push(txn.clone());
+        }
+
+        let applied_transaction_hashes =
+            applied_transactions.iter().map(|tx| tx.hash).collect_vec();
+
+        // Generate the early proposal
+        // Some critical parts are dummy/missing:
+        // a. Majority QC is missing
+        // b. Rewards have not been applied
+        let proposal = Block::from_qc(
+            self.secret_key,
+            executed_block_header.view,
+            executed_block_header.number,
+            early_qc,           // dummy QC for early proposal
+            state.root_hash()?, // late state before rewards are applied
+            Hash(transactions_trie.root_hash()?.into()),
+            Hash(receipts_trie.root_hash()?.into()),
+            applied_transaction_hashes,
+            executed_block_header.timestamp,
+            executed_block_header.gas_limit - gas_left,
+            executed_block_header.gas_limit,
+        );
+
+        // Restore the state to previous sane state
+        state.set_to_root(previous_state_root_hash.into());
+
+        // as a future improvement, process the proposal before broadcasting it
+        trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### proposing pending block");
+
+        // Return the pending block
+        Ok(Some(proposal))
     }
 
     /// Produces the Proposal block.
@@ -1316,9 +1455,8 @@ impl Consensus {
         else {
             // Do not Propose.
             // Recover the proposed transactions into the pool.
-            let mut tx_pool = self.transaction_pool.borrow_mut();
             while let Some(txn) = applied_txs.pop() {
-                tx_pool.insert_ready_transaction(txn);
+                self.transaction_pool.insert_ready_transaction(txn);
             }
             return Ok(None);
         };
@@ -1333,7 +1471,7 @@ impl Consensus {
         // If no early_proposal exists, assemble with any ready transactions in pool.
         // If the pool is empty, the early block assembly could be retried later.
         // If this is called on each Vote, the Proposer can try several times to populate a block.
-        if self.early_proposal.is_none() && self.transaction_pool.borrow().has_txn_ready() {
+        if self.early_proposal.is_none() && self.transaction_pool.has_txn_ready() {
             info!("assemble early proposal {}", self.view.get_view());
             let mut state = self.state.clone();
             self.early_proposal = self.assemble_early_block_at(&mut state)?;
@@ -1346,18 +1484,13 @@ impl Consensus {
     pub fn get_pending_block(&self) -> Result<Option<Block>> {
         let mut state = self.state.clone();
 
-        let early_proposal = self.assemble_early_block_at(&mut state)?;
+        let early_proposal = self.assemble_pending_block_at(&mut state)?;
 
-        if let Some((pending_block, mut applied_txs)) = early_proposal {
-            // Recover the proposed transactions into the pool.
-            let mut tx_pool = self.transaction_pool.borrow_mut();
-            while let Some(txn) = applied_txs.pop() {
-                tx_pool.insert_ready_transaction(txn);
-            }
-            return Ok(Some(pending_block));
+        let Some(pending_block) = early_proposal else {
+            return Ok(None);
         };
 
-        Ok(None)
+        Ok(Some(pending_block))
     }
 
     fn are_we_leader_for_view(&mut self, parent_hash: Hash, view: u64) -> bool {
@@ -1567,10 +1700,7 @@ impl Consensus {
 
         let txn_hash = txn.hash;
 
-        let new = self
-            .transaction_pool
-            .borrow_mut()
-            .insert_transaction(txn, account.nonce);
+        let new = self.transaction_pool.insert_transaction(txn, account.nonce);
         if new {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
@@ -1579,7 +1709,6 @@ impl Consensus {
                 // Clone the transaction from the pool, because we moved it in.
                 let txn = self
                     .transaction_pool
-                    .borrow()
                     .get_transaction(txn_hash)
                     .ok_or_else(|| anyhow!("transaction we just added is missing"))?
                     .clone();
@@ -1596,12 +1725,7 @@ impl Consensus {
             .get_transaction(&hash)?
             .map(|tx| tx.verify())
             .transpose()?
-            .or_else(|| {
-                self.transaction_pool
-                    .borrow()
-                    .get_transaction(hash)
-                    .cloned()
-            }))
+            .or_else(|| self.transaction_pool.get_transaction(hash).cloned()))
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
@@ -2378,16 +2502,13 @@ impl Consensus {
             self.state
                 .set_to_root(parent_block.state_root_hash().into());
 
-            // Internal tx_pool - to mutate self.transaction_pool
-            let mut tx_pool = self.transaction_pool.borrow_mut();
-
             // Ensure the transaction pool is consistent by recreating it. This is moderately costly, but forks are
             // rare.
-            let existing_txns = tx_pool.drain();
+            let existing_txns = self.transaction_pool.drain();
 
             for txn in existing_txns {
                 let account_nonce = self.state.get_account(txn.signer)?.nonce;
-                tx_pool.insert_transaction(txn, account_nonce);
+                self.transaction_pool.insert_transaction(txn, account_nonce);
             }
 
             // block transactions need to be removed from self.transactions and re-injected
@@ -2396,7 +2517,8 @@ impl Consensus {
 
                 // Insert this unwound transaction back into the transaction pool.
                 let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
-                tx_pool.insert_transaction(orig_tx, account_nonce);
+                self.transaction_pool
+                    .insert_transaction(orig_tx, account_nonce);
             }
             // then purge them all from the db, including receipts and indexes
             self.db
@@ -2471,11 +2593,10 @@ impl Consensus {
         // transactions) from our mempool. If any txs are unavailable either in the
         // message or locally, the proposal cannot be applied
         for (idx, tx_hash) in block.transactions.iter().enumerate() {
-            let mut tx_pool = self.transaction_pool.borrow_mut();
             if transactions.get(idx).is_some_and(|tx| tx.hash == *tx_hash) {
                 // all good
             } else {
-                let Some(local_tx) = tx_pool.pop_transaction(*tx_hash) else {
+                let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
                     warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
                     return Ok(());
                 };
@@ -2497,7 +2618,7 @@ impl Consensus {
             let result = self
                 .apply_transaction(txn.clone(), block.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
-            self.transaction_pool.borrow_mut().mark_executed(&txn);
+            self.transaction_pool.mark_executed(&txn);
             for address in inspector.touched {
                 self.db.add_touched_address(address, tx_hash)?;
             }
