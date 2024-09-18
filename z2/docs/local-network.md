@@ -28,7 +28,7 @@ Use the `depends` tool to pull all dependencies:
 This will pull dependencies to the parent directory. You will need to build scilla manually, see instructions in it's repo.
 
 You can then invoke a local ZQ2 network with:
-c
+
 ```bash
     cargo build
     ./scripts/z2 run /tmp/some_dir
