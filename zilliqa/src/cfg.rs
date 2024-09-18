@@ -217,8 +217,8 @@ pub struct ConsensusConfig {
     #[serde(default = "scilla_address_default")]
     pub scilla_address: String,
     /// Where (in the Scilla server's filesystem) is the library directory containing Scilla library functions?
-    #[serde(default = "scilla_lib_dirs_default")]
-    pub scilla_lib_dirs: Vec<String>,
+    #[serde(default = "scilla_stdlib_dir_default")]
+    pub scilla_stdlib_dir: String,
     /// Where (in the ZQ2 server's filesystem) are the external libraries cached so that scilla server can find them?
     #[serde(default = "scilla_ext_libs_cache_folder_default")]
     pub scilla_ext_libs_cache_folder: String,
@@ -266,8 +266,8 @@ pub fn scilla_address_default() -> String {
     String::from("http://localhost:3000")
 }
 
-pub fn scilla_lib_dirs_default() -> Vec<String> {
-    vec![String::from("/scilla/0/_build/default/src/stdlib/")]
+pub fn scilla_stdlib_dir_default() -> String {
+    String::from("/scilla/0/_build/default/src/stdlib/")
 }
 
 pub fn scilla_ext_libs_cache_folder_default() -> String {

@@ -19,8 +19,8 @@ impl collector::Runner for Runner {
 }
 
 impl Runner {
-    pub fn get_scilla_lib_dirs(base_dir: &str) -> Vec<String> {
-        vec![format!("{base_dir}/scilla/_build/default/src/stdlib/")]
+    pub fn get_scilla_stdlib_dir(base_dir: &str) -> String {
+        format!("{base_dir}/scilla/_build/default/src/stdlib/")
     }
 
     pub async fn requirements() -> Result<components::Requirements> {

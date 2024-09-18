@@ -61,7 +61,10 @@ impl State {
             scilla: Arc::new(OnceLock::new()),
             scilla_address: consensus_config.scilla_address.clone(),
             local_address: consensus_config.local_address.clone(),
-            scilla_lib_dirs: consensus_config.scilla_lib_dirs.clone(),
+            scilla_lib_dirs: vec![
+                consensus_config.scilla_stdlib_dir.clone(),
+                consensus_config.scilla_ext_libs_cache_folder.clone(),
+            ],
             block_gas_limit: consensus_config.eth_block_gas_limit,
             gas_price: *consensus_config.gas_price,
             chain_id: ChainId::new(config.eth_chain_id),

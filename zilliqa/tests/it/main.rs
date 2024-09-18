@@ -67,8 +67,8 @@ use zilliqa::{
         block_request_limit_default, disable_rpc_default, eth_chain_id_default,
         failed_request_sleep_duration_default, json_rpc_port_default, local_address_default,
         max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_ext_libs_cache_folder_default, scilla_lib_dirs_default,
-        scilla_lib_extension_default, state_rpc_limit_default, Amount, Checkpoint, ConsensusConfig,
+        scilla_address_default, scilla_ext_libs_cache_folder_default, scilla_lib_extension_default,
+        scilla_stdlib_dir_default, state_rpc_limit_default, Amount, Checkpoint, ConsensusConfig,
         NodeConfig,
     },
     crypto::{NodePublicKey, SecretKey, TransactionPublicKey},
@@ -236,7 +236,7 @@ struct Network {
     seed: u64,
     pub genesis_key: SigningKey,
     scilla_address: String,
-    scilla_lib_dirs: Vec<String>,
+    scilla_stdlib_dir: String,
     do_checkpoints: bool,
 }
 
@@ -247,7 +247,7 @@ impl Network {
         nodes: usize,
         seed: u64,
         scilla_address: String,
-        scilla_lib_dirs: &[String],
+        scilla_stdlib_dir: String,
         do_checkpoints: bool,
     ) -> Network {
         Self::new_shard(
@@ -258,7 +258,7 @@ impl Network {
             seed,
             None,
             scilla_address,
-            scilla_lib_dirs,
+            scilla_stdlib_dir,
             do_checkpoints,
         )
     }
@@ -272,7 +272,7 @@ impl Network {
         seed: u64,
         keys: Option<Vec<SecretKey>>,
         scilla_address: String,
-        scilla_lib_dirs: &[String],
+        scilla_stdlib_dir: String,
         do_checkpoints: bool,
     ) -> Network {
         let mut signing_keys = keys.unwrap_or_else(|| {
@@ -317,7 +317,7 @@ impl Network {
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
                 scilla_address: scilla_address.clone(),
-                scilla_lib_dirs: scilla_lib_dirs.to_vec(),
+                scilla_stdlib_dir: scilla_stdlib_dir.clone(),
                 scilla_lib_extension: ".scillib".to_string(),
                 scilla_ext_libs_cache_folder: "scilla_ext_libs".to_string(),
                 local_address: "host.docker.internal".to_owned(),
@@ -398,7 +398,7 @@ impl Network {
             genesis_key,
             scilla_address,
             do_checkpoints,
-            scilla_lib_dirs: scilla_lib_dirs.to_vec(),
+            scilla_stdlib_dir,
         }
     }
 
@@ -446,7 +446,7 @@ impl Network {
                 scilla_address: scilla_address_default(),
                 blocks_per_epoch: 10,
                 epochs_per_checkpoint: 1,
-                scilla_lib_dirs: scilla_lib_dirs_default(),
+                scilla_stdlib_dir: scilla_stdlib_dir_default(),
                 scilla_ext_libs_cache_folder: scilla_ext_libs_cache_folder_default(),
                 scilla_lib_extension: scilla_lib_extension_default(),
             },
@@ -557,7 +557,7 @@ impl Network {
                         scilla_address: scilla_address_default(),
                         blocks_per_epoch: 10,
                         epochs_per_checkpoint: 1,
-                        scilla_lib_dirs: scilla_lib_dirs_default(),
+                        scilla_stdlib_dir: scilla_stdlib_dir_default(),
                         scilla_ext_libs_cache_folder: scilla_ext_libs_cache_folder_default(),
                         scilla_lib_extension: scilla_lib_extension_default(),
                     },
@@ -869,7 +869,7 @@ impl Network {
                                     self.seed,
                                     Some(vec![secret_key]),
                                     self.scilla_address.clone(),
-                                    &self.scilla_lib_dirs,
+                                    self.scilla_stdlib_dir.clone(),
                                     self.do_checkpoints,
                                 ),
                             );
