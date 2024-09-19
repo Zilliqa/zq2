@@ -11,7 +11,7 @@ use std::{
 };
 
 use alloy::primitives::{hex, Address, U256};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
@@ -1352,7 +1352,10 @@ fn cache_external_libraries(
                 }
 
                 let file_path = ext_libs_path.join(&lib.name);
-                fs::write(file_path, code)?;
+                fs::write(&file_path, code).context(format!(
+                    "failed to write the contract code to {:?}",
+                    file_path
+                ))?;
             }
         }
     }

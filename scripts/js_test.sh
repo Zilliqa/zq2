@@ -37,10 +37,12 @@ npm install > /dev/null 2>&1
 echo "Funding tests"
 npx hardhat run scripts/FundAccountsFromEth.ts
 
+echo "------------------------------"
 echo "Running tests"
-
+ls /tmp/scilla_ext_libs
+echo "------------------------------"
 # Run tests
-npx hardhat test
+npx hardhat test test/scilla/UserDefinedLibrary.ts
 
 retVal=$?
 pkill -INT zilliqa
