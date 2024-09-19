@@ -275,8 +275,8 @@ pub fn scilla_stdlib_dir_default() -> String {
 
 pub fn scilla_ext_libs_cache_folder_default() -> ScillaExtLibsCacheFolder {
     ScillaExtLibsCacheFolder {
-        on_host: String::from("scilla_ext_libs"),
-        on_docker: String::from("/ext_libs"),
+        on_host: String::from("/scilla_ext_libs"),
+        on_docker: String::from("/scilla_ext_libs"),
     }
 }
 
