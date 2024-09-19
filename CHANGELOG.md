@@ -5,6 +5,7 @@
 Unreleased changes, in reverse chronological order. New entries are added at the top of this list.
 
 - [#1472](https://github.com/Zilliqa/zq2/pull/1472): Add `GetTransactionsForTxBlockEx` API.
+- [#1474](https://github.com/Zilliqa/zq2/pull/1474): Fix reading `ByStr20` maps in Scilla via EVM.
 - [#1469](https://github.com/Zilliqa/zq2/pull/1469): Calculate block state roots earlier to avoid database inconsistency.
 
 ## [0.3.1] - 2024-09-13
