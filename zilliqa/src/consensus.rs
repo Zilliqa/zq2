@@ -1237,7 +1237,7 @@ impl Consensus {
             transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
 
             let receipt = Self::create_txn_receipt(
-                result.clone(),
+                result,
                 tx.hash,
                 tx_index_in_block,
                 self.config.consensus.eth_block_gas_limit - gas_left,
@@ -1340,6 +1340,7 @@ impl Consensus {
             ..BlockHeader::default()
         };
 
+        // Retrieve a list of pending transactions
         let pending = self.transaction_pool.pending_hashes();
 
         for hash in pending.into_iter() {
@@ -1356,6 +1357,7 @@ impl Consensus {
                 break;
             }
 
+            // Retrieve txn from the pool
             let Some(txn) = self.transaction_pool.get_transaction(hash) else {
                 continue;
             };
@@ -1386,7 +1388,7 @@ impl Consensus {
             transactions_trie.insert(txn.hash.as_bytes(), txn.hash.as_bytes())?;
 
             let receipt = Self::create_txn_receipt(
-                result.clone(),
+                result,
                 txn.hash,
                 tx_index_in_block,
                 self.config.consensus.eth_block_gas_limit - gas_left,
@@ -1413,12 +1415,6 @@ impl Consensus {
             executed_block_header.gas_limit - gas_left,
             executed_block_header.gas_limit,
         );
-
-        // Restore the state to previous sane state
-        state.set_to_root(previous_state_root_hash.into());
-
-        // as a future improvement, process the proposal before broadcasting it
-        trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### proposing pending block");
 
         // Return the pending block
         Ok(Some(proposal))
