@@ -1,19 +1,43 @@
-# z2
+# z2 local network
 
 The `z2` tool allows you to run a simple Zilliqa 2 network locally for debugging.
 
-You can invoke it like this:
+## Setup
 
-```sh
-$ mkdir /some/dir
-$ cd /some/dir
-$ git clone git@github.com:zilliqa/otterscan
-$ git clone git@github.com:zilliqa/zilliqa-developer
-$ git clone git@github.com:zilliqa/zq2
-$ sudo apt install mitmproxy
-$ cd zq2
-$ cargo build
-$ ./scripts/z2 run /tmp/some_dir
+Install dependencies
+
+```bash
+    sudo apt install mitmproxy npm
+```
+
+Create a new directory and pull zq2
+
+```bash
+    mkdir /some/dir
+    cd /some/dir
+    git clone git@github.com:zilliqa/zq2
+```
+
+Use the `depends` tool to pull all dependencies:
+
+```bash
+    cd zq2
+    ./scripts/z2 depends update
+```
+
+This will pull dependencies to the parent directory. You will need to build scilla manually, see instructions in it's repo.
+
+You can then invoke a local ZQ2 network with:
+
+```bash
+    cargo build
+    ./scripts/z2 run /tmp/some_dir
+```
+
+For help run:
+
+```bash
+    ./scripts/z2
 ```
 
 It will:
@@ -23,7 +47,7 @@ It will:
  * Start a 4-node Zilliqa 2 network
  * Start otterscan
  * Start a mitmweb proxy so you can debug RPC calls
- * Start a faucet so you can get some ZIL.
+ * Start a faucet so you can get some ZIL
 
 otterscan runs directly to node 0 (without going through the proxy)
 because developer tools in chrome gives a decent RPC debugger and this
@@ -34,9 +58,9 @@ faucet without the otterscan polls getting in the way.
 
 ```
 🦏  JSON-RPC ports are at 4201+<node_index>
-🦏  Otterscan: http://localhost:6000/
 🦏  Spout is at http://localhost:6001/
 🦏  mitmproxy port at http://localhost:6002/
+🦏  Otterscan: http://localhost:6003/
 ```
 
 In the future, we will also have the ability to manage persistence: watch this space.
