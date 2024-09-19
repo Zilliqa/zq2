@@ -422,7 +422,7 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
         return Err(anyhow!("Address not contract address"));
     };
 
-    Ok(serde_json::from_str(&init_data)?)
+    Ok(serde_json::from_str(&init_data.to_string())?) // FIXME:
 }
 
 fn get_transactions_for_tx_block(

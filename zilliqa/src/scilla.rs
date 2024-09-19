@@ -38,7 +38,7 @@ use crate::{
     exec::{PendingState, StorageValue},
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
-    state::Code,
+    state::{Code, ContractInit},
     time::SystemTime,
     transaction::{ScillaGas, ZilAmount},
 };
@@ -83,9 +83,9 @@ impl ScillaServerRequestBuilder {
         }
     }
 
-    fn init(mut self, init: &[Value]) -> Result<Self> {
-        self.init = Some(serde_json::to_string(&init)?);
-        Ok(self)
+    fn init(mut self, init: String) -> Self {
+        self.init = Some(init);
+        self
     }
 
     fn message(mut self, msg: &Value) -> Result<Self> {
@@ -154,6 +154,16 @@ impl ScillaServerRequestBuilder {
         if let Some(ipc_address) = self.ipc_address {
             args.push("-ipcaddress".to_owned());
             args.push(ipc_address);
+        }
+
+        if let Some(balance) = self.balance {
+            args.push("-balance".to_owned());
+            args.push(balance);
+        }
+
+        if let Some(message) = self.message {
+            args.push("-imessage".to_owned());
+            args.push(message);
         }
 
         if let Some(code) = self.code {
@@ -288,27 +298,20 @@ impl Scilla {
         format!("{local_addr}:{}", addr.port())
     }
 
-    fn is_library(init: &[Value]) -> bool {
-        init.iter()
-            .any(|v| v["vname"].as_str().is_some_and(|v| v == "_library"))
-    }
-
     pub fn check_contract(
         &self,
         code: &str,
         gas_limit: ScillaGas,
-        init: &[Value],
+        init: &ContractInit,
     ) -> Result<Result<CheckOutput, CheckError>> {
-        let is_library = Self::is_library(init);
-
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Check)
-            .init(init)?
+            .init(init.to_string())
             .lib_dirs(self.lib_dirs.clone())
             .code(code.to_owned())
             .gas_limit(gas_limit)
             .contract_info(true)
             .json_errors(true)
-            .is_library(is_library)
+            .is_library(init.is_library)
             .build()?;
 
         self.request_tx.send(request)?;
@@ -351,19 +354,17 @@ impl Scilla {
         code: &str,
         gas_limit: ScillaGas,
         value: ZilAmount,
-        init: &[Value],
+        init: &ContractInit,
     ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
-        let is_library = Self::is_library(init);
-
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
             .ipc_address(self.state_server_addr())
-            .init(init)?
+            .init(init.to_string())
             .lib_dirs(self.lib_dirs.clone())
             .code(code.to_owned())
             .gas_limit(gas_limit)
             .balance(value)
             .json_errors(true)
-            .is_library(is_library)
+            .is_library(init.is_library)
             .build()?;
 
         let (response, state) =
@@ -413,11 +414,11 @@ impl Scilla {
         code: &str,
         gas_limit: ScillaGas,
         contract_balance: ZilAmount,
-        init: &[Value],
+        init: &ContractInit,
         msg: &Value,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
-            .init(init)?
+            .init(init.to_string())
             .ipc_address(self.state_server_addr())
             .lib_dirs(self.lib_dirs.clone())
             .code(code.to_owned())

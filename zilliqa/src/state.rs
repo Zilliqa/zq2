@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    fmt::Display,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
@@ -12,11 +13,12 @@ use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use revm::primitives::ResultAndState;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha3::{Digest, Keccak256};
 
 use crate::{
     block_store::BlockStore,
-    cfg::NodeConfig,
+    cfg::{NodeConfig, ScillaExtLibsCacheFolder},
     contracts, crypto,
     db::TrieStorage,
     exec::BaseFeeCheck,
@@ -44,7 +46,8 @@ pub struct State {
     scilla: Arc<OnceLock<Mutex<Scilla>>>,
     scilla_address: String,
     local_address: String,
-    scilla_lib_dirs: Vec<String>,
+    scilla_lib_dir: String,
+    pub scilla_ext_libs_cache_folder: ScillaExtLibsCacheFolder,
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
     pub chain_id: ChainId,
@@ -61,10 +64,8 @@ impl State {
             scilla: Arc::new(OnceLock::new()),
             scilla_address: consensus_config.scilla_address.clone(),
             local_address: consensus_config.local_address.clone(),
-            scilla_lib_dirs: vec![
-                consensus_config.scilla_stdlib_dir.clone(),
-                consensus_config.scilla_ext_libs_cache_folder.clone(),
-            ],
+            scilla_lib_dir: consensus_config.scilla_stdlib_dir.clone(),
+            scilla_ext_libs_cache_folder: consensus_config.scilla_ext_libs_cache_folder.clone(),
             block_gas_limit: consensus_config.eth_block_gas_limit,
             gas_price: *consensus_config.gas_price,
             chain_id: ChainId::new(config.eth_chain_id),
@@ -78,7 +79,10 @@ impl State {
                 Mutex::new(Scilla::new(
                     self.scilla_address.clone(),
                     self.local_address.clone(),
-                    self.scilla_lib_dirs.clone(),
+                    vec![
+                        self.scilla_lib_dir.clone(),
+                        self.scilla_ext_libs_cache_folder.on_docker.clone(),
+                    ],
                 ))
             })
             .lock()
@@ -172,7 +176,8 @@ impl State {
             scilla: self.scilla.clone(),
             scilla_address: self.scilla_address.clone(),
             local_address: self.local_address.clone(),
-            scilla_lib_dirs: self.scilla_lib_dirs.clone(),
+            scilla_lib_dir: self.scilla_lib_dir.clone(),
+            scilla_ext_libs_cache_folder: self.scilla_ext_libs_cache_folder.clone(),
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
             chain_id: self.chain_id,
@@ -303,12 +308,84 @@ impl Default for Account {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ContractInitEntry {
+    pub vname: String,
+    pub value: Value,
+    pub r#type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalLibrary {
+    pub name: String,
+    pub address: Address,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractInit {
+    init: String,
+    pub scilla_version: String,
+    pub external_libraries: Vec<ExternalLibrary>,
+    pub is_library: bool,
+}
+
+impl ContractInit {
+    pub fn new(init: &[ContractInitEntry]) -> Result<Self> {
+        let mut scilla_version = String::new();
+        let mut is_library = false;
+        let mut external_libraries = vec![];
+        for entry in init {
+            match entry.vname.as_str() {
+                "_scilla_version" => scilla_version = entry.value.to_string(),
+                "_library" => {
+                    is_library = entry.value["constructor"]
+                        .as_str()
+                        .is_some_and(|value| value == "True")
+                }
+                "_extlibs" => {
+                    if let Some(ext_libs) = entry.value.as_array() {
+                        for ext_lib in ext_libs {
+                            match ext_lib["arguments"].as_array() {
+                                Some(lib) => {
+                                    if lib.len() != 2 {
+                                        return Err(anyhow!("Invalid init"));
+                                    }
+                                    let lib_name = lib[0].as_str().unwrap(); // FIXME:
+                                    let lib_address = lib[1].as_str().unwrap(); // FIXME:
+                                    external_libraries.push(ExternalLibrary {
+                                        name: lib_name.to_string(),
+                                        address: lib_address.parse::<Address>().unwrap(),
+                                    }); // FIXME:
+                                }
+                                None => return Err(anyhow!("Invalid init.")),
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(Self {
+            init: serde_json::to_string(init)?,
+            scilla_version,
+            external_libraries,
+            is_library,
+        })
+    }
+}
+
+impl Display for ContractInit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.init)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Code {
     Evm(#[serde(with = "serde_bytes")] Vec<u8>),
     Scilla {
         code: String,
-        init_data: String,
+        init_data: ContractInit,
         types: BTreeMap<String, (String, u8)>,
         transitions: Vec<Transition>,
     },
@@ -339,7 +416,7 @@ impl Code {
         }
     }
 
-    pub fn scilla_code_and_init_data(self) -> Option<(String, String)> {
+    pub fn scilla_code_and_init_data(self) -> Option<(String, ContractInit)> {
         match self {
             Code::Scilla {
                 code, init_data, ..

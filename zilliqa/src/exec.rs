@@ -4,8 +4,9 @@ use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap},
     error::Error,
     fmt::{self, Display, Formatter},
-    mem,
+    fs, mem,
     num::NonZeroU128,
+    path::Path,
     sync::{Arc, MutexGuard},
 };
 
@@ -37,7 +38,9 @@ use crate::{
     message::{Block, BlockHeader},
     precompiles::{get_custom_precompiles, scilla_call_handle_register},
     scilla::{self, split_storage_key, storage_key, Scilla},
-    state::{contract_addr, Account, Code, State},
+    state::{
+        contract_addr, Account, Code, ContractInit, ContractInitEntry, ExternalLibrary, State,
+    },
     time::SystemTime,
     transaction::{
         total_scilla_gas_price, EvmGas, EvmLog, Log, ScillaGas, ScillaLog, ScillaParam,
@@ -527,6 +530,7 @@ impl State {
                 txn,
                 current_block,
                 inspector,
+                &self.scilla_ext_libs_cache_folder.on_host,
             )
         } else {
             scilla_call(
@@ -1323,6 +1327,38 @@ impl From<Account> for PendingAccount {
     }
 }
 
+fn cache_external_libraries(
+    state: &State,
+    ext_libs_cache_dir: &str,
+    ext_libraries: &[ExternalLibrary],
+) -> Result<()> {
+    let ext_libs_path = Path::new(ext_libs_cache_dir);
+
+    for lib in ext_libraries {
+        let account = state.get_account(lib.address)?;
+        match &account.code {
+            Code::Evm(_) => {
+                return Err(anyhow!(
+                    "impossible to load an EVM contract as a scilla library."
+                ))
+            }
+            Code::Scilla {
+                code, init_data, ..
+            } => {
+                if !init_data.is_library {
+                    return Err(anyhow!(
+                        "impossible to load a non-library contract as a scilla library"
+                    ));
+                }
+
+                let file_path = ext_libs_path.join(&lib.name);
+                fs::write(file_path, code)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn scilla_create(
     mut state: PendingState,
     scilla: MutexGuard<'_, Scilla>,
@@ -1330,6 +1366,7 @@ fn scilla_create(
     txn: TxZilliqa,
     current_block: BlockHeader,
     mut inspector: impl ScillaInspector,
+    ext_libs_cache_dir: &str,
 ) -> Result<(ScillaResult, PendingState)> {
     if txn.data.is_empty() {
         return Err(anyhow!("contract creation without init data"));
@@ -1343,11 +1380,18 @@ fn scilla_create(
     // than this.
     let contract_address = zil_contract_address(from_addr, txn.nonce - 1);
 
-    let mut init_data: Vec<Value> = serde_json::from_str(&txn.data)?;
-    init_data.push(json!({"vname": "_creation_block", "type": "BNum", "value": current_block.number.to_string()}));
+    let mut init_data: Vec<ContractInitEntry> = serde_json::from_str(&txn.data)?;
+    init_data.push(ContractInitEntry {
+        vname: "_creation_block".to_string(),
+        value: Value::String(current_block.number.to_string()),
+        r#type: "BNum".to_string(),
+    });
     let contract_address_hex = format!("{contract_address:#x}");
-    init_data
-        .push(json!({"vname": "_this_address", "type": "ByStr20", "value": contract_address_hex}));
+    init_data.push(ContractInitEntry {
+        vname: "_this_address".to_string(),
+        value: Value::String(contract_address_hex),
+        r#type: "ByStr20".to_string(),
+    });
 
     let gas = txn.gas_limit;
 
@@ -1368,6 +1412,14 @@ fn scilla_create(
         ));
     };
 
+    let init_data = ContractInit::new(&init_data)?;
+    println!("{init_data:#?}");
+
+    cache_external_libraries(
+        &state.pre_state,
+        &ext_libs_cache_dir,
+        &init_data.external_libraries,
+    )?;
     let check_output = match scilla.check_contract(&txn.code, gas, &init_data)? {
         Ok(o) => o,
         Err(e) => {
@@ -1405,7 +1457,7 @@ fn scilla_create(
     account.account.balance = txn.amount.get();
     account.account.code = Code::Scilla {
         code: txn.code.clone(),
-        init_data: serde_json::to_string(&init_data)?,
+        init_data: init_data.clone(), // FIXME: Remove this clone
         types,
         transitions,
     };
@@ -1563,7 +1615,7 @@ pub fn scilla_call(
             gas = g;
 
             let code = code.clone();
-            let init_data = serde_json::from_str::<Vec<_>>(init_data)?;
+            let init_data = init_data.clone();
             let contract_balance = contract.account.balance;
 
             let (output, mut new_state) = scilla.invoke_contract(

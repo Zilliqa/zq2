@@ -189,6 +189,12 @@ impl<'de> Deserialize<'de> for Amount {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ScillaExtLibsCacheFolder {
+    pub on_host: String,
+    pub on_docker: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ConsensusConfig {
     /// If main, deploy a shard registry contract.
@@ -219,12 +225,9 @@ pub struct ConsensusConfig {
     /// Where (in the Scilla server's filesystem) is the library directory containing Scilla library functions?
     #[serde(default = "scilla_stdlib_dir_default")]
     pub scilla_stdlib_dir: String,
-    /// Where (in the ZQ2 server's filesystem) are the external libraries cached so that scilla server can find them?
+    /// Where are the external libraries cached so that scilla server can find them?
     #[serde(default = "scilla_ext_libs_cache_folder_default")]
-    pub scilla_ext_libs_cache_folder: String,
-    /// Extension of scilla libraries. Defaults to ".scillib"
-    #[serde(default = "scilla_lib_extension_default")]
-    pub scilla_lib_extension: String,
+    pub scilla_ext_libs_cache_folder: ScillaExtLibsCacheFolder,
     /// Hostname at which this process is accessible by the Scilla process. Defaults to "localhost". If running the
     /// Scilla process in Docker and this process on the host, you probably want to pass
     /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
@@ -270,12 +273,11 @@ pub fn scilla_stdlib_dir_default() -> String {
     String::from("/scilla/0/_build/default/src/stdlib/")
 }
 
-pub fn scilla_ext_libs_cache_folder_default() -> String {
-    String::from("scilla_ext_libs")
-}
-
-pub fn scilla_lib_extension_default() -> String {
-    String::from(".scillib")
+pub fn scilla_ext_libs_cache_folder_default() -> ScillaExtLibsCacheFolder {
+    ScillaExtLibsCacheFolder {
+        on_host: String::from("scilla_ext_libs"),
+        on_docker: String::from("/ext_libs"),
+    }
 }
 
 pub fn local_address_default() -> String {
