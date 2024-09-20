@@ -1339,23 +1339,22 @@ fn cache_external_libraries(
         match &account.code {
             Code::Evm(_) => {
                 return Err(anyhow!(
-                    "impossible to load an EVM contract as a scilla library."
-                ))
+                    "Impossible to load an EVM contract as a Scilla library."
+                ));
             }
             Code::Scilla {
                 code, init_data, ..
             } => {
                 if !init_data.is_library {
                     return Err(anyhow!(
-                        "impossible to load a non-library contract as a scilla library"
+                        "Impossible to load a non-library contract as a Scilla library."
                     ));
                 }
 
                 let file_path = ext_libs_path.join(&lib.name);
-                fs::write(&file_path, code).context(format!(
-                    "failed to write the contract code to {:?}",
-                    file_path
-                ))?;
+                fs::write(&file_path, code).with_context(|| {
+                    format!("Failed to write the contract code to {:?}", file_path)
+                })?;
             }
         }
     }

@@ -340,24 +340,27 @@ impl ContractInit {
                 "_library" => {
                     is_library = entry.value["constructor"]
                         .as_str()
-                        .is_some_and(|value| value == "True")
+                        .map_or(false, |value| value == "True")
                 }
                 "_extlibs" => {
                     if let Some(ext_libs) = entry.value.as_array() {
                         for ext_lib in ext_libs {
-                            match ext_lib["arguments"].as_array() {
-                                Some(lib) => {
-                                    if lib.len() != 2 {
-                                        return Err(anyhow!("Invalid init"));
-                                    }
-                                    let lib_name = lib[0].as_str().unwrap(); // FIXME:
-                                    let lib_address = lib[1].as_str().unwrap(); // FIXME:
-                                    external_libraries.push(ExternalLibrary {
-                                        name: lib_name.to_string(),
-                                        address: lib_address.parse::<Address>().unwrap(),
-                                    }); // FIXME:
+                            if let Some(lib) = ext_lib["arguments"].as_array() {
+                                if lib.len() != 2 {
+                                    return Err(anyhow!("Invalid init."));
                                 }
-                                None => return Err(anyhow!("Invalid init.")),
+                                let lib_name = lib[0].as_str().ok_or_else(|| {
+                                    anyhow!("Invalid init. Library name is not an string")
+                                })?;
+                                let lib_address = lib[1].as_str().ok_or_else(|| {
+                                    anyhow!("Invalid init. Library address is not an string")
+                                })?;
+                                external_libraries.push(ExternalLibrary {
+                                    name: lib_name.to_string(),
+                                    address: lib_address.parse::<Address>()?,
+                                });
+                            } else {
+                                return Err(anyhow!("Invalid init."));
                             }
                         }
                     }
