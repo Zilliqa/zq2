@@ -558,3 +558,13 @@ pub struct TxBlockListingResult {
     #[serde(rename = "maxPages")]
     pub max_pages: u64,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TxnsForTxBlockExResponse {
+    #[serde(rename = "CurrPage")]
+    pub curr_page: u64,
+    #[serde(rename = "NumPages")]
+    pub num_pages: u64,
+    #[serde(rename = "Transactions")]
+    pub transactions: Vec<String>,
+}
