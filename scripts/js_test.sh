@@ -6,7 +6,6 @@ sudo apt-get install solc libsecp256k1-dev protobuf-compiler > /dev/null 2>&1
 
 # Start network early.
 pwd
-mkdir /tmp/scilla_ext_libs
 
 echo "building zilliqa and running it as a detached process"
 cargo build --all-targets
@@ -39,18 +38,12 @@ npm install > /dev/null 2>&1
 echo "Funding tests"
 npx hardhat run scripts/FundAccountsFromEth.ts
 
-echo "------------------------------"
 echo "Running tests"
-ls /tmp/
-echo "------------------------------"
 # Run tests
-npx hardhat test --grep "Importing and calling external scilla libraries"
+npx hardhat test 
 
 retVal=$?
 
-echo "------------------------------"
-ls /tmp/
-echo "------------------------------"
 pkill -INT zilliqa
 if [ $retVal -ne 0 ]; then
     cat /tmp/zil_log_out.txt
