@@ -2079,7 +2079,7 @@ impl Consensus {
             availability
         );
         self.block_store.update_availability(from, availability)?;
-        self.block_store.retry_us_requests()
+        Ok(())
     }
 
     // Checks for the validity of a block and adds it to our block store if valid.
@@ -2110,15 +2110,21 @@ impl Consensus {
         let hash = block.hash();
         debug!(?from, ?hash, ?block.header.view, ?block.header.number, "added block");
         let _ = self.new_blocks.send(block.header);
-        if let Some(child_proposal) = self.block_store.process_block(from, block)? {
-            self.message_sender.send_external_message(
-                self.peer_id(),
-                ExternalMessage::ProcessProposal(ProcessProposal {
-                    from: from.unwrap_or(self.peer_id()).to_bytes(),
-                    block: child_proposal,
-                }),
-            )?;
-        }
+        // We may have child blocks; process them too.
+        self.block_store
+            .process_block(from, block)?
+            .into_iter()
+            .for_each(|(from_id, child_proposal)| {
+                // If we fail here, just fail - eventually someone will notice we did and
+                // retry the whole action.
+                let _ = self.message_sender.send_external_message(
+                    self.peer_id(),
+                    ExternalMessage::ProcessProposal(ProcessProposal {
+                        from: from_id.to_bytes(),
+                        block: child_proposal,
+                    }),
+                );
+            });
         Ok(())
     }
 
@@ -2692,19 +2698,37 @@ impl Consensus {
     pub fn tick(&mut self) -> Result<()> {
         trace!("consensus::tick()");
         trace!("request_missing_blocks from timer");
-        self.block_store.request_missing_blocks()?;
-        // Is it likely that the next thing in the buffer could be the next block?
-        if let Some((from, block)) = self.block_store.next_proposal_if_likely()? {
-            trace!("buffer may contain the next block");
-            self.message_sender.send_external_message(
-                self.peer_id(),
-                ExternalMessage::ProcessProposal(ProcessProposal {
-                    from: from.to_bytes(),
-                    block,
-                }),
-            )?;
+        if self.block_store.request_missing_blocks()? {
+            // We're syncing..
+            // Is it likely that the next thing in the buffer could be the next block?
+            let likely_blocks = self.block_store.next_proposals_if_likely()?;
+            if likely_blocks.is_empty() {
+                trace!("no blocks buffered");
+                // If there are no next blocks buffered, someone may well have lied to us about
+                // where the gaps in the view range are. This should be a rare occurrence, so in
+                // lieu of timing it out, just zap the view range gap and we'll take the hit on
+                // any rerequests.
+                self.block_store.delete_empty_view_range_cache();
+            } else {
+                likely_blocks.into_iter().for_each(|(from, block)| {
+                    trace!(
+                        "buffer may contain the next block - {0:?} v={1} n={2}",
+                        block.hash(),
+                        block.view(),
+                        block.number()
+                    );
+                    // Ignore errors here - just carry on and wait for re-request to clean up.
+                    let _ = self.message_sender.send_external_message(
+                        self.peer_id(),
+                        ExternalMessage::ProcessProposal(ProcessProposal {
+                            from: from.to_bytes(),
+                            block,
+                        }),
+                    );
+                });
+            }
         } else {
-            trace!("no blocks buffered");
+            trace!("not syncing ...");
         }
         Ok(())
     }

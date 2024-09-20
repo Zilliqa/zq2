@@ -236,11 +236,17 @@ impl RangeMap {
         self
     }
 
+    pub fn diff_inter(&self, to_remove: &Self) -> (Self, Self) {
+        self.diff_inter_limited(to_remove, None)
+    }
+
     /// Set difference
     /// Returns (intersection, diff) where
     /// intersection is the set of things in both self and to_remove
     /// diff is the set of things in self with the set of things in to_remove removed.
-    pub fn diff_inter(&self, to_remove: &Self) -> (Self, Self) {
+    /// We will never put more than limit in intersection - the rest will be returned in diff. This is used to limit the
+    /// number of requests to a node. None == unlimited.
+    pub fn diff_inter_limited(&self, to_remove: &Self, limit: Option<usize>) -> (Self, Self) {
         //  We proceed in lock-step between the sets.
         let mut intersection = RangeMap::new();
         let mut diff = RangeMap::new();
@@ -254,6 +260,16 @@ impl RangeMap {
         //  - advances remain by one, or
         //  - breaks remain into a smaller range than it was before.
         while let Some(next_self) = &current_self_iter {
+            if let Some(val) = limit {
+                if intersection.ranges.len() >= val {
+                    // Too many things in diff now - we're done. Append the rest of self and return.
+                    while let Some(n) = &current_self_iter {
+                        diff.with_range(n);
+                        current_self_iter = self_iter.next().cloned();
+                    }
+                    break;
+                }
+            }
             if let Some(current_remove) = &current_remove_iter {
                 // Things in self which are too small to remove - these will always
                 // be too small to remove, because current_remove is nondecreasing.

@@ -502,17 +502,14 @@ impl Db {
             .optional()?)
     }
 
-    pub fn get_highest_block_hash(&self) -> Result<Option<Hash>> {
+    pub fn get_highest_block_hashes(&self, how_many: usize) -> Result<Vec<Hash>> {
         Ok(self
             .block_store
             .lock()
-            .unwrap()
-            .query_row_and_then(
-                "select block_hash from blocks where height=(select height from main_chain_canonical_blocks ORDER BY height DESC LIMIT 1)",
-                (),
-                |row| row.get(0),
-            )
-            .optional()?)
+           .unwrap()
+           .prepare_cached(
+               "select block_hash from blocks where height in (select height from main_chain_canonical_blocks ORDER BY height DESC LIMIT ?1)")?
+           .query_map([how_many], |row| row.get(0))?.collect::<Result<Vec<Hash>, _>>()?)
     }
 
     pub fn set_high_qc_with_db_tx(

@@ -267,6 +267,7 @@ impl Node {
                     })
                     .collect::<Result<_>>()?;
 
+                trace!("Call availability");
                 let availability = self.consensus.block_store.availability()?;
                 trace!("responding to new blocks request of {request:?} with props {0:?} availability {availability:?}",
                        proposals.iter().fold("".to_string(), |state, x| format!("{},{}", state, x.header.view)));
