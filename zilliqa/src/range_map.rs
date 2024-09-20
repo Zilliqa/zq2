@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::cmp::{max, min, Ordering};
 use std::default::Default;
 use std::ops::Range;
@@ -5,7 +6,7 @@ use std::{fmt, fmt::Display};
 use tracing::*;
 
 /// A block map - a reasonably efficient, easily implementable representation of a collection of ranges.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct RangeMap {
     pub ranges: Vec<Range<u64>>,
 }
@@ -317,6 +318,13 @@ impl RangeMap {
         // We've run out of things; anything left to remove will therefore not be removed and we're done.
         trace!("Done! {intersection:?} {diff:?}");
         (intersection, diff)
+    }
+
+    // This is a very strange function. It limits the storage size of a RangeMap at the high end.
+    // it's used when trimming the "no blocks for this view" cache to prevent memory exhaustion in large
+    // networks.
+    pub fn truncate(&mut self, max_ranges: usize) {
+        self.ranges.truncate(max_ranges);
     }
 }
 

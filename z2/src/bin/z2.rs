@@ -10,7 +10,6 @@ use clap_verbosity_flag::{InfoLevel, Verbosity};
 use z2lib::{
     chain,
     components::Component,
-    deployer,
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };

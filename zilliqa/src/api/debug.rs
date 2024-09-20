@@ -55,6 +55,7 @@ fn blocks(
         Vec<(String, u64, String)>,
         Vec<(String, u64, String)>,
         Vec<(String, String)>,
+        String,
     ),
 )> {
     trace!("blocks");

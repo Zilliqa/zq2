@@ -55,3 +55,6 @@ pub const BLOCK_CACHE_LOG2_WAYS: usize = 4;
 /// so that it can catch up quickly when it reaches the current head of the chain.
 /// Not required for correctness.
 pub const BLOCK_CACHE_TAIL_BUFFER_ENTRIES: usize = 16;
+
+/// Max pending requests per peer
+pub const MAX_PENDING_REQUESTS_PER_PEER : usize = 2;

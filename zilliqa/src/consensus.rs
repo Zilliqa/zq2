@@ -2703,6 +2703,8 @@ impl Consensus {
                     block,
                 }),
             )?;
+        } else {
+            trace!("no blocks buffered");
         }
         Ok(())
     }
@@ -2710,5 +2712,14 @@ impl Consensus {
     pub fn buffer_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
         self.block_store.buffer_proposal(from, proposal)?;
         Ok(())
+    }
+
+    pub fn buffer_lack_of_proposals(
+        &mut self,
+        from_view: u64,
+        proposals: &Vec<Proposal>,
+    ) -> Result<()> {
+        self.block_store
+            .buffer_lack_of_proposals(from_view, proposals)
     }
 }

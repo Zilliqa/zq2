@@ -211,6 +211,7 @@ pub struct BlockRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
     pub proposals: Vec<Proposal>,
+    pub from_view: u64,
     /// When we send a block response, we may also send data on what blocks we are prepared
     /// to serve.
     pub availability: Option<Vec<BlockStrategy>>,

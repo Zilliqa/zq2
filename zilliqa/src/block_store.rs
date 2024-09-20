@@ -59,6 +59,8 @@ pub struct BlockCache {
     pub cache: BTreeMap<u128, BlockCacheEntry>,
     /// Caches proposals close to the head.
     pub tail: BTreeMap<u128, BlockCacheEntry>,
+    /// Caches ranges where we think there is no block at all (just an empty view)
+    pub empty_view_ranges: RangeMap,
     /// The head cache - this caches
     /// An index into the cache by parent hash
     pub by_parent_hash: HashMap<Hash, u128>,
@@ -69,6 +71,7 @@ impl BlockCache {
         Self {
             cache: BTreeMap::new(),
             tail: BTreeMap::new(),
+            empty_view_ranges: RangeMap::new(),
             by_parent_hash: HashMap::new(),
         }
     }
@@ -100,6 +103,15 @@ impl BlockCache {
                 .remove(&key)
                 .or_else(|| self.tail.remove(&key))
                 .map(|x| (x.from, x.proposal));
+            // Ignore any gaps up to this point, because they may be lies.
+            if let Some((_, prop)) = &maybe {
+                (_, self.empty_view_ranges) =
+                    self.empty_view_ranges
+                        .diff_inter(&RangeMap::from_range(&Range {
+                            start: 0,
+                            end: prop.header.view + 1,
+                        }));
+            };
             maybe
         } else {
             None
@@ -134,8 +146,19 @@ impl BlockCache {
                 }
             }
         }
+        // No need to remember which views don't have a block before the lowest confirmed view.
+        (_, self.empty_view_ranges) =
+            self.empty_view_ranges
+                .diff_inter(&RangeMap::from_range(&Range {
+                    start: 0,
+                    end: highest_confirmed_view + 1,
+                }));
 
-        while self.cache.len() > usize::try_from(cache_entries).unwrap() {
+        // And trim.
+        let cache_size = usize::try_from(cache_entries).unwrap();
+        self.empty_view_ranges.truncate(cache_size);
+
+        while self.cache.len() > cache_size {
             self.cache
                 .pop_last()
                 .and_then(|(_, v)| self.by_parent_hash.remove(&v.parent_hash));
@@ -149,6 +172,10 @@ impl BlockCache {
         // debug!("cache now has: {0}", self.extant_block_ranges()?);
         // Both caches are now at most the "right" number of entries long.
         Ok(())
+    }
+
+    pub fn no_blocks_at(&mut self, no_blocks_in: &Range<u64>) {
+        self.empty_view_ranges.with_range(no_blocks_in);
     }
 
     /// Insert this proposal into the cache.
@@ -205,7 +232,7 @@ impl BlockCache {
     }
 
     // For debugging - what view number ranges are in the cache?
-    pub fn extant_block_ranges(&self) -> Result<RangeMap> {
+    pub fn extant_block_ranges(&self) -> RangeMap {
         let mut result = RangeMap::new();
         let shift = 8 - constants::BLOCK_CACHE_LOG2_WAYS;
         for key in self.cache.keys() {
@@ -214,7 +241,7 @@ impl BlockCache {
         for key in self.tail.keys() {
             let _ = u128::try_into(key >> shift).map(|x| result.with_number(x));
         }
-        Ok(result)
+        result
     }
 
     pub fn summarise(
@@ -223,6 +250,7 @@ impl BlockCache {
         Vec<(String, u64, String)>,
         Vec<(String, u64, String)>,
         Vec<(String, String)>,
+        String,
     )> {
         let mut from_cache: Vec<(String, u64, String)> = Vec::new();
         for (k, v) in &self.cache {
@@ -244,7 +272,12 @@ impl BlockCache {
         for (hash, key) in &self.by_parent_hash {
             from_idx.push((format!("{:?}", hash), format!("{:0x}", key)));
         }
-        Ok((from_cache, from_tail, from_idx))
+        Ok((
+            from_cache,
+            from_tail,
+            from_idx,
+            format!("{:0}", self.empty_view_ranges),
+        ))
     }
 }
 
@@ -310,8 +343,6 @@ struct PeerInfo {
     availability_updated_at: Option<SystemTime>,
     /// Last availability query - don't send them too often.
     availability_requested_at: Option<SystemTime>,
-    /// The number of blocks we've requested from the peer.
-    requested_blocks: u64,
     /// Requests we've sent to the peer.
     pending_requests: HashMap<RequestId, (SystemTime, u64, u64)>,
     /// If `Some`, the time of the most recently failed request.
@@ -324,7 +355,6 @@ impl PeerInfo {
             availability: BlockAvailability::new(),
             availability_updated_at: None,
             availability_requested_at: None,
-            requested_blocks: 0,
             pending_requests: HashMap::new(),
             last_request_failed_at: None,
         }
@@ -379,7 +409,6 @@ impl PeerInfo {
 pub struct PeerInfoStatus {
     availability: BlockAvailability,
     availability_updated_at: Option<u64>,
-    requested_blocks: u64,
     pending_requests: Vec<(String, SystemTime, u64, u64)>,
     last_request_failed_at: Option<u64>,
 }
@@ -428,7 +457,6 @@ impl PeerInfoStatus {
         Self {
             availability: info.availability.clone(),
             availability_updated_at: s_from_time(info.availability_updated_at),
-            requested_blocks: info.requested_blocks,
             pending_requests,
             last_request_failed_at: s_from_time(info.last_request_failed_at),
         }
@@ -471,6 +499,7 @@ impl BlockStore {
         Vec<(String, u64, String)>,
         Vec<(String, u64, String)>,
         Vec<(String, String)>,
+        String,
     )> {
         self.buffered.summarise()
     }
@@ -564,22 +593,6 @@ impl BlockStore {
         }
 
         Ok(())
-    }
-
-    pub fn best_peer(&self, view: u64) -> Option<PeerId> {
-        let (best, _) = self
-            .peers
-            .iter()
-            .filter(|(_, peer)| peer.availability.highest_known_view >= view)
-            // If the last request failed, don't send requests to this peer for 10 seconds.
-            .filter(|(_, peer)| {
-                peer.last_request_failed_at
-                    .and_then(|at| at.elapsed().ok())
-                    .map(|time_since| time_since > self.failed_request_sleep_duration)
-                    .unwrap_or(true)
-            })
-            .min_by_key(|(_, peer)| peer.requested_blocks)?;
-        Some(*best)
     }
 
     pub fn request_missing_blocks(&mut self) -> Result<()> {
@@ -719,10 +732,13 @@ impl BlockStore {
 
         // If it's already buffered, don't request it again - wait for us to reject it and
         // then we can re-request.
-        let extant = self.buffered.extant_block_ranges()?;
+        let extant = self.buffered.extant_block_ranges();
         trace!("cache has {:?}", extant);
         (_, remain) = remain.diff_inter(&extant);
         trace!(" .. after cache removal {remain:?}");
+        trace!("known gaps {:?}", self.buffered.empty_view_ranges);
+        (_, remain) = remain.diff_inter(&self.buffered.empty_view_ranges);
+        trace!(" .. after removal of empty view ranges {remain:?}");
 
         // If it's in flight, don't request it again.
         let mut in_flight = RangeMap::new();
@@ -778,6 +794,14 @@ impl BlockStore {
                             .unwrap_or(true)
                     {
                         trace!(".. Last request failed; skipping this peer");
+                        continue;
+                    }
+
+                    if peer_info.pending_requests.len() > constants::MAX_PENDING_REQUESTS_PER_PEER {
+                        trace!(
+                            ".. Skipping peer {peer} - too many pending requests {0}",
+                            peer_info.pending_requests.len()
+                        );
                         continue;
                     }
 
@@ -902,7 +926,6 @@ impl BlockStore {
 
         if let Some(from) = from {
             let peer = self.peer_info(from);
-            peer.requested_blocks = peer.requested_blocks.saturating_sub(1);
             if block.view() > peer.availability.highest_known_view {
                 trace!(%from, view = block.view(), "new highest known view for peer");
                 peer.availability.highest_known_view = block.view();
@@ -963,11 +986,48 @@ impl BlockStore {
 
     pub fn next_proposal_if_likely(&mut self) -> Result<Option<(PeerId, Proposal)>> {
         if let Some(current_hash) = self.db.get_highest_block_hash()? {
+            trace!(
+                "check next block {2} for {1} in {0}",
+                self.buffered.extant_block_ranges(),
+                self.highest_confirmed_view,
+                &current_hash
+            );
             Ok(self
                 .buffered
                 .destructive_proposal_from_parent_hash(&current_hash))
         } else {
             Ok(None)
         }
+    }
+
+    pub fn buffer_lack_of_proposals(
+        &mut self,
+        from_view: u64,
+        proposals: &Vec<Proposal>,
+    ) -> Result<()> {
+        // OK. Find the gaps and register them as areas not to ask about again, because
+        // we now "know" that there is no block in this range.
+        // If this turns out to be a lie, we will pop the first block in the gap and check to see
+        // if it our next block. This will have the side-effect of forgetting about any gaps before
+        // that point, which we will then re-query, realise our mistake and carry on.
+        // @todo this is horribly slow - speed it up!
+        let mut gap_start = from_view;
+        let mut gap_end = 0;
+        for p in proposals {
+            trace!(
+                "buffer_lack_of_proposals: {gap_start}, {gap_end}, {0}",
+                p.header.view
+            );
+            gap_end = p.header.view;
+            if gap_end > gap_start {
+                self.buffered.no_blocks_at(&Range {
+                    start: gap_start,
+                    end: gap_end,
+                });
+                gap_start = gap_end + 1;
+            }
+        }
+        // There's never a gap at the end, because we don't know at which view we stopped.
+        Ok(())
     }
 }

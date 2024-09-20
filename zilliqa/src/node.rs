@@ -253,6 +253,10 @@ impl Node {
                 }
 
                 trace!("Received a block request");
+                // Note that it is very important that we limit this by number of blocks
+                // returned, _not_ by max view range returned. If we don't, then any
+                // view gap larger than block_request_limit will never be filliable
+                // because no node will ever be prepared to return the block after it.
                 let proposals: Vec<Proposal> = (request.from_view..=request.to_view)
                     .take(self.config.block_request_limit)
                     .filter_map(|view| {
@@ -272,6 +276,7 @@ impl Node {
                     response_channel,
                     ExternalMessage::BlockResponse(BlockResponse {
                         proposals,
+                        from_view: request.from_view,
                         availability,
                     }),
                 ))?;
@@ -898,6 +903,8 @@ impl Node {
         self.consensus
             .receive_availability(from, &response.availability)?;
 
+        self.consensus
+            .buffer_lack_of_proposals(response.from_view, &response.proposals)?;
         for block in response.proposals {
             // Buffer the block so that we know we have it - in fact, add it to the cache so
             // that we can include it in the chain if necessary.
