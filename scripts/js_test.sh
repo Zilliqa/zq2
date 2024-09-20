@@ -44,7 +44,7 @@ echo "Running tests"
 ls /tmp/
 echo "------------------------------"
 # Run tests
-npx hardhat test test/scilla/UserDefinedLibrary.ts
+npx hardhat test --grep "Importing and calling external scilla libraries"
 
 retVal=$?
 

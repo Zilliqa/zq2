@@ -4,7 +4,7 @@ import {ScillaContract} from "hardhat-scilla-plugin";
 import {parallelizer} from "../../helpers";
 import hre from "hardhat";
 
-describe("Scilla library deploy", () => {
+describe("Importing and calling external scilla libraries", () => {
   let additionLibAddress: string;
   let mutualLibAddress: string;
   let contract1: ScillaContract;
@@ -33,8 +33,7 @@ describe("Scilla library deploy", () => {
     expect(additionLibAddress).to.be.properAddress;
   });
 
-  it("Should be possible to deploy TestContract1 which imports AdditonLib and MutualLib", async () => {
-    console.log(`${additionLibAddress} ${mutualLibAddress}`);
+  it("Should be possible to deploy TestContract1 which imports AdditionLib and MutualLib", async () => {
     contract1 = await parallelizer.deployScillaContractWithLibrary("TestContract1", [
       {name: "AdditionLib.scillib", address: additionLibAddress!.toLocaleLowerCase()},
       {name: "MutualLib.scillib", address: mutualLibAddress!.toLocaleLowerCase()}
