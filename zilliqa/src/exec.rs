@@ -1462,7 +1462,7 @@ fn scilla_create(
     account.account.balance = txn.amount.get();
     account.account.code = Code::Scilla {
         code: txn.code.clone(),
-        init_data: init_data.clone(), // FIXME: Remove this clone
+        init_data: init_data.clone(),
         types,
         transitions,
     };
