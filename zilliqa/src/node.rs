@@ -301,10 +301,10 @@ impl Node {
 
     pub fn handle_request_failure(
         &mut self,
-        from: PeerId,
+        to: PeerId,
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
-        debug!(%from, to = %self.peer_id, ?failure, "handling message failure");
+        debug!(from = %self.peer_id, %to, ?failure, "handling message failure");
         self.consensus.report_outgoing_message_failure(failure)?;
         Ok(())
     }

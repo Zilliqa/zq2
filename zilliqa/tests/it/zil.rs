@@ -510,7 +510,7 @@ async fn scilla_precompiles(mut network: Network) {
     assert_eq!(log.address, scilla_contract_address);
     assert_eq!(
         log.topics[0],
-        H256(keccak256("event Inserted(string)".as_bytes()))
+        H256(keccak256("Inserted(string)".as_bytes()))
     );
     let data = ethabi::decode(&[ParamType::String], &log.data).unwrap()[0]
         .clone()
