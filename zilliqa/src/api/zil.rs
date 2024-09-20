@@ -21,6 +21,7 @@ use super::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, SWInfo, ShardingStructure,
         SmartContract, TXBlockRateResult, TxBlockListing, TxBlockListingResult,
+        TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -71,6 +72,10 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("TxBlockListing", tx_block_listing),
             ("GetNumPeers", get_num_peers),
             ("GetTransactionRate", get_tx_rate),
+            (
+                "GetTransactionsForTxBlockEx",
+                get_transactions_for_tx_block_ex
+            ),
         ],
     )
 }
@@ -714,4 +719,51 @@ fn get_tx_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<f64> {
         .duration_since(prev_block.header.timestamp)?;
     let transaction_rate = transactions_between / time_between.as_secs_f64();
     Ok(transaction_rate)
+}
+
+fn get_transactions_for_tx_block_ex(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<TxnsForTxBlockExResponse> {
+    let mut seq = params.sequence();
+    let block_number: String = seq.next()?;
+    let page_number: String = seq.next()?;
+    let block_number: u64 = block_number.parse()?;
+    let page_number: usize = page_number.parse()?;
+
+    let node = node.lock().unwrap();
+    let block = node
+        .get_block(block_number)?
+        .ok_or_else(|| anyhow!("Block not found"))?;
+
+    let total_transactions = block.transactions.len();
+    let num_pages = (total_transactions / TRANSACTIONS_PER_PAGE)
+        + (if total_transactions % TRANSACTIONS_PER_PAGE != 0 {
+            1
+        } else {
+            0
+        });
+
+    // Ensure page is within bounds
+    if page_number >= num_pages {
+        return Ok(TxnsForTxBlockExResponse {
+            curr_page: page_number as u64,
+            num_pages: num_pages as u64,
+            transactions: vec![],
+        });
+    }
+
+    let start = std::cmp::min(page_number * TRANSACTIONS_PER_PAGE, total_transactions);
+
+    let end = std::cmp::min(start + TRANSACTIONS_PER_PAGE, total_transactions);
+    let slice = block.transactions[start..end].to_vec();
+
+    Ok(TxnsForTxBlockExResponse {
+        curr_page: page_number as u64,
+        num_pages: num_pages as u64,
+        transactions: slice
+            .into_iter()
+            .map(|h| B256::from(h).to_hex_no_prefix())
+            .collect(),
+    })
 }
