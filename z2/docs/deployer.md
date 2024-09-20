@@ -179,6 +179,7 @@ Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
+      --select      Enable nodes selection
   -v, --verbose...  Increase logging verbosity
   -q, --quiet...    Decrease logging verbosity
   -h, --help        Print help
@@ -186,7 +187,7 @@ Options:
 
 ### Usage example
 
-#### Scenario
+#### Scenario - Upgrade all the nodes
 
 Upgrade to a new version the `zq2-prototestnet` nodes
 
@@ -197,6 +198,19 @@ Configuration file: zq2-prototestnet.yaml
 
 ```bash
 z2 deployer upgrade zq2-prototestnet.yaml
+```
+
+#### Scenario - Upgrade only selected nodes
+
+Upgrade to a new version the `zq2-prototestnet` validators
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer upgrade --select zq2-prototestnet.yaml
 ```
 
 ## Install the network
@@ -214,6 +228,7 @@ Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
+      --select      Enable nodes selection
   -v, --verbose...  Increase logging verbosity
   -q, --quiet...    Decrease logging verbosity
   -h, --help        Print help
@@ -236,6 +251,7 @@ Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
+      --select      Enable nodes selection
   -v, --verbose...  Increase logging verbosity
   -q, --quiet...    Decrease logging verbosity
   -h, --help        Print help
@@ -271,6 +287,7 @@ Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
+      --select      Enable nodes selection
   -v, --verbose...  Increase logging verbosity
   -q, --quiet...    Decrease logging verbosity
   -h, --help        Print help

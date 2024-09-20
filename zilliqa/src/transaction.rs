@@ -890,7 +890,7 @@ impl ScillaLog {
         EvmLog {
             address: self.address,
             topics: vec![keccak256(
-                format!("event {}(string)", self.event_name).into_bytes(),
+                format!("{}(string)", self.event_name).into_bytes(),
             )],
             data,
         }
