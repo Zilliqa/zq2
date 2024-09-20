@@ -34,7 +34,7 @@ use crate::{
     message::Block,
     node::Node,
     schnorr,
-    scilla::split_storage_key,
+    scilla::{split_storage_key, ParamValue},
     state::Code,
     time::SystemTime,
     transaction::{ScillaGas, SignedTransaction, TxZilliqa, ZilAmount, EVM_GAS_PER_SCILLA_GAS},
@@ -427,7 +427,7 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     Ok(json!({ "code": code, "type": type_ }))
 }
 
-fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
+fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<ParamValue>> {
     let address: ZilAddress = params.one()?;
     let address: Address = address.into();
 
@@ -440,8 +440,9 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address not contract address"));
     };
+    let init_data = init_data.into_iter().map(ParamValue::from).collect();
 
-    Ok(serde_json::from_str(&init_data)?)
+    Ok(init_data)
 }
 
 fn get_transactions_for_tx_block(
