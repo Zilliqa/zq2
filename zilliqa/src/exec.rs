@@ -1421,7 +1421,7 @@ fn scilla_create(
     // We need to cache external libraries used in the current contract. Scilla checker needs to import them to check the contract.
     cache_external_libraries(
         &state.pre_state,
-        &ext_libs_cache_dir,
+        ext_libs_cache_dir,
         &init_data.external_libraries()?,
     )?;
     let check_output = match scilla.check_contract(&txn.code, gas, &init_data)? {

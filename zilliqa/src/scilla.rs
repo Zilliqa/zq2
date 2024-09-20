@@ -123,6 +123,7 @@ impl ScillaServerRequestBuilder {
         self
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn is_library(mut self, is_library: bool) -> Self {
         self.is_library = is_library;
         self
