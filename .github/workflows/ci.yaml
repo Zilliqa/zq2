@@ -49,7 +49,7 @@ jobs:
         ports:
           - 3000:3000
         volumes:
-          - ${{ github.workspace }}/tmp:/scilla_ext_libs
+          - /tmp:/scilla_ext_libs
 
     runs-on: ubuntu-latest
     steps:

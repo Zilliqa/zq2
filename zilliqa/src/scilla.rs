@@ -142,28 +142,23 @@ impl ScillaServerRequestBuilder {
         let mut args = vec![];
 
         if let Some(init) = self.init {
-            args.push("-init".to_owned());
-            args.push(init);
+            args.extend(["-init".to_owned(), init]);
         }
 
         if let Some(lib_dirs) = self.lib_dirs {
-            args.push("-libdir".to_owned());
-            args.push(lib_dirs.join(":"));
+            args.extend(["-libdir".to_owned(), lib_dirs.join(":")]);
         }
 
         if let Some(ipc_address) = self.ipc_address {
-            args.push("-ipcaddress".to_owned());
-            args.push(ipc_address);
+            args.extend(["-ipcaddress".to_owned(), ipc_address])
         }
 
         if let Some(balance) = self.balance {
-            args.push("-balance".to_owned());
-            args.push(balance);
+            args.extend(["-balance".to_owned(), balance]);
         }
 
         if let Some(message) = self.message {
-            args.push("-imessage".to_owned());
-            args.push(message);
+            args.extend(["-imessage".to_owned(), message]);
         }
 
         if let Some(code) = self.code {
@@ -175,8 +170,7 @@ impl ScillaServerRequestBuilder {
         }
 
         if let Some(gas_limit) = self.gas_limit {
-            args.push("-gaslimit".to_owned());
-            args.push(gas_limit.to_string());
+            args.extend(vec!["-gaslimit".to_owned(), gas_limit.to_string()]);
         }
 
         if self.contract_info {

@@ -6,7 +6,6 @@ sudo apt-get install solc libsecp256k1-dev protobuf-compiler > /dev/null 2>&1
 
 # Start network early.
 pwd
-
 echo "building zilliqa and running it as a detached process"
 cargo build --all-targets
 ls ./target
@@ -39,11 +38,11 @@ echo "Funding tests"
 npx hardhat run scripts/FundAccountsFromEth.ts
 
 echo "Running tests"
+
 # Run tests
-npx hardhat test 
+npx hardhat test
 
 retVal=$?
-
 pkill -INT zilliqa
 if [ $retVal -ne 0 ]; then
     cat /tmp/zil_log_out.txt

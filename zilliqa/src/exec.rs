@@ -1416,8 +1416,8 @@ fn scilla_create(
     };
 
     let init_data = ContractInit::new(&init_data)?;
-    println!("{init_data:#?}");
 
+    // We need to cache external libraries used in the current contract. Scilla checker needs to import them to check the contract.
     cache_external_libraries(
         &state.pre_state,
         &ext_libs_cache_dir,
@@ -1447,6 +1447,7 @@ fn scilla_create(
 
     let gas = gas.min(check_output.gas_remaining);
 
+    // If the contract is a library, contract info is empty.
     let contract_info = check_output.contract_info.unwrap_or_default();
     let types = contract_info
         .fields
