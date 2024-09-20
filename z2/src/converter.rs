@@ -194,11 +194,11 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
     let init_data = zq1_db.get_contract_init_state_2(address)?;
 
     let init_data = match init_data {
-        Some(data) => ContractInit::new(&serde_json::from_str::<Vec<_>>(
+        Some(data) => ContractInit::new(serde_json::from_str::<Vec<_>>(
             &String::from_utf8(data)
                 .map_err(|err| anyhow!("Unable to convert scilla init data into string: {err}"))?,
         )?)?,
-        None => ContractInit::new(&[])?,
+        None => ContractInit::new(vec![])?,
     };
 
     Ok(Code::Scilla {

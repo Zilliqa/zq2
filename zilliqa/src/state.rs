@@ -308,8 +308,8 @@ impl Default for Account {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ContractInitEntry {
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ScillaTypedVariable {
     pub vname: String,
     pub value: Value,
     pub r#type: String,
@@ -322,64 +322,72 @@ pub struct ExternalLibrary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContractInit {
-    init: String,
-    pub scilla_version: String,
-    pub external_libraries: Vec<ExternalLibrary>,
-    pub is_library: bool,
-}
+pub struct ContractInit(Vec<ScillaTypedVariable>);
 
 impl ContractInit {
-    pub fn new(init: &[ContractInitEntry]) -> Result<Self> {
-        let mut scilla_version = String::new();
-        let mut is_library = false;
-        let mut external_libraries = vec![];
-        for entry in init {
-            match entry.vname.as_str() {
-                "_scilla_version" => scilla_version = entry.value.to_string(),
-                "_library" => {
-                    is_library = entry.value["constructor"]
-                        .as_str()
-                        .map_or(false, |value| value == "True")
-                }
-                "_extlibs" => {
-                    if let Some(ext_libs) = entry.value.as_array() {
-                        for ext_lib in ext_libs {
-                            if let Some(lib) = ext_lib["arguments"].as_array() {
-                                if lib.len() != 2 {
-                                    return Err(anyhow!("Invalid init."));
-                                }
-                                let lib_name = lib[0].as_str().ok_or_else(|| {
-                                    anyhow!("Invalid init. Library name is not an string")
-                                })?;
-                                let lib_address = lib[1].as_str().ok_or_else(|| {
-                                    anyhow!("Invalid init. Library address is not an string")
-                                })?;
-                                external_libraries.push(ExternalLibrary {
-                                    name: lib_name.to_string(),
-                                    address: lib_address.parse::<Address>()?,
-                                });
-                            } else {
+    pub fn new(init: Vec<ScillaTypedVariable>) -> Result<Self> {
+        Ok(Self(init))
+    }
+
+    pub fn scilla_version(&self) -> Result<String> {
+        for entry in &self.0 {
+            if entry.vname == "_scilla_version" {
+                return Ok(entry.value.to_string());
+            }
+        }
+        Ok(String::new())
+    }
+
+    pub fn is_library(&self) -> Result<bool> {
+        for entry in &self.0 {
+            if entry.vname == "_library" {
+                return Ok(entry.value["constructor"]
+                    .as_str()
+                    .map_or(false, |value| value == "True"));
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn external_libraries(&self) -> Result<Vec<ExternalLibrary>> {
+        let mut external_libraries = Vec::new();
+        for entry in &self.0 {
+            if entry.vname == "_extlibs" {
+                if let Some(ext_libs) = entry.value.as_array() {
+                    for ext_lib in ext_libs {
+                        if let Some(lib) = ext_lib["arguments"].as_array() {
+                            if lib.len() != 2 {
                                 return Err(anyhow!("Invalid init."));
                             }
+                            let lib_name = lib[0].as_str().ok_or_else(|| {
+                                anyhow!("Invalid init. Library name is not a string")
+                            })?;
+                            let lib_address = lib[1].as_str().ok_or_else(|| {
+                                anyhow!("Invalid init. Library address is not a string")
+                            })?;
+                            external_libraries.push(ExternalLibrary {
+                                name: lib_name.to_string(),
+                                address: lib_address.parse::<Address>()?,
+                            });
+                        } else {
+                            return Err(anyhow!("Invalid init."));
                         }
                     }
                 }
-                _ => {}
             }
         }
-        Ok(Self {
-            init: serde_json::to_string(init)?,
-            scilla_version,
-            external_libraries,
-            is_library,
-        })
+        Ok(external_libraries)
+    }
+
+    pub fn into_inner(self) -> Vec<ScillaTypedVariable> {
+        self.0
     }
 }
 
 impl Display for ContractInit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.init)
+        let json = serde_json::to_string(&self.0).map_err(|_| std::fmt::Error)?;
+        write!(f, "{}", json)
     }
 }
 

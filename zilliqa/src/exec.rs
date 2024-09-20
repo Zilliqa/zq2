@@ -39,7 +39,7 @@ use crate::{
     precompiles::{get_custom_precompiles, scilla_call_handle_register},
     scilla::{self, split_storage_key, storage_key, Scilla},
     state::{
-        contract_addr, Account, Code, ContractInit, ContractInitEntry, ExternalLibrary, State,
+        contract_addr, Account, Code, ContractInit, ExternalLibrary, ScillaTypedVariable, State,
     },
     time::SystemTime,
     transaction::{
@@ -1345,7 +1345,7 @@ fn cache_external_libraries(
             Code::Scilla {
                 code, init_data, ..
             } => {
-                if !init_data.is_library {
+                if !init_data.is_library()? {
                     return Err(anyhow!(
                         "Impossible to load a non-library contract as a Scilla library."
                     ));
@@ -1382,18 +1382,20 @@ fn scilla_create(
     // than this.
     let contract_address = zil_contract_address(from_addr, txn.nonce - 1);
 
-    let mut init_data: Vec<ContractInitEntry> = serde_json::from_str(&txn.data)?;
-    init_data.push(ContractInitEntry {
-        vname: "_creation_block".to_string(),
-        value: Value::String(current_block.number.to_string()),
-        r#type: "BNum".to_string(),
-    });
-    let contract_address_hex = format!("{contract_address:#x}");
-    init_data.push(ContractInitEntry {
-        vname: "_this_address".to_string(),
-        value: Value::String(contract_address_hex),
-        r#type: "ByStr20".to_string(),
-    });
+    let mut init_data: Vec<ScillaTypedVariable> = serde_json::from_str(&txn.data)?;
+
+    init_data.extend([
+        ScillaTypedVariable {
+            vname: "_creation_block".to_string(),
+            value: Value::String(current_block.number.to_string()),
+            r#type: "BNum".to_string(),
+        },
+        ScillaTypedVariable {
+            vname: "_this_address".to_string(),
+            value: Value::String(format!("{contract_address:#x}")),
+            r#type: "ByStr20".to_string(),
+        },
+    ]);
 
     let gas = txn.gas_limit;
 
@@ -1414,13 +1416,13 @@ fn scilla_create(
         ));
     };
 
-    let init_data = ContractInit::new(&init_data)?;
+    let init_data = ContractInit::new(init_data)?;
 
     // We need to cache external libraries used in the current contract. Scilla checker needs to import them to check the contract.
     cache_external_libraries(
         &state.pre_state,
         &ext_libs_cache_dir,
-        &init_data.external_libraries,
+        &init_data.external_libraries()?,
     )?;
     let check_output = match scilla.check_contract(&txn.code, gas, &init_data)? {
         Ok(o) => o,

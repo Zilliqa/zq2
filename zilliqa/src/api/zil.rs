@@ -30,7 +30,7 @@ use crate::{
     node::Node,
     schnorr,
     scilla::split_storage_key,
-    state::Code,
+    state::{Code, ScillaTypedVariable},
     time::SystemTime,
     transaction::{ScillaGas, SignedTransaction, TxZilliqa, ZilAmount, EVM_GAS_PER_SCILLA_GAS},
 };
@@ -408,7 +408,10 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     Ok(json!({ "code": code, "type": type_ }))
 }
 
-fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
+fn get_smart_contract_init(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Vec<ScillaTypedVariable>> {
     let address: ZilAddress = params.one()?;
     let address: Address = address.into();
 
@@ -418,11 +421,11 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
     let account = node.get_state(&block)?.get_account(address)?;
 
-    let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
+    let Some((_, contract_init)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address not contract address"));
     };
 
-    Ok(serde_json::from_str(&init_data.to_string())?) // FIXME:
+    Ok(contract_init.into_inner())
 }
 
 fn get_transactions_for_tx_block(

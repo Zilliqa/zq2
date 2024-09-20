@@ -305,7 +305,7 @@ impl Scilla {
             .gas_limit(gas_limit)
             .contract_info(true)
             .json_errors(true)
-            .is_library(init.is_library)
+            .is_library(init.is_library()?)
             .build()?;
 
         self.request_tx.send(request)?;
@@ -358,7 +358,7 @@ impl Scilla {
             .gas_limit(gas_limit)
             .balance(value)
             .json_errors(true)
-            .is_library(init.is_library)
+            .is_library(init.is_library()?)
             .build()?;
 
         let (response, state) =
