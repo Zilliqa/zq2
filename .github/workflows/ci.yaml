@@ -49,13 +49,10 @@ jobs:
         ports:
           - 3000:3000
         volumes:
-          - /tmp/scilla_ext_libs:/scilla_ext_libs
+          - /tmp/:/scilla_ext_libs
 
     runs-on: ubuntu-latest
     steps:
-      - name: Create scilla external libs cache directory on host
-        run: mkdir -p /tmp/scilla_ext_libs
-
       - uses: actions/checkout@v4
         with:
           submodules: recursive

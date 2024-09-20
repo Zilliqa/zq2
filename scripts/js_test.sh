@@ -41,7 +41,7 @@ npx hardhat run scripts/FundAccountsFromEth.ts
 
 echo "------------------------------"
 echo "Running tests"
-ls /tmp/scilla_ext_libs
+ls /tmp/
 echo "------------------------------"
 # Run tests
 npx hardhat test test/scilla/UserDefinedLibrary.ts
@@ -49,7 +49,7 @@ npx hardhat test test/scilla/UserDefinedLibrary.ts
 retVal=$?
 
 echo "------------------------------"
-ls /tmp/scilla_ext_libs
+ls /tmp/
 echo "------------------------------"
 pkill -INT zilliqa
 if [ $retVal -ne 0 ]; then
