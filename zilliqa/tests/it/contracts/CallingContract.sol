@@ -11,11 +11,9 @@ contract Callee {
         return x;
     }
 
-    function setXandSendEther(uint256 _x)
-        public
-        payable
-        returns (uint256, uint256)
-    {
+    function setXandSendEther(
+        uint256 _x
+    ) public payable returns (uint256, uint256) {
         x = _x;
         value = msg.value;
 
@@ -34,7 +32,8 @@ contract Caller {
     }
 
     function setXandSendEther(Callee _callee, uint256 _x) public payable {
-        (uint256 x, uint256 value) =
-            _callee.setXandSendEther{value: msg.value}(_x);
+        (uint256 x, uint256 value) = _callee.setXandSendEther{value: msg.value}(
+            _x
+        );
     }
 }
