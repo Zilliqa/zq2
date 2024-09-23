@@ -14,7 +14,7 @@ contract OwnableBox is Ownable {
     emit ValueChanged(value);
   }
 
-  function retrieve() public view returns (uint256) {
+  function retrieve() public view returns(uint256) {
     return _value;
   }
 }
