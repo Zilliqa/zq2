@@ -501,7 +501,12 @@ impl State {
         let (mut state, cfg) = evm.into_db_and_env_with_handler_cfg();
 
         let result_and_state = match transact_result {
-            Err(EVMError::Transaction(_) | EVMError::Header(_)) => {
+            Err(
+                EVMError::Transaction(_)
+                | EVMError::Header(_)
+                | EVMError::Custom(_)
+                | EVMError::Precompile(_),
+            ) => {
                 let account = state.load_account(from_addr)?;
                 let Account {
                     code,
