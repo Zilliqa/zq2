@@ -523,7 +523,7 @@ impl State {
                 };
                 let code = match code {
                     EvmCode(code) => mem::take(code),
-                    _ => bail!("Evm account contains on-evm type of code!")
+                    _ => bail!("Evm account contains on-evm type of code!"),
                 };
 
                 // The only updated fields are nonce and balance, rest can be set to default (means: no update)
