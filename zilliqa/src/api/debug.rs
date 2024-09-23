@@ -1,5 +1,4 @@
-//! A debugging API.
-
+#![cfg(feature = "debug_api")]
 #![allow(unused_imports)]
 use super::to_hex::ToHex;
 use crate::block_store::BlockStoreStatus;

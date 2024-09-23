@@ -53,12 +53,9 @@ pub const BLOCK_CACHE_LOG2_WAYS: usize = 4;
 pub const BLOCK_CACHE_TAIL_BUFFER_ENTRIES: usize = 16;
 
 /// Max pending requests per peer
-pub const MAX_PENDING_REQUESTS_PER_PEER: usize = 2;
+pub const MAX_PENDING_REQUESTS_PER_PEER: usize = 4;
 
 /// Number of previous blocks to examine at each level of fork counter. Should be
 /// set small enough to avoid serious database load, but large enough to jump any
 /// plausible fork reasonably quickly.
 pub const EXAMINE_BLOCKS_PER_FORK_COUNT: usize = 16;
-
-// When we have gone this number of ticks without voting, we trigger a sync
-pub const SYNC_AT_MISSED_VOTE_TICKS: usize = 4;
