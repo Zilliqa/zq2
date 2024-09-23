@@ -50,7 +50,7 @@ libp2p = {version = "0.54.0", features = ["identify"]}
 log = "0.4.22"
 octocrab = "0.39.0"
 primitive-types = "0.12.2"
-prost = "0.13.1"
+prost = "0.13.3"
 rand = "0.8.5"
 rand_core = "0.6.4"
 regex = "1.10.6"
