@@ -139,6 +139,13 @@ impl BridgeNode {
                             },
                         );
                     }
+                };
+
+                if let Some(event_signature) = self.event_signatures.get(&dispatch.nonce) {
+                    if let Some(event) = &event_signature.event {
+                        let mut state_info = self.state_info.lock().unwrap();
+                        state_info.pending_relayed_events.remove(event);
+                    }
                 }
             }
             InboundBridgeMessage::Relay(relay) => {
@@ -167,6 +174,12 @@ impl BridgeNode {
 
         info!("Received a relay event: {event:?}");
         self.relay_nonces.insert(event.nonce);
+
+        {
+            let mut state_info = self.state_info.lock().unwrap();
+            state_info.pending_relayed_events.insert(event.clone());
+            state_info.relayed_events.push(event.clone());
+        }
 
         self.outbound_message_sender
             .send(OutboundBridgeMessage::Relay(Relay {
