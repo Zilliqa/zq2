@@ -45,7 +45,7 @@ contract Revert {
 
   function outOfGas() public {
     for (uint256 i = 0; ; ++i) {
-        _array.push(i);
+      _array.push(i);
     }
   }
 

@@ -2,21 +2,17 @@
 pragma solidity ^0.8.9;
 
 contract SingleTransfer {
+  event DebugMessage(string message);
+  event DebugMessageExtended(uint256 amount, address indexed addr, string message);
 
-    event DebugMessage(string message);
-    event DebugMessageExtended(uint256 amount, address indexed addr, string message);
+  constructor() payable {}
 
-    constructor() payable
-    {
-    }
+  function doTransfer(address payable destination, uint256 amount) public payable {
+    emit DebugMessageExtended(amount, destination, "sending...");
 
-    function doTransfer(address payable destination, uint256 amount) public payable
-    {
-        emit DebugMessageExtended(amount, destination, "sending...");
+    (bool success1, ) = destination.call{value: amount}("");
 
-        (bool success1, ) = destination.call{value: amount}("");
-
-        require(success1, "Unable to send amount");
-        emit DebugMessage("Done.");
-    }
+    require(success1, "Unable to send amount");
+    emit DebugMessage("Done.");
+  }
 }
