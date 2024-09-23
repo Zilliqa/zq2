@@ -266,21 +266,16 @@ impl SignedTransaction {
     }
 
     fn maximum_cost(&self) -> Result<u128> {
-        let gas_cost = self.gas_cost()?;
         match self {
-            SignedTransaction::Legacy { tx, .. } => Ok(gas_cost + u128::try_from(tx.value)?),
-            SignedTransaction::Eip2930 { tx, .. } => Ok(gas_cost + u128::try_from(tx.value)?),
-            SignedTransaction::Eip1559 { tx, .. } => Ok(gas_cost + u128::try_from(tx.value)?),
-            SignedTransaction::Zilliqa { .. } => Ok(gas_cost),
-            SignedTransaction::Intershard { .. } => Ok(gas_cost),
-        }
-    }
-
-    pub(crate) fn gas_cost(&self) -> Result<u128> {
-        match self {
-            SignedTransaction::Legacy { tx, .. } => Ok(tx.gas_limit * tx.gas_price),
-            SignedTransaction::Eip2930 { tx, .. } => Ok(tx.gas_limit * tx.gas_price),
-            SignedTransaction::Eip1559 { tx, .. } => Ok(tx.gas_limit * tx.max_fee_per_gas),
+            SignedTransaction::Legacy { tx, .. } => {
+                Ok(tx.gas_limit * tx.gas_price + u128::try_from(tx.value)?)
+            }
+            SignedTransaction::Eip2930 { tx, .. } => {
+                Ok(tx.gas_limit * tx.gas_price + u128::try_from(tx.value)?)
+            }
+            SignedTransaction::Eip1559 { tx, .. } => {
+                Ok(tx.gas_limit * tx.max_fee_per_gas + u128::try_from(tx.value)?)
+            }
             SignedTransaction::Zilliqa { tx, .. } => {
                 Ok(total_scilla_gas_price(tx.gas_limit, tx.gas_price).0)
             }
