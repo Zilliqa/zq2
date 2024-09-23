@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -27,6 +27,7 @@ use crate::{
         cfg::Config,
         client::ChainClient,
         contracts,
+        event::{DispatchedEvent, RelayedEvent},
         message::{Dispatch, InboundBridgeMessage, OutboundBridgeMessage},
     },
 };
@@ -34,7 +35,19 @@ use crate::{
 type ChainID = U256;
 
 #[derive(Debug)]
-pub struct StateInfo {}
+pub struct StateInfo {
+    pub relayed_events: Vec<RelayedEvent>,
+    pub pending_relayed_events: HashSet<RelayedEvent>,
+}
+
+impl StateInfo {
+    pub fn new() -> Self {
+        Self {
+            relayed_events: vec![],
+            pending_relayed_events: HashSet::new(),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct ValidatorNode {
