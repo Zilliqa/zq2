@@ -45,6 +45,13 @@ impl Component {
             Component::Docs,
         ])
     }
+
+    pub fn is_instanced(&self) -> bool {
+        match self {
+            Component::ZQ2 | Component::Scilla => true,
+            _ => false,
+        }
+    }
 }
 
 // Used as a legend for log output.

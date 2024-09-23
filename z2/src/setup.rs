@@ -1,12 +1,11 @@
-//use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use alloy::primitives::{address, Address};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
+use serde_yaml;
 use tokio::fs;
-use toml;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::{SecretKey, TransactionPublicKey};
@@ -27,19 +26,37 @@ use zilliqa::{
 use crate::{
     collector::{self, Collector},
     components::{Component, Requirements},
+    node_spec::Composition,
     scilla, utils,
 };
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 const GENESIS_DEPOSIT: u128 = 10000000000000000000000000;
 const DATADIR_PREFIX: &str = "z2_node_";
+const NETWORK_CONFIG_FILE_NAME: &str = "network.yaml";
+const ZQ2_CONFIG_FILE_NAME: &str = "config.toml";
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NodeData {
+    // Secret key as hex.
+    secret_key: String,
+    address: Address,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Config {
+    /// Network shape
+    pub shape: Composition,
+    /// Node data.
+    pub node_data: HashMap<u64, NodeData>,
+    /// Base port
+    pub base_port: u16,
+}
 
 pub struct Setup {
-    /// How many nodes should we start?
-    pub how_many: usize,
-    /// Secret keys for the nodes
-    pub secret_keys: Vec<SecretKey>,
-    /// Node addresses
-    pub node_addresses: Vec<Address>,
+    /// Configuration
+    pub config: Config,
     /// The collector, if one is running
     pub collector: Option<collector::Collector>,
     /// Where we store config files.
@@ -48,43 +65,134 @@ pub struct Setup {
     pub log_spec: String,
     /// Base dir - the one zq2 is in.
     pub base_dir: String,
-    /// Base port
-    pub base_port: u16,
     /// Restart an old network
     pub keep_old_network: bool,
     /// Watch source
     pub watch: bool,
 }
 
+impl Config {
+    pub fn get_config_file_name(config_dir: &str) -> Result<String> {
+        let file_name = format!("{}/{}", config_dir, NETWORK_CONFIG_FILE_NAME);
+        Ok(file_name.to_string())
+    }
+
+    pub async fn from_config_dir(config_dir: &str) -> Result<Option<Self>> {
+        let file_name = Config::get_config_file_name(config_dir)?;
+        if Path::new(&file_name).exists() {
+            let data = fs::read_to_string(&file_name).await?;
+            Ok(Some(serde_yaml::from_str(&data)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn save_to_config_dir(&self, config_dir: &str) -> Result<()> {
+        let file_name = Config::get_config_file_name(config_dir)?;
+        let str = serde_yaml::to_string(self)?;
+        fs::write(file_name, str).await?;
+        Ok(())
+    }
+
+    pub fn from_spec(network: &Composition, base_port: u16) -> Result<Self> {
+        // Generate secret keys and node addresses for the nodes in the network and stash it all in config.
+        let mut node_data: HashMap<u64, NodeData> = HashMap::new();
+        for node_id in network.nodes.keys() {
+            let (secret_key, signing_key) = generate_keys_from_index(*node_id + 1)?;
+            let address =
+                TransactionPublicKey::Ecdsa(*signing_key.verifying_key(), true).into_addr();
+            println!("[#{node_id}] = {}", secret_key.to_hex());
+            node_data.insert(
+                *node_id,
+                NodeData {
+                    secret_key: secret_key.to_hex(),
+                    address,
+                },
+            );
+        }
+
+        let result = Config {
+            shape: network.clone(),
+            node_data,
+            base_port,
+        };
+        Ok(result)
+    }
+}
+
 impl Setup {
-    pub fn new(
-        how_many: usize,
+    pub fn ephemeral(base_port: u16, base_dir: &str, config_dir: &str) -> Result<Self> {
+        let config = Config::from_spec(&Composition::small_network(), base_port)?;
+        Ok(Self {
+            config,
+            collector: None,
+            config_dir: config_dir.to_string(),
+            log_spec: "".to_string(),
+            base_dir: base_dir.to_string(),
+            keep_old_network: true,
+            watch: false,
+        })
+    }
+
+    pub async fn load(
         config_dir: &str,
         log_spec: &str,
         base_dir: &str,
-        base_port: u16,
-        keep_old_network: bool,
         watch: bool,
     ) -> Result<Self> {
-        let mut secret_keys = Vec::new();
-        let mut node_addresses = Vec::new();
-        for i in 0..how_many {
-            let (secret_key, signing_key) = generate_keys_from_index(i + 1)?;
-            println!("[#{i}] = {}", secret_key.to_hex());
-            secret_keys.push(secret_key);
-            node_addresses
-                .push(TransactionPublicKey::Ecdsa(*signing_key.verifying_key(), true).into_addr());
-        }
-
+        let config = Config::from_config_dir(&config_dir)
+            .await?
+            .ok_or(anyhow!("Couldn't load configuration from {config_dir}"))?;
         Ok(Self {
-            how_many,
-            secret_keys,
-            node_addresses,
+            config,
             collector: None,
             config_dir: config_dir.to_string(),
             log_spec: log_spec.to_string(),
             base_dir: base_dir.to_string(),
-            base_port,
+            keep_old_network: true,
+            watch,
+        })
+    }
+
+    pub async fn create(
+        network: &Option<Composition>,
+        config_dir: &str,
+        base_port: u16,
+        log_spec: &str,
+        base_dir: &str,
+        keep_old_network: bool,
+        watch: bool,
+    ) -> Result<Self> {
+        // If we had a config file, load it. Otherwise create a new one and save it so that
+        // we can find it later.
+        let loaded_config = Config::from_config_dir(&config_dir).await?;
+        let config = if let Some(val) = &network {
+            // One was specified.
+            if let Some(val2) = loaded_config {
+                println!("WARNING: You've specified a network configuration; we'll ignore this and take the config from the existing loaded configuration file");
+                val2
+            } else {
+                Config::from_spec(val, base_port)?
+            }
+        } else if let Some(val2) = loaded_config {
+            println!("Starting previously saved config in {config_dir}");
+            val2
+        } else {
+            // Set up a default network
+            println!(">> No network specified or loaded; using default 4-node network for legacy reasons.");
+            //config = loaded_config.ok_or(anyhow!(
+            //    "Cannot find config file in {config_dir}/network.yaml"
+            //))?;
+            Config::from_spec(&Composition::small_network(), base_port)?
+        };
+        // Whatever we did, save it!
+        config.save_to_config_dir(config_dir).await?;
+        Ok(Self {
+            config,
+            collector: None,
+            config_dir: config_dir.to_string(),
+            log_spec: log_spec.to_string(),
+            base_dir: base_dir.to_string(),
             keep_old_network,
             watch,
         })
@@ -92,29 +200,29 @@ impl Setup {
 
     /// For historical reasons, this is 201.
     pub fn get_json_rpc_port(&self, index: u16, proxied: bool) -> u16 {
-        index + 201 + self.base_port + if proxied { 1000 } else { 0 }
+        index + 201 + self.config.base_port + if proxied { 1000 } else { 0 }
     }
 
     pub fn get_scilla_port(&self, index: u16) -> u16 {
-        index + self.base_port + 500
+        index + self.config.base_port + 500
     }
 
     pub fn get_docs_port(&self) -> u16 {
-        self.base_port + 2004
+        self.config.base_port + 2004
     }
 
     /// this used to be + 2000, but the default (base_port=4000) causes chrome to fail to browse, because it considers
     /// 6000 unsafe. Sigh.
     pub fn get_otterscan_port(&self) -> u16 {
-        self.base_port + 2003
+        self.config.base_port + 2003
     }
 
     pub fn get_spout_port(&self) -> u16 {
-        self.base_port + 2001
+        self.config.base_port + 2001
     }
 
     pub fn get_mitmproxy_port(&self) -> u16 {
-        self.base_port + 2002
+        self.config.base_port + 2002
     }
 
     pub fn get_explorer_url(&self) -> String {
@@ -165,16 +273,22 @@ impl Setup {
     pub async fn generate_config(&self) -> Result<()> {
         // The genesis deposits.
         let mut genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)> = Vec::new();
-        for i in 0..self.how_many {
-            genesis_deposits.push((
-                self.secret_keys[i].node_public_key(),
-                self.secret_keys[i]
-                    .to_libp2p_keypair()
-                    .public()
-                    .to_peer_id(),
-                GENESIS_DEPOSIT.into(),
-                self.node_addresses[i],
-            ))
+        for (node, desc) in self.config.shape.nodes.iter() {
+            if desc.is_validator {
+                let data = self
+                    .config
+                    .node_data
+                    .get(node)
+                    .ok_or(anyhow!("no node data for {node}"))?;
+                // Better have a genesis deposit.
+                let secret_key = SecretKey::from_hex(&data.secret_key)?;
+                genesis_deposits.push((
+                    secret_key.node_public_key(),
+                    secret_key.to_libp2p_keypair().public().to_peer_id(),
+                    GENESIS_DEPOSIT.into(),
+                    data.address,
+                ))
+            }
         }
 
         let genesis_accounts: Vec<(Address, Amount)> = vec![
@@ -190,8 +304,13 @@ impl Setup {
         ];
 
         // Node vector
-        println!("Writing config files to {0}", &self.config_dir);
-        for i in 0..self.how_many {
+        println!(
+            "Writing {0} config files to {1}",
+            self.config.shape.nodes.len(),
+            &self.config_dir
+        );
+        for (node_index, _node_desc) in self.config.shape.nodes.iter() {
+            println!("🎱 Generating configuration for node {node_index}...");
             let mut cfg = zilliqa::cfg::Config {
                 otlp_collector_endpoint: Some("http://localhost:4317".to_string()),
                 bootstrap_address: None,
@@ -201,7 +320,7 @@ impl Setup {
             };
             // @todo should pass this in!
             let mut node_config = cfg::NodeConfig {
-                json_rpc_port: self.get_json_rpc_port(usize::try_into(i)?, false),
+                json_rpc_port: self.get_json_rpc_port(u64::try_into(*node_index)?, false),
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
                 load_checkpoint: None,
@@ -233,8 +352,12 @@ impl Setup {
                 state_rpc_limit: state_rpc_limit_default(),
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
             };
-            println!("Node {i} has RPC port {0}", node_config.json_rpc_port);
-            let data_dir_name = format!("{0}{1}", DATADIR_PREFIX, i);
+            println!(
+                "🧩  Node {node_index} has RPC port {0}",
+                node_config.json_rpc_port
+            );
+
+            let data_dir_name = format!("{0}{1}", DATADIR_PREFIX, node_index);
             let mut path = PathBuf::from(&self.config_dir);
             path.push(&data_dir_name);
             if utils::file_exists(&path).await? {
@@ -264,8 +387,9 @@ impl Setup {
                 .clone_from(&genesis_accounts);
             node_config.consensus.scilla_address = format!(
                 "http://localhost:{0}",
-                self.get_scilla_port(usize::try_into(i)?)
+                self.get_scilla_port(u64::try_into(*node_index)?)
             );
+            node_config.state_rpc_limit = usize::try_from(i64::MAX)?;
             node_config.consensus.scilla_lib_dir =
                 scilla::Runner::get_scilla_lib_dir(&self.base_dir);
 
@@ -275,8 +399,8 @@ impl Setup {
             // Now write the config.
             let mut path = PathBuf::from(&self.config_dir);
             path.push(&data_dir_name);
-            path.push("config.yaml");
-            println!("Writing node {0} .. ", i);
+            path.push(ZQ2_CONFIG_FILE_NAME);
+            println!("🪅 Writing configuration file for node {0} .. ", node_index);
             let config_str = toml::to_string(&cfg)?;
             fs::write(path, config_str).await?;
         }
@@ -295,42 +419,79 @@ impl Setup {
         }
     }
 
+    pub async fn preprocess_config_file(
+        config_file: &str,
+        checkpoint: Option<&zilliqa::cfg::Checkpoint>,
+    ) -> Result<()> {
+        // Load the config file, modify it and save it back.
+        let loaded_config_str = fs::read_to_string(&config_file)
+            .await
+            .context(format!("Cannot read from {config_file} - are you sure you are trying to start a node that actually exists?"))?;
+        let mut loaded_config: zilliqa::cfg::Config = toml::from_str(&loaded_config_str)?;
+        for node in loaded_config.nodes.iter_mut() {
+            if let Some(cp) = checkpoint {
+                println!(
+                    " 😇 Configuring Zilliqa to load a checkpoint from {}:{} .. ",
+                    cp.file,
+                    hex::encode(cp.hash.0)
+                );
+                node.load_checkpoint = Some(cp.clone());
+            } else {
+                node.load_checkpoint = None
+            }
+        }
+        let config_str = toml::to_string(&loaded_config)?;
+        fs::write(config_file, config_str).await?;
+        Ok(())
+    }
+
+    /// for_nodes restricts which nodes start.
     pub async fn run_component(
         &mut self,
         component: &Component,
         collector: &mut Collector,
+        for_nodes: &Composition,
+        checkpoints: &Option<HashMap<u64, zilliqa::cfg::Checkpoint>>,
     ) -> Result<()> {
         match component {
             Component::Scilla => {
                 // Generate a collector
                 self.generate_config().await?;
-                let config_files = (0..self.how_many)
-                    .map(|x| format!("{0}/{1}{2}/config.yaml", self.config_dir, DATADIR_PREFIX, x))
-                    .collect::<Vec<String>>();
-                for (idx, _) in config_files.iter().enumerate() {
+                for idx in for_nodes.nodes.keys() {
                     collector
                         .start_scilla(
                             &self.base_dir,
-                            idx,
-                            self.get_scilla_port(usize::try_into(idx)?),
+                            u64::try_into(*idx)?,
+                            self.get_scilla_port(u64::try_into(*idx)?),
                         )
                         .await?;
                 }
                 Ok(())
             }
             Component::ZQ2 => {
-                // Generate a collector
-                self.generate_config().await?;
-                let config_files = (0..self.how_many)
-                    .map(|x| format!("{0}/{1}{2}/config.yaml", self.config_dir, DATADIR_PREFIX, x))
-                    .collect::<Vec<String>>();
-                for (idx, _) in config_files.iter().enumerate() {
+                for idx in for_nodes.nodes.keys() {
+                    let config_file = format!(
+                        "{0}/{1}{2}/{ZQ2_CONFIG_FILE_NAME}",
+                        self.config_dir, DATADIR_PREFIX, idx
+                    );
+                    // Now, we need to rewrite the config file to take account of checkpoints...
+                    Self::preprocess_config_file(
+                        &config_file,
+                        checkpoints.as_ref().and_then(|x| x.get(idx)),
+                    )
+                    .await?;
+                    let node_data = self
+                        .config
+                        .node_data
+                        .get(idx)
+                        .ok_or(anyhow!("No node data for node {idx}"))?;
+                    let secret_key = SecretKey::from_hex(&node_data.secret_key)?;
                     collector
                         .start_zq2_node(
                             &self.base_dir,
-                            idx,
-                            &self.secret_keys[idx],
-                            &config_files[idx],
+                            u64::try_into(*idx)?,
+                            &secret_key,
+                            &config_file,
                             self.watch,
                         )
                         .await?;
@@ -410,7 +571,7 @@ pub fn generate_secret_key() -> Result<SecretKey> {
     SecretKey::new().map_err(|err| anyhow!(Box::new(err)))
 }
 
-pub fn generate_keys_from_index(index: usize) -> Result<(SecretKey, SigningKey)> {
+pub fn generate_keys_from_index(index: u64) -> Result<(SecretKey, SigningKey)> {
     assert_ne!(
         index, 0,
         "index must be non-zero when generating secret key"

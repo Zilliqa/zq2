@@ -1,11 +1,19 @@
-use std::{collections::HashSet, env, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    env, fmt,
+};
 
 use alloy::primitives::B256;
 use anyhow::{anyhow, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
-use z2lib::{chain, components::Component, plumbing, validators};
-use zilliqa::crypto::SecretKey;
+use z2lib::{
+    chain,
+    components::Component,
+    node_spec::{Composition, NodeSpec},
+    plumbing, utils, validators,
+};
+use zilliqa::crypto::{Hash, SecretKey};
 
 #[derive(Parser, Debug)]
 #[clap(about)]
@@ -42,6 +50,10 @@ enum Commands {
     /// Deposit stake amount to validators
     Deposit(DepositStruct),
     Kpi(KpiStruct),
+    /// Print out the ports in use (otherwise they scroll off the top too fast)
+    Ports(RunStruct),
+    /// Start some nodes - this starts all the instanced components (scilla and zq2)
+    Nodes(NodesStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -193,6 +205,9 @@ struct DocStruct {
 struct RunStruct {
     config_dir: String,
 
+    /// An optional node spec - use node numbers as comma-separated ranges - <network>/<nodes> - eg. 0-3/0-3
+    nodespec: Option<String>,
+
     #[clap(long)]
     #[clap(default_value = "warn")]
     log_level: LogLevel,
@@ -253,6 +268,9 @@ struct RunStruct {
 #[derive(Args, Debug)]
 struct OnlyStruct {
     config_dir: String,
+
+    /// An optional node spec - <nr_to_run_now>>/<total_nodes_to_provision>
+    nodespec: Option<String>,
 
     #[clap(long)]
     #[clap(default_value = "warn")]
@@ -328,6 +346,40 @@ struct DepositStruct {
     pop_signature: String,
 }
 
+#[derive(Args, Debug)]
+struct NodesStruct {
+    config_dir: String,
+
+    /// This is a composition (/-separated) string which tells us which nodes to start - eg '2,3/4/1,5'
+    nodes: String,
+
+    /// From a checkpoint? Syntax is file_name:hash
+    checkpoint: Option<String>,
+
+    #[clap(long)]
+    #[clap(default_value = "warn")]
+    log_level: LogLevel,
+
+    #[clap(long)]
+    debug_modules: Vec<String>,
+
+    #[clap(long)]
+    trace_modules: Vec<String>,
+
+    /// If --watch is specified, we will auto-reload Zilliqa 2 (but not other programs!) when the source changes.
+    #[clap(long, action=ArgAction::SetTrue)]
+    watch: bool,
+
+    #[clap(long="no-zq2", action= ArgAction::SetFalse)]
+    zq2: bool,
+    #[clap(long = "zq2", overrides_with = "zq2")]
+    _no_zq2: bool,
+    #[clap(long="no-scilla",action=ArgAction::SetFalse)]
+    scilla: bool,
+    #[clap(long = "scilla", overrides_with = "scilla")]
+    _no_scilla: bool,
+}
+
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
 enum LogLevel {
     Warn,
@@ -349,6 +401,24 @@ impl fmt::Display for LogLevel {
             }
         )
     }
+}
+
+fn nodespec_from_arg(arg: &Option<String>) -> Result<Option<NodeSpec>> {
+    if let Some(v) = arg {
+        if let Some(x) = NodeSpec::parse(&v)? {
+            Ok(Some(x))
+        } else {
+            Ok(None)
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+fn hash_from_hex(in_str: &str) -> Result<Hash> {
+    let bytes = hex::decode(in_str)?;
+    let result = Hash::try_from(bytes.as_slice())?;
+    Ok(result)
 }
 
 #[tokio::main]
@@ -398,18 +468,28 @@ async fn main() -> Result<()> {
             }
 
             let keep_old_network = !arg.restart_network;
-            plumbing::run_local_net(
-                &base_dir,
-                arg.base_port,
-                &arg.config_dir,
+            let spec = nodespec_from_arg(&arg.nodespec)?;
+            let log_spec = utils::compute_log_string(
                 &arg.log_level.to_string(),
                 &arg.debug_modules,
                 &arg.trace_modules,
+            )?;
+            plumbing::run_local_net(
+                &spec,
+                &base_dir,
+                arg.base_port,
+                &arg.config_dir,
+                &log_spec,
                 &to_run,
                 keep_old_network,
                 arg.watch,
+                &None,
             )
             .await?;
+            Ok(())
+        }
+        Commands::Ports(ref arg) => {
+            plumbing::print_ports(arg.base_port, &base_dir, &arg.config_dir).await?;
             Ok(())
         }
         Commands::Run(ref arg) => {
@@ -438,16 +518,22 @@ async fn main() -> Result<()> {
             }
 
             let keep_old_network = !arg.restart_network;
-            plumbing::run_local_net(
-                &base_dir,
-                arg.base_port,
-                &arg.config_dir,
+            let log_spec = utils::compute_log_string(
                 &arg.log_level.to_string(),
                 &arg.debug_modules,
                 &arg.trace_modules,
+            )?;
+            let spec = nodespec_from_arg(&arg.nodespec)?;
+            plumbing::run_local_net(
+                &spec,
+                &base_dir,
+                arg.base_port,
+                &arg.config_dir,
+                &log_spec,
                 &to_run,
                 keep_old_network,
                 arg.watch,
+                &None,
             )
             .await?;
             Ok(())
@@ -477,7 +563,6 @@ async fn main() -> Result<()> {
                 let eth_chain_id = arg
                     .eth_chain_id
                     .ok_or_else(|| anyhow::anyhow!("--eth-chain-id is a mandatory argument"))?;
-
                 plumbing::run_deployer_new(&network_name, eth_chain_id, &project_id, roles)
                     .await
                     .map_err(|err| {
@@ -606,6 +691,54 @@ async fn main() -> Result<()> {
                 &args.reward_address,
             )?;
             validators::deposit_stake(&stake).await
+        }
+        Commands::Nodes(ref args) => {
+            let spec = Composition::parse(&args.nodes)?;
+            let log_spec = utils::compute_log_string(
+                &args.log_level.to_string(),
+                &args.debug_modules,
+                &args.trace_modules,
+            )?;
+            let mut to_run: HashSet<Component> = HashSet::new();
+            if args.zq2 {
+                to_run.insert(Component::ZQ2);
+            }
+            if args.scilla {
+                to_run.insert(Component::Scilla);
+            }
+            let checkpoints = if let Some(v) = &args.checkpoint {
+                let components = v.split(':').collect::<Vec<&str>>();
+                if components.len() != 2 {
+                    return Err(anyhow!(
+                        "Checkpoint spec is not in form <file>:<hash> - {v}"
+                    ));
+                } else {
+                    let mut c = HashMap::new();
+                    for id in spec.nodes.keys() {
+                        c.insert(
+                            *id,
+                            zilliqa::cfg::Checkpoint {
+                                file: components[0].to_string(),
+                                hash: hash_from_hex(components[1])?,
+                            },
+                        );
+                    }
+                    Some(c)
+                }
+            } else {
+                None
+            };
+            plumbing::run_extra_nodes(
+                &spec,
+                &args.config_dir,
+                &base_dir,
+                &log_spec,
+                &to_run,
+                args.watch,
+                &checkpoints,
+            )
+            .await?;
+            Ok(())
         }
     }
 }

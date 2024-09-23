@@ -37,3 +37,17 @@ To use it:
 - Install / upgrade a `zq2` network: [`z2 deployer`](./deployer.md)
 - Convert `zq1` to `zq2` persistence: [`z2 converter` ](./converter.md)
 - Promote a node as validator via `$ZIL` deposit: [`z2 deposit` ](./deposit.md)
+
+## Network specs
+
+Network specs are rather complex - sorry - they're intended as a concise description of a network's shape.
+
+You write a network spec as `[potential]:[actual]` . `[potential]` is a configuration of what nodes should be configured, and `[actual]` of those that should be started now.
+
+Each configuration is a series of fields separated by `/`. Currently, there is only one field, `validators`. An empty configuration means a series of 0s.
+
+Each field is a comma-separated list of ranges - eg. `2` or `1,4-5`.
+
+Thus `1,2,3/` means "Create a network of three validators - nodes 1,2,3 and start none of them".
+
+Ranges are inclusive, so `2-3` means "start validators 2 and 3" - beware of this because internally we convert to the standard Rust half-open ranges.
