@@ -34,6 +34,9 @@ use crate::{
 type ChainID = U256;
 
 #[derive(Debug)]
+pub struct StateInfo {}
+
+#[derive(Debug)]
 pub struct ValidatorNode {
     shard_id: u64,
     /// The following two message streams are used for networked messages.
@@ -44,6 +47,7 @@ pub struct ValidatorNode {
     config: Config,
     signer: PrivateKeySigner,
     consensus: Arc<Mutex<Consensus>>,
+    state_info: Arc<Mutex<StateInfo>>,
 }
 
 impl ValidatorNode {
@@ -53,6 +57,7 @@ impl ValidatorNode {
         shard_id: u64,
         bridge_outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
         consensus: Arc<Mutex<Consensus>>,
+        state_info: Arc<Mutex<StateInfo>>,
     ) -> Result<Self> {
         let (bridge_inbound_message_sender, bridge_inbound_message_receiver) =
             mpsc::unbounded_channel::<ExternalMessage>();
@@ -67,6 +72,7 @@ impl ValidatorNode {
             config: config.clone(),
             signer: signer.clone(),
             consensus,
+            state_info,
         })
     }
 
@@ -96,6 +102,7 @@ impl ValidatorNode {
                 chain_client.clone(),
                 bridge_message_sender.clone(),
                 self.consensus.clone(),
+                self.state_info.clone(),
             )
             .await?;
 
@@ -111,6 +118,7 @@ impl ValidatorNode {
             });
         }
 
+        let bridge_outbound_message_sender = self.bridge_outbound_message_sender.clone();
         loop {
             select! {
                Some(message) = self.bridge_inbound_message_receiver.next() => {
@@ -141,7 +149,7 @@ impl ValidatorNode {
                         },
                         OutboundBridgeMessage::Relay(relay) => {
                             // Forward message to broadcast
-                            self.bridge_outbound_message_sender.send((None, self.shard_id ,ExternalMessage::BridgeEcho(relay)))?;
+                            bridge_outbound_message_sender.send((None, self.shard_id ,ExternalMessage::BridgeEcho(relay)))?;
                         },
                     }
                 }
