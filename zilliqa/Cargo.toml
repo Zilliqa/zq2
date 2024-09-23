@@ -20,6 +20,8 @@ test_contract_bytecode = []
 fake_response_channel = []
 # Enable fake implementation of `std::time::SystemTime` for deterministic tests.
 fake_time = []
+# A debug API for performing special effects.
+debug_api = []
 
 [build-dependencies]
 anyhow = { version = "1.0.89", features = ["backtrace"] }
