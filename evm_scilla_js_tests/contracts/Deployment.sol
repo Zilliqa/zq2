@@ -3,68 +3,71 @@
 pragma solidity >=0.7.0 <0.9.0;
 
 contract ZeroParamConstructor {
-    uint256 public number;
+  uint256 public number;
 
-    constructor() {
-        number = 123;
-    }
+  constructor() {
+    number = 123;
+  }
 
-    function getNumber() private view returns (uint256) {
-        return number;
-    }
+  function getNumber() private view returns (uint256) {
+    return number;
+  }
 }
 
 contract WithStringConstructor {
-    string public name;
+  string public name;
 
-    constructor(string memory _name) {
-        name = _name;
-    }
+  constructor(string memory _name) {
+    name = _name;
+  }
 }
 
 contract WithUintConstructor {
-    uint public number;
+  uint public number;
 
-    constructor(uint _number) {
-        number = _number;
-    }
+  constructor(uint _number) {
+    number = _number;
+  }
 }
 
 contract WithAddressConstructor {
-    address public someAddress;
+  address public someAddress;
 
-    constructor(address _addr) {
-        someAddress = _addr;
-    }
+  constructor(address _addr) {
+    someAddress = _addr;
+  }
 }
 
 contract WithEnumConstructor {
-    enum MyEnum { Zero, One, Two }
+  enum MyEnum {
+    Zero,
+    One,
+    Two
+  }
 
-    MyEnum public someEnum;
+  MyEnum public someEnum;
 
-    constructor(MyEnum _enum) {
-        someEnum = _enum;
-    }
+  constructor(MyEnum _enum) {
+    someEnum = _enum;
+  }
 }
 
-
 contract MultiParamConstructor {
-    string public name;
-    uint public number;
+  string public name;
+  uint public number;
 
-    constructor(string memory _name, uint _number) {
-        name = _name;
-        number = _number;
-    }
+  constructor(string memory _name, uint _number) {
+    name = _name;
+    number = _number;
+  }
 }
 
 contract WithPayableConstructor {
-    address public owner;
-    uint public balance;
+  address public owner;
+  uint public balance;
 
-    constructor() payable{
-        balance = msg.value;
-        owner = msg.sender;
-    }
+  constructor() payable {
+    balance = msg.value;
+    owner = msg.sender;
+  }
 }
