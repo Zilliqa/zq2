@@ -1,5 +1,4 @@
 use std::{
-    borrow::BorrowMut,
     collections::HashSet,
     fmt::Debug,
     str::FromStr,
@@ -54,6 +53,7 @@ use crate::{
 };
 
 type UCCBValidatorNode = crate::uccb::validator_node::ValidatorNode;
+type UCCBStateInfo = crate::uccb::validator_node::StateInfo;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct RequestId(u64);
@@ -156,7 +156,7 @@ pub struct Node {
     pub chain_id: ChainId,
     // UCCB
     validator_node: Option<UCCBValidatorNode>,
-    uccb_state_info: Arc<Mutex<validator_node::StateInfo>>,
+    uccb_state_info: Arc<Mutex<UCCBStateInfo>>,
     bridge_inbound_message_sender: Option<UnboundedSender<ExternalMessage>>,
 }
 
@@ -205,7 +205,7 @@ impl Node {
             db.clone(),
         )?));
 
-        let uccb_state_info = Arc::new(Mutex::new(validator_node::StateInfo {}));
+        let uccb_state_info = Arc::new(Mutex::new(validator_node::StateInfo::new()));
         let (bridge_inbound_message_sender, validator_node) = if let Some(uccb_config) = uccb_config
         {
             let signer = PrivateKeySigner::from_str(secret_key.to_hex().as_str())?;
