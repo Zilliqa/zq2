@@ -147,7 +147,7 @@ async fn create_shard(
         network.seed,
         None,
         network.scilla_address.clone(),
-        network.scilla_lib_dir.clone(),
+        network.scilla_stdlib_dir.clone(),
         false,
     );
     let shard_wallet = shard_network.genesis_wallet().await;
