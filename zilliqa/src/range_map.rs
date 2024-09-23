@@ -6,8 +6,14 @@ use std::{fmt, fmt::Display};
 use tracing::*;
 
 /// A block map - a reasonably efficient, easily implementable representation of a collection of ranges.
+/// Feel free to make this generic - we only ever need the u64 variant so I didn't bother.
+/// I did look at crates to implement this, but they were all either overcomplicated, unmaintained, or both;
+/// if you can find a good one, please do!
+/// (but watch out for the semantics of int_diff() which are quite specialised).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct RangeMap {
+    /// ranges in this rangemap. These are held as non-overlapping non-empty ranges sorted in ascending order of start
+    /// (and thus ascending order of end).
     pub ranges: Vec<Range<u64>>,
 }
 
@@ -29,6 +35,8 @@ impl Display for RangeMap {
     }
 }
 
+/// Merge two ranges, returning the combined range if you can and None if you can't
+/// (which would mean that the ranges are disjoint).
 fn merge_ranges(r1: &Range<u64>, r2: &Range<u64>) -> Option<Range<u64>> {
     // < and > because the ranges are half-open.
     if r1.end < r2.start || r1.start > r2.end {
@@ -43,6 +51,8 @@ fn merge_ranges(r1: &Range<u64>, r2: &Range<u64>) -> Option<Range<u64>> {
     }
 }
 
+/// Iterates over all the values in a range_map() by stepping through
+/// each range and value in turn.
 pub struct ItemIterator<'a> {
     map: &'a RangeMap,
     index: usize,
@@ -67,6 +77,8 @@ impl<'a> ItemIterator<'a> {
 impl<'a> Iterator for ItemIterator<'a> {
     type Item = u64;
 
+    /// Just count up through the ranges and values one by one until
+    /// you get to the end.
     fn next(&mut self) -> Option<u64> {
         if self.index < self.map.ranges.len() {
             let range = &self.map.ranges[self.index];
@@ -89,11 +101,12 @@ impl<'a> Iterator for ItemIterator<'a> {
 }
 
 impl RangeMap {
-    /// A new, empty blockmap.
+    /// Create a new, empty RangeMap
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Iterate over all the values in this RangeMap
     pub fn iter_values(&self) -> ItemIterator {
         ItemIterator::new(self)
     }
@@ -108,18 +121,20 @@ impl RangeMap {
         }
     }
 
-    /// From a range
+    /// Create a RangeMap from a (half-open) Range.
     pub fn from_range(range: &Range<u64>) -> Self {
         Self {
             ranges: vec![range.clone()],
         }
     }
 
+    /// Does this RangeMap contain any items?
     pub fn is_empty(&self) -> bool {
         self.ranges.is_empty()
     }
 
-    /// Mostly for testing.
+    /// Mostly for testing - convert each Range to a pair of u64s (half-open) so that
+    /// we can easily print it.
     pub fn to_tuple_vec(&self) -> Vec<(u64, u64)> {
         let mut result = Vec::new();
         for range in &self.ranges {
@@ -140,19 +155,11 @@ impl RangeMap {
         result
     }
 
-    /// Add a tuple
+    /// Add a range from a (closed!) tuple.
     pub fn with_closed_tuple(&mut self, tuple: (u64, u64)) -> &mut Self {
         self.with_range(&Range {
             start: tuple.0,
             end: tuple.1 + 1,
-        })
-    }
-
-    /// Add a single number
-    pub fn with_number(&mut self, val: u64) -> &mut Self {
-        self.with_range(&Range {
-            start: val,
-            end: val + 1,
         })
     }
 
@@ -164,7 +171,7 @@ impl RangeMap {
         })
     }
 
-    /// Add a range
+    /// Add a range to this RangeMap, returning a reference to self.
     pub fn with_range(&mut self, range: &Range<u64>) -> &mut Self {
         if !range.is_empty() {
             let mut inserted = false;
@@ -183,6 +190,9 @@ impl RangeMap {
         self
     }
 
+    /// Canonicalise this RangeMap - go through the RangeMap merging
+    /// adjacent ranges.
+    /// Note: this function doesn't remove empty ranges.
     fn canonicalise(&mut self) -> &mut Self {
         // Counts through the source list.
         let mut src = 1;
@@ -204,6 +214,8 @@ impl RangeMap {
         self
     }
 
+    /// Non-destructively merge this range map with `ranges`, and
+    /// return the result.
     pub fn with_range_map(&mut self, ranges: &Self) -> &mut Self {
         for r in ranges.ranges.iter() {
             self.with_range(r);
@@ -211,11 +223,14 @@ impl RangeMap {
         self
     }
 
-    // Return the max value in this range map
+    /// Return the max value in this range map
     pub fn max(&self) -> Option<u64> {
         self.ranges.last().map(|x| x.end - 1)
     }
 
+    /// Remove any values in this RangeMap greater than limit
+    /// (this is used to delete elements of "not here" ranges that we think
+    /// might actually exist)
     pub fn with_closed_upper_limit(&mut self, limit: u64) -> &mut Self {
         let mut new_ranges: Vec<Range<u64>> = Vec::new();
         for r in self.ranges.iter() {
@@ -236,16 +251,24 @@ impl RangeMap {
         self
     }
 
+    /// Make an unlimited diff_inter() call - equivalent to diff_inter_limited(to_remove, None).
     pub fn diff_inter(&self, to_remove: &Self) -> (Self, Self) {
         self.diff_inter_limited(to_remove, None)
     }
 
     /// Set difference
-    /// Returns (intersection, diff) where
-    /// intersection is the set of things in both self and to_remove
-    /// diff is the set of things in self with the set of things in to_remove removed.
-    /// We will never put more than limit in intersection - the rest will be returned in diff. This is used to limit the
-    /// number of requests to a node. None == unlimited.
+    ///
+    /// Returns `(intersection, diff)` where:
+    ///  * `intersection` is the set of things in both `self` and `to_remove`.
+    ///  * `diff` is the set of things in self with the set of things in to_remove
+    /// removed.
+    ///
+    /// We will never put more than `limit` ranges in intersection -
+    /// the rest will be returned in diff.
+    ///
+    /// This is used to limit the number of requests to a node. None
+    /// == unlimited.  We also don't guarantee to find the "best"
+    /// `limit` ranges - just no more than `limit`.
     pub fn diff_inter_limited(&self, to_remove: &Self, limit: Option<usize>) -> (Self, Self) {
         //  We proceed in lock-step between the sets.
         let mut intersection = RangeMap::new();
@@ -362,7 +385,7 @@ mod tests {
     #[test]
     fn canonical() {
         let mut map = RangeMap::new();
-        map.with_number(1).with_number(2).with_number(3);
+        map.with_elem(1).with_elem(2).with_elem(3);
         assert_eq!(map.to_tuple_vec(), vec![(1, 4)]);
     }
 

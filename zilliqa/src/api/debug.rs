@@ -22,7 +22,6 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
         [
             ("zdbg_echo", echo),
             ("zdbg_blockstore", blocks),
-            ("zdbg_forget", forget),
             ("zdbg_request", request),
             ("zdbg_checkpoint", checkpoint)
         ]
@@ -64,19 +63,6 @@ fn blocks(
         node.consensus.block_store.availability()?,
         node.consensus.block_store.get_buffered()?,
     ))
-}
-
-fn forget(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    let mut params = params.sequence();
-    let from: u64 = params.next()?;
-    let to: u64 = params.next()?;
-    let mut node = node.lock().unwrap();
-    trace!("Forget blocks from {from} to {to}");
-    node.consensus.block_store.forget_block_range(Range {
-        start: from,
-        end: to + 1,
-    })?;
-    Ok("done".to_string())
 }
 
 fn request(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
