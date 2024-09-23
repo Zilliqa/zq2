@@ -43,6 +43,7 @@
     "jest-circus": "^29.7.0",
     "lint-staged": "^13.3.0",
     "prettier": "^2.8.8",
+    "prettier-plugin-solidity": "^1.4.1",
     "semver": "^7.5.4",
     "solidity-coverage": "^0.8.5",
     "ts-node": "^10.9.1",

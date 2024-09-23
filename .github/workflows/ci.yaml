@@ -17,6 +17,23 @@ env:
   ZQ_TEST_SAMPLES: 100
 
 jobs:
+  format:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "16"
+      - run: cd evm_scilla_js_tests
+      - run: npm install --save-dev prettier prettier-plugin-solidity
+      - run: npx prettier --write --plugin=prettier-plugin-solidity '../**/*.sol'
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: Apply formatting changes to solidity files
+          branch: ${{ github.head_ref }}
   check:
     runs-on: [self-hosted, gcp]
     steps:
