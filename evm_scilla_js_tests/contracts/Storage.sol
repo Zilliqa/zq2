@@ -7,31 +7,30 @@ pragma solidity >=0.7.0 <0.9.0;
  * @dev Store & retrieve value in a variable
  */
 contract Storage {
+  uint256 number = 1024;
+  mapping(address => uint256) balances;
 
-    uint256 number = 1024;
-    mapping(address => uint256) balances;
+  constructor() {
+    balances[address(0x10)] = 2048;
+  }
 
-    constructor() {
-        balances[address(0x10)] = 2048;
-    }
+  /**
+   * @dev Store value in variable
+   * @param num value to store
+   */
+  function store(uint256 num) public {
+    number = num;
+  }
 
-    /**
-     * @dev Store value in variable
-     * @param num value to store
-     */
-    function store(uint256 num) public {
-        number = num;
-    }
+  /**
+   * @dev Return value
+   * @return value of 'number'
+   */
+  function retrieve() public view returns (uint256) {
+    return number;
+  }
 
-    /**
-     * @dev Return value 
-     * @return value of 'number'
-     */
-    function retrieve() public view returns (uint256){
-        return number;
-    }
-
-   function wtf() public {
-        selfdestruct(payable(address(0)));
-    }
+  function wtf() public {
+    selfdestruct(payable(address(0)));
+  }
 }

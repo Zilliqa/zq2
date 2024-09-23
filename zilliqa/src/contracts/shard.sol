@@ -6,11 +6,16 @@ contract Shard {
 
     uint public id;
     uint public parentShard;
-    bytes32 genesis; 
+    bytes32 genesis;
 
     uint16 public consensusTimeoutMs;
 
-    constructor(uint _id, uint parentId, uint16 consensusTimeout, bytes32 genesisHash) {
+    constructor(
+        uint _id,
+        uint parentId,
+        uint16 consensusTimeout,
+        bytes32 genesisHash
+    ) {
         id = _id;
         parentShard = parentId;
         consensusTimeoutMs = consensusTimeout;
@@ -27,4 +32,3 @@ contract Shard {
         return true;
     }
 }
-

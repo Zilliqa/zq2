@@ -7,7 +7,13 @@ import "../../../src/contracts/shard_registry.sol";
 contract LinkableShard is Shard {
     ShardRegistry registry;
 
-    constructor(uint _id, uint parentId, uint16 consensusTimeout, bytes32 genesisHash, address shardRegistry) Shard(_id, parentId, consensusTimeout, genesisHash) {
+    constructor(
+        uint _id,
+        uint parentId,
+        uint16 consensusTimeout,
+        bytes32 genesisHash,
+        address shardRegistry
+    ) Shard(_id, parentId, consensusTimeout, genesisHash) {
         registry = ShardRegistry(shardRegistry);
     }
 
@@ -15,4 +21,3 @@ contract LinkableShard is Shard {
         registry.addLink(id, targetId);
     }
 }
-
