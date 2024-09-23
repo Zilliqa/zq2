@@ -140,7 +140,7 @@ impl Setup {
         base_dir: &str,
         watch: bool,
     ) -> Result<Self> {
-        let config = Config::from_config_dir(&config_dir)
+        let config = Config::from_config_dir(config_dir)
             .await?
             .ok_or(anyhow!("Couldn't load configuration from {config_dir}"))?;
         Ok(Self {
@@ -165,7 +165,7 @@ impl Setup {
     ) -> Result<Self> {
         // If we had a config file, load it. Otherwise create a new one and save it so that
         // we can find it later.
-        let loaded_config = Config::from_config_dir(&config_dir).await?;
+        let loaded_config = Config::from_config_dir(config_dir).await?;
         let config = if let Some(val) = &network {
             // One was specified.
             if let Some(val2) = loaded_config {

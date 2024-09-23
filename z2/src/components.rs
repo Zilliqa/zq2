@@ -47,10 +47,7 @@ impl Component {
     }
 
     pub fn is_instanced(&self) -> bool {
-        match self {
-            Component::ZQ2 | Component::Scilla => true,
-            _ => false,
-        }
+        matches!(self, Component::ZQ2 | Component::Scilla)
     }
 }
 

@@ -405,7 +405,7 @@ impl fmt::Display for LogLevel {
 
 fn nodespec_from_arg(arg: &Option<String>) -> Result<Option<NodeSpec>> {
     if let Some(v) = arg {
-        if let Some(x) = NodeSpec::parse(&v)? {
+        if let Some(x) = NodeSpec::parse(v)? {
             Ok(Some(x))
         } else {
             Ok(None)

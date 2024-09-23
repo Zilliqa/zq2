@@ -260,8 +260,7 @@ impl RangeMap {
     ///
     /// Returns `(intersection, diff)` where:
     ///  * `intersection` is the set of things in both `self` and `to_remove`.
-    ///  * `diff` is the set of things in self with the set of things in to_remove
-    /// removed.
+    ///  * `diff` is the set of things in self with the set of things in `to-remove` removed.
     ///
     /// We will never put more than `limit` ranges in intersection -
     /// the rest will be returned in diff.
