@@ -55,7 +55,7 @@ rand = "0.8.5"
 rand_core = "0.6.4"
 regex = "1.10.6"
 reqwest = {version = "0.12.3", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
-revm = {version = "14.0.1", features = ["optional_balance_check"]}
+revm = {version = "14.0.2", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
 serde = {version = "1.0.210", features = ["derive"]}
 serde_json = "1.0.128"
