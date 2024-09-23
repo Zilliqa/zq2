@@ -1,3 +1,7 @@
+pub mod config;
+pub mod instance;
+pub mod node;
+
 use std::{fmt, str::FromStr};
 
 use anyhow::{anyhow, Error, Result};

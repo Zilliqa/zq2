@@ -4,7 +4,7 @@ use alloy::primitives::B256;
 use anyhow::{anyhow, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
-use z2lib::{chain, components::Component, deployer, plumbing, validators};
+use z2lib::{chain, components::Component, plumbing, validators};
 use zilliqa::crypto::SecretKey;
 
 #[derive(Parser, Debug)]
@@ -88,13 +88,16 @@ pub struct DeployerNewArgs {
     project_id: Option<String>,
     #[clap(long, value_enum, value_delimiter = ',')]
     /// Virtual Machine roles
-    roles: Option<Vec<deployer::NodeRole>>,
+    roles: Option<Vec<chain::node::NodeRole>>,
 }
 
 #[derive(Args, Debug)]
 pub struct DeployerUpgradeArgs {
     /// The network deployer config file
     config_file: Option<String>,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
 }
 
 #[derive(Args, Debug)]
@@ -488,7 +491,7 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_install(&config_file)
+                plumbing::run_deployer_install(&config_file, arg.select)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer install command: {}", err)
@@ -501,7 +504,7 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_upgrade(&config_file)
+                plumbing::run_deployer_upgrade(&config_file, arg.select)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
@@ -514,7 +517,7 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_get_deposit_commands(&config_file)
+                plumbing::run_deployer_get_deposit_commands(&config_file, arg.select)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!(
@@ -530,7 +533,7 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_deposit(&config_file)
+                plumbing::run_deployer_deposit(&config_file, arg.select)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer deposit command: {}", err)

@@ -1,21 +1,237 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+    str::FromStr,
+};
 
 use anyhow::{anyhow, Ok, Result};
+use clap::ValueEnum;
+use colored::Colorize;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::NamedTempFile;
 use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
 
-use crate::{
-    address::EthereumAddress,
-    chain::Chain,
-    deployer::{docker_image, Machine, NodeRole},
-};
+use crate::{address::EthereumAddress, chain::Chain};
 
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum Components {
+    #[serde(rename = "zq2")]
+    ZQ2,
+    #[serde(rename = "otterscan")]
+    Otterscan,
+    #[serde(rename = "spout")]
+    Spout,
+}
+
+impl FromStr for Components {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "zq2" => Ok(Components::ZQ2),
+            "otterscan" => Ok(Components::Otterscan),
+            "spout" => Ok(Components::Spout),
+            _ => Err(anyhow!("Component not supported")),
+        }
+    }
+}
+
+pub fn docker_image(component: &str, version: &str) -> Result<String> {
+    // Define regular expressions for semantic version and 8-character commit ID
+    let semver_re = Regex::new(r"^v\d+\.\d+\.\d+(-[a-zA-Z0-9]+)?$").unwrap();
+    let commit_id_re = Regex::new(r"^[a-f0-9]{8}$").unwrap();
+    match component.to_string().parse::<Components>()? {
+        Components::ZQ2 => {
+            if semver_re.is_match(version) {
+                Ok(format!(
+                    "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:{}",
+                    version
+                ))
+            } else if commit_id_re.is_match(version) {
+                Ok(format!(
+                    "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private/zq2:{}",
+                    version
+                ))
+            } else {
+                Err(anyhow!("Invalid version for ZQ2"))
+            }
+        }
+        Components::Spout => Ok(format!(
+            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:{}",
+            version
+        )),
+        Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeRole {
+    /// Virtual machine bootstrap
+    Bootstrap,
+    /// Virtual machine validator
+    Validator,
+    /// Virtual machine api
+    Api,
+    /// Virtual machine apps
+    Apps,
+    /// Virtual machine checkpoint
+    Checkpoint,
+    /// Virtual machine sentry
+    Sentry,
+}
+
+impl FromStr for NodeRole {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s.to_lowercase().as_str() {
+            "bootstrap" => Ok(NodeRole::Bootstrap),
+            "api" => Ok(NodeRole::Api),
+            "apps" => Ok(NodeRole::Apps),
+            "validator" => Ok(NodeRole::Validator),
+            "checkpoint" => Ok(NodeRole::Checkpoint),
+            "sentry" => Ok(NodeRole::Sentry),
+            _ => Err(anyhow!("Node role not supported")),
+        }
+    }
+}
+
+impl fmt::Display for NodeRole {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            NodeRole::Bootstrap => write!(f, "bootstrap"),
+            NodeRole::Api => write!(f, "api"),
+            NodeRole::Apps => write!(f, "apps"),
+            NodeRole::Validator => write!(f, "validator"),
+            NodeRole::Checkpoint => write!(f, "checkpoint"),
+            NodeRole::Sentry => write!(f, "sentry"),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Machine {
+    pub project_id: String,
+    pub zone: String,
+    pub name: String,
+    pub external_address: String,
+    pub labels: BTreeMap<String, String>,
+}
+
+impl Machine {
+    pub async fn add_labels(&self, labels: BTreeMap<String, String>) -> Result<()> {
+        let labels = &labels
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join(",");
+        let args = [
+            "--project",
+            &self.project_id,
+            "compute",
+            "instances",
+            "add-labels",
+            &self.name,
+            &format!("--labels={}", labels.to_lowercase()),
+            "--zone",
+            &self.zone,
+        ];
+
+        println!("gcloud {}", args.join(" "));
+
+        zqutils::commands::CommandBuilder::new()
+            .silent()
+            .cmd("gcloud", &args)
+            .run()
+            .await?;
+        Ok(())
+    }
+
+    pub async fn copy_to(&self, file_from: &[&str], file_to: &str) -> Result<()> {
+        let tgt_spec = format!("{0}:{file_to}", &self.name);
+        let args = [
+            &[
+                "compute",
+                "scp",
+                "--project",
+                &self.project_id,
+                "--zone",
+                &self.zone,
+                "--tunnel-through-iap",
+                "--strict-host-key-checking=no",
+                "--scp-flag=-r",
+            ],
+            file_from,
+            &[&tgt_spec],
+        ]
+        .concat();
+
+        zqutils::commands::CommandBuilder::new()
+            .silent()
+            .cmd("gcloud", &args)
+            .run()
+            .await?;
+        Ok(())
+    }
+
+    pub async fn run(&self, cmd: &str) -> Result<zqutils::commands::CommandOutput> {
+        println!("Running command '{}' in {}", cmd, self.name);
+        let output: zqutils::commands::CommandOutput = zqutils::commands::CommandBuilder::new()
+            .silent()
+            .cmd(
+                "gcloud",
+                &[
+                    "compute",
+                    "ssh",
+                    "--project",
+                    &self.project_id,
+                    "--zone",
+                    &self.zone,
+                    &self.name,
+                    "--tunnel-through-iap",
+                    "--strict-host-key-checking=no",
+                    "--ssh-flag=",
+                    "--command",
+                    cmd,
+                ],
+            )
+            .run_for_output()
+            .await?;
+        Ok(output)
+    }
+
+    pub async fn get_local_block_number(&self) -> Result<u64> {
+        let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
+        let output = self.run(inner_command).await?;
+        if !output.success {
+            return Err(anyhow!(
+                "getting local block number failed: {:?}",
+                output.stderr
+            ));
+        }
+
+        let response: Value = serde_json::from_slice(&output.stdout)?;
+        let block_number = response
+            .get("result")
+            .ok_or_else(|| anyhow!("response has no result"))?
+            .as_str()
+            .ok_or_else(|| anyhow!("result is not a string"))?
+            .strip_prefix("0x")
+            .ok_or_else(|| anyhow!("result does not start with 0x"))?;
+        let block_number = u64::from_str_radix(block_number, 16)?;
+
+        Ok(block_number)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct ChainNode {
     chain_name: String,
     eth_chain_id: u64,
-    role: NodeRole,
+    pub role: NodeRole,
     machine: Machine,
     versions: HashMap<String, String>,
     bootstrap_public_ip: String,
@@ -57,7 +273,8 @@ impl ChainNode {
     }
 
     pub async fn install(&self) -> Result<()> {
-        println!("Installing {} instance {}", self.role, self.machine.name,);
+        let message = format!("Installing {} instance {}", self.role, self.machine.name);
+        println!("{}", message.bold().yellow());
 
         self.tag_machine().await?;
         self.clean_previous_install().await?;
@@ -68,7 +285,8 @@ impl ChainNode {
     }
 
     pub async fn upgrade(&self) -> Result<()> {
-        println!("Upgrading {} instance {}", self.role, self.machine.name,);
+        let message = format!("Upgrading {} instance {}", self.role, self.machine.name);
+        println!("{}", message.bold().yellow());
 
         self.tag_machine().await?;
         self.clean_previous_install().await?;
@@ -258,7 +476,7 @@ impl ChainNode {
     }
 
     async fn create_checkpoint_cron_job(&self, filename: &str) -> Result<String> {
-        let spec_config = include_str!("../resources/checkpoints.tera.sh");
+        let spec_config = include_str!("../../resources/checkpoints.tera.sh");
 
         let eth_chain_id = self.eth_chain_id.to_string();
 
@@ -278,7 +496,7 @@ impl ChainNode {
     }
 
     async fn create_config_toml(&self, filename: &str) -> Result<String> {
-        let spec_config = include_str!("../resources/config.tera.toml");
+        let spec_config = include_str!("../../resources/config.tera.toml");
 
         let genesis_wallet = EthereumAddress::from_private_key(&self.genesis_wallet_private_key)?;
         let bootstrap_node = EthereumAddress::from_private_key(&self.bootstrap_private_key)?;
@@ -311,7 +529,7 @@ impl ChainNode {
         // deployment and the configuration of the apps and validator so, we can move it to a proper
         // tera template and remove this.
 
-        let provisioning_script = include_str!("../resources/node_provision.tera.py");
+        let provisioning_script = include_str!("../../resources/node_provision.tera.py");
         let role_name = &self.role.to_string();
 
         let z2_image = &docker_image(
@@ -349,144 +567,7 @@ impl ChainNode {
     }
 }
 
-pub async fn get_nodes_by_role(
-    chain_name: &str,
-    eth_chain_id: u64,
-    project_id: &str,
-    node_role: NodeRole,
-    versions: HashMap<String, String>,
-) -> Result<Vec<ChainNode>> {
-    println!("Create the instance list for {node_role}");
-
-    let role_instances = get_network_machines(chain_name, project_id).await?;
-
-    let bootstrap_instances: Vec<Machine> = role_instances
-        .clone()
-        .into_iter()
-        .filter(|m| m.labels.get("role") == Some(&"bootstrap".to_string()))
-        .collect();
-
-    if bootstrap_instances.is_empty() {
-        return Err(anyhow!("No bootstrap instances found"));
-    }
-
-    let role_instances: Vec<Machine> = role_instances
-        .into_iter()
-        .filter(|m| m.labels.get("role") == Some(&node_role.to_string()))
-        .collect();
-
-    if role_instances.is_empty() {
-        println!("No {node_role} instances found");
-    }
-
-    let bootstrap_private_keys =
-        retrieve_secret_by_role(chain_name, project_id, "bootstrap").await?;
-    let bootstrap_private_key = bootstrap_private_keys.first();
-
-    let bootstrap_private_key = if let Some(private_key) = bootstrap_private_key {
-        private_key.to_owned()
-    } else {
-        return Err(anyhow!(
-            "Found multiple secrets with role bootstrap in the network {}",
-            chain_name
-        ));
-    };
-
-    let genesis_wallet_private_keys =
-        retrieve_secret_by_role(chain_name, project_id, "genesis").await?;
-    let genesis_wallet_private_key = genesis_wallet_private_keys.first();
-
-    let genesis_wallet_private_key = if let Some(private_key) = genesis_wallet_private_key {
-        private_key.to_owned()
-    } else {
-        return Err(anyhow!(
-            "Found multiple secrets with role genesis in the network {}",
-            chain_name
-        ));
-    };
-
-    Ok(role_instances
-        .into_iter()
-        .map(|m| {
-            ChainNode::new(
-                chain_name.to_owned(),
-                eth_chain_id,
-                node_role.clone(),
-                m,
-                versions.clone(),
-                bootstrap_instances[0].external_address.clone(),
-                bootstrap_private_key.to_owned(),
-                genesis_wallet_private_key.to_owned(),
-            )
-        })
-        .collect::<Vec<_>>())
-}
-
-pub async fn get_network_machines(chain_name: &str, project_id: &str) -> Result<Vec<Machine>> {
-    println!("Create the instance list for {chain_name}");
-
-    let output = zqutils::commands::CommandBuilder::new()
-        .silent()
-        .cmd(
-            "gcloud",
-            &[
-                "--project",
-                project_id,
-                "compute",
-                "instances",
-                "list",
-                "--format=json",
-                "--filter",
-                &format!("labels.zq2-network={chain_name}"),
-            ],
-        )
-        .run()
-        .await?;
-
-    if !output.success {
-        return Err(anyhow!("Listing {chain_name} instances failed"));
-    }
-
-    let j_output: Value = serde_json::from_slice(&output.stdout)?;
-
-    let instances = j_output
-        .as_array()
-        .ok_or_else(|| anyhow!("instances is not an array"))?;
-
-    let machines = instances
-        .iter()
-        .map(|i| {
-            let name = i
-                .get("name")
-                .and_then(|n| n.as_str())
-                .ok_or_else(|| anyhow!("name is missing or not a string"))?;
-            let zone = i
-                .get("zone")
-                .and_then(|z| z.as_str())
-                .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
-            let labels: BTreeMap<String, String> = i
-                .get("labels")
-                .and_then(|z| serde_json::from_value(z.clone()).unwrap_or_default())
-                .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
-            let external_address = i["networkInterfaces"]
-                .get(0)
-                .and_then(|ni| ni["accessConfigs"].get(0))
-                .and_then(|ac| ac["natIP"].as_str())
-                .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
-            Ok(Machine {
-                project_id: project_id.to_string(),
-                zone: zone.to_string(),
-                name: name.to_string(),
-                labels,
-                external_address: external_address.to_string(),
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    Ok(machines)
-}
-
-async fn retrieve_secret_by_role(
+pub async fn retrieve_secret_by_role(
     chain_name: &str,
     project_id: &str,
     role_name: &str,

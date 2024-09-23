@@ -1,278 +1,18 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt,
-    str::FromStr,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use clap::ValueEnum;
 use colored::Colorize;
-use regex::Regex;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio::{fs, sync::Semaphore, task};
 
 use crate::{
     address::EthereumAddress,
-    github,
-    node::{get_network_machines, get_nodes_by_role, ChainNode},
+    chain::{
+        config::NetworkConfig,
+        instance::ChainInstance,
+        node::{ChainNode, NodeRole},
+    },
     validators,
 };
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub enum Components {
-    #[serde(rename = "zq2")]
-    ZQ2,
-    #[serde(rename = "otterscan")]
-    Otterscan,
-    #[serde(rename = "spout")]
-    Spout,
-}
-
-impl FromStr for Components {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "zq2" => Ok(Components::ZQ2),
-            "otterscan" => Ok(Components::Otterscan),
-            "spout" => Ok(Components::Spout),
-            _ => Err(anyhow!("Component not supported")),
-        }
-    }
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct NetworkConfig {
-    name: String,
-    eth_chain_id: u64,
-    project_id: String,
-    roles: Vec<NodeRole>,
-    versions: HashMap<String, String>,
-}
-
-pub fn docker_image(component: &str, version: &str) -> Result<String> {
-    // Define regular expressions for semantic version and 8-character commit ID
-    let semver_re = Regex::new(r"^v\d+\.\d+\.\d+(-[a-zA-Z0-9]+)?$").unwrap();
-    let commit_id_re = Regex::new(r"^[a-f0-9]{8}$").unwrap();
-    match component.to_string().parse::<Components>()? {
-        Components::ZQ2 => {
-            if semver_re.is_match(version) {
-                Ok(format!(
-                    "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:{}",
-                    version
-                ))
-            } else if commit_id_re.is_match(version) {
-                Ok(format!(
-                    "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private/zq2:{}",
-                    version
-                ))
-            } else {
-                Err(anyhow!("Invalid version for ZQ2"))
-            }
-        }
-        Components::Spout => Ok(format!(
-            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:{}",
-            version
-        )),
-        Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
-    }
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-#[serde(rename_all = "snake_case")]
-pub enum NodeRole {
-    /// Virtual machine bootstrap
-    Bootstrap,
-    /// Virtual machine validator
-    Validator,
-    /// Virtual machine api
-    Api,
-    /// Virtual machine apps
-    Apps,
-    /// Virtual machine checkpoint
-    Checkpoint,
-    /// Virtual machine sentry
-    Sentry,
-}
-
-impl FromStr for NodeRole {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
-            "bootstrap" => Ok(NodeRole::Bootstrap),
-            "api" => Ok(NodeRole::Api),
-            "apps" => Ok(NodeRole::Apps),
-            "validator" => Ok(NodeRole::Validator),
-            "checkpoint" => Ok(NodeRole::Checkpoint),
-            "sentry" => Ok(NodeRole::Sentry),
-            _ => Err(anyhow!("Node role not supported")),
-        }
-    }
-}
-
-impl fmt::Display for NodeRole {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            NodeRole::Bootstrap => write!(f, "bootstrap"),
-            NodeRole::Api => write!(f, "api"),
-            NodeRole::Apps => write!(f, "apps"),
-            NodeRole::Validator => write!(f, "validator"),
-            NodeRole::Checkpoint => write!(f, "checkpoint"),
-            NodeRole::Sentry => write!(f, "sentry"),
-        }
-    }
-}
-
-impl NetworkConfig {
-    async fn new(
-        name: String,
-        eth_chain_id: u64,
-        project_id: String,
-        roles: Vec<NodeRole>,
-    ) -> Result<Self> {
-        let mut versions = HashMap::new();
-
-        for r in roles.clone() {
-            if r.to_string().to_lowercase() == "validator" {
-                versions.insert(
-                    "zq2".to_string(),
-                    github::get_release_or_commit("zq2").await?,
-                );
-            } else if r.to_string().to_lowercase() == "apps" {
-                versions.insert(
-                    "spout".to_string(),
-                    github::get_release_or_commit("zilliqa-developer").await?,
-                );
-                versions.insert("otterscan".to_string(), "latest".to_string());
-            }
-        }
-
-        Ok(Self {
-            name,
-            eth_chain_id,
-            project_id,
-            roles,
-            versions,
-        })
-    }
-}
-
-#[derive(Clone)]
-pub struct Machine {
-    pub project_id: String,
-    pub zone: String,
-    pub name: String,
-    pub external_address: String,
-    pub labels: BTreeMap<String, String>,
-}
-
-impl Machine {
-    pub async fn add_labels(&self, labels: BTreeMap<String, String>) -> Result<()> {
-        let labels = &labels
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join(",");
-        let args = [
-            "--project",
-            &self.project_id,
-            "compute",
-            "instances",
-            "add-labels",
-            &self.name,
-            &format!("--labels={}", labels.to_lowercase()),
-            "--zone",
-            &self.zone,
-        ];
-
-        println!("gcloud {}", args.join(" "));
-
-        zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd("gcloud", &args)
-            .run()
-            .await?;
-        Ok(())
-    }
-
-    pub async fn copy_to(&self, file_from: &[&str], file_to: &str) -> Result<()> {
-        let tgt_spec = format!("{0}:{file_to}", &self.name);
-        let args = [
-            &[
-                "compute",
-                "scp",
-                "--project",
-                &self.project_id,
-                "--zone",
-                &self.zone,
-                "--tunnel-through-iap",
-                "--strict-host-key-checking=no",
-                "--scp-flag=-r",
-            ],
-            file_from,
-            &[&tgt_spec],
-        ]
-        .concat();
-
-        zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd("gcloud", &args)
-            .run()
-            .await?;
-        Ok(())
-    }
-
-    pub async fn run(&self, cmd: &str) -> Result<zqutils::commands::CommandOutput> {
-        println!("Running command '{}' in {}", cmd, self.name);
-        let output: zqutils::commands::CommandOutput = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd(
-                "gcloud",
-                &[
-                    "compute",
-                    "ssh",
-                    "--project",
-                    &self.project_id,
-                    "--zone",
-                    &self.zone,
-                    &self.name,
-                    "--tunnel-through-iap",
-                    "--strict-host-key-checking=no",
-                    "--ssh-flag=",
-                    "--command",
-                    cmd,
-                ],
-            )
-            .run_for_output()
-            .await?;
-        Ok(output)
-    }
-
-    pub async fn get_local_block_number(&self) -> Result<u64> {
-        let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
-        let output = self.run(inner_command).await?;
-        if !output.success {
-            return Err(anyhow!(
-                "getting local block number failed: {:?}",
-                output.stderr
-            ));
-        }
-
-        let response: Value = serde_json::from_slice(&output.stdout)?;
-        let block_number = response
-            .get("result")
-            .ok_or_else(|| anyhow!("response has no result"))?
-            .as_str()
-            .ok_or_else(|| anyhow!("result is not a string"))?
-            .strip_prefix("0x")
-            .ok_or_else(|| anyhow!("result does not start with 0x"))?;
-        let block_number = u64::from_str_radix(block_number, 16)?;
-
-        Ok(block_number)
-    }
-}
 
 pub async fn new(
     network_name: &str,
@@ -294,52 +34,50 @@ pub async fn new(
     Ok(())
 }
 
-pub async fn install_or_upgrade(config_file: &str, is_upgrade: bool) -> Result<()> {
+pub async fn install_or_upgrade(
+    config_file: &str,
+    is_upgrade: bool,
+    only_selected_nodes: bool,
+) -> Result<()> {
     let config = fs::read_to_string(config_file).await?;
     let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
-    let versions = config.versions;
+    let chain = ChainInstance::new(config).await?;
+    let mut chain_nodes = chain.nodes().await?;
+    let node_names = chain_nodes
+        .iter()
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
 
-    let mut node_roles = config.roles.clone();
-    node_roles.sort();
+    let selected_machines = if !only_selected_nodes {
+        node_names
+    } else {
+        let mut multi_select = cliclack::multiselect(format!(
+            "Select nodes to {}",
+            if is_upgrade { "upgrade" } else { "install" }
+        ));
 
-    let mut bootstrap_nodes = vec![];
-    let mut chain_nodes = vec![];
-    let mut apps_nodes = vec![];
-
-    for node_role in node_roles.clone() {
-        match node_role {
-            NodeRole::Bootstrap => bootstrap_nodes.extend(
-                get_nodes_by_role(
-                    &config.name,
-                    config.eth_chain_id,
-                    &config.project_id,
-                    node_role.clone(),
-                    versions.clone(),
-                )
-                .await?,
-            ),
-            NodeRole::Apps => apps_nodes.extend(
-                get_nodes_by_role(
-                    &config.name,
-                    config.eth_chain_id,
-                    &config.project_id,
-                    node_role.clone(),
-                    versions.clone(),
-                )
-                .await?,
-            ),
-            _ => chain_nodes.extend(
-                get_nodes_by_role(
-                    &config.name,
-                    config.eth_chain_id,
-                    &config.project_id,
-                    node_role.clone(),
-                    versions.clone(),
-                )
-                .await?,
-            ),
+        for name in node_names {
+            multi_select = multi_select.item(name.clone(), name, "");
         }
-    }
+
+        multi_select.interact()?
+    };
+
+    let mut bootstrap_nodes = chain_nodes.clone();
+    bootstrap_nodes.retain(|node| {
+        node.role == NodeRole::Bootstrap && selected_machines.clone().contains(&node.name())
+    });
+
+    let mut apps_nodes = chain_nodes.clone();
+    apps_nodes.retain(|node| {
+        node.role == NodeRole::Apps && selected_machines.clone().contains(&node.name())
+    });
+
+    chain_nodes.retain(|node| {
+        node.role != NodeRole::Bootstrap
+            && node.role != NodeRole::Apps
+            && selected_machines.clone().contains(&node.name())
+    });
 
     let _ = execute_install_or_upgrade(bootstrap_nodes, is_upgrade).await;
     let _ = execute_install_or_upgrade(chain_nodes, is_upgrade).await;
@@ -349,7 +87,8 @@ pub async fn install_or_upgrade(config_file: &str, is_upgrade: bool) -> Result<(
 }
 
 async fn execute_install_or_upgrade(nodes: Vec<ChainNode>, is_upgrade: bool) -> Result<()> {
-    let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
+    let permits = if is_upgrade { 1 } else { 50 };
+    let semaphore = Arc::new(Semaphore::new(permits)); // Limit to 50 concurrent tasks
     let mut futures = vec![];
 
     for node in nodes {
@@ -392,31 +131,41 @@ async fn execute_install_or_upgrade(nodes: Vec<ChainNode>, is_upgrade: bool) -> 
     Ok(())
 }
 
-pub async fn get_deposit_commands(config_file: &str) -> Result<()> {
+pub async fn get_deposit_commands(config_file: &str, only_selected_nodes: bool) -> Result<()> {
     let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
     let mut futures = vec![];
 
     let config = fs::read_to_string(config_file).await?;
     let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
-    let versions = config.versions;
-    let chain_name = &config.name;
+    let chain = ChainInstance::new(config).await?;
+    let mut validators = chain.nodes().await?;
+    validators.retain(|node| node.role == NodeRole::Validator);
 
-    // Create a list of validators instances
-    let nodes = get_nodes_by_role(
-        chain_name,
-        config.eth_chain_id,
-        &config.project_id,
-        NodeRole::Validator,
-        versions.clone(),
-    )
-    .await?;
+    let validator_names = validators
+        .iter()
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
+    let selected_machines = if !only_selected_nodes {
+        validator_names
+    } else {
+        let mut multi_select = cliclack::multiselect("Select nodes");
+
+        for name in validator_names {
+            multi_select = multi_select.item(name.clone(), name, "");
+        }
+
+        multi_select.interact()?
+    };
+
+    validators.retain(|node| selected_machines.clone().contains(&node.name()));
 
     println!(
         "Deposit commands for the validators in the chain {}",
-        chain_name
+        chain.name()
     );
 
-    for node in nodes {
+    for node in validators {
         let permit = semaphore.clone().acquire_owned().await?;
         let future = task::spawn(async move {
             let result = get_node_deposit_commands(&node).await;
@@ -462,31 +211,41 @@ pub async fn get_node_deposit_commands(node: &ChainNode) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_deposit(config_file: &str) -> Result<()> {
+pub async fn run_deposit(config_file: &str, only_selected_nodes: bool) -> Result<()> {
     let config = fs::read_to_string(config_file).await?;
     let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
-    let versions = config.versions;
-    let chain_name = &config.name;
+    let chain = ChainInstance::new(config.clone()).await?;
+    let mut validators = chain.nodes().await?;
+    validators.retain(|node| node.role == NodeRole::Validator);
 
-    // Create a list of validators instances
-    let nodes = get_nodes_by_role(
-        chain_name,
-        config.eth_chain_id,
-        &config.project_id,
-        NodeRole::Validator,
-        versions.clone(),
-    )
-    .await?;
+    let validator_names = validators
+        .iter()
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
+    let selected_machines = if !only_selected_nodes {
+        validator_names
+    } else {
+        let mut multi_select = cliclack::multiselect("Select nodes");
+
+        for name in validator_names {
+            multi_select = multi_select.item(name.clone(), name, "");
+        }
+
+        multi_select.interact()?
+    };
+
+    validators.retain(|node| selected_machines.clone().contains(&node.name()));
 
     println!(
         "Running stake deposit for the validators in the chain {}",
-        chain_name
+        chain.name()
     );
 
     let mut successes = vec![];
     let mut failures = vec![];
 
-    for node in nodes {
+    for node in validators {
         let genesis_private_key = node.get_genesis_key();
         let private_keys = node.get_private_key().await?;
         let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
@@ -503,7 +262,7 @@ pub async fn run_deposit(config_file: &str) -> Result<()> {
         let stake = validators::StakeDeposit::new(
             validator,
             100,
-            chain_name.parse()?,
+            chain.name().parse()?,
             &genesis_private_key,
             &node_reward_ethereum_address.address,
         )?;
@@ -539,14 +298,13 @@ pub async fn run_rpc_call(method: &str, params: &Option<String>, config_file: &s
 
     let config = fs::read_to_string(config_file).await?;
     let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
-    let chain_name = &config.name;
+    let chain = ChainInstance::new(config).await?;
 
     // Create a list of chain instances
-    let mut machines = get_network_machines(chain_name, &config.project_id).await?;
-
+    let mut machines = chain.machines();
     machines.retain(|m| m.labels.get("role") != Some(&"apps".to_string()));
 
-    println!("Running RPC call on {} nodes", chain_name);
+    println!("Running RPC call on {} nodes", chain.name());
     println!("🦆 Running the RPC call - Method: '{method}' .. ");
     println!(
         "🦆 Params: {} .. ",
