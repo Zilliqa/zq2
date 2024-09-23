@@ -409,7 +409,7 @@ impl Consensus {
             if time_since_last_view_change > empty_block_timeout_ms
                 || has_txns_for_next_block
                 || (time_since_last_view_change + minimum_time_left_for_empty_block
-                >= exponential_backoff_timeout)
+                    >= exponential_backoff_timeout)
             {
                 if let Ok(Some((block, transactions))) = self.propose_new_block() {
                     self.create_next_block_on_timeout = false;
@@ -1937,7 +1937,7 @@ impl Consensus {
             &committee,
             parent.state_root_hash(),
         )
-            .map_err(|e| (e, false))?;
+        .map_err(|e| (e, false))?;
 
         let committee: Vec<_> = committee
             .into_iter()
@@ -2283,10 +2283,10 @@ impl Consensus {
 
     pub fn leader_at_block(&self, block: &Block, view: u64) -> Option<Validator> {
         if let Some(CachedLeader {
-                        block_number: cached_block_number,
-                        view: cached_view,
-                        next_leader,
-                    }) = *self.latest_leader_cache.borrow()
+            block_number: cached_block_number,
+            view: cached_view,
+            next_leader,
+        }) = *self.latest_leader_cache.borrow()
         {
             if cached_block_number == block.number() && cached_view == view {
                 return Some(next_leader);

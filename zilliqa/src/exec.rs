@@ -17,12 +17,11 @@ use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
     primitives::{
-        AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg, Output,
-        ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
+        AccountInfo, AccountStatus, BlockEnv, Bytecode, EVMError, Env, ExecutionResult, HaltReason,
+        HandlerCfg, Output, ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
     },
     Database, DatabaseRef, Evm, Inspector,
 };
-use revm::primitives::{AccountStatus, EVMError};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -37,14 +36,13 @@ use crate::{
     message::{Block, BlockHeader},
     precompiles::{get_custom_precompiles, scilla_call_handle_register},
     scilla::{self, split_storage_key, storage_key, Scilla},
-    state::{contract_addr, Account, Code, State},
+    state::{contract_addr, Account, Code, Code::Evm as EvmCode, State},
     time::SystemTime,
     transaction::{
         total_scilla_gas_price, EvmGas, EvmLog, Log, ScillaGas, ScillaLog, ScillaParam,
         Transaction, TxZilliqa, VerifiedTransaction, ZilAmount,
     },
 };
-use crate::state::Code::Evm as EvmCode;
 
 type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
 
@@ -505,21 +503,22 @@ impl State {
         let result_and_state = match transact_result {
             Err(EVMError::Transaction(_) | EVMError::Header(_)) => {
                 let account = state.load_account(from_addr)?;
-                let Account {code, nonce, balance, ..} = &mut account.account;
+                let Account {
+                    code,
+                    nonce,
+                    balance,
+                    ..
+                } = &mut account.account;
 
                 let code_hash = match &code {
-                    EvmCode(vec) if vec.is_empty() => {
-                        KECCAK_EMPTY
-                    },
+                    EvmCode(vec) if vec.is_empty() => KECCAK_EMPTY,
                     // Just signal that the code exists by returning non-KECCAK_EMPTY hash (we don't have to be precise here)
-                    EvmCode(_) => {
-                        B256::ZERO
-                    }
-                    _ => KECCAK_EMPTY
+                    EvmCode(_) => B256::ZERO,
+                    _ => KECCAK_EMPTY,
                 };
                 let code = match code {
                     EvmCode(code) => mem::take(code),
-                    _ => Vec::default()
+                    _ => Vec::default(),
                 };
 
                 // The only updated fields are nonce and balance, rest can be set to default (means: no update)
@@ -527,26 +526,28 @@ impl State {
                     status: AccountStatus::default(),
                     storage: HashMap::new(),
                     info: AccountInfo {
-                        balance: balance.saturating_sub(gas_price * u128::from(gas_limit.0) + amount).try_into()?,
+                        balance: balance
+                            .saturating_sub(gas_price * u128::from(gas_limit.0) + amount)
+                            .try_into()?,
                         nonce: *nonce + 1,
                         code_hash,
-                        code: Some(Bytecode::new_raw(code.into()))
-                    }
-
+                        code: Some(Bytecode::new_raw(code.into())),
+                    },
                 };
                 let mut state = HashMap::new();
                 state.insert(from_addr, affected_acc);
                 ResultAndState {
-                    result: ExecutionResult::Revert {gas_used: 0u64, output: Bytes::default()},
-                    state
+                    result: ExecutionResult::Revert {
+                        gas_used: 0u64,
+                        output: Bytes::default(),
+                    },
+                    state,
                 }
-            },
+            }
             Err(err) => {
                 bail!(err);
             }
-            Ok(result) => {
-                result
-            }
+            Ok(result) => result,
         };
 
         Ok((result_and_state, state.finalize(), cfg.env))
@@ -1781,12 +1782,3 @@ const BLESSED_TRANSACTIONS: [Hash; 1] = [
         "eddf9e61fb9d8f5111840daef55e5fde0041f5702856532cdbb5a02998033d26"
     )),
 ];
-
-pub fn deduct_cost_for_failed_txn(state: &mut State, txn: &VerifiedTransaction) -> Result<()> {
-    let gas_cost = txn.tx.gas_cost()?;
-    state.mutate_account(txn.signer, |account| {
-        account.balance.saturating_sub(gas_cost)
-    })?;
-    state.mutate_account(txn.signer, |account| account.nonce += 1)?;
-    Ok(())
-}
