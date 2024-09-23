@@ -91,9 +91,9 @@ checksum = "5c6cb57a04249c6480766f7f7cef5467412af1490f8d1e243141daddada3264f"
 
 [[package]]
 name = "alloy"
-version = "0.3.5"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2683873c2744f6cd72d0db51bb74fee9ed310e0476a140bdc19e82b407d8a0a"
+checksum = "8367891bf380210abb0d6aa30c5f85a9080cb4a066c4d5c5acadad630823751b"
 dependencies = [
  "alloy-consensus",
  "alloy-core",
