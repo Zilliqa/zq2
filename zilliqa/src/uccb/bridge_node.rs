@@ -42,6 +42,7 @@ pub struct BridgeNode {
     pub chain_client: ChainClient,
     validators: HashSet<Address>,
     consensus: Arc<Mutex<Consensus>>,
+    state_info: Arc<Mutex<StateInfo>>,
 }
 
 impl BridgeNode {
@@ -49,6 +50,7 @@ impl BridgeNode {
         chain_client: ChainClient,
         outbound_message_sender: UnboundedSender<OutboundBridgeMessage>,
         consensus: Arc<Mutex<Consensus>>,
+        state_info: Arc<Mutex<StateInfo>>,
     ) -> Result<Self> {
         let (inbound_message_sender, inbound_message_receiver) = mpsc::unbounded_channel();
         let inbound_message_receiver = UnboundedReceiverStream::new(inbound_message_receiver);
@@ -62,6 +64,7 @@ impl BridgeNode {
             inbound_message_sender,
             consensus,
             relay_nonces: HashSet::new(),
+            state_info,
         })
     }
 
