@@ -5,17 +5,18 @@ use std::{
     str::FromStr,
 };
 
+use alloy::primitives::B256;
+use anyhow::{anyhow, Result};
+use colored::Colorize;
+use tokio::{fs, process::Command};
+use zilliqa::crypto::SecretKey;
+
 use crate::{
     chain::node::NodeRole,
     kpi,
     node_spec::{Composition, NodeSpec},
     utils,
 };
-use alloy::primitives::B256;
-use anyhow::{anyhow, Result};
-use colored::Colorize;
-use tokio::{fs, process::Command};
-use zilliqa::crypto::SecretKey;
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
 

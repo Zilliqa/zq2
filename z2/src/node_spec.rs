@@ -1,8 +1,11 @@
+use std::{
+    collections::{HashMap, HashSet},
+    default::Default,
+    fmt,
+};
+
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
-use std::default::Default;
-use std::fmt;
 use zilliqa::range_map::RangeMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]

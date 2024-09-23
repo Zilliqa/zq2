@@ -1,8 +1,12 @@
+use std::{
+    cmp::{max, min, Ordering},
+    default::Default,
+    fmt,
+    fmt::Display,
+    ops::Range,
+};
+
 use serde::{Deserialize, Serialize};
-use std::cmp::{max, min, Ordering};
-use std::default::Default;
-use std::ops::Range;
-use std::{fmt, fmt::Display};
 use tracing::*;
 
 /// A block map - a reasonably efficient, easily implementable representation of a collection of ranges.
@@ -368,8 +372,9 @@ impl RangeMap {
 
 #[cfg(test)]
 mod tests {
-    use crate::range_map::RangeMap;
     use std::ops::Range;
+
+    use crate::range_map::RangeMap;
 
     #[test]
     fn simple() {

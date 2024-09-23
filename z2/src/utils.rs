@@ -1,6 +1,5 @@
 use core::convert::AsRef;
-use std::env;
-use std::path::Path;
+use std::{env, path::Path};
 
 use anyhow::{anyhow, Result};
 use reqwest;

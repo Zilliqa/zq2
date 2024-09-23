@@ -1,9 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use alloy::primitives::{address, Address};
 use anyhow::{anyhow, Context, Result};
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
+use serde::{Deserialize, Serialize};
 use serde_yaml;
 use tokio::fs;
 /// This module should eventually generate configuration files
@@ -29,8 +33,6 @@ use crate::{
     node_spec::Composition,
     scilla, utils,
 };
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 const GENESIS_DEPOSIT: u128 = 10000000000000000000000000;
 const DATADIR_PREFIX: &str = "z2_node_";
