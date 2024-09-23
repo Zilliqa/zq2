@@ -180,9 +180,6 @@ impl Setup {
         } else {
             // Set up a default network
             println!(">> No network specified or loaded; using default 4-node network for legacy reasons.");
-            //config = loaded_config.ok_or(anyhow!(
-            //    "Cannot find config file in {config_dir}/network.yaml"
-            //))?;
             Config::from_spec(&Composition::small_network(), base_port)?
         };
         // Whatever we did, save it!
