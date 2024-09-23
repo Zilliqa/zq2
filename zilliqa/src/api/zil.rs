@@ -430,7 +430,7 @@ fn get_smart_contract_init(
         return Err(anyhow!("Address not contract address"));
     };
 
-    Ok(contract_init.into_inner())
+    Ok(serde_json::from_str(&contract_init)?)
 }
 
 fn get_transactions_for_tx_block(

@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fmt::Display,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
@@ -13,7 +13,6 @@ use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use revm::primitives::ResultAndState;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha3::{Digest, Keccak256};
 
 use crate::{
@@ -311,8 +310,24 @@ impl Default for Account {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScillaTypedVariable {
     pub vname: String,
-    pub value: Value,
+    pub value: ScillaVariableValue,
     pub r#type: String,
+}
+
+#[derive(Serialize, Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum ScillaVariableValue {
+    Primitive(String),
+    Adt(AdtValue),
+    Map(HashMap<String, ScillaVariableValue>),
+    List(Vec<ScillaVariableValue>),
+}
+
+#[derive(Serialize, Debug, Clone, Deserialize)]
+pub struct AdtValue {
+    constructor: String,
+    argtypes: Vec<String>,
+    arguments: Vec<ScillaVariableValue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -332,7 +347,9 @@ impl ContractInit {
     pub fn scilla_version(&self) -> Result<String> {
         for entry in &self.0 {
             if entry.vname == "_scilla_version" {
-                return Ok(entry.value.to_string());
+                if let ScillaVariableValue::Primitive(version) = &entry.value {
+                    return Ok(version.to_owned());
+                }
             }
         }
         Ok(String::new())
@@ -341,9 +358,9 @@ impl ContractInit {
     pub fn is_library(&self) -> Result<bool> {
         for entry in &self.0 {
             if entry.vname == "_library" {
-                return Ok(entry.value["constructor"]
-                    .as_str()
-                    .map_or(false, |value| value == "True"));
+                if let ScillaVariableValue::Adt(is_library) = &entry.value {
+                    return Ok(is_library.constructor == *"True");
+                }
             }
         }
         Ok(false)
@@ -353,24 +370,25 @@ impl ContractInit {
         let mut external_libraries = Vec::new();
         for entry in &self.0 {
             if entry.vname == "_extlibs" {
-                if let Some(ext_libs) = entry.value.as_array() {
+                if let ScillaVariableValue::List(ext_libs) = &entry.value {
                     for ext_lib in ext_libs {
-                        if let Some(lib) = ext_lib["arguments"].as_array() {
-                            if lib.len() != 2 {
+                        if let ScillaVariableValue::Adt(ext_lib) = ext_lib {
+                            if ext_lib.arguments.len() != 2 {
                                 return Err(anyhow!("Invalid init."));
                             }
-                            let lib_name = lib[0].as_str().ok_or_else(|| {
-                                anyhow!("Invalid init. Library name is not a string")
-                            })?;
-                            let lib_address = lib[1].as_str().ok_or_else(|| {
-                                anyhow!("Invalid init. Library address is not a string")
-                            })?;
-                            external_libraries.push(ExternalLibrary {
-                                name: lib_name.to_string(),
-                                address: lib_address.parse::<Address>()?,
-                            });
-                        } else {
-                            return Err(anyhow!("Invalid init."));
+
+                            match (&ext_lib.arguments[0], &ext_lib.arguments[1]) {
+                                (
+                                    ScillaVariableValue::Primitive(name),
+                                    ScillaVariableValue::Primitive(address),
+                                ) => {
+                                    external_libraries.push(ExternalLibrary {
+                                        name: name.clone(),
+                                        address: address.parse()?,
+                                    });
+                                }
+                                _ => return Err(anyhow!("Invalid init.")),
+                            }
                         }
                     }
                 }
@@ -396,7 +414,7 @@ pub enum Code {
     Evm(#[serde(with = "serde_bytes")] Vec<u8>),
     Scilla {
         code: String,
-        init_data: ContractInit,
+        init_data: String,
         types: BTreeMap<String, (String, u8)>,
         transitions: Vec<Transition>,
     },
@@ -427,7 +445,7 @@ impl Code {
         }
     }
 
-    pub fn scilla_code_and_init_data(self) -> Option<(String, ContractInit)> {
+    pub fn scilla_code_and_init_data(self) -> Option<(String, String)> {
         match self {
             Code::Scilla {
                 code, init_data, ..
