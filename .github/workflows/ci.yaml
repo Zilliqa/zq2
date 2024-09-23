@@ -30,10 +30,14 @@ jobs:
       - run: npm install --save-dev prettier prettier-plugin-solidity
       - run: npx prettier --write --plugin=prettier-plugin-solidity '../**/*.sol'
       - name: Commit changes
-        uses: stefanzweifel/git-auto-commit-action@v4
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: Apply formatting changes to solidity files
           branch: ${{ github.head_ref }}
+          add_options: "-u"
+          file_pattern: "*.sol"
+          status_options: "--untracked-files=no"
+
   check:
     runs-on: [self-hosted, gcp]
     steps:
