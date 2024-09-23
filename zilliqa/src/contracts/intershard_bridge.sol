@@ -25,16 +25,6 @@ contract IntershardBridge {
         uint128 gasPrice
     ) external {
         ++nonce;
-        emit Relayed(
-            targetShard,
-            msg.sender,
-            contractCreation,
-            target,
-            uint64(block.chainid),
-            nonce,
-            call,
-            gasLimit,
-            gasPrice
-        );
+        emit Relayed(targetShard, msg.sender, contractCreation, target, uint64(block.chainid), nonce, call, gasLimit, gasPrice);
     }
 }
