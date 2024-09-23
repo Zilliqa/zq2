@@ -1367,9 +1367,9 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
-version = "1.7.1"
+version = "1.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8318a53db07bb3f8dca91a600466bdb3f2eaadeedfdbcf02e1accbad9271ba50"
+checksum = "428d9aa8fbc0670b7b8d6030a7fadd0f86151cae55e4dbbece15f3780a3dfaf3"
 dependencies = [
  "serde",
 ]
@@ -2866,9 +2866,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3372aaa89b1653b61fb297dbc24e74ad727ff76cc4415f1a0ec5f802d24e0797"
+checksum = "6d91e510bd537970f68f8462dea0e8df0a2302d4749fb57bc8e10bbd32a283e2"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -2899,9 +2899,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76c4f9ac0ed5e695bbeb48ff0758ba31ce3d0d52b752aaa466f311f48ed772c0"
+checksum = "f9971eefe4eae1cf2ac707beb4d40f63304b34c81c0961d299e461c14a23b1e7"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -2909,9 +2909,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ad6beeb057a8a58993d13841cffcb99e8aefdeb52ed9b368c85518747b467f9"
+checksum = "0cde3d12776c295ad85bcdbbae18f4601e384f40a62b0e3371d880bbcd91c65c"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -2931,9 +2931,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "442e5eb231aad523f0f3e26f9475ad9eab1aa2173a5991df1b7fa51f589f309f"
+checksum = "569a769f6105248816c253715ec39977d61d369e9c67e4774d6870da8f64dffc"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -2946,9 +2946,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92049644ce2745c36be16f6406592155d4be2314306af2543c7d30a32b00d6ed"
+checksum = "5f10ade77fa0eab75e142a76711c42a258781bad0c4516ad64aa413297ebb72e"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -5802,7 +5802,7 @@ dependencies = [
  "opentelemetry 0.24.0",
  "opentelemetry-proto",
  "opentelemetry_sdk",
- "prost 0.13.2",
+ "prost 0.13.3",
  "thiserror",
  "tokio",
  "tonic",
@@ -5816,7 +5816,7 @@ checksum = "30ee9f20bff9c984511a02f082dc8ede839e4a9bf15cc2487c8d6fea5ad850d9"
 dependencies = [
  "opentelemetry 0.24.0",
  "opentelemetry_sdk",
- "prost 0.13.2",
+ "prost 0.13.3",
  "tonic",
 ]
 
@@ -6428,12 +6428,12 @@ dependencies = [
 
 [[package]]
 name = "prost"
-version = "0.13.2"
+version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b2ecbe40f08db5c006b5764a2645f7f3f141ce756412ac9e1dd6087e6d32995"
+checksum = "7b0487d90e047de87f984913713b85c601c05609aad5b0df4b4573fbf69aa13f"
 dependencies = [
  "bytes",
- "prost-derive 0.13.2",
+ "prost-derive 0.13.3",
 ]
 
 [[package]]
@@ -6450,7 +6450,7 @@ dependencies = [
  "once_cell",
  "petgraph",
  "prettyplease",
- "prost 0.13.2",
+ "prost 0.13.3",
  "prost-types",
  "regex",
  "syn 2.0.77",
@@ -6472,9 +6472,9 @@ dependencies = [
 
 [[package]]
 name = "prost-derive"
-version = "0.13.2"
+version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acf0c195eebb4af52c752bec4f52f645da98b6e92077a04110c7f349477ae5ac"
+checksum = "e9552f850d5f0964a4e4d0bf306459ac29323ddfbae05e35a7c0d35cb0803cc5"
 dependencies = [
  "anyhow",
  "itertools 0.13.0",
@@ -6489,7 +6489,7 @@ version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60caa6738c7369b940c3d49246a8d1749323674c65cb13010134f5c9bad5b519"
 dependencies = [
- "prost 0.13.2",
+ "prost 0.13.3",
 ]
 
 [[package]]
@@ -8253,18 +8253,18 @@ checksum = "a38c90d48152c236a3ab59271da4f4ae63d678c5d7ad6b7714d7cb9760be5e4b"
 
 [[package]]
 name = "thiserror"
-version = "1.0.63"
+version = "1.0.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0342370b38b6a11b6cc11d6a805569958d54cfa061a29969c3b5ce2ea405724"
+checksum = "d50af8abc119fb8bb6dbabcfa89656f46f84aa0ac7688088608076ad2b459a84"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.63"
+version = "1.0.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4558b58466b9ad7ca0f102865eccc95938dca1a74a856f2b57b6629050da261"
+checksum = "08904e7672f5eb876eaaf87e0ce17857500934f4981c4a0ab2b4aa98baac7fc3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8566,7 +8566,7 @@ dependencies = [
  "hyper-util",
  "percent-encoding",
  "pin-project",
- "prost 0.13.2",
+ "prost 0.13.3",
  "socket2",
  "tokio",
  "tokio-stream",
@@ -9689,7 +9689,7 @@ dependencies = [
  "log",
  "octocrab",
  "primitive-types",
- "prost 0.13.2",
+ "prost 0.13.3",
  "prost-build",
  "rand",
  "rand_core",
@@ -9840,7 +9840,7 @@ dependencies = [
  "opentelemetry_sdk",
  "paste",
  "primitive-types",
- "prost 0.13.2",
+ "prost 0.13.3",
  "rand",
  "rand_chacha",
  "rand_core",
