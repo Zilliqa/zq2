@@ -8,6 +8,7 @@ pub mod subscription_id_provider;
 mod to_hex;
 mod trace;
 pub mod types;
+mod uccb;
 mod web3;
 pub mod zil;
 
@@ -22,6 +23,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     module.merge(web3::rpc_module(node.clone())).unwrap();
     module.merge(zil::rpc_module(node.clone())).unwrap();
     module.merge(admin::rpc_module(node.clone())).unwrap();
+    module.merge(uccb::rpc_module(node.clone())).unwrap();
 
     module.merge(others::rpc_module(node.clone())).unwrap();
 
