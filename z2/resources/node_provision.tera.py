@@ -74,9 +74,9 @@ def health():
         latest_block_number_obtained_at = current_time
 
     
-    if latest_block_number_obtained_at + 30 < current_time:
-        # no blocks for 30 seconds
-        return ("no blocks for more than 30 seconds", 500)
+    if latest_block_number_obtained_at + 60 < current_time:
+        # no blocks for 60 seconds
+        return ("no blocks for more than 60 seconds", 500)
     else:
         return (f"block {latest_block_number} since {latest_block_number_obtained_at}", 200)
 
