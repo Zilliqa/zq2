@@ -1,5 +1,6 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
+    fmt::Display,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
@@ -16,7 +17,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::{
     block_store::BlockStore,
-    cfg::NodeConfig,
+    cfg::{NodeConfig, ScillaExtLibsCacheFolder},
     contracts, crypto,
     db::TrieStorage,
     exec::BaseFeeCheck,
@@ -45,6 +46,7 @@ pub struct State {
     scilla_address: String,
     local_address: String,
     scilla_lib_dir: String,
+    pub scilla_ext_libs_cache_folder: ScillaExtLibsCacheFolder,
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
     pub chain_id: ChainId,
@@ -61,7 +63,8 @@ impl State {
             scilla: Arc::new(OnceLock::new()),
             scilla_address: consensus_config.scilla_address.clone(),
             local_address: consensus_config.local_address.clone(),
-            scilla_lib_dir: consensus_config.scilla_lib_dir.clone(),
+            scilla_lib_dir: consensus_config.scilla_stdlib_dir.clone(),
+            scilla_ext_libs_cache_folder: consensus_config.scilla_ext_libs_cache_folder.clone(),
             block_gas_limit: consensus_config.eth_block_gas_limit,
             gas_price: *consensus_config.gas_price,
             chain_id: ChainId::new(config.eth_chain_id),
@@ -75,7 +78,10 @@ impl State {
                 Mutex::new(Scilla::new(
                     self.scilla_address.clone(),
                     self.local_address.clone(),
-                    self.scilla_lib_dir.clone(),
+                    vec![
+                        self.scilla_lib_dir.clone(),
+                        self.scilla_ext_libs_cache_folder.on_docker.clone(),
+                    ],
                 ))
             })
             .lock()
@@ -170,6 +176,7 @@ impl State {
             scilla_address: self.scilla_address.clone(),
             local_address: self.local_address.clone(),
             scilla_lib_dir: self.scilla_lib_dir.clone(),
+            scilla_ext_libs_cache_folder: self.scilla_ext_libs_cache_folder.clone(),
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
             chain_id: self.chain_id,
@@ -297,6 +304,108 @@ impl Default for Account {
             code: Code::default(),
             storage_root: EMPTY_ROOT_HASH,
         }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ScillaTypedVariable {
+    pub vname: String,
+    pub value: ScillaVariableValue,
+    pub r#type: String,
+}
+
+#[derive(Serialize, Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum ScillaVariableValue {
+    Primitive(String),
+    Adt(AdtValue),
+    Map(HashMap<String, ScillaVariableValue>),
+    List(Vec<ScillaVariableValue>),
+}
+
+#[derive(Serialize, Debug, Clone, Deserialize)]
+pub struct AdtValue {
+    constructor: String,
+    argtypes: Vec<String>,
+    arguments: Vec<ScillaVariableValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalLibrary {
+    pub name: String,
+    pub address: Address,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractInit(Vec<ScillaTypedVariable>);
+
+impl ContractInit {
+    pub fn new(init: Vec<ScillaTypedVariable>) -> Result<Self> {
+        Ok(Self(init))
+    }
+
+    pub fn scilla_version(&self) -> Result<String> {
+        for entry in &self.0 {
+            if entry.vname == "_scilla_version" {
+                if let ScillaVariableValue::Primitive(version) = &entry.value {
+                    return Ok(version.to_owned());
+                }
+            }
+        }
+        Ok(String::new())
+    }
+
+    pub fn is_library(&self) -> Result<bool> {
+        for entry in &self.0 {
+            if entry.vname == "_library" {
+                if let ScillaVariableValue::Adt(is_library) = &entry.value {
+                    return Ok(is_library.constructor == *"True");
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn external_libraries(&self) -> Result<Vec<ExternalLibrary>> {
+        let mut external_libraries = Vec::new();
+        for entry in &self.0 {
+            if entry.vname == "_extlibs" {
+                if let ScillaVariableValue::List(ext_libs) = &entry.value {
+                    for ext_lib in ext_libs {
+                        if let ScillaVariableValue::Adt(ext_lib) = ext_lib {
+                            if ext_lib.arguments.len() != 2 {
+                                return Err(anyhow!("Invalid init."));
+                            }
+
+                            match (&ext_lib.arguments[0], &ext_lib.arguments[1]) {
+                                (
+                                    ScillaVariableValue::Primitive(name),
+                                    ScillaVariableValue::Primitive(address),
+                                ) => {
+                                    external_libraries.push(ExternalLibrary {
+                                        name: name.clone(),
+                                        address: address.parse()?,
+                                    });
+                                }
+                                _ => return Err(anyhow!("Invalid init.")),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(external_libraries)
+    }
+
+    pub fn into_inner(self) -> Vec<ScillaTypedVariable> {
+        self.0
+    }
+}
+
+impl Display for ContractInit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let json = serde_json::to_string(&self.0).map_err(|_| std::fmt::Error)?;
+        write!(f, "{}", json)
     }
 }
 

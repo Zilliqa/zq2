@@ -17,8 +17,9 @@ use zilliqa::{
         block_request_limit_default, consensus_timeout_default, disable_rpc_default,
         empty_block_timeout_default, eth_chain_id_default, failed_request_sleep_duration_default,
         local_address_default, max_blocks_in_flight_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
-        state_rpc_limit_default, Amount, ConsensusConfig,
+        minimum_time_left_for_empty_block_default, scilla_address_default,
+        scilla_ext_libs_cache_folder_default, scilla_stdlib_dir_default, state_rpc_limit_default,
+        Amount, ConsensusConfig,
     },
     crypto::NodePublicKey,
     transaction::EvmGas,
@@ -210,7 +211,8 @@ impl Setup {
                 eth_chain_id: eth_chain_id_default(),
                 consensus: ConsensusConfig {
                     scilla_address: scilla_address_default(),
-                    scilla_lib_dir: scilla_lib_dir_default(),
+                    scilla_stdlib_dir: scilla_stdlib_dir_default(),
+                    scilla_ext_libs_cache_folder: scilla_ext_libs_cache_folder_default(),
                     minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                     main_shard_id: None,
                     local_address: local_address_default(),
@@ -266,8 +268,8 @@ impl Setup {
                 "http://localhost:{0}",
                 self.get_scilla_port(usize::try_into(i)?)
             );
-            node_config.consensus.scilla_lib_dir =
-                scilla::Runner::get_scilla_lib_dir(&self.base_dir);
+            node_config.consensus.scilla_stdlib_dir =
+                scilla::Runner::get_scilla_stdlib_dir(&self.base_dir);
 
             cfg.nodes = Vec::new();
             cfg.nodes.push(node_config);
