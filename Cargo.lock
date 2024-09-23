@@ -5802,7 +5802,7 @@ dependencies = [
  "opentelemetry 0.24.0",
  "opentelemetry-proto",
  "opentelemetry_sdk",
- "prost 0.13.2",
+ "prost 0.13.3",
  "thiserror",
  "tokio",
  "tonic",
@@ -5816,7 +5816,7 @@ checksum = "30ee9f20bff9c984511a02f082dc8ede839e4a9bf15cc2487c8d6fea5ad850d9"
 dependencies = [
  "opentelemetry 0.24.0",
  "opentelemetry_sdk",
- "prost 0.13.2",
+ "prost 0.13.3",
  "tonic",
 ]
 
@@ -6428,19 +6428,19 @@ dependencies = [
 
 [[package]]
 name = "prost"
-version = "0.13.2"
+version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b2ecbe40f08db5c006b5764a2645f7f3f141ce756412ac9e1dd6087e6d32995"
+checksum = "7b0487d90e047de87f984913713b85c601c05609aad5b0df4b4573fbf69aa13f"
 dependencies = [
  "bytes",
- "prost-derive 0.13.2",
+ "prost-derive 0.13.3",
 ]
 
 [[package]]
 name = "prost-build"
-version = "0.13.2"
+version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8650aabb6c35b860610e9cff5dc1af886c9e25073b7b1712a68972af4281302"
+checksum = "0c1318b19085f08681016926435853bbf7858f9c082d0999b80550ff5d9abe15"
 dependencies = [
  "bytes",
  "heck 0.5.0",
@@ -6450,7 +6450,7 @@ dependencies = [
  "once_cell",
  "petgraph",
  "prettyplease",
- "prost 0.13.2",
+ "prost 0.13.3",
  "prost-types",
  "regex",
  "syn 2.0.77",
@@ -6472,9 +6472,9 @@ dependencies = [
 
 [[package]]
 name = "prost-derive"
-version = "0.13.2"
+version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acf0c195eebb4af52c752bec4f52f645da98b6e92077a04110c7f349477ae5ac"
+checksum = "e9552f850d5f0964a4e4d0bf306459ac29323ddfbae05e35a7c0d35cb0803cc5"
 dependencies = [
  "anyhow",
  "itertools 0.13.0",
@@ -6485,11 +6485,11 @@ dependencies = [
 
 [[package]]
 name = "prost-types"
-version = "0.13.2"
+version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60caa6738c7369b940c3d49246a8d1749323674c65cb13010134f5c9bad5b519"
+checksum = "4759aa0d3a6232fb8dbdb97b61de2c20047c68aca932c7ed76da9d788508d670"
 dependencies = [
- "prost 0.13.2",
+ "prost 0.13.3",
 ]
 
 [[package]]
@@ -8566,7 +8566,7 @@ dependencies = [
  "hyper-util",
  "percent-encoding",
  "pin-project",
- "prost 0.13.2",
+ "prost 0.13.3",
  "socket2",
  "tokio",
  "tokio-stream",
@@ -9689,7 +9689,7 @@ dependencies = [
  "log",
  "octocrab",
  "primitive-types",
- "prost 0.13.2",
+ "prost 0.13.3",
  "prost-build",
  "rand",
  "rand_core",
@@ -9840,7 +9840,7 @@ dependencies = [
  "opentelemetry_sdk",
  "paste",
  "primitive-types",
- "prost 0.13.2",
+ "prost 0.13.3",
  "rand",
  "rand_chacha",
  "rand_core",
