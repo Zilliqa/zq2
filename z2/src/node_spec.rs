@@ -41,7 +41,7 @@ fn indices_from_string(input: &str) -> Result<HashSet<u64>> {
     // Now, each component is either a-b or a number
     for c in components {
         if let Ok(val) = c.trim().parse::<u64>() {
-            result.with_number(val);
+            result.with_elem(val);
         } else {
             let ranges = c.split('-').collect::<Vec<&str>>();
             if ranges.len() != 2 {

@@ -70,10 +70,12 @@ pub struct BlockCache {
     /// The counter is zeroed when we receive (or pop) a new block, and counts 1 every
     /// time we looked.
     pub fork_counter: usize,
+    /// Copied from the parent to minimise the number of additional parameters we need.
+    pub max_blocks_in_flight: u64,
 }
 
 impl BlockCache {
-    pub fn new() -> Self {
+    pub fn new(max_blocks_in_flight: u64) -> Self {
         Self {
             cache: BTreeMap::new(),
             tail: BTreeMap::new(),
@@ -81,6 +83,7 @@ impl BlockCache {
             by_parent_hash: HashMap::new(),
             shift: 8 - constants::BLOCK_CACHE_LOG2_WAYS,
             fork_counter: 0,
+            max_blocks_in_flight,
         }
     }
 
@@ -115,13 +118,12 @@ impl BlockCache {
         trace!("parent hashes {hashes:?} maps to keys {cache_keys:?}");
         let maybe = cache_keys
             .iter()
-            .map(|key| {
+            .filter_map(|key| {
                 self.cache
-                    .remove(&key)
-                    .or_else(|| self.tail.remove(&key))
+                    .remove(key)
+                    .or_else(|| self.tail.remove(key))
                     .map(|entry| (entry.from, entry.proposal))
             })
-            .filter_map(|x| x)
             .collect::<Vec<(PeerId, Proposal)>>();
         if !cache_keys.is_empty() {
             let max_view =
@@ -146,7 +148,22 @@ impl BlockCache {
         maybe
     }
 
-    pub fn trim(&mut self, highest_confirmed_view: u64, max_blocks_in_flight: u64) -> Result<()> {
+    /// Delete all blocks in the cache up to and including block_number
+    pub fn delete_blocks_up_to(&mut self, block_number: u64) {
+        // note that this code embodies the assumption that increasing block number implies
+        // increasing view number.
+        self.trim_with_fn(|_, v| -> bool { v.proposal.number() <= block_number });
+    }
+
+    pub fn trim(&mut self, highest_confirmed_view: u64) {
+        let lowest_ignored_key = self.min_key_for_view(highest_confirmed_view);
+        debug!("trim: lowest_ignored_key = {0}", lowest_ignored_key);
+        self.trim_with_fn(|k, _| -> bool { *k < lowest_ignored_key });
+    }
+
+    /// DANGER WILL ROBINSON! This function only searches from the minimum key to the maximum, so
+    /// any selector function which is not monotonic in key will not work properly.
+    fn trim_with_fn<F: Fn(&u128, &BlockCacheEntry) -> bool>(&mut self, selector: F) {
         // We've deleted or replaced this key with this parent hash; remove it from the index.
         fn unlink_parent_hash(cache: &mut HashMap<Hash, HashSet<u128>>, key: &u128, hash: &Hash) {
             let mut do_remove = false;
@@ -160,41 +177,39 @@ impl BlockCache {
                 cache.remove(hash);
             }
         }
-        let lowest_ignored_key = self.min_key_for_view(highest_confirmed_view);
-        let cache_entries = max_blocks_in_flight << constants::BLOCK_CACHE_LOG2_WAYS;
-        debug!("trim: lowest_ignored_key = {0}", lowest_ignored_key);
+
+        let cache_entries = self.max_blocks_in_flight << constants::BLOCK_CACHE_LOG2_WAYS;
         // debug!("trim: cache had: {0}", self.extant_block_ranges()?);
-        let mut did_anything = true;
+        // Should really be an option, but given that there is a convenient sentinel..
+        let mut lowest_view_in_cache: Option<u64> = None;
+        let shift = self.shift;
 
-        while did_anything {
-            did_anything = false;
-
-            if let Some((k, _)) = self.cache.first_key_value() {
-                if *k <= lowest_ignored_key {
+        for cache_ptr in [&mut self.cache, &mut self.tail] {
+            while let Some((k, v)) = cache_ptr.first_key_value() {
+                if selector(k, v) {
                     // Kill it!
-                    if let Some((k, v)) = self.cache.pop_first() {
+                    if let Some((k, v)) = cache_ptr.pop_first() {
                         unlink_parent_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
                     };
-                    did_anything = true;
-                }
-            }
-            if let Some((k, _)) = self.tail.first_key_value() {
-                if *k <= lowest_ignored_key {
-                    if let Some((k, v)) = self.tail.pop_first() {
-                        unlink_parent_hash(&mut self.by_parent_hash, &k, &v.parent_hash)
-                    };
-                    did_anything = true;
+                } else {
+                    let view_number = u64::try_from(*k >> shift).unwrap();
+                    lowest_view_in_cache = Some(
+                        lowest_view_in_cache.map_or(view_number, |x| std::cmp::min(x, view_number)),
+                    );
+                    break;
                 }
             }
         }
-        // No need to remember which views don't have a block before the lowest confirmed view.
-        (_, self.empty_view_ranges) =
-            self.empty_view_ranges
-                .diff_inter(&RangeMap::from_range(&Range {
-                    start: 0,
-                    end: highest_confirmed_view + 1,
-                }));
 
+        // Empty view ranges below the thing we last trimmed might not exist - zap them.
+        if let Some(v) = lowest_view_in_cache {
+            (_, self.empty_view_ranges) =
+                self.empty_view_ranges
+                    .diff_inter(&RangeMap::from_range(&Range {
+                        start: 0,
+                        end: v + 1,
+                    }));
+        }
         // And trim.
         let cache_size = usize::try_from(cache_entries).unwrap();
         self.empty_view_ranges.truncate(cache_size);
@@ -209,10 +224,7 @@ impl BlockCache {
                 unlink_parent_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
             }
         }
-
-        // debug!("cache now has: {0}", self.extant_block_ranges()?);
         // Both caches are now at most the "right" number of entries long.
-        Ok(())
     }
 
     pub fn no_blocks_at(&mut self, no_blocks_in: &Range<u64>) {
@@ -231,7 +243,6 @@ impl BlockCache {
         proposal: Proposal,
         highest_confirmed_view: u64,
         highest_known_view: u64,
-        max_blocks_in_flight: u64,
     ) -> Result<()> {
         fn insert_with_replacement(
             into: &mut BTreeMap<u128, BlockCacheEntry>,
@@ -290,7 +301,7 @@ impl BlockCache {
         // Zero the fork counter.
         self.fork_counter = 0;
         // Now evict the worst entry
-        self.trim(highest_confirmed_view, max_blocks_in_flight)?;
+        self.trim(highest_confirmed_view);
         Ok(())
     }
 
@@ -308,10 +319,10 @@ impl BlockCache {
         let mut result = RangeMap::new();
         let shift = 8 - constants::BLOCK_CACHE_LOG2_WAYS;
         for key in self.cache.keys() {
-            let _ = u128::try_into(key >> shift).map(|x| result.with_number(x));
+            let _ = u128::try_into(key >> shift).map(|x| result.with_elem(x));
         }
         for key in self.tail.keys() {
-            let _ = u128::try_into(key >> shift).map(|x| result.with_number(x));
+            let _ = u128::try_into(key >> shift).map(|x| result.with_elem(x));
         }
         result
     }
@@ -558,7 +569,7 @@ impl BlockStore {
             strategies: vec![BlockStrategy::Latest(constants::RETAINS_LAST_N_BLOCKS)],
             available_blocks: vec![],
             available_blocks_updated: None,
-            buffered: BlockCache::new(),
+            buffered: BlockCache::new(config.max_blocks_in_flight),
             unserviceable_requests: None,
             message_sender,
             clock: 0,
@@ -591,7 +602,7 @@ impl BlockStore {
             strategies: self.strategies.clone(),
             available_blocks: Vec::new(),
             available_blocks_updated: None,
-            buffered: BlockCache::new(),
+            buffered: BlockCache::new(0),
             unserviceable_requests: None,
             message_sender: self.message_sender.clone(),
             clock: 0,
@@ -655,7 +666,6 @@ impl BlockStore {
             proposal,
             self.highest_confirmed_view,
             self.highest_known_view,
-            self.max_blocks_in_flight,
         )?;
 
         let peer = self.peer_info(from);
@@ -1000,14 +1010,13 @@ impl BlockStore {
         // There are two sets
         let result = self
             .buffered
-            .destructive_proposals_from_parent_hashes(&vec![block.hash().clone()]);
+            .destructive_proposals_from_parent_hashes(&vec![block.hash()]);
 
         // Update highest_confirmed_view, but don't trim the cache if
         // we're not changing anything.
         if block.header.view > self.highest_confirmed_view {
             self.highest_confirmed_view = block.header.view;
-            self.buffered
-                .trim(self.highest_confirmed_view, self.max_blocks_in_flight)?;
+            self.buffered.trim(self.highest_confirmed_view);
         }
 
         Ok(result)
@@ -1060,12 +1069,27 @@ impl BlockStore {
             .buffered
             .destructive_proposals_from_parent_hashes(hashes);
         if with_parent_hashes.is_empty() {
-            // There isn't. This means that either we simply haven't received the next block yet, or
-            // that we have but there was a fork and the next block we should process is a child of
-            // something in our current chain, but not the last block we processed (which was likely
-            // the other side of the fork).
+            // There isn't. There are three cases:
+            //
+            // 1. We simply haven't received the next block yet. Give up and wait for it.
+            // 2. We have received a lie for the next block. Delete it and try again.
+            // 3. There was a fork and so the true next block is a bit further on in the
+            //    chain than we've looked so far.
+            //
             // There would be a few easy optimisations if we could eg. assume that forks were max length
             // 1. As it is, I can't think of a clever way to do this, so...
+
+            // In any case, deleting any cached block that calls itself the next block is
+            // the right thing to do - if it really was the next block, we would not be
+            // executing this branch.
+            if let Some(highest_block_number) = self.db.get_highest_block_number()? {
+                self.buffered.delete_blocks_up_to(highest_block_number + 1);
+                trace!(
+                    "deleted cached blocks up to and including {0}",
+                    highest_block_number + 1
+                );
+            }
+
             let fork_elems =
                 self.buffered.inc_fork_counter() * (1 + constants::EXAMINE_BLOCKS_PER_FORK_COUNT);
             let parent_hashes = self.db.get_highest_block_hashes(fork_elems)?;
