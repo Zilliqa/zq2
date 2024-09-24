@@ -126,6 +126,7 @@ impl ChainInstance {
         let bootstrap_public_ip = self.bootstrap_public_ip()?;
         let bootstrap_private_key = self.bootstrap_private_key().await?;
         let genesis_wallet_private_key = self.genesis_wallet_private_key().await?;
+        let validator_private_keys = self.validator_private_keys().await?;
 
         for node_role in node_roles {
             let instances = self.machines_by_role(node_role.clone());
@@ -141,6 +142,7 @@ impl ChainInstance {
                         bootstrap_public_ip.clone(),
                         bootstrap_private_key.clone(),
                         genesis_wallet_private_key.clone(),
+                        validator_private_keys.clone(),
                     )
                 })
                 .collect::<Vec<_>>();
@@ -176,6 +178,21 @@ impl ChainInstance {
                 &self.name()
             ))
         }
+    }
+
+    pub async fn validator_private_keys(&self) -> Result<Vec<String>> {
+        let private_keys =
+            retrieve_secret_by_role(&self.config.name, &self.config.project_id, "validator")
+                .await?;
+
+        if private_keys.is_empty() {
+            return Err(anyhow!(
+                "No secrets with role validator found in the network {}",
+                &self.name()
+            ));
+        }
+
+        Ok(private_keys)
     }
 
     pub async fn genesis_wallet_private_key(&self) -> Result<String> {

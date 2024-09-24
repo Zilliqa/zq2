@@ -264,6 +264,7 @@ pub struct ChainNode {
     bootstrap_public_ip: String,
     bootstrap_private_key: String,
     genesis_wallet_private_key: String,
+    validator_private_keys: Vec<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -277,6 +278,7 @@ impl ChainNode {
         bootstrap_public_ip: String,
         bootstrap_private_key: String,
         genesis_wallet_private_key: String,
+        validator_private_keys: Vec<String>,
     ) -> Self {
         Self {
             chain_name,
@@ -287,6 +289,7 @@ impl ChainNode {
             bootstrap_public_ip,
             bootstrap_private_key,
             genesis_wallet_private_key,
+            validator_private_keys,
         }
     }
 
@@ -534,6 +537,12 @@ impl ChainNode {
     pub fn get_config_toml(&self) -> Result<String> {
         let spec_config = include_str!("../../resources/config.tera.toml");
 
+        let validator_node = if let Some(pk) = self.validator_private_keys.first() {
+            EthereumAddress::from_private_key(pk)?
+        } else {
+            return Err(anyhow!("Validator private keys not found"));
+        };
+
         let genesis_wallet = EthereumAddress::from_private_key(&self.genesis_wallet_private_key)?;
         let bootstrap_node = EthereumAddress::from_private_key(&self.bootstrap_private_key)?;
         let role_name = self.role.to_string();
@@ -544,8 +553,9 @@ impl ChainNode {
         var_map.insert("eth_chain_id", &eth_chain_id);
         var_map.insert("bootstrap_public_ip", &self.bootstrap_public_ip);
         var_map.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
-        var_map.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
         var_map.insert("genesis_address", &genesis_wallet.address);
+        var_map.insert("validator_0_bls_public_key", &validator_node.bls_public_key);
+        var_map.insert("validator_0_peer_id", &validator_node.peer_id);
 
         let ctx = Context::from_serialize(var_map)?;
         Ok(Tera::one_off(spec_config, &ctx, false)?)
