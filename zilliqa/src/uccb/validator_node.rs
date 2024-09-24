@@ -27,7 +27,7 @@ use crate::{
         cfg::Config,
         client::ChainClient,
         contracts,
-        event::{DispatchedEvent, RelayedEvent},
+        event::RelayedEvent,
         message::{Dispatch, InboundBridgeMessage, OutboundBridgeMessage},
     },
 };
