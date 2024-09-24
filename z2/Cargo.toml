@@ -27,7 +27,7 @@ async-trait = "0.1.81"
 base64 = "0.22.0"
 bitvec = "1.0.1"
 blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
-clap = {version = "4.5.17", features = ["derive"]}
+clap = {version = "4.5.18", features = ["derive"]}
 clap-verbosity-flag = "2.2.1"
 cliclack = "0.3.5"
 colored = "2.1.0"
@@ -44,7 +44,7 @@ home = "0.5.9"
 indicatif = "0.17.8"
 itertools = "0.13.0"
 jsonrpsee = {version = "0.22.4", features = ["client"]}
-k256 = "0.13.3"
+k256 = "0.13.4"
 lazy_static = "1.5.0"
 libp2p = {version = "0.54.0", features = ["identify"]}
 log = "0.4.22"
