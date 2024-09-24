@@ -740,8 +740,9 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .unwrap();
     let zero_acount_balance_change_with_gas_spent =
         zero_account_balance_before - zero_account_balance_after;
+
     assert_eq!(
-        zero_acount_balance_change_with_gas_spent,
-        zero_acount_balance_change_rewards_only + block.gas_used
+        zero_acount_balance_change_with_gas_spent + block.gas_used,
+        zero_acount_balance_change_rewards_only
     );
 }

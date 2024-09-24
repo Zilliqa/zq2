@@ -1121,6 +1121,11 @@ impl Consensus {
             &qc.cosigned, // QC cosigners
         )?;
 
+        // ZIP-9: Sink gas to zero account
+        state
+            .mutate_account(Address::ZERO, |a| a.balance += proposal.gas_used().0 as u128)?;
+    
+
         // Finalise the proposal with final QC and state.
         let proposal = Block::from_qc(
             self.secret_key,
@@ -2593,11 +2598,12 @@ impl Consensus {
             }
         }
 
+        
+        self.apply_rewards_raw(committee, &parent, block.view(), &block.header.qc.cosigned)?;
+
         // ZIP-9: Sink gas to zero account
         self.state
             .mutate_account(Address::ZERO, |a| a.balance += block.gas_used().0 as u128)?;
-
-        self.apply_rewards_raw(committee, &parent, block.view(), &block.header.qc.cosigned)?;
 
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
