@@ -29,6 +29,7 @@ use crate::{
         event::{DispatchedEvent, RelayEventSignatures, RelayedEvent},
         message::{Dispatch, Dispatched, InboundBridgeMessage, OutboundBridgeMessage, Relay},
         signature::SignatureTracker,
+        validator_node::StateInfo,
     },
 };
 
