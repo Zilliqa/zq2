@@ -44,7 +44,7 @@ home = "0.5.9"
 indicatif = "0.17.8"
 itertools = "0.13.0"
 jsonrpsee = {version = "0.22.4", features = ["client"]}
-k256 = "0.13.3"
+k256 = "0.13.4"
 lazy_static = "1.5.0"
 libp2p = {version = "0.54.0", features = ["identify"]}
 log = "0.4.22"
