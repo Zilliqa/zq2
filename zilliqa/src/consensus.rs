@@ -699,7 +699,6 @@ impl Consensus {
 
     /// Note that the algorithm below is mentioned in cfg.rs - if you change the way
     /// rewards are calculated, please change the comments in the configuration structure there.
-    /// TODOtomos: is this fn needed?
     fn apply_rewards(
         &mut self,
         committee: &[NodePublicKey],
@@ -2594,6 +2593,10 @@ impl Consensus {
             }
         }
 
+        // ZIP-9: Sink gas to zero account
+        self.state
+            .mutate_account(Address::ZERO, |a| a.balance += block.gas_used().0 as u128)?;
+
         self.apply_rewards_raw(committee, &parent, block.view(), &block.header.qc.cosigned)?;
 
         let mut block_receipts = Vec::new();
@@ -2642,11 +2645,6 @@ impl Consensus {
             warn!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());
             return Ok(());
         }
-
-        // ZIP-9: Sink gas to zero account
-        self.state.mutate_account(Address::ZERO, |a| {
-            a.balance += cumulative_gas_used.0 as u128
-        })?;
 
         let receipts_root_hash: Hash = receipts_trie.root_hash()?.into();
         if block.header.receipts_root_hash != receipts_root_hash {
