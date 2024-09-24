@@ -182,19 +182,27 @@ impl NodeLauncher {
             select! {
                 message = self.broadcasts.next() => {
                     let (source, message) = message.expect("message stream should be infinite");
-                    self.node.lock().unwrap().handle_broadcast(source, message).unwrap();
+                    if let Err(e) = self.node.lock().unwrap().handle_broadcast(source, message) {
+                        error!("Failed to process broadcast message: {e}");
+                    }
                 }
                 message = self.requests.next() => {
                     let (source, message, response_channel) = message.expect("message stream should be infinite");
-                    self.node.lock().unwrap().handle_request(source, message, response_channel).unwrap();
+                    if let Err(e) = self.node.lock().unwrap().handle_request(source, message, response_channel) {
+                        error!("Failed to process request message: {e}");
+                    }
                 }
                 message = self.request_failures.next() => {
                     let (source, message) = message.expect("message stream should be infinite");
-                    self.node.lock().unwrap().handle_request_failure(source, message).unwrap();
+                    if let Err(e) = self.node.lock().unwrap().handle_request_failure(source, message) {
+                        error!("Failed to process request failure message: {e}");
+                    };
                 }
                 message = self.responses.next() => {
                     let (source, message) = message.expect("message stream should be infinite");
-                    self.node.lock().unwrap().handle_response(source, message).unwrap();
+                    if let Err(e) = self.node.lock().unwrap().handle_response(source, message) {
+                        error!("Failed to process response message: {e}");
+                    }
                 }
                 message = self.local_messages.next() => {
                     let (_source, _message) = message.expect("message stream should be infinite");
