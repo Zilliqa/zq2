@@ -1122,9 +1122,9 @@ impl Consensus {
         )?;
 
         // ZIP-9: Sink gas to zero account
-        state
-            .mutate_account(Address::ZERO, |a| a.balance += proposal.gas_used().0 as u128)?;
-    
+        state.mutate_account(Address::ZERO, |a| {
+            a.balance += proposal.gas_used().0 as u128
+        })?;
 
         // Finalise the proposal with final QC and state.
         let proposal = Block::from_qc(
@@ -2598,7 +2598,6 @@ impl Consensus {
             }
         }
 
-        
         self.apply_rewards_raw(committee, &parent, block.view(), &block.header.qc.cosigned)?;
 
         // ZIP-9: Sink gas to zero account
@@ -2625,8 +2624,6 @@ impl Consensus {
             let gas_used = result.gas_used();
             cumulative_gas_used += gas_used;
 
-            // TODOtomos: we are updating state in above lines but could potentially fail here and further down without rewinding state changes.
-            // This feels bad
             if cumulative_gas_used > block.gas_limit() {
                 warn!("Cumulative gas used by executing transactions exceeded block limit!");
                 return Ok(());
