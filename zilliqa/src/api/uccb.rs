@@ -1,8 +1,7 @@
-use crate::{node::Node, uccb::validator_node};
+use crate::node::Node;
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
-use std::sync::{Arc, Mutex, MutexGuard};
-use tracing::{error, info, warn};
+use std::sync::{Arc, Mutex};
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     let module = super::declare_module!(
