@@ -753,23 +753,29 @@ impl Consensus {
             })
             .collect();
 
-        // ZIP-9: Fund rewards amount from zero account
-        at_state.mutate_account(Address::ZERO, |a| a.balance -= rewards_per_block)?;
+        // Track total awards given out. This may be different to rewards_per_block because we round down on division when we split the rewards
+        let mut total_rewards_issued = 0;
 
         // Reward the Proposer
         if let Some(proposer_address) = proposer_address {
             let reward = rewards_per_block / 2;
             at_state.mutate_account(proposer_address, |a| a.balance += reward)?;
+            total_rewards_issued += reward;
         }
 
         // Reward the committee
         for (reward_address, stake) in cosigner_stake {
             if let Some(cosigner) = reward_address {
-                let reward = U256::from(rewards_per_block / 2) * U256::from(stake)
-                    / U256::from(total_cosigner_stake);
-                at_state.mutate_account(cosigner, |a| a.balance += reward.to::<u128>())?;
+                let reward = (U256::from(rewards_per_block / 2) * U256::from(stake)
+                    / U256::from(total_cosigner_stake))
+                .to::<u128>();
+                at_state.mutate_account(cosigner, |a| a.balance += reward)?;
+                total_rewards_issued += reward;
             }
         }
+
+        // ZIP-9: Fund rewards amount from zero account
+        at_state.mutate_account(Address::ZERO, |a| a.balance -= total_rewards_issued)?;
 
         Ok(())
     }

@@ -74,10 +74,16 @@ pub fn process_blocks(c: &mut Criterion) {
     let mut state = consensus.state().at_root(genesis.state_root_hash().into());
     let mut parent_hash = genesis.hash();
     let mut proposals = (1..).map(|view| {
+        // The reward per block above is configured to 1. The consensus algorithm splits this reward between the
+        // proposer and the cosigners, rounding down. Effectively this means no rewards are issued to anyone with this
+        // configuration. However, the reward code will still unconditionally mutate the state trie to apply this zero
+        // reward. Therefore, to calculate a correct state root hash we need to ensure the state trie includes an empty
+        // entry for the rewarded and zero addresses, even if they never actually changes from the default account.
         let reward_address: Address = "0x0000000000000000000000000000000000000001"
             .parse()
             .unwrap();
         state.mutate_account(reward_address, |_| {}).unwrap();
+        state.mutate_account(Address::ZERO, |_| {}).unwrap();
 
         let vote = Vote::new(
             secret_key,
