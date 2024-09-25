@@ -22,7 +22,9 @@ contract ShardRegistry is Shard {
     //
     // However, on the main shard, there is no higher source of trust to verify the genesis
     // than the chain itself (which also contains this contract), so this is not a problem.
-    constructor(uint16 consensusTimeoutMs) Shard(block.chainid, block.chainid, consensusTimeoutMs, 0) {
+    constructor(
+        uint16 consensusTimeoutMs
+    ) Shard(block.chainid, block.chainid, consensusTimeoutMs, 0) {
         addShard(block.chainid, address(this));
     }
 
@@ -53,4 +55,3 @@ contract ShardRegistry is Shard {
         emit LinkAdded(sourceId, targetId);
     }
 }
-
