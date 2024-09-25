@@ -10,6 +10,8 @@ use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
 use tokio::fs;
+use toml;
+use zilliqa::cfg::total_native_token_supply_default;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::{SecretKey, TransactionPublicKey};
@@ -348,6 +350,7 @@ impl Setup {
                     blocks_per_epoch: 3600,
                     epochs_per_checkpoint: 24,
                     rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
+                    total_native_token_supply: total_native_token_supply_default(),
                 },
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),

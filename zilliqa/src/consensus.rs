@@ -1,5 +1,10 @@
 use std::{
-    cell::RefCell, collections::{btree_map::Entry, BTreeMap}, error::Error, fmt::Display, sync::Arc, time::Duration
+    cell::RefCell,
+    collections::{btree_map::Entry, BTreeMap},
+    error::Error,
+    fmt::Display,
+    sync::Arc,
+    time::Duration,
 };
 
 use alloy::primitives::{Address, U256};
@@ -2611,7 +2616,7 @@ impl Consensus {
             let gas_used = result.gas_used();
             cumulative_gas_used += gas_used;
 
-            // TODOtomos: we are updating state in above lines but could potentially fail here and further down without rewinding state changes. 
+            // TODOtomos: we are updating state in above lines but could potentially fail here and further down without rewinding state changes.
             // This feels bad
             if cumulative_gas_used > block.gas_limit() {
                 warn!("Cumulative gas used by executing transactions exceeded block limit!");
@@ -2637,9 +2642,11 @@ impl Consensus {
             warn!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());
             return Ok(());
         }
-        
+
         // ZIP-9: Sink gas to zero account
-        self.state.mutate_account(Address::ZERO, |a| a.balance += cumulative_gas_used.0 as u128)?;
+        self.state.mutate_account(Address::ZERO, |a| {
+            a.balance += cumulative_gas_used.0 as u128
+        })?;
 
         let receipts_root_hash: Hash = receipts_trie.root_hash()?.into();
         if block.header.receipts_root_hash != receipts_root_hash {

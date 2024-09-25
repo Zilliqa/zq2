@@ -16,7 +16,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::{
     block_store::BlockStore,
-    cfg::NodeConfig,
+    cfg::{Amount, NodeConfig},
     contracts, crypto,
     db::TrieStorage,
     exec::BaseFeeCheck,
@@ -113,6 +113,18 @@ impl State {
             intershard_bridge_data,
             Some(contract_addr::INTERSHARD_BRIDGE),
         )?;
+
+        let zero_account_balance = config.consensus.total_native_token_supply
+            - (config
+                .consensus
+                .genesis_accounts
+                .iter()
+                .fold(Amount(0), |acc, item: &(Address, Amount)| acc + item.1))
+            - (config.consensus.genesis_deposits.iter().fold(
+                Amount(0),
+                |acc, item: &(crypto::NodePublicKey, libp2p::PeerId, Amount, Address)| acc + item.2,
+            ));
+        state.mutate_account(Address::ZERO, |a| a.balance = *zero_account_balance)?;
 
         for (address, balance) in config.consensus.genesis_accounts {
             state.mutate_account(address, |a| a.balance = *balance)?;

@@ -1,4 +1,8 @@
-use std::{ops::Deref, str::FromStr, time::Duration};
+use std::{
+    ops::{Add, Deref, Sub},
+    str::FromStr,
+    time::Duration,
+};
 
 use alloy::primitives::Address;
 use libp2p::{Multiaddr, PeerId};
@@ -188,6 +192,20 @@ impl<'de> Deserialize<'de> for Amount {
     }
 }
 
+impl Add for Amount {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        Amount::from(*self + *other)
+    }
+}
+
+impl Sub for Amount {
+    type Output = Self;
+    fn sub(self, other: Self) -> Self {
+        Amount::from(*self - *other)
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ConsensusConfig {
@@ -242,6 +260,9 @@ pub struct ConsensusConfig {
     pub epochs_per_checkpoint: u64,
     /// The gas price, in Wei per unit of EVM gas.
     pub gas_price: Amount,
+    /// The total supply of native token in the network in Wei. Any funds which are not immediately assigned to an account (via genesis_accounts and genesis_deposits env vars) will be assigned to the zero account (0x0).
+    #[serde(default = "total_native_token_supply_default")]
+    pub total_native_token_supply: Amount,
 }
 
 pub fn consensus_timeout_default() -> Duration {
@@ -278,4 +299,8 @@ pub fn epochs_per_checkpoint_default() -> u64 {
 
 fn default_true() -> bool {
     true
+}
+
+pub fn total_native_token_supply_default() -> Amount {
+    Amount::from(21_000_000_000_000_000_000_000_000_000)
 }
