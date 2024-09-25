@@ -1,74 +1,113 @@
-use std::{collections::HashSet, env, path::PathBuf, str::FromStr};
+#![allow(unused_imports)]
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    str::FromStr,
+};
 
 use alloy::primitives::B256;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
 
-use crate::{chain::node::NodeRole, kpi, utils};
+use crate::{
+    chain::node::NodeRole,
+    kpi,
+    node_spec::{Composition, NodeSpec},
+    utils,
+};
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
 
 use crate::{collector, components::Component, converter, deployer, docgen, perf, setup, zq1};
 
+pub async fn print_ports(base_port: u16, base_dir: &str, config_dir: &str) -> Result<()> {
+    let setup_obj = setup::Setup::ephemeral(base_port, base_dir, config_dir)?;
+    println!("{0}", setup_obj.get_port_map());
+    Ok(())
+}
+
+pub async fn run_extra_nodes(
+    spec: &Composition,
+    config_dir: &str,
+    base_dir: &str,
+    log_spec: &str,
+    components: &HashSet<Component>,
+    watch: bool,
+    checkpoints: &Option<HashMap<u64, zilliqa::cfg::Checkpoint>>,
+) -> Result<()> {
+    println!("🎈 Loading network configuration from {config_dir} .. ");
+    let mut setup_obj = setup::Setup::load(config_dir, log_spec, base_dir, watch).await?;
+    // Remove components which are not instanced.
+    println!("🎳 Starting nodes {spec:?} .. ");
+    let mut collector = collector::Collector::new(log_spec, base_dir).await?;
+    for c in Component::in_dependency_order().iter() {
+        if components.contains(c) && c.is_instanced() {
+            setup_obj
+                .run_component(c, &mut collector, spec, checkpoints)
+                .await?;
+        }
+    }
+    collector.complete().await?;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_local_net(
+    spec: &Option<NodeSpec>,
     base_dir: &str,
     base_port: u16,
     config_dir: &str,
-    log_level: &str,
-    debug_modules: &Vec<String>,
-    trace_modules: &Vec<String>,
+    log_spec: &str,
     components: &HashSet<Component>,
     keep_old_network: bool,
     watch: bool,
+    checkpoints: &Option<HashMap<u64, zilliqa::cfg::Checkpoint>>,
 ) -> Result<()> {
-    // Now build the log string. If there already was one, use that ..
-    let log_var = env::var("RUST_LOG");
-    let log_spec = match log_var {
-        Ok(val) => {
-            println!("Using RUST_LOG from environment");
-            val
-        }
-        _ => {
-            let mut val = log_level.to_string();
-            for i in debug_modules {
-                val.push_str(&format!(",{i}=debug"));
-            }
-            for i in trace_modules {
-                val.push_str(&format!(",{i}=trace"));
-            }
-            val.push_str(",opentelemetry=trace,opentelemetry_otlp=trace");
-            val
-        }
-    };
     println!("RUST_LOG = {log_spec}");
+    println!("Running network with nodespec = {spec:?}");
     println!("Create config directory .. ");
     let _ = fs::create_dir(&config_dir).await;
     println!("Generate zq2 configuration .. ");
-    let mut setup_obj = setup::Setup::new(
-        4,
+    let configured = spec.clone().map(|x| x.configured);
+    let mut setup_obj = setup::Setup::create(
+        &configured,
         config_dir,
-        &log_spec,
-        base_dir,
         base_port,
+        log_spec,
+        base_dir,
         keep_old_network,
         watch,
-    )?;
+    )
+    .await?;
+    // Generate configuration.
+    setup_obj.generate_config().await?;
     println!("{0}", setup_obj.get_port_map());
     println!("Set up collector");
-    let mut collector = collector::Collector::new(&log_spec, base_dir).await?;
-    // Iterate through the components in dependency order.
+    let mut collector = collector::Collector::new(log_spec, base_dir).await?;
+    let actually_start = if let Some(to_start) = spec {
+        &to_start.start
+    } else {
+        // All of them!
+        &setup_obj.config.shape.clone()
+    };
+    setup_obj.config.composition().check_compatible(actually_start)
+        .context(format!("You asked to start nodes {actually_start}, but this wasn't compatible with the network configuration {0} stored in {config_dir}",
+        setup_obj.config.composition()))?;
+    // Run all components here - not just the ones that are instanced.
     for c in Component::in_dependency_order().iter() {
         if components.contains(c) {
             println!("Start {c}");
-            setup_obj.run_component(c, &mut collector).await?;
+            setup_obj
+                .run_component(c, &mut collector, actually_start, checkpoints)
+                .await?;
         } else {
             println!("Skipping {c}");
         }
     }
 
+    println!("Components running; awaiting termination.");
     collector.complete().await?;
     Ok(())
 }

@@ -17,6 +17,7 @@ pub mod node_launcher;
 pub mod p2p_node;
 mod pool;
 mod precompiles;
+pub mod range_map;
 pub mod schnorr;
 pub mod scilla;
 mod scilla_proto;

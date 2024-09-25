@@ -10,6 +10,8 @@ use clap::ValueEnum;
 #[derive(Clone, Debug, ValueEnum)]
 // TODO: decomment when became available
 pub enum Chain {
+    #[value(name = "zq2-uccbtest")]
+    Zq2UccbTest,
     #[value(name = "zq2-infratest")]
     Zq2InfraTest,
     #[value(name = "zq2-perftest")]
@@ -29,6 +31,7 @@ pub enum Chain {
 impl Chain {
     pub fn get_endpoint(&self) -> Option<&'static str> {
         match self {
+            Self::Zq2UccbTest => Some("https://api.zq2-uccbtest.zilstg.dev"),
             Self::Zq2InfraTest => Some("https://api.zq2-infratest.zilstg.dev"),
             Self::Zq2PerfTest => Some("https://api.zq2-perftest.zilstg.dev"),
             Self::Zq2Devnet => Some("https://api.zq2-devnet.zilliqa.com"),
@@ -41,6 +44,7 @@ impl Chain {
 
     pub fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
         match chain_name {
+            "zq2-uccbtest" => Err(anyhow!("Configuration file for {} not found", chain_name)),
             "zq2-infratest" => Err(anyhow!("Configuration file for {} not found", chain_name)),
             "zq2-perftest" => Ok(include_str!("../resources/chain-specs/zq2-perftest.toml")),
             "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
@@ -57,6 +61,7 @@ impl FromStr for Chain {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
+            "zq2-uccbtest" => Ok(Self::Zq2UccbTest),
             "zq2-infratest" => Ok(Self::Zq2InfraTest),
             "zq2-perftest" => Ok(Self::Zq2PerfTest),
             "zq2-devnet" => Ok(Self::Zq2Devnet),
@@ -72,6 +77,7 @@ impl FromStr for Chain {
 impl fmt::Display for Chain {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Self::Zq2UccbTest => write!(f, "zq2-uccbtest"),
             Self::Zq2InfraTest => write!(f, "zq2-infratest"),
             Self::Zq2PerfTest => write!(f, "zq2-perftest"),
             Self::Zq2Devnet => write!(f, "zq2-devnet"),
