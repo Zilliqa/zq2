@@ -96,6 +96,10 @@ impl Config {
         Ok(())
     }
 
+    pub fn composition(&self) -> Composition {
+        self.shape.clone()
+    }
+
     pub fn from_spec(network: &Composition, base_port: u16) -> Result<Self> {
         // Generate secret keys and node addresses for the nodes in the network and stash it all in config.
         let mut node_data: HashMap<u64, NodeData> = HashMap::new();

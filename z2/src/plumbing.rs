@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy::primitives::B256;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
@@ -92,6 +92,9 @@ pub async fn run_local_net(
         // All of them!
         &setup_obj.config.shape.clone()
     };
+    setup_obj.config.composition().check_compatible(actually_start)
+        .context(format!("You asked to start nodes {actually_start}, but this wasn't compatible with the network configuration {0} stored in {config_dir}",
+        setup_obj.config.composition()))?;
     // Run all components here - not just the ones that are instanced.
     for c in Component::in_dependency_order().iter() {
         if components.contains(c) {

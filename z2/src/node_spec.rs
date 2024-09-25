@@ -79,6 +79,25 @@ impl Composition {
         }
         Self { nodes }
     }
+
+    /// If we were to ask to start 'other' in a network of 'self',
+    /// would it work? Returns a descriptive error if not.
+    pub fn check_compatible(&self, other: &Self) -> Result<()> {
+        for (k, v) in &other.nodes {
+            if let Some(def) = self.nodes.get(k) {
+                if def.is_validator != v.is_validator {
+                    return Err(anyhow!(
+                        "Node {k} is_validator mismatch - network {0}, spec {1}",
+                        def.is_validator,
+                        v.is_validator
+                    ));
+                }
+            } else {
+                return Err(anyhow!("Cannot start non-existent node {k}"));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl fmt::Display for NodeSpec {
