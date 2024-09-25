@@ -1,10 +1,5 @@
 use std::{
-    cell::RefCell,
-    collections::{btree_map::Entry, BTreeMap},
-    error::Error,
-    fmt::Display,
-    sync::Arc,
-    time::Duration,
+    cell::RefCell, collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration,
 };
 
 use alloy::primitives::{Address, U256};
@@ -106,7 +101,7 @@ struct CachedLeader {
 
 /// The consensus algorithm is pipelined fast-hotstuff, as given in this paper: https://arxiv.org/pdf/2010.11454.pdf
 ///
-/// The algorithm can be condensed down into the following explaination:
+/// The algorithm can be condensed down into the following explanation:
 /// - Blocks must contain either a QuorumCertificate (QC), or an aggregated QuorumCertificate (aggQC).
 /// - A QuorumCertificate is an aggregation of signatures of threshold validators against a block hash (the previous block)
 /// - An aggQC is an aggregation of threshold QC.
@@ -143,7 +138,7 @@ pub struct Consensus {
     pub block_store: BlockStore,
     latest_leader_cache: RefCell<Option<CachedLeader>>,
     votes: BTreeMap<Hash, BlockVotes>,
-    /// Votes for a block we don't have stored. They are retained in case we recieve the block later.
+    /// Votes for a block we don't have stored. They are retained in case we receive the block later.
     // TODO(#719): Consider how to limit the size of this.
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
     new_views: BTreeMap<u64, NewViewVote>,
@@ -1145,9 +1140,8 @@ impl Consensus {
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
     fn assemble_early_block_at(
-        &self,
+        &mut self,
         state: &mut State,
-        transaction_pool: &mut TransactionPool,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         // Start with highest canonical block
         let num = self
@@ -1194,7 +1188,7 @@ impl Consensus {
         };
 
         // Assemble new block with whatever is in the mempool
-        while let Some(tx) = transaction_pool.best_transaction() {
+        while let Some(tx) = self.transaction_pool.best_transaction() {
             // First - check if we have time left to process txns and give enough time for block propagation
             let (
                 time_since_last_view_change,
@@ -1206,7 +1200,7 @@ impl Consensus {
                 >= exponential_backoff_timeout
             {
                 // don't have time, reinsert txn.
-                transaction_pool.insert_ready_transaction(tx);
+                self.transaction_pool.insert_ready_transaction(tx);
                 break;
             }
 
@@ -1233,17 +1227,17 @@ impl Consensus {
                     nonce = tx.tx.nonce(),
                     "gas limit reached, returning last transaction to pool",
                 );
-                transaction_pool.insert_ready_transaction(tx);
+                self.transaction_pool.insert_ready_transaction(tx);
                 state.set_to_root(updated_root_hash.into());
                 break;
             };
 
             // Do necessary work to assemble the transaction
-            transaction_pool.mark_executed(&tx);
+            self.transaction_pool.mark_executed(&tx);
             transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
 
             let receipt = Self::create_txn_receipt(
-                result.clone(),
+                result,
                 tx.hash,
                 tx_index_in_block,
                 self.config.consensus.eth_block_gas_limit - gas_left,
@@ -1292,12 +1286,138 @@ impl Consensus {
         // have to re-execute it ourselves (in order to vote on it) and thus will
         // need those transactions again
         for tx in opaque_transactions {
-            let account_nonce = self.state.get_account(tx.signer)?.nonce;
-            transaction_pool.insert_transaction(tx, account_nonce);
+            let account_nonce = state.get_account(tx.signer)?.nonce;
+            self.transaction_pool.insert_transaction(tx, account_nonce);
         }
 
         // Return the early proposal
         Ok(Some((proposal, broadcasted_transactions)))
+    }
+
+    /// Assembles a Pending block.
+    fn assemble_pending_block_at(&self, state: &mut State) -> Result<Option<Block>> {
+        // Start with highest canonical block
+        let num = self
+            .db
+            .get_highest_block_number()?
+            .context("no canonical blocks")?; // get highest canonical block number
+        let block = self
+            .get_block_by_number(num)?
+            .context("missing canonical block")?; // retrieve highest canonical block
+
+        // Generate early QC
+        let early_qc = QuorumCertificate::new_with_identity(block.hash(), block.view());
+        let parent = self
+            .get_block(&early_qc.block_hash)?
+            .context("missing parent block")?;
+
+        // Ensure sane state
+        let previous_state_root_hash = state.root_hash()?;
+        if previous_state_root_hash != block.state_root_hash() {
+            warn!(
+                "state root hash mismatch, expected: {:?}, actual: {:?}",
+                block.state_root_hash(),
+                previous_state_root_hash
+            );
+            state.set_to_root(block.state_root_hash().into());
+        }
+
+        // Internal states
+        let mut gas_left = self.config.consensus.eth_block_gas_limit;
+        let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut updated_root_hash = state.root_hash()?;
+        let mut tx_index_in_block = 0;
+        let mut applied_transaction_hashes = Vec::<Hash>::new();
+
+        // This is a partial header of a block that will be proposed with some transactions executed below.
+        // It is needed so that each transaction is executed within proper block context (the block it belongs to)
+        let executed_block_header = BlockHeader {
+            view: self.view(),
+            number: parent.header.number + 1,
+            timestamp: SystemTime::max(SystemTime::now(), parent.header.timestamp),
+            gas_limit: gas_left,
+            ..BlockHeader::default()
+        };
+
+        // Retrieve a list of pending transactions
+        let pending = self.transaction_pool.pending_hashes();
+
+        for hash in pending.into_iter() {
+            // First - check for time
+            let (
+                time_since_last_view_change,
+                exponential_backoff_timeout,
+                minimum_time_left_for_empty_block,
+            ) = self.get_consensus_timeout_params();
+
+            if time_since_last_view_change + minimum_time_left_for_empty_block
+                >= exponential_backoff_timeout
+            {
+                break;
+            }
+
+            // Retrieve txn from the pool
+            let Some(txn) = self.transaction_pool.get_transaction(hash) else {
+                continue;
+            };
+
+            // Apply specific txn
+            let result = Self::apply_transaction_at(
+                state,
+                self.db.clone(),
+                txn.clone(),
+                executed_block_header,
+                inspector::noop(),
+            )?;
+
+            // Skip transactions whose execution resulted in an error
+            let Some(result) = result else {
+                continue;
+            };
+
+            // Second - check for gas
+            gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
+                g
+            } else {
+                state.set_to_root(updated_root_hash.into());
+                break;
+            };
+
+            // Do necessary work to assemble the transaction
+            transactions_trie.insert(txn.hash.as_bytes(), txn.hash.as_bytes())?;
+
+            let receipt = Self::create_txn_receipt(
+                result,
+                txn.hash,
+                tx_index_in_block,
+                self.config.consensus.eth_block_gas_limit - gas_left,
+            );
+            let receipt_hash = receipt.compute_hash();
+            receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
+
+            tx_index_in_block += 1;
+            updated_root_hash = state.root_hash()?;
+            applied_transaction_hashes.push(txn.hash);
+        }
+
+        // Generate the pending proposal, with dummy data
+        let proposal = Block::from_qc(
+            self.secret_key,
+            executed_block_header.view,
+            executed_block_header.number,
+            early_qc,           // dummy QC for early proposal
+            state.root_hash()?, // late state before rewards are applied
+            Hash(transactions_trie.root_hash()?.into()),
+            Hash(receipts_trie.root_hash()?.into()),
+            applied_transaction_hashes,
+            executed_block_header.timestamp,
+            executed_block_header.gas_limit - gas_left,
+            executed_block_header.gas_limit,
+        );
+
+        // Return the pending block
+        Ok(Some(proposal))
     }
 
     /// Produces the Proposal block.
@@ -1308,9 +1428,7 @@ impl Consensus {
         // give it a last try, even if it results in an empty block
         if self.early_proposal.is_none() {
             trace!("missing early proposal {}", self.view.get_view());
-            let mut tx_pool = self.transaction_pool.clone();
-            self.early_proposal = self.assemble_early_block_at(&mut state, &mut tx_pool)?;
-            self.transaction_pool = tx_pool;
+            self.early_proposal = self.assemble_early_block_at(&mut state)?;
         }
         let (pending_block, mut applied_txs) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
 
@@ -1339,48 +1457,20 @@ impl Consensus {
         if self.early_proposal.is_none() && self.transaction_pool.has_txn_ready() {
             info!("assemble early proposal {}", self.view.get_view());
             let mut state = self.state.clone();
-            let mut tx_pool = self.transaction_pool.clone();
-            self.early_proposal = self.assemble_early_block_at(&mut state, &mut tx_pool)?;
+            self.early_proposal = self.assemble_early_block_at(&mut state)?;
             self.state = state;
-            self.transaction_pool = tx_pool;
         }
         Ok(())
     }
 
+    /// Provides a preview of the early proposal.
     pub fn get_pending_block(&self) -> Result<Option<Block>> {
         let mut state = self.state.clone();
-        let mut tx_pool = self.transaction_pool.clone();
-        let mut votes = self.votes.clone();
 
-        let head_height = self.block_store.get_highest_block_number()?.unwrap();
-        let head_block = self.get_block_by_number(head_height)?.unwrap();
-
-        // If there are no votes for highest block then we have to create artificial vote
-        // This is needed to satisfy aggregate signature (otherwise there's nothing agg signature can be built on)
-
-        if let Entry::Vacant(v) = votes.entry(head_block.hash()) {
-            let my_vote = Vote::new(
-                self.secret_key,
-                head_block.hash(),
-                self.public_key(),
-                self.view.get_view(),
-            );
-
-            let votes = (
-                vec![my_vote.signature()],
-                // Lets pretend everyone has signed this block.
-                bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
-                0,
-                false,
-            );
-            v.insert(votes);
-        }
-
-        let pending_block = self.assemble_early_block_at(&mut state, &mut tx_pool)?;
-
-        let Some((pending_block, _)) = pending_block else {
+        let Some(pending_block) = self.assemble_pending_block_at(&mut state)? else {
             return Ok(None);
         };
+
         Ok(Some(pending_block))
     }
 

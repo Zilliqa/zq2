@@ -26,15 +26,15 @@ anyhow = { version = "1.0.89", features = ["backtrace"] }
 vergen = { version = "8.3.1", features = ["git", "git2"] }
 
 [dependencies]
-alloy = { version = "0.3.5", default-features = false, features = ["consensus", "eips", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
+alloy = { version = "0.3.6", default-features = false, features = ["consensus", "eips", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 anyhow = { version = "1.0.89", features = ["backtrace"] }
 async-trait = "0.1.81"
 base64 = "0.22.1"
 bincode = "1.3.3"
 bitvec = { version = "1.0.1", features = ["serde"] }
 bs58 = "0.5.1"
-bytes = "1.7.1"
-clap = { version = "4.5.17", features = ["derive"] }
+bytes = "1.7.2"
+clap = { version = "4.5.18", features = ["derive"] }
 crypto-bigint = "=0.5.5"
 eth_trie = {path =  "../eth-trie.rs"}
 ethabi = "18.0.0"
@@ -44,7 +44,7 @@ http = "1.1.0"
 hyper = "1.4.1"
 itertools = "0.13.0"
 jsonrpsee = { version = "0.24.3", features = ["jsonrpsee-http-client", "server"] }
-k256 = {version = "0.13.3", features = ["serde", "pem"] }
+k256 = {version = "0.13.4", features = ["serde", "pem"] }
 libp2p = { version = "0.54.0", features = ["cbor", "dns", "gossipsub", "macros", "tcp", "tokio", "noise", "mdns", "request-response", "kad", "identify", "serde", "yamux", "autonat"] }
 lru = "0.12"
 once_cell = "1.19.0"
@@ -52,11 +52,11 @@ opentelemetry = { version = "0.25.0", features = ["metrics"] }
 opentelemetry_sdk = { version = "0.24.1", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.17.0", features = ["metrics"] }
 paste = "1.0.15"
-prost = "0.13.1"
+prost = "0.13.3"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rand_core = "0.6.4"
-revm = { version = "14.0.1", features = ["optional_no_base_fee"] }
+revm = { version = "14.0.2", features = ["optional_no_base_fee"] }
 revm-inspectors = { version = "0.7.2", features = ["js-tracer"] }
 rusqlite = { version = "0.32.1", features = ["bundled", "trace"] }
 serde = { version = "1.0.210", features = ["derive", "rc"] }
@@ -71,7 +71,7 @@ tokio = { version = "1.39.2", features = ["macros", "rt-multi-thread", "signal",
 tokio-stream = "0.1.16"
 toml = "0.8.19"
 tower = "0.4.13"
-tower-http = { version = "0.5.2", features = ["cors"] }
+tower-http = { version = "0.6.0", features = ["cors"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 cbor4ii = "0.3.2"
@@ -81,11 +81,11 @@ bech32 = "0.11.0"
 cfg-if = "1.0.0"
 
 [dev-dependencies]
-alloy = { version = "0.3.5", default-features = false, features = ["rand"] }
+alloy = { version = "0.3.6", default-features = false, features = ["rand"] }
 async-trait = "0.1.81"
 criterion = "0.5.1"
 ethers = { version = "2.0.14", default-features = false, features = ["legacy"] }
-foundry-compilers = { version = "0.11.0", features = ["svm-solc"] }
+foundry-compilers = { version = "0.11.1", features = ["svm-solc"] }
 fs_extra = "1.3.0"
 indicatif = "0.17.8"
 primitive-types = { version = "0.12.2" }

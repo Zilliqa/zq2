@@ -74,9 +74,9 @@ def health():
         latest_block_number_obtained_at = current_time
 
     
-    if latest_block_number_obtained_at + 30 < current_time:
-        # no blocks for 30 seconds
-        return ("no blocks for more than 30 seconds", 500)
+    if latest_block_number_obtained_at + 60 < current_time:
+        # no blocks for 60 seconds
+        return ("no blocks for more than 60 seconds", 500)
     else:
         return (f"block {latest_block_number} since {latest_block_number_obtained_at}", 200)
 
@@ -265,6 +265,27 @@ logging:
       zilliqa:
         receivers: [ zilliqa ]
         processors: [ parse_log, parse_log_with_field, move_fields ]
+metrics:
+  receivers:
+    hostmetrics:
+      type: hostmetrics
+      collection_interval: 60s
+  processors:
+    metrics_filter:
+      type: exclude_metrics
+      metrics_pattern:
+      - agent.googleapis.com/gpu/*
+      - agent.googleapis.com/interface/*
+      - agent.googleapis.com/network/*
+      - agent.googleapis.com/swap/*
+      - agent.googleapis.com/pagefile/*
+      - agent.googleapis.com/processes/*
+  service:
+    log_level: info
+    pipelines:
+      default_pipeline:
+        receivers: [hostmetrics]
+        processors: [metrics_filter]
 """
 
 LOGROTATE_CONFIG="""
