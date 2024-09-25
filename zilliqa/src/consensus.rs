@@ -1995,7 +1995,6 @@ impl Consensus {
         else {
             return Err((MissingBlockError::from(self.finalized_view).into(), false));
         };
- 
         if block.view() < finalized_block.view() {
             return Err((
                 anyhow!(
@@ -2448,7 +2447,6 @@ impl Consensus {
             head = self.get_block(&head.parent_hash())?.unwrap();
             head_height = head.number();
         }
-        // TODOtomos does this ever run?
         while proposed_block_height > head_height {
             trace!("Stepping back proposed block pointer");
             proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
