@@ -1,10 +1,5 @@
 use std::{
-    cell::RefCell,
-    collections::{btree_map::Entry, BTreeMap},
-    error::Error,
-    fmt::Display,
-    sync::Arc,
-    time::Duration,
+    cell::RefCell, collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration,
 };
 
 use alloy::primitives::{Address, U256};
@@ -700,20 +695,6 @@ impl Consensus {
     /// Note that the algorithm below is mentioned in cfg.rs - if you change the way
     /// rewards are calculated, please change the comments in the configuration structure there.
     fn apply_rewards(
-        &mut self,
-        committee: &[NodePublicKey],
-        parent_block: &Block,
-        view: u64,
-        cosigned: &BitSlice,
-    ) -> Result<()> {
-        self.apply_rewards_raw(
-            &committee.iter().map(|k| (*k).into()).collect::<Vec<_>>(),
-            parent_block,
-            view,
-            cosigned,
-        )
-    }
-    fn apply_rewards_raw(
         &mut self,
         committee: &[NodePublicKeyRaw],
         parent_block: &Block,
@@ -1625,7 +1606,12 @@ impl Consensus {
                         self.state.set_to_root(parent.state_root_hash().into());
                     }
 
-                    self.apply_rewards(&committee, &parent, new_view.view, &high_qc.cosigned)?;
+                    self.apply_rewards(
+                        &committee.iter().map(|k| (*k).into()).collect::<Vec<_>>(),
+                        &parent,
+                        new_view.view,
+                        &high_qc.cosigned,
+                    )?;
 
                     let mut empty_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
                     let empty_root_hash = Hash(empty_trie.root_hash()?.into());
@@ -2598,7 +2584,7 @@ impl Consensus {
             }
         }
 
-        self.apply_rewards_raw(committee, &parent, block.view(), &block.header.qc.cosigned)?;
+        self.apply_rewards(committee, &parent, block.view(), &block.header.qc.cosigned)?;
 
         // ZIP-9: Sink gas to zero account
         self.state

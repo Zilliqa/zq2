@@ -642,7 +642,7 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .genesis_accounts
         .clone()[0]
         .1
-        .0;
+         .0;
     let genesis_account_balance: u128 = wallet
         .get_balance(wallet.address(), None)
         .await
