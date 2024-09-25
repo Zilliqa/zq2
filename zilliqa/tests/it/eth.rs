@@ -1306,3 +1306,72 @@ async fn deploy_deterministic_deployment_proxy(mut network: Network) {
             .unwrap()
     );
 }
+
+#[zilliqa_macros::test]
+async fn include_failed_tx_in_block(mut network: Network) {
+    let wallet_1 = network.genesis_wallet().await;
+    let wallet_2 = network.random_wallet().await;
+
+    let provider = wallet_1.provider();
+
+    let funds = wallet_1
+        .get_balance(wallet_1.address(), None)
+        .await
+        .unwrap();
+    let block_gas_limit = network.nodes[0]
+        .inner
+        .lock()
+        .unwrap()
+        .config
+        .consensus
+        .eth_block_gas_limit
+        .0
+        - 1;
+
+    let gas_price = funds / block_gas_limit;
+    //let gas_price = (gas_price / 2)  + 10;
+
+    // Send a transaction from wallet 1 to wallet 2.
+    let _hash_1 = wallet_1
+        .send_transaction(
+            TransactionRequest::pay(wallet_2.address(), 10)
+                .nonce(0)
+                .gas_price(gas_price)
+                .gas(block_gas_limit),
+            None,
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Send second transaction from wallet 1 to wallet 2.
+    let hash_2 = wallet_1
+        .send_transaction(
+            TransactionRequest::pay(wallet_2.address(), 10)
+                .nonce(1)
+                .gas_price(gas_price)
+                .gas(block_gas_limit),
+            None,
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Process pending transaction
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(hash_2)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    let receipt_2 = provider.get_transaction_receipt(hash_2).await.unwrap();
+    assert_eq!(receipt_2.unwrap().status.unwrap(), U64::zero());
+}

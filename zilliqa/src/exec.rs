@@ -9,17 +9,16 @@ use std::{
     sync::{Arc, MutexGuard},
 };
 
-use alloy::primitives::{hex, Address, U256};
-use anyhow::{anyhow, Result};
-use bytes::Bytes;
+use alloy::primitives::{hex, Address, Bytes, U256};
+use anyhow::{anyhow, bail, Result};
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
 use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
     primitives::{
-        AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg, Output,
-        ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
+        AccountInfo, AccountStatus, BlockEnv, Bytecode, EVMError, Env, ExecutionResult, HaltReason,
+        HandlerCfg, Output, ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
     },
     Database, DatabaseRef, Evm, Inspector,
 };
@@ -37,7 +36,7 @@ use crate::{
     message::{Block, BlockHeader},
     precompiles::{get_custom_precompiles, scilla_call_handle_register},
     scilla::{self, split_storage_key, storage_key, Scilla},
-    state::{contract_addr, Account, Code, State},
+    state::{contract_addr, Account, Code, Code::Evm as EvmCode, State},
     time::SystemTime,
     transaction::{
         total_scilla_gas_price, EvmGas, EvmLog, Log, ScillaGas, ScillaLog, ScillaParam,
@@ -497,9 +496,66 @@ impl State {
             })
             .build();
 
-        let e = evm.transact()?;
+        let transact_result = evm.transact();
+
         let (mut state, cfg) = evm.into_db_and_env_with_handler_cfg();
-        Ok((e, state.finalize(), cfg.env))
+
+        let result_and_state = match transact_result {
+            Err(
+                EVMError::Transaction(_)
+                | EVMError::Header(_)
+                | EVMError::Custom(_)
+                | EVMError::Precompile(_),
+            ) => {
+                let account = state.load_account(from_addr)?;
+                let Account {
+                    code,
+                    nonce,
+                    balance,
+                    ..
+                } = &mut account.account;
+
+                let code_hash = match &code {
+                    EvmCode(vec) if vec.is_empty() => KECCAK_EMPTY,
+                    // Just signal that the code exists by returning non-KECCAK_EMPTY hash (we don't have to be precise here)
+                    EvmCode(_) => B256::ZERO,
+                    _ => KECCAK_EMPTY,
+                };
+                let code = match code {
+                    EvmCode(code) => mem::take(code),
+                    _ => bail!("Evm account contains non-evm code type!"),
+                };
+
+                // The only updated fields are nonce and balance, rest can be set to default (means: no update)
+                let affected_acc = revm::primitives::Account {
+                    status: AccountStatus::default(),
+                    storage: HashMap::new(),
+                    info: AccountInfo {
+                        balance: balance
+                            .saturating_sub(gas_price * u128::from(gas_limit.0) + amount)
+                            .try_into()?,
+                        nonce: *nonce + 1,
+                        code_hash,
+                        code: Some(Bytecode::new_raw(code.into())),
+                    },
+                };
+                let mut state = HashMap::new();
+                state.insert(from_addr, affected_acc);
+                ResultAndState {
+                    result: ExecutionResult::Revert {
+                        gas_used: 0u64,
+                        output: Bytes::default(),
+                    },
+                    state,
+                }
+            }
+            Err(err) => {
+                bail!(err);
+            }
+            Ok(result) => result,
+        };
+
+        Ok((result_and_state, state.finalize(), cfg.env))
     }
 
     fn apply_transaction_scilla(
@@ -958,7 +1014,7 @@ impl State {
             None,
             current_block,
             inspector::noop(),
-            BaseFeeCheck::Validate,
+            BaseFeeCheck::Ignore,
         )?;
 
         match result {
