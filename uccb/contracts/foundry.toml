@@ -1,9 +1,11 @@
 [profile.default]
 src = "src"
 out = "out"
-libs = ["node_modules", "lib"]
+libs = [
+  "../../vendor/openzeppelin-contracts/node_modules",
+  "../../vendor/openzeppelin-contracts/lib" ]
 remappings = [
-  "@openzeppelin/=node_modules/@openzeppelin/",
+  "@openzeppelin/=../../vendor/openzeppelin-contracts/node_modules/@openzeppelin/",
   "contracts/=src/"
 ]
 
