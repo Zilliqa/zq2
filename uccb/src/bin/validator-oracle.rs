@@ -112,16 +112,15 @@ impl ValidatorOracle {
             let handle = tokio::spawn(async move {
                 loop {
                     let validators = receiver.borrow_and_update().clone();
-                    if Self::update_validator_manager(
+                    if let Err(e) = Self::update_validator_manager(
                         &chain_client,
                         &validators,
                         validator_manager_abi.clone(),
                     )
                     .await
-                    .is_err()
                     {
                         error!(
-                            "Failed updating the validator manager on {}",
+                            "Failed updating the validator manager on {}: {e}",
                             chain_client.rpc_url
                         );
                     }
