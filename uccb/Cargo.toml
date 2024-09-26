@@ -37,7 +37,6 @@ alloy = { version = "0.3.5", default-features = false, features = [
   "sol-types"] }
 anyhow = { version = "1.0.89", features = ["backtrace"] }
 async-trait = "0.1.81"
-bls-signatures = "0.15.0"
 clap = {version = "4.5.17", features = ["derive"]}
 futures = "0.3.30"
 futures-util = "0.3"
