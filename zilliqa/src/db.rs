@@ -11,7 +11,6 @@ use std::{
 use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie, Trie};
-use itertools::Either;
 use rusqlite::{
     named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -169,6 +168,12 @@ impl FromSql for EvmGas {
     }
 }
 
+enum BlockFilter {
+    Hash(Hash),
+    View(u64),
+    Height(u64),
+}
+
 const STATE_TRIE_TREE: &[u8] = b"state_trie";
 
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -226,10 +231,8 @@ impl Db {
                 gas_used INTEGER NOT NULL,
                 gas_limit INTEGER NOT NULL,
                 qc BLOB NOT NULL,
-                agg BLOB);
-            CREATE TABLE IF NOT EXISTS main_chain_canonical_blocks (
-                height INTEGER NOT NULL PRIMARY KEY,
-                block_hash TEXT NOT NULL REFERENCES blocks (block_hash));
+                agg BLOB,
+                is_canonical BOOLEAN NOT NULL);
             CREATE TABLE IF NOT EXISTS transactions (
                 tx_hash BLOB NOT NULL PRIMARY KEY,
                 data BLOB NOT NULL);
@@ -334,7 +337,7 @@ impl Db {
             // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
             // a node that already contains previous state, until (and unless) there's ever a
             // usecase for going through the effort to support it and ensure it works as expected.
-            if let Some(db_block) = self.get_block_by_hash(&block.hash())? {
+            if let Some(db_block) = self.get_block_by_hash(block.hash())? {
                 if db_block != block {
                     return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"));
                 } else {
@@ -388,8 +391,6 @@ impl Db {
             self.insert_block_with_db_tx(tx, &parent)?;
             self.set_latest_finalized_view_with_db_tx(tx, block_ref.view())?;
             self.set_high_qc_with_db_tx(tx, block_ref.header.qc)?;
-            self.set_canonical_block_number_with_db_tx(tx, block_ref.number(), block_ref.hash())?;
-            self.set_canonical_block_number_with_db_tx(tx, parent.number(), parent.hash())?;
             Ok(())
         })?;
 
@@ -411,42 +412,6 @@ impl Db {
         let sqlite_tx = sqlite_tx.transaction()?;
         operations(&sqlite_tx)?;
         Ok(sqlite_tx.commit()?)
-    }
-
-    pub fn set_canonical_block_number_with_db_tx(
-        &self,
-        sqlite_tx: &Connection,
-        number: u64,
-        hash: Hash,
-    ) -> Result<()> {
-        sqlite_tx.execute("INSERT OR REPLACE INTO main_chain_canonical_blocks (height, block_hash) VALUES (?1, ?2)",
-            (number, hash))?;
-        Ok(())
-    }
-
-    pub fn set_canonical_block_number(&self, number: u64, hash: Hash) -> Result<()> {
-        self.set_canonical_block_number_with_db_tx(&self.block_store.lock().unwrap(), number, hash)
-    }
-
-    pub fn get_canonical_block_number(&self, number: u64) -> Result<Option<Hash>> {
-        Ok(self
-            .block_store
-            .lock()
-            .unwrap()
-            .query_row_and_then(
-                "SELECT block_hash FROM main_chain_canonical_blocks WHERE height = ?1",
-                [number],
-                |row| row.get(0),
-            )
-            .optional()?)
-    }
-
-    pub fn revert_canonical_block_number(&self, number: u64) -> Result<()> {
-        self.block_store.lock().unwrap().execute(
-            "DELETE FROM main_chain_canonical_blocks WHERE height = ?1",
-            [number],
-        )?;
-        Ok(())
     }
 
     pub fn get_block_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
@@ -494,7 +459,7 @@ impl Db {
             .lock()
             .unwrap()
             .query_row_and_then(
-                "SELECT height FROM main_chain_canonical_blocks ORDER BY height DESC LIMIT 1",
+                "SELECT height FROM blocks WHERE is_canonical = TRUE ORDER BY height DESC LIMIT 1",
                 (),
                 |row| row.get(0),
             )
@@ -617,8 +582,8 @@ impl Db {
     pub fn insert_block_with_db_tx(&self, sqlite_tx: &Connection, block: &Block) -> Result<()> {
         sqlite_tx.execute(
             "INSERT INTO blocks
-                (block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg)
-            VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg)",
+                (block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, is_canonical)
+            VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg, TRUE)",
             named_params! {
                 ":block_hash": block.header.hash,
                 ":view": block.header.view,
@@ -636,6 +601,14 @@ impl Db {
         Ok(())
     }
 
+    pub fn mark_block_as_non_canonical(&self, hash: Hash) -> Result<()> {
+        self.block_store.lock().unwrap().execute(
+            "UPDATE blocks SET is_canonical = FALSE WHERE block_hash = ?1",
+            [hash],
+        )?;
+        Ok(())
+    }
+
     pub fn insert_block(&self, block: &Block) -> Result<()> {
         self.insert_block_with_db_tx(&self.block_store.lock().unwrap(), block)
     }
@@ -648,7 +621,7 @@ impl Db {
         Ok(())
     }
 
-    fn get_transactionless_block(&self, key: Either<&Hash, &u64>) -> Result<Option<Block>> {
+    fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
         fn make_block(row: &Row) -> rusqlite::Result<Block> {
             Ok(Block {
                 header: BlockHeader {
@@ -673,18 +646,21 @@ impl Db {
                 self.block_store.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
             };
         }
-        Ok(match key {
-            Either::Left(hash) => {
+        Ok(match filter {
+            BlockFilter::Hash(hash) => {
                 query_block!("block_hash = ?1", hash)
             }
-            Either::Right(view) => {
+            BlockFilter::View(view) => {
                 query_block!("view = ?1", view)
+            }
+            BlockFilter::Height(height) => {
+                query_block!("height = ?1 AND is_canonical = TRUE", height)
             }
         })
     }
 
-    pub fn get_block(&self, key: Either<&Hash, &u64>) -> Result<Option<Block>> {
-        let Some(mut block) = self.get_transactionless_block(key)? else {
+    fn get_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
+        let Some(mut block) = self.get_transactionless_block(filter)? else {
             return Ok(None);
         };
         let transaction_hashes = self
@@ -698,12 +674,16 @@ impl Db {
         Ok(Some(block))
     }
 
-    pub fn get_block_by_hash(&self, block_hash: &Hash) -> Result<Option<Block>> {
-        self.get_block(Either::Left(block_hash))
+    pub fn get_block_by_hash(&self, block_hash: Hash) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::Hash(block_hash))
     }
 
-    pub fn get_block_by_view(&self, view: &u64) -> Result<Option<Block>> {
-        self.get_block(Either::Right(view))
+    pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::View(view))
+    }
+
+    pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::Height(number))
     }
 
     pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {
