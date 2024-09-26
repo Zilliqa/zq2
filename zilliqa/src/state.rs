@@ -126,10 +126,16 @@ impl State {
                     acc + item.2 .0
                 },
             ));
-        state.mutate_account(Address::ZERO, |a| Ok(a.balance = zero_account_balance))?;
+        state.mutate_account(Address::ZERO, |a| {
+            a.balance = zero_account_balance;
+            Ok(())
+        })?;
 
         for (address, balance) in config.consensus.genesis_accounts {
-            state.mutate_account(address, |a| Ok(a.balance = *balance))?;
+            state.mutate_account(address, |a| {
+                a.balance = *balance;
+                Ok(())
+            })?;
         }
 
         let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
