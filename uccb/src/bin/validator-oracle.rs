@@ -24,7 +24,7 @@ use uccb::{
 use zilliqa::{contracts, crypto::SecretKey, state::contract_addr};
 
 const VALIDATOR_MANAGER_ABI_JSON: &str =
-    include_str!["../../contracts/out/ValidatorManager.sol/ValidatorManager.json"];
+    include_str!("../../contracts/out/ValidatorManager.sol/ValidatorManager.json");
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -45,7 +45,7 @@ impl uccb::Args for Args {
 }
 
 // Workaround for displaying the collection of validators
-// using Display instead of Debug which shows too mube info...
+// using Display instead of Debug which shows too much info...
 struct Display<'a>(&'a std::vec::Vec<Address>);
 
 impl<'a> std::fmt::Display for Display<'a> {
@@ -146,10 +146,12 @@ impl ValidatorOracle {
         &mut self,
         sender: watch::Sender<Vec<Address>>,
     ) -> Result<()> {
+        let staker_added_event = contracts::deposit::ABI.event("StakerAdded").unwrap();
+
         let filter = Filter::new()
             .address(contract_addr::DEPOSIT)
             // Must be the same signature as the event in deposit.sol
-            .event("StakerAdded(bytes)")
+            .event(&staker_added_event.signature().to_string())
             .from_block(BlockNumberOrTag::Finalized);
 
         let subscription = self
@@ -213,7 +215,7 @@ impl ValidatorOracle {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|k| k.as_address().unwrap() /*NodePublicKey::from_bytes(k.as_bytes().unwrap()).unwrap()*/)
+                .map(|k| k.as_address().unwrap())
                 .collect()
         } else {
             vec![]

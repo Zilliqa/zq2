@@ -8,7 +8,6 @@ pub struct ValidatorNodeConfig {
     pub chain_configs: Vec<ChainConfig>,
     pub private_key: SecretKey,
     pub is_leader: bool,
-    // pub bootstrap_address: Option<(PeerId, Multiaddr)>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
