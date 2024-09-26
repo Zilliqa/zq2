@@ -124,10 +124,10 @@ impl State {
                 Amount(0),
                 |acc, item: &(crypto::NodePublicKey, libp2p::PeerId, Amount, Address)| acc + item.2,
             ));
-        state.mutate_account(Address::ZERO, |a| a.balance = *zero_account_balance)?;
+        state.mutate_account(Address::ZERO, |a| Ok(a.balance = *zero_account_balance))?;
 
         for (address, balance) in config.consensus.genesis_accounts {
-            state.mutate_account(address, |a| a.balance = *balance)?;
+            state.mutate_account(address, |a| Ok(a.balance = *balance))?;
         }
 
         let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
@@ -235,13 +235,13 @@ impl State {
         })
     }
 
-    pub fn mutate_account<F: FnOnce(&mut Account) -> R, R>(
+    pub fn mutate_account<F: FnOnce(&mut Account) -> Result<R>, R>(
         &mut self,
         address: Address,
         mutation: F,
     ) -> Result<R> {
         let mut account = self.get_account(address)?;
-        let result = mutation(&mut account);
+        let result = mutation(&mut account)?;
         self.save_account(address, account)?;
         Ok(result)
     }

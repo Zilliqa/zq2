@@ -10,7 +10,6 @@ use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
 use tokio::fs;
-use toml;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::crypto::{SecretKey, TransactionPublicKey};

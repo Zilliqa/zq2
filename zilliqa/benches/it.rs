@@ -82,8 +82,8 @@ pub fn process_blocks(c: &mut Criterion) {
         let reward_address: Address = "0x0000000000000000000000000000000000000001"
             .parse()
             .unwrap();
-        state.mutate_account(reward_address, |_| {}).unwrap();
-        state.mutate_account(Address::ZERO, |_| {}).unwrap();
+        state.mutate_account(reward_address, |_| Ok(())).unwrap();
+        state.mutate_account(Address::ZERO, |_| Ok(())).unwrap();
 
         let vote = Vote::new(
             secret_key,
