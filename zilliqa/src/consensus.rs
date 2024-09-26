@@ -696,20 +696,6 @@ impl Consensus {
     /// rewards are calculated, please change the comments in the configuration structure there.
     fn apply_rewards(
         &mut self,
-        committee: &[NodePublicKey],
-        parent_block: &Block,
-        view: u64,
-        cosigned: &BitSlice,
-    ) -> Result<()> {
-        self.apply_rewards_raw(
-            &committee.iter().map(|k| (*k).into()).collect::<Vec<_>>(),
-            parent_block,
-            view,
-            cosigned,
-        )
-    }
-    fn apply_rewards_raw(
-        &mut self,
         committee: &[NodePublicKeyRaw],
         parent_block: &Block,
         view: u64,
@@ -767,20 +753,47 @@ impl Consensus {
             })
             .collect();
 
+        // Track total awards given out. This may be different to rewards_per_block because we round down on division when we split the rewards
+        let mut total_rewards_issued = 0;
+
         // Reward the Proposer
         if let Some(proposer_address) = proposer_address {
             let reward = rewards_per_block / 2;
-            at_state.mutate_account(proposer_address, |a| a.balance += reward)?;
+            at_state.mutate_account(proposer_address, |a| {
+                a.balance = a
+                    .balance
+                    .checked_add(reward)
+                    .ok_or_else(|| anyhow!("Overflow occured in proposer account balance"))?;
+                Ok(())
+            })?;
+            total_rewards_issued += reward;
         }
 
         // Reward the committee
         for (reward_address, stake) in cosigner_stake {
             if let Some(cosigner) = reward_address {
-                let reward = U256::from(rewards_per_block / 2) * U256::from(stake)
-                    / U256::from(total_cosigner_stake);
-                at_state.mutate_account(cosigner, |a| a.balance += reward.to::<u128>())?;
+                let reward = (U256::from(rewards_per_block / 2) * U256::from(stake)
+                    / U256::from(total_cosigner_stake))
+                .to::<u128>();
+                at_state.mutate_account(cosigner, |a| {
+                    a.balance = a
+                        .balance
+                        .checked_add(reward)
+                        .ok_or(anyhow!("Overflow occured in cosigner account balance"))?;
+                    Ok(())
+                })?;
+                total_rewards_issued += reward;
             }
         }
+
+        // ZIP-9: Fund rewards amount from zero account
+        at_state.mutate_account(Address::ZERO, |a| {
+            a.balance = a
+                .balance
+                .checked_sub(total_rewards_issued)
+                .ok_or(anyhow!("No funds left in zero account"))?;
+            Ok(())
+        })?;
 
         Ok(())
     }
@@ -1112,6 +1125,15 @@ impl Consensus {
             parent_block_view + 1,
             &qc.cosigned, // QC cosigners
         )?;
+
+        // ZIP-9: Sink gas to zero account
+        state.mutate_account(Address::ZERO, |a| {
+            a.balance = a
+                .balance
+                .checked_add(proposal.gas_used().0 as u128)
+                .ok_or(anyhow!("Overflow occured in zero account balance"))?;
+            Ok(())
+        })?;
 
         // Finalise the proposal with final QC and state.
         let proposal = Block::from_qc(
@@ -1612,7 +1634,12 @@ impl Consensus {
                         self.state.set_to_root(parent.state_root_hash().into());
                     }
 
-                    self.apply_rewards(&committee, &parent, new_view.view, &high_qc.cosigned)?;
+                    self.apply_rewards(
+                        &committee.iter().map(|k| (*k).into()).collect::<Vec<_>>(),
+                        &parent,
+                        new_view.view,
+                        &high_qc.cosigned,
+                    )?;
 
                     let mut empty_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
                     let empty_root_hash = Hash(empty_trie.root_hash()?.into());
@@ -2585,7 +2612,16 @@ impl Consensus {
             }
         }
 
-        self.apply_rewards_raw(committee, &parent, block.view(), &block.header.qc.cosigned)?;
+        self.apply_rewards(committee, &parent, block.view(), &block.header.qc.cosigned)?;
+
+        // ZIP-9: Sink gas to zero account
+        self.state.mutate_account(Address::ZERO, |a| {
+            a.balance = a
+                .balance
+                .checked_add(block.gas_used().0 as u128)
+                .ok_or(anyhow!("Overflow occured in zero account balance"))?;
+            Ok(())
+        })?;
 
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);

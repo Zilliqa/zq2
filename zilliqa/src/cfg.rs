@@ -242,6 +242,9 @@ pub struct ConsensusConfig {
     pub epochs_per_checkpoint: u64,
     /// The gas price, in Wei per unit of EVM gas.
     pub gas_price: Amount,
+    /// The total supply of native token in the network in Wei. Any funds which are not immediately assigned to an account (via genesis_accounts and genesis_deposits env vars) will be assigned to the zero account (0x0).
+    #[serde(default = "total_native_token_supply_default")]
+    pub total_native_token_supply: Amount,
 }
 
 pub fn consensus_timeout_default() -> Duration {
@@ -278,4 +281,8 @@ pub fn epochs_per_checkpoint_default() -> u64 {
 
 fn default_true() -> bool {
     true
+}
+
+pub fn total_native_token_supply_default() -> Amount {
+    Amount::from(21_000_000_000_000_000_000_000_000_000)
 }
