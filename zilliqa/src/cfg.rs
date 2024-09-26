@@ -1,8 +1,4 @@
-use std::{
-    ops::Deref,
-    str::FromStr,
-    time::Duration,
-};
+use std::{ops::Deref, str::FromStr, time::Duration};
 
 use alloy::primitives::Address;
 use libp2p::{Multiaddr, PeerId};

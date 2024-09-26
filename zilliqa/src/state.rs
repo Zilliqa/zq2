@@ -119,10 +119,12 @@ impl State {
                 .consensus
                 .genesis_accounts
                 .iter()
-                .fold(0, |acc, item: &(Address, Amount)| acc + item.1.0))
+                .fold(0, |acc, item: &(Address, Amount)| acc + item.1 .0))
             - (config.consensus.genesis_deposits.iter().fold(
                 0,
-                |acc, item: &(crypto::NodePublicKey, libp2p::PeerId, Amount, Address)| acc + item.2.0,
+                |acc, item: &(crypto::NodePublicKey, libp2p::PeerId, Amount, Address)| {
+                    acc + item.2 .0
+                },
             ));
         state.mutate_account(Address::ZERO, |a| Ok(a.balance = zero_account_balance))?;
 

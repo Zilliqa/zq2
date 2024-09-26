@@ -760,9 +760,11 @@ impl Consensus {
         if let Some(proposer_address) = proposer_address {
             let reward = rewards_per_block / 2;
             at_state.mutate_account(proposer_address, |a| {
-                a.balance
+                a.balance = a
+                    .balance
                     .checked_add(reward)
-                    .ok_or(anyhow!("Overflow occured in proposer account balance"))
+                    .ok_or_else(|| anyhow!("Overflow occured in proposer account balance"))?;
+                Ok(())
             })?;
             total_rewards_issued += reward;
         }
@@ -774,9 +776,11 @@ impl Consensus {
                     / U256::from(total_cosigner_stake))
                 .to::<u128>();
                 at_state.mutate_account(cosigner, |a| {
-                    a.balance
+                    a.balance = a
+                        .balance
                         .checked_add(reward)
-                        .ok_or(anyhow!("Overflow occured in cosigner account balance"))
+                        .ok_or(anyhow!("Overflow occured in cosigner account balance"))?;
+                    Ok(())
                 })?;
                 total_rewards_issued += reward;
             }
@@ -784,9 +788,11 @@ impl Consensus {
 
         // ZIP-9: Fund rewards amount from zero account
         at_state.mutate_account(Address::ZERO, |a| {
-            a.balance
+            a.balance = a
+                .balance
                 .checked_sub(total_rewards_issued)
-                .ok_or(anyhow!("No funds left in zero account"))
+                .ok_or(anyhow!("No funds left in zero account"))?;
+            Ok(())
         })?;
 
         Ok(())
@@ -1122,9 +1128,11 @@ impl Consensus {
 
         // ZIP-9: Sink gas to zero account
         state.mutate_account(Address::ZERO, |a| {
-            a.balance
+            a.balance = a
+                .balance
                 .checked_add(proposal.gas_used().0 as u128)
-                .ok_or(anyhow!("Overflow occured in zero account balance"))
+                .ok_or(anyhow!("Overflow occured in zero account balance"))?;
+            Ok(())
         })?;
 
         // Finalise the proposal with final QC and state.
@@ -2608,9 +2616,11 @@ impl Consensus {
 
         // ZIP-9: Sink gas to zero account
         self.state.mutate_account(Address::ZERO, |a| {
-            a.balance
+            a.balance = a
+                .balance
                 .checked_add(block.gas_used().0 as u128)
-                .ok_or(anyhow!("Overflow occured in zero account balance"))
+                .ok_or(anyhow!("Overflow occured in zero account balance"))?;
+            Ok(())
         })?;
 
         let mut block_receipts = Vec::new();
