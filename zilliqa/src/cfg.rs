@@ -1,5 +1,5 @@
 use std::{
-    ops::{Add, Deref, Sub},
+    ops::Deref,
     str::FromStr,
     time::Duration,
 };
@@ -189,20 +189,6 @@ impl<'de> Deserialize<'de> for Amount {
         Ok(Amount(
             u128::from_str(&res).map_err(serde::de::Error::custom)?,
         ))
-    }
-}
-
-impl Add for Amount {
-    type Output = Self;
-    fn add(self, other: Self) -> Self {
-        Amount::from(*self + *other)
-    }
-}
-
-impl Sub for Amount {
-    type Output = Self;
-    fn sub(self, other: Self) -> Self {
-        Amount::from(*self - *other)
     }
 }
 

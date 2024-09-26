@@ -114,17 +114,17 @@ impl State {
             Some(contract_addr::INTERSHARD_BRIDGE),
         )?;
 
-        let zero_account_balance = config.consensus.total_native_token_supply
+        let zero_account_balance = config.consensus.total_native_token_supply.0
             - (config
                 .consensus
                 .genesis_accounts
                 .iter()
-                .fold(Amount(0), |acc, item: &(Address, Amount)| acc + item.1))
+                .fold(0, |acc, item: &(Address, Amount)| acc + item.1.0))
             - (config.consensus.genesis_deposits.iter().fold(
-                Amount(0),
-                |acc, item: &(crypto::NodePublicKey, libp2p::PeerId, Amount, Address)| acc + item.2,
+                0,
+                |acc, item: &(crypto::NodePublicKey, libp2p::PeerId, Amount, Address)| acc + item.2.0,
             ));
-        state.mutate_account(Address::ZERO, |a| Ok(a.balance = *zero_account_balance))?;
+        state.mutate_account(Address::ZERO, |a| Ok(a.balance = zero_account_balance))?;
 
         for (address, balance) in config.consensus.genesis_accounts {
             state.mutate_account(address, |a| Ok(a.balance = *balance))?;
