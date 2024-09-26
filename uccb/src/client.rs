@@ -60,9 +60,6 @@ impl ChainClient {
             .await?;
         let provider: Arc<ChainProvider> = Arc::new(provider);
 
-        // TODO: get the validator_manager_address from chain_gateway itself
-        // let chain_gateway = ChainGateway::new(config.chain_gateway_address, provider.clone());
-
         Ok(ChainClient {
             rpc_url: config.rpc_url.clone(),
             provider,
