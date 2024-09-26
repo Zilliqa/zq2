@@ -3,7 +3,8 @@ src = "src"
 out = "out"
 libs = [
   "../../vendor/openzeppelin-contracts/contracts",
-  "../../vendor/openzeppelin-contracts/lib" ]
+  "../../vendor/openzeppelin-contracts/lib"
+]
 remappings = [
   "@openzeppelin/=../../vendor/openzeppelin-contracts/",
   "contracts/=src/"
