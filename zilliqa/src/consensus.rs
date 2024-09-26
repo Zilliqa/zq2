@@ -220,6 +220,7 @@ impl Consensus {
         let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
         if let Some(checkpoint) = &config.load_checkpoint {
             db.load_trusted_checkpoint(&checkpoint.file, &checkpoint.hash, config.eth_chain_id)?;
+            // TODOtomos: then execute latest block
         }
 
         let latest_block = db
