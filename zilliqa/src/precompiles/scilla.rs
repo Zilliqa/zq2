@@ -236,11 +236,10 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
             init_data.iter().find(|p| p.name == field),
             types.get(&field),
         ) {
-            (None, Some((ty, _))) => (ty, None),
+            // Note that if a field exists in both the `init_data` and mutable fields, we ignore the `init_data` and
+            // read from the field. This behaviour matches the semantics of Scilla and specification in ZIP-21.
+            (_, Some((ty, _))) => (ty, None),
             (Some(v), None) => (&v.ty, Some(v.value.clone())),
-            (Some(_), Some(_)) => {
-                return err(format!("variable {field} in both init data and state"));
-            }
             (None, None) => {
                 return err(format!("variable {field} does not exist in contract"));
             }
