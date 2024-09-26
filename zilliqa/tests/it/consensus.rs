@@ -9,10 +9,10 @@ use ethers::{
 use primitive_types::{H160, H256, U256};
 use tokio::sync::Mutex;
 use tracing::*;
-use zilliqa::{contracts, crypto::Hash, state::contract_addr};
+use zilliqa::{contracts, crypto::Hash, message::ExternalMessage, state::contract_addr};
 
 use crate::{
-    compile_contract, deploy_contract, deploy_contract_with_args, Network, NewNodeOptions, Wallet,
+    compile_contract, deploy_contract, deploy_contract_with_args, AnyMessage, Network, NewNodeOptions, Wallet
 };
 
 // Test that all nodes can die and the network can restart (even if they startup at different
@@ -745,4 +745,60 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         zero_acount_balance_change_with_gas_spent + block.gas_used,
         zero_acount_balance_change_rewards_only
     );
+}
+
+// Test that validators correctly resolve a fork if they've advanced their own view incorrectly.
+#[zilliqa_macros::test]
+async fn handle_delayed_proposal(mut network: Network) {
+    // Wait until at least 2 blocks have been produced
+    network
+        .run_until(
+            |n| {
+                n.get_node(0).get_block(BlockId::latest()).unwrap().unwrap().number() >= 2
+            },
+            100,
+        )
+        .await
+        .unwrap();
+
+    network.disconnect_node(0);
+
+    // Register a message listener for proposals. This will let us grab the proposal message that is sent while node 0 is disconnected.
+    let mut listener = network.register_message_listener(|message| matches!(message, AnyMessage::External(ExternalMessage::Proposal(_))));
+
+    // Produce more blocks
+    network
+        .run_until(
+            |n| {
+                n.get_node(1).get_block(BlockId::latest()).unwrap().unwrap().number() >= 3
+            },
+            100,
+        )
+        .await
+        .unwrap();
+
+    // Trigger timeout in node 0. Node 0 should advance its own view and vote for a `NewView`, but this won't have an
+    // effect because the other nodes are fine. 8 seconds should be long enough for node 0 to assume a missed view, but
+    // short enough that it doesn't reject the proposal it eventually receives due to the timestamp skew.
+    zilliqa::time::advance(Duration::from_millis(8000));
+    network.node_at(0).handle_timeout().unwrap();
+
+    let proposal = listener.recv().await.unwrap();
+
+    network.connect_node(0);
+
+    // Resend the proposal now node 0 is reconnected.
+    network.resend_message(proposal);
+
+    // Ensure node 0 catches up. Importantly, this relies on the node accepting the proposal, despite having advanced
+    // its own view to 4.
+    network
+        .run_until(
+            |n| {
+                n.get_node(0).get_block(BlockId::latest()).unwrap().unwrap().number() >= 4
+            },
+            100,
+        )
+        .await
+        .unwrap();
 }

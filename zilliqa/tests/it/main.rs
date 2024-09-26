@@ -218,6 +218,7 @@ struct Network {
     // We keep track of a list of disconnected nodes. These nodes will not recieve any messages until they are removed
     // from this list.
     disconnected: HashSet<usize>,
+    message_listeners: Vec<(mpsc::UnboundedSender<StreamMessage>, Box<dyn Fn(&AnyMessage) -> bool + Send + Sync + 'static>)>,
     /// A stream of messages from each node. The stream items are a tuple of (source, destination, message).
     /// If the destination is `None`, the message is a broadcast.
     receivers: Vec<BoxStream<'static, StreamMessage>>,
@@ -384,6 +385,7 @@ impl Network {
             genesis_deposits,
             nodes,
             disconnected: HashSet::new(),
+            message_listeners: vec![],
             send_to_parent,
             shard_id,
             receivers,
@@ -831,6 +833,13 @@ impl Network {
     fn handle_message(&mut self, message: StreamMessage) {
         let (source, destination, ref contents) = message;
         info!(%source, ?destination);
+
+        for (sender, condition) in &self.message_listeners {
+            if condition(contents) {
+                sender.send(message.clone()).unwrap();
+            }
+        }
+
         let sender_node = self
             .nodes
             .iter()
@@ -1070,11 +1079,25 @@ impl Network {
     }
 
     pub fn disconnect_node(&mut self, index: usize) {
+        trace!(index, "disconnected");
         self.disconnected.insert(index);
     }
 
     pub fn connect_node(&mut self, index: usize) {
+        trace!(index, "connected");
         self.disconnected.remove(&index);
+    }
+
+    pub fn register_message_listener(&mut self, condition: impl Fn(&AnyMessage) -> bool + Send + Sync + 'static) -> mpsc::UnboundedReceiver<StreamMessage> {
+        let (sender, receiver) = mpsc::unbounded_channel();
+
+        self.message_listeners.push((sender, Box::new(condition)));
+
+        receiver
+    }
+
+    pub fn resend_message(&mut self, message: StreamMessage) {
+        self.resend_message.send(message).unwrap();
     }
 
     pub fn random_index(&mut self) -> usize {
