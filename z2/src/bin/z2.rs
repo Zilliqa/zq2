@@ -76,13 +76,15 @@ enum DeployerCommands {
     /// Generate the deployer config file
     New(DeployerNewArgs),
     /// Install the network defined in the deployer config file
-    Install(DeployerUpgradeArgs),
+    Install(DeployerActionsArgs),
     /// Update the network defined in the deployer config file
-    Upgrade(DeployerUpgradeArgs),
+    Upgrade(DeployerActionsArgs),
+    /// Generate in output the validator config file to join the network
+    GetConfigFile(DeployerConfigArgs),
     /// Generate in output the commands to deposit stake amount to all the validators
-    GetDepositCommands(DeployerUpgradeArgs),
+    GetDepositCommands(DeployerActionsArgs),
     /// Deposit the stake amounts to all the validators
-    Deposit(DeployerUpgradeArgs),
+    Deposit(DeployerActionsArgs),
     /// Run RPC calls over the internal network nodes
     Rpc(DeployerRpcArgs),
 }
@@ -104,7 +106,16 @@ pub struct DeployerNewArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct DeployerUpgradeArgs {
+pub struct DeployerConfigArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Node role. Default: validator
+    #[clap(long, value_enum)]
+    role: Option<chain::node::NodeRole>,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerActionsArgs {
     /// The network deployer config file
     config_file: Option<String>,
     /// Enable nodes selection
@@ -593,6 +604,20 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::GetConfigFile(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                let role = arg.role.clone().unwrap_or(chain::node::NodeRole::Validator);
+                plumbing::run_deployer_get_config_file(&config_file, role)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer get-config-file command: {}", err)
                     })?;
                 Ok(())
             }

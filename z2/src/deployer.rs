@@ -131,6 +131,38 @@ async fn execute_install_or_upgrade(nodes: Vec<ChainNode>, is_upgrade: bool) -> 
     Ok(())
 }
 
+pub async fn get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
+    if role == NodeRole::Apps {
+        log::info!(
+            "Config file is not present for nodes with role {}",
+            NodeRole::Apps
+        );
+        return Ok(());
+    }
+
+    let config = fs::read_to_string(config_file).await?;
+    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let chain = ChainInstance::new(config).await?;
+    let mut chain_nodes = chain.nodes().await?;
+
+    chain_nodes.retain(|node| node.role == role);
+
+    if let Some(node) = chain_nodes.first() {
+        println!("Config file for a node role {} in {}", role, chain.name());
+        println!("---");
+        println!("{}", node.get_config_toml()?);
+        println!("---");
+    } else {
+        log::error!(
+            "No nodes available in {} for the role {}",
+            chain.name(),
+            role
+        );
+    }
+
+    Ok(())
+}
+
 pub async fn get_deposit_commands(config_file: &str, only_selected_nodes: bool) -> Result<()> {
     let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
     let mut futures = vec![];

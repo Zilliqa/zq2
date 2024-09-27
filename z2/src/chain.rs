@@ -44,7 +44,7 @@ impl Chain {
 
     pub fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
         match chain_name {
-            "zq2-uccbtest" => Err(anyhow!("Configuration file for {} not found", chain_name)),
+            "zq2-uccbtest" => Ok(include_str!("../resources/chain-specs/zq2-uccbtest.toml")),
             "zq2-infratest" => Err(anyhow!("Configuration file for {} not found", chain_name)),
             "zq2-perftest" => Ok(include_str!("../resources/chain-specs/zq2-perftest.toml")),
             "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),

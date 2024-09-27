@@ -1,0 +1,17 @@
+p2p_port = 3333
+bootstrap_address = [ "12D3KooWReRperXgN12FUH6yRTXrcV3u98E753356AR1sAEJefup", "/ip4/34.87.127.118/tcp/3333" ]
+
+[[nodes]]
+eth_chain_id = 33469
+allowed_timestamp_skew = { secs = 60, nanos = 0 }
+data_dir = "/data"
+consensus.genesis_accounts = [ ["0xc36ca59822f80b8b55cd033007cc46d5205cca3e", "21_000_000_000_000_000_000_000_000_000"] ]
+consensus.genesis_deposits = [ ["b3256475ab58e0964b748ba90c7b19d39496ffc93345db7f2d23abf38f981f9654f08882ce415d5588530bb4861a09c4", "12D3KooWReRperXgN12FUH6yRTXrcV3u98E753356AR1sAEJefup", "100_000_000_000_000_000_000_000_000", "0xc36ca59822f80b8b55cd033007cc46d5205cca3e"] ]
+
+# Reward parameters
+consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
+consensus.blocks_per_hour = 3600
+consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
+# Gas parameters
+consensus.eth_block_gas_limit = 84000000
+consensus.gas_price = "4_761_904_800_000"

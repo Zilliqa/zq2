@@ -108,6 +108,7 @@ ZQ2_IMAGE="{{ docker_image }}"
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
     docker run -td -p 3333:3333 -p 4201:4201 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
+    --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
     -e RUST_LOG="zilliqa=trace,libp2p=trace" -e RUST_BACKTRACE=1 \
     -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
     ${ZQ2_IMAGE} ${1} --log-json
@@ -152,6 +153,7 @@ OTTERSCAN_IMAGE="{{ otterscan_image }}"
 start() {
      docker rm otterscan-""" + VERSIONS.get('otterscan') + """ &> /dev/null || echo 0
     docker run -td -p 80:80 --name otterscan-""" + VERSIONS.get('otterscan') + """ \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         -e ERIGON_URL=https://api.""" + SUBDOMAIN + """ \
         ${OTTERSCAN_IMAGE} &> /dev/null &
 }
@@ -192,6 +194,7 @@ SPOUT_IMAGE="{{ spout_image }}"
 start() {
     docker rm spout-""" + VERSIONS.get('spout') + """ &> /dev/null || echo 0
     docker run -td -p 8080:80 --name spout-""" + VERSIONS.get('spout') + """ \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         -e RPC_URL=https://api.""" + SUBDOMAIN + """ \
         -e NATIVE_TOKEN_SYMBOL="ZIL" \
         -e PRIVATE_KEY=""" + GENESIS_KEY + """ \
