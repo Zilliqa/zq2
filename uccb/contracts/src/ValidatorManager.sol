@@ -50,12 +50,12 @@ contract ValidatorManager is Ownable2Step {
     }
 
     function setValidators(address[] calldata users) external onlyOwner {
-      clearValidators();
+        clearValidators();
 
-      uint256 length = users.length;
-      for (uint256 i = 0; i < length; ++i) {
-        _validators.add(users[i]);
-      }
+        uint256 length = users.length;
+        for (uint256 i = 0; i < length; ++i) {
+            _validators.add(users[i]);
+        }
     }
 
     // Expensive function, avoid calling on-chain
