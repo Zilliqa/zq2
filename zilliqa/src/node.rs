@@ -721,7 +721,7 @@ impl Node {
                         tx_hash: Some(txn_hash.0.into()),
                     }))
                 }
-                GethDebugBuiltInTracerType::FlatCallTracer => todo!(),
+                GethDebugBuiltInTracerType::CallTracer => todo!(),
             },
             GethDebugTracerType::JsTracer(js_code) => {
                 let config = tracer_config.into_json();
