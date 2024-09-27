@@ -5,6 +5,7 @@ use alloy::{
     dyn_abi::DynSolValue,
     eips::{eip2930::AccessList, BlockNumberOrTag},
     json_abi::JsonAbi,
+    network::Ethereum,
     primitives::Address,
     providers::Provider,
     pubsub::PubSubFrontend,
@@ -60,8 +61,8 @@ impl<'a> std::fmt::Display for Display<'a> {
 struct ValidatorOracle {
     signer: PrivateKeySigner,
     chain_clients: Vec<ChainClient>,
-    deploy_abi: JsonAbi,
     validator_manager_abi: JsonAbi,
+    deposit_contract: ContractInstance<PubSubFrontend, uccb::client::ChainProvider, Ethereum>,
 }
 
 impl ValidatorOracle {
@@ -80,16 +81,22 @@ impl ValidatorOracle {
             );
         }
 
+        let deploy_abi: JsonAbi =
+            serde_json::from_value(serde_json::to_value(contracts::deposit::ABI.clone())?)?;
+        let deposit_contract: ContractInstance<PubSubFrontend, _> = ContractInstance::new(
+            contract_addr::DEPOSIT,
+            chain_clients[0].provider.as_ref().clone(),
+            Interface::new(deploy_abi.clone()),
+        );
+
         Ok(Self {
             signer,
             chain_clients,
-            deploy_abi: serde_json::from_value(serde_json::to_value(
-                contracts::deposit::ABI.clone(),
-            )?)?,
             validator_manager_abi: serde_json::from_value(
                 serde_json::from_str::<serde_json::Value>(VALIDATOR_MANAGER_ABI_JSON)?["abi"]
                     .clone(),
             )?,
+            deposit_contract,
         })
     }
 
@@ -146,12 +153,12 @@ impl ValidatorOracle {
         &mut self,
         sender: watch::Sender<Vec<Address>>,
     ) -> Result<()> {
-        let staker_added_event = contracts::deposit::ABI.event("StakerAdded").unwrap();
-
         let filter = Filter::new()
             .address(contract_addr::DEPOSIT)
-            // Must be the same signature as the event in deposit.sol
-            .event(&staker_added_event.signature().to_string())
+            .events([
+                &contracts::deposit::STAKER_ADDED_EVT.name,
+                &contracts::deposit::STAKER_REMOVED_EVT.name,
+            ])
             .from_block(BlockNumberOrTag::Finalized);
 
         let subscription = self
@@ -201,25 +208,16 @@ impl ValidatorOracle {
     async fn get_stakers(&self) -> Result<Vec<Address>> {
         debug!("Retreiving validators from the deposit contract");
 
-        let contract: ContractInstance<PubSubFrontend, _> = ContractInstance::new(
-            contract_addr::DEPOSIT,
-            self.zq2_chain_client().provider.as_ref(),
-            Interface::new(self.deploy_abi.clone()),
-        );
-
-        let call_builder: DynCallBuilder<_, _, _> =
-            contract.function("getStakerSignerAddresses", &[])?;
+        let call_builder: DynCallBuilder<_, _, _> = self
+            .deposit_contract
+            .function("getStakerSignerAddresses", &[])?;
         let output = call_builder.call().await?;
-        let validators = if output.len() == 1 {
-            output[0]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|k| k.as_address().unwrap())
-                .collect()
-        } else {
-            vec![]
-        };
+        let validators = output[0]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| k.as_address().unwrap())
+            .collect();
 
         Ok(validators)
     }
