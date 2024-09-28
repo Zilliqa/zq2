@@ -495,7 +495,7 @@ impl ChainNode {
         Ok(filename.to_owned())
     }
 
-    async fn create_config_toml(&self, filename: &str) -> Result<String> {
+    pub fn get_config_toml(&self) -> Result<String> {
         let spec_config = include_str!("../../resources/config.tera.toml");
 
         let genesis_wallet = EthereumAddress::from_private_key(&self.genesis_wallet_private_key)?;
@@ -512,7 +512,11 @@ impl ChainNode {
         var_map.insert("genesis_address", &genesis_wallet.address);
 
         let ctx = Context::from_serialize(var_map)?;
-        let rendered_template = Tera::one_off(spec_config, &ctx, false)?;
+        Ok(Tera::one_off(spec_config, &ctx, false)?)
+    }
+
+    async fn create_config_toml(&self, filename: &str) -> Result<String> {
+        let rendered_template = self.get_config_toml()?;
         let config_file = rendered_template.as_str();
 
         let mut fh = File::create(filename).await?;

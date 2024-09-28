@@ -149,6 +149,12 @@ pub async fn run_deployer_upgrade(config_file: &str, only_selected_nodes: bool) 
     Ok(())
 }
 
+pub async fn run_deployer_get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
+    println!("🦆 Getting nodes config file for {config_file} .. ");
+    deployer::get_config_file(config_file, role).await?;
+    Ok(())
+}
+
 pub async fn run_deployer_get_deposit_commands(
     config_file: &str,
     only_selected_nodes: bool,
