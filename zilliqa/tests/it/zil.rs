@@ -926,7 +926,7 @@ async fn get_txns_for_tx_block_ex_1(mut network: Network) {
         "Expected Transactions length to be less than or equal to 2500"
     );
     assert!(
-        txns.transactions.len() >= 1,
+        !txns.transactions.is_empty(),
         "Expected Transactions length to be greater than or equal to 1"
     );
 }
@@ -966,7 +966,7 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
         serde_json::from_value(response).expect("Failed to deserialize response");
 
     assert!(
-        txns[0].len() >= 1,
+        !txns[0].is_empty(),
         "Expected Transactions length to be greater than or equal to 1"
     );
 }
