@@ -970,3 +970,30 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
         "Expected Transactions length to be greater than or equal to 1"
     );
 }
+
+#[zilliqa_macros::test]
+async fn get_txn_bodies_for_tx_block_ex(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let block_number = "1002353";
+    let page_number = "2";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxnBodiesForTxBlockEx", [block_number, page_number])
+        .await
+        .expect("Failed to call GetTxnBodiesForTxBlockEx API");
+
+    let txn_bodies: zilliqa::api::types::zil::TxnBodiesForTxBlockExResponse =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert_eq!(txn_bodies.curr_page, page_number.parse::<u64>().unwrap());
+    assert!(
+        txn_bodies.num_pages > 0,
+        "Expected NumPages to be greater than 0"
+    );
+    assert!(
+        txn_bodies.transactions.len() <= 2500,
+        "Expected Transcations length to be less than or equal to 2500"
+    );
+}
