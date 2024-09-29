@@ -636,7 +636,7 @@ async fn get_ds_block_rate(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
-async fn get_tx_block_rate(mut network: Network) {
+async fn get_tx_block_rate_0(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     let response: Value = wallet
@@ -648,6 +648,36 @@ async fn get_tx_block_rate(mut network: Network) {
     let returned = zilliqa::api::types::zil::TXBlockRateResult::deserialize(&response).unwrap();
 
     assert!(returned.rate >= 0.0, "Block rate should be non-negative");
+}
+
+#[zilliqa_macros::test]
+async fn get_tx_block_rate_1(mut network: Network) {
+    let wallet = network.random_wallet().await;
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        to_addr,
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxBlockRate", [""])
+        .await
+        .expect("Failed to call GetTxBlockRate API");
+
+    let returned = zilliqa::api::types::zil::TXBlockRateResult::deserialize(&response).unwrap();
+
+    assert!(returned.rate > 0.0, "Block rate should be positive");
 }
 
 #[zilliqa_macros::test]
@@ -711,7 +741,7 @@ async fn get_num_peers(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
-async fn get_tx_rate(mut network: Network) {
+async fn get_tx_rate_0(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     let response: Value = wallet
@@ -722,10 +752,6 @@ async fn get_tx_rate(mut network: Network) {
 
     let tx_rate: f64 = serde_json::from_value(response).expect("Failed to deserialize response");
 
-    assert!(
-        tx_rate >= 0.0,
-        "Transaction block rate should be non-negative"
-    );
     assert!(tx_rate >= 0.0, "Transaction rate should be non-negative");
 
     network.run_until_block(&wallet, 2.into(), 50).await;
@@ -738,15 +764,55 @@ async fn get_tx_rate(mut network: Network) {
 
     let tx_rate: f64 = serde_json::from_value(response).expect("Failed to deserialize response");
 
-    assert!(
-        tx_rate >= 0.0,
-        "Transaction block rate should be non-negative"
-    );
     assert!(tx_rate >= 0.0, "Transaction rate should be non-negative");
 }
 
 #[zilliqa_macros::test]
-async fn get_txns_for_tx_block_ex(mut network: Network) {
+async fn get_tx_rate_1(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        to_addr,
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTransactionRate", [""])
+        .await
+        .expect("Failed to call GetTxRate API");
+
+    let tx_rate: f64 = serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert!(tx_rate > 0.0, "Transaction block rate should be positive");
+
+    network.run_until_block(&wallet, 2.into(), 50).await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTransactionRate", [""])
+        .await
+        .expect("Failed to call GetTxRate API");
+
+    let tx_rate: f64 = serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert!(tx_rate > 0.0, "Transaction rate should be non-negative");
+}
+
+#[zilliqa_macros::test]
+async fn get_txns_for_tx_block_ex_0(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     network.run_until_block(&wallet, 2.into(), 50).await;
 
@@ -766,5 +832,141 @@ async fn get_txns_for_tx_block_ex(mut network: Network) {
     assert!(
         txns.transactions.len() <= 2500,
         "Expected Transactions length to be less than or equal to 2500"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn test_simulate_transactions(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        to_addr,
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    // Verify the sender's nonce has increased using the `GetBalance` API.
+    let response: Value = wallet
+        .provider()
+        .request("GetBalance", [address])
+        .await
+        .unwrap();
+    assert_eq!(response["nonce"].as_u64().unwrap(), 1);
+
+    // Verify the receiver's balance has increased using the `GetBalance` API.
+    let response: Value = wallet
+        .provider()
+        .request("GetBalance", [to_addr])
+        .await
+        .unwrap();
+    assert_eq!(response["balance"].as_str().unwrap(), "200000000000000");
+
+    let node = network.get_node(0);
+
+    let mut num_transactions = 0;
+    let mut i = 0;
+    while let Some(b) = node.get_block(i).unwrap() {
+        for tx in b.transactions.iter() {
+            num_transactions += 1;
+            println!("Block {:?}, transaction {:?}", &b, &tx);
+        }
+        i += 1;
+    }
+
+    assert!(num_transactions >= 1);
+}
+
+#[zilliqa_macros::test]
+async fn get_txns_for_tx_block_ex_1(mut network: Network) {
+    let wallet = network.random_wallet().await;
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        to_addr,
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    network.run_until_block(&wallet, 2.into(), 50).await;
+
+    let block_number = "1";
+    let page_number = "0";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTransactionsForTxBlockEx", [block_number, page_number])
+        .await
+        .expect("Failed to call GetTransactionsForTxBlockEx API");
+
+    let txns: zilliqa::api::types::zil::TxnsForTxBlockExResponse =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert_eq!(txns.curr_page, page_number.parse::<u64>().unwrap());
+    assert!(
+        txns.transactions.len() <= 2500,
+        "Expected Transactions length to be less than or equal to 2500"
+    );
+    assert!(
+        txns.transactions.len() >= 1,
+        "Expected Transactions length to be greater than or equal to 1"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_txns_for_tx_block_0(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        to_addr,
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    network.run_until_block(&wallet, 2.into(), 50).await;
+
+    let block_number = "1";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTransactionsForTxBlock", [block_number])
+        .await
+        .expect("Failed to call GetTransactionsForTxBlock API");
+
+    let txns: Vec<Vec<String>> =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert!(
+        txns[0].len() >= 1,
+        "Expected Transactions length to be greater than or equal to 1"
     );
 }
