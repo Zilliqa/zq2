@@ -35,7 +35,7 @@ use crate::{
     inspector::{self, ScillaInspector},
     message::{
         Block, BlockHeader, BlockResponse, ExternalMessage, InternalMessage, IntershardCall,
-        Proposal,
+        ProcessProposal, Proposal,
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -252,7 +252,12 @@ impl Node {
                     return Ok(());
                 }
 
-                let proposals = (request.from_view..=request.to_view)
+                trace!("Received a block request");
+                // Note that it is very important that we limit this by number of blocks
+                // returned, _not_ by max view range returned. If we don't, then any
+                // view gap larger than block_request_limit will never be filliable
+                // because no node will ever be prepared to return the block after it.
+                let proposals: Vec<Proposal> = (request.from_view..=request.to_view)
                     .take(self.config.block_request_limit)
                     .filter_map(|view| {
                         self.consensus
@@ -262,12 +267,19 @@ impl Node {
                     })
                     .collect::<Result<_>>()?;
 
-                trace!("responding to new blocks request of {request:?}");
+                trace!("Call availability");
+                let availability = self.consensus.block_store.availability()?;
+                trace!("responding to new blocks request of {request:?} with props {0:?} availability {availability:?}",
+                       proposals.iter().fold("".to_string(), |state, x| format!("{},{}", state, x.header.view)));
 
                 // Send the response to this block request.
                 self.request_responses.send((
                     response_channel,
-                    ExternalMessage::BlockResponse(BlockResponse { proposals }),
+                    ExternalMessage::BlockResponse(BlockResponse {
+                        proposals,
+                        from_view: request.from_view,
+                        availability,
+                    }),
                 ))?;
             }
             // We don't usually expect a [BlockResponse] to be received as a request, however this can occur when our
@@ -280,6 +292,11 @@ impl Node {
                 // us, but we keep it here for symmetry with the other handlers.
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            // This just breaks down group block messages into individual messages to stop them blocking threads
+            // for long periods.
+            ExternalMessage::ProcessProposal(m) => {
+                self.handle_process_proposal(from, m)?;
             }
             // Handle requests which just contain a block proposal. This shouldn't actually happen in production, but
             // annoyingly we have some test cases which trigger this (by rewriting broadcasts to direct messages) and
@@ -885,15 +902,35 @@ impl Node {
             "Received blocks response of length {}",
             response.proposals.len()
         );
+        self.consensus
+            .receive_availability(from, &response.availability)?;
+
+        self.consensus
+            .buffer_lack_of_proposals(response.from_view, &response.proposals)?;
 
         for block in response.proposals {
-            let proposal = self.consensus.receive_block(from, block)?;
-            if let Some(proposal) = proposal {
-                self.message_sender
-                    .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
-            }
+            // Buffer the block so that we know we have it - in fact, add it to the cache so
+            // that we can include it in the chain if necessary.
+            self.consensus.buffer_proposal(from, block)?;
         }
+        Ok(())
+    }
 
+    fn handle_process_proposal(&mut self, from: PeerId, req: ProcessProposal) -> Result<()> {
+        if from != self.consensus.peer_id() {
+            warn!("Someone ({from}) sent me a ProcessProposal; illegal- ignoring");
+            return Ok(());
+        }
+        trace!("Handling proposal for view {0}", req.block.header.view);
+        let proposal = self.consensus.receive_block(from, req.block)?;
+        if let Some(proposal) = proposal {
+            trace!(
+                " ... broadcasting proposal for view {0}",
+                proposal.header.view
+            );
+            self.message_sender
+                .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
+        }
         Ok(())
     }
 }
