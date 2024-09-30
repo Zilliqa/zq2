@@ -183,6 +183,7 @@ contract Deposit {
         require(msg.sender == address(0));
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
+        require(signerAddress != address(0));
 
         if (amount < _minimumStake) {
             revert("stake less than minimum stake");
