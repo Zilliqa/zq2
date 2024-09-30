@@ -2866,9 +2866,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.11.1"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d91e510bd537970f68f8462dea0e8df0a2302d4749fb57bc8e10bbd32a283e2"
+checksum = "2a8b6b55ad815420a141dc699a4655df7684abd0650bb08c371f8b79835c3c96"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -2899,9 +2899,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.11.1"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9971eefe4eae1cf2ac707beb4d40f63304b34c81c0961d299e461c14a23b1e7"
+checksum = "11e678e647318830588a600fe13897b0b92eeb0299e760f90f24464590cb4e85"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -2909,9 +2909,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.11.1"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cde3d12776c295ad85bcdbbae18f4601e384f40a62b0e3371d880bbcd91c65c"
+checksum = "49e0e2c63807b73bd3d0cb30e19fa4f015c1722be551bdf20511a45251651fbb"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -2931,9 +2931,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.11.1"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "569a769f6105248816c253715ec39977d61d369e9c67e4774d6870da8f64dffc"
+checksum = "e09212f84d04d1e62461bc09784b609bb9fe48b6fb973f69eca4edf1f4668cee"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -2946,14 +2946,13 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.11.1"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f10ade77fa0eab75e142a76711c42a258781bad0c4516ad64aa413297ebb72e"
+checksum = "567581086a924e411374d505558f021f9d2060519dc4a21c93eae061f6079947"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
  "dunce",
- "memmap2",
  "once_cell",
  "path-slash",
  "regex",
@@ -5231,15 +5230,6 @@ name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
-
-[[package]]
-name = "memmap2"
-version = "0.9.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe751422e4a8caa417e13c3ea66452215d7d63e19e604f4980461212f3ae1322"
-dependencies = [
- "libc",
-]
 
 [[package]]
 name = "memoffset"
