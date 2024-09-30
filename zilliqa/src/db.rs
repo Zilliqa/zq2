@@ -485,7 +485,7 @@ impl Db {
             .lock()
            .unwrap()
            .prepare_cached(
-               "select block_hash from blocks where height in (select height from main_chain_canonical_blocks ORDER BY height DESC LIMIT ?1)")?
+               "select block_hash from blocks where is_canonical = true order by height desc limit ?1")?
            .query_map([how_many], |row| row.get(0))?.collect::<Result<Vec<Hash>, _>>()?)
     }
 
@@ -821,21 +821,15 @@ impl Db {
                            ":low" : blocks.start,
                            ":high" : blocks.end } )?;
             // @TODO can't yet remove transactions - we don't know the hashes.
-            tx.execute("DELETE FROM receipts WHERE block_hash IN (SELECT block_hash FROM main_chain_canonical_blocks WHERE height >= :low AND height < :high)",
+            tx.execute("DELETE FROM receipts WHERE block_hash IN (SELECT block_hash FROM blocks WHERE height >= :low AND height < :high)",
                        named_params! {
                            ":low": blocks.start,
                            ":high": blocks.end })?;
             tx.execute(
-                "DELETE FROM main_chain_canonical_blocks WHERE height >= :low AND height < :high",
+                "DELETE FROM blocks WHERE height >= :low AND height < :high",
                 named_params! {
                     ":low": blocks.start,
                     ":high": blocks.end },
-            )?;
-            tx.execute(
-                "DELETE FROM blocks WHERE height >= :low AND height < :high",
-                named_params! {
-                ":low": blocks.start,
-                ":high" : blocks.end },
             )?;
             Ok(())
         })
