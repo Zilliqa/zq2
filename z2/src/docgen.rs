@@ -408,9 +408,9 @@ pub async fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, Page
     let (s4, _) = tokio::sync::mpsc::unbounded_channel();
     let peers = Arc::new(AtomicUsize::new(0));
 
-    let my_node = Arc::new(Mutex::new(
-        zilliqa::node::Node::new(config, secret_key, s1, s2, s3, s4, peers, None).await?,
-    ));
+    let my_node = Arc::new(Mutex::new(zilliqa::node::Node::new(
+        config, secret_key, s1, s2, s3, s4, peers, None,
+    )?));
     let module = zilliqa::api::rpc_module(my_node.clone());
     for m in module.method_names() {
         methods.insert(

@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf};
 
+use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
-use std::{fs, path::PathBuf};
 
 pub mod bridge_node;
 pub mod cfg;
@@ -83,7 +83,8 @@ mod tests {
         let input = SolcInput {
             language: SolcLanguage::Solidity,
             sources: Source::read_all(
-                ["ValidatorManager.sol"].map(|c| format!("contracts/src/{c}")),
+                ["ValidatorManager.sol", "ChainGateway.sol"]
+                    .map(|c| format!("../uccb/contracts/src/core/{c}")),
             )
             .unwrap(),
             settings: Settings {
