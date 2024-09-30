@@ -238,6 +238,7 @@ struct Network {
     scilla_address: String,
     scilla_stdlib_dir: String,
     do_checkpoints: bool,
+    consensus_tick_countdown: u64,
 }
 
 impl Network {
@@ -399,6 +400,7 @@ impl Network {
             scilla_address,
             do_checkpoints,
             scilla_stdlib_dir,
+            consensus_tick_countdown: 10,
         }
     }
 
@@ -595,6 +597,8 @@ impl Network {
         // this could of course spin forever, but the test itself should time out.
         loop {
             for node in &self.nodes {
+                // Trigger a tick so that block fetching can operate.
+                node.inner.lock().unwrap().consensus.tick().unwrap();
                 if node.inner.lock().unwrap().handle_timeout().unwrap() {
                     return;
                 }
@@ -749,6 +753,19 @@ impl Network {
         // Advance time.
         zilliqa::time::advance(Duration::from_millis(1));
 
+        // Every 20ms send a consensus tick, since most of our tests are too short to otherwise
+        // be able to sync.
+        self.consensus_tick_countdown -= 1;
+        if self.consensus_tick_countdown == 0 {
+            for (index, node) in self.nodes.iter().enumerate() {
+                let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
+
+                span.in_scope(|| {
+                    node.inner.lock().unwrap().consensus.tick().unwrap();
+                });
+            }
+            self.consensus_tick_countdown = 10;
+        }
         // Take all the currently ready messages from the stream.
         let mut messages = self.collect_messages();
 

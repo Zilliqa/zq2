@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     fmt::{self, Display, Formatter},
+    ops::Range,
     path::Path,
 };
 
@@ -11,7 +12,6 @@ use itertools::Either;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use std::ops::Range;
 
 use crate::{
     crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
