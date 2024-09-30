@@ -36,9 +36,6 @@ pub trait DB: Send + Sync {
         Ok(())
     }
 
-    /// Flush data to the DB from the cache.
-    fn flush(&self) -> Result<(), Self::Error>;
-
     #[cfg(test)]
     fn len(&self) -> Result<usize, Self::Error>;
     #[cfg(test)]
@@ -81,10 +78,6 @@ impl DB for MemoryDB {
         if self.light {
             self.storage.write().remove(key);
         }
-        Ok(())
-    }
-
-    fn flush(&self) -> Result<(), Self::Error> {
         Ok(())
     }
 
