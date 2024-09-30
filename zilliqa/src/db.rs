@@ -3,6 +3,7 @@ use std::{
     fmt::Debug,
     fs::{self, File},
     io::{BufRead, BufReader, BufWriter, Read, Write},
+    ops::Range,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
@@ -28,7 +29,6 @@ use crate::{
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt},
 };
-use std::ops::Range;
 
 macro_rules! sqlify_with_bincode {
     ($type: ty) => {

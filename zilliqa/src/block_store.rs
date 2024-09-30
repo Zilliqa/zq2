@@ -2,6 +2,7 @@ use std::{
     cmp,
     collections::{BTreeMap, HashMap, HashSet},
     num::NonZeroUsize,
+    ops::Range,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -10,7 +11,6 @@ use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
-use std::ops::Range;
 use tracing::*;
 
 use crate::{
@@ -252,7 +252,7 @@ impl BlockCache {
             key: u128,
             value: Proposal,
         ) {
-            into.insert(key, BlockCacheEntry::new(*parent_hash, from.clone(), value))
+            into.insert(key, BlockCacheEntry::new(*parent_hash, *from, value))
                 .map(|entry| {
                     by_parent_hash
                         .get_mut(&entry.parent_hash)
@@ -277,7 +277,7 @@ impl BlockCache {
             insert_with_replacement(
                 &mut self.tail,
                 &mut self.by_parent_hash,
-                &from,
+                from,
                 parent_hash,
                 key,
                 proposal,
@@ -292,7 +292,7 @@ impl BlockCache {
             insert_with_replacement(
                 &mut self.cache,
                 &mut self.by_parent_hash,
-                &from,
+                from,
                 parent_hash,
                 key,
                 proposal,
@@ -325,42 +325,6 @@ impl BlockCache {
             let _ = u128::try_into(key >> shift).map(|x| result.with_elem(x));
         }
         result
-    }
-
-    pub fn summarise(
-        &self,
-    ) -> Result<(
-        Vec<(String, u64, String)>,
-        Vec<(String, u64, String)>,
-        Vec<(String, String)>,
-        String,
-    )> {
-        let mut from_cache: Vec<(String, u64, String)> = Vec::new();
-        for (k, v) in &self.cache {
-            from_cache.push((
-                format!("{:0x}", k),
-                v.proposal.header.number,
-                format!("{:?}", v.parent_hash),
-            ));
-        }
-        let mut from_tail: Vec<(String, u64, String)> = Vec::new();
-        for (k, v) in &self.tail {
-            from_tail.push((
-                format!("{:0x}", k),
-                v.proposal.header.number,
-                format!("{:?}", v.parent_hash),
-            ));
-        }
-        let mut from_idx: Vec<(String, String)> = Vec::new();
-        for (hash, key) in &self.by_parent_hash {
-            from_idx.push((format!("{:?}", hash), format!("{:?}", key)));
-        }
-        Ok((
-            from_cache,
-            from_tail,
-            from_idx,
-            format!("{:0}", self.empty_view_ranges),
-        ))
     }
 }
 
@@ -458,7 +422,7 @@ impl PeerInfo {
                 match s {
                     BlockStrategy::CachedViewRange(views, until_view) => {
                         if until_view.map_or(true, |x| self.availability.highest_known_view <= x) {
-                            result.with_range(&views);
+                            result.with_range(views);
                             max_end = Some(
                                 max_end.map_or(views.end - 1, |v| std::cmp::max(v, views.end - 1)),
                             );
@@ -510,7 +474,7 @@ impl BlockStoreStatus {
         let peers = block_store
             .peers
             .iter()
-            .map(|(k, v)| (format!("{:?}", k), PeerInfoStatus::new(&v)))
+            .map(|(k, v)| (format!("{:?}", k), PeerInfoStatus::new(v)))
             .collect::<Vec<_>>();
 
         Ok(Self {
@@ -574,17 +538,6 @@ impl BlockStore {
             message_sender,
             clock: 0,
         })
-    }
-
-    pub fn get_buffered(
-        &self,
-    ) -> Result<(
-        Vec<(String, u64, String)>,
-        Vec<(String, u64, String)>,
-        Vec<(String, String)>,
-        String,
-    )> {
-        self.buffered.summarise()
     }
 
     /// Create a read-only clone of this [BlockStore]. The read-only property must be upheld by the caller - Calling
@@ -1033,15 +986,15 @@ impl BlockStore {
     }
 
     fn peer_info(&mut self, peer: PeerId) -> &mut PeerInfo {
-        self.peers.entry(peer).or_insert_with(|| PeerInfo::new())
+        self.peers.entry(peer).or_insert_with(PeerInfo::new)
     }
 
     pub fn forget_block_range(&mut self, blocks: Range<u64>) -> Result<()> {
-        Ok(self.db.forget_block_range(blocks)?)
+        self.db.forget_block_range(blocks)
     }
 
     pub fn contains_block(&mut self, block_hash: &Hash) -> Result<bool> {
-        Ok(self.db.contains_block(block_hash)?)
+        self.db.contains_block(block_hash)
     }
 
     // Retrieve the plausible next blocks for the block with this hash
