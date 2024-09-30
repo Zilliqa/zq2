@@ -14,7 +14,6 @@ pub struct ZQ2Config {
 pub struct ChainConfig {
     // Must be ws:// to support subscriptions.
     pub rpc_url: String,
-    pub chain_gateway_address: Address,
     #[serde(default)]
     pub estimate_gas: bool,
     #[serde(default)]
