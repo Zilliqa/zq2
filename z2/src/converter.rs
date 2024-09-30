@@ -738,7 +738,7 @@ fn infer_eth_signature(
                     chain_id: Some(chain_id.into()),
                     nonce: transaction.nonce - 1,
                     gas_price: transaction.gas_price,
-                    gas_limit: transaction.gas_limit as u128,
+                    gas_limit: transaction.gas_limit,
                     to: if transaction.to_addr.is_zero() {
                         TxKind::Create
                     } else {
@@ -754,7 +754,7 @@ fn infer_eth_signature(
                     chain_id: chain_id.into(),
                     nonce: transaction.nonce - 1,
                     gas_price: transaction.gas_price,
-                    gas_limit: transaction.gas_limit as u128,
+                    gas_limit: transaction.gas_limit,
                     to: if transaction.to_addr.is_zero() {
                         TxKind::Create
                     } else {
@@ -770,7 +770,7 @@ fn infer_eth_signature(
                 tx: TxEip1559 {
                     chain_id: chain_id.into(),
                     nonce: transaction.nonce - 1,
-                    gas_limit: transaction.gas_limit as u128,
+                    gas_limit: transaction.gas_limit,
                     to: if transaction.to_addr.is_zero() {
                         TxKind::Create
                     } else {

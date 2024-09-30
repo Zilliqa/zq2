@@ -237,9 +237,9 @@ impl SignedTransaction {
 
     pub fn gas_limit(&self) -> EvmGas {
         match self {
-            SignedTransaction::Legacy { tx, .. } => EvmGas(tx.gas_limit as u64),
-            SignedTransaction::Eip2930 { tx, .. } => EvmGas(tx.gas_limit as u64),
-            SignedTransaction::Eip1559 { tx, .. } => EvmGas(tx.gas_limit as u64),
+            SignedTransaction::Legacy { tx, .. } => EvmGas(tx.gas_limit),
+            SignedTransaction::Eip2930 { tx, .. } => EvmGas(tx.gas_limit),
+            SignedTransaction::Eip1559 { tx, .. } => EvmGas(tx.gas_limit),
             SignedTransaction::Zilliqa { tx, .. } => tx.gas_limit.into(),
             SignedTransaction::Intershard { tx, .. } => tx.gas_limit,
         }
@@ -247,9 +247,9 @@ impl SignedTransaction {
 
     pub fn gas_limit_scilla(&self) -> ScillaGas {
         match self {
-            SignedTransaction::Legacy { tx, .. } => EvmGas(tx.gas_limit as u64).into(),
-            SignedTransaction::Eip2930 { tx, .. } => EvmGas(tx.gas_limit as u64).into(),
-            SignedTransaction::Eip1559 { tx, .. } => EvmGas(tx.gas_limit as u64).into(),
+            SignedTransaction::Legacy { tx, .. } => EvmGas(tx.gas_limit).into(),
+            SignedTransaction::Eip2930 { tx, .. } => EvmGas(tx.gas_limit).into(),
+            SignedTransaction::Eip1559 { tx, .. } => EvmGas(tx.gas_limit).into(),
             SignedTransaction::Zilliqa { tx, .. } => tx.gas_limit,
             SignedTransaction::Intershard { tx, .. } => tx.gas_limit.into(),
         }
@@ -268,13 +268,13 @@ impl SignedTransaction {
     fn maximum_cost(&self) -> Result<u128> {
         match self {
             SignedTransaction::Legacy { tx, .. } => {
-                Ok(tx.gas_limit * tx.gas_price + u128::try_from(tx.value)?)
+                Ok(tx.gas_limit as u128 * tx.gas_price + u128::try_from(tx.value)?)
             }
             SignedTransaction::Eip2930 { tx, .. } => {
-                Ok(tx.gas_limit * tx.gas_price + u128::try_from(tx.value)?)
+                Ok(tx.gas_limit as u128 * tx.gas_price + u128::try_from(tx.value)?)
             }
             SignedTransaction::Eip1559 { tx, .. } => {
-                Ok(tx.gas_limit * tx.max_fee_per_gas + u128::try_from(tx.value)?)
+                Ok(tx.gas_limit as u128 * tx.max_fee_per_gas + u128::try_from(tx.value)?)
             }
             SignedTransaction::Zilliqa { tx, .. } => {
                 Ok(total_scilla_gas_price(tx.gas_limit, tx.gas_price).0)
@@ -548,9 +548,9 @@ impl Transaction {
 
     pub fn gas_limit(&self) -> EvmGas {
         match self {
-            Transaction::Legacy(TxLegacy { gas_limit, .. }) => EvmGas(*gas_limit as u64),
-            Transaction::Eip2930(TxEip2930 { gas_limit, .. }) => EvmGas(*gas_limit as u64),
-            Transaction::Eip1559(TxEip1559 { gas_limit, .. }) => EvmGas(*gas_limit as u64),
+            Transaction::Legacy(TxLegacy { gas_limit, .. }) => EvmGas(*gas_limit),
+            Transaction::Eip2930(TxEip2930 { gas_limit, .. }) => EvmGas(*gas_limit),
+            Transaction::Eip1559(TxEip1559 { gas_limit, .. }) => EvmGas(*gas_limit),
             Transaction::Zilliqa(TxZilliqa { gas_limit, .. }) => (*gas_limit).into(),
             Transaction::Intershard(TxIntershard { gas_limit, .. }) => *gas_limit,
         }

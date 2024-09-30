@@ -723,7 +723,7 @@ fn parse_legacy_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
 
     let nonce = u64::decode(&mut bytes)?;
     let gas_price = u128::decode(&mut bytes)?;
-    let gas_limit = u128::decode(&mut bytes)?;
+    let gas_limit = u64::decode(&mut bytes)?;
     let to = TxKind::decode(&mut bytes)?;
     let value = U256::decode(&mut bytes)?;
     let input = Bytes::decode(&mut bytes)?;
@@ -752,7 +752,7 @@ fn parse_eip2930_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
     let chain_id = u64::decode(&mut bytes)?;
     let nonce = u64::decode(&mut bytes)?;
     let gas_price = u128::decode(&mut bytes)?;
-    let gas_limit = u128::decode(&mut bytes)?;
+    let gas_limit = u64::decode(&mut bytes)?;
     let to = TxKind::decode(&mut bytes)?;
     let value = U256::decode(&mut bytes)?;
     let input = Bytes::decode(&mut bytes)?;
@@ -784,7 +784,7 @@ fn parse_eip1559_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
     let nonce = u64::decode(&mut bytes)?;
     let max_priority_fee_per_gas = u128::decode(&mut bytes)?;
     let max_fee_per_gas = u128::decode(&mut bytes)?;
-    let gas_limit = u128::decode(&mut bytes)?;
+    let gas_limit = u64::decode(&mut bytes)?;
     let to = TxKind::decode(&mut bytes)?;
     let value = U256::decode(&mut bytes)?;
     let input = Bytes::decode(&mut bytes)?;
