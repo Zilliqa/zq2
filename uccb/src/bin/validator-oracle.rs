@@ -6,7 +6,7 @@ use alloy::{
     eips::{eip2930::AccessList, BlockNumberOrTag},
     json_abi::JsonAbi,
     network::Ethereum,
-    primitives::Address,
+    primitives::{Address, FixedBytes},
     providers::Provider,
     pubsub::PubSubFrontend,
     rpc::types::Filter,
@@ -153,12 +153,19 @@ impl ValidatorOracle {
         &mut self,
         sender: watch::Sender<Vec<Address>>,
     ) -> Result<()> {
+        let signatures : Vec<FixedBytes<32>> = vec![
+            contracts::deposit::STAKER_ADDED_EVT.signature(),
+            contracts::deposit::STAKER_REMOVED_EVT.signature(),
+        ]
+                    .into_iter()
+                    .map(|x| FixedBytes::<32>::from(x.as_fixed_bytes()))
+                    .collect();
+
         let filter = Filter::new()
             .address(contract_addr::DEPOSIT)
-            .events([
-                &contracts::deposit::STAKER_ADDED_EVT.name,
-                &contracts::deposit::STAKER_REMOVED_EVT.name,
-            ])
+            .event_signature(
+                signatures
+            )
             .from_block(BlockNumberOrTag::Finalized);
 
         let subscription = self
