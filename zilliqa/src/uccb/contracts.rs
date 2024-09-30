@@ -1,13 +1,13 @@
 use alloy::json_abi::JsonAbi;
 
 pub mod validator_manager {
-    use super::{read_contract_abi, JsonAbi};
     use alloy::{
         contract::{ContractInstance, Interface},
         primitives::Address,
     };
-
     use once_cell::sync::Lazy;
+
+    use super::{read_contract_abi, JsonAbi};
 
     pub const ABI: Lazy<JsonAbi> = Lazy::new(|| {
         read_contract_abi(include_str![
@@ -22,13 +22,13 @@ pub mod validator_manager {
 }
 
 pub mod chain_gateway {
-    use super::{read_contract_abi, JsonAbi};
     use alloy::{
         contract::{ContractInstance, Interface},
         primitives::Address,
     };
-
     use once_cell::sync::Lazy;
+
+    use super::{read_contract_abi, JsonAbi};
 
     pub const ABI: Lazy<JsonAbi> = Lazy::new(|| {
         read_contract_abi(include_str![

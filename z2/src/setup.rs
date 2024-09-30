@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf, str::FromStr},
+    path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use alloy::{

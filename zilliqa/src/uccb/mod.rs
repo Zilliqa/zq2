@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf};
 
+use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
-use std::{fs, path::PathBuf};
 
 pub mod bridge_node;
 pub mod cfg;
