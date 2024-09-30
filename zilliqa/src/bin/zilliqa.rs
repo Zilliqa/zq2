@@ -24,17 +24,6 @@ struct Args {
     log_json: bool,
 }
 
-impl zilliqa::uccb::Args for Args {
-    fn secret_key(&self) -> &SecretKey {
-        &self.secret_key
-    }
-
-    fn config_file(&self) -> PathBuf {
-        let uccb_config_file = self.uccb_config_file.clone();
-        uccb_config_file.unwrap()
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -93,8 +82,8 @@ async fn main() -> Result<()> {
         }
     }));
 
-    let uccb_config = if args.uccb_config_file.is_some() {
-        Some(zilliqa::uccb::read_config(&args)?)
+    let uccb_config = if let Some(uccb_config_file) = args.uccb_config_file {
+        Some(zilliqa::uccb::read_config(&uccb_config_file)?)
     } else {
         None
     };

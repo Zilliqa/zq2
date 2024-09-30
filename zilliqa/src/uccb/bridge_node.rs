@@ -1,13 +1,8 @@
-use crate::{
-    consensus::Consensus,
-    uccb::{
-        client::ChainClient,
-        contracts,
-        event::{DispatchedEvent, RelayEventSignatures, RelayedEvent},
-        message::{Dispatch, Dispatched, InboundBridgeMessage, OutboundBridgeMessage, Relay},
-        signature::SignatureTracker,
-    },
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
 };
+
 use alloy::{
     contract::{ContractInstance, DynCallBuilder},
     dyn_abi::EventExt,
@@ -19,16 +14,23 @@ use alloy::{
 };
 use anyhow::Result;
 use futures_util::stream::StreamExt;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
-};
 use tokio::{
     select,
     sync::mpsc::{self, UnboundedSender},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, error, info, warn};
+
+use crate::{
+    consensus::Consensus,
+    uccb::{
+        client::ChainClient,
+        contracts,
+        event::{DispatchedEvent, RelayEventSignatures, RelayedEvent},
+        message::{Dispatch, Dispatched, InboundBridgeMessage, OutboundBridgeMessage, Relay},
+        signature::SignatureTracker,
+    },
+};
 
 #[derive(Debug)]
 pub struct BridgeNode {

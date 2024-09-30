@@ -1018,6 +1018,8 @@ fn get_recent_transactions(
     while block_number > 0 && txns.len() < 100 && blocks_searched < 100 {
         let block = match node
             .consensus
+            .lock()
+            .unwrap()
             .block_store
             .get_canonical_block_by_number(block_number)?
         {
@@ -1042,7 +1044,12 @@ fn get_recent_transactions(
 
 fn get_num_transactions(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
-    let num_transactions = node.consensus.block_store.get_num_transactions()?;
+    let num_transactions = node
+        .consensus
+        .lock()
+        .unwrap()
+        .block_store
+        .get_num_transactions()?;
     Ok(num_transactions.to_string())
 }
 
