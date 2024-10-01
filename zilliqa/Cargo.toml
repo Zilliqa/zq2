@@ -28,10 +28,7 @@ vergen = { version = "8.3.1", features = ["git", "git2"] }
 [dependencies]
 alloy = { version = "0.4.2", default-features = false, features = [
   "consensus",
-  "contract",
-  "dyn-abi",
   "eips",
-  "json-abi",
   "k256",
   "network",
   "providers",
