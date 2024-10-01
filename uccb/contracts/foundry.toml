@@ -2,11 +2,10 @@
 src = "src"
 out = "out"
 libs = [
-  "node_modules",
-  "../../vendor/openzeppelin-contracts/node_modules",
+  "../../vendor/openzeppelin-contracts/contracts",
   "../../vendor/openzeppelin-contracts/lib" ]
 remappings = [
-  "@openzeppelin/=node_modules/@openzeppelin/",
+  "@openzeppelin/=../../vendor/openzeppelin-contracts/",
   "contracts/=src/"
 ]
 
