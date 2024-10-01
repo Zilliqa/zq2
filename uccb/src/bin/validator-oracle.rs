@@ -153,19 +153,17 @@ impl ValidatorOracle {
         &mut self,
         sender: watch::Sender<Vec<Address>>,
     ) -> Result<()> {
-        let signatures : Vec<FixedBytes<32>> = vec![
+        let signatures: Vec<FixedBytes<32>> = vec![
             contracts::deposit::STAKER_ADDED_EVT.signature(),
             contracts::deposit::STAKER_REMOVED_EVT.signature(),
         ]
-                    .into_iter()
-                    .map(|x| FixedBytes::<32>::from(x.as_fixed_bytes()))
-                    .collect();
+        .into_iter()
+        .map(|x| FixedBytes::<32>::from(x.as_fixed_bytes()))
+        .collect();
 
         let filter = Filter::new()
             .address(contract_addr::DEPOSIT)
-            .event_signature(
-                signatures
-            )
+            .event_signature(signatures)
             .from_block(BlockNumberOrTag::Finalized);
 
         let subscription = self
