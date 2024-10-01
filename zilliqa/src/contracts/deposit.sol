@@ -8,6 +8,7 @@ struct Staker {
     uint256 balance;
     address rewardAddress;
     bytes peerId;
+    // Used by UCCB to identify the validators
     address signerAddress;
 }
 
