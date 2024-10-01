@@ -4,7 +4,6 @@
 
 Unreleased changes, in reverse chronological order. New entries are added at the top of this list.
 
-- [#1511](https://github.com/Zilliqa/zq2/pull/1511): Add more API tests.
 - [#1449](https://github.com/Zilliqa/zq2/pull/1449): Restructure how blocks are stored to prevent database inconsistencies.
 - [#1472](https://github.com/Zilliqa/zq2/pull/1472): Add `GetTransactionsForTxBlockEx` API.
 - [#1476](https://github.com/Zilliqa/zq2/pull/1476): Fix topic in EVM-encoded Scilla events.
