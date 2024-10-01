@@ -284,7 +284,7 @@ impl Db {
         our_shard_id: u64,
     ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
         // For now, only support a single version: you want to load the latest checkpoint, anyway.
-        const SUPPORTED_VERSION: u32 = 1;
+        const SUPPORTED_VERSION: u32 = 2;
 
         let input = File::open(path)?;
         let mut reader = BufReader::with_capacity(8192 * 1024, input); // 8 MiB read chunks
@@ -311,7 +311,7 @@ impl Db {
             return Err(anyhow!("Invalid checkpoint file: wrong shard ID."));
         }
 
-        // Decode checkpoint block, its transactions and parent block, and validate
+        // Decode and validate checkpoint block, its transactions and parent block
         let mut lines = reader.lines(); // V1 uses a plaintext, line-based format
         let block = lines.next().ok_or(anyhow!(
             "Invalid checkpoint file: missing block info on line 1"
@@ -329,7 +329,7 @@ impl Db {
             bincode::deserialize(&hex::decode(transactions.as_bytes())?)?;
 
         let parent = lines.next().ok_or(anyhow!(
-            "Invalid checkpoint file: missing parent info on line 4"
+            "Invalid checkpoint file: missing parent info on line 3"
         ))??;
         let parent: Block = bincode::deserialize(&hex::decode(parent.as_bytes())?)?;
         parent.verify_hash()?;
@@ -788,7 +788,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     shard_id: u64,
     output_dir: P,
 ) -> Result<()> {
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
 
     fs::create_dir_all(&output_dir)?;
 

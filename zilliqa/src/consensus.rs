@@ -240,6 +240,7 @@ impl Consensus {
             .transpose()?;
 
         let mut state = if let Some(latest_block) = &latest_block {
+            trace!("Loading state from latest block");
             State::new_at_root(
                 db.state_trie()?,
                 latest_block.state_root_hash().into(),
