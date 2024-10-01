@@ -2594,6 +2594,11 @@ impl Consensus {
         let transactions: Result<Vec<_>> = transactions.into_iter().map(|tx| tx.verify()).collect();
         let mut transactions = transactions?;
 
+        let transaction_hashes = transactions
+            .iter()
+            .map(|tx| format!("{:?}", tx.hash))
+            .join(",");
+
         // We re-inject any missing Intershard transactions (or really, any missing
         // transactions) from our mempool. If any txs are unavailable either in the
         // message or locally, the proposal cannot be applied
@@ -2668,8 +2673,8 @@ impl Consensus {
         let receipts_root_hash: Hash = receipts_trie.root_hash()?.into();
         if block.header.receipts_root_hash != receipts_root_hash {
             warn!(
-                "Receipt root mismatch. Specified in block: {} vs computed: {}",
-                block.header.receipts_root_hash, receipts_root_hash
+                "Receipt root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
+                block.header.receipts_root_hash, receipts_root_hash, transaction_hashes
             );
             return Ok(());
         }
@@ -2677,18 +2682,19 @@ impl Consensus {
         let transactions_root_hash: Hash = transactions_trie.root_hash()?.into();
         if block.header.transactions_root_hash != transactions_root_hash {
             warn!(
-                "Transactions root mismatch. Specified in block: {} vs computed: {}",
-                block.header.transactions_root_hash, transactions_root_hash
+                "Transactions root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
+                block.header.transactions_root_hash, transactions_root_hash, transaction_hashes
             );
             return Ok(());
         }
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(
-                "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}",
+                "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}, txn_hashes: {}",
                 self.state.root_hash()?,
                 block.state_root_hash(),
-                block
+                block,
+                transaction_hashes
             );
             return Err(anyhow!(
                 "state root hash mismatch, expected: {:?}, actual: {:?}",
