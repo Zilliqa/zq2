@@ -249,10 +249,18 @@ async fn checkpoints_test(mut network: Network) {
     let latest_block_number = new_node_wallet.get_block_number().await.unwrap();
     assert_eq!(latest_block_number, 10.into());
 
-    let block = wallet.get_block(latest_block_number).await.unwrap().unwrap();
+    let block = wallet
+        .get_block(latest_block_number)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(block.transactions.len(), 1);
 
-    let block_from_checkpoint = new_node_wallet.get_block(latest_block_number).await.unwrap().unwrap();
+    let block_from_checkpoint = new_node_wallet
+        .get_block(latest_block_number)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(block.transactions, block_from_checkpoint.transactions);
     // Check access to previous block state via fetching author of current block
     assert_eq!(block.author, block_from_checkpoint.author);

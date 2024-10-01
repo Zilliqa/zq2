@@ -275,12 +275,14 @@ impl Db {
     }
 
     /// Fetch checkpoint data from file and initialise db state
+    /// Return checkpointed block and transactions which must be executed after this function
+    /// Return None if checkpoint already loaded
     pub fn load_trusted_checkpoint<P: AsRef<Path>>(
         &self,
         path: P,
         hash: &Hash,
         our_shard_id: u64,
-    ) -> Result<(Block, Vec<SignedTransaction>, Block)> {
+    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
         // For now, only support a single version: you want to load the latest checkpoint, anyway.
         const SUPPORTED_VERSION: u32 = 1;
 
@@ -319,11 +321,12 @@ impl Db {
             return Err(anyhow!("Checkpoint does not match trusted hash"));
         }
         block.verify_hash()?;
-        
+
         let transactions = lines.next().ok_or(anyhow!(
             "Invalid checkpoint file: missing transactions info on line 2"
         ))??;
-        let transactions: Vec<SignedTransaction> = bincode::deserialize(&hex::decode(transactions.as_bytes())?)?;
+        let transactions: Vec<SignedTransaction> =
+            bincode::deserialize(&hex::decode(transactions.as_bytes())?)?;
 
         let parent = lines.next().ok_or(anyhow!(
             "Invalid checkpoint file: missing parent info on line 4"
@@ -335,28 +338,31 @@ impl Db {
             return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
         }
 
-        // TODOtomos fix this check
-        // if !trie_storage.db.is_empty() || self.get_highest_block_number()?.is_some() {
-        //     // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
-        //     // values not part of any state trie of any known block. With some effort, this could
-        //     // even be supported.
-        //     // However, without such explicit support, having old blocks MAY in fact cause
-        //     // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
-        //     // a node that already contains previous state, until (and unless) there's ever a
-        //     // usecase for going through the effort to support it and ensure it works as expected.
-        //     if let Some(db_block) = self.get_block_by_hash(&block.hash())? {
-        //         if db_block != block {
-        //             return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"));
-        //         } else {
-        //             // In this case, the database already has the block contained in this checkpoint. We assume the
-        //             // database contains the full state for that block too and thus return early, without actually
-        //             // loading the checkpoint file.
-        //             return Ok((db_block, transactions, commitee, parent));
-        //         }
-        //     } else {
-        //         return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint file does not exist in non-empty database"));
-        //     }
-        // }
+        if !trie_storage.db.is_empty() || self.get_highest_block_number()?.is_some() {
+            // If checkpointed block already exists then assume checkpoint load already complete. Return None
+            if let Some(_) = self.get_block_by_hash(&block.hash())? {
+                return Ok(None);
+            }
+            // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
+            // values not part of any state trie of any known block. With some effort, this could
+            // even be supported.
+            // However, without such explicit support, having old blocks MAY in fact cause
+            // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
+            // a node that already contains previous state, until (and unless) there's ever a
+            // usecase for going through the effort to support it and ensure it works as expected.
+            if let Some(db_block) = self.get_block_by_hash(&parent.hash())? {
+                if db_block.parent_hash() != parent.parent_hash() {
+                    return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"));
+                } else {
+                    // In this case, the database already has the block contained in this checkpoint. We assume the
+                    // database contains the full state for that block too and thus return early, without actually
+                    // loading the checkpoint file.
+                    return Ok(Some((block, transactions, parent)));
+                }
+            } else {
+                return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint file does not exist in non-empty database"));
+            }
+        }
 
         // then decode state
         for (idx, line) in lines.enumerate() {
@@ -400,7 +406,7 @@ impl Db {
             Ok(())
         })?;
 
-        Ok((block, transactions, parent))
+        Ok(Some((block, transactions, parent)))
     }
 
     pub fn flush_state(&self) {
@@ -819,7 +825,8 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     writer.write_all(b"\n")?;
 
     // then write state
-    let accounts = EthTrie::new(state_trie_storage.clone()).at_root(parent.state_root_hash().into());
+    let accounts =
+        EthTrie::new(state_trie_storage.clone()).at_root(parent.state_root_hash().into());
     let account_storage = EthTrie::new(state_trie_storage);
     let mut account_key_buf = [0u8; 64]; // save a few allocations, since account keys are fixed length
 
@@ -991,7 +998,7 @@ mod tests {
 
         const SHARD_ID: u64 = 5000;
 
-        let checkpoint_transactions = vec!();
+        let checkpoint_transactions = vec![];
         checkpoint_block_with_state(
             &checkpoint_block,
             &checkpoint_transactions,
@@ -1009,21 +1016,34 @@ mod tests {
                 &checkpoint_block.hash(),
                 SHARD_ID,
             )
+            .unwrap()
             .unwrap();
         assert_eq!(checkpoint_block, block);
-        assert_eq!(checkpoint_transactions, transactions);       
+        assert_eq!(checkpoint_transactions, transactions);
         assert_eq!(checkpoint_parent, parent);
 
         // load the checkpoint again, to ensure idempotency
-        // let (block, transactions, commitee, parent) = db
-        //     .load_trusted_checkpoint(
-        //         checkpoint_path.join(checkpoint_block.number().to_string()),
-        //         &checkpoint_block.hash(),
-        //         SHARD_ID,
-        //     )
-        //     .unwrap();
-        // assert_eq!(checkpoint_block, block);
-        // assert_eq!(checkpoint_transactions, transactions);
-        // assert_eq!(checkpoint_parent, parent);
+        let (block, transactions, parent) = db
+            .load_trusted_checkpoint(
+                checkpoint_path.join(checkpoint_block.number().to_string()),
+                &checkpoint_block.hash(),
+                SHARD_ID,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(checkpoint_block, block);
+        assert_eq!(checkpoint_transactions, transactions);
+        assert_eq!(checkpoint_parent, parent);
+
+        // Return None if checkpointed block already executed
+        db.insert_block(&checkpoint_block).unwrap();
+        let result = db
+            .load_trusted_checkpoint(
+                checkpoint_path.join(checkpoint_block.number().to_string()),
+                &checkpoint_block.hash(),
+                SHARD_ID,
+            )
+            .unwrap();
+        assert!(result.is_none());
     }
 }
