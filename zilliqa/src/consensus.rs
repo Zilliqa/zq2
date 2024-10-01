@@ -2630,7 +2630,7 @@ impl Consensus {
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
 
-        for (tx_index, txn) in transactions.clone().into_iter().enumerate() {
+        for (tx_index, txn) in transactions.into_iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
