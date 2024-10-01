@@ -809,6 +809,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     // write the block...
     writer.write_all(hex::encode(bincode::serialize(&block)?).as_bytes())?; // TODO: better serialization (#1007)
     writer.write_all(b"\n")?;
+
     // write transactions
     writer.write_all(hex::encode(bincode::serialize(&transactions)?).as_bytes())?; // TODO: better serialization (#1007)
     writer.write_all(b"\n")?;

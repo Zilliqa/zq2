@@ -197,6 +197,15 @@ async fn checkpoints_test(mut network: Network) {
         .tx_hash();
     network.run_until_receipt(&wallet, update_tx_hash, 50).await;
 
+    // Run until block 9 so that we can insert a tx in block 10
+    network.run_until_block(&wallet, 9.into(), 200).await;
+
+    let _hash = wallet
+        .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
     // wait 10 blocks for checkpoint to happen - then 3 more to finalize that block
     network.run_until_block(&wallet, 13.into(), 200).await;
 
@@ -235,18 +244,20 @@ async fn checkpoints_test(mut network: Network) {
         ..Default::default()
     });
 
+    // Confirm wallet and new_node_wallet have the same block and state
     let new_node_wallet = network.wallet_of_node(new_node_idx).await;
     let latest_block_number = new_node_wallet.get_block_number().await.unwrap();
     assert_eq!(latest_block_number, 10.into());
 
-    // Find missing data in wallet's state
-    let author_block_10 = wallet.get_block(latest_block_number).await.unwrap().unwrap().author.unwrap();
-    
-    // check access to previous block state via fetching author of current block
-    let latest_block = new_node_wallet.get_block(latest_block_number).await.unwrap();
-    assert_eq!(author_block_10, latest_block.unwrap().author.unwrap());
+    let block = wallet.get_block(latest_block_number).await.unwrap().unwrap();
+    assert_eq!(block.transactions.len(), 1);
 
-    // check storage using it
+    let block_from_checkpoint = new_node_wallet.get_block(latest_block_number).await.unwrap().unwrap();
+    assert_eq!(block.transactions, block_from_checkpoint.transactions);
+    // Check access to previous block state via fetching author of current block
+    assert_eq!(block.author, block_from_checkpoint.author);
+
+    // Check storage
     let storage_getter = abi.function("pos1").unwrap();
     let check_storage_tx = TransactionRequest::new().to(contract_address).data(
         storage_getter
@@ -265,7 +276,7 @@ async fn checkpoints_test(mut network: Network) {
         .get_transaction_count(wallet.address(), None)
         .await
         .unwrap();
-    assert_eq!(nonce, 2.into());
+    assert_eq!(nonce, 3.into());
 
     // check the new node catches up and keeps up with block production
     network

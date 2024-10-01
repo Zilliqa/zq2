@@ -1987,7 +1987,7 @@ impl Consensus {
                             .ok_or(anyhow!(
                                 "Trying to checkpoint block, but we don't have its parent"
                             ))?;
-                    let transactions: Vec<SignedTransaction> = parent.transactions.iter().map(|txn_hash | {
+                    let transactions: Vec<SignedTransaction> = block.transactions.iter().map(|txn_hash | {
                         let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!("failed to fetch transaction {} for checkpoint parent {}", txn_hash, parent.hash()))?;
                         Ok::<_, anyhow::Error>(tx)
                     }).collect::<Result<Vec<SignedTransaction>>>()?;
@@ -2642,8 +2642,6 @@ impl Consensus {
                 .ok_or(anyhow!("Overflow occured in zero account balance"))?;
             Ok(())
         })?;
-
-        //TODOtomos state must be cloned by now
 
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
