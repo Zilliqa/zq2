@@ -36,7 +36,7 @@ pub mod deposit {
     pub static STAKER_ADDED_EVT: Lazy<Event> =
         Lazy::new(|| CONTRACT.abi.event("StakerAdded").unwrap().clone());
     pub static STAKER_REMOVED_EVT: Lazy<Event> =
-        Lazy::new(|| CONTRACT.abi.event("StakerAdded").unwrap().clone());
+        Lazy::new(|| CONTRACT.abi.event("StakerRemoved").unwrap().clone());
 }
 
 pub mod shard {

@@ -45,19 +45,6 @@ impl uccb::Args for Args {
     }
 }
 
-// Workaround for displaying the collection of validators
-// using Display instead of Debug which shows too much info...
-struct Display<'a>(&'a std::vec::Vec<Address>);
-
-impl<'a> std::fmt::Display for Display<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if let Ok(s) = serde_json::to_string(self.0) {
-            write!(f, "{}", &s)?
-        }
-        Ok(())
-    }
-}
-
 struct ValidatorOracle {
     signer: PrivateKeySigner,
     chain_clients: Vec<ChainClient>,
@@ -107,7 +94,7 @@ impl ValidatorOracle {
         );
 
         let validators = self.get_stakers().await?;
-        info!("Current validator set is: {}", Display(&validators));
+        info!("Current validator set is: {validators:?}");
 
         let (sender, receiver) = watch::channel(validators);
 
@@ -173,14 +160,10 @@ impl ValidatorOracle {
             .await?;
         let mut stream = subscription.into_stream();
         while let Some(log) = stream.next().await {
-            // TODO: infer if staker added or removed
             info!("Received validator update: {log:?}");
 
             let validators = self.get_stakers().await?;
-            info!(
-                "Updating chains to the current validator set to: {}",
-                Display(&validators)
-            );
+            info!("Updating chains to the current validator set to: {validators:?}");
 
             sender.send(validators)?;
         }
@@ -196,9 +179,6 @@ impl ValidatorOracle {
             &ChainConfig {
                 rpc_url: config.zq2.rpc_url,
                 chain_gateway_address: config.zq2.chain_gateway_address,
-                chain_gateway_block_deployed: 0,
-                block_instant_finality: false,
-                legacy_gas_estimation: false,
             },
             config.zq2.validator_manager_address,
             signer.clone(),
