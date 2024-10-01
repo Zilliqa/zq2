@@ -217,10 +217,16 @@ impl Consensus {
             config.eth_chain_id
         );
 
+        // Start from checkpoint - load checkpointed block - 1 into state
         let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
+        let mut checkpoint_block = None;
+        let mut checkpoint_transactions = None;
+        let is_checkpoint_time = &config.load_checkpoint.is_some();
         if let Some(checkpoint) = &config.load_checkpoint {
-            db.load_trusted_checkpoint(&checkpoint.file, &checkpoint.hash, config.eth_chain_id)?;
-            // TODOtomos: then execute latest block
+            trace!("Loading state from checkpoint: {:?}", checkpoint);
+            let (block, transactions, _parent) = db.load_trusted_checkpoint(&checkpoint.file, &checkpoint.hash, config.eth_chain_id)?;
+            checkpoint_block = Some(block);
+            checkpoint_transactions = Some(transactions);
         }
 
         let latest_block = db
@@ -233,7 +239,6 @@ impl Consensus {
             .transpose()?;
 
         let mut state = if let Some(latest_block) = &latest_block {
-            trace!("Loading state from latest block");
             State::new_at_root(
                 db.state_trie()?,
                 latest_block.state_root_hash().into(),
@@ -336,6 +341,12 @@ impl Consensus {
             }
             // treat genesis as finalized
             consensus.finalize_view(latest_block_view)?;
+        }
+
+        // If we started from a checkpoint, execute the checkpointed block now
+        if *is_checkpoint_time {
+            let stakers: Vec<_> = consensus.state.get_stakers_raw()?;
+            consensus.execute_block(None, &checkpoint_block.unwrap(), checkpoint_transactions.unwrap(), &stakers)?;
         }
 
         Ok(consensus)
@@ -1970,15 +1981,21 @@ impl Consensus {
                 && self.epoch_is_checkpoint(self.epoch_number(block.number()))
             {
                 if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
-                    let parent = self
-                        .db
-                        .get_block_by_hash(block.parent_hash())?
-                        .ok_or(anyhow!(
-                            "Trying to checkpoint block, but we don't have its parent"
-                        ))?;
+                    let parent =
+                        self.db
+                            .get_block_by_hash(&block.parent_hash())?
+                            .ok_or(anyhow!(
+                                "Trying to checkpoint block, but we don't have its parent"
+                            ))?;
+                    let transactions: Vec<SignedTransaction> = parent.transactions.iter().map(|txn_hash | {
+                        let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!("failed to fetch transaction {} for checkpoint parent {}", txn_hash, parent.hash()))?;
+                        Ok::<_, anyhow::Error>(tx)
+                    }).collect::<Result<Vec<SignedTransaction>>>()?;
+
                     self.message_sender.send_message_to_coordinator(
                         InternalMessage::ExportBlockCheckpoint(
                             Box::new(block),
+                            transactions,
                             Box::new(parent),
                             self.db.state_trie()?.clone(),
                             checkpoint_path,
@@ -2625,6 +2642,8 @@ impl Consensus {
                 .ok_or(anyhow!("Overflow occured in zero account balance"))?;
             Ok(())
         })?;
+
+        //TODOtomos state must be cloned by now
 
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);

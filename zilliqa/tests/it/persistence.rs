@@ -239,11 +239,12 @@ async fn checkpoints_test(mut network: Network) {
     let latest_block_number = new_node_wallet.get_block_number().await.unwrap();
     assert_eq!(latest_block_number, 10.into());
 
-    // check access to previous block state via 
-    // Fails to get block here because state is not regenerated with all block info
+    // Find missing data in wallet's state
+    let author_block_10 = wallet.get_block(latest_block_number).await.unwrap().unwrap().author.unwrap();
+    
+    // check access to previous block state via fetching author of current block
     let latest_block = new_node_wallet.get_block(latest_block_number).await.unwrap();
-    println!("latest_block: {:?}", latest_block);
-    assert!(latest_block.unwrap().author.is_none());
+    assert_eq!(author_block_10, latest_block.unwrap().author.unwrap());
 
     // check storage using it
     let storage_getter = abi.function("pos1").unwrap();
