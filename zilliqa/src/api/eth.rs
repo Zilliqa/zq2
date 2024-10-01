@@ -180,18 +180,13 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         &block,
         call_params.from,
         call_params.to,
-        call_params.data.clone(),
+        call_params
+            .data
+            .try_into_unique_input()?
+            .unwrap_or_default()
+            .to_vec(),
         call_params.value.to(),
     )?;
-
-    trace!(
-        "Performed eth call. Args: {:?} ie: {:?} {:?} {:?}  ret: {:?}",
-        serde_json::to_string(&call_params),
-        call_params.from,
-        call_params.to,
-        call_params.data,
-        ret.to_hex()
-    );
 
     Ok(ret.to_hex())
 }
@@ -212,7 +207,11 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         block_number,
         call_params.from,
         call_params.to,
-        call_params.data.clone(),
+        call_params
+            .data
+            .try_into_unique_input()?
+            .unwrap_or_default()
+            .to_vec(),
         call_params.gas.map(|g| EvmGas(g.to())),
         call_params.gas_price.map(|g| g.to()),
         call_params.value.to(),
