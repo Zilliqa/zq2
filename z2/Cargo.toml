@@ -48,7 +48,7 @@ k256 = "0.13.4"
 lazy_static = "1.5.0"
 libp2p = {version = "0.54.0", features = ["identify"]}
 log = "0.4.22"
-octocrab = "0.39.0"
+octocrab = "0.40.0"
 primitive-types = "0.12.2"
 prost = "0.13.3"
 rand = "0.8.5"
