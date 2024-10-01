@@ -1989,7 +1989,7 @@ impl Consensus {
                 if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
                     let parent =
                         self.db
-                            .get_block_by_hash(&block.parent_hash())?
+                            .get_block_by_hash(block.parent_hash())?
                             .ok_or(anyhow!(
                                 "Trying to checkpoint block, but we don't have its parent"
                             ))?;
