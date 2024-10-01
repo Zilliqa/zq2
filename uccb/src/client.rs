@@ -26,19 +26,14 @@ pub struct ChainClient {
     pub rpc_url: String,
     pub provider: Arc<ChainProvider>,
     pub validator_manager_address: Address,
-    // pub chain_gateway_address: Address,
     pub chain_id: u64,
     pub signer: PrivateKeySigner,
-    pub chain_gateway_block_deployed: u64,
-    pub block_instant_finality: bool,
-    pub legacy_gas_estimation: bool,
 }
 
 impl ChainClient {
     pub async fn new(
         config: &ChainConfig,
         validator_manager_address: Address,
-        // chain_gateway_address: Address,
         signer: PrivateKeySigner,
     ) -> Result<Self> {
         let ws = WsConnect::new(&config.rpc_url);
@@ -64,12 +59,8 @@ impl ChainClient {
             rpc_url: config.rpc_url.clone(),
             provider,
             validator_manager_address,
-            // chain_gateway_address,
             chain_id,
             signer,
-            chain_gateway_block_deployed: config.chain_gateway_block_deployed,
-            block_instant_finality: config.block_instant_finality,
-            legacy_gas_estimation: config.legacy_gas_estimation,
         })
     }
 }
