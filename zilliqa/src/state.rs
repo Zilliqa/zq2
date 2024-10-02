@@ -17,7 +17,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::{
     block_store::BlockStore,
-    cfg::{NodeConfig, ScillaExtLibsCacheFolder},
+    cfg::{Amount, NodeConfig, ScillaExtLibsCacheFolder},
     contracts, crypto,
     db::TrieStorage,
     exec::BaseFeeCheck,
@@ -120,8 +120,28 @@ impl State {
             Some(contract_addr::INTERSHARD_BRIDGE),
         )?;
 
+        let zero_account_balance = config.consensus.total_native_token_supply.0
+            - (config
+                .consensus
+                .genesis_accounts
+                .iter()
+                .fold(0, |acc, item: &(Address, Amount)| acc + item.1 .0))
+            - (config.consensus.genesis_deposits.iter().fold(
+                0,
+                |acc, item: &(crypto::NodePublicKey, libp2p::PeerId, Amount, Address)| {
+                    acc + item.2 .0
+                },
+            ));
+        state.mutate_account(Address::ZERO, |a| {
+            a.balance = zero_account_balance;
+            Ok(())
+        })?;
+
         for (address, balance) in config.consensus.genesis_accounts {
-            state.mutate_account(address, |a| a.balance = *balance)?;
+            state.mutate_account(address, |a| {
+                a.balance = *balance;
+                Ok(())
+            })?;
         }
 
         let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
@@ -230,13 +250,13 @@ impl State {
         })
     }
 
-    pub fn mutate_account<F: FnOnce(&mut Account) -> R, R>(
+    pub fn mutate_account<F: FnOnce(&mut Account) -> Result<R>, R>(
         &mut self,
         address: Address,
         mutation: F,
     ) -> Result<R> {
         let mut account = self.get_account(address)?;
-        let result = mutation(&mut account);
+        let result = mutation(&mut account)?;
         self.save_account(address, account)?;
         Ok(result)
     }

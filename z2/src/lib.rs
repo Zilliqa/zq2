@@ -9,6 +9,7 @@ pub mod docs;
 mod github;
 pub mod kpi;
 pub mod mitmweb;
+pub mod node_spec;
 pub mod otel;
 pub mod otterscan;
 pub mod perf;

@@ -247,7 +247,7 @@ impl BlockStore {
         if let Some(block) = block_cache.get(&hash) {
             return Ok(Some(block.clone()));
         }
-        let Some(block) = self.db.get_block_by_hash(&hash)? else {
+        let Some(block) = self.db.get_block_by_hash(hash)? else {
             return Ok(None);
         };
         block_cache.put(hash, block.clone());
@@ -266,10 +266,7 @@ impl BlockStore {
     }
 
     pub fn get_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        let Some(hash) = self.db.get_canonical_block_number(number)? else {
-            return Ok(None);
-        };
-        self.get_block(hash)
+        self.db.get_canonical_block_by_number(number)
     }
 
     pub fn process_block(
@@ -279,8 +276,6 @@ impl BlockStore {
     ) -> Result<Option<Proposal>> {
         trace!(?from, number = block.number(), hash = ?block.hash(), "insert block");
         self.db.insert_block(&block)?;
-        self.db
-            .set_canonical_block_number(block.number(), block.hash())?;
 
         if let Some(from) = from {
             let peer = self.peer_info(from);

@@ -404,7 +404,7 @@ impl Node {
                 let Some(view) = self.db.get_latest_finalized_view()? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
-                let Some(block) = self.db.get_block_by_view(&view)? else {
+                let Some(block) = self.db.get_block_by_view(view)? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
                 Ok(Some(block))

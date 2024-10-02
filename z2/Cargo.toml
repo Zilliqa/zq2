@@ -21,14 +21,14 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy = { version = "0.3.5", default-features = false, features = ["consensus", "rlp", "serde"] }
+alloy = { version = "0.3.6", default-features = false, features = ["consensus", "rlp", "serde"] }
 anyhow = "1.0.89"
-async-trait = "0.1.81"
+async-trait = "0.1.83"
 base64 = "0.22.0"
 bitvec = "1.0.1"
 blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
-clap = {version = "4.5.17", features = ["derive"]}
-clap-verbosity-flag = "2.2.1"
+clap = {version = "4.5.18", features = ["derive"]}
+clap-verbosity-flag = "2.2.2"
 cliclack = "0.3.5"
 colored = "2.1.0"
 crypto-bigint = "=0.5.5"
@@ -44,27 +44,27 @@ home = "0.5.9"
 indicatif = "0.17.8"
 itertools = "0.13.0"
 jsonrpsee = {version = "0.22.4", features = ["client"]}
-k256 = "0.13.3"
+k256 = "0.13.4"
 lazy_static = "1.5.0"
 libp2p = {version = "0.54.0", features = ["identify"]}
 log = "0.4.22"
-octocrab = "0.39.0"
+octocrab = "0.40.0"
 primitive-types = "0.12.2"
-prost = "0.13.1"
+prost = "0.13.3"
 rand = "0.8.5"
 rand_core = "0.6.4"
-regex = "1.10.6"
+regex = "1.11.0"
 reqwest = {version = "0.12.3", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
-revm = {version = "14.0.1", features = ["optional_balance_check"]}
+revm = {version = "14.0.2", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
 serde = {version = "1.0.210", features = ["derive"]}
 serde_json = "1.0.128"
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
-tempfile = "3.12.0"
+tempfile = "3.13.0"
 tera = "1.19.1"
-thiserror = "1.0.63"
+thiserror = "1.0.64"
 tokio = {version = "1.39.2", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
 tokio-stream = "0.1.16"
 toml = "0.8.19"
@@ -76,4 +76,4 @@ zilliqa-rs = "0.3.1"
 zqutils = {git = "https://github.com/zilliqa/zq-base"}
 
 [build-dependencies]
-prost-build = "0.13.1"
+prost-build = "0.13.3"
