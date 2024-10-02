@@ -2014,12 +2014,12 @@ impl Consensus {
                 && self.epoch_is_checkpoint(self.epoch_number(block.number()))
             {
                 if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
-                    let parent = self
-                        .db
-                        .get_block_by_hash(block.parent_hash())?
-                        .ok_or(anyhow!(
-                            "Trying to checkpoint block, but we don't have its parent"
-                        ))?;
+                    let parent =
+                        self.db
+                            .get_block_by_hash(&block.parent_hash())?
+                            .ok_or(anyhow!(
+                                "Trying to checkpoint block, but we don't have its parent"
+                            ))?;
                     let transactions: Vec<SignedTransaction> = block
                         .transactions
                         .iter()
@@ -2060,6 +2060,18 @@ impl Consensus {
             .ok_or(anyhow!(
                 "Trying to checkpoint block, but we don't have its parent"
             ))?;
+        let transactions: Vec<SignedTransaction> = block
+            .transactions
+            .iter()
+            .map(|txn_hash| {
+                let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
+                    "failed to fetch transaction {} for checkpoint parent {}",
+                    txn_hash,
+                    parent.hash()
+                ))?;
+                Ok::<_, anyhow::Error>(tx)
+            })
+            .collect::<Result<Vec<SignedTransaction>>>()?;
         let checkpoint_dir = self
             .db
             .get_checkpoint_dir()?
@@ -2069,6 +2081,7 @@ impl Consensus {
         self.message_sender
             .send_message_to_coordinator(InternalMessage::ExportBlockCheckpoint(
                 Box::new(block),
+                transactions,
                 Box::new(parent),
                 self.db.state_trie()?.clone(),
                 checkpoint_dir,

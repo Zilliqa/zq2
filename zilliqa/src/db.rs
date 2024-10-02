@@ -335,7 +335,7 @@ impl Db {
 
         if state_trie.iter().next().is_some() || self.get_highest_block_number()?.is_some() {
             // If checkpointed block already exists then assume checkpoint load already complete. Return None
-            if self.get_block_by_hash(block.hash())?.is_some() {
+            if self.get_block_by_hash(&block.hash())?.is_some() {
                 return Ok(None);
             }
             // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
@@ -345,7 +345,7 @@ impl Db {
             // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
             // a node that already contains previous state, until (and unless) there's ever a
             // usecase for going through the effort to support it and ensure it works as expected.
-            if let Some(db_block) = self.get_block_by_hash(parent.hash())? {
+            if let Some(db_block) = self.get_block_by_hash(&parent.hash())? {
                 if db_block.parent_hash() != parent.parent_hash() {
                     return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"));
                 } else {
