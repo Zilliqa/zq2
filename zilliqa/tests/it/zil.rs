@@ -972,10 +972,29 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
-async fn get_txn_bodies_for_tx_block_ex(mut network: Network) {
-    let wallet = network.genesis_wallet().await;
+async fn get_txn_bodies_for_tx_block_ex_0(mut network: Network) {
+    let wallet = network.random_wallet().await;
 
-    let block_number = "1002353";
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        to_addr,
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    network.run_until_block(&wallet, 2.into(), 50).await;
+
+    let block_number = "1";
     let page_number = "2";
 
     let response: Value = wallet
@@ -994,6 +1013,56 @@ async fn get_txn_bodies_for_tx_block_ex(mut network: Network) {
     );
     assert!(
         txn_bodies.transactions.len() <= 2500,
-        "Expected Transcations length to be less than or equal to 2500"
+        "Expected Transactions length to be less than or equal to 2500"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        to_addr,
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    network.run_until_block(&wallet, 2.into(), 50).await;
+
+    let block_number = "1";
+    let page_number = "0";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxnBodiesForTxBlockEx", [block_number, page_number])
+        .await
+        .expect("Failed to call GetTxnBodiesForTxBlockEx API");
+
+    let txn_bodies: zilliqa::api::types::zil::TxnBodiesForTxBlockExResponse =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    assert_eq!(txn_bodies.curr_page, page_number.parse::<u64>().unwrap());
+    assert!(
+        txn_bodies.num_pages > 0,
+        "Expected NumPages to be greater than 0"
+    );
+    assert!(
+        txn_bodies.transactions.len() <= 2500,
+        "Expected Transactions length to be less than or equal to 2500"
+    );
+    assert!(
+        !txn_bodies.transactions.is_empty(),
+        "Expected Transactions length to be greater than or equal to 1"
     );
 }
