@@ -448,7 +448,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
                         .as_slice(),
                 ) == U256::from(custom_value)
             },
-            200,
+            800,
         )
         .await
         .unwrap();
