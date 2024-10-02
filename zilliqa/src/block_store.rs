@@ -100,6 +100,14 @@ impl BlockCache {
         u128::from(view) << self.shift
     }
 
+    /// returns the minimum key (view << shift) that we are prepared to store in the tail cache.
+    /// keys smaller than this are stored in the main cache.
+    /// We compute this by subtracting a constant from (highest_known_view +1)<< shift - which is
+    /// the highest key we think could currently exist (highest view we've ever seen +1 shifted up).
+    /// (the constant is preshifted for efficiency)
+    /// This aims to keep the tail cache at roughly BLOCK_CACHE_TAIL_BUFFER_ENTRIES entries
+    /// (note that this will be BLOCK_CACHE_TAIL_BUFFER_ENTRIES >> shift cached views, since the
+    /// tail cache is set associative)
     pub fn min_tail_key(&self, highest_known_view: u64) -> u128 {
         let highest_key = u128::from(highest_known_view + 1) << self.shift;
         highest_key - u128::try_from(constants::BLOCK_CACHE_TAIL_BUFFER_ENTRIES).unwrap()
@@ -1093,5 +1101,9 @@ impl BlockStore {
     pub fn get_num_transactions(&self) -> Result<usize> {
         let count = self.db.get_total_transaction_count()?;
         Ok(count)
+    }
+
+    pub fn summarise_buffered(&self) -> RangeMap {
+        self.buffered.extant_block_ranges()
     }
 }
