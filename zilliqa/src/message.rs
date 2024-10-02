@@ -286,8 +286,14 @@ pub enum InternalMessage {
     IntershardCall(IntershardCall),
     /// Trigger a checkpoint export of the given block, including the state at its root hash as read
     /// from the given trie
-    /// (checkpoint block, parent block, reference to our trie DB, output path)
-    ExportBlockCheckpoint(Box<Block>, Box<Block>, TrieStorage, Box<Path>),
+    /// (checkpoint block, transactions, parent block, reference to our trie DB, output path)
+    ExportBlockCheckpoint(
+        Box<Block>,
+        Vec<SignedTransaction>,
+        Box<Block>,
+        TrieStorage,
+        Box<Path>,
+    ),
 }
 
 /// Returns a terse, human-readable summary of a message.

@@ -218,8 +218,16 @@ impl Consensus {
         );
 
         let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
+
+        // Start chain from checkpoint. Load data file and initialise data in tables
+        let mut checkpoint_data = None;
         if let Some(checkpoint) = &config.load_checkpoint {
-            db.load_trusted_checkpoint(&checkpoint.file, &checkpoint.hash, config.eth_chain_id)?;
+            trace!("Loading state from checkpoint: {:?}", checkpoint);
+            checkpoint_data = db.load_trusted_checkpoint(
+                &checkpoint.file,
+                &checkpoint.hash,
+                config.eth_chain_id,
+            )?;
         }
 
         let latest_block = db
@@ -335,6 +343,16 @@ impl Consensus {
             }
             // treat genesis as finalized
             consensus.finalize_view(latest_block_view)?;
+        }
+
+        // If we started from a checkpoint, execute the checkpointed block now
+        if let Some((block, transactions, _parent)) = checkpoint_data {
+            consensus.execute_block(
+                None,
+                &block,
+                transactions,
+                &consensus.state.get_stakers_raw()?,
+            )?;
         }
 
         Ok(consensus)
@@ -1975,9 +1993,23 @@ impl Consensus {
                         .ok_or(anyhow!(
                             "Trying to checkpoint block, but we don't have its parent"
                         ))?;
+                    let transactions: Vec<SignedTransaction> = block
+                        .transactions
+                        .iter()
+                        .map(|txn_hash| {
+                            let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
+                                "failed to fetch transaction {} for checkpoint parent {}",
+                                txn_hash,
+                                parent.hash()
+                            ))?;
+                            Ok::<_, anyhow::Error>(tx)
+                        })
+                        .collect::<Result<Vec<SignedTransaction>>>()?;
+
                     self.message_sender.send_message_to_coordinator(
                         InternalMessage::ExportBlockCheckpoint(
                             Box::new(block),
+                            transactions,
                             Box::new(parent),
                             self.db.state_trie()?.clone(),
                             checkpoint_path,
