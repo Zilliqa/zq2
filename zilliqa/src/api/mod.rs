@@ -1,4 +1,3 @@
-#[cfg(feature = "debug_api")]
 pub mod debug;
 mod erigon;
 pub mod eth;

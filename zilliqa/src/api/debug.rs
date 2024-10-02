@@ -1,10 +1,10 @@
 #![cfg(feature = "debug_api")]
 #![allow(unused_imports)]
-use super::to_hex::ToHex;
-use crate::block_store::BlockStoreStatus;
-use crate::message::BlockStrategy;
-use crate::node::Node;
-use crate::range_map::RangeMap;
+use std::{
+    ops::Range,
+    sync::{Arc, Mutex, MutexGuard},
+};
+
 use anyhow::{anyhow, Result};
 use jsonrpsee::{
     core::StringError,
@@ -12,9 +12,12 @@ use jsonrpsee::{
     PendingSubscriptionSink, RpcModule, SubscriptionMessage,
 };
 use serde::{Deserialize, Serialize};
-use std::ops::Range;
-use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::trace;
+
+use super::to_hex::ToHex;
+use crate::{
+    block_store::BlockStoreStatus, message::BlockStrategy, node::Node, range_map::RangeMap,
+};
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
@@ -46,22 +49,13 @@ fn echo(params: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
 fn blocks(
     _params: Params,
     node: &Arc<Mutex<Node>>,
-) -> Result<(
-    BlockStoreStatus,
-    Option<Vec<BlockStrategy>>,
-    (
-        Vec<(String, u64, String)>,
-        Vec<(String, u64, String)>,
-        Vec<(String, String)>,
-        String,
-    ),
-)> {
+) -> Result<(BlockStoreStatus, Option<Vec<BlockStrategy>>, RangeMap)> {
     trace!("blocks");
     let mut node = node.lock().unwrap();
     Ok((
         BlockStoreStatus::new(&mut node.consensus.block_store)?,
         node.consensus.block_store.availability()?,
-        node.consensus.block_store.get_buffered()?,
+        node.consensus.block_store.summarise_buffered(),
     ))
 }
 
