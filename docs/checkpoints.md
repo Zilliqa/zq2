@@ -21,7 +21,7 @@ Currently, old checkpoints are kept indefinitely. It is the node operator's resp
 If the node does not have a data directory (i.e. is running on an ephemeral in-memory database), no checkpoints will be exported, regardless of the `do_checkpoints` parameter.
 
 ## Checkpoint file format
-The checkpoint file consists of a 21-byte header followed by, in version 1, the block data and the state data in a plaintext format.
+The checkpoint file consists of a 21-byte header followed by, in version 2, the block data, the block's transactions and the state trie of the *parent* block in a plaintext format.
 
 The header contains:
  * 8 magic bytes corresponding to the ASCII string `ZILCHKPT`
@@ -29,12 +29,14 @@ The header contains:
  * 8 bytes containing the big-endian 64-bit chain ID that the checkpoint corresponds to.
  * The 21st byte is an ASCII newline.
 
-### Version `1`
+### Version `2`
 Currently checkpoints use a plaintext, line-based format.
 
-The first two lines (after the header) are the block data: first, the checkpoint block itself; then, its parent block. Blocks are currently encoded using `bincode` and the default serialization format - refer to `zilliqa/src/message.rs`. The resulting binary strings are hex-encoded.
+The first two lines (after the header) are the checkpoint block data: first, the checkpoint block itself; then, its transactions, then its parent block. Blocks are currently encoded using `bincode` and the default serialization format - refer to `zilliqa/src/message.rs`. The resulting binary strings are hex-encoded.
 
-All subsequent lines contain serialised state data. As some background, the state consists of a patricia merkle trie of accounts, and each account additionally stores the state root hash of a sub-trie for its storage. Each line has a format that looks like this:
+All subsequent lines contain serialised state data of the parent block. We pass the state trie of the parent rather than the checkpoint block itself to ensure that all state data for the checkpointed block is available, even that which requires a lookup to the parent state trie such as the commitee and author.
+
+As some background, the state consists of a patricia merkle trie of accounts, and each account additionally stores the state root hash of a sub-trie for its storage. Each line has a format that looks like this:
 ```
 {account key}:{serialized account};{storage entry key}:{storage value},{storage entry key}:{storage value},{...}
 ```
