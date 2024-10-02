@@ -1987,12 +1987,12 @@ impl Consensus {
                 && self.epoch_is_checkpoint(self.epoch_number(block.number()))
             {
                 if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
-                    let parent =
-                        self.db
-                            .get_block_by_hash(block.parent_hash())?
-                            .ok_or(anyhow!(
-                                "Trying to checkpoint block, but we don't have its parent"
-                            ))?;
+                    let parent = self
+                        .db
+                        .get_block_by_hash(block.parent_hash())?
+                        .ok_or(anyhow!(
+                            "Trying to checkpoint block, but we don't have its parent"
+                        ))?;
                     let transactions: Vec<SignedTransaction> = block
                         .transactions
                         .iter()

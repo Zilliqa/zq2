@@ -340,7 +340,7 @@ impl Db {
 
         if !trie_storage.db.is_empty() || self.get_highest_block_number()?.is_some() {
             // If checkpointed block already exists then assume checkpoint load already complete. Return None
-            if let Some(_) = self.get_block_by_hash(block.hash())? {
+            if self.get_block_by_hash(block.hash())?.is_some() {
                 return Ok(None);
             }
             // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
@@ -400,7 +400,7 @@ impl Db {
 
         let parent_ref: &Block = &parent; // for moving into the closure
         self.with_sqlite_tx(move |tx| {
-            self.insert_block_with_db_tx(tx, &parent_ref)?;
+            self.insert_block_with_db_tx(tx, parent_ref)?;
             self.set_latest_finalized_view_with_db_tx(tx, parent_ref.view())?;
             self.set_high_qc_with_db_tx(tx, block.header.qc)?;
             Ok(())
