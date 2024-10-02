@@ -779,7 +779,7 @@ fn get_txn_bodies_for_tx_block_ex(
     let block_number: u64 = params[0].parse()?;
     let page_number: usize = params[1].parse()?;
 
-    let node = node.lock().unwrap();
+    let node = node.lock().expect("Failed to acquire lock on node");
     let block = node
         .get_block(block_number)?
         .ok_or_else(|| anyhow!("Block not found"))?;
@@ -791,7 +791,18 @@ fn get_txn_bodies_for_tx_block_ex(
         } else {
             0
         });
-    let start = page_number * TRANSACTIONS_PER_PAGE;
+
+    // Ensure page is within bounds
+    if page_number >= num_pages {
+        return Ok(TxnBodiesForTxBlockExResponse {
+            curr_page: page_number as u64,
+            num_pages: num_pages as u64,
+            transactions: vec![],
+        });
+    }
+
+    let start = std::cmp::min(page_number * TRANSACTIONS_PER_PAGE, total_transactions);
+
     let end = std::cmp::min(start + TRANSACTIONS_PER_PAGE, total_transactions);
 
     let mut transactions = Vec::with_capacity(end - start);
