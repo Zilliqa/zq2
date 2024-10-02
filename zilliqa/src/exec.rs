@@ -39,8 +39,7 @@ use crate::{
     precompiles::{get_custom_precompiles, scilla_call_handle_register},
     scilla::{self, split_storage_key, storage_key, Scilla},
     state::{
-        contract_addr, Account, Code, ContractInit, ExternalLibrary, ScillaTypedVariable,
-        ScillaVariableValue, State,
+        contract_addr, Account, Code, ContractInit, ExternalLibrary, ScillaTypedVariable, State,
     },
     time::SystemTime,
     transaction::{
@@ -1389,12 +1388,12 @@ fn scilla_create(
     init_data.extend([
         ScillaTypedVariable {
             vname: "_creation_block".to_string(),
-            value: ScillaVariableValue::Primitive(current_block.number.to_string()),
+            value: Value::String(current_block.number.to_string()),
             r#type: "BNum".to_string(),
         },
         ScillaTypedVariable {
             vname: "_this_address".to_string(),
-            value: ScillaVariableValue::Primitive(format!("{contract_address:#x}")),
+            value: Value::String(format!("{contract_address:#x}")),
             r#type: "ByStr20".to_string(),
         },
     ]);
