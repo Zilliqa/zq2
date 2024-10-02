@@ -1353,7 +1353,14 @@ fn cache_external_libraries(
                 }
 
                 let file_path = ext_libs_path.join(&lib.name);
-                fs::write(&file_path, code).with_context(|| {
+                let canonical_file_path = fs::canonicalize(&file_path)?;
+
+                // To prevent malicious library names like ../../../a.txt
+                if !canonical_file_path.starts_with(&ext_libs_path) {
+                    return Err(anyhow::anyhow!("Invalid library name: {}", lib.name));
+                }
+
+                fs::write(&canonical_file_path, code).with_context(|| {
                     format!("Failed to write the contract code to {:?}", file_path)
                 })?;
             }
