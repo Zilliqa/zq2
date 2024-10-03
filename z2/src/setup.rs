@@ -397,7 +397,7 @@ impl Setup {
             );
             node_config.state_rpc_limit = usize::try_from(i64::MAX)?;
             node_config.consensus.scilla_stdlib_dir =
-                scilla::Runner::get_scilla_lib_dir(&self.base_dir);
+                scilla::Runner::get_scilla_stdlib_dir(&self.base_dir);
 
             cfg.nodes = Vec::new();
             cfg.nodes.push(node_config);
