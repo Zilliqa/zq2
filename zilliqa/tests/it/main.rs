@@ -25,7 +25,7 @@ use std::{
     pin::Pin,
     rc::Rc,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex, MutexGuard,
     },
     time::Duration,
@@ -67,13 +67,15 @@ use zilliqa::{
         block_request_limit_default, disable_rpc_default, eth_chain_id_default,
         failed_request_sleep_duration_default, json_rpc_port_default, local_address_default,
         max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_lib_dir_default, state_rpc_limit_default, Amount,
-        Checkpoint, ConsensusConfig, GenesisDeposit, NodeConfig,
+        scilla_address_default, scilla_lib_dir_default, state_rpc_limit_default,
+        total_native_token_supply_default, Amount, Checkpoint, ConsensusConfig, GenesisDeposit,
+        NodeConfig,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
     message::{ExternalMessage, InternalMessage},
     node::{Node, RequestId},
+    node_launcher::ResponseChannel,
     transaction::EvmGas,
 };
 
@@ -104,6 +106,10 @@ impl NewNodeOptions {
 enum AnyMessage {
     External(ExternalMessage),
     Internal(u64, u64, InternalMessage),
+    Response {
+        channel: ResponseChannel,
+        message: ExternalMessage,
+    },
 }
 
 type Wallet = SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>;
@@ -121,6 +127,7 @@ fn node(
     datadir: Option<TempDir>,
 ) -> Result<(
     TestNode,
+    BoxStream<'static, StreamMessage>,
     BoxStream<'static, StreamMessage>,
     BoxStream<'static, StreamMessage>,
 )> {
@@ -145,6 +152,15 @@ fn node(
         })
         .boxed();
 
+    let (request_responses_sender, request_responses_receiver) = mpsc::unbounded_channel();
+    let request_responses_receiver =
+        UnboundedReceiverStream::new(request_responses_receiver).boxed();
+    let request_responses_receiver = request_responses_receiver
+        // A bit of a hack here - We keep the destination of responses as `None` for now (as if they were a broadcast)
+        // and look up the destination via the channel later.
+        .map(move |(channel, message)| (peer_id, None, AnyMessage::Response { channel, message }))
+        .boxed();
+
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     std::mem::forget(reset_timeout_receiver);
 
@@ -158,7 +174,9 @@ fn node(
         secret_key,
         message_sender,
         local_message_sender,
+        request_responses_sender,
         reset_timeout_sender,
+        Arc::new(AtomicUsize::new(0)),
     )?;
     let node = Arc::new(Mutex::new(node));
     let rpc_module: RpcModule<Arc<Mutex<Node>>> = zilliqa::api::rpc_module(node.clone());
@@ -175,6 +193,7 @@ fn node(
         },
         message_receiver,
         local_message_receiver,
+        request_responses_receiver,
     ))
 }
 
@@ -203,6 +222,12 @@ struct Network {
     /// A stream of messages from each node. The stream items are a tuple of (source, destination, message).
     /// If the destination is `None`, the message is a broadcast.
     receivers: Vec<BoxStream<'static, StreamMessage>>,
+    /// When we send a request to a node, we also send it a [ResponseChannel]. The node sends a response to that
+    /// request by passing the [ResponseChannel] back to us. This map lets us remember who to send that response to,
+    /// based on who the initial request was from.
+    pending_responses: HashMap<ResponseChannel, PeerId>,
+    /// Counter for the next unassigned response channel ID. Starts at 0 and increments with each request.
+    response_channel_id: u64,
     resend_message: UnboundedSender<StreamMessage>,
     send_to_parent: Option<UnboundedSender<StreamMessage>>,
     rng: Arc<Mutex<ChaCha8Rng>>,
@@ -308,6 +333,7 @@ impl Network {
                 main_shard_id: None,
                 blocks_per_epoch,
                 epochs_per_checkpoint: 1,
+                total_native_token_supply: total_native_token_supply_default(),
             },
             json_rpc_port: json_rpc_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
@@ -322,7 +348,12 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
         };
 
-        let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
+        let (nodes, external_receivers, local_receivers, request_response_receivers): (
+            Vec<_>,
+            Vec<_>,
+            Vec<_>,
+            Vec<_>,
+        ) = keys
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
@@ -340,6 +371,7 @@ impl Network {
         let mut receivers: Vec<_> = external_receivers
             .into_iter()
             .chain(local_receivers)
+            .chain(request_response_receivers)
             .collect();
 
         let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
@@ -362,6 +394,8 @@ impl Network {
             send_to_parent,
             shard_id,
             receivers,
+            pending_responses: HashMap::new(),
+            response_channel_id: 0,
             resend_message,
             rng,
             seed,
@@ -419,6 +453,7 @@ impl Network {
                 blocks_per_epoch: self.blocks_per_epoch,
                 epochs_per_checkpoint: 1,
                 scilla_lib_dir: scilla_lib_dir_default(),
+                total_native_token_supply: total_native_token_supply_default(),
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -429,7 +464,7 @@ impl Network {
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
         let onchain_key = options.onchain_key_or_random(self.rng.clone());
-        let (node, receiver, local_receiver) =
+        let (node, receiver, local_receiver, request_responses) =
             node(config, secret_key, onchain_key, self.nodes.len(), None).unwrap();
 
         trace!("Node {}: {}", node.index, node.peer_id);
@@ -439,6 +474,7 @@ impl Network {
         self.nodes.push(node);
         self.receivers.push(receiver);
         self.receivers.push(local_receiver);
+        self.receivers.push(request_responses);
 
         index
     }
@@ -476,7 +512,12 @@ impl Network {
             nodes.inner.lock().unwrap().db.flush_state();
         }
 
-        let (nodes, external_receivers, local_receivers): (Vec<_>, Vec<_>, Vec<_>) = keys
+        let (nodes, external_receivers, local_receivers, request_response_receivers): (
+            Vec<_>,
+            Vec<_>,
+            Vec<_>,
+            Vec<_>,
+        ) = keys
             .into_iter()
             .enumerate()
             .map(|(i, key)| {
@@ -522,6 +563,7 @@ impl Network {
                         blocks_per_epoch: self.blocks_per_epoch,
                         epochs_per_checkpoint: 1,
                         scilla_lib_dir: scilla_lib_dir_default(),
+                        total_native_token_supply: total_native_token_supply_default(),
                     },
                     block_request_limit: block_request_limit_default(),
                     max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -537,6 +579,7 @@ impl Network {
         let mut receivers: Vec<_> = external_receivers
             .into_iter()
             .chain(local_receivers)
+            .chain(request_response_receivers)
             .collect();
 
         for node in &nodes {
@@ -795,6 +838,13 @@ impl Network {
 
     fn handle_message(&mut self, message: StreamMessage) {
         let (source, destination, ref contents) = message;
+        info!(%source, ?destination);
+        let sender_node = self
+            .nodes
+            .iter()
+            .find(|&node| node.peer_id == source)
+            .expect("Sender should be on the nodes list");
+        let sender_chain_id = sender_node.inner.lock().unwrap().config.eth_chain_id;
         match contents {
             AnyMessage::Internal(source_shard, destination_shard, ref internal_message) => {
                 trace!("Handling internal message from node in shard {source_shard}, targetting {destination_shard}");
@@ -865,11 +915,18 @@ impl Network {
                             trace!(?message);
                         }
                     }
-                    InternalMessage::ExportBlockCheckpoint(block, parent, trie_storage, output) => {
+                    InternalMessage::ExportBlockCheckpoint(
+                        block,
+                        transactions,
+                        parent,
+                        trie_storage,
+                        output,
+                    ) => {
                         assert!(self.do_checkpoints, "Node requested a checkpoint checkpoint export to {}, despite checkpoints beind disabled in the config", output.to_string_lossy());
                         trace!("Exporting checkpoint to path {}", output.to_string_lossy());
                         db::checkpoint_block_with_state(
                             block,
+                            transactions,
                             parent,
                             trie_storage.clone(),
                             *source_shard,
@@ -880,41 +937,77 @@ impl Network {
                 }
             }
             AnyMessage::External(external_message) => {
-                let nodes: Vec<(usize, &TestNode)> = if let Some((destination, _)) = destination {
-                    let (index, node) = self
-                        .nodes
-                        .iter()
-                        .enumerate()
-                        .find(|(_, n)| n.peer_id == destination)
-                        .unwrap();
-                    if self.disconnected.contains(&index) {
-                        vec![]
-                    } else {
-                        vec![(index, node)]
+                info!(%external_message, "external");
+                match destination {
+                    Some((destination, _)) => {
+                        // Direct message
+                        let (index, node) = self
+                            .nodes
+                            .iter()
+                            .enumerate()
+                            .find(|(_, n)| n.peer_id == destination)
+                            .unwrap();
+                        if !self.disconnected.contains(&index) {
+                            let span =
+                                tracing::span!(tracing::Level::INFO, "handle_message", index);
+                            span.in_scope(|| {
+                                let mut inner = node.inner.lock().unwrap();
+                                // Send to nodes only in the same shard (having same chain_id)
+                                if inner.config.eth_chain_id == sender_chain_id {
+                                    let response_channel =
+                                        ResponseChannel::Remote(self.response_channel_id);
+                                    self.response_channel_id += 1;
+                                    self.pending_responses
+                                        .insert(response_channel.clone(), source);
+
+                                    inner
+                                        .handle_request(
+                                            source,
+                                            external_message.clone(),
+                                            response_channel,
+                                        )
+                                        .unwrap();
+                                }
+                            });
+                        }
                     }
-                } else {
-                    self.nodes
-                        .iter()
-                        .enumerate()
-                        .filter(|(index, _)| !self.disconnected.contains(index))
-                        .collect()
-                };
-                let sender_node = self
+                    None => {
+                        // Broadcast
+                        for (index, node) in self.nodes.iter().enumerate() {
+                            if self.disconnected.contains(&index) {
+                                continue;
+                            }
+                            let span =
+                                tracing::span!(tracing::Level::INFO, "handle_message", index);
+                            span.in_scope(|| {
+                                let mut inner = node.inner.lock().unwrap();
+                                // Send to nodes only in the same shard (having same chain_id)
+                                if inner.config.eth_chain_id == sender_chain_id {
+                                    inner
+                                        .handle_broadcast(source, external_message.clone())
+                                        .unwrap();
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+            AnyMessage::Response { channel, message } => {
+                info!(%message, ?channel, "response");
+                let destination = self.pending_responses.remove(channel).unwrap();
+                let (index, node) = self
                     .nodes
                     .iter()
-                    .find(|&node| node.peer_id == source)
-                    .expect("Sender should be on the nodes list");
-                let sender_chain_id = sender_node.inner.lock().unwrap().config.eth_chain_id;
-
-                for (index, node) in nodes.iter() {
+                    .enumerate()
+                    .find(|(_, n)| n.peer_id == destination)
+                    .unwrap();
+                if !self.disconnected.contains(&index) {
                     let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                     span.in_scope(|| {
                         let mut inner = node.inner.lock().unwrap();
-                        // Send broadcast to nodes only in the same shard (having same chain_id)
+                        // Send to nodes only in the same shard (having same chain_id)
                         if inner.config.eth_chain_id == sender_chain_id {
-                            inner
-                                .handle_network_message(source, Ok(external_message.clone()))
-                                .unwrap();
+                            inner.handle_response(source, message.clone()).unwrap();
                         }
                     });
                 }
@@ -1094,6 +1187,7 @@ fn format_message(
     let message = match message {
         AnyMessage::External(message) => format!("{message}"),
         AnyMessage::Internal(_source_shard, _destination_shard, message) => format!("{message}"),
+        AnyMessage::Response { message, .. } => format!("{message}"),
     };
 
     let source_index = nodes.iter().find(|n| n.peer_id == source).unwrap().index;

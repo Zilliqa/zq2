@@ -45,7 +45,7 @@ impl Runner {
         let mut cmd = Command::new(&startup);
         cmd.current_dir(otter_dir);
         cmd.env("VITE_ERIGON_URL", chain_url);
-        cmd.env("PORT", &format!("{}", port));
+        cmd.env("PORT", format!("{}", port));
         let join_handles = collector::spawn(
             &mut cmd,
             &startup,

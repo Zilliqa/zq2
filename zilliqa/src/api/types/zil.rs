@@ -6,7 +6,7 @@ use alloy::{
 };
 use anyhow::Result;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{hex, hex_no_prefix, option_hex_no_prefix};
 use crate::{
@@ -395,4 +395,176 @@ pub enum RPCErrorCode {
     RpcVerifyRejected = -26,       // Transaction or block was rejected by network rules
     RpcInWarmup = -28,             // Client still warming up
     RpcMethodDeprecated = -32,     // RPC method is deprecated
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlock {
+    pub header: DSBlockHeader,
+    pub signature: String,
+}
+
+impl From<DSBlockVerbose> for DSBlock {
+    fn from(verbose_block: DSBlockVerbose) -> Self {
+        DSBlock {
+            header: DSBlockHeader::from(verbose_block.header),
+            signature: verbose_block.signature,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlockHeader {
+    #[serde(rename = "BlockNum")]
+    pub block_num: String,
+    #[serde(rename = "Difficulty")]
+    pub difficulty: u64,
+    #[serde(rename = "DifficultyDS")]
+    pub difficulty_ds: u64,
+    #[serde(rename = "GasPrice")]
+    pub gas_price: String,
+    #[serde(rename = "PoWWinners")]
+    pub pow_winners: Vec<String>,
+    #[serde(rename = "PrevHash")]
+    pub prev_hash: String,
+    #[serde(rename = "Timestamp")]
+    pub timestamp: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlockVerbose {
+    // Sample fields based on given/expected data structure
+    #[serde(rename = "B1")]
+    pub b1: Vec<bool>,
+    #[serde(rename = "B2")]
+    pub b2: Vec<bool>,
+    #[serde(rename = "CS1")]
+    pub cs1: String,
+    #[serde(rename = "PrevDSHash")]
+    pub prev_dshash: String,
+    pub header: DSBlockHeaderVerbose,
+    pub signature: String,
+}
+
+impl From<DSBlockHeaderVerbose> for DSBlockHeader {
+    fn from(header: DSBlockHeaderVerbose) -> Self {
+        DSBlockHeader {
+            block_num: header.block_num,
+            difficulty: header.difficulty,
+            difficulty_ds: header.difficulty_ds,
+            gas_price: header.gas_price,
+            pow_winners: header.po_wwinners,
+            prev_hash: header.prev_hash,
+            timestamp: header.timestamp,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlockHeaderVerbose {
+    #[serde(rename = "BlockNum")]
+    pub block_num: String,
+    #[serde(rename = "CommitteeHash")]
+    pub committee_hash: String,
+    #[serde(rename = "Difficulty")]
+    pub difficulty: u64,
+    #[serde(rename = "DifficultyDS")]
+    pub difficulty_ds: u64,
+    #[serde(rename = "EpochNum")]
+    pub epoch_num: String,
+    #[serde(rename = "GasPrice")]
+    pub gas_price: String,
+    #[serde(rename = "MembersEjected")]
+    pub members_ejected: Vec<String>,
+    #[serde(rename = "PoWWinners")]
+    pub po_wwinners: Vec<String>,
+    #[serde(rename = "PoWWinnersIP")]
+    pub po_wwinners_ip: Vec<PoWWinnerIP>,
+    #[serde(rename = "PrevHash")]
+    pub prev_hash: String,
+    #[serde(rename = "ReservedField")]
+    pub reserved_field: String,
+    #[serde(rename = "SWInfo")]
+    pub swinfo: SWInfo,
+    #[serde(rename = "ShardingHash")]
+    pub sharding_hash: String,
+    #[serde(rename = "Timestamp")]
+    pub timestamp: String,
+    #[serde(rename = "Version")]
+    pub version: u32,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PoWWinnerIP {
+    #[serde(rename = "IP")]
+    pub ip: String,
+    pub port: u32,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SWInfo {
+    #[serde(rename = "Scilla")]
+    pub scilla: Vec<u64>,
+    #[serde(rename = "Zilliqa")]
+    pub zilliqa: Vec<u64>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct GetCurrentDSCommResult {
+    #[serde(rename = "CurrentDSEpoch")]
+    pub current_dsepoch: String,
+    #[serde(rename = "CurrentTxEpoch")]
+    pub current_tx_epoch: String,
+    #[serde(rename = "NumOfDSGuard")]
+    pub num_of_dsguard: u32,
+    pub dscomm: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlockRateResult {
+    pub rate: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlockListingResult {
+    pub data: Vec<DSBlockListing>,
+    #[serde(rename = "maxPages")]
+    pub max_pages: u32,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DSBlockListing {
+    #[serde(rename = "BlockNum")]
+    pub block_num: u64,
+    #[serde(rename = "Hash")]
+    pub hash: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TXBlockRateResult {
+    pub rate: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TxBlockListing {
+    #[serde(rename = "BlockNum")]
+    pub block_num: u64,
+    #[serde(rename = "Hash")]
+    pub hash: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TxBlockListingResult {
+    pub data: Vec<TxBlockListing>,
+    #[serde(rename = "maxPages")]
+    pub max_pages: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TxnsForTxBlockExResponse {
+    #[serde(rename = "CurrPage")]
+    pub curr_page: u64,
+    #[serde(rename = "NumPages")]
+    pub num_pages: u64,
+    #[serde(rename = "Transactions")]
+    pub transactions: Vec<String>,
 }

@@ -31,7 +31,7 @@ library ScillaConnector {
 
         assembly {
             let alwaysSuccessForThisPrecompile := call(
-                21000,
+                gas(),
                 SCILLA_CALL_PRECOMPILE_ADDRESS,
                 0,
                 add(encodedArgs, 0x20),
@@ -242,20 +242,47 @@ contract ScillaInterop {
     using ScillaConnector for address;
 
     constructor() {}
-    
-    function readUint128(address scillaContract, string memory varName) public view returns (uint128) {
+
+    function readUint128(
+        address scillaContract,
+        string memory varName
+    ) public view returns (uint128) {
         return scillaContract.readUint128(varName);
     }
 
-    function readString(address scillaContract, string memory varName) public view returns (string memory) {
+    function readString(
+        address scillaContract,
+        string memory varName
+    ) public view returns (string memory) {
         return scillaContract.readString(varName);
     }
 
-    function readMapUint128(address scillaContract, string memory varName, address key) public view returns (uint128) {
+    function readMapUint128(
+        address scillaContract,
+        string memory varName,
+        address key
+    ) public view returns (uint128) {
         return scillaContract.readMapUint128(varName, key);
     }
 
-    function readNestedMapUint128(address scillaContract, string memory varName, address key1, address key2) public view returns (uint128) {
+    function readNestedMapUint128(
+        address scillaContract,
+        string memory varName,
+        address key1,
+        address key2
+    ) public view returns (uint128) {
         return scillaContract.readNestedMapUint128(varName, key1, key2);
+    }
+
+    function callScilla(
+        address scillaContract,
+        string memory transitionName,
+        string memory varName,
+        address arg1,
+        uint128 arg2
+    ) public returns (uint128) {
+        scillaContract.call(transitionName, arg1, arg2);
+
+        return readMapUint128(scillaContract, varName, arg1);
     }
 }

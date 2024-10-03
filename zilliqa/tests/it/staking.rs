@@ -138,7 +138,10 @@ async fn get_stakers_at(
     let tx = TransactionRequest::new()
         .to(H160(contract_addr::DEPOSIT.into_array()))
         .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
-    let stakers = wallet.call(&tx.into(), Some(block_number.into())).await.unwrap();
+    let stakers = wallet
+        .call(&tx.into(), Some(block_number.into()))
+        .await
+        .unwrap();
     let stakers = contracts::deposit::GET_STAKERS
         .decode_output(&stakers)
         .unwrap()[0]
@@ -256,15 +259,21 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
 
         let tx = TransactionRequest::new()
             .to(H160(contract_addr::DEPOSIT.into_array()))
-            .data(contracts::deposit::INTERNAL_COMMITTEE.encode_input(&[]).unwrap());
+            .data(
+                contracts::deposit::INTERNAL_COMMITTEE
+                    .encode_input(&[])
+                    .unwrap(),
+            );
         let committee = wallet.call(&tx.into(), Some(n.into())).await.unwrap();
         let committee = contracts::deposit::INTERNAL_COMMITTEE
             .decode_output(&committee)
             .unwrap();
 
-
         let stakers = get_stakers_at(&wallet, n).await;
-        info!("{n}: stakers: {}, epoch: {epoch:?}, committee: {committee:?}", stakers.len());
+        info!(
+            "{n}: stakers: {}, epoch: {epoch:?}, committee: {committee:?}",
+            stakers.len()
+        );
     }
 
     let stakers = get_stakers(&wallet).await;

@@ -1,4 +1,10 @@
-use std::{cell::RefCell, cmp, collections::HashMap, num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{
+    cmp,
+    collections::{BTreeSet, HashMap},
+    num::NonZeroUsize,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
@@ -32,7 +38,7 @@ use crate::{
 #[derive(Debug)]
 pub struct BlockStore {
     db: Arc<Db>,
-    block_cache: RefCell<LruCache<Hash, Block>>,
+    block_cache: Arc<RwLock<LruCache<Hash, Block>>>,
     /// The maximum view of any proposal we have received, even if it is not part of our chain yet.
     highest_known_view: u64,
     /// Information we keep about our peers' state.
@@ -53,7 +59,7 @@ pub struct BlockStore {
     /// newly created blocks that arrive while we are syncing.
     buffered: LruCache<Hash, Proposal>,
     /// Requests we would like to send, but haven't been able to (e.g. because we have no peers).
-    unserviceable_requests: Vec<(u64, u64)>,
+    unserviceable_requests: BTreeSet<(u64, u64)>,
     message_sender: MessageSender,
 }
 
@@ -84,7 +90,7 @@ impl BlockStore {
     pub fn new(config: &NodeConfig, db: Arc<Db>, message_sender: MessageSender) -> Result<Self> {
         Ok(BlockStore {
             db,
-            block_cache: RefCell::new(LruCache::new(NonZeroUsize::new(5).unwrap())),
+            block_cache: Arc::new(RwLock::new(LruCache::new(NonZeroUsize::new(5).unwrap()))),
             highest_known_view: 0,
             peers: HashMap::new(),
             requested_view: 0,
@@ -94,8 +100,26 @@ impl BlockStore {
             buffered: LruCache::new(
                 NonZeroUsize::new(config.max_blocks_in_flight as usize + 100).unwrap(),
             ),
-            unserviceable_requests: vec![],
+            unserviceable_requests: BTreeSet::new(),
             message_sender,
+        })
+    }
+
+    /// Create a read-only clone of this [BlockStore]. The read-only property must be upheld by the caller - Calling
+    /// any `&mut self` methods on the returned [BlockStore] will lead to problems. This clone is cheap.
+    pub fn clone_read_only(&self) -> Arc<Self> {
+        Arc::new(BlockStore {
+            db: self.db.clone(),
+            block_cache: self.block_cache.clone(),
+            highest_known_view: 0,
+            peers: HashMap::new(),
+            requested_view: 0,
+            max_blocks_in_flight: 0,
+            batch_size: 0,
+            failed_request_sleep_duration: Duration::ZERO,
+            buffered: LruCache::new(NonZeroUsize::new(1).unwrap()),
+            unserviceable_requests: BTreeSet::new(),
+            message_sender: self.message_sender.clone(),
         })
     }
 
@@ -153,11 +177,8 @@ impl BlockStore {
             self.requested_view = current_view;
         }
 
-        // Attempt to send pending requests if we can. Note that unserviceable requests are retried in LIFO order. This
-        // effectively means that requests for higher views are sent first. Also, we break early if a peer can't
-        // service the final request, despite the possibility that it could service a request for lower views. If this
-        // appears to be a problem in practice, we could use a `VecDeque` and retry requests in FIFO order.
-        while let Some((from, to)) = self.unserviceable_requests.pop() {
+        // Attempt to send pending requests if we can.
+        while let Some((from, to)) = self.unserviceable_requests.pop_first() {
             if !self.request_blocks(from, to)? {
                 // Stop trying to send requests if no peers are available.
                 break;
@@ -196,7 +217,7 @@ impl BlockStore {
     fn request_blocks(&mut self, from: u64, to: u64) -> Result<bool> {
         let Some(peer) = self.best_peer(from) else {
             warn!(from, "no peers to download missing blocks from");
-            self.unserviceable_requests.push((from, to));
+            self.unserviceable_requests.insert((from, to));
             return Ok(false);
         };
         trace!(%peer, from, to, "requesting blocks");
@@ -219,11 +240,14 @@ impl BlockStore {
     }
 
     pub fn get_block(&self, hash: Hash) -> Result<Option<Block>> {
-        let mut block_cache = self.block_cache.borrow_mut();
+        let mut block_cache = self
+            .block_cache
+            .write()
+            .map_err(|e| anyhow!("Failed to get write access to block cache: {e}"))?;
         if let Some(block) = block_cache.get(&hash) {
             return Ok(Some(block.clone()));
         }
-        let Some(block) = self.db.get_block_by_hash(&hash)? else {
+        let Some(block) = self.db.get_block_by_hash(hash)? else {
             return Ok(None);
         };
         block_cache.put(hash, block.clone());
@@ -237,11 +261,12 @@ impl BlockStore {
         self.get_block(hash)
     }
 
+    pub fn get_highest_block_number(&self) -> Result<Option<u64>> {
+        self.db.get_highest_block_number()
+    }
+
     pub fn get_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        let Some(hash) = self.db.get_canonical_block_number(number)? else {
-            return Ok(None);
-        };
-        self.get_block(hash)
+        self.db.get_canonical_block_by_number(number)
     }
 
     pub fn process_block(
@@ -251,8 +276,6 @@ impl BlockStore {
     ) -> Result<Option<Proposal>> {
         trace!(?from, number = block.number(), hash = ?block.hash(), "insert block");
         self.db.insert_block(&block)?;
-        self.db
-            .set_canonical_block_number(block.number(), block.hash())?;
 
         if let Some(from) = from {
             let peer = self.peer_info(from);

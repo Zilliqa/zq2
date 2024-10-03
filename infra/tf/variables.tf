@@ -66,6 +66,18 @@ variable "apps_node_count" {
   default     = 1
 }
 
+variable "provisioning_model" {
+  description = "The provisioning model for the instance. Must be either 'STANDARD' or 'SPOT'."
+  type        = string
+
+  validation {
+    condition     = contains(["STANDARD", "SPOT"], var.provisioning_model)
+    error_message = "The provisioning model must be either 'STANDARD' or 'SPOT'."
+  }
+
+  default = "STANDARD"
+}
+
 variable "api_node_count" {
   description = "(Optional) ZQ2 Node apps count"
   type        = number
@@ -106,8 +118,22 @@ variable "distributed_validators" {
 }
 
 variable "apps_node_type" {
+  description = "(Optional) The size of the apps nodes."
+  type        = string
+  default     = "e2-standard-2"
+  nullable    = false
+}
+
+variable "node_type" {
   description = "(Optional) The size of the nodes."
   type        = string
   default     = "e2-standard-2"
+  nullable    = false
+}
+
+variable "checkpoint_bucket_force_destroy" {
+  description = "(Optional) Whether force destroying the checkpoint bucket deprovisioning the infrastructure."
+  type        = bool
+  default     = true
   nullable    = false
 }

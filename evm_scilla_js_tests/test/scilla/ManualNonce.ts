@@ -17,6 +17,10 @@ describe("Manual nonce #parallel", function () {
     contract = await hre.deployScillaContractWithSigner("SetGet", signer);
   });
 
+  after(function () {
+    hre.releaseZilSigner(signer);
+  });
+
   it("Should be possible to set nonce manually @block-1", async function () {
     let result = await hre.zilliqaSetup.zilliqa.blockchain.getBalance(signer.address);
     const nextNonce = result.result.nonce + 1;

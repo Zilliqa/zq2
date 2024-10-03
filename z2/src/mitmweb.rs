@@ -37,7 +37,7 @@ impl Runner {
         println!("Starting mitmproxy FROM {from_port} (send requests here <---) TO {to_port} (where they go) MGMT {mgmt_port}");
         let mut cmd = Command::new("mitmweb");
         cmd.arg("--mode");
-        cmd.arg(&format!("reverse:http://localhost:{}", to_port));
+        cmd.arg(format!("reverse:http://localhost:{}", to_port));
         cmd.arg("--no-web-open-browser");
         cmd.arg("--listen-port");
         cmd.arg(format!("{}", from_port));

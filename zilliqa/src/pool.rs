@@ -4,6 +4,7 @@ use std::{
 };
 
 use alloy::primitives::Address;
+use tracing::debug;
 
 use crate::{
     crypto::Hash,
@@ -131,6 +132,43 @@ impl TransactionPool {
         }
     }
 
+    /// Returns a list of txns that are pending for inclusion in the next block
+    pub fn pending_hashes(&self) -> Vec<Hash> {
+        let mut pending_hash = Vec::<Hash>::new();
+        let mut pending_set = HashSet::new();
+        let mut ready = self.ready.clone();
+        // Find all transactions that are pending for inclusion in the next block
+        while let Some(ReadyItem { tx_index, .. }) = ready.pop() {
+            // We don't include nonceless txns because the way we present results on API level requires having proper nonce
+            if let TxIndex::Intershard(_, _) = tx_index {
+                continue;
+            }
+
+            // A transaction might have been ready, but it might have gotten popped
+            // or the sender's nonce might have increased, making it invalid. In this case,
+            // we will have a stale reference would still exist in the heap.
+            let Some(txn) = self.transactions.get(&tx_index) else {
+                continue;
+            };
+
+            if !pending_set.insert(txn.hash) {
+                continue;
+            }
+
+            pending_hash.push(txn.hash);
+
+            let Some(next) = tx_index.next() else {
+                continue;
+            };
+
+            if let Some(next_txn) = self.transactions.get(&next) {
+                ready.push(next_txn.into());
+            }
+        }
+
+        pending_hash
+    }
+
     pub fn preview_content(&self) -> TxPoolContent {
         // First make a copy of 'ready' transactions
         let mut ready = self.ready.clone();
@@ -153,12 +191,11 @@ impl TransactionPool {
                 continue;
             };
 
-            if pending_set.contains(&txn.hash) {
+            if !pending_set.insert(&txn.hash) {
                 continue;
             }
 
             pending.push(txn.clone());
-            pending_set.insert(txn.hash);
 
             let Some(next) = tx_index.next() else {
                 continue;
@@ -198,6 +235,7 @@ impl TransactionPool {
 
     pub fn insert_transaction(&mut self, txn: VerifiedTransaction, account_nonce: u64) -> bool {
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
+            debug!("Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}", txn.hash, txn.signer, txn.tx.nonce());
             // This transaction is permanently invalid, so there is nothing to do.
             return false;
         }
@@ -211,6 +249,7 @@ impl TransactionPool {
             // keeping the same nonce. So for those, it will always discard the new (identical)
             // one.
             if ReadyItem::from(existing_txn) >= ReadyItem::from(&txn) {
+                debug!("Received txn with the same nonce but lower gas price. Txn hash: {:?}, from: {:?}, nonce: {:?}, gas_price: {:?}", txn.hash, txn.signer, txn.tx.nonce(), txn.tx.gas_price_per_evm_gas());
                 return false;
             }
             // Remove the existing transaction from `hash_to_index` if we're about to replace it.
@@ -224,10 +263,11 @@ impl TransactionPool {
             self.ready.push((&txn).into());
         }
 
+        debug!("Txn added to mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}", txn.hash, txn.signer, txn.tx.nonce());
+
         // Finally we insert it into the tx store and the hash reverse-index
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
         self.transactions.insert(txn.mempool_index(), txn);
-
         true
     }
 
@@ -271,13 +311,13 @@ impl TransactionPool {
         std::mem::take(&mut self.transactions).into_values()
     }
 
+    /// Check the ready transactions in arbitrary order, for one that is Ready
     pub fn has_txn_ready(&self) -> bool {
-        let mut ready = self.ready.clone();
-        while let Some(ReadyItem { tx_index, .. }) = ready.pop() {
+        for ReadyItem { tx_index, .. } in self.ready.iter() {
             // A transaction might have been ready, but it might have gotten popped
             // or the sender's nonce might have increased, making it invalid. In this case,
             // we will have a stale reference would still exist in the heap.
-            let Some(_) = self.transactions.get(&tx_index) else {
+            let Some(_) = self.transactions.get(tx_index) else {
                 continue;
             };
 

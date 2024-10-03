@@ -40,8 +40,10 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.function("totalStake").unwrap().clone());
     pub static MIN_DEPOSIT: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("minimumStake").unwrap().clone());
-    pub static COMMITTEE: Lazy<Function> = Lazy::new(|| CONTRACT.abi.function("committee").unwrap().clone());
-    pub static INTERNAL_COMMITTEE: Lazy<Function> = Lazy::new(|| CONTRACT.abi.function("internalCommittee").unwrap().clone());
+    pub static COMMITTEE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("committee").unwrap().clone());
+    pub static INTERNAL_COMMITTEE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("internalCommittee").unwrap().clone());
 }
 
 pub mod shard {
@@ -125,7 +127,8 @@ mod tests {
 
     use foundry_compilers::{
         artifacts::{
-            output_selection::OutputSelection, EvmVersion, Optimizer, Remapping, Settings, SolcInput, Source
+            output_selection::OutputSelection, EvmVersion, Optimizer, Remapping, Settings,
+            SolcInput, Source,
         },
         solc::SolcLanguage,
     };

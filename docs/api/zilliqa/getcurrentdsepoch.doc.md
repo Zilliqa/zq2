@@ -6,14 +6,11 @@ GetCurrentDSEpoch
 
 DS,epoch,get,current
 
-# Status
-
-NotYetDocumented
-
 # Description
 
 Returns the current number of DS blocks in the network. This is represented as a
 `String`.
+Deprecated in ZQ2; now returns a constant placeholder value.
 
 # Curl
 

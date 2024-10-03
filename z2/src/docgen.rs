@@ -7,7 +7,7 @@ use std::{
     convert::TryFrom,
     fmt,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicUsize, Arc, Mutex},
 };
 
 use alloy::primitives::{address, Address};
@@ -27,7 +27,8 @@ use zilliqa::{
         empty_block_timeout_default, eth_chain_id_default, failed_request_sleep_duration_default,
         json_rpc_port_default, local_address_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
-        state_rpc_limit_default, Amount, ConsensusConfig, NodeConfig,
+        state_rpc_limit_default, total_native_token_supply_default, Amount, ConsensusConfig,
+        NodeConfig,
     },
     crypto::SecretKey,
     node::{MessageSender, Node},
@@ -35,8 +36,7 @@ use zilliqa::{
 };
 use zqutils::utils;
 
-const SUPPORTED_APIS_PATH_NAME: &str = "supported_apis";
-const SUPPORTED_APIS_PAGE_NAME: &str = "Supported APIs";
+const SUPPORTED_APIS_PATH_NAME: &str = "index";
 
 #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub enum PageStatus {
@@ -118,6 +118,85 @@ struct ParsedInput {
 
 fn split_into_components(prefix: &str) -> Result<Vec<String>> {
     Ok(prefix.split('/').map(|x| x.to_string()).collect::<Vec<_>>())
+}
+
+// Removes the first element of the sequence named by components
+fn replace_first_string_element_of(
+    val: &serde_yaml::Value,
+    components: &Vec<String>,
+    idx: usize,
+    to_insert: &str,
+) -> Option<serde_yaml::Value> {
+    match val {
+        serde_yaml::Value::Mapping(map) => {
+            if idx >= components.len() {
+                return Some(val.clone());
+            }
+            // Insert all.
+            let component = &components[idx];
+            let mut new_map = serde_yaml::Mapping::new();
+            for (k, v) in map {
+                if let serde_yaml::Value::String(k_s) = k {
+                    if k_s == component {
+                        let to_insert =
+                            replace_first_string_element_of(v, components, idx + 1, to_insert);
+                        if let Some(v) = to_insert {
+                            new_map.insert(k.clone(), v);
+                        }
+                    } else {
+                        new_map.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            // Implicitly remove empty maps.
+            if new_map.is_empty() {
+                None
+            } else {
+                Some(serde_yaml::Value::Mapping(new_map))
+            }
+        }
+        serde_yaml::Value::Sequence(seq) => {
+            match idx.cmp(&components.len()) {
+                std::cmp::Ordering::Less => {
+                    // Move on.
+                    let mut new_seq = serde_yaml::Sequence::new();
+                    for s in seq.iter() {
+                        if let Some(v) =
+                            replace_first_string_element_of(s, components, idx, to_insert)
+                        {
+                            new_seq.push(v);
+                        }
+                    }
+                    if new_seq.is_empty() {
+                        None
+                    } else {
+                        Some(serde_yaml::Value::Sequence(new_seq))
+                    }
+                }
+                std::cmp::Ordering::Equal => {
+                    // Remove the first non-mapping element.
+                    let mut new_seq = serde_yaml::Sequence::new();
+                    new_seq.push(serde_yaml::Value::String(to_insert.to_string()));
+                    let mut got_one = false;
+                    for s in seq.iter() {
+                        if !got_one {
+                            match s {
+                                serde_yaml::Value::String(_) => (),
+                                _ => new_seq.push(s.clone()),
+                            }
+                            got_one = true;
+                        } else {
+                            new_seq.push(s.clone());
+                        }
+                    }
+                    Some(serde_yaml::Value::Sequence(new_seq))
+                }
+                _ => Some(val.clone()),
+            }
+        }
+        // Ignore tags for now!
+        _ => Some(val.clone()),
+    }
 }
 
 // Mutating trees is just as painful in rust as it is in ML :-(
@@ -285,22 +364,11 @@ pub struct ApiCallStatus {
 
 pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus>> {
     let mut methods = HashMap::new();
-    // Construct an empty node so we can check for the existence of RPC methods without constructing a full node.
-    let genesis_accounts: Vec<(Address, Amount)> = vec![
-        (
-            address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"),
-            5000000000000000000000u128.into(),
-        ),
-        // privkey db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3
-        (
-            address!("cb57ec3f064a16cadb36c7c712f4c9fa62b77415"),
-            5000000000000000000000u128.into(),
-        ),
-    ];
 
+    // Construct an empty node so we can check for the existence of RPC methods without constructing a full node.
     let config = NodeConfig {
         consensus: ConsensusConfig {
-            genesis_accounts,
+            genesis_accounts: vec![],
             rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
             blocks_per_hour: 3600,
             is_main: true,
@@ -308,7 +376,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
             minimum_stake: 10_000_000_000_000_000_000_000_000u128.into(),
             gas_price: 4_761_904_800_000u128.into(),
             eth_block_gas_limit: EvmGas(84000000),
-            genesis_deposits: Vec::new(),
+            genesis_deposits: vec![],
             consensus_timeout: consensus_timeout_default(),
             local_address: local_address_default(),
             scilla_lib_dir: scilla_lib_dir_default(),
@@ -317,6 +385,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
             scilla_address: scilla_address_default(),
             blocks_per_epoch: 3600,
             epochs_per_checkpoint: 24,
+            total_native_token_supply: total_native_token_supply_default(),
         },
         data_dir: None,
         load_checkpoint: None,
@@ -335,9 +404,11 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
     let (s1, _) = tokio::sync::mpsc::unbounded_channel();
     let (s2, _) = tokio::sync::mpsc::unbounded_channel();
     let (s3, _) = tokio::sync::mpsc::unbounded_channel();
+    let (s4, _) = tokio::sync::mpsc::unbounded_channel();
+    let peers = Arc::new(AtomicUsize::new(0));
 
     let my_node = Arc::new(Mutex::new(zilliqa::node::Node::new(
-        config, secret_key, s1, s2, s3,
+        config, secret_key, s1, s2, s3, s4, peers,
     )?));
     let module = zilliqa::api::rpc_module(my_node.clone());
     for m in module.method_names() {
@@ -384,7 +455,6 @@ impl Docs {
     pub async fn read_macros(&self) -> Result<Macros> {
         let macro_source = include_str!("../resources/api_macros.tera.md");
         let parsed = self.parse_input_sections(macro_source).await?;
-        println!("Macros {:?}", &parsed.sections);
         Ok(Macros {
             macros: parsed.sections,
         })
@@ -445,8 +515,6 @@ impl Docs {
         contents_map = remove_key(&contents_map, &base_key, 0)
             .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
 
-        println!("After remove {0}", serde_yaml::to_string(&contents_map)?);
-
         while let Some(ref path_entry) = stack.pop() {
             let md = fs::metadata(&path_entry.abs)
                 .await
@@ -489,13 +557,23 @@ impl Docs {
         // Now sort the list of files to generate.
         to_generate.sort_by(|a, b| a.rel.cmp(&b.rel));
         for path_entry in to_generate.iter() {
-            println!("File: {:?} rel {:?}", &path_entry.abs, &path_entry.rel);
             let generated = self
                 .generate_file(&path_entry.abs, &path_entry.rel, macros)
                 .await?;
-            let the_iter = key_prefix_components
-                .iter()
-                .chain(generated.id_components.iter());
+            let the_iter = key_prefix_components.iter().chain(
+                generated
+                    .id_components
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, v)| {
+                        if idx == 1 && v == "api" {
+                            None
+                        } else {
+                            Some(v)
+                        }
+                    }),
+            );
+            // Flatten "api" back to the root directory, per #1434
             insert_key(
                 &mut contents_map,
                 &the_iter.map(|m| m.to_string()).collect(),
@@ -585,17 +663,10 @@ impl Docs {
         if let Some(val) = &self.index_file {
             // Now write out...
             let contents_map = serde_yaml::from_str(&fs::read_to_string(val).await?)?;
-            let mut base_key = self.get_base_mkdocs_key().await?;
-            base_key.push(SUPPORTED_APIS_PAGE_NAME.to_string());
-            let mut contents_map = remove_key(&contents_map, &base_key, 0)
-                .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-            insert_key(
-                &mut contents_map,
-                &base_key,
-                0,
-                &mkdocs_filename,
-                &Some(Position::Beginning),
-            );
+            let base_key = self.get_base_mkdocs_key().await?;
+            let contents_map =
+                replace_first_string_element_of(&contents_map, &base_key, 0, &mkdocs_filename)
+                    .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
             fs::write(val, &serde_yaml::to_string(&contents_map)?).await?;
         }
         Ok(all_apis)
@@ -713,7 +784,6 @@ impl Docs {
         println!("---------------------------");
         for k in parsed.sections.keys() {
             let rendered = section_tera.render(k, &context)?;
-            println!("** {k} *** \n {rendered}");
             if k == "status" {
                 page_status = rendered.trim().try_into()?;
             } else {
@@ -793,9 +863,6 @@ impl Docs {
         self.write_file(&final_page, &desc_path).await?;
 
         let mkdocs_filename = zqutils::utils::string_from_path(&mkdocs_path)?;
-
-        println!("prefixed_id is {prefixed_id}");
-        println!("mkdocs_filename is {mkdocs_filename}");
 
         let id_components = id_path
             .iter()

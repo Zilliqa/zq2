@@ -1,8 +1,10 @@
 use alloy::eips::BlockId;
 use ethabi::Token;
 use ethers::{
-    abi::FunctionExt, prelude::DeploymentTxFactory, providers::Middleware,
-    types::TransactionRequest,
+    abi::FunctionExt,
+    prelude::DeploymentTxFactory,
+    providers::Middleware,
+    types::{TransactionRequest, U64},
 };
 use primitive_types::{H160, H256, U256};
 use tokio::sync::Mutex;
@@ -90,6 +92,7 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
     );
 }
 
+// Test that new node joining the network catches up on blocks
 #[zilliqa_macros::test]
 async fn block_production(mut network: Network) {
     network
@@ -186,7 +189,7 @@ async fn create_shard(
         });
     }
 
-    network.run_until_block(wallet, 10.into(), 100).await;
+    network.run_until_block(wallet, 10.into(), 200).await;
     assert_eq!(
         network.nodes.len(),
         initial_main_shard_nodes + child_shard_nodes
@@ -620,4 +623,127 @@ async fn handle_forking_correctly(mut network: Network) {
         )
         .await
         .unwrap();
+}
+
+// Test that zero account has correct initial funds, is the source of rewards and is the sink of gas
+#[zilliqa_macros::test]
+async fn zero_account_per_block_balance_updates(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Check inital account values
+    let block_height = wallet.get_block_number().await.unwrap();
+    assert_eq!(block_height, U64::from(0));
+
+    // Amount assigned to genesis account
+    let genesis_account_expected_balance = network
+        .get_node(0)
+        .config
+        .consensus
+        .genesis_accounts
+        .clone()[0]
+        .1
+         .0;
+    let genesis_account_balance: u128 = wallet
+        .get_balance(wallet.address(), None)
+        .await
+        .unwrap()
+        .try_into()
+        .unwrap();
+    assert_eq!(genesis_account_expected_balance, genesis_account_balance);
+
+    // Total intial stake spread across 4 validators
+    let genesis_deposits = network
+        .get_node(0)
+        .config
+        .consensus
+        .genesis_deposits
+        .clone();
+    let total_staked: u128 = genesis_deposits[0].stake.0 * 4;
+
+    // Zero account balance plus genesis account plus initial stakes should equal total_native_token_supply
+    let zero_account_balance: u128 = wallet
+        .get_balance(H160::zero(), None)
+        .await
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let total_native_token_supply = network
+        .get_node(0)
+        .config
+        .consensus
+        .total_native_token_supply
+        .0;
+    assert_eq!(
+        total_native_token_supply,
+        zero_account_balance + total_staked + genesis_account_balance
+    );
+
+    // Mine first block
+    network.run_until_block(&wallet, 1.into(), 50).await;
+
+    let block = wallet.get_block(1).await.unwrap().unwrap();
+    assert_eq!(block.transactions.len(), 0);
+
+    // Check proposer was rewarded
+    let miner: H160 = block.author.unwrap();
+    let miner_balance_before = wallet
+        .get_balance(miner, Some((block.number.unwrap() - 1).into()))
+        .await
+        .unwrap();
+    let miner_balance_after = wallet
+        .get_balance(miner, Some(block.number.unwrap().into()))
+        .await
+        .unwrap();
+    assert!(miner_balance_before < miner_balance_after);
+
+    // Check reward came from zero account balance
+    let zero_account = H160::zero();
+    let zero_account_balance_before = wallet
+        .get_balance(zero_account, Some((block.number.unwrap() - 1).into()))
+        .await
+        .unwrap();
+    let zero_account_balance_after = wallet
+        .get_balance(zero_account, Some(block.number.unwrap().into()))
+        .await
+        .unwrap();
+    assert!(zero_account_balance_before > zero_account_balance_after);
+    let zero_acount_balance_change_rewards_only =
+        zero_account_balance_before - zero_account_balance_after;
+
+    // Check gas is sunk to zero account
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, hash, 200).await;
+
+    let receipt = provider
+        .get_transaction_receipt(hash)
+        .await
+        .unwrap()
+        .unwrap();
+    let block = wallet
+        .get_block(receipt.block_number.unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(block.transactions.len(), 1);
+
+    let zero_account_balance_before = wallet
+        .get_balance(zero_account, Some((block.number.unwrap() - 1).into()))
+        .await
+        .unwrap();
+    let zero_account_balance_after = wallet
+        .get_balance(zero_account, Some(block.number.unwrap().into()))
+        .await
+        .unwrap();
+    let zero_acount_balance_change_with_gas_spent =
+        zero_account_balance_before - zero_account_balance_after;
+
+    assert_eq!(
+        zero_acount_balance_change_with_gas_spent + block.gas_used,
+        zero_acount_balance_change_rewards_only
+    );
 }

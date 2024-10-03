@@ -11,14 +11,13 @@ use std::{
 use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie, Trie};
-use itertools::Either;
 use rusqlite::{
     named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
     Connection, OptionalExtension, Row, ToSql,
 };
 use serde::{Deserialize, Serialize};
-use sled::{Batch, Tree};
+use sled::{transaction::TransactionError, Batch, Tree};
 use tracing::warn;
 
 use crate::{
@@ -169,6 +168,12 @@ impl FromSql for EvmGas {
     }
 }
 
+enum BlockFilter {
+    Hash(Hash),
+    View(u64),
+    Height(u64),
+}
+
 const STATE_TRIE_TREE: &[u8] = b"state_trie";
 
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -226,10 +231,8 @@ impl Db {
                 gas_used INTEGER NOT NULL,
                 gas_limit INTEGER NOT NULL,
                 qc BLOB NOT NULL,
-                agg BLOB);
-            CREATE TABLE IF NOT EXISTS main_chain_canonical_blocks (
-                height INTEGER NOT NULL PRIMARY KEY,
-                block_hash TEXT NOT NULL REFERENCES blocks (block_hash));
+                agg BLOB,
+                is_canonical BOOLEAN NOT NULL);
             CREATE TABLE IF NOT EXISTS transactions (
                 tx_hash BLOB NOT NULL PRIMARY KEY,
                 data BLOB NOT NULL);
@@ -246,6 +249,7 @@ impl Db {
                 accepted INTEGER,
                 errors BLOB,
                 exceptions BLOB);
+            CREATE INDEX IF NOT EXISTS block_hash_index ON receipts (block_hash);
             CREATE TABLE IF NOT EXISTS touched_address_index (
                 address BLOB,
                 tx_hash BLOB REFERENCES transactions (tx_hash) ON DELETE CASCADE,
@@ -270,30 +274,21 @@ impl Db {
         Ok(Some(base_path.join("checkpoints").into_boxed_path()))
     }
 
+    /// Fetch checkpoint data from file and initialise db state
+    /// Return checkpointed block and transactions which must be executed after this function
+    /// Return None if checkpoint already loaded
     pub fn load_trusted_checkpoint<P: AsRef<Path>>(
         &self,
         path: P,
         hash: &Hash,
         our_shard_id: u64,
-    ) -> Result<Block> {
+    ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
         // For now, only support a single version: you want to load the latest checkpoint, anyway.
-        const SUPPORTED_VERSION: u32 = 1;
+        const SUPPORTED_VERSION: u32 = 2;
 
         let input = File::open(path)?;
         let mut reader = BufReader::with_capacity(8192 * 1024, input); // 8 MiB read chunks
         let trie_storage = Arc::new(self.state_trie()?);
-        if !trie_storage.db.is_empty() || self.get_highest_block_number()?.is_some() {
-            // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
-            // values not part of any state trie of any known block. With some effort, this could
-            // even be supported.
-            // However, without such explicit support, having old blocks MAY in fact cause
-            // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
-            // a node that already contains previous state, until (and unless) there's ever a
-            // usecase for going through the effort to support it and ensure it works as expected.
-            return Err(anyhow!(
-                "Node state must be empty when loading a checkpoint."
-            ));
-        }
         let mut state_trie = EthTrie::new(trie_storage.clone());
 
         // Decode and validate header
@@ -316,7 +311,7 @@ impl Db {
             return Err(anyhow!("Invalid checkpoint file: wrong shard ID."));
         }
 
-        // Decode checkpoint block and parent block, and validate
+        // Decode and validate checkpoint block, its transactions and parent block
         let mut lines = reader.lines(); // V1 uses a plaintext, line-based format
         let block = lines.next().ok_or(anyhow!(
             "Invalid checkpoint file: missing block info on line 1"
@@ -327,14 +322,46 @@ impl Db {
         }
         block.verify_hash()?;
 
+        let transactions = lines.next().ok_or(anyhow!(
+            "Invalid checkpoint file: missing transactions info on line 2"
+        ))??;
+        let transactions: Vec<SignedTransaction> =
+            bincode::deserialize(&hex::decode(transactions.as_bytes())?)?;
+
         let parent = lines.next().ok_or(anyhow!(
-            "Invalid checkpoint file: missing parent info on line 2"
+            "Invalid checkpoint file: missing parent info on line 3"
         ))??;
         let parent: Block = bincode::deserialize(&hex::decode(parent.as_bytes())?)?;
         parent.verify_hash()?;
 
         if block.parent_hash() != parent.hash() {
             return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
+        }
+
+        if !trie_storage.db.is_empty() || self.get_highest_block_number()?.is_some() {
+            // If checkpointed block already exists then assume checkpoint load already complete. Return None
+            if self.get_block_by_hash(block.hash())?.is_some() {
+                return Ok(None);
+            }
+            // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
+            // values not part of any state trie of any known block. With some effort, this could
+            // even be supported.
+            // However, without such explicit support, having old blocks MAY in fact cause
+            // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
+            // a node that already contains previous state, until (and unless) there's ever a
+            // usecase for going through the effort to support it and ensure it works as expected.
+            if let Some(db_block) = self.get_block_by_hash(parent.hash())? {
+                if db_block.parent_hash() != parent.parent_hash() {
+                    return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"));
+                } else {
+                    // In this case, the database already has the block contained in this checkpoint. We assume the
+                    // database contains the full state for that block too and thus return early, without actually
+                    // loading the checkpoint file.
+                    return Ok(Some((block, transactions, parent)));
+                }
+            } else {
+                return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint file does not exist in non-empty database"));
+            }
         }
 
         // then decode state
@@ -367,22 +394,19 @@ impl Db {
             }
             state_trie.insert(&hex::decode(account_hash)?, &serialized_account)?;
         }
-        if state_trie.root_hash()? != block.state_root_hash().0 {
+        if state_trie.root_hash()? != parent.state_root_hash().0 {
             return Err(anyhow!("Invalid checkpoint file: state root hash mismatch"));
         }
 
-        let block_ref = &block; // for moving into the closure
+        let parent_ref: &Block = &parent; // for moving into the closure
         self.with_sqlite_tx(move |tx| {
-            self.insert_block_with_db_tx(tx, block_ref)?;
-            self.insert_block_with_db_tx(tx, &parent)?;
-            self.set_latest_finalized_view_with_db_tx(tx, block_ref.view())?;
-            self.set_high_qc_with_db_tx(tx, block_ref.header.qc)?;
-            self.set_canonical_block_number_with_db_tx(tx, block_ref.number(), block_ref.hash())?;
-            self.set_canonical_block_number_with_db_tx(tx, parent.number(), parent.hash())?;
+            self.insert_block_with_db_tx(tx, parent_ref)?;
+            self.set_latest_finalized_view_with_db_tx(tx, parent_ref.view())?;
+            self.set_high_qc_with_db_tx(tx, block.header.qc)?;
             Ok(())
         })?;
 
-        Ok(block)
+        Ok(Some((block, transactions, parent)))
     }
 
     pub fn flush_state(&self) {
@@ -400,42 +424,6 @@ impl Db {
         let sqlite_tx = sqlite_tx.transaction()?;
         operations(&sqlite_tx)?;
         Ok(sqlite_tx.commit()?)
-    }
-
-    pub fn set_canonical_block_number_with_db_tx(
-        &self,
-        sqlite_tx: &Connection,
-        number: u64,
-        hash: Hash,
-    ) -> Result<()> {
-        sqlite_tx.execute("INSERT OR REPLACE INTO main_chain_canonical_blocks (height, block_hash) VALUES (?1, ?2)",
-            (number, hash))?;
-        Ok(())
-    }
-
-    pub fn set_canonical_block_number(&self, number: u64, hash: Hash) -> Result<()> {
-        self.set_canonical_block_number_with_db_tx(&self.block_store.lock().unwrap(), number, hash)
-    }
-
-    pub fn get_canonical_block_number(&self, number: u64) -> Result<Option<Hash>> {
-        Ok(self
-            .block_store
-            .lock()
-            .unwrap()
-            .query_row_and_then(
-                "SELECT block_hash FROM main_chain_canonical_blocks WHERE height = ?1",
-                [number],
-                |row| row.get(0),
-            )
-            .optional()?)
-    }
-
-    pub fn revert_canonical_block_number(&self, number: u64) -> Result<()> {
-        self.block_store.lock().unwrap().execute(
-            "DELETE FROM main_chain_canonical_blocks WHERE height = ?1",
-            [number],
-        )?;
-        Ok(())
     }
 
     pub fn get_block_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
@@ -483,7 +471,7 @@ impl Db {
             .lock()
             .unwrap()
             .query_row_and_then(
-                "SELECT height FROM main_chain_canonical_blocks ORDER BY height DESC LIMIT 1",
+                "SELECT height FROM blocks WHERE is_canonical = TRUE ORDER BY height DESC LIMIT 1",
                 (),
                 |row| row.get(0),
             )
@@ -606,8 +594,8 @@ impl Db {
     pub fn insert_block_with_db_tx(&self, sqlite_tx: &Connection, block: &Block) -> Result<()> {
         sqlite_tx.execute(
             "INSERT INTO blocks
-                (block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg)
-            VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg)",
+                (block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, is_canonical)
+            VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg, TRUE)",
             named_params! {
                 ":block_hash": block.header.hash,
                 ":view": block.header.view,
@@ -625,11 +613,27 @@ impl Db {
         Ok(())
     }
 
+    pub fn mark_block_as_non_canonical(&self, hash: Hash) -> Result<()> {
+        self.block_store.lock().unwrap().execute(
+            "UPDATE blocks SET is_canonical = FALSE WHERE block_hash = ?1",
+            [hash],
+        )?;
+        Ok(())
+    }
+
     pub fn insert_block(&self, block: &Block) -> Result<()> {
         self.insert_block_with_db_tx(&self.block_store.lock().unwrap(), block)
     }
 
-    fn get_transactionless_block(&self, key: Either<&Hash, &u64>) -> Result<Option<Block>> {
+    pub fn remove_block(&self, block: &Block) -> Result<()> {
+        self.block_store.lock().unwrap().execute(
+            "DELETE FROM blocks WHERE block_hash = ?1",
+            [block.header.hash],
+        )?;
+        Ok(())
+    }
+
+    fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
         fn make_block(row: &Row) -> rusqlite::Result<Block> {
             Ok(Block {
                 header: BlockHeader {
@@ -654,18 +658,21 @@ impl Db {
                 self.block_store.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
             };
         }
-        Ok(match key {
-            Either::Left(hash) => {
+        Ok(match filter {
+            BlockFilter::Hash(hash) => {
                 query_block!("block_hash = ?1", hash)
             }
-            Either::Right(view) => {
+            BlockFilter::View(view) => {
                 query_block!("view = ?1", view)
+            }
+            BlockFilter::Height(height) => {
+                query_block!("height = ?1 AND is_canonical = TRUE", height)
             }
         })
     }
 
-    pub fn get_block(&self, key: Either<&Hash, &u64>) -> Result<Option<Block>> {
-        let Some(mut block) = self.get_transactionless_block(key)? else {
+    fn get_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
+        let Some(mut block) = self.get_transactionless_block(filter)? else {
             return Ok(None);
         };
         let transaction_hashes = self
@@ -679,12 +686,16 @@ impl Db {
         Ok(Some(block))
     }
 
-    pub fn get_block_by_hash(&self, block_hash: &Hash) -> Result<Option<Block>> {
-        self.get_block(Either::Left(block_hash))
+    pub fn get_block_by_hash(&self, block_hash: Hash) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::Hash(block_hash))
     }
 
-    pub fn get_block_by_view(&self, view: &u64) -> Result<Option<Block>> {
-        self.get_block(Either::Right(view))
+    pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::View(view))
+    }
+
+    pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::Height(number))
     }
 
     pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {
@@ -771,12 +782,13 @@ impl Db {
 
 pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     block: &Block,
+    transactions: &Vec<SignedTransaction>,
     parent: &Block,
     state_trie_storage: TrieStorage,
     shard_id: u64,
     output_dir: P,
 ) -> Result<()> {
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
 
     fs::create_dir_all(&output_dir)?;
 
@@ -803,12 +815,18 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     // write the block...
     writer.write_all(hex::encode(bincode::serialize(&block)?).as_bytes())?; // TODO: better serialization (#1007)
     writer.write_all(b"\n")?;
+
+    // write transactions
+    writer.write_all(hex::encode(bincode::serialize(&transactions)?).as_bytes())?; // TODO: better serialization (#1007)
+    writer.write_all(b"\n")?;
+
     // and its parent, to keep the qc tracked
     writer.write_all(hex::encode(bincode::serialize(&parent)?).as_bytes())?; // TODO: better serialization (#1007)
     writer.write_all(b"\n")?;
 
     // then write state
-    let accounts = EthTrie::new(state_trie_storage.clone()).at_root(block.state_root_hash().into());
+    let accounts =
+        EthTrie::new(state_trie_storage.clone()).at_root(parent.state_root_hash().into());
     let account_storage = EthTrie::new(state_trie_storage);
     let mut account_key_buf = [0u8; 64]; // save a few allocations, since account keys are fixed length
 
@@ -869,7 +887,19 @@ impl eth_trie::DB for TrieStorage {
         for (key, value) in keys.into_iter().zip(values) {
             batch.insert(key, value);
         }
-        self.db.apply_batch(batch)?;
+        if let Err(e) = self.db.transaction(|db| {
+            db.apply_batch(&batch)?;
+            Ok(())
+        }) {
+            match e {
+                TransactionError::Abort(()) => {
+                    unreachable!("we don't call `abort` during this transaction")
+                }
+                TransactionError::Storage(e) => {
+                    return Err(e);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -945,10 +975,10 @@ mod tests {
         }
 
         let state_hash = root_trie.root_hash().unwrap();
-        let parent_block = Block::genesis(state_hash.into());
+        let checkpoint_parent = Block::genesis(state_hash.into());
         // bit of a hack to generate a successor block
         let mut qc2 = QuorumCertificate::genesis();
-        qc2.block_hash = parent_block.hash();
+        qc2.block_hash = checkpoint_parent.hash();
         qc2.view = 1;
         let checkpoint_block = Block::from_qc(
             SecretKey::new().unwrap(),
@@ -968,21 +998,52 @@ mod tests {
 
         const SHARD_ID: u64 = 5000;
 
+        let checkpoint_transactions = vec![];
         checkpoint_block_with_state(
             &checkpoint_block,
-            &parent_block,
+            &checkpoint_transactions,
+            &checkpoint_parent,
             trie_db.deref().clone(),
             SHARD_ID,
             &checkpoint_path,
         )
         .unwrap();
 
-        // now parse the checkpoint
-        db.load_trusted_checkpoint(
-            checkpoint_path.join(checkpoint_block.number().to_string()),
-            &checkpoint_block.hash(),
-            SHARD_ID,
-        )
-        .unwrap();
+        // now load the checkpoint
+        let (block, transactions, parent) = db
+            .load_trusted_checkpoint(
+                checkpoint_path.join(checkpoint_block.number().to_string()),
+                &checkpoint_block.hash(),
+                SHARD_ID,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(checkpoint_block, block);
+        assert_eq!(checkpoint_transactions, transactions);
+        assert_eq!(checkpoint_parent, parent);
+
+        // load the checkpoint again, to ensure idempotency
+        let (block, transactions, parent) = db
+            .load_trusted_checkpoint(
+                checkpoint_path.join(checkpoint_block.number().to_string()),
+                &checkpoint_block.hash(),
+                SHARD_ID,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(checkpoint_block, block);
+        assert_eq!(checkpoint_transactions, transactions);
+        assert_eq!(checkpoint_parent, parent);
+
+        // Return None if checkpointed block already executed
+        db.insert_block(&checkpoint_block).unwrap();
+        let result = db
+            .load_trusted_checkpoint(
+                checkpoint_path.join(checkpoint_block.number().to_string()),
+                &checkpoint_block.hash(),
+                SHARD_ID,
+            )
+            .unwrap();
+        assert!(result.is_none());
     }
 }

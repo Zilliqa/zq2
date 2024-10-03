@@ -2,9 +2,8 @@
 use std::env;
 use std::{convert::TryFrom, str::FromStr};
 
-use anyhow::{anyhow, Context as _, Error, Result};
+use anyhow::{anyhow, Context as _, Result};
 use blsful::{vsss_rs::ShareIdentifier, Bls12381G2Impl};
-use clap::ValueEnum;
 use ethabi::Token;
 use ethers::{
     core::types::TransactionRequest,
@@ -20,7 +19,7 @@ use tokio::{fs::File, io::AsyncWriteExt};
 use toml::Value;
 use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
 
-use crate::github;
+use crate::{chain::Chain, github};
 
 #[derive(Debug)]
 pub struct Validator {
@@ -78,11 +77,11 @@ pub struct ChainConfig {
 
 impl ChainConfig {
     pub async fn new(chain_name: &Chain) -> Result<Self> {
-        let spec = get_chain_spec_config(chain_name.as_str()).await?;
+        let spec = get_chain_spec_config(&chain_name.to_string()).await?;
         let version = github::get_release_or_commit("zq2").await?;
 
         Ok(ChainConfig {
-            name: chain_name.as_str().to_owned(),
+            name: chain_name.to_string(),
             version,
             spec,
         })
@@ -96,77 +95,6 @@ impl ChainConfig {
             .await?;
         println!("💾 Validator config: {}", file_path.to_string_lossy());
         Ok(())
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, ValueEnum)]
-// TODO: decomment when became available
-pub enum Chain {
-    // Devnet,
-    #[value(name = "zq2-prototestnet")]
-    Zq2ProtoTestnet,
-    // ProtoMainnet,
-    // Testnet,
-    // Mainnet,
-    #[value(name = "zq2-mr-prototestnet")]
-    Zq2MrProtoTestnet,
-    #[value(name = "zq2-protodevnet")]
-    Zq2ProtoDevnet,
-}
-
-#[allow(dead_code)]
-impl Chain {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Chain::Zq2ProtoDevnet => "zq2-protodevnet",
-            Chain::Zq2ProtoTestnet => "zq2-prototestnet",
-            Chain::Zq2MrProtoTestnet => "zq2-mr-prototestnet",
-            // Chain::ProtoMainnet => "protomainnet",
-            // Chain::Devnet => "devnet",
-            // Chain::Testnet => "testnet",
-            // Chain::Mainnet => "mainnet",
-        }
-    }
-
-    fn get_endpoint(&self) -> Option<&'static str> {
-        match self {
-            Chain::Zq2ProtoDevnet => Some("https://api.zq2-protodevnet.zilliqa.com"),
-            Chain::Zq2ProtoTestnet => Some("https://api.zq2-prototestnet.zilliqa.com"),
-            Chain::Zq2MrProtoTestnet => Some("https://api.zq2-mr-prototestnet.zilstg.dev"),
-            // Chain::ProtoMainnet => None,
-            // Chain::Devnet => Some("https://api.zq2-devnet.zilliqa.com"),
-            // Chain::Testnet => None,
-            // Chain::Mainnet => None,
-        }
-    }
-
-    fn from_str(chain_name: &str) -> Result<Self, Error> {
-        match chain_name {
-            "zq2-protodevnet" => Ok(Chain::Zq2ProtoDevnet),
-            "zq2-prototestnet" => Ok(Chain::Zq2ProtoTestnet),
-            "zq2-mr-prototestnet" => Ok(Chain::Zq2MrProtoTestnet),
-            // "protomainnet" => Ok(Chain::ProtoMainnet),
-            // "devnet" => Ok(Chain::Devnet),
-            // "testnet" => Ok(Chain::Testnet),
-            // "mainnet" => Ok(Chain::Mainnet),
-            _ => Err(anyhow!("Chain not supported")),
-        }
-    }
-
-    pub fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
-        match chain_name {
-            "zq2-protodevnet" => Ok(include_str!(
-                "../resources/chain-specs/zq2-protodevnet.toml"
-            )),
-            "zq2-prototestnet" => Ok(include_str!(
-                "../resources/chain-specs/zq2-prototestnet.toml"
-            )),
-            "zq2-mr-prototestnet" => Ok(include_str!(
-                "../resources/chain-specs/zq2-mr-prototestnet.toml"
-            )),
-            _ => Err(anyhow!("Configuration file for {} not found", chain_name)),
-        }
     }
 }
 
@@ -196,26 +124,26 @@ pub async fn get_chain_spec_config(chain_name: &str) -> Result<Value> {
 pub async fn gen_validator_startup_script(config: &ChainConfig) -> Result<()> {
     println!("✌️ Generating the validator startup scripts and configuration");
     println!("📋 Chain specification: {}", config.name);
-    println!("👤 Role: External Validator");
+    println!("👤 Role: Node");
 
     let mut file_path = env::current_dir()?;
     let mut tera_template: Tera = Default::default();
     let mut context = tera::Context::new();
 
     tera_template.add_raw_template(
-        "start_validator",
-        include_str!("../resources/start_validator.tera.sh"),
+        "start_node",
+        include_str!("../resources/start_node.tera.sh"),
     )?;
 
     context.insert("version", &config.version);
     context.insert("chain_name", &config.name);
 
     let script = tera_template
-        .render("start_validator", &context)
-        .context("Whilst rendering start_validator.sh script")?;
+        .render("start_node", &context)
+        .context("Whilst rendering start_node.sh script")?;
     config.write().await?;
 
-    file_path.push("start_validator.sh");
+    file_path.push("start_node.sh");
     let mut fh = File::create(file_path.clone()).await?;
     fh.write_all(script.as_bytes()).await?;
 

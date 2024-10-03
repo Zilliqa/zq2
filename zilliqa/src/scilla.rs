@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use alloy::primitives::Address;
+use alloy::{hex::ToHexExt, primitives::Address};
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -26,9 +26,11 @@ use jsonrpsee::{
 use prost::Message as _;
 use serde::{
     de::{self, Unexpected},
-    Deserialize, Deserializer,
+    Deserialize, Deserializer, Serialize,
 };
 use serde_json::Value;
+use sha2::Sha256;
+use sha3::{digest::DynDigest, Digest};
 use tokio::runtime;
 use tracing::trace;
 
@@ -36,6 +38,8 @@ use crate::{
     exec::{PendingState, StorageValue},
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
+    state::Code,
+    time::SystemTime,
     transaction::{ScillaGas, ZilAmount},
 };
 
@@ -255,7 +259,7 @@ impl Scilla {
         contract: Address,
         code: &str,
         gas_limit: ScillaGas,
-        value: ZilAmount,
+        contract_balance: ZilAmount,
         init: &[Value],
         msg: &Value,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
@@ -271,7 +275,7 @@ impl Scilla {
             "-gaslimit".to_owned(),
             gas_limit.to_string(),
             "-balance".to_owned(),
-            value.to_string(),
+            contract_balance.to_string(),
             "-libdir".to_owned(),
             self.lib_dir.clone(),
             "-jsonerrors".to_owned(),
@@ -344,9 +348,25 @@ pub struct Location {
 pub struct ContractInfo {
     pub scilla_major_version: String,
     pub fields: Vec<Param>,
+    pub transitions: Vec<Transition>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Transition {
+    #[serde(rename = "vname")]
+    pub name: String,
+    pub params: Vec<TransitionParam>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TransitionParam {
+    #[serde(rename = "vname")]
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Param {
     #[serde(rename = "vname")]
     pub name: String,
@@ -442,7 +462,7 @@ impl StateServer {
         module.register_method("fetchStateValueB64", {
             let active_call = Arc::clone(&active_call);
             let b64 = base64::engine::general_purpose::STANDARD;
-            move |params, ()| {
+            move |params, (), _| {
                 #[derive(Deserialize)]
                 struct Params {
                     #[serde(deserialize_with = "de_b64")]
@@ -471,7 +491,7 @@ impl StateServer {
         module.register_method("fetchExternalStateValueB64", {
             let active_call = Arc::clone(&active_call);
             let b64 = base64::engine::general_purpose::STANDARD;
-            move |params, ()| {
+            move |params, (), _| {
                 #[derive(Deserialize)]
                 struct Params {
                     addr: Address,
@@ -504,7 +524,7 @@ impl StateServer {
         })?;
         module.register_method("updateStateValueB64", {
             let active_call = Arc::clone(&active_call);
-            move |params, ()| {
+            move |params, (), _| {
                 #[derive(Deserialize)]
                 struct Params {
                     #[serde(deserialize_with = "de_b64")]
@@ -535,7 +555,7 @@ impl StateServer {
         })?;
         module.register_method("fetchBlockchainInfo", {
             let active_call = Arc::clone(&active_call);
-            move |params, ()| {
+            move |params, (), _| {
                 #[derive(Deserialize)]
                 struct Params {
                     query_name: String,
@@ -552,9 +572,10 @@ impl StateServer {
                     return Err(err("no active call"));
                 };
 
-                active_call.fetch_blockchain_info(query_name, query_args);
-
-                Ok::<_, ErrorObject>(())
+                match active_call.fetch_blockchain_info(query_name, query_args) {
+                    Ok((present, value)) => Ok(Value::Array(vec![present.into(), value.into()])),
+                    Err(e) => Err(err(e)),
+                }
             }
         })?;
 
@@ -715,7 +736,19 @@ impl ActiveCall {
                 Ok(Some((val, "ByStr20".to_owned())))
             }
             "_codehash" => {
-                todo!()
+                let code_bytes = match &account.account.code {
+                    Code::Evm(bytes) => bytes.clone(),
+                    Code::Scilla { code, .. } => code.clone().into_bytes(),
+                };
+
+                let mut hasher = Sha256::new();
+                DynDigest::update(&mut hasher, &code_bytes);
+
+                let mut hash = [0u8; 32];
+                DynDigest::finalize_into(hasher, &mut hash[..]).unwrap();
+
+                let val = scilla_val(format!("\"0x{}\"", hash.encode_hex()).into_bytes());
+                Ok(Some((val, "ByStr32".to_owned())))
             }
             _ => self.fetch_value_inner(addr, name.clone(), indices.clone()),
         }
@@ -775,7 +808,37 @@ impl ActiveCall {
         Ok(())
     }
 
-    fn fetch_blockchain_info(&self, name: String, args: String) {
-        eprintln!("fetch_blockchain_info - {name}, {args}");
+    fn fetch_blockchain_info(&self, name: String, args: String) -> Result<(bool, String)> {
+        match name.as_str() {
+            "CHAINID" => Ok((true, self.state.zil_chain_id().to_string())),
+            "BLOCKNUMBER" => match self.state.get_highest_block_number()? {
+                Some(block_number) => Ok((true, block_number.to_string())),
+                None => Ok((false, "".to_string())),
+            },
+            "BLOCKHASH" => {
+                let block_number: u64 = args.parse()?;
+                match self.state.get_block_by_number(block_number)? {
+                    Some(block) => Ok((true, block.hash().to_string())),
+                    None => Ok((false, "".to_string())),
+                }
+            }
+            "TIMESTAMP" => {
+                let block_number: u64 = args.parse()?;
+                match self.state.get_block_by_number(block_number)? {
+                    Some(block) => Ok((
+                        true,
+                        block
+                            .timestamp()
+                            .duration_since(SystemTime::UNIX_EPOCH)?
+                            .as_micros()
+                            .to_string(),
+                    )),
+                    None => Ok((false, "".to_string())),
+                }
+            }
+            _ => Err(anyhow!(
+                "fetch_blockchain_info: `{name}` not implemented yet."
+            )),
+        }
     }
 }

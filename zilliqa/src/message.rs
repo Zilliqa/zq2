@@ -39,12 +39,12 @@ impl Proposal {
     /// ```Arguments```
     ///
     /// * `block`: the Block, including the header and the full list of transaction hashes
-    /// included in the block (and proposal)
+    ///   included in the block (and proposal)
     ///
     /// * `full_transactions`: the transactions whose full `Transaction` bodies will be
-    /// included in the proposal. The difference between `block.transactions` and
-    /// `full_transactions` make up the `opaque_transactions` (i.e. transactions only known
-    /// by their hash).
+    ///   included in the proposal. The difference between `block.transactions` and
+    ///   `full_transactions` make up the `opaque_transactions` (i.e. transactions only known
+    ///   by their hash).
     pub fn from_parts(block: Block, full_transactions: Vec<VerifiedTransaction>) -> Self {
         Self::from_parts_with_hashes(
             block,
@@ -218,7 +218,9 @@ pub enum ExternalMessage {
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
     NewTransaction(SignedTransaction),
-    RequestResponse,
+    /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
+    /// require any data in the response.
+    Acknowledgement,
 }
 
 impl ExternalMessage {
@@ -253,8 +255,21 @@ impl Display for ExternalMessage {
                     (None, Some(_)) => unreachable!(),
                 }
             }
-            ExternalMessage::NewTransaction(_) => write!(f, "NewTransaction"),
-            ExternalMessage::RequestResponse => write!(f, "RequestResponse"),
+            ExternalMessage::NewTransaction(txn) => match txn.clone().verify() {
+                Ok(txn) => {
+                    write!(
+                        f,
+                        "NewTransaction(Hash: {:?}, from: {:?}, nonce: {:?})",
+                        txn.hash,
+                        txn.signer,
+                        txn.tx.nonce()
+                    )
+                }
+                Err(err) => {
+                    write!(f, "NewTransaction(Unable to verify txn due to: {:?})", err)
+                }
+            },
+            ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
         }
     }
 }
@@ -271,8 +286,14 @@ pub enum InternalMessage {
     IntershardCall(IntershardCall),
     /// Trigger a checkpoint export of the given block, including the state at its root hash as read
     /// from the given trie
-    /// (checkpoint block, parent block, reference to our trie DB, output path)
-    ExportBlockCheckpoint(Box<Block>, Box<Block>, TrieStorage, Box<Path>),
+    /// (checkpoint block, transactions, parent block, reference to our trie DB, output path)
+    ExportBlockCheckpoint(
+        Box<Block>,
+        Vec<SignedTransaction>,
+        Box<Block>,
+        TrieStorage,
+        Box<Path>,
+    ),
 }
 
 /// Returns a terse, human-readable summary of a message.
@@ -289,7 +310,7 @@ impl Display for InternalMessage {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub struct QuorumCertificate {
     /// An aggregated signature from `n - f` distinct replicas, built by signing a block hash in a specific view.
     pub signature: NodeSignature,
@@ -305,6 +326,15 @@ impl QuorumCertificate {
             cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
             block_hash: Hash::ZERO,
             view: 0,
+        }
+    }
+
+    pub fn new_with_identity(block_hash: Hash, view: u64) -> Self {
+        QuorumCertificate {
+            signature: NodeSignature::identity(),
+            cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
+            block_hash,
+            view,
         }
     }
 
@@ -367,7 +397,7 @@ impl Display for QuorumCertificate {
 }
 
 /// A collection of `n - f` [QuorumCertificate]s.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AggregateQc {
     pub signature: NodeSignature,
     pub cosigned: BitArray,
@@ -396,7 +426,7 @@ pub enum BlockRef {
 }
 
 /// The [Copy]-able subset of a block.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlockHeader {
     pub view: u64, // only useful to consensus: the proposer can be derived from the block's view
     pub number: u64, // distinct from view, this is the normal incrementing block number
@@ -458,7 +488,7 @@ impl Default for BlockHeader {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Block {
     pub header: BlockHeader,
     /// The block will include an [AggregateQc] if the previous leader failed, meaning we couldn't construct a QC. When

@@ -31,6 +31,18 @@ variable "vm_num" {
   default     = 1
 }
 
+variable "provisioning_model" {
+  description = "The provisioning model for the instance. Must be either 'STANDARD' or 'SPOT'."
+  type        = string
+
+  validation {
+    condition     = contains(["STANDARD", "SPOT"], var.provisioning_model)
+    error_message = "The provisioning model must be either 'STANDARD' or 'SPOT'."
+  }
+
+  default = "STANDARD"
+}
+
 variable "network_name" {
   description = "The network name"
   type        = string

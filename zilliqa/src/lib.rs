@@ -1,5 +1,5 @@
 pub mod api;
-mod block_store;
+pub mod block_store;
 mod blockhooks;
 pub mod cfg;
 pub mod consensus;
@@ -17,8 +17,9 @@ pub mod node_launcher;
 pub mod p2p_node;
 mod pool;
 mod precompiles;
+pub mod range_map;
 pub mod schnorr;
-mod scilla;
+pub mod scilla;
 mod scilla_proto;
 pub mod serde_util;
 pub mod state;

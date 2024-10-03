@@ -4,18 +4,26 @@
 
 ```bash
 z2 deployer --help
-Deploy Zilliqa 2
+```
 
-Usage: z2 deployer <COMMAND>
+```bash
+Group of subcommands to deploy and configure a Zilliqa 2 network
+
+Usage: z2 deployer [OPTIONS] <COMMAND>
 
 Commands:
-  new      Generate the deployer config file
-  upgrade  Perfom the network upgrade
-  help     Print this message or the help of the given subcommand(s)
+  new                   Generate the deployer config file
+  install               Install the network defined in the deployer config file
+  upgrade               Update the network defined in the deployer config file
+  get-deposit-commands  Generate in output the commands to deposit stake amount to all the validators
+  deposit               Deposit the stake amounts to all the validators
+  help                  Print this message or the help of the given subcommand(s)
 
 Options:
-  -h, --help  Print help
-  ```
+  -v, --verbose...  Increase logging verbosity
+  -q, --quiet...    Decrease logging verbosity
+  -h, --help        Print help
+```
 
 ## To use it:
 
@@ -37,6 +45,9 @@ Options:
       --network-name <NETWORK_NAME>
           ZQ2 network name
 
+      --eth-chain-id <ETH_CHAIN_ID>
+          ZQ2 EVM chain ID
+
       --project-id <PROJECT_ID>
           GCP project-id where the network is running
 
@@ -45,11 +56,17 @@ Options:
 
           Possible values:
           - bootstrap:  Virtual machine bootstrap
+          - validator:  Virtual machine validator
           - api:        Virtual machine api
           - apps:       Virtual machine apps
-          - validator:  Virtual machine validator
           - checkpoint: Virtual machine checkpoint
           - sentry:     Virtual machine sentry
+
+  -v, --verbose...
+          Increase logging verbosity
+
+  -q, --quiet...
+          Decrease logging verbosity
 
   -h, --help
           Print help (see a summary with '-h')
@@ -59,7 +76,7 @@ Options:
 
 #### Scenario 1
 
-Generate the deployer configuration file for upgrade the validator nodes of the `zq2-prototestnet` running on a GCP project named `gcp-tests`.
+Generate the deployer configuration file to upgrade the validator nodes of the `zq2-prototestnet` with chain ID `33333` and running on a GCP project named `gcp-tests`.
 
 ```
 Network name: `zq2-prototestnet`
@@ -68,13 +85,14 @@ Roles: validators
 ```
 
 ```bash
-z2 deployer new --network-name zq2-prototestnet --project-id gcp-tests --roles validator
+z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --project-id gcp-tests --roles validator
 ```
 
 Output: `zq2-prototestnet.yaml`
 
 ```yaml
 name: zq2-prototestnet
+eth_chain_id: 33333
 project_id: gcp-tests
 roles:
 - validator
@@ -84,22 +102,24 @@ versions:
 
 #### Scenario 2
 
-Generate the deployer configuration file for upgrade the app node of the `zq2-prototestnet` running on a GCP project named `gcp-tests`.
+Generate the deployer configuration file for upgrade the app node of the `zq2-prototestnet` with chain ID `33333` and running on a GCP project named `gcp-tests`.
 
-```
-Network name: `zq2-prototestnet`
-Project Id: `gcp-tests`
+```yaml
+Network name: zq2-prototestnet
+Eth Chain ID: 33333
+Project ID: gcp-tests
 Roles: apps
 ```
 
 ```bash
-z2 deployer new --network-name zq2-prototestnet --project-id gcp-tests --roles apps
+z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --project-id gcp-tests --roles apps
 ```
 
 Output: `zq2-prototestnet.yaml`
 
 ```yaml
 name: zq2-prototestnet
+eth_chain_id: 33333
 project_id: gcp-tests
 roles:
 - apps
@@ -110,22 +130,24 @@ versions:
 
 #### Scenario 3
 
-Generate the deployer configuration file for upgrade both validators and app nodes of the `zq2-prototestnet` running on a GCP project named `gcp-tests`.
+Generate the deployer configuration file for upgrade both validators and app nodes of the `zq2-prototestnet` with chain ID `33333` and running on a GCP project named `gcp-tests`.
 
-```
-Network name: `zq2-prototestnet`
-Project Id: `gcp-tests`
-Roles: apps
+```yaml
+Network name: zq2-prototestnet
+Eth Chain ID: 33333
+Project ID: gcp-tests
+Roles: apps,validator
 ```
 
 ```bash
-z2 deployer new --network-name zq2-prototestnet --project-id gcp-tests --roles validator,apps
+z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --project-id gcp-tests --roles apps,validator
 ```
 
 Output: `zq2-prototestnet.yaml`
 
 ```yaml
 name: zq2-prototestnet
+eth_chain_id: 33333
 project_id: gcp-tests
 roles:
 - validator
@@ -149,52 +171,176 @@ z2 deployer upgrade --help
 ```
 
 ```bash
-Perfom the network upgrade
-Usage: z2 deployer upgrade [CONFIG_FILE]
+Update the network defined in the deployer config file
+
+Usage: z2 deployer upgrade [OPTIONS] [CONFIG_FILE]
 
 Arguments:
-  [CONFIG_FILE]  
+  [CONFIG_FILE]  The network deployer config file
 
 Options:
-  -h, --help  Print help
+      --select      Enable nodes selection
+  -v, --verbose...  Increase logging verbosity
+  -q, --quiet...    Decrease logging verbosity
+  -h, --help        Print help
 ```
 
 ### Usage example
 
-#### Scenario
+#### Scenario - Upgrade all the nodes
 
-Network name: `zq2-prototestnet`
-Configuration file: `zq2-prototestnet.yaml`
+Upgrade to a new version the `zq2-prototestnet` nodes
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
 
 ```bash
 z2 deployer upgrade zq2-prototestnet.yaml
 ```
 
-## Retrieve the `z2 deposit` commands for the validator nodes
+#### Scenario - Upgrade only selected nodes
+
+Upgrade to a new version the `zq2-prototestnet` validators
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer upgrade --select zq2-prototestnet.yaml
+```
+
+## Install the network
+
+```bash
+z2 deployer install --help
+```
+
+```bash
+Install the network defined in the deployer config file
+
+Usage: z2 deployer install [OPTIONS] [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  The network deployer config file
+
+Options:
+      --select      Enable nodes selection
+  -v, --verbose...  Increase logging verbosity
+  -q, --quiet...    Decrease logging verbosity
+  -h, --help        Print help
+```
+
+> Same as `upgrade` subcommand, but skipping the check if the nodes are receiving new blocks
+
+## Retrieve the commands to deposit stake amount to all the validators
 
 ```bash
 z2 deployer get-deposit-commands --help
 ```
 
 ```bash
-Provide the deposit commands for the validator nodes
+Generate in output the commands to deposit stake amount to all the validators
 
-Usage: z2 deployer get-deposit-commands [CONFIG_FILE]
+Usage: z2 deployer get-deposit-commands [OPTIONS] [CONFIG_FILE]
 
 Arguments:
-  [CONFIG_FILE]
+  [CONFIG_FILE]  The network deployer config file
 
 Options:
-  -h, --help  Print help
+      --select      Enable nodes selection
+  -v, --verbose...  Increase logging verbosity
+  -q, --quiet...    Decrease logging verbosity
+  -h, --help        Print help
 ```
 
 ### Usage example
 
 #### Scenario
 
-Network name: `zq2-prototestnet`
-Configuration file: `zq2-prototestnet.yaml`
+Retrieve the commands to deposit the stake amounts to the `zq2-prototestnet` validators
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
 
 ```bash
 z2 deployer get-deposit-commands zq2-prototestnet.yaml
+```
+
+## Deposit the stake amounts to all the validators
+
+```bash
+z2 deployer deposit --help
+```
+
+```bash
+Deposit the stake amounts to all the validators
+
+Usage: z2 deployer deposit [OPTIONS] [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  The network deployer config file
+
+Options:
+      --select      Enable nodes selection
+  -v, --verbose...  Increase logging verbosity
+  -q, --quiet...    Decrease logging verbosity
+  -h, --help        Print help
+```
+
+### Usage example
+
+#### Scenario
+
+Deposit the stake amounts to the `zq2-prototestnet` validators
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer deposit zq2-prototestnet.yaml
+```
+
+## Run RPC calls over all the nodes
+
+```bash
+z2 deployer rpc --help
+```
+
+```bash
+Run RPC calls over the internal network nodes
+
+Usage: z2 deployer rpc [OPTIONS] --method <METHOD> <CONFIG_FILE>
+
+Arguments:
+  <CONFIG_FILE>  The network deployer config file
+
+Options:
+  -m, --method <METHOD>  Method to run
+  -p, --params <PARAMS>  List of parameters for the method. ie "["string_value", true]"
+  -v, --verbose...       Increase logging verbosity
+  -q, --quiet...         Decrease logging verbosity
+  -h, --help             Print help
+```
+
+### Usage example
+
+#### Scenario
+
+Get the current block height in the `zq2-prototestnet` nodes
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer rpc -m eth_blockNumber zq2-prototestnet.yaml
 ```

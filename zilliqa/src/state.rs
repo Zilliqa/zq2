@@ -15,13 +15,15 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    cfg::{ConsensusConfig, GenesisDeposit},
+    block_store::BlockStore,
+    cfg::{Amount, GenesisDeposit, NodeConfig},
     contracts, crypto,
     db::TrieStorage,
     exec::BaseFeeCheck,
     inspector,
     message::{BlockHeader, MAX_COMMITTEE_SIZE},
-    scilla::Scilla,
+    node::ChainId,
+    scilla::{Scilla, Transition},
     transaction::EvmGas,
 };
 
@@ -29,6 +31,7 @@ use crate::{
 /// The state of the blockchain, consisting of:
 /// -  state - a database of Map<Address, Map<key,value>>
 /// -  accounts, Map<Address, Account>
+///
 /// where an address is a 20-byte array representing a user.
 /// where Account is (nonce, code, storage_root)
 /// the storage root is used to index into the state
@@ -44,20 +47,25 @@ pub struct State {
     scilla_lib_dir: String,
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
+    pub chain_id: ChainId,
+    pub block_store: Arc<BlockStore>,
 }
 
 impl State {
-    pub fn new(trie: TrieStorage, config: &ConsensusConfig) -> State {
+    pub fn new(trie: TrieStorage, config: &NodeConfig, block_store: Arc<BlockStore>) -> State {
         let db = Arc::new(trie);
+        let consensus_config = &config.consensus;
         Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
             scilla: Arc::new(OnceLock::new()),
-            scilla_address: config.scilla_address.clone(),
-            local_address: config.local_address.clone(),
-            scilla_lib_dir: config.scilla_lib_dir.clone(),
-            block_gas_limit: config.eth_block_gas_limit,
-            gas_price: *config.gas_price,
+            scilla_address: consensus_config.scilla_address.clone(),
+            local_address: consensus_config.local_address.clone(),
+            scilla_lib_dir: consensus_config.scilla_lib_dir.clone(),
+            block_gas_limit: consensus_config.eth_block_gas_limit,
+            gas_price: *consensus_config.gas_price,
+            chain_id: ChainId::new(config.eth_chain_id),
+            block_store,
         }
     }
 
@@ -74,17 +82,28 @@ impl State {
             .unwrap()
     }
 
-    pub fn new_at_root(trie: TrieStorage, root_hash: B256, config: ConsensusConfig) -> Self {
-        Self::new(trie, &config).at_root(root_hash)
+    pub fn new_at_root(
+        trie: TrieStorage,
+        root_hash: B256,
+        config: NodeConfig,
+        block_store: Arc<BlockStore>,
+    ) -> Self {
+        Self::new(trie, &config, block_store).at_root(root_hash)
     }
 
-    pub fn new_with_genesis(trie: TrieStorage, config: ConsensusConfig) -> Result<State> {
-        let mut state = State::new(trie, &config);
+    pub fn new_with_genesis(
+        trie: TrieStorage,
+        config: NodeConfig,
+        block_store: Arc<BlockStore>,
+    ) -> Result<State> {
+        let mut state = State::new(trie, &config, block_store);
 
-        if config.is_main {
+        if config.consensus.is_main {
             let shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
                 contracts::shard_registry::BYTECODE.to_vec(),
-                &[Token::Uint(config.consensus_timeout.as_millis().into())],
+                &[Token::Uint(
+                    config.consensus.consensus_timeout.as_millis().into(),
+                )],
             )?;
             state.force_deploy_contract_evm(shard_data, Some(contract_addr::SHARD_REGISTRY))?;
         };
@@ -95,20 +114,35 @@ impl State {
             Some(contract_addr::INTERSHARD_BRIDGE),
         )?;
 
-        if config.genesis_accounts.is_empty() {
-            panic!("No genesis accounts provided");
-        }
+        let zero_account_balance = config.consensus.total_native_token_supply.0
+            - (config
+                .consensus
+                .genesis_accounts
+                .iter()
+                .fold(0, |acc, item: &(Address, Amount)| acc + item.1 .0))
+            - (config
+                .consensus
+                .genesis_deposits
+                .iter()
+                .fold(0, |acc, item| acc + item.stake.0));
+        state.mutate_account(Address::ZERO, |a| {
+            a.balance = zero_account_balance;
+            Ok(())
+        })?;
 
-        for (address, balance) in config.genesis_accounts {
-            state.mutate_account(address, |a| a.balance = *balance)?;
+        for (address, balance) in config.consensus.genesis_accounts {
+            state.mutate_account(address, |a| {
+                a.balance = *balance;
+                Ok(())
+            })?;
         }
 
         let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
             contracts::deposit::BYTECODE.to_vec(),
             &[
-                Token::Uint((*config.minimum_stake).into()),
+                Token::Uint((*config.consensus.minimum_stake).into()),
                 Token::Uint(MAX_COMMITTEE_SIZE.into()),
-                Token::Uint(config.blocks_per_epoch.into()),
+                Token::Uint(config.consensus.blocks_per_epoch.into()),
             ],
         )?;
 
@@ -120,7 +154,7 @@ impl State {
             stake,
             reward_address,
             control_address,
-        } in config.genesis_deposits
+        } in config.consensus.genesis_deposits
         {
             let data = contracts::deposit::SET_STAKE.encode_input(&[
                 Token::Bytes(public_key.as_bytes()),
@@ -139,11 +173,10 @@ impl State {
                 Address::ZERO,
                 Some(contract_addr::DEPOSIT),
                 0,
-                config.eth_block_gas_limit,
+                config.consensus.eth_block_gas_limit,
                 0,
                 data,
                 None,
-                0,
                 BlockHeader::default(),
                 inspector::noop(),
                 BaseFeeCheck::Ignore,
@@ -167,6 +200,8 @@ impl State {
             scilla_lib_dir: self.scilla_lib_dir.clone(),
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
+            chain_id: self.chain_id,
+            block_store: self.block_store.clone(),
         }
     }
 
@@ -216,13 +251,13 @@ impl State {
         })
     }
 
-    pub fn mutate_account<F: FnOnce(&mut Account) -> R, R>(
+    pub fn mutate_account<F: FnOnce(&mut Account) -> Result<R>, R>(
         &mut self,
         address: Address,
         mutation: F,
     ) -> Result<R> {
         let mut account = self.get_account(address)?;
-        let result = mutation(&mut account);
+        let result = mutation(&mut account)?;
         self.save_account(address, account)?;
         Ok(result)
     }
@@ -300,6 +335,7 @@ pub enum Code {
         code: String,
         init_data: String,
         types: BTreeMap<String, (String, u8)>,
+        transitions: Vec<Transition>,
     },
 }
 

@@ -48,6 +48,58 @@ def query_metadata_ext_ip() -> str:
         "Metadata-Flavor" : "Google" })
     return r.text
 
+API_HEALTHCHECK_SCRIPT="""from flask import Flask
+import requests
+from time import time
+
+app = Flask(__name__)
+
+latest_block_number = 0
+latest_block_number_obtained_at = 0
+
+@app.route("/health")
+def health():
+    global latest_block_number
+    global latest_block_number_obtained_at
+    response = requests.post(
+        "http://localhost:4201",
+        json={"jsonrpc":"2.0", "id": 1, "method": "eth_blockNumber"},
+    ).json()
+    block_number = int(response["result"], 16)
+    current_time = int(time())
+    print (f"block {block_number} latest {latest_block_number}")
+
+    if block_number > latest_block_number:
+        latest_block_number = block_number
+        latest_block_number_obtained_at = current_time
+
+    
+    if latest_block_number_obtained_at + 60 < current_time:
+        # no blocks for 60 seconds
+        return ("no blocks for more than 60 seconds", 500)
+    else:
+        return (f"block {latest_block_number} since {latest_block_number_obtained_at}", 200)
+
+if __name__ == "__main__":
+    app.run(debug=True, port=8080, host="0.0.0.0")
+"""
+
+API_HEALTHCHECK_SERVICE_DESC="""
+[Unit]
+Description=Zilliqa Node Healthcheck
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'python3 /api_healthcheck.py'
+ExecStop=pkill -f /api_healthcheck.py
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+
 ZQ2_SCRIPT="""#!/bin/bash
 echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
@@ -56,6 +108,7 @@ ZQ2_IMAGE="{{ docker_image }}"
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
     docker run -td -p 3333:3333 -p 4201:4201 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
+    --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
     -e RUST_LOG="zilliqa=trace,libp2p=trace" -e RUST_BACKTRACE=1 \
     -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
     ${ZQ2_IMAGE} ${1} --log-json
@@ -100,6 +153,7 @@ OTTERSCAN_IMAGE="{{ otterscan_image }}"
 start() {
      docker rm otterscan-""" + VERSIONS.get('otterscan') + """ &> /dev/null || echo 0
     docker run -td -p 80:80 --name otterscan-""" + VERSIONS.get('otterscan') + """ \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         -e ERIGON_URL=https://api.""" + SUBDOMAIN + """ \
         ${OTTERSCAN_IMAGE} &> /dev/null &
 }
@@ -140,6 +194,7 @@ SPOUT_IMAGE="{{ spout_image }}"
 start() {
     docker rm spout-""" + VERSIONS.get('spout') + """ &> /dev/null || echo 0
     docker run -td -p 8080:80 --name spout-""" + VERSIONS.get('spout') + """ \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         -e RPC_URL=https://api.""" + SUBDOMAIN + """ \
         -e NATIVE_TOKEN_SYMBOL="ZIL" \
         -e PRIVATE_KEY=""" + GENESIS_KEY + """ \
@@ -213,6 +268,27 @@ logging:
       zilliqa:
         receivers: [ zilliqa ]
         processors: [ parse_log, parse_log_with_field, move_fields ]
+metrics:
+  receivers:
+    hostmetrics:
+      type: hostmetrics
+      collection_interval: 60s
+  processors:
+    metrics_filter:
+      type: exclude_metrics
+      metrics_pattern:
+      - agent.googleapis.com/gpu/*
+      - agent.googleapis.com/interface/*
+      - agent.googleapis.com/network/*
+      - agent.googleapis.com/swap/*
+      - agent.googleapis.com/pagefile/*
+      - agent.googleapis.com/processes/*
+  service:
+    log_level: info
+    pipelines:
+      default_pipeline:
+        receivers: [hostmetrics]
+        processors: [metrics_filter]
 """
 
 LOGROTATE_CONFIG="""
@@ -372,13 +448,23 @@ def go(role):
     install_ops_agent()
     install_gcloud()
     match role:
-        case "validator" | "bootstrap" | "api" | "checkpoint":
+        case "validator" | "bootstrap" | "checkpoint":
             log("Configuring a validator node")
             configure_logrotate()
             stop_zq2()
             install_zilliqa()
             download_persistence()
             start_zq2()
+        case "api":
+            log("Configuring an API node")
+            stop_api_checkpoint()
+            install_api_checkpoint()
+            configure_logrotate()
+            stop_zq2()
+            install_zilliqa()
+            download_persistence()
+            start_zq2()
+            start_api_checkpoint()
         case "apps":
             log("Configuring the blockchain app node")
             stop_apps()
@@ -531,6 +617,27 @@ def start_zq2():
 def stop_zq2():
     if os.path.exists("/etc/systemd/system/zilliqa.service"):
         run_or_die(["sudo", "systemctl", "stop", "zilliqa"])
+    pass
+
+def install_api_checkpoint():
+    run_or_die(["sudo", "pip3", "install", "flask", "requests"])
+    with open("/api_healthcheck.py", "w") as f:
+        f.write(API_HEALTHCHECK_SCRIPT)
+
+    with open("/tmp/api_healthcheck.service", "w") as f:
+        f.write(API_HEALTHCHECK_SERVICE_DESC)
+    run_or_die(["sudo","cp","/tmp/api_healthcheck.service","/etc/systemd/system/api_healthcheck.service"])
+    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/api_healthcheck.service"])
+    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/api_healthcheck.service", "/etc/systemd/system/multi-user.target.wants/api_healthcheck.service"])
+    run_or_die(["sudo", "systemctl", "enable", "api_healthcheck.service"])
+
+
+def start_api_checkpoint():
+    run_or_die(["sudo", "systemctl", "start", "api_healthcheck.service"])
+
+def stop_api_checkpoint():
+    if os.path.exists("/etc/systemd/system/api_healthcheck.service"):
+        run_or_die(["sudo", "systemctl", "stop", "api_healthcheck"])
     pass
 
 if __name__ == "__main__":

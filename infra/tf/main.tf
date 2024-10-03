@@ -113,6 +113,8 @@ module "bootstrap_node" {
   zq_network_name       = var.network_name
   role                  = "bootstrap"
   labels                = local.labels
+  provisioning_model    = var.provisioning_model
+  node_type             = var.node_type
 }
 
 module "validators" {
@@ -130,6 +132,8 @@ module "validators" {
   role                   = "validator"
   zq_network_name        = var.network_name
   generate_reward_wallet = true
+  provisioning_model     = var.provisioning_model
+  node_type              = var.node_type
 }
 
 module "apis" {
@@ -146,6 +150,8 @@ module "apis" {
   persistence_url       = var.persistence_url
   role                  = "api"
   zq_network_name       = var.network_name
+  provisioning_model    = var.provisioning_model
+  node_type             = var.node_type
 }
 
 resource "google_project_service" "osconfig" {
@@ -213,8 +219,8 @@ resource "google_compute_health_check" "api" {
   name = "${var.network_name}-jsonrpc"
 
   http_health_check {
-    port_name          = "jsonrpc"
-    port_specification = "USE_NAMED_PORT"
+    port               = "8080"
+    port_specification = "USE_FIXED_PORT"
     request_path       = "/health"
   }
 }

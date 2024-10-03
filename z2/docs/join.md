@@ -1,6 +1,6 @@
 # z2 join
 
-`z2 join` creates the validator node startup script and configuration file.
+`z2 join` creates the node startup script and configuration file.
 
 ```bash
 Join a ZQ2 network
@@ -17,23 +17,23 @@ Options:
 ```bash
 
 z2 join --chain zq2-prototestnet
-✌️ Generating the validator startup scripts and configuration
+✌️ Generating the node startup scripts and configuration
 📋 Chain specification: zq2-prototestnet
-👤 Role: External Validator
-💾 Validator config: /path/to/zq2/zq2-prototestnet.toml
-💾 Startup script: /path/to/zq2/start_validator.sh
+👤 Role: Node
+💾 Node config: /path/to/zq2/zq2-prototestnet.toml
+💾 Startup script: /path/to/zq2/start_node.sh
 ```
 
-## Run the validator
+## Run the node
 
-To run the validator you need to create a PRIVATE KEY for you node.
+To run the node you need to create a PRIVATE KEY for your node.
 Any 32 byte Hex string is valid. Ensure you save it after on a safe place, in case you need
 to restart your node.
 
-Copy the above generated Validator config and startup script to an Ubuntu 20.04LTS with
+Copy the above generated node config and startup script to an Ubuntu 20.04LTS with
 Docker version 26.1+.
 
->Info: the start_validator.sh and the zq2-prototestnet.toml MUST be on the same directory.
+>Info: the start_node.sh and the zq2-prototestnet.toml MUST be on the same directory.
 
 On the Ubuntu 20.04LTS run:
 
@@ -47,14 +47,15 @@ On the Ubuntu 20.04LTS run:
 
 
 ```bash
-chmod +x /path/to/zq2/start_validator.sh
+chmod +x /path/to/zq2/start_node.sh
 
-/path/to/zq2/start_validator.sh $PRIVATE_KEY
+/path/to/zq2/start_node.sh  -k $PRIVATE_KEY -p <checkpoint_file.dat>
 ```
+> **Note:** `-p <checkpoint_file.dat>` is optional and should only be used when the node is syncing from a checkpoint.
 
 # How-to use a custom docker image
 
-If you want to use a custom docker image you need to edit the generated `/path/to/zq2/start_validator.sh` changing the following variables:
+If you want to use a custom docker image you need to edit the generated `/path/to/zq2/start_node.sh` changing the following variables:
 
 ```bash
 ZQ_VERSION="e5f75649"
