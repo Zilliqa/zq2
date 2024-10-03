@@ -35,6 +35,7 @@ use tokio::runtime;
 use tracing::trace;
 
 use crate::{
+    crypto::Hash,
     exec::{PendingState, StorageValue},
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
@@ -135,7 +136,7 @@ impl Scilla {
         &self,
         code: &str,
         gas_limit: ScillaGas,
-        init: &[Value],
+        init: &[ParamValue],
     ) -> Result<Result<CheckOutput, ErrorResponse>> {
         let args = vec![
             "-init".to_owned(),
@@ -192,7 +193,7 @@ impl Scilla {
         code: &str,
         gas_limit: ScillaGas,
         value: ZilAmount,
-        init: &[Value],
+        init: &[ParamValue],
     ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
         let args = vec![
             "-i".to_owned(),
@@ -260,7 +261,7 @@ impl Scilla {
         code: &str,
         gas_limit: ScillaGas,
         contract_balance: ZilAmount,
-        init: &[Value],
+        init: &[ParamValue],
         msg: &Value,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
         let args = vec![
@@ -407,13 +408,23 @@ pub struct ScillaEvent {
     pub params: Vec<ParamValue>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ParamValue {
     #[serde(rename = "vname")]
     pub name: String,
     pub value: Value,
     #[serde(rename = "type")]
     pub ty: String,
+}
+
+impl ParamValue {
+    pub fn compute_hash(&self) -> Hash {
+        Hash::builder()
+            .with(self.ty.as_bytes())
+            .with(self.value.to_string().as_bytes())
+            .with(self.name.as_bytes())
+            .finalize()
+    }
 }
 
 #[derive(Debug, Deserialize)]

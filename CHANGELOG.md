@@ -4,6 +4,7 @@
 
 Unreleased changes, in reverse chronological order. New entries are added at the top of this list.
 
+- [#1475](https://github.com/Zilliqa/zq2/pull/1475): Read from init_data or state in scilla_read precompile.
 - [#1530](https://github.com/Zilliqa/zq2/pull/1530): State at checkpoint should contain current block data as well as parent block data
 - [#1449](https://github.com/Zilliqa/zq2/pull/1449): Restructure how blocks are stored to prevent database inconsistencies.
 - [#1472](https://github.com/Zilliqa/zq2/pull/1472): Add `GetTransactionsForTxBlockEx` API.

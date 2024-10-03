@@ -12,7 +12,7 @@ describe("Scilla timestamp #parallel", () => {
     const blockCount = await ethers.provider.getBlockNumber();
     const blockTimestamp = (await ethers.provider.getBlock(blockCount)).timestamp;
     const tx = await contract.EventTimestamp(blockCount);
-    const timestamp = Number(JSON.parse(tx.receipt.event_logs[0].params[0].value).arguments[0]);
+    const timestamp = Number(tx.receipt.event_logs[0].params[0].value.arguments[0]);
     expect(Math.floor(timestamp / 1000_000)).to.be.eq(blockTimestamp);
   });
 });

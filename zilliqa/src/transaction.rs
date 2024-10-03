@@ -33,10 +33,11 @@ use crate::{
         EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, EVM_MIN_GAS_UNITS, ZIL_CONTRACT_CREATE_GAS,
         ZIL_CONTRACT_INVOKE_GAS, ZIL_MAX_CODE_SIZE, ZIL_NORMAL_TXN_GAS,
     },
-    crypto,
-    crypto::Hash,
+    crypto::{self, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     schnorr,
+    scilla::ParamValue,
+    serde_util::vec_param_value,
     state::Account,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
@@ -875,17 +876,33 @@ pub struct ScillaLog {
     pub address: Address,
     #[serde(rename = "_eventname")]
     pub event_name: String,
-    pub params: Vec<ScillaParam>,
+    #[serde(with = "vec_param_value")]
+    pub params: Vec<ParamValue>,
 }
 
 impl ScillaLog {
     pub fn into_evm(self) -> EvmLog {
-        // Unwrap is safe because [ScillaLog::Serialize] is infallible.
-        let data = serde_json::to_string(&self).unwrap().abi_encode();
-        EvmLog {
+        /// A version of [ScillaLog] which *doesn't* encode the `params` values as strings.
+        #[derive(Clone, Serialize, Debug)]
+        pub struct ScillaLogRaw {
+            pub address: Address,
+            #[serde(rename = "_eventname")]
+            pub event_name: String,
+            pub params: Vec<ParamValue>,
+        }
+
+        let log = ScillaLogRaw {
             address: self.address,
+            event_name: self.event_name,
+            params: self.params,
+        };
+
+        // Unwrap is safe because [ScillaLogRaw::Serialize] is infallible.
+        let data = serde_json::to_string(&log).unwrap().abi_encode();
+        EvmLog {
+            address: log.address,
             topics: vec![keccak256(
-                format!("{}(string)", self.event_name).into_bytes(),
+                format!("{}(string)", log.event_name).into_bytes(),
             )],
             data,
         }
@@ -939,25 +956,6 @@ impl Log {
                 .with(log.topics.iter().map(|topic| topic.to_vec()).concat())
                 .finalize(),
         }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScillaParam {
-    #[serde(rename = "type")]
-    pub ty: String,
-    pub value: String,
-    #[serde(rename = "vname")]
-    pub name: String,
-}
-
-impl ScillaParam {
-    pub fn compute_hash(&self) -> Hash {
-        Hash::builder()
-            .with(self.ty.as_bytes())
-            .with(self.value.as_bytes())
-            .with(self.name.as_bytes())
-            .finalize()
     }
 }
 
