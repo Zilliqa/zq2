@@ -93,6 +93,7 @@ module "checkpoints" {
   role                  = "checkpoint"
   zq_network_name       = var.network_name
   provisioning_model    = var.provisioning_model
+  node_type             = var.node_type
 }
 
 resource "google_compute_instance_group" "checkpoint" {

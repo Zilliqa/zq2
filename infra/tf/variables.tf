@@ -118,6 +118,13 @@ variable "distributed_validators" {
 }
 
 variable "apps_node_type" {
+  description = "(Optional) The size of the apps nodes."
+  type        = string
+  default     = "e2-standard-2"
+  nullable    = false
+}
+
+variable "node_type" {
   description = "(Optional) The size of the nodes."
   type        = string
   default     = "e2-standard-2"

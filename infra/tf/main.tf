@@ -114,6 +114,7 @@ module "bootstrap_node" {
   role                  = "bootstrap"
   labels                = local.labels
   provisioning_model    = var.provisioning_model
+  node_type             = var.node_type
 }
 
 module "validators" {
@@ -132,6 +133,7 @@ module "validators" {
   zq_network_name        = var.network_name
   generate_reward_wallet = true
   provisioning_model     = var.provisioning_model
+  node_type              = var.node_type
 }
 
 module "apis" {
@@ -149,6 +151,7 @@ module "apis" {
   role                  = "api"
   zq_network_name       = var.network_name
   provisioning_model    = var.provisioning_model
+  node_type             = var.node_type
 }
 
 resource "google_project_service" "osconfig" {
