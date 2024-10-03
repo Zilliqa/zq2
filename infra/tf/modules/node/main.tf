@@ -75,6 +75,14 @@ resource "google_compute_instance" "this" {
   allow_stopping_for_update = true
   zone                      = length(var.node_zones) > 1 ? sort(var.node_zones)[count.index % length(var.node_zones)] : var.node_zones[count.index % length(var.node_zones)]
 
+  scheduling {
+    provisioning_model = var.provisioning_model
+    preemptible        = var.provisioning_model == "SPOT"
+    automatic_restart  = var.provisioning_model != "SPOT"
+
+    instance_termination_action = var.provisioning_model == "SPOT" ? "STOP" : null
+  }
+
   labels = merge({ "zq2-network" = var.zq_network_name },
   { "role" = var.role }, { "node-name" = "${var.name}-${count.index}-${random_id.name_suffix.hex}" }, var.labels)
 

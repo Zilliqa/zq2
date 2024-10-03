@@ -89,6 +89,7 @@ module "apps" {
   persistence_url       = ""
   genesis_key           = local.genesis_key
   node_type             = var.apps_node_type
+  provisioning_model    = var.provisioning_model
 
   zq_network_name = var.network_name
 }
