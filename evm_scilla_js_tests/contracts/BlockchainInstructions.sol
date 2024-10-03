@@ -53,7 +53,7 @@ contract BlockchainInstructions {
     return _timestamp;
   }
 
-  function getTimestamp() external view returns (uint256) {
+  function getCurrentBlockTimestamp() external view returns (uint256) {
     return block.timestamp;
   }
 
@@ -72,6 +72,10 @@ contract BlockchainInstructions {
 
   function getGaslimit() external view returns (uint256) {
     return block.gaslimit;
+  }
+
+  function getCurrentBlockNumber() public view returns (uint) {
+    return block.number;
   }
 
   // TODO implement basefee similarly.
