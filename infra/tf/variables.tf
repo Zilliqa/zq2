@@ -66,6 +66,18 @@ variable "apps_node_count" {
   default     = 1
 }
 
+variable "provisioning_model" {
+  description = "The provisioning model for the instance. Must be either 'STANDARD' or 'SPOT'."
+  type        = string
+
+  validation {
+    condition     = contains(["STANDARD", "SPOT"], var.provisioning_model)
+    error_message = "The provisioning model must be either 'STANDARD' or 'SPOT'."
+  }
+
+  default = "STANDARD"
+}
+
 variable "api_node_count" {
   description = "(Optional) ZQ2 Node apps count"
   type        = number
