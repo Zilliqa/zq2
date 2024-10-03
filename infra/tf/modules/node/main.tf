@@ -79,6 +79,8 @@ resource "google_compute_instance" "this" {
     provisioning_model = var.provisioning_model
     preemptible        = var.provisioning_model == "SPOT"
     automatic_restart  = var.provisioning_model != "SPOT"
+
+    instance_termination_action = var.provisioning_model == "SPOT" ? "STOP" : null
   }
 
   labels = merge({ "zq2-network" = var.zq_network_name },
