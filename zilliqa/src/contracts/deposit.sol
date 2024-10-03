@@ -334,10 +334,6 @@ contract Deposit {
 
         updateLatestComputedEpoch();
 
-        if (block.number == 5) {
-            revert("fooble");
-        }
-
         Committee storage futureCommittee = _committee[(currentEpoch() + 2) % 3];
         futureCommittee.totalStake += msg.value;
         staker.keyIndex = int(futureCommittee.stakers.length);
