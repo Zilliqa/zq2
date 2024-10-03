@@ -76,9 +76,9 @@ enum DeployerCommands {
     /// Generate the deployer config file
     New(DeployerNewArgs),
     /// Install the network defined in the deployer config file
-    Install(DeployerActionsArgs),
+    Install(DeployerInstallArgs),
     /// Update the network defined in the deployer config file
-    Upgrade(DeployerActionsArgs),
+    Upgrade(DeployerUpgradeArgs),
     /// Generate in output the validator config file to join the network
     GetConfigFile(DeployerConfigArgs),
     /// Generate in output the commands to deposit stake amount to all the validators
@@ -112,6 +112,30 @@ pub struct DeployerConfigArgs {
     /// Node role. Default: validator
     #[clap(long, value_enum)]
     role: Option<chain::node::NodeRole>,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerInstallArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// Define the number of nodes to process in parallel. Default: 50
+    #[clap(long)]
+    max_parallel: Option<usize>,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerUpgradeArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// Define the number of nodes to process in parallel. Default: 1
+    #[clap(long)]
+    max_parallel: Option<usize>,
 }
 
 #[derive(Args, Debug)]
@@ -587,7 +611,7 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_install(&config_file, arg.select)
+                plumbing::run_deployer_install(&config_file, arg.select, arg.max_parallel)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer install command: {}", err)
@@ -600,7 +624,7 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_upgrade(&config_file, arg.select)
+                plumbing::run_deployer_upgrade(&config_file, arg.select, arg.max_parallel)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)

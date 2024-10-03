@@ -38,6 +38,7 @@ pub async fn install_or_upgrade(
     config_file: &str,
     is_upgrade: bool,
     only_selected_nodes: bool,
+    max_parallel: usize,
 ) -> Result<()> {
     let config = fs::read_to_string(config_file).await?;
     let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
@@ -79,16 +80,19 @@ pub async fn install_or_upgrade(
             && selected_machines.clone().contains(&node.name())
     });
 
-    let _ = execute_install_or_upgrade(bootstrap_nodes, is_upgrade).await;
-    let _ = execute_install_or_upgrade(chain_nodes, is_upgrade).await;
-    let _ = execute_install_or_upgrade(apps_nodes, is_upgrade).await;
+    let _ = execute_install_or_upgrade(bootstrap_nodes, is_upgrade, max_parallel).await;
+    let _ = execute_install_or_upgrade(chain_nodes, is_upgrade, max_parallel).await;
+    let _ = execute_install_or_upgrade(apps_nodes, is_upgrade, max_parallel).await;
 
     Ok(())
 }
 
-async fn execute_install_or_upgrade(nodes: Vec<ChainNode>, is_upgrade: bool) -> Result<()> {
-    let permits = if is_upgrade { 1 } else { 50 };
-    let semaphore = Arc::new(Semaphore::new(permits)); // Limit to 50 concurrent tasks
+async fn execute_install_or_upgrade(
+    nodes: Vec<ChainNode>,
+    is_upgrade: bool,
+    max_parallel: usize,
+) -> Result<()> {
+    let semaphore = Arc::new(Semaphore::new(max_parallel));
     let mut futures = vec![];
 
     for node in nodes {
