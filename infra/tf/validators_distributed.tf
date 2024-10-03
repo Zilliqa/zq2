@@ -58,4 +58,6 @@ module "distributed_validators" {
   role                   = "validator"
   zq_network_name        = var.network_name
   generate_reward_wallet = true
+  provisioning_model     = var.provisioning_model
+  node_type              = var.node_type
 }
