@@ -26,8 +26,6 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.function("eject").unwrap().clone());
     pub static CURRENT_EPOCH: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("currentEpoch").unwrap().clone());
-    pub static TICK_EPOCH: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("tickEpoch").unwrap().clone());
     pub static SET_STAKE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("setStake").unwrap().clone());
     pub static GET_STAKE: Lazy<Function> =
@@ -42,6 +40,8 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.function("totalStake").unwrap().clone());
     pub static MIN_DEPOSIT: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("minimumStake").unwrap().clone());
+    pub static COMMITTEE: Lazy<Function> = Lazy::new(|| CONTRACT.abi.function("committee").unwrap().clone());
+    pub static INTERNAL_COMMITTEE: Lazy<Function> = Lazy::new(|| CONTRACT.abi.function("internalCommittee").unwrap().clone());
 }
 
 pub mod shard {
@@ -125,8 +125,7 @@ mod tests {
 
     use foundry_compilers::{
         artifacts::{
-            output_selection::OutputSelection, EvmVersion, Optimizer, Remapping, Settings,
-            SolcInput, Source,
+            output_selection::OutputSelection, EvmVersion, Optimizer, Remapping, Settings, SolcInput, Source
         },
         solc::SolcLanguage,
     };

@@ -723,6 +723,23 @@ impl State {
         self.get_stake_raw(public_key.into())
     }
 
+    pub fn committee(&self) -> Result<()> {
+        let data = contracts::deposit::COMMITTEE.encode_input(&[])?;
+
+        let committee = self.call_contract(
+            Address::ZERO,
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            0,
+            BlockHeader::default(),
+        )?;
+        let committee = contracts::deposit::COMMITTEE.decode_output(&committee)?;
+        info!("committee: {committee:?}");
+
+        Ok(())
+    }
+
     pub fn get_stake_raw(&self, public_key: NodePublicKeyRaw) -> Result<Option<NonZeroU128>> {
         let data =
             contracts::deposit::GET_STAKE.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
@@ -818,35 +835,6 @@ impl State {
             .unwrap();
 
         Ok(amount.as_u128())
-    }
-
-    pub fn tick_epoch(&mut self, current_block: BlockHeader) -> Result<()> {
-        let payload = contracts::deposit::TICK_EPOCH.encode_input(&[])?;
-        let (ResultAndState { result, state }, ..) = self.apply_transaction_evm(
-            Address::ZERO,
-            Some(contract_addr::DEPOSIT),
-            0,
-            self.block_gas_limit,
-            0,
-            payload,
-            None,
-            0,
-            current_block,
-            inspector::noop(),
-            BaseFeeCheck::Ignore,
-        )?;
-
-        match result {
-            ExecutionResult::Success {
-                output: Output::Call(_),
-                ..
-            } => self.apply_delta_evm(&state),
-            ExecutionResult::Success { .. } => Err(anyhow!(
-                "epoch tick transaction created a contract - this should never be possible"
-            )),
-            ExecutionResult::Revert { .. } => Err(anyhow!("epoch tick reverted")),
-            ExecutionResult::Halt { reason, .. } => Err(anyhow!("epoch tick halted: {reason:?}")),
-        }
     }
 
     #[allow(clippy::too_many_arguments)]

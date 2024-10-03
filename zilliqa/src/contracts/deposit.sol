@@ -17,7 +17,7 @@ library Deque {
     }
 
     // Returns the physical index of an element, given its logical index.
-    function physicalIdx(Withdrawals storage deque, uint256 idx) private view returns (uint256) {
+    function physicalIdx(Withdrawals storage deque, uint256 idx) internal view returns (uint256) {
         uint256 physical = deque.head + idx;
         // Wrap the physical index in case it is out-of-bounds of the buffer.
         if (deque.values.length >= physical) {
@@ -27,12 +27,12 @@ library Deque {
         }
     }
 
-    function length(Withdrawals storage deque) public view returns (uint256) {
+    function length(Withdrawals storage deque) internal view returns (uint256) {
         return deque.len;
     }
 
     // Get the element at the given logical index. Reverts if `idx >= queue.length()`.
-    function get(Withdrawals storage deque, uint256 idx) public view returns (Withdrawal storage) {
+    function get(Withdrawals storage deque, uint256 idx) internal view returns (Withdrawal storage) {
         if (idx >= deque.len) {
             revert("element does not exist");
         }
@@ -42,7 +42,7 @@ library Deque {
     }
 
     // Push an empty element to the back of the queue. Returns a reference to the new element.
-    function pushBack(Withdrawals storage deque) public returns (Withdrawal storage) {
+    function pushBack(Withdrawals storage deque) internal returns (Withdrawal storage) {
         // Add more space in the buffer if it is full.
         if (deque.len == deque.values.length) {
             deque.values.push();
@@ -57,7 +57,7 @@ library Deque {
     // Pop an element from the front of the queue. Note that this returns a reference to the element in storage. This
     // means that further mutations of the queue may invalidate the returned element. Do not use this return value
     // after calling any other mutations on the queue.
-    function popFront(Withdrawals storage deque) public returns (Withdrawal storage) {
+    function popFront(Withdrawals storage deque) internal returns (Withdrawal storage) {
         if (deque.len == 0) {
             revert("queue is empty");
         }
@@ -71,14 +71,14 @@ library Deque {
     // Peeks the element at the back of the queue. Note that this returns a reference to the element in storage. This
     // means that further mutations of the queue may invalidate the returned element. Do not use this return value
     // after calling any other mutations on the queue.
-    function back(Withdrawals storage deque) public view returns (Withdrawal storage) {
+    function back(Withdrawals storage deque) internal view returns (Withdrawal storage) {
         return get(deque, deque.len - 1);
     }
 
     // Peeks the element at the front of the queue. Note that this returns a reference to the element in storage. This
     // means that further mutations of the queue may invalidate the returned element. Do not use this return value
     // after calling any other mutations on the queue.
-    function front(Withdrawals storage deque) public view returns (Withdrawal storage) {
+    function front(Withdrawals storage deque) internal view returns (Withdrawal storage) {
         return get(deque, 0);
     }
 }
@@ -113,6 +113,10 @@ contract Deposit {
     // is stored at index (currentEpoch() % 3).
     Committee[3] _committee;
 
+    function internalCommittee() public view returns (Committee[3] memory) {
+        return _committee;
+    }
+
     // All stakers. Keys into this map are stored by the `Committee`.
     mapping(bytes => Staker) _stakersMap;
     // Mapping from `controlAddress` to `blsPubKey` for each staker.
@@ -130,10 +134,10 @@ contract Deposit {
 
 
     constructor(uint256 _minimumStake, uint256 _maximumStakers, uint64 _blocksPerEpoch) {
-        latestComputedEpoch = 2;
         minimumStake = _minimumStake;
         maximumStakers = _maximumStakers;
         blocksPerEpoch = _blocksPerEpoch;
+        latestComputedEpoch = currentEpoch();
     }
 
     function leaderFromRandomness(
@@ -184,6 +188,36 @@ contract Deposit {
         }
     }
 
+    function getStakers() public view returns (bytes[] memory) {
+        return committee().stakers;
+    }
+
+    function getStake(bytes calldata blsPubKey) public view returns (uint256) {
+        require(blsPubKey.length == 48);
+
+        return committee().balances[uint(_stakersMap[blsPubKey].keyIndex)];
+    }
+
+    function getRewardAddress(
+        bytes calldata blsPubKey
+    ) public view returns (address) {
+        require(blsPubKey.length == 48);
+        if (_stakersMap[blsPubKey].controlAddress == address(0)) {
+            revert("not staked");
+        }
+        return _stakersMap[blsPubKey].rewardAddress;
+    }
+
+    function getPeerId(
+        bytes calldata blsPubKey
+    ) public view returns (bytes memory) {
+        require(blsPubKey.length == 48);
+        if (_stakersMap[blsPubKey].controlAddress == address(0)) {
+            revert("not staked");
+        }
+        return _stakersMap[blsPubKey].peerId;
+    }
+
     function currentEpoch() public view returns (uint64) {
         return uint64(block.number / blocksPerEpoch);
     }
@@ -219,18 +253,53 @@ contract Deposit {
     function updateLatestComputedEpoch() internal {
         // If the latest computed epoch is less than two epochs ahead of the current one, we must fill in the missing
         // epochs. This just involves copying the committee from the previous epoch to the next one. It is assumed that
-        // the caller will then want to the future epochs.
+        // the caller will then want to update the future epochs.
         if (latestComputedEpoch < currentEpoch() + 2) {
             Committee storage latestComputedCommittee = _committee[latestComputedEpoch % 3];
-            // Note the early exit condition if `i < 2` which asserts this loop will not run more than twice. This is
-            // acceptable because we only store 3 committees at a time, so once we have updated two of them to the
-            // latest computed committee, there is no more work to do.
-            for (uint64 i = latestComputedEpoch + 1; i <= currentEpoch() + 2 && i < 2; i++) {
+            // Note the early exit condition if `latestComputedEpoch + 3` which ensures this loop will not run more
+            // than twice. This is acceptable because we only store 3 committees at a time, so once we have updated two
+            // of them to the latest computed committee, there is no more work to do.
+            // i in (1..=2) {1, 2}
+            for (uint64 i = latestComputedEpoch + 1; i <= currentEpoch() + 2 && i < latestComputedEpoch + 3; i++) {
                 _committee[i % 3] = latestComputedCommittee;
             }
 
             latestComputedEpoch = currentEpoch() + 2;
         }
+    }
+
+    // TODO: REMOVE AND SET IN CONSTRUCTOR INSTEAD
+    function setStake(
+        bytes calldata blsPubKey,
+        bytes calldata peerId,
+        address rewardAddress,
+        address controlAddress,
+        uint256 amount
+    ) public {
+        require(blsPubKey.length == 48);
+        require(peerId.length == 38);
+
+        require(committee().stakers.length < maximumStakers, "too many stakers");
+
+        Staker storage staker = _stakersMap[blsPubKey];
+        // This must be a new staker, meaning the control address must be zero.
+        // TODO: Separate method for topping up existing validator.
+        require(staker.controlAddress == address(0), "staker already exists");
+
+        if (amount < minimumStake) {
+            revert("stake is less than minimum stake");
+        }
+
+        _stakerKeys[controlAddress] = blsPubKey;
+        staker.peerId = peerId;
+        staker.controlAddress = controlAddress;
+        staker.rewardAddress = rewardAddress;
+
+        Committee storage currentCommittee = _committee[currentEpoch() % 3];
+        currentCommittee.totalStake += amount;
+        staker.keyIndex = int(currentCommittee.stakers.length);
+        currentCommittee.stakers.push(blsPubKey);
+        currentCommittee.balances.push(amount);
     }
 
     function deposit(
@@ -265,11 +334,15 @@ contract Deposit {
 
         updateLatestComputedEpoch();
 
+        if (block.number == 5) {
+            revert("fooble");
+        }
+
         Committee storage futureCommittee = _committee[(currentEpoch() + 2) % 3];
         futureCommittee.totalStake += msg.value;
+        staker.keyIndex = int(futureCommittee.stakers.length);
         futureCommittee.stakers.push(blsPubKey);
         futureCommittee.balances.push(msg.value);
-        staker.keyIndex = int(futureCommittee.stakers.length);
     }
 
     function depositTopup() public payable {

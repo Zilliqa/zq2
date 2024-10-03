@@ -131,6 +131,27 @@ async fn get_stakers(
         .collect()
 }
 
+async fn get_stakers_at(
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+    block_number: u64,
+) -> Vec<NodePublicKey> {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
+    let stakers = wallet.call(&tx.into(), Some(block_number.into())).await.unwrap();
+    let stakers = contracts::deposit::GET_STAKERS
+        .decode_output(&stakers)
+        .unwrap()[0]
+        .clone()
+        .into_array()
+        .unwrap();
+
+    stakers
+        .into_iter()
+        .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
+        .collect()
+}
+
 async fn get_minimum_deposit(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
 ) -> u128 {
@@ -221,6 +242,30 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     network
         .run_until_block(&wallet, deposit_block + 3, 200)
         .await;
+
+    info!("deposit block: {deposit_block}");
+
+    for n in 0..=(deposit_block.as_u64() + 3) {
+        let tx = TransactionRequest::new()
+            .to(H160(contract_addr::DEPOSIT.into_array()))
+            .data(contracts::deposit::CURRENT_EPOCH.encode_input(&[]).unwrap());
+        let epoch = wallet.call(&tx.into(), Some(n.into())).await.unwrap();
+        let epoch = contracts::deposit::CURRENT_EPOCH
+            .decode_output(&epoch)
+            .unwrap();
+
+        let tx = TransactionRequest::new()
+            .to(H160(contract_addr::DEPOSIT.into_array()))
+            .data(contracts::deposit::INTERNAL_COMMITTEE.encode_input(&[]).unwrap());
+        let committee = wallet.call(&tx.into(), Some(n.into())).await.unwrap();
+        let committee = contracts::deposit::INTERNAL_COMMITTEE
+            .decode_output(&committee)
+            .unwrap();
+
+
+        let stakers = get_stakers_at(&wallet, n).await;
+        info!("{n}: stakers: {}, epoch: {epoch:?}, committee: {committee:?}", stakers.len());
+    }
 
     let stakers = get_stakers(&wallet).await;
     assert_eq!(stakers.len(), 4);
