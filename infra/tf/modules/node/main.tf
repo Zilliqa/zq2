@@ -77,6 +77,8 @@ resource "google_compute_instance" "this" {
 
   scheduling {
     provisioning_model = var.provisioning_model
+    preemptible = var.provisioning_model == "SPOT"
+    automatic_restart = var.provisioning_model != "SPOT"
   }
 
   labels = merge({ "zq2-network" = var.zq_network_name },
