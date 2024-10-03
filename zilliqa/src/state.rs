@@ -16,7 +16,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::{
     block_store::BlockStore,
-    cfg::{Amount, NodeConfig},
+    cfg::{Amount, GenesisDeposit, NodeConfig},
     contracts, crypto,
     db::TrieStorage,
     exec::BaseFeeCheck,
@@ -120,12 +120,11 @@ impl State {
                 .genesis_accounts
                 .iter()
                 .fold(0, |acc, item: &(Address, Amount)| acc + item.1 .0))
-            - (config.consensus.genesis_deposits.iter().fold(
-                0,
-                |acc, item: &(crypto::NodePublicKey, libp2p::PeerId, Amount, Address)| {
-                    acc + item.2 .0
-                },
-            ));
+            - (config
+                .consensus
+                .genesis_deposits
+                .iter()
+                .fold(0, |acc, item| acc + item.stake.0));
         state.mutate_account(Address::ZERO, |a| {
             a.balance = zero_account_balance;
             Ok(())
@@ -143,16 +142,25 @@ impl State {
             &[
                 Token::Uint((*config.consensus.minimum_stake).into()),
                 Token::Uint(MAX_COMMITTEE_SIZE.into()),
+                Token::Uint(config.consensus.blocks_per_epoch.into()),
             ],
         )?;
 
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
 
-        for (pub_key, peer_id, stake, reward_address) in config.consensus.genesis_deposits {
+        for GenesisDeposit {
+            public_key,
+            peer_id,
+            stake,
+            reward_address,
+            control_address,
+        } in config.consensus.genesis_deposits
+        {
             let data = contracts::deposit::SET_STAKE.encode_input(&[
-                Token::Bytes(pub_key.as_bytes()),
+                Token::Bytes(public_key.as_bytes()),
                 Token::Bytes(peer_id.to_bytes()),
                 Token::Address(ethabi::Address::from(reward_address.into_array())),
+                Token::Address(ethabi::Address::from(control_address.into_array())),
                 Token::Uint((*stake).into()),
             ])?;
             let (

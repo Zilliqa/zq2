@@ -7,6 +7,7 @@ use syn::{parse::Parser, ItemFn};
 pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut restrict_concurrency = false;
     let mut do_checkpoints = false;
+    let mut blocks_per_epoch = 10;
 
     let parsed_args =
         match syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
@@ -31,6 +32,41 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                         return token_stream_with_error(
                             args,
                             syn::Error::new_spanned(p, "Unknown attribute"),
+                        )
+                    }
+                }
+            }
+            syn::Meta::NameValue(a) => {
+                let Some(name) = a.path.get_ident() else {
+                    return token_stream_with_error(
+                        args,
+                        syn::Error::new_spanned(a.path, "Attribute parameter must be ident"),
+                    );
+                };
+                match name.to_string().as_str() {
+                    "blocks_per_epoch" => {
+                        let syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Int(val),
+                            ..
+                        }) = a.value
+                        else {
+                            return token_stream_with_error(
+                                args,
+                                syn::Error::new_spanned(
+                                    a.value,
+                                    "Attribute parameter value must be an int",
+                                ),
+                            );
+                        };
+                        match val.base10_parse::<u64>() {
+                            Ok(val) => blocks_per_epoch = val,
+                            Err(e) => return token_stream_with_error(args, e),
+                        };
+                    }
+                    _ => {
+                        return token_stream_with_error(
+                            args,
+                            syn::Error::new_spanned(a, "Unknown attribute"),
                         )
                     }
                 }
@@ -197,7 +233,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                     async move {
                         let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
                         let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed, format!("http://{addr}"),
-                                                          scilla_lib_dir.to_string(), #do_checkpoints);
+                                                          scilla_lib_dir.to_string(), #do_checkpoints, #blocks_per_epoch);
 
                         // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
                         let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
