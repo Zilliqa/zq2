@@ -58,6 +58,8 @@ impl ValidatorOracle {
             );
         }
 
+        // We need to convert ethabi::Contract -> alloy::json_abi::JsonAbi. Both JSON
+        // representations are the same.
         let deploy_abi: JsonAbi =
             serde_json::from_value(serde_json::to_value(contracts::deposit::ABI.clone())?)?;
         let deposit_contract: ContractInstance<PubSubFrontend, _> = ContractInstance::new(
@@ -69,6 +71,7 @@ impl ValidatorOracle {
         Ok(Self {
             signer,
             chain_clients,
+            // See above comment regarding ethabi::Contract -> alloy::json_abi::JsonAbi.
             validator_manager_abi: serde_json::from_value(
                 serde_json::from_str::<serde_json::Value>(VALIDATOR_MANAGER_ABI_JSON)?["abi"]
                     .clone(),
