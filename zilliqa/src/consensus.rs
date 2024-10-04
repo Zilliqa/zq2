@@ -2617,8 +2617,6 @@ impl Consensus {
         transactions: Vec<SignedTransaction>,
         committee: &[NodePublicKeyRaw],
     ) -> Result<()> {
-        let len = transactions.len();
-        let start = std::time::Instant::now();
         debug!("Executing block: {:?}", block.header.hash);
 
         let parent = self
@@ -2634,7 +2632,6 @@ impl Consensus {
         // We re-inject any missing Intershard transactions (or really, any missing
         // transactions) from our mempool. If any txs are unavailable in both the
         // message or locally, the proposal cannot be applied
-        let now = std::time::Instant::now();
         for (idx, tx_hash) in block.transactions.iter().enumerate() {
             // Prefer to insert verified txn from pool. This is faster.
             let txn = match self.transaction_pool.pop_transaction(*tx_hash) {
@@ -2653,8 +2650,6 @@ impl Consensus {
             };
             verified_txns.insert(idx, txn);
         }
-
-        info!("{} ELAPSED_INS {:?}", len, now.elapsed());
 
         let transaction_hashes = verified_txns
             .iter()
@@ -2677,7 +2672,6 @@ impl Consensus {
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
 
-        let now = std::time::Instant::now();
         for (tx_index, txn) in verified_txns.into_iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
@@ -2714,7 +2708,6 @@ impl Consensus {
             info!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push((receipt, tx_index));
         }
-        info!("{} ELAPSED_APP {:?}", len, now.elapsed());
 
         if cumulative_gas_used != block.gas_used() {
             warn!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());
@@ -2754,7 +2747,6 @@ impl Consensus {
             ));
         }
 
-        let now = std::time::Instant::now();
         for (receipt, tx_index) in &mut block_receipts {
             receipt.block_hash = block.hash();
             // Avoid cloning the receipt if there are no subscriptions to send it to.
@@ -2762,7 +2754,6 @@ impl Consensus {
                 let _ = self.receipts.send((receipt.clone(), *tx_index));
             }
         }
-        info!("{} ELAPSED_RCT {:?}", len, now.elapsed());
 
         // Important - only add blocks we are going to execute because they can potentially
         // overwrite the mapping of block height to block, which there should only be one of.
@@ -2776,18 +2767,15 @@ impl Consensus {
             // closure has to be move to take ownership of block_receipts
             let db = &self.db;
             self.db.with_sqlite_tx(move |sqlite_tx| {
-                let now = std::time::Instant::now();
                 for (receipt, _) in block_receipts {
                     db.insert_transaction_receipt_with_db_tx(sqlite_tx, receipt)?;
                 }
-                info!("{} ELAPSED_SQL {:?}", len, now.elapsed());
                 Ok(())
             })?;
         }
 
         // Tell the block store to request more blocks if it can.
         self.block_store.request_missing_blocks()?;
-        info!("{} ELAPSED_EXE {:?}", len, start.elapsed());
         Ok(())
     }
 
