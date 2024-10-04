@@ -568,3 +568,39 @@ pub struct TxnsForTxBlockExResponse {
     #[serde(rename = "Transactions")]
     pub transactions: Vec<String>,
 }
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TxnBodiesForTxBlockExResponse {
+    #[serde(rename = "CurrPage")]
+    pub curr_page: u64,
+    #[serde(rename = "NumPages")]
+    pub num_pages: u64,
+    #[serde(rename = "Transactions")]
+    pub transactions: Vec<TransactionBody>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TransactionBody {
+    #[serde(rename = "ID")]
+    pub id: String,
+    pub amount: String,
+    #[serde(rename = "gasLimit")]
+    pub gas_limit: String,
+    #[serde(rename = "gasPrice")]
+    pub gas_price: String,
+    pub nonce: String,
+    pub receipt: TransactionReceipt,
+    #[serde(rename = "senderPubKey")]
+    pub sender_pub_key: String,
+    pub signature: String,
+    #[serde(rename = "toAddr")]
+    pub to_addr: String,
+    pub version: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TransactionReceiptResponse {
+    pub cumulative_gas: String,
+    pub epoch_num: String,
+    pub success: bool,
+}
