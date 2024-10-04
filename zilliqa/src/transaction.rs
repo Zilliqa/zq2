@@ -880,12 +880,29 @@ pub struct ScillaLog {
 
 impl ScillaLog {
     pub fn into_evm(self) -> EvmLog {
-        // Unwrap is safe because [ScillaLog::Serialize] is infallible.
-        let data = serde_json::to_string(&self).unwrap().abi_encode();
+        /// A version of [ScillaLog] which lets us serialise the `address` manually. We need to serialize it without
+        /// the checksum.
+        #[derive(Serialize)]
+        struct ScillaLogNoChecksum {
+            address: String,
+            #[serde(rename = "_eventname")]
+            event_name: String,
+            params: Vec<ScillaParam>,
+        }
+
+        let address = self.address;
+        let log = ScillaLogNoChecksum {
+            address: format!("{address:?}"),
+            event_name: self.event_name,
+            params: self.params,
+        };
+
+        // Unwrap is safe because [ScillaLogNoChecksum::Serialize] is infallible.
+        let data = serde_json::to_string(&log).unwrap().abi_encode();
         EvmLog {
-            address: self.address,
+            address,
             topics: vec![keccak256(
-                format!("{}(string)", self.event_name).into_bytes(),
+                format!("{}(string)", log.event_name).into_bytes(),
             )],
             data,
         }
