@@ -753,12 +753,12 @@ impl Network {
         // Advance time.
         zilliqa::time::advance(Duration::from_millis(1));
 
-        // Every 20ms send a consensus tick, since most of our tests are too short to otherwise
+        // Every 10ms send a consensus tick, since most of our tests are too short to otherwise
         // be able to sync.
         self.consensus_tick_countdown -= 1;
         if self.consensus_tick_countdown == 0 {
             for (index, node) in self.nodes.iter().enumerate() {
-                let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
+                let span = tracing::span!(tracing::Level::INFO, "consensus_tick", index);
 
                 span.in_scope(|| {
                     node.inner.lock().unwrap().consensus.tick().unwrap();
