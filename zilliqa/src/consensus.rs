@@ -2629,32 +2629,33 @@ impl Consensus {
             trace!("applying {} transactions to state", transactions.len());
         }
 
-        let now = std::time::Instant::now();
-        let transactions: Result<Vec<_>> = transactions.into_iter().map(|tx| tx.verify()).collect();
-        let mut transactions = transactions?;
-        info!("{} ELAPSED_VER {:?}", len, now.elapsed());
-
-        let transaction_hashes = transactions
-            .iter()
-            .map(|tx| format!("{:?}", tx.hash))
-            .join(",");
+        let mut verified_txns = Vec::new();
 
         // We re-inject any missing Intershard transactions (or really, any missing
         // transactions) from our mempool. If any txs are unavailable either in the
         // message or locally, the proposal cannot be applied
         let now = std::time::Instant::now();
         for (idx, tx_hash) in block.transactions.iter().enumerate() {
-            if transactions.get(idx).is_some_and(|tx| tx.hash == *tx_hash) {
-                // all good
-            } else {
-                let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
-                    warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
-                    return Ok(());
-                };
-                transactions.insert(idx, local_tx);
-            }
+            // Attempt to insert verified txns from pool.
+            if let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) {
+                verified_txns.insert(idx, local_tx);
+                continue;
+            };
+            // And recover missing txns from block
+            if let Some(block_tx) = transactions.get(idx) {
+                verified_txns.insert(idx, block_tx.clone().verify()?);
+                continue;
+            };
+
+            warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
+            return Ok(());
         }
         info!("{} ELAPSED_INS {:?}", len, now.elapsed());
+
+        let transaction_hashes = verified_txns
+            .iter()
+            .map(|tx| format!("{:?}", tx.hash))
+            .join(",");
 
         self.apply_rewards(committee, &parent, block.view(), &block.header.qc.cosigned)?;
 
@@ -2673,7 +2674,7 @@ impl Consensus {
         let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
 
         let now = std::time::Instant::now();
-        for (tx_index, txn) in transactions.into_iter().enumerate() {
+        for (tx_index, txn) in verified_txns.into_iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
