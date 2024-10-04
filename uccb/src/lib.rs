@@ -1,17 +1,11 @@
 use std::{fs, path::PathBuf};
 
 use anyhow::Result;
-use zilliqa::crypto::SecretKey;
 
 pub mod cfg;
 pub mod client;
 
-pub trait Args {
-    fn secret_key(&self) -> &SecretKey;
-    fn config_file(&self) -> &PathBuf;
-}
-pub fn read_config<T: Args>(args: &T) -> Result<cfg::Config> {
-    let config_file = &args.config_file();
+pub fn read_config(config_file: &PathBuf) -> Result<cfg::Config> {
     let config_content = if config_file.exists() {
         fs::read_to_string(config_file)?
     } else {

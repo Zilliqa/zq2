@@ -35,16 +35,6 @@ struct Args {
     config_file: PathBuf,
 }
 
-impl uccb::Args for Args {
-    fn secret_key(&self) -> &SecretKey {
-        &self.secret_key
-    }
-
-    fn config_file(&self) -> &PathBuf {
-        &self.config_file
-    }
-}
-
 struct ValidatorOracle {
     signer: PrivateKeySigner,
     chain_clients: Vec<ChainClient>,
@@ -245,7 +235,7 @@ impl ValidatorOracle {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let config = uccb::read_config(&args)?;
+    let config = uccb::read_config(&args.config_file)?;
 
     let builder = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
