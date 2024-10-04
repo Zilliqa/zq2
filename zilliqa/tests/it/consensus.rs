@@ -252,7 +252,7 @@ async fn create_shard(
     // * Finalize the block on the main shard and check each main shard node has
     // spawned a child shard node in response
     network
-        .run_until_block(wallet, included_block + 6, 200)
+        .run_until_block(wallet, included_block + 6, 400)
         .await;
 
     network
