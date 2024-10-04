@@ -137,15 +137,35 @@ pub async fn run_deployer_new(
     Ok(())
 }
 
-pub async fn run_deployer_install(config_file: &str, only_selected_nodes: bool) -> Result<()> {
+pub async fn run_deployer_install(
+    config_file: &str,
+    only_selected_nodes: bool,
+    max_parallel: Option<usize>,
+) -> Result<()> {
     println!("🦆 Installing {config_file} .. ");
-    deployer::install_or_upgrade(config_file, false, only_selected_nodes).await?;
+    deployer::install_or_upgrade(
+        config_file,
+        false,
+        only_selected_nodes,
+        max_parallel.unwrap_or(50),
+    )
+    .await?;
     Ok(())
 }
 
-pub async fn run_deployer_upgrade(config_file: &str, only_selected_nodes: bool) -> Result<()> {
+pub async fn run_deployer_upgrade(
+    config_file: &str,
+    only_selected_nodes: bool,
+    max_parallel: Option<usize>,
+) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
-    deployer::install_or_upgrade(config_file, true, only_selected_nodes).await?;
+    deployer::install_or_upgrade(
+        config_file,
+        true,
+        only_selected_nodes,
+        max_parallel.unwrap_or(1),
+    )
+    .await?;
     Ok(())
 }
 

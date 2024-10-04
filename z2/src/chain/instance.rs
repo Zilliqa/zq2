@@ -78,6 +78,12 @@ impl ChainInstance {
 
         let machines = instances
             .iter()
+            .filter(|i| {
+                i.get("status")
+                    .and_then(|status| status.as_str())
+                    .map(|status_str| status_str == "RUNNING")
+                    .unwrap_or(false) // Exclude instances without a valid status or those not in RUNNING state
+            })
             .map(|i| {
                 let name = i
                     .get("name")
@@ -90,12 +96,12 @@ impl ChainInstance {
                 let labels: BTreeMap<String, String> = i
                     .get("labels")
                     .and_then(|z| serde_json::from_value(z.clone()).unwrap_or_default())
-                    .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
+                    .ok_or_else(|| anyhow!("labels are missing or not a string"))?;
                 let external_address = i["networkInterfaces"]
                     .get(0)
                     .and_then(|ni| ni["accessConfigs"].get(0))
                     .and_then(|ac| ac["natIP"].as_str())
-                    .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
+                    .ok_or_else(|| anyhow!("external IP is missing or not a string"))?;
                 Ok(Machine {
                     project_id: project_id.to_string(),
                     zone: zone.to_string(),
