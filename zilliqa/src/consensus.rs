@@ -2632,24 +2632,28 @@ impl Consensus {
         let mut verified_txns = Vec::new();
 
         // We re-inject any missing Intershard transactions (or really, any missing
-        // transactions) from our mempool. If any txs are unavailable either in the
+        // transactions) from our mempool. If any txs are unavailable in both the
         // message or locally, the proposal cannot be applied
         let now = std::time::Instant::now();
         for (idx, tx_hash) in block.transactions.iter().enumerate() {
-            // Attempt to insert verified txns from pool.
-            if let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) {
-                verified_txns.insert(idx, local_tx);
-                continue;
+            // Prefer to insert verified txn from pool. This is faster.
+            let txn = match self.transaction_pool.pop_transaction(*tx_hash) {
+                Some(txn) if txn.hash == *tx_hash => txn,
+                _ => match transactions
+                    .get(idx)
+                    .and_then(|sig_tx| sig_tx.clone().verify().ok())
+                {
+                    // Otherwise, recover txn from proposal. This is slower.
+                    Some(txn) if txn.hash == *tx_hash => txn,
+                    _ => {
+                        warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
+                        return Ok(());
+                    }
+                },
             };
-            // And recover missing txns from block
-            if let Some(block_tx) = transactions.get(idx) {
-                verified_txns.insert(idx, block_tx.clone().verify()?);
-                continue;
-            };
-
-            warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
-            return Ok(());
+            verified_txns.insert(idx, txn);
         }
+
         info!("{} ELAPSED_INS {:?}", len, now.elapsed());
 
         let transaction_hashes = verified_txns
