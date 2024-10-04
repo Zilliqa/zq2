@@ -1,3 +1,4 @@
+pub mod debug;
 mod erigon;
 pub mod eth;
 mod net;
@@ -10,7 +11,7 @@ pub mod types;
 mod web3;
 pub mod zil;
 
-pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
+pub fn rpc_module(node: Arc<Mutex<Node>>, _enable_debug_api: bool) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = RpcModule::new(node.clone());
 
     module.merge(erigon::rpc_module(node.clone())).unwrap();
@@ -20,6 +21,11 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     module.merge(ots::rpc_module(node.clone())).unwrap();
     module.merge(web3::rpc_module(node.clone())).unwrap();
     module.merge(zil::rpc_module(node.clone())).unwrap();
+
+    #[cfg(feature = "debug_api")]
+    if _enable_debug_api {
+        module.merge(debug::rpc_module(node.clone())).unwrap();
+    }
 
     module.merge(others::rpc_module(node.clone())).unwrap();
 
