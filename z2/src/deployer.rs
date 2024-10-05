@@ -506,6 +506,8 @@ pub async fn run_restore(config_file: &str, filename: &str, max_parallel: usize)
         futures.push(future);
     }
 
+    multi_progress.stop();
+
     let results = futures::future::join_all(futures).await;
 
     let mut successes = vec![];

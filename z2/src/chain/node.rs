@@ -681,7 +681,6 @@ impl ChainNode {
             "✔".green(),
             self.name()
         ));
-        multi_progress.stop();
 
         Ok(())
     }
