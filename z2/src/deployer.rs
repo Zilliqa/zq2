@@ -492,11 +492,14 @@ pub async fn run_restore(config_file: &str, filename: &str, max_parallel: usize)
     let semaphore = Arc::new(Semaphore::new(max_parallel));
     let mut futures = vec![];
 
+    let multi_progress = cliclack::multi_progress("Restoring the nodes data dir".yellow());
+
     for node in target_nodes {
         let permit = semaphore.clone().acquire_owned().await?;
         let file = filename.to_owned();
+        let mp = multi_progress.to_owned();
         let future = task::spawn(async move {
-            let result = node.restore_from(&file).await;
+            let result = node.restore_from(&file, &mp).await;
             drop(permit); // Release the permit when the task is done
             (node, result)
         });

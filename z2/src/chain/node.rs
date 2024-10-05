@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{anyhow, Ok, Result};
 use clap::ValueEnum;
+use cliclack::MultiProgress;
 use colored::Colorize;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -201,8 +202,10 @@ impl Machine {
         Ok(())
     }
 
-    pub async fn run(&self, cmd: &str) -> Result<zqutils::commands::CommandOutput> {
-        println!("Running command '{}' in {}", cmd, self.name);
+    pub async fn run(&self, cmd: &str, print: bool) -> Result<zqutils::commands::CommandOutput> {
+        if print {
+            println!("Running command '{}' in {}", cmd, self.name);
+        }
         let output: zqutils::commands::CommandOutput = zqutils::commands::CommandBuilder::new()
             .silent()
             .cmd(
@@ -229,7 +232,7 @@ impl Machine {
 
     pub async fn get_local_block_number(&self) -> Result<u64> {
         let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
-        let output = self.run(inner_command).await?;
+        let output = self.run(inner_command, true).await?;
         if !output.success {
             return Err(anyhow!(
                 "getting local block number failed: {:?}",
@@ -466,7 +469,7 @@ impl ChainNode {
 
     async fn clean_previous_install(&self) -> Result<()> {
         let cmd = "sudo rm -f /tmp/config.toml /tmp/provision_node.py";
-        let output = self.machine.run(cmd).await?;
+        let output = self.machine.run(cmd, true).await?;
         if !output.success {
             println!("{:?}", output.stderr);
             return Err(anyhow!("Error removing previous installation files"));
@@ -479,7 +482,7 @@ impl ChainNode {
 
     async fn run_provisioning_script(&self) -> Result<()> {
         let cmd = "sudo chmod 666 /tmp/config.toml /tmp/provision_node.py && sudo mv /tmp/config.toml /config.toml && sudo python3 /tmp/provision_node.py";
-        let output = self.machine.run(cmd).await?;
+        let output = self.machine.run(cmd, true).await?;
         if !output.success {
             println!("{:?}", output.stderr);
             return Err(anyhow!("Error running the provisioning script"));
@@ -487,7 +490,7 @@ impl ChainNode {
 
         if self.role == NodeRole::Checkpoint {
             let cmd = "sudo chmod 777 /tmp/checkpoint_cron_job.sh && sudo mv /tmp/checkpoint_cron_job.sh /checkpoint_cron_job.sh && echo '*/5 * * * * /checkpoint_cron_job.sh' | sudo crontab -";
-            let output = self.machine.run(cmd).await?;
+            let output = self.machine.run(cmd, true).await?;
             if !output.success {
                 println!("{:?}", output.stderr);
                 return Err(anyhow!("Error creating the checkpoint cronjob"));
@@ -595,67 +598,90 @@ impl ChainNode {
     }
 
     pub async fn backup_to(&self, filename: &str) -> Result<()> {
-        println!(
-            "{}",
-            format!(
-                "Backing up {} data dir in {}",
-                self.name().bold(),
-                filename.bold()
-            )
-            .yellow()
-        );
-
         let machine = &self.machine;
 
-        machine.run("sudo systemctl stop zilliqa.service").await?;
-        machine
-            .run("sudo apt install -y zip && sudo zip -r /tmp/data.zip /data")
-            .await?;
-        machine.copy_from("/tmp/data.zip", filename).await?;
-        machine.run("sudo rm -rf /tmp/data.zip").await?;
-        machine.run("sudo systemctl start zilliqa.service").await?;
+        let multi_progress =
+            cliclack::multi_progress(format!("Backing up {} ...", self.name()).yellow());
+        let progress_bar = multi_progress.add(cliclack::progress_bar(5));
 
-        println!(
-            "{}",
-            format!(
-                "Node {} backed up successfully in {}",
-                self.name(),
-                filename
+        progress_bar.start("Stopping the service");
+        machine
+            .run("sudo systemctl stop zilliqa.service", false)
+            .await?;
+        progress_bar.inc(1);
+
+        progress_bar.start("Packaging the data dir");
+        machine
+            .run(
+                "sudo apt install -y zip && sudo zip -r /tmp/data.zip /data",
+                false,
             )
-            .green()
-            .bold()
-        );
+            .await?;
+        progress_bar.inc(1);
+
+        progress_bar.start("Exporting the backup file");
+        machine.copy_from("/tmp/data.zip", filename).await?;
+        progress_bar.inc(1);
+
+        progress_bar.start("Cleaning the backup files");
+        machine.run("sudo rm -rf /tmp/data.zip", false).await?;
+        progress_bar.inc(1);
+
+        progress_bar.start("Starting the service");
+        machine
+            .run("sudo systemctl start zilliqa.service", false)
+            .await?;
+        progress_bar.inc(1);
+
+        progress_bar.stop(format!("{} Backup completed", "✔".green()));
+        multi_progress.stop();
 
         Ok(())
     }
 
-    pub async fn restore_from(&self, filename: &str) -> Result<()> {
-        println!(
-            "{}",
-            format!("Restoring {} from {}", self.name().bold(), filename.bold()).yellow()
-        );
-
+    pub async fn restore_from(&self, filename: &str, multi_progress: &MultiProgress) -> Result<()> {
         let machine = &self.machine;
+        let progress_bar = multi_progress.add(cliclack::progress_bar(6));
 
-        machine.run("sudo systemctl stop zilliqa.service").await?;
-        machine.copy_to(&[filename], "/tmp/data.zip").await?;
-        machine.run("sudo rm -rf /data").await?;
+        progress_bar.start(format!("{}: Stopping the service", self.name()));
         machine
-            .run("sudo apt install -y unzip && sudo unzip /tmp/data.zip -d /")
+            .run("sudo systemctl stop zilliqa.service", false)
             .await?;
-        machine.run("sudo rm -f /tmp/data.zip").await?;
-        machine.run("sudo systemctl start zilliqa.service").await?;
+        progress_bar.inc(1);
 
-        println!(
-            "{}",
-            format!(
-                "Node {} restored successfully from {}",
-                self.name(),
-                filename
+        progress_bar.start(format!("{}: Importing the backup file", self.name()));
+        machine.copy_to(&[filename], "/tmp/data.zip").await?;
+        progress_bar.inc(1);
+
+        progress_bar.start(format!("{}: Deleting the data folder", self.name()));
+        machine.run("sudo rm -rf /data", false).await?;
+        progress_bar.inc(1);
+
+        progress_bar.start(format!("{}: Restoring the data folder", self.name()));
+        machine
+            .run(
+                "sudo apt install -y unzip && sudo unzip /tmp/data.zip -d /",
+                false,
             )
-            .green()
-            .bold()
-        );
+            .await?;
+        progress_bar.inc(1);
+
+        progress_bar.start(format!("{}: Cleaning the backup files", self.name()));
+        machine.run("sudo rm -f /tmp/data.zip", false).await?;
+        progress_bar.inc(1);
+
+        progress_bar.start(format!("{}: Starting the service", self.name()));
+        machine
+            .run("sudo systemctl start zilliqa.service", false)
+            .await?;
+        progress_bar.inc(1);
+
+        progress_bar.stop(format!(
+            "{}: {} Restore completed",
+            "✔".green(),
+            self.name()
+        ));
+        multi_progress.stop();
 
         Ok(())
     }
