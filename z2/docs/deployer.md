@@ -328,11 +328,12 @@ Arguments:
   <CONFIG_FILE>  The network deployer config file
 
 Options:
-  -m, --method <METHOD>  Method to run
-  -p, --params <PARAMS>  List of parameters for the method. ie "["string_value", true]"
-  -v, --verbose...       Increase logging verbosity
-  -q, --quiet...         Decrease logging verbosity
-  -h, --help             Print help
+      --timeout <TIMEOUT>  Specifies the maximum time (in seconds) allowed for the entire request. Default: 30
+  -m, --method <METHOD>    Method to run
+  -p, --params <PARAMS>    List of parameters for the method. ie "["string_value", true]"
+  -v, --verbose...         Increase logging verbosity
+  -q, --quiet...           Decrease logging verbosity
+  -h, --help               Print help
 ```
 
 ### Usage example
@@ -402,21 +403,56 @@ Configuration file: zq2-prototestnet.yaml
 z2 deployer get-config-file --role api zq2-prototestnet.yaml
 ```
 
-## Restore a node using another node's data dir
+## Backup locally a node's data dir
+
+```bash
+z2 deployer backup --help
+```
+
+```bash
+Backup locally a node data dir
+
+Usage: z2 deployer backup [OPTIONS] --file <FILE> [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  The network deployer config file
+
+Options:
+  -f, --file <FILE>  The path of the backup file
+  -v, --verbose...   Increase logging verbosity
+  -q, --quiet...     Decrease logging verbosity
+  -h, --help         Print help
+```
+
+### Usage example
+
+#### Scenario
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer backup --file /tmp/data.zip zq2-prototestnet.yaml
+```
+
+## Restore a node's data dir from a local backup
 
 ```bash
 z2 deployer restore --help
 ```
 
 ```bash
-Restore a node using another node's data dir
+Restore a node data dir from a local backup
 
-Usage: z2 deployer restore [OPTIONS] [CONFIG_FILE]
+Usage: z2 deployer restore [OPTIONS] --file <FILE> [CONFIG_FILE]
 
 Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
+  -f, --file <FILE>                  The path of the backup file
       --max-parallel <MAX_PARALLEL>  Define the number of nodes to process in parallel. Default: 50
   -v, --verbose...                   Increase logging verbosity
   -q, --quiet...                     Decrease logging verbosity
@@ -433,5 +469,5 @@ Configuration file: zq2-prototestnet.yaml
 ```
 
 ```bash
-z2 deployer restore zq2-prototestnet.yaml
+z2 deployer restore --file /tmp/data.zip zq2-prototestnet.yaml
 ```

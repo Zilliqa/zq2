@@ -440,7 +440,7 @@ def sudo_noninteractive_apt_env(rest):
 def go(role):
     log("Running as {0}".format(os.getuid()))
     run_or_die(sudo_noninteractive_apt_env(["apt", "update"]))
-    run_or_die(sudo_noninteractive_apt_env(["apt", "-y", "dist-upgrade"]))
+    run_or_die(sudo_noninteractive_apt_env(["apt", "-y", "dist-upgrade", "zip", "unzip"]))
     a_list = [ "apt" , "install", "-y" ]
     a_list.extend(INSTALL_PKGS)
     run_or_die(sudo_noninteractive_apt_env(a_list))

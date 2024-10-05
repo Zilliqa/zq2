@@ -328,7 +328,12 @@ pub async fn run_deposit(config_file: &str, only_selected_nodes: bool) -> Result
     Ok(())
 }
 
-pub async fn run_rpc_call(method: &str, params: &Option<String>, config_file: &str) -> Result<()> {
+pub async fn run_rpc_call(
+    method: &str,
+    params: &Option<String>,
+    config_file: &str,
+    timeout: usize,
+) -> Result<()> {
     let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
     let mut futures = vec![];
 
@@ -358,9 +363,13 @@ pub async fn run_rpc_call(method: &str, params: &Option<String>, config_file: &s
         let current_params = params.to_owned();
         let permit = semaphore.clone().acquire_owned().await?;
         let future = task::spawn(async move {
-            let result =
-                run_node_rpc_call(&current_method, &current_params, &machine.external_address)
-                    .await;
+            let result = run_node_rpc_call(
+                &current_method,
+                &current_params,
+                &machine.external_address,
+                timeout,
+            )
+            .await;
             drop(permit); // Release the permit when the task is done
             (machine, result)
         });
@@ -392,6 +401,7 @@ async fn run_node_rpc_call(
     method: &str,
     params: &Option<String>,
     endpoint: &str,
+    timeout: usize,
 ) -> Result<String> {
     let body = format!(
         "{{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"{}\",\"params\":{}}}",
@@ -400,6 +410,8 @@ async fn run_node_rpc_call(
     );
 
     let args = &[
+        "--max-time",
+        &timeout.to_string(),
         "-X",
         "POST",
         "-H",
@@ -426,7 +438,7 @@ async fn run_node_rpc_call(
     Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
 }
 
-pub async fn run_restore(config_file: &str, max_parallel: usize) -> Result<()> {
+pub async fn run_backup(config_file: &str, filename: &str) -> Result<()> {
     let config = fs::read_to_string(config_file).await?;
     let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
     let chain = ChainInstance::new(config).await?;
@@ -450,14 +462,24 @@ pub async fn run_restore(config_file: &str, max_parallel: usize) -> Result<()> {
         nodes.first().unwrap().clone()
     };
 
+    source_node.backup_to(filename).await
+}
+
+pub async fn run_restore(config_file: &str, filename: &str, max_parallel: usize) -> Result<()> {
+    let config = fs::read_to_string(config_file).await?;
+    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let chain = ChainInstance::new(config).await?;
+    let chain_nodes = chain.nodes().await?;
+    let node_names = chain_nodes
+        .iter()
+        .filter(|n| n.role != NodeRole::Apps)
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
     let target_nodes = {
         let mut select = cliclack::multiselect("Select target nodes");
 
-        // Remove the source node from the target list
-        let mut target_names = node_names.clone();
-        target_names.retain(|x| x != &source_node.name());
-
-        for name in &target_names {
+        for name in &node_names {
             select = select.item(name.clone(), name, "");
         }
 
@@ -472,9 +494,9 @@ pub async fn run_restore(config_file: &str, max_parallel: usize) -> Result<()> {
 
     for node in target_nodes {
         let permit = semaphore.clone().acquire_owned().await?;
-        let node_from = source_node.clone();
+        let file = filename.to_owned();
         let future = task::spawn(async move {
-            let result = node.restore_from(&node_from).await;
+            let result = node.restore_from(&file).await;
             drop(permit); // Release the permit when the task is done
             (node, result)
         });

@@ -150,7 +150,31 @@ impl Machine {
         Ok(())
     }
 
-    pub async fn copy_to(&self, file_from: &[&str], file_to: &str) -> Result<()> {
+    async fn copy_from(&self, file_from: &str, file_to: &str) -> Result<()> {
+        let file_from = &format!("{0}:{file_from}", &self.name);
+        let args = &[
+            "compute",
+            "scp",
+            "--project",
+            &self.project_id,
+            "--zone",
+            &self.zone,
+            "--tunnel-through-iap",
+            "--strict-host-key-checking=no",
+            "--scp-flag=-r",
+            file_from,
+            file_to,
+        ];
+
+        zqutils::commands::CommandBuilder::new()
+            .silent()
+            .cmd("gcloud", args)
+            .run()
+            .await?;
+        Ok(())
+    }
+
+    async fn copy_to(&self, file_from: &[&str], file_to: &str) -> Result<()> {
         let tgt_spec = format!("{0}:{file_to}", &self.name);
         let args = [
             &[
@@ -570,8 +594,68 @@ impl ChainNode {
         Ok(filename.to_owned())
     }
 
-    pub async fn restore_from(&self, other: &Self) -> Result<()> {
-        println!("{}", format!("Node {} restored successfully from: {}", self.name().bold(), other.name().bold()).yellow());
+    pub async fn backup_to(&self, filename: &str) -> Result<()> {
+        println!(
+            "{}",
+            format!(
+                "Backing up {} data dir in {}",
+                self.name().bold(),
+                filename.bold()
+            )
+            .yellow()
+        );
+
+        let machine = &self.machine;
+
+        machine.run("sudo systemctl stop zilliqa.service").await?;
+        machine
+            .run("sudo apt install -y zip && sudo zip -r /tmp/data.zip /data")
+            .await?;
+        machine.copy_from("/tmp/data.zip", filename).await?;
+        machine.run("sudo rm -rf /tmp/data.zip").await?;
+        machine.run("sudo systemctl start zilliqa.service").await?;
+
+        println!(
+            "{}",
+            format!(
+                "Node {} backed up successfully in {}",
+                self.name(),
+                filename
+            )
+            .green()
+            .bold()
+        );
+
+        Ok(())
+    }
+
+    pub async fn restore_from(&self, filename: &str) -> Result<()> {
+        println!(
+            "{}",
+            format!("Restoring {} from {}", self.name().bold(), filename.bold()).yellow()
+        );
+
+        let machine = &self.machine;
+
+        machine.run("sudo systemctl stop zilliqa.service").await?;
+        machine.copy_to(&[filename], "/tmp/data.zip").await?;
+        machine.run("sudo rm -rf /data").await?;
+        machine
+            .run("sudo apt install -y unzip && sudo unzip /tmp/data.zip -d /")
+            .await?;
+        machine.run("sudo rm -f /tmp/data.zip").await?;
+        machine.run("sudo systemctl start zilliqa.service").await?;
+
+        println!(
+            "{}",
+            format!(
+                "Node {} restored successfully from {}",
+                self.name(),
+                filename
+            )
+            .green()
+            .bold()
+        );
 
         Ok(())
     }
