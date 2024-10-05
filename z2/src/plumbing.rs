@@ -196,6 +196,12 @@ pub async fn run_rpc_call(method: &str, params: &Option<String>, config_file: &s
     Ok(())
 }
 
+pub async fn run_deployer_restore(config_file: &str, max_parallel: Option<usize>) -> Result<()> {
+    println!("🦆 Restoring process for {config_file} .. ");
+    deployer::run_restore(config_file, max_parallel.unwrap_or(50)).await?;
+    Ok(())
+}
+
 pub async fn print_depends(_base_dir: &str) -> Result<()> {
     for p in Component::all().iter() {
         let req = setup::Setup::describe_component(p).await?;

@@ -569,6 +569,12 @@ impl ChainNode {
 
         Ok(filename.to_owned())
     }
+
+    pub async fn restore_from(&self, other: &Self) -> Result<()> {
+        println!("{}", format!("Node {} restored successfully from: {}", self.name().bold(), other.name().bold()).yellow());
+
+        Ok(())
+    }
 }
 
 pub async fn retrieve_secret_by_role(

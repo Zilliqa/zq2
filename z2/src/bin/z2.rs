@@ -87,6 +87,8 @@ enum DeployerCommands {
     Deposit(DeployerActionsArgs),
     /// Run RPC calls over the internal network nodes
     Rpc(DeployerRpcArgs),
+    /// Restore a node using another node's data dir
+    Restore(DeployerRestoreArgs),
 }
 
 #[derive(Args, Debug)]
@@ -157,6 +159,15 @@ pub struct DeployerRpcArgs {
     params: Option<String>,
     /// The network deployer config file
     config_file: String,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerRestoreArgs {
+    /// Define the number of nodes to process in parallel. Default: 50
+    #[clap(long)]
+    max_parallel: Option<usize>,
+    /// The network deployer config file
+    config_file: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -679,6 +690,19 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer rpc command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Restore(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_restore(&config_file, arg.max_parallel)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer restore command: {}", err)
                     })?;
                 Ok(())
             }
