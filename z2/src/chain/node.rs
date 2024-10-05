@@ -677,7 +677,7 @@ impl ChainNode {
         progress_bar.inc(1);
 
         progress_bar.stop(format!(
-            "{}: {} Restore completed",
+            "{} {}: Restore completed",
             "✔".green(),
             self.name()
         ));
