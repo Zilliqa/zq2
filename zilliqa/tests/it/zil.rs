@@ -1066,3 +1066,20 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
         "Expected Transactions length to be greater than or equal to 1"
     );
 }
+
+#[zilliqa_macros::test]
+async fn get_num_ds_blocks(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNumDSBlocks", [""])
+        .await
+        .expect("Failed to call GetNumDSBlocks API");
+
+    assert!(
+        response.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response
+    );
+}
