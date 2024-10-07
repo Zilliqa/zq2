@@ -2627,28 +2627,35 @@ impl Consensus {
             trace!("applying {} transactions to state", transactions.len());
         }
 
-        let transactions: Result<Vec<_>> = transactions.into_iter().map(|tx| tx.verify()).collect();
-        let mut transactions = transactions?;
+        let mut verified_txns = Vec::new();
 
-        let transaction_hashes = transactions
+        // We re-inject any missing Intershard transactions (or really, any missing
+        // transactions) from our mempool. If any txs are unavailable in both the
+        // message or locally, the proposal cannot be applied
+        for (idx, tx_hash) in block.transactions.iter().enumerate() {
+            // Prefer to insert verified txn from pool. This is faster.
+            let txn = match self.transaction_pool.pop_transaction(*tx_hash) {
+                Some(txn) => txn,
+                _ => match transactions
+                    .get(idx)
+                    .map(|sig_tx| sig_tx.clone().verify())
+                    .transpose()?
+                {
+                    // Otherwise, recover txn from proposal. This is slower.
+                    Some(txn) if txn.hash == *tx_hash => txn,
+                    _ => {
+                        warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
+                        return Ok(());
+                    }
+                },
+            };
+            verified_txns.push(txn);
+        }
+
+        let transaction_hashes = verified_txns
             .iter()
             .map(|tx| format!("{:?}", tx.hash))
             .join(",");
-
-        // We re-inject any missing Intershard transactions (or really, any missing
-        // transactions) from our mempool. If any txs are unavailable either in the
-        // message or locally, the proposal cannot be applied
-        for (idx, tx_hash) in block.transactions.iter().enumerate() {
-            if transactions.get(idx).is_some_and(|tx| tx.hash == *tx_hash) {
-                // all good
-            } else {
-                let Some(local_tx) = self.transaction_pool.pop_transaction(*tx_hash) else {
-                    warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
-                    return Ok(());
-                };
-                transactions.insert(idx, local_tx);
-            }
-        }
 
         self.apply_rewards(committee, &parent, block.view(), &block.header.qc.cosigned)?;
 
@@ -2666,7 +2673,7 @@ impl Consensus {
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
 
-        for (tx_index, txn) in transactions.into_iter().enumerate() {
+        for (tx_index, txn) in verified_txns.into_iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
@@ -2770,7 +2777,6 @@ impl Consensus {
 
         // Tell the block store to request more blocks if it can.
         self.block_store.request_missing_blocks()?;
-
         Ok(())
     }
 
