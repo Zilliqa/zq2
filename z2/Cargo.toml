@@ -27,7 +27,7 @@ async-trait = "0.1.83"
 base64 = "0.22.0"
 bitvec = "1.0.1"
 blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
-clap = {version = "4.5.18", features = ["derive"]}
+clap = {version = "4.5.19", features = ["derive"]}
 clap-verbosity-flag = "2.2.2"
 cliclack = "0.3.5"
 colored = "2.1.0"
