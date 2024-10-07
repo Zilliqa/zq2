@@ -203,9 +203,7 @@ impl Node {
             ExternalMessage::NewTransaction(t) => {
                 let inserted = self.consensus.new_transaction(t.verify()?)?;
                 if inserted {
-                    if let Some((_, message)) = self.consensus.try_to_propose_new_block()? {
-                        self.message_sender.broadcast_external_message(message)?;
-                    }
+                    self.consensus.assemble_early_block()?;
                 }
             }
             _ => {

@@ -1026,36 +1026,33 @@ impl Consensus {
             if supermajority_reached {
                 // We propose new block immediately if there's something in mempool or it's the first view
                 // Otherwise the block will be proposed on timeout
-                if self.view.get_view() == 1 || self.transaction_pool.has_txn_ready() {
+                if self.view.get_view() == 1 {
                     return self.propose_new_block();
-                } else {
-                    // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
-                    let (
-                        time_since_last_view_change,
-                        exponential_backoff_timeout,
-                        minimum_time_left_for_empty_block,
-                    ) = self.get_consensus_timeout_params();
-
-                    if time_since_last_view_change + minimum_time_left_for_empty_block
-                        >= exponential_backoff_timeout
-                    {
-                        return self.propose_new_block();
-                    }
-
-                    self.create_next_block_on_timeout = true;
-                    // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
-                    // the last view change. At this point we should be ready to produce a new empty block.
-                    self.reset_timeout.send(
-                        self.config
-                            .consensus
-                            .empty_block_timeout
-                            .saturating_sub(Duration::from_millis(time_since_last_view_change)),
-                    )?;
-                    trace!("Empty transaction pool, will create new block on timeout");
                 }
-            } else {
-                // Assemble early proposal if we're the leader but no super majority
-                self.assemble_early_block()?;
+                
+                // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
+                let (
+                    time_since_last_view_change,
+                    exponential_backoff_timeout,
+                    minimum_time_left_for_empty_block,
+                ) = self.get_consensus_timeout_params();
+
+                if time_since_last_view_change + minimum_time_left_for_empty_block
+                    >= exponential_backoff_timeout
+                {
+                    return self.propose_new_block();
+                }
+
+                // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
+                // the last view change. At this point we should be ready to produce a new empty block.
+                self.create_next_block_on_timeout = true;
+                self.reset_timeout.send(
+                    self.config
+                        .consensus
+                        .empty_block_timeout
+                        .saturating_sub(Duration::from_millis(time_since_last_view_change)),
+                )?;
+                trace!("Empty transaction pool, will create new block on timeout");
             }
         } else {
             self.votes.insert(
@@ -1064,21 +1061,9 @@ impl Consensus {
             );
         }
 
-        Ok(None)
-    }
+        // Either way assemble early proposal
+        self.assemble_early_block()?;
 
-    pub fn try_to_propose_new_block(&mut self) -> Result<Option<NetworkMessage>> {
-        // We try to propose next block here iff this action has already been postponed and there's any txn in the mempool
-        // that will be included in the next block
-        if self.create_next_block_on_timeout && self.transaction_pool.has_txn_ready() {
-            if let Ok(Some((block, transactions))) = self.propose_new_block() {
-                self.create_next_block_on_timeout = false;
-                return Ok(Some((
-                    None,
-                    ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
-                )));
-            };
-        }
         Ok(None)
     }
 
@@ -1483,10 +1468,8 @@ impl Consensus {
 
     /// Assembles the Proposal block, but with a dummy QC.
     pub fn assemble_early_block(&mut self) -> Result<()> {
-        // If no early_proposal exists, assemble with any ready transactions in pool.
-        // If the pool is empty, the early block assembly could be retried later.
-        // If this is called on each Vote, the Proposer can try several times to populate a block.
-        if self.early_proposal.is_none() && self.transaction_pool.has_txn_ready() {
+        // Rebuild early block if it doesnt exist or if proposal has been postponed and there are transactions in the mempool
+        if self.early_proposal.is_none() || (self.create_next_block_on_timeout && self.transaction_pool.has_txn_ready()) {
             info!("assemble early proposal {}", self.view.get_view());
             let mut state = self.state.clone();
             self.early_proposal = self.assemble_early_block_at(&mut state)?;
