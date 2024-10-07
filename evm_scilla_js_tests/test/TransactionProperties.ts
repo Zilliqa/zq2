@@ -1,6 +1,6 @@
 import {expect} from "chai";
 import hre from "hardhat";
-import {Contract} from "ethers";
+import {BigNumber, Contract} from "ethers";
 import {ethers} from "hardhat";
 
 describe("Transaction Properties", function () {
@@ -33,8 +33,7 @@ describe("Transaction Properties", function () {
   });
 
   it("should return the correct msg.value and msg.data", async function () {
-    const iface = (await hre.ethers.getContractFactory("BlockAndTransactionProperties")).interface;
-    const emittedData = iface.getSighash("receiveEther");
+    const emittedData = contract.interface.getSighash("receiveEther");
     const sendValue = ethers.utils.parseEther("0.001");
 
     const [owner] = await ethers.getSigners();
@@ -42,10 +41,19 @@ describe("Transaction Properties", function () {
     await expect(tx).to.emit(contract, "Received").withArgs(owner.address, sendValue, emittedData);
   });
 
-  xit("should return the correct tx gas price", async function () {
-    const contractTxGasPrice = await contract.getTxGasPrice();
-    const currentGasPrice = await ethers.provider.getGasPrice();
+  it("should return the correct gasLeft", async function () {
+    const tx = await contract.emitGasLeft();
+    const receipt = await tx.wait();
 
-    expect(contractTxGasPrice).to.equal(currentGasPrice);
+    const event = receipt.events.find((event: any) => event.event === "GasLeft");
+    const emittedGas = event.args.gas;
+
+    expect(emittedGas).to.be.greaterThan(BigNumber.from(0));
+  });
+
+  it("should emit tx.gasprice correctly with overridden gas price", async function () {
+    const customGasPrice = ethers.utils.parseUnits("5000", "gwei");
+    const tx = await contract.emitGasPrice({gasPrice: customGasPrice});
+    await expect(tx).to.emit(contract, "GasPrice").withArgs(customGasPrice);
   });
 });

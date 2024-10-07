@@ -4,6 +4,8 @@ pragma solidity ^0.8.0;
 contract BlockAndTransactionProperties {
   uint public receivedValue;
   event Received(address sender, uint amount, bytes data);
+  event GasLeft(uint256 gas);
+  event GasPrice(uint256 gasPrice);
 
   // Block Properties
   function getBlockHash(uint blockNumber) public view returns (bytes32) {
@@ -35,8 +37,8 @@ contract BlockAndTransactionProperties {
   }
 
   // Transaction Properties
-  function getGasLeft() public view returns (uint256) {
-    return gasleft();
+  function emitGasLeft() public {
+    emit GasLeft(gasleft());
   }
 
   function getMsgData() public pure returns (bytes calldata) {
@@ -60,8 +62,8 @@ contract BlockAndTransactionProperties {
     emit Received(msg.sender, msg.value, msg.data);
   }
 
-  function getTxGasPrice() public view returns (uint) {
-    return tx.gasprice;
+  function emitGasPrice() public {
+    emit GasPrice(tx.gasprice);
   }
 
   function getTxOrigin() public view returns (address) {
