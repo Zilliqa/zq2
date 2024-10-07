@@ -1254,6 +1254,7 @@ impl Consensus {
 
             // Skip transactions whose execution resulted in an error and drop them.
             let Some(result) = result else {
+                warn!("Dropping failed transaction: {:?}", tx.hash);
                 continue;
             };
 
@@ -1281,7 +1282,10 @@ impl Consensus {
                 tx_index_in_block,
                 self.config.consensus.eth_block_gas_limit - gas_left,
             );
+
             let receipt_hash = receipt.compute_hash();
+            debug!("During assembly in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", self.view.get_view(), tx.hash, receipt, receipt_hash);
+
             receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
             tx_index_in_block += 1;
@@ -2685,6 +2689,8 @@ impl Consensus {
             let receipt = Self::create_txn_receipt(result, tx_hash, tx_index, cumulative_gas_used);
 
             let receipt_hash = receipt.compute_hash();
+
+            debug!("During execution in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", self.view.get_view(), tx_hash, receipt, receipt_hash);
             receipts_trie
                 .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())
                 .unwrap();
@@ -2705,8 +2711,8 @@ impl Consensus {
         let receipts_root_hash: Hash = receipts_trie.root_hash()?.into();
         if block.header.receipts_root_hash != receipts_root_hash {
             warn!(
-                "Receipt root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
-                block.header.receipts_root_hash, receipts_root_hash, transaction_hashes
+                "Block number: {}, Receipt root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
+                block.number(), block.header.receipts_root_hash, receipts_root_hash, transaction_hashes
             );
             return Ok(());
         }
@@ -2714,8 +2720,8 @@ impl Consensus {
         let transactions_root_hash: Hash = transactions_trie.root_hash()?.into();
         if block.header.transactions_root_hash != transactions_root_hash {
             warn!(
-                "Transactions root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
-                block.header.transactions_root_hash, transactions_root_hash, transaction_hashes
+                "Block number: {}, Transactions root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
+                block.number(), block.header.transactions_root_hash, transactions_root_hash, transaction_hashes
             );
             return Ok(());
         }

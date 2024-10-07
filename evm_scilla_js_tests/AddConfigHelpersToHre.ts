@@ -1,10 +1,9 @@
 import {extendEnvironment} from "hardhat/config";
 import {HardhatRuntimeEnvironment} from "hardhat/types/runtime";
 import SingerPool from "./helpers/parallel-tests/SignerPool";
-import {Contract, Signer} from "ethers";
+import {Contract, ethers, Signer, Wallet} from "ethers";
 import {Contract as Web3Contract} from "web3-eth-contract";
-import {SignerWithAddress} from "@nomiclabs/hardhat-ethers/signers";
-import {TransactionRequest, TransactionResponse} from "@ethersproject/providers";
+import {JsonRpcProvider, TransactionRequest, TransactionResponse} from "@ethersproject/providers";
 import BN from "bn.js";
 import {ScillaContract, Setup} from "hardhat-scilla-plugin";
 import {Account} from "@zilliqa-js/zilliqa";
@@ -27,11 +26,11 @@ declare module "hardhat/types/runtime" {
     getProtocolVersion: () => number;
     getMiningState: () => boolean;
     getNetworkName: () => string;
-    getEthSignerForContractDeployment: () => Promise<SignerWithAddress>;
+    getEthSignerForContractDeployment: () => Promise<Wallet>;
     getZilSignerForContractDeployment: () => Account;
-    allocateEthSigner: () => SignerWithAddress;
+    allocateEthSigner: () => Wallet;
     allocateZilSigner: () => Account;
-    releaseEthSigner: (...signer: SignerWithAddress[]) => void;
+    releaseEthSigner: (...signer: Wallet[]) => void;
     releaseZilSigner: (...signer: Account[]) => void;
     sendEthTransaction: (txn: TransactionRequest) => Promise<{response: TransactionResponse; signer_address: string}>;
     deployScillaContract2: (name: string, ...args: any[]) => Promise<ScillaContract>;
@@ -87,11 +86,21 @@ extendEnvironment((hre: HardhatRuntimeEnvironment) => {
     return (hre as any).network.name;
   };
 
-  hre.getEthSignerForContractDeployment = async (): Promise<SignerWithAddress> => {
+  hre.getEthSignerForContractDeployment = async (): Promise<Wallet> => {
     if (hre.parallel) {
       return hre.signer_pool.takeEthSigner();
     } else {
-      return (await hre.ethers.getSigners())[0];
+      const privateKeys: string[] = hre.getPrivateKeys();
+      if (privateKeys.length === 0) {
+        throw new Error("Please specify at least one account in the config.");
+      }
+
+      const url = hre.getNetworkUrl();
+      const customProvider = new JsonRpcProvider(url);
+      customProvider.pollingInterval = 200;
+      const signer = new ethers.Wallet(privateKeys[0], customProvider);
+
+      return signer;
     }
   };
 
@@ -104,7 +113,7 @@ extendEnvironment((hre: HardhatRuntimeEnvironment) => {
   };
 
   /// If you call this function, consequently you must call `releaseEthSigner`, otherwise you'll run out of signers.
-  hre.allocateEthSigner = (): SignerWithAddress => {
+  hre.allocateEthSigner = (): Wallet => {
     return hre.signer_pool.takeEthSigner();
   };
 
@@ -113,7 +122,7 @@ extendEnvironment((hre: HardhatRuntimeEnvironment) => {
     return hre.signer_pool.takeZilSigner();
   };
 
-  hre.releaseEthSigner = (...signer: SignerWithAddress[]) => {
+  hre.releaseEthSigner = (...signer: Wallet[]) => {
     hre.signer_pool.releaseEthSigner(...signer);
   };
 
@@ -174,7 +183,6 @@ extendEnvironment((hre: HardhatRuntimeEnvironment) => {
       from: signerAddress,
       value
     });
-
 
     const gasLimit = options.gasLimit || estimatedGas;
 

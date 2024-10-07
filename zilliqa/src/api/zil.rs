@@ -7,11 +7,13 @@ use std::{
 };
 
 use alloy::{
+    consensus::SignableTransaction,
     eips::BlockId,
     primitives::{Address, B256},
 };
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 
@@ -20,8 +22,8 @@ use super::{
     types::zil::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, SWInfo, ShardingStructure,
-        SmartContract, TXBlockRateResult, TxBlockListing, TxBlockListingResult,
-        TxnsForTxBlockExResponse,
+        SmartContract, TXBlockRateResult, TransactionBody, TxBlockListing, TxBlockListingResult,
+        TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -76,6 +78,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 "GetTransactionsForTxBlockEx",
                 get_transactions_for_tx_block_ex
             ),
+            ("GetTxnBodiesForTxBlockEx", get_txn_bodies_for_tx_block_ex),
+            ("GetNumDSBlocks", get_num_ds_blocks),
         ],
     )
 }
@@ -766,4 +770,127 @@ fn get_transactions_for_tx_block_ex(
             .map(|h| B256::from(h).to_hex_no_prefix())
             .collect(),
     })
+}
+
+fn get_txn_bodies_for_tx_block_ex(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<TxnBodiesForTxBlockExResponse> {
+    let params: Vec<String> = params.parse()?;
+    let block_number: u64 = params[0].parse()?;
+    let page_number: usize = params[1].parse()?;
+
+    let node = node.lock().expect("Failed to acquire lock on node");
+    let block = node
+        .get_block(block_number)?
+        .ok_or_else(|| anyhow!("Block not found"))?;
+
+    let total_transactions = block.transactions.len();
+    let num_pages = (total_transactions / TRANSACTIONS_PER_PAGE)
+        + (if total_transactions % TRANSACTIONS_PER_PAGE != 0 {
+            1
+        } else {
+            0
+        });
+
+    // Ensure page is within bounds
+    if page_number >= num_pages {
+        return Ok(TxnBodiesForTxBlockExResponse {
+            curr_page: page_number as u64,
+            num_pages: num_pages as u64,
+            transactions: vec![],
+        });
+    }
+
+    let start = std::cmp::min(page_number * TRANSACTIONS_PER_PAGE, total_transactions);
+
+    let end = std::cmp::min(start + TRANSACTIONS_PER_PAGE, total_transactions);
+
+    let mut transactions = Vec::with_capacity(end - start);
+    for hash in &block.transactions[start..end] {
+        let tx = node
+            .get_transaction_by_hash(*hash)?
+            .ok_or(anyhow!("Transaction hash missing"))?;
+        let nonce = tx.tx.nonce().unwrap_or_default();
+        let amount = tx.tx.zil_amount();
+        let gas_price = tx.tx.gas_price_per_scilla_gas();
+        let gas_limit = tx.tx.gas_limit_scilla();
+        let receipt = node
+            .get_transaction_receipt(*hash)?
+            .ok_or(anyhow!("Transaction receipt missing"))?;
+        let (version, to_addr, sender_pub_key, signature, _code, _data) = match tx.tx {
+            SignedTransaction::Zilliqa { tx, sig, key } => (
+                ((tx.chain_id as u32) << 16) | 1,
+                tx.to_addr,
+                key.to_encoded_point(true).as_bytes().to_hex(),
+                <[u8; 64]>::from(sig.to_bytes()).to_hex(),
+                (!tx.code.is_empty()).then_some(tx.code),
+                (!tx.data.is_empty()).then_some(tx.data),
+            ),
+            SignedTransaction::Legacy { tx, sig } => (
+                ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Eip2930 { tx, sig } => (
+                ((tx.chain_id as u32) << 16) | 3,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Eip1559 { tx, sig } => (
+                ((tx.chain_id as u32) << 16) | 4,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Intershard { tx, .. } => (
+                ((tx.chain_id as u32) << 16) | 20,
+                tx.to_addr.unwrap_or_default(),
+                String::new(),
+                String::new(),
+                tx.to_addr.is_none().then(|| hex::encode(&tx.payload)),
+                tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
+            ),
+        };
+        let body = TransactionBody {
+            id: tx.hash.to_string(),
+            amount: amount.to_string(),
+            gas_limit: gas_limit.to_string(),
+            gas_price: gas_price.to_string(),
+            nonce: nonce.to_string(),
+            receipt,
+            sender_pub_key,
+            signature,
+            to_addr: to_addr.to_string(),
+            version: version.to_string(),
+        };
+        transactions.push(body);
+    }
+
+    Ok(TxnBodiesForTxBlockExResponse {
+        curr_page: page_number as u64,
+        num_pages: num_pages as u64,
+        transactions,
+    })
+}
+
+fn get_num_ds_blocks(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+    let num_tx_blocks = node.get_chain_tip();
+    let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
+    Ok(num_ds_blocks.to_string())
 }
