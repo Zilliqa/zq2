@@ -27,14 +27,6 @@ describe("Block Properties", function () {
     expect(contractBlockTimestamp).to.equal(currentBlock.timestamp);
   });
 
-  xit("should return the correct block hash", async function () {
-    const currentBlockNumber = await ethers.provider.getBlockNumber();
-    const contractBlockHash = await contract.getBlockHash(currentBlockNumber);
-    const currentBlock = await ethers.provider.getBlock(currentBlockNumber);
-
-    expect(contractBlockHash).to.equal(currentBlock.hash);
-  });
-
   it("should return the correct base fee", async function () {
     const contractBaseFee = await contract.getBaseFee();
 
