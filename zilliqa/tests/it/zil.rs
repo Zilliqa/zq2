@@ -1083,3 +1083,83 @@ async fn get_num_ds_blocks(mut network: Network) {
         response
     );
 }
+
+#[zilliqa_macros::test]
+async fn get_recent_transactions_0(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetRecentTransactions", [""])
+        .await
+        .expect("Failed to call GetRecentTransactions API");
+
+    let recent_transactions =
+        zilliqa::api::types::zil::RecentTransactionsResponse::deserialize(&response)
+            .expect("Failed to deserialize response");
+
+    assert_eq!(
+        recent_transactions.number as usize,
+        recent_transactions.txn_hashes.len()
+    );
+    assert!(recent_transactions.number < 100);
+}
+
+#[zilliqa_macros::test]
+async fn get_recent_transactions_1(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        to_addr,
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    network.run_until_block(&wallet, 1.into(), 50).await;
+
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        to_addr,
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    network.run_until_block(&wallet, 2.into(), 50).await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetRecentTransactions", [""])
+        .await
+        .expect("Failed to call GetRecentTransactions API");
+
+    let recent_transactions =
+        zilliqa::api::types::zil::RecentTransactionsResponse::deserialize(&response)
+            .expect("Failed to deserialize response");
+
+    assert_eq!(
+        recent_transactions.number as usize,
+        recent_transactions.txn_hashes.len()
+    );
+    assert_eq!(recent_transactions.number, 4);
+}

@@ -21,9 +21,10 @@ use super::{
     to_hex::ToHex,
     types::zil::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
-        DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, SWInfo, ShardingStructure,
-        SmartContract, TXBlockRateResult, TransactionBody, TxBlockListing, TxBlockListingResult,
-        TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
+        DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, RecentTransactionsResponse,
+        SWInfo, ShardingStructure, SmartContract, TXBlockRateResult, TransactionBody,
+        TxBlockListing, TxBlockListingResult, TxnBodiesForTxBlockExResponse,
+        TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -80,6 +81,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ),
             ("GetTxnBodiesForTxBlockEx", get_txn_bodies_for_tx_block_ex),
             ("GetNumDSBlocks", get_num_ds_blocks),
+            ("GetRecentTransactions", get_recent_transactions),
         ],
     )
 }
@@ -893,4 +895,35 @@ fn get_num_ds_blocks(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String>
     let num_tx_blocks = node.get_chain_tip();
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
     Ok(num_ds_blocks.to_string())
+}
+
+fn get_recent_transactions(
+    _params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<RecentTransactionsResponse> {
+    let node = node.lock().unwrap();
+    let mut block_number = node.get_chain_tip();
+    let mut txns = Vec::new();
+    while block_number > 0 && txns.len() < 100 {
+        let block = match node
+            .consensus
+            .block_store
+            .get_block_by_number(block_number)?
+        {
+            Some(block) => block,
+            None => continue,
+        };
+        for txn in block.transactions {
+            txns.push(txn.to_string());
+            if txns.len() >= 100 {
+                break;
+            }
+        }
+        block_number -= 1;
+    }
+
+    Ok(RecentTransactionsResponse {
+        number: txns.len() as u64,
+        txn_hashes: txns,
+    })
 }
