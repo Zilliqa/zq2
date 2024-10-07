@@ -24,8 +24,7 @@ use uccb::{
 };
 use zilliqa::{contracts, crypto::SecretKey, state::contract_addr};
 
-const VALIDATOR_MANAGER_ABI_JSON: &str =
-    include_str!("../../contracts/out/ValidatorManager.sol/ValidatorManager.json");
+const VALIDATOR_MANAGER_ABI_JSON: &str = include_str!("../../contracts/compiled.json");
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -73,7 +72,8 @@ impl ValidatorOracle {
             chain_clients,
             // See above comment regarding ethabi::Contract -> alloy::json_abi::JsonAbi.
             validator_manager_abi: serde_json::from_value(
-                serde_json::from_str::<serde_json::Value>(VALIDATOR_MANAGER_ABI_JSON)?["abi"]
+                serde_json::from_str::<serde_json::Value>(VALIDATOR_MANAGER_ABI_JSON)?["contracts"]
+                    ["contracts/src/ValidatorManager.sol"]["ValidatorManager"]["abi"]
                     .clone(),
             )?,
             deposit_contract,
