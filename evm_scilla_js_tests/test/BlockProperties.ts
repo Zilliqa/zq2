@@ -29,8 +29,8 @@ describe("Block Properties", function () {
 
   xit("should return the correct block hash", async function () {
     const currentBlockNumber = await ethers.provider.getBlockNumber();
-    const contractBlockHash = await contract.getBlockHash(currentBlockNumber - 1);
-    const currentBlock = await ethers.provider.getBlock(currentBlockNumber - 1);
+    const contractBlockHash = await contract.getBlockHash(currentBlockNumber);
+    const currentBlock = await ethers.provider.getBlock(currentBlockNumber);
 
     expect(contractBlockHash).to.equal(currentBlock.hash);
   });
