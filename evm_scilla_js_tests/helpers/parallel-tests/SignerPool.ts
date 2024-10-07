@@ -25,6 +25,7 @@ export default class SignerPool {
   }
 
   public initSigners(hre: HardhatRuntimeEnvironment, privateKeys: string[]) {
+    // FIXME: Creating a custom prover is not needed in the new versions of hardhat/ethers.js
     const url = hre.getNetworkUrl();
     const customProvider = new JsonRpcProvider(url);
     customProvider.pollingInterval = 200;
