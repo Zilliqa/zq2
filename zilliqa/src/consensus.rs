@@ -1052,7 +1052,7 @@ impl Consensus {
                         .empty_block_timeout
                         .saturating_sub(Duration::from_millis(time_since_last_view_change)),
                 )?;
-                trace!("Empty transaction pool, will create new block on timeout");
+                trace!("will propose new block {} on timeout", self.view.get_view());
             }
         } else {
             self.votes.insert(
@@ -1061,7 +1061,7 @@ impl Consensus {
             );
         }
 
-        // Either way assemble early proposal
+        // Either way assemble early proposal now
         self.assemble_early_block()?;
 
         Ok(None)
@@ -1466,10 +1466,19 @@ impl Consensus {
         Ok(Some((final_block, applied_txs)))
     }
 
+    /// Insert transaction and add to early_proposal if possible. Return true if transaction was new.
+    pub fn handle_new_transaction(&mut self, txn: SignedTransaction) -> Result<bool> {
+        let inserted = self.new_transaction(txn.verify()?)?;
+        if inserted && self.create_next_block_on_timeout {
+            self.assemble_early_block()?;
+        }
+        Ok(inserted)
+    }
+
     /// Assembles the Proposal block, but with a dummy QC.
     pub fn assemble_early_block(&mut self) -> Result<()> {
-        // Rebuild early block if it doesnt exist or if proposal has been postponed and there are transactions in the mempool
-        if self.early_proposal.is_none() || (self.create_next_block_on_timeout && self.transaction_pool.has_txn_ready()) {
+        // Rebuild early block if it doesn't exist or if there are transactions in the mempool
+        if self.early_proposal.is_none() || self.transaction_pool.has_txn_ready() {
             info!("assemble early proposal {}", self.view.get_view());
             let mut state = self.state.clone();
             self.early_proposal = self.assemble_early_block_at(&mut state)?;

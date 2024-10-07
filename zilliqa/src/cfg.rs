@@ -210,7 +210,8 @@ pub struct ConsensusConfig {
     /// Minimum time to wait for consensus to propose new block if there are no transactions.
     #[serde(default = "empty_block_timeout_default")]
     pub empty_block_timeout: Duration,
-    /// Minimum remaining time allowing to wait for empty block proposal
+    /// Minimum remaining time before end of round in which Proposer has the opportunity to broadcast empty block proposal. 
+    /// If there is less time than this value left in a round then the view will likely move on before a proposal can be finalised.
     #[serde(default = "minimum_time_left_for_empty_block_default")]
     pub minimum_time_left_for_empty_block: Duration,
     /// Address of the Scilla server. Defaults to "http://localhost:3000".

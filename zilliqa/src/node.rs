@@ -201,10 +201,7 @@ impl Node {
                 self.handle_proposal(from, m)?;
             }
             ExternalMessage::NewTransaction(t) => {
-                let inserted = self.consensus.new_transaction(t.verify()?)?;
-                if inserted {
-                    self.consensus.assemble_early_block()?;
-                }
+                self.consensus.handle_new_transaction(t)?;
             }
             _ => {
                 warn!("unexpected message type");
@@ -379,7 +376,7 @@ impl Node {
 
         info!(?hash, "seen new txn {:?}", txn);
 
-        if self.consensus.new_transaction(txn.clone().verify()?)? {
+        if self.consensus.handle_new_transaction(txn.clone())? {
             self.message_sender
                 .broadcast_external_message(ExternalMessage::NewTransaction(txn))?;
         }
