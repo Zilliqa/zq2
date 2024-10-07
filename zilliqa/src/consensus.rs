@@ -2635,10 +2635,11 @@ impl Consensus {
         for (idx, tx_hash) in block.transactions.iter().enumerate() {
             // Prefer to insert verified txn from pool. This is faster.
             let txn = match self.transaction_pool.pop_transaction(*tx_hash) {
-                Some(txn) if txn.hash == *tx_hash => txn,
+                Some(txn) => txn,
                 _ => match transactions
                     .get(idx)
-                    .and_then(|sig_tx| sig_tx.clone().verify().ok())
+                    .map(|sig_tx| sig_tx.clone().verify())
+                    .transpose()?
                 {
                     // Otherwise, recover txn from proposal. This is slower.
                     Some(txn) if txn.hash == *tx_hash => txn,
@@ -2648,7 +2649,7 @@ impl Consensus {
                     }
                 },
             };
-            verified_txns.insert(idx, txn);
+            verified_txns.push(txn);
         }
 
         let transaction_hashes = verified_txns
