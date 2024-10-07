@@ -18,25 +18,28 @@ describe("Transaction Properties", function () {
     expect(await contract.getTxOrigin()).to.be.eq(await owner.getAddress());
   });
 
-  it("should return the correct msg sender", async function () {
+  it("should return the correct msg.sender", async function () {
     const [_owner, sender] = await ethers.getSigners();
     const contractMsgSender = await contract.connect(sender).getMsgSender();
 
     expect(contractMsgSender).to.equal(sender.address);
   });
 
-  it("should return the correct msg sig", async function () {
+  it("should return the correct msg.sig", async function () {
     const contractMsgSig = await contract.getMsgSig();
     const expectedMsgSig = contract.interface.getSighash("getMsgSig()");
 
     expect(contractMsgSig).to.equal(expectedMsgSig);
   });
 
-  xit("should return the correct msg value", async function () {
+  it("should return the correct msg.value and msg.data", async function () {
+    const iface = (await hre.ethers.getContractFactory("BlockAndTransactionProperties")).interface;
+    const emittedData = iface.getSighash("receiveEther");
     const sendValue = ethers.utils.parseEther("0.001");
-    await contract.getMsgValue({value: sendValue});
 
-    expect(await contract.receivedValue()).to.equal(sendValue);
+    const [owner] = await ethers.getSigners();
+    const tx = await contract.receiveEther({value: sendValue});
+    await expect(tx).to.emit(contract, "Received").withArgs(owner.address, sendValue, emittedData);
   });
 
   xit("should return the correct tx gas price", async function () {
