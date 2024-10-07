@@ -5,10 +5,12 @@ task("test")
   .addFlag("logJsonrpc", "Log JSON RPC ")
   .addFlag("logTxnid", "Log JSON RPC ")
   .setAction(async (taskArgs, hre, runSuper): Promise<any> => {
-    console.log(clc.yellow(`⚠️  Your ${clc.bold("Eth/Zil")} accounts supposed to have funds to run tests successfully.`));
+    console.log(
+      clc.yellow(`⚠️  Your ${clc.bold("Eth/Zil")} accounts supposed to have funds to run tests successfully.`)
+    );
     let signers = await hre.ethers.getSigners();
-    const private_keys: string[] = hre.network["config"]["accounts"] as string[];
-    hre.signer_pool.initSigners(signers, private_keys);
+    const private_keys: string[] = hre.getPrivateKeys();
+    hre.signer_pool.initSigners(hre, private_keys);
     let balances = await Promise.all(signers.map((signer) => signer.getBalance()));
 
     if (taskArgs.logJsonrpc || taskArgs.logTxnid) {
