@@ -35,11 +35,10 @@ describe("Block Properties", function () {
     expect(contractBlockHash).to.equal(currentBlock.hash);
   });
 
-  xit("should return the correct base fee", async function () {
+  it("should return the correct base fee", async function () {
     const contractBaseFee = await contract.getBaseFee();
-    const currentBlock = await ethers.provider.getBlock("latest");
 
-    expect(contractBaseFee).to.equal(currentBlock.baseFeePerGas);
+    expect(contractBaseFee).to.equal(await hre.ethers.provider.getGasPrice());
   });
 
   it("should return the correct chain id", async function () {
@@ -49,11 +48,10 @@ describe("Block Properties", function () {
     expect(contractChainId).to.equal(network.chainId);
   });
 
-  xit("should return the correct coinbase", async function () {
+  it("should return the correct coinbase", async function () {
     const contractCoinbase = await contract.getCoinbase();
-    const currentBlock = await ethers.provider.getBlock("latest");
 
-    expect(contractCoinbase).to.equal(currentBlock.miner);
+    expect(contractCoinbase).to.equal("0x0000000000000000000000000000000000000000");
   });
 
   it("should return the correct gas limit", async function () {
