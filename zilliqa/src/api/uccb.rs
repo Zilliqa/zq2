@@ -1,7 +1,9 @@
-use crate::node::Node;
+use std::sync::{Arc, Mutex};
+
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
-use std::sync::{Arc, Mutex};
+
+use crate::node::Node;
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     let module = super::declare_module!(
