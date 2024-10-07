@@ -62,4 +62,14 @@ describe("Block Properties", function () {
 
     expect(contractGasLimit).to.equal(currentBlock.gasLimit);
   });
+
+  it("should emit blockhash correctly", async function () {
+    const currentBlockNumber = await ethers.provider.getBlockNumber();
+
+    // Call emitBlockHash with the current block number
+    const tx = await contract.emitBlockHash(currentBlockNumber);
+    const actualBlockHash = (await ethers.provider.getBlock(currentBlockNumber)).hash;
+
+    await expect(tx).to.emit(contract, "BlockHash").withArgs(actualBlockHash);
+  });
 });

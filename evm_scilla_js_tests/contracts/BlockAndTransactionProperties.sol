@@ -6,6 +6,7 @@ contract BlockAndTransactionProperties {
   event Received(address sender, uint amount, bytes data);
   event GasLeft(uint256 gas);
   event GasPrice(uint256 gasPrice);
+  event BlockHash(bytes32 blockHash);
 
   // Block Properties
   function getBlockHash(uint blockNumber) public view returns (bytes32) {
@@ -34,6 +35,10 @@ contract BlockAndTransactionProperties {
 
   function getTimestamp() public view returns (uint) {
     return block.timestamp;
+  }
+
+  function emitBlockHash(uint256 blockNumber) public {
+    emit BlockHash(blockhash(blockNumber));
   }
 
   // Transaction Properties
