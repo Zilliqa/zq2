@@ -15,8 +15,11 @@ Commands:
   new                   Generate the deployer config file
   install               Install the network defined in the deployer config file
   upgrade               Update the network defined in the deployer config file
+  get-config-file       Generate in output the validator config file to join the network
   get-deposit-commands  Generate in output the commands to deposit stake amount to all the validators
   deposit               Deposit the stake amounts to all the validators
+  rpc                   Run RPC calls over the internal network nodes
+  restore               Restore a node using another node's data dir
   help                  Print this message or the help of the given subcommand(s)
 
 Options:
@@ -179,10 +182,11 @@ Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
-      --select      Enable nodes selection
-  -v, --verbose...  Increase logging verbosity
-  -q, --quiet...    Decrease logging verbosity
-  -h, --help        Print help
+      --select                       Enable nodes selection
+      --max-parallel <MAX_PARALLEL>  Define the number of nodes to process in parallel. Default: 1
+  -v, --verbose...                   Increase logging verbosity
+  -q, --quiet...                     Decrease logging verbosity
+  -h, --help                         Print help
 ```
 
 ### Usage example
@@ -228,10 +232,11 @@ Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
-      --select      Enable nodes selection
-  -v, --verbose...  Increase logging verbosity
-  -q, --quiet...    Decrease logging verbosity
-  -h, --help        Print help
+      --select                       Enable nodes selection
+      --max-parallel <MAX_PARALLEL>  Define the number of nodes to process in parallel. Default: 50
+  -v, --verbose...                   Increase logging verbosity
+  -q, --quiet...                     Decrease logging verbosity
+  -h, --help                         Print help
 ```
 
 > Same as `upgrade` subcommand, but skipping the check if the nodes are receiving new blocks
@@ -323,11 +328,12 @@ Arguments:
   <CONFIG_FILE>  The network deployer config file
 
 Options:
-  -m, --method <METHOD>  Method to run
-  -p, --params <PARAMS>  List of parameters for the method. ie "["string_value", true]"
-  -v, --verbose...       Increase logging verbosity
-  -q, --quiet...         Decrease logging verbosity
-  -h, --help             Print help
+      --timeout <TIMEOUT>  Specifies the maximum time (in seconds) allowed for the entire request. Default: 30
+  -m, --method <METHOD>    Method to run
+  -p, --params <PARAMS>    List of parameters for the method. ie "["string_value", true]"
+  -v, --verbose...         Increase logging verbosity
+  -q, --quiet...           Decrease logging verbosity
+  -h, --help               Print help
 ```
 
 ### Usage example
@@ -343,4 +349,125 @@ Configuration file: zq2-prototestnet.yaml
 
 ```bash
 z2 deployer rpc -m eth_blockNumber zq2-prototestnet.yaml
+```
+
+## Generate in output the config file to join the network
+
+```bash
+z2 deployer get-config-file --help
+```
+
+```bash
+Generate in output the validator config file to join the network
+
+Usage: z2 deployer get-config-file [OPTIONS] [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]
+          The network deployer config file
+
+Options:
+      --role <ROLE>
+          Node role. Default: validator
+
+          Possible values:
+          - bootstrap:  Virtual machine bootstrap
+          - validator:  Virtual machine validator
+          - api:        Virtual machine api
+          - apps:       Virtual machine apps
+          - checkpoint: Virtual machine checkpoint
+          - sentry:     Virtual machine sentry
+
+  -v, --verbose...
+          Increase logging verbosity
+
+  -q, --quiet...
+          Decrease logging verbosity
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+### Usage example
+
+#### Scenario
+
+Get the config file for a node role `api` in the `zq2-prototestnet` nodes
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer get-config-file --role api zq2-prototestnet.yaml
+```
+
+## Backup locally a node's data dir
+
+```bash
+z2 deployer backup --help
+```
+
+```bash
+Backup locally a node data dir
+
+Usage: z2 deployer backup [OPTIONS] --file <FILE> [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  The network deployer config file
+
+Options:
+  -f, --file <FILE>  The path of the backup file
+  -v, --verbose...   Increase logging verbosity
+  -q, --quiet...     Decrease logging verbosity
+  -h, --help         Print help
+```
+
+### Usage example
+
+#### Scenario
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer backup --file /tmp/data.zip zq2-prototestnet.yaml
+```
+
+## Restore a node's data dir from a local backup
+
+```bash
+z2 deployer restore --help
+```
+
+```bash
+Restore a node data dir from a local backup
+
+Usage: z2 deployer restore [OPTIONS] --file <FILE> [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  The network deployer config file
+
+Options:
+  -f, --file <FILE>                  The path of the backup file
+      --max-parallel <MAX_PARALLEL>  Define the number of nodes to process in parallel. Default: 50
+  -v, --verbose...                   Increase logging verbosity
+  -q, --quiet...                     Decrease logging verbosity
+  -h, --help                         Print help
+```
+
+### Usage example
+
+#### Scenario
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer restore --file /tmp/data.zip zq2-prototestnet.yaml
 ```
