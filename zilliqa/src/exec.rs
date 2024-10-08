@@ -30,7 +30,7 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    cfg::{ScillaExtLibsPath, ScillaExtLibsPathInScilla},
+    cfg::{ScillaExtLibsPath, ScillaExtLibsPathInScilla, ScillaExtLibsPathInZq2},
     contracts,
     crypto::{Hash, NodePublicKey, NodePublicKeyRaw},
     db::TrieStorage,
@@ -1333,7 +1333,7 @@ fn store_external_libraries(
     state: &State,
     scilla_ext_libs_path: &ScillaExtLibsPath,
     ext_libraries: Vec<ExternalLibrary>,
-) -> Result<ScillaExtLibsPathInScilla> {
+) -> Result<(ScillaExtLibsPathInZq2, ScillaExtLibsPathInScilla)> {
     let (ext_libs_dir_in_zq2, ext_libs_dir_in_scilla) =
         scilla_ext_libs_path.generate_random_subdirs();
 
@@ -1367,7 +1367,7 @@ fn store_external_libraries(
             }
         }
     }
-    Ok(ext_libs_dir_in_scilla)
+    Ok((ext_libs_dir_in_zq2, ext_libs_dir_in_scilla))
 }
 
 fn scilla_create(
@@ -1428,30 +1428,37 @@ fn scilla_create(
     let init_data = ContractInit::new(init_data)?;
 
     // We need to store external libraries used in the current contract. Scilla checker needs to import them to check the contract.
-    let ext_libs_dir = store_external_libraries(
+    let (ext_libs_dir_in_zq2, ext_libs_dir_in_scilla) = store_external_libraries(
         &state.pre_state,
         scilla_ext_libs_path,
         init_data.external_libraries()?,
     )?;
-    let check_output = match scilla.check_contract(&txn.code, gas, &init_data, &ext_libs_dir)? {
-        Ok(o) => o,
-        Err(e) => {
-            warn!(?e, "transaction failed");
-            return Ok((
-                ScillaResult {
-                    success: false,
-                    contract_address: Some(contract_address),
-                    logs: vec![],
-                    gas_used: (txn.gas_limit - gas).into(),
-                    transitions: vec![],
-                    accepted: Some(false),
-                    errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
-                    exceptions: e.errors.into_iter().map(Into::into).collect(),
-                },
-                state,
-            ));
-        }
-    };
+
+    let _cleanup_ext_libs_guard = scopeguard::guard((), |_| {
+        // We need to ensure that in any case, the external libs directory will be removed.
+        let _ = std::fs::remove_dir_all(ext_libs_dir_in_zq2.0);
+    });
+
+    let check_output =
+        match scilla.check_contract(&txn.code, gas, &init_data, &ext_libs_dir_in_scilla)? {
+            Ok(o) => o,
+            Err(e) => {
+                warn!(?e, "transaction failed");
+                return Ok((
+                    ScillaResult {
+                        success: false,
+                        contract_address: Some(contract_address),
+                        logs: vec![],
+                        gas_used: (txn.gas_limit - gas).into(),
+                        transitions: vec![],
+                        accepted: Some(false),
+                        errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
+                        exceptions: e.errors.into_iter().map(Into::into).collect(),
+                    },
+                    state,
+                ));
+            }
+        };
 
     info!(?check_output);
 
@@ -1500,7 +1507,7 @@ fn scilla_create(
         gas,
         txn.amount,
         &init_data,
-        &ext_libs_dir,
+        &ext_libs_dir_in_scilla,
     )?;
     let create_output = match create_output {
         Ok(o) => o,
@@ -1635,11 +1642,15 @@ pub fn scilla_call(
             let contract_balance = contract.account.balance;
 
             // We need to store external libraries used in the current contract. Scilla needs to import them to run the transition.
-            let ext_libs_dir = store_external_libraries(
+            let (ext_libs_dir_in_zq2, ext_libs_dir_in_scilla) = store_external_libraries(
                 &current_state.pre_state,
                 scilla_ext_libs_path,
                 contract_init.external_libraries()?,
             )?;
+            let _cleanup_ext_libs_guard = scopeguard::guard((), |_| {
+                // We need to ensure that in any case, the external libs directory will be removed.
+                let _ = std::fs::remove_dir_all(ext_libs_dir_in_zq2.0);
+            });
             let (output, mut new_state) = scilla.invoke_contract(
                 current_state,
                 to_addr,
@@ -1650,7 +1661,7 @@ pub fn scilla_call(
                 message
                     .as_ref()
                     .ok_or_else(|| anyhow!("call to a Scilla contract without a message"))?,
-                &ext_libs_dir,
+                &ext_libs_dir_in_scilla,
             )?;
             inspector.call(sender, to_addr, amount.get(), depth);
 
