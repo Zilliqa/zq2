@@ -4,6 +4,7 @@
 
 Unreleased changes, in reverse chronological order. New entries are added at the top of this list.
 
+- [#1532](https://github.com/Zilliqa/zq2/pull/1532): Return `0x` from `eth_getCode` for EOAs.
 - [#1567](https://github.com/Zilliqa/zq2/pull/1567): Add `GetNumDSBlocks` API.
 - [#1557](https://github.com/Zilliqa/zq2/pull/1557): Add `GetTxnBodiesForTxBlockEx` API.
 - [#1534](https://github.com/Zilliqa/zq2/pull/1534): Accept `input` or `data` for transaction request payloads.
