@@ -44,6 +44,10 @@ mod time_impl {
                 .duration_since(other.0)
                 .map_err(|e| SystemTimeError(e.duration()))
         }
+
+        pub fn checked_sub(&self, duration: Duration) -> Option<Self> {
+            self.0.checked_sub(duration).map(Self)
+        }
     }
 
     impl Add<Duration> for SystemTime {
