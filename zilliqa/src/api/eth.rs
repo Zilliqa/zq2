@@ -255,7 +255,7 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     // do it this way so the compiler will tell us when another option inevitably
     // turns up and we have to deal with it ..
     let return_code = if code.is_eoa() {
-        hex::encode(vec![])
+        vec![].to_hex()
     } else {
         match code {
             Code::Evm(val) => val.to_hex(),
