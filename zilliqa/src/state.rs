@@ -122,9 +122,14 @@ impl State {
                 .fold(0, |acc, item: &(Address, Amount)| acc + item.1 .0))
             - (config.consensus.genesis_deposits.iter().fold(
                 0,
-                |acc, item: &(crypto::NodePublicKey, libp2p::PeerId, Amount, Address)| {
-                    acc + item.2 .0
-                },
+                |acc,
+                 item: &(
+                    crypto::NodePublicKey,
+                    libp2p::PeerId,
+                    Amount,
+                    Address,
+                    Address,
+                )| { acc + item.2 .0 },
             ));
         state.mutate_account(Address::ZERO, |a| {
             a.balance = zero_account_balance;
@@ -148,11 +153,14 @@ impl State {
 
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
 
-        for (pub_key, peer_id, stake, reward_address) in config.consensus.genesis_deposits {
+        for (pub_key, peer_id, stake, reward_address, signer_address) in
+            config.consensus.genesis_deposits
+        {
             let data = contracts::deposit::SET_STAKE.encode_input(&[
                 Token::Bytes(pub_key.as_bytes()),
                 Token::Bytes(peer_id.to_bytes()),
                 Token::Address(ethabi::Address::from(reward_address.into_array())),
+                Token::Address(ethabi::Address::from(signer_address.into_array())),
                 Token::Uint((*stake).into()),
             ])?;
             let (
