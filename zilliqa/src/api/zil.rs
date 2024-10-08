@@ -79,6 +79,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 get_transactions_for_tx_block_ex
             ),
             ("GetTxnBodiesForTxBlockEx", get_txn_bodies_for_tx_block_ex),
+            ("GetNumDSBlocks", get_num_ds_blocks),
         ],
     )
 }
@@ -888,4 +889,11 @@ fn get_txn_bodies_for_tx_block_ex(
         num_pages: num_pages as u64,
         transactions,
     })
+}
+
+fn get_num_ds_blocks(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+    let num_tx_blocks = node.get_chain_tip();
+    let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
+    Ok(num_ds_blocks.to_string())
 }
