@@ -3,7 +3,7 @@ use std::{
     fmt::Debug,
     fs::{self, File},
     io::{BufRead, BufReader, BufWriter, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -28,6 +28,7 @@ use crate::{
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt},
 };
+use std::ops::Range;
 
 macro_rules! sqlify_with_bincode {
     ($type: ty) => {
@@ -467,6 +468,16 @@ impl Db {
             .optional()?)
     }
 
+    pub fn get_highest_block_hashes(&self, how_many: usize) -> Result<Vec<Hash>> {
+        Ok(self
+            .block_store
+            .lock()
+           .unwrap()
+           .prepare_cached(
+               "select block_hash from blocks where height in (select height from main_chain_canonical_blocks ORDER BY height DESC LIMIT ?1)")?
+           .query_map([how_many], |row| row.get(0))?.collect::<Result<Vec<Hash>, _>>()?)
+    }
+
     pub fn set_high_qc_with_db_tx(
         &self,
         sqlite_tx: &Connection,
@@ -683,8 +694,8 @@ impl Db {
         Ok(Some(block))
     }
 
-    pub fn get_block_by_hash(&self, block_hash: Hash) -> Result<Option<Block>> {
-        self.get_block(BlockFilter::Hash(block_hash))
+    pub fn get_block_by_hash(&self, block_hash: &Hash) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::Hash(*block_hash))
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
@@ -707,6 +718,16 @@ impl Db {
             )
             .optional()?
             .is_some())
+    }
+
+    fn make_view_range(row: &Row) -> rusqlite::Result<Range<u64>> {
+        // Add one to end because the range returned from SQL is inclusive.
+        let start: u64 = row.get(0)?;
+        let end_inc: u64 = row.get(1)?;
+        Ok(Range {
+            start,
+            end: end_inc + 1,
+        })
     }
 
     fn make_receipt(row: &Row) -> rusqlite::Result<TransactionReceipt> {
@@ -784,6 +805,54 @@ impl Db {
                 .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))?;
         Ok(count)
     }
+
+    /// Retrieve a list of the views in our db.
+    /// This is a bit horrific. What we actually do here is to find the view lower and upper bounds for the contiguous block ranges in the database.
+    /// See block_store.rs::availability() for details.
+    pub fn get_view_ranges(&self) -> Result<Vec<Range<u64>>> {
+        // The island field is technically redundant, but it helps with debugging.
+        Ok(self.block_store.lock().unwrap()
+            .prepare_cached("SELECT MIN(vlb), MAX(vub), MIN(height),MAX(height),height-rank AS island FROM ( SELECT height,vlb,vub,ROW_NUMBER() OVER (ORDER BY height) AS rank FROM
+ (SELECT height,MIN(view) as vlb, MAX(view) as vub from blocks GROUP BY height ) )  GROUP BY island ORDER BY MIN(height) ASC")?
+           .query_map([], Self::make_view_range)?.collect::<Result<Vec<_>,_>>()?)
+    }
+
+    /// Forget about a range of blocks; this saves space, but also allows us to test our block fetch algorithm.
+    /// If canonical is true, we'll forget the canonical block mappings for this range too - uses less space, but not so good for security.
+    pub fn forget_block_range(&self, blocks: Range<u64>) -> Result<()> {
+        self.with_sqlite_tx(move |tx| {
+            // Remove everything!
+            tx.execute("DELETE FROM tip_info WHERE latest_finalized_view IN (SELECT view FROM blocks WHERE height >= :low AND height < :high)",
+                       named_params! {
+                           ":low" : blocks.start,
+                           ":high" : blocks.end } )?;
+            // @TODO can't yet remove transactions - we don't know the hashes.
+            tx.execute("DELETE FROM receipts WHERE block_hash IN (SELECT block_hash FROM main_chain_canonical_blocks WHERE height >= :low AND height < :high)",
+                       named_params! {
+                           ":low": blocks.start,
+                           ":high": blocks.end })?;
+            tx.execute(
+                "DELETE FROM main_chain_canonical_blocks WHERE height >= :low AND height < :high",
+                named_params! {
+                    ":low": blocks.start,
+                    ":high": blocks.end },
+            )?;
+            tx.execute(
+                "DELETE FROM blocks WHERE height >= :low AND height < :high",
+                named_params! {
+                ":low": blocks.start,
+                ":high" : blocks.end },
+            )?;
+            Ok(())
+        })
+    }
+}
+
+pub fn get_checkpoint_filename<P: AsRef<Path> + Debug>(
+    output_dir: P,
+    block: &Block,
+) -> Result<PathBuf> {
+    Ok(output_dir.as_ref().join(block.number().to_string()))
 }
 
 pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
@@ -807,7 +876,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     }
 
     // Note: we ignore any existing file
-    let output_filename = output_dir.as_ref().join(block.number().to_string());
+    let output_filename = get_checkpoint_filename(output_dir, block)?;
     let temp_filename = output_filename.with_extension("part");
     let outfile_temp = File::create_new(&temp_filename)?;
     let mut writer = BufWriter::with_capacity(8192 * 1024, outfile_temp); // 8 MiB chunks
