@@ -904,7 +904,8 @@ fn get_recent_transactions(
     let node = node.lock().unwrap();
     let mut block_number = node.get_chain_tip();
     let mut txns = Vec::new();
-    while block_number > 0 && txns.len() < 100 {
+    let mut blocks_searched = 0;
+    while block_number > 0 && txns.len() < 100 && blocks_searched < 100 {
         let block = match node
             .consensus
             .block_store
@@ -920,6 +921,7 @@ fn get_recent_transactions(
             }
         }
         block_number -= 1;
+        blocks_searched += 1;
     }
 
     Ok(RecentTransactionsResponse {
