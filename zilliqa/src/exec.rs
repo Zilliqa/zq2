@@ -30,6 +30,7 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
+    cfg::ScillaExtLibsPathInZq2,
     contracts,
     crypto::{Hash, NodePublicKey, NodePublicKeyRaw},
     db::TrieStorage,
@@ -530,7 +531,7 @@ impl State {
                 txn,
                 current_block,
                 inspector,
-                &self.scilla_ext_libs_cache_folder.on_host,
+                &self.scilla_ext_libs_path.zq2,
             )
         } else {
             scilla_call(
@@ -1329,10 +1330,10 @@ impl From<Account> for PendingAccount {
 
 fn cache_external_libraries(
     state: &State,
-    ext_libs_cache_dir: &str,
+    ext_libs_path_on_zq2: &ScillaExtLibsPathInZq2,
     ext_libraries: &[ExternalLibrary],
 ) -> Result<()> {
-    let ext_libs_path = Path::new(ext_libs_cache_dir);
+    let ext_libs_path = Path::new(&ext_libs_path_on_zq2.0);
 
     for lib in ext_libraries {
         let account = state.get_account(lib.address)?;
@@ -1361,7 +1362,7 @@ fn cache_external_libraries(
                 }
 
                 fs::write(&canonical_file_path, code).with_context(|| {
-                    format!("Failed to write the contract code to {:?}", file_path)
+                    format!("Failed to write the contract code to {:?}. library name: {}, library address: {}", file_path, lib.name, lib.address)
                 })?;
             }
         }
@@ -1376,7 +1377,7 @@ fn scilla_create(
     txn: TxZilliqa,
     current_block: BlockHeader,
     mut inspector: impl ScillaInspector,
-    ext_libs_cache_dir: &str,
+    ext_libs_path_on_zq2: &ScillaExtLibsPathInZq2,
 ) -> Result<(ScillaResult, PendingState)> {
     if txn.data.is_empty() {
         return Err(anyhow!("contract creation without init data"));
@@ -1429,7 +1430,7 @@ fn scilla_create(
     // We need to cache external libraries used in the current contract. Scilla checker needs to import them to check the contract.
     cache_external_libraries(
         &state.pre_state,
-        ext_libs_cache_dir,
+        ext_libs_path_on_zq2,
         &init_data.external_libraries()?,
     )?;
     let check_output = match scilla.check_contract(&txn.code, gas, &init_data)? {

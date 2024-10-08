@@ -189,9 +189,17 @@ impl<'de> Deserialize<'de> for Amount {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ScillaExtLibsCacheFolder {
-    pub on_host: String,
-    pub on_docker: String,
+pub struct ScillaExtLibsPathInZq2(pub String);
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ScillaExtLibsPathInScilla(pub String);
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ScillaExtLibsPath {
+    /// Where are the external libraries stored in zq2 servers' filesystem
+    pub zq2: ScillaExtLibsPathInZq2,
+    /// Where are the external libraries stored in scilla servers' filesystem
+    pub scilla: ScillaExtLibsPathInScilla,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -225,9 +233,9 @@ pub struct ConsensusConfig {
     /// Where (in the Scilla server's filesystem) is the library directory containing Scilla library functions?
     #[serde(default = "scilla_stdlib_dir_default")]
     pub scilla_stdlib_dir: String,
-    /// Where are the external libraries cached so that scilla server can find them?
-    #[serde(default = "scilla_ext_libs_cache_folder_default")]
-    pub scilla_ext_libs_cache_folder: ScillaExtLibsCacheFolder,
+    /// Where are the external libraries are stored on zq2 and scilla server's filesystem so that scilla server can find them?
+    #[serde(default = "scilla_ext_libs_path_default")]
+    pub scilla_ext_libs_path: ScillaExtLibsPath,
     /// Hostname at which this process is accessible by the Scilla process. Defaults to "localhost". If running the
     /// Scilla process in Docker and this process on the host, you probably want to pass
     /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
@@ -272,14 +280,15 @@ pub fn scilla_address_default() -> String {
     String::from("http://localhost:3000")
 }
 
+// This path is as viewed from Scilla, not zq2.
 pub fn scilla_stdlib_dir_default() -> String {
     String::from("/scilla/0/_build/default/src/stdlib/")
 }
 
-pub fn scilla_ext_libs_cache_folder_default() -> ScillaExtLibsCacheFolder {
-    ScillaExtLibsCacheFolder {
-        on_host: String::from("/tmp"),
-        on_docker: String::from("/scilla_ext_libs"),
+pub fn scilla_ext_libs_path_default() -> ScillaExtLibsPath {
+    ScillaExtLibsPath {
+        zq2: ScillaExtLibsPathInZq2(String::from("/tmp")),
+        scilla: ScillaExtLibsPathInScilla(String::from("/scilla_ext_libs")),
     }
 }
 

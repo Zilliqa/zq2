@@ -18,7 +18,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::{
     block_store::BlockStore,
-    cfg::{Amount, NodeConfig, ScillaExtLibsCacheFolder},
+    cfg::{Amount, NodeConfig, ScillaExtLibsPath},
     contracts, crypto,
     db::TrieStorage,
     exec::BaseFeeCheck,
@@ -47,7 +47,7 @@ pub struct State {
     scilla_address: String,
     local_address: String,
     scilla_lib_dir: String,
-    pub scilla_ext_libs_cache_folder: ScillaExtLibsCacheFolder,
+    pub scilla_ext_libs_path: ScillaExtLibsPath,
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
     pub chain_id: ChainId,
@@ -65,7 +65,7 @@ impl State {
             scilla_address: consensus_config.scilla_address.clone(),
             local_address: consensus_config.local_address.clone(),
             scilla_lib_dir: consensus_config.scilla_stdlib_dir.clone(),
-            scilla_ext_libs_cache_folder: consensus_config.scilla_ext_libs_cache_folder.clone(),
+            scilla_ext_libs_path: consensus_config.scilla_ext_libs_path.clone(),
             block_gas_limit: consensus_config.eth_block_gas_limit,
             gas_price: *consensus_config.gas_price,
             chain_id: ChainId::new(config.eth_chain_id),
@@ -81,7 +81,7 @@ impl State {
                     self.local_address.clone(),
                     vec![
                         self.scilla_lib_dir.clone(),
-                        self.scilla_ext_libs_cache_folder.on_docker.clone(),
+                        self.scilla_ext_libs_path.scilla.0.clone(),
                     ],
                 ))
             })
@@ -197,7 +197,7 @@ impl State {
             scilla_address: self.scilla_address.clone(),
             local_address: self.local_address.clone(),
             scilla_lib_dir: self.scilla_lib_dir.clone(),
-            scilla_ext_libs_cache_folder: self.scilla_ext_libs_cache_folder.clone(),
+            scilla_ext_libs_path: self.scilla_ext_libs_path.clone(),
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
             chain_id: self.chain_id,
