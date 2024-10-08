@@ -30,7 +30,7 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    cfg::ScillaExtLibsPathInZq2,
+    cfg::{ScillaExtLibsPath, ScillaExtLibsPathInScilla},
     contracts,
     crypto::{Hash, NodePublicKey, NodePublicKeyRaw},
     db::TrieStorage,
@@ -531,7 +531,7 @@ impl State {
                 txn,
                 current_block,
                 inspector,
-                &self.scilla_ext_libs_path.zq2,
+                &self.scilla_ext_libs_path,
             )
         } else {
             scilla_call(
@@ -544,6 +544,7 @@ impl State {
                 txn.amount,
                 txn.data,
                 inspector,
+                &self.scilla_ext_libs_path,
             )
         }?;
 
@@ -1328,14 +1329,18 @@ impl From<Account> for PendingAccount {
     }
 }
 
-fn cache_external_libraries(
+fn store_external_libraries(
     state: &State,
-    ext_libs_path_on_zq2: &ScillaExtLibsPathInZq2,
-    ext_libraries: &[ExternalLibrary],
-) -> Result<()> {
-    let ext_libs_path = Path::new(&ext_libs_path_on_zq2.0);
+    scilla_ext_libs_path: &ScillaExtLibsPath,
+    ext_libraries: Vec<ExternalLibrary>,
+) -> Result<ScillaExtLibsPathInScilla> {
+    let (ext_libs_dir_in_zq2, ext_libs_dir_in_scilla) =
+        scilla_ext_libs_path.generate_random_subdirs();
 
-    for lib in ext_libraries {
+    let ext_libs_path = Path::new(&ext_libs_dir_in_zq2.0);
+    std::fs::create_dir_all(ext_libs_path)?;
+
+    for mut lib in ext_libraries {
         let account = state.get_account(lib.address)?;
         match &account.code {
             Code::Evm(_) => {
@@ -1353,21 +1358,16 @@ fn cache_external_libraries(
                     ));
                 }
 
+                lib.name.retain(|c| c.is_alphanumeric() || c == '.');
                 let file_path = ext_libs_path.join(&lib.name);
-                let canonical_file_path = fs::canonicalize(&file_path)?;
 
-                // To prevent malicious library names like ../../../a.txt
-                if !canonical_file_path.starts_with(&ext_libs_path) {
-                    return Err(anyhow::anyhow!("Invalid library name: {}", lib.name));
-                }
-
-                fs::write(&canonical_file_path, code).with_context(|| {
+                fs::write(&file_path, code).with_context(|| {
                     format!("Failed to write the contract code to {:?}. library name: {}, library address: {}", file_path, lib.name, lib.address)
                 })?;
             }
         }
     }
-    Ok(())
+    Ok(ext_libs_dir_in_scilla)
 }
 
 fn scilla_create(
@@ -1377,7 +1377,7 @@ fn scilla_create(
     txn: TxZilliqa,
     current_block: BlockHeader,
     mut inspector: impl ScillaInspector,
-    ext_libs_path_on_zq2: &ScillaExtLibsPathInZq2,
+    scilla_ext_libs_path: &ScillaExtLibsPath,
 ) -> Result<(ScillaResult, PendingState)> {
     if txn.data.is_empty() {
         return Err(anyhow!("contract creation without init data"));
@@ -1427,13 +1427,13 @@ fn scilla_create(
 
     let init_data = ContractInit::new(init_data)?;
 
-    // We need to cache external libraries used in the current contract. Scilla checker needs to import them to check the contract.
-    cache_external_libraries(
+    // We need to store external libraries used in the current contract. Scilla checker needs to import them to check the contract.
+    let ext_libs_dir = store_external_libraries(
         &state.pre_state,
-        ext_libs_path_on_zq2,
-        &init_data.external_libraries()?,
+        scilla_ext_libs_path,
+        init_data.external_libraries()?,
     )?;
-    let check_output = match scilla.check_contract(&txn.code, gas, &init_data)? {
+    let check_output = match scilla.check_contract(&txn.code, gas, &init_data, &ext_libs_dir)? {
         Ok(o) => o,
         Err(e) => {
             warn!(?e, "transaction failed");
@@ -1500,6 +1500,7 @@ fn scilla_create(
         gas,
         txn.amount,
         &init_data,
+        &ext_libs_dir,
     )?;
     let create_output = match create_output {
         Ok(o) => o,
@@ -1554,6 +1555,7 @@ pub fn scilla_call(
     amount: ZilAmount,
     data: String,
     mut inspector: impl ScillaInspector,
+    scilla_ext_libs_path: &ScillaExtLibsPath,
 ) -> Result<(ScillaResult, PendingState)> {
     let mut gas = gas_limit;
 
@@ -1632,6 +1634,12 @@ pub fn scilla_call(
             let contract_init = ContractInit::new(serde_json::from_str(init_data)?)?;
             let contract_balance = contract.account.balance;
 
+            // We need to store external libraries used in the current contract. Scilla needs to import them to run the transition.
+            let ext_libs_dir = store_external_libraries(
+                &current_state.pre_state,
+                scilla_ext_libs_path,
+                contract_init.external_libraries()?,
+            )?;
             let (output, mut new_state) = scilla.invoke_contract(
                 current_state,
                 to_addr,
@@ -1642,6 +1650,7 @@ pub fn scilla_call(
                 message
                     .as_ref()
                     .ok_or_else(|| anyhow!("call to a Scilla contract without a message"))?,
+                &ext_libs_dir,
             )?;
             inspector.call(sender, to_addr, amount.get(), depth);
 

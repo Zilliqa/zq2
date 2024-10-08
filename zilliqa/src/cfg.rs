@@ -2,6 +2,7 @@ use std::{ops::Deref, str::FromStr, time::Duration};
 
 use alloy::primitives::Address;
 use libp2p::{Multiaddr, PeerId};
+use rand::{distributions::Alphanumeric, Rng};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
@@ -200,6 +201,21 @@ pub struct ScillaExtLibsPath {
     pub zq2: ScillaExtLibsPathInZq2,
     /// Where are the external libraries stored in scilla servers' filesystem
     pub scilla: ScillaExtLibsPathInScilla,
+}
+
+impl ScillaExtLibsPath {
+    pub fn generate_random_subdirs(&self) -> (ScillaExtLibsPathInZq2, ScillaExtLibsPathInScilla) {
+        let sub_directory: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(10)
+            .map(char::from)
+            .collect();
+
+        (
+            ScillaExtLibsPathInZq2(format!("{}/{}", self.zq2.0, sub_directory)),
+            ScillaExtLibsPathInScilla(format!("{}/{}", self.scilla.0, sub_directory)),
+        )
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

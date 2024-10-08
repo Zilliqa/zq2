@@ -35,6 +35,7 @@ use tokio::runtime;
 use tracing::trace;
 
 use crate::{
+    cfg::ScillaExtLibsPathInScilla,
     exec::{PendingState, StorageValue},
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
@@ -212,7 +213,7 @@ pub struct Scilla {
     response_rx: Mutex<Receiver<Result<Value, ClientError>>>,
     state_server: Arc<Mutex<StateServer>>,
     local_address: String,
-    lib_dirs: Vec<String>,
+    scilla_stdlib_dir: String,
 }
 
 impl Scilla {
@@ -235,7 +236,7 @@ impl Scilla {
     ///
     /// After creating the [StateServer], we wrap it in an `Arc<Mutex<T>>` and send a clone back to the main thread,
     /// to enable shared access to the server.
-    pub fn new(address: String, local_address: String, lib_dirs: Vec<String>) -> Scilla {
+    pub fn new(address: String, local_address: String, scilla_stdlib_dir: String) -> Scilla {
         let (request_tx, request_rx) = channel();
         let (response_tx, response_rx) = channel();
 
@@ -282,7 +283,7 @@ impl Scilla {
             response_rx: Mutex::new(response_rx),
             state_server,
             local_address,
-            lib_dirs,
+            scilla_stdlib_dir,
         }
     }
 
@@ -298,10 +299,11 @@ impl Scilla {
         code: &str,
         gas_limit: ScillaGas,
         init: &ContractInit,
+        ext_libs_dir: &ScillaExtLibsPathInScilla,
     ) -> Result<Result<CheckOutput, CheckError>> {
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Check)
             .init(init.to_string())
-            .lib_dirs(self.lib_dirs.clone())
+            .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
             .code(code.to_owned())
             .gas_limit(gas_limit)
             .contract_info(true)
@@ -350,11 +352,12 @@ impl Scilla {
         gas_limit: ScillaGas,
         value: ZilAmount,
         init: &ContractInit,
+        ext_libs_dir: &ScillaExtLibsPathInScilla,
     ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
             .ipc_address(self.state_server_addr())
             .init(init.to_string())
-            .lib_dirs(self.lib_dirs.clone())
+            .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
             .code(code.to_owned())
             .gas_limit(gas_limit)
             .balance(value)
@@ -411,11 +414,12 @@ impl Scilla {
         contract_balance: ZilAmount,
         init: &ContractInit,
         msg: &Value,
+        ext_libs_dir: &ScillaExtLibsPathInScilla,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
             .init(init.to_string())
             .ipc_address(self.state_server_addr())
-            .lib_dirs(self.lib_dirs.clone())
+            .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
             .code(code.to_owned())
             .message(msg)?
             .balance(contract_balance)

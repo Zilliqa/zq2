@@ -79,10 +79,7 @@ impl State {
                 Mutex::new(Scilla::new(
                     self.scilla_address.clone(),
                     self.local_address.clone(),
-                    vec![
-                        self.scilla_lib_dir.clone(),
-                        self.scilla_ext_libs_path.scilla.0.clone(),
-                    ],
+                    self.scilla_lib_dir.clone(),
                 ))
             })
             .lock()
