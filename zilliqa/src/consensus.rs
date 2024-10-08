@@ -1049,7 +1049,7 @@ impl Consensus {
                 }
 
                 // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
-                // the last view change. At this point we should be ready to produce a new empty block.
+                // the last view change. At this point we should be ready to produce a new block.
                 self.create_next_block_on_timeout = true;
                 self.reset_timeout.send(
                     self.config
@@ -1067,7 +1067,9 @@ impl Consensus {
         }
 
         // Either way assemble early proposal now
-        self.assemble_early_block()?;
+        let mut state = self.state.clone();
+        self.assemble_early_block_at(&mut state)?;
+        self.state = state;
 
         Ok(None)
     }
@@ -1158,6 +1160,10 @@ impl Consensus {
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
     fn assemble_early_block_at(&mut self, state: &mut State) -> Result<()> {
+        if self.early_proposal.is_some() {
+            error!("attempted to assemble early proposal but it already exists");
+            return Ok(());
+        }
         info!("assemble early proposal for view {}", self.view.get_view());
 
         // Start with highest canonical block
@@ -1225,7 +1231,7 @@ impl Consensus {
         self.early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie));
 
         // Apply ready transactions in the mempool
-        self.apply_transactions_to_block(state)?;
+        self.apply_transactions_to_block_at(state)?;
 
         // Restore the state to previous sane state
         state.set_to_root(previous_state_root_hash.into());
@@ -1234,9 +1240,10 @@ impl Consensus {
 
     /// Updates self.early_proposal data (proposal, applied_transactions, transactions_trie, receipts_trie) to include any transactions in the mempool
     /// Note that this fn will mutate State
-    fn apply_transactions_to_block(&mut self, state: &mut State) -> Result<()> {
+    fn apply_transactions_to_block_at(&mut self, state: &mut State) -> Result<()> {
         if self.early_proposal.is_none() {
             error!("could not apply transactions to early_proposal because it does not exist");
+            return Ok(());
         }
 
         let proposal = self.early_proposal.as_ref().unwrap().0.clone();
@@ -1485,7 +1492,6 @@ impl Consensus {
         }
         let (pending_block, applied_txs, _, _) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
 
-        // TODOtomos: move this somewhere neater. inside finish_early_proposal()?
         // intershard transactions are not meant to be broadcast
         let (mut broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) = applied_txs
             .clone()
@@ -1527,24 +1533,13 @@ impl Consensus {
             let mut state = self.state.clone();
             let previous_state_root_hash = state.root_hash()?;
 
-            self.apply_transactions_to_block(&mut state)?;
+            self.apply_transactions_to_block_at(&mut state)?;
 
-            // Restore the state to previous sane state
+            // Restore the state to previous
             state.set_to_root(previous_state_root_hash.into());
             self.state = state;
         }
         Ok(inserted)
-    }
-
-    /// Assembles the Proposal block, but with a dummy QC.
-    pub fn assemble_early_block(&mut self) -> Result<()> {
-        // Rebuild early block if it doesn't exist or if there are transactions in the mempool
-        if self.early_proposal.is_none() || self.transaction_pool.has_txn_ready() {
-            let mut state = self.state.clone();
-            self.assemble_early_block_at(&mut state)?;
-            self.state = state;
-        }
-        Ok(())
     }
 
     /// Provides a preview of the early proposal.
