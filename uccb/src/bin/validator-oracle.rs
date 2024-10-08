@@ -155,10 +155,21 @@ impl ValidatorOracle {
         while let Some(log) = stream.next().await {
             info!("Received validator update: {log:?}");
 
-            let validators = self.get_stakers().await?;
-            info!("Updating chains to the current validator set to: {validators:?}");
+            //let block_number = self.zq2_chain_client().provider.get_block_number().await?;
+            let block_number: u64 = self
+                .zq2_chain_client()
+                .provider
+                .raw_request("eth_blockNumber".into(), (BlockNumberOrTag::Finalized,))
+                .await?;
 
-            sender.send(validators)?;
+            if let Some(log_block_number) = log.block_number {
+                if log_block_number >= block_number {
+                    let validators = self.get_stakers().await?;
+                    info!("Updating chains to the current validator set to: {validators:?}");
+
+                    sender.send(validators)?;
+                }
+            }
         }
 
         Ok(())
