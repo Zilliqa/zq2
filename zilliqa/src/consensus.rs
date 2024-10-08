@@ -5,7 +5,7 @@ use std::{
 use alloy::primitives::{Address, U256};
 use anyhow::{anyhow, Context, Result};
 use bitvec::{bitarr, order::Msb0};
-use eth_trie::{MemoryDB, Trie};
+use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use libp2p::PeerId;
 use revm::Inspector;
@@ -1029,7 +1029,7 @@ impl Consensus {
                 if self.view.get_view() == 1 {
                     return self.propose_new_block();
                 }
-                
+
                 // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
                 let (
                     time_since_last_view_change,
@@ -1183,11 +1183,9 @@ impl Consensus {
         }
 
         // Internal states
-        let mut gas_left = self.config.consensus.eth_block_gas_limit;
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut updated_root_hash = state.root_hash()?;
-        let mut tx_index_in_block = 0;
+        let mut transactions_trie: eth_trie::EthTrie<MemoryDB> =
+            eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut applied_transactions = Vec::<VerifiedTransaction>::new();
 
         // This is a partial header of a block that will be proposed with some transactions executed below.
@@ -1196,9 +1194,64 @@ impl Consensus {
             view: self.view(),
             number: parent.header.number + 1,
             timestamp: SystemTime::max(SystemTime::now(), parent.header.timestamp),
-            gas_limit: gas_left,
+            gas_limit: self.config.consensus.eth_block_gas_limit,
             ..BlockHeader::default()
         };
+
+        // Generate the early proposal
+        // Some critical parts are dummy/missing:
+        // a. Majority QC is missing
+        // b. Rewards have not been applied
+        // c. transactions have not been added
+        let mut proposal = Block::from_qc(
+            self.secret_key,
+            executed_block_header.view,
+            executed_block_header.number,
+            early_qc,           // dummy QC for early proposal
+            state.root_hash()?, // late state before rewards are applied
+            Hash(transactions_trie.root_hash()?.into()),
+            Hash(receipts_trie.root_hash()?.into()),
+            vec![],
+            executed_block_header.timestamp,
+            EvmGas(0),
+            executed_block_header.gas_limit,
+        );
+
+        // Apply ready transactions in the mempool
+        let broadcasted_transactions = self.apply_transactions_to_block(
+            state,
+            &mut proposal,
+            &mut applied_transactions,
+            &mut transactions_trie,
+            &mut receipts_trie,
+        )?;
+
+        // Restore the state to previous sane state
+        state.set_to_root(previous_state_root_hash.into());
+
+        // Return the early proposal
+        Ok(Some((proposal, broadcasted_transactions)))
+    }
+
+    /// Updates given proposal, applied_transactions, transcation_trie and receipts_trie with any transactions in the mempool
+    /// Note that this fn will mutate State
+    fn apply_transactions_to_block(
+        &mut self,
+        state: &mut State,
+        proposal: &mut Block,
+        applied_transactions: &mut Vec<VerifiedTransaction>,
+        transactions_trie: &mut EthTrie<MemoryDB>,
+        receipts_trie: &mut EthTrie<MemoryDB>,
+    ) -> Result<Vec<VerifiedTransaction>> {
+        // Internal states
+        state.set_to_root(proposal.state_root_hash().into());
+        let mut updated_root_hash = state.root_hash()?;
+        let mut gas_left = proposal.header.gas_limit - proposal.header.gas_used;
+        let mut tx_index_in_block = proposal.transactions.len();
+
+        // This is a partial header of a block that will be proposed with some transactions executed below.
+        // It is needed so that each transaction is executed within proper block context (the block it belongs to)
+        let executed_block_header = proposal.header;
 
         // Assemble new block with whatever is in the mempool
         while let Some(tx) = self.transaction_pool.best_transaction() {
@@ -1270,32 +1323,18 @@ impl Consensus {
         let applied_transaction_hashes =
             applied_transactions.iter().map(|tx| tx.hash).collect_vec();
 
-        // Generate the early proposal
-        // Some critical parts are dummy/missing:
-        // a. Majority QC is missing
-        // b. Rewards have not been applied
-        let proposal = Block::from_qc(
-            self.secret_key,
-            executed_block_header.view,
-            executed_block_header.number,
-            early_qc,           // dummy QC for early proposal
-            state.root_hash()?, // late state before rewards are applied
-            Hash(transactions_trie.root_hash()?.into()),
-            Hash(receipts_trie.root_hash()?.into()),
-            applied_transaction_hashes,
-            executed_block_header.timestamp,
-            executed_block_header.gas_limit - gas_left,
-            executed_block_header.gas_limit,
-        );
-
-        // Restore the state to previous sane state
-        state.set_to_root(previous_state_root_hash.into());
+        proposal.header.state_root_hash = state.root_hash()?;
+        proposal.header.transactions_root_hash = Hash(transactions_trie.root_hash()?.into());
+        proposal.header.receipts_root_hash = Hash(receipts_trie.root_hash()?.into());
+        proposal.transactions = applied_transaction_hashes;
+        proposal.header.gas_used = proposal.header.gas_limit - gas_left;
 
         // as a future improvement, process the proposal before broadcasting it
         trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### proposing early block");
         // intershard transactions are not meant to be broadcast
         let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
             applied_transactions
+                .clone()
                 .into_iter()
                 .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
         // however, for the transactions that we are NOT broadcasting, we re-insert
@@ -1307,8 +1346,7 @@ impl Consensus {
             self.transaction_pool.insert_transaction(tx, account_nonce);
         }
 
-        // Return the early proposal
-        Ok(Some((proposal, broadcasted_transactions)))
+        Ok(broadcasted_transactions)
     }
 
     /// Assembles a Pending block.
