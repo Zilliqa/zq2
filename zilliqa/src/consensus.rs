@@ -152,7 +152,12 @@ pub struct Consensus {
     /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
     /// Pending proposal
-    early_proposal: Option<(Block, Vec<VerifiedTransaction>)>,
+    early_proposal: Option<(
+        Block,
+        Vec<VerifiedTransaction>,
+        EthTrie<MemoryDB>,
+        EthTrie<MemoryDB>,
+    )>,
     /// Flag indicating that block creation should be postponed due to empty mempool
     create_next_block_on_timeout: bool,
     pub new_blocks: broadcast::Sender<BlockHeader>,
@@ -1152,10 +1157,9 @@ impl Consensus {
     /// Assembles the Proposal block early.
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
-    fn assemble_early_block_at(
-        &mut self,
-        state: &mut State,
-    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    fn assemble_early_block_at(&mut self, state: &mut State) -> Result<()> {
+        info!("assemble early proposal for view {}", self.view.get_view());
+
         // Start with highest canonical block
         let num = self
             .db
@@ -1183,10 +1187,10 @@ impl Consensus {
         }
 
         // Internal states
-        let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut transactions_trie: eth_trie::EthTrie<MemoryDB> =
+        let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut transactions_trie: EthTrie<MemoryDB> =
             eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut applied_transactions = Vec::<VerifiedTransaction>::new();
+        let applied_txs = Vec::<VerifiedTransaction>::new();
 
         // This is a partial header of a block that will be proposed with some transactions executed below.
         // It is needed so that each transaction is executed within proper block context (the block it belongs to)
@@ -1203,7 +1207,7 @@ impl Consensus {
         // a. Majority QC is missing
         // b. Rewards have not been applied
         // c. transactions have not been added
-        let mut proposal = Block::from_qc(
+        let proposal = Block::from_qc(
             self.secret_key,
             executed_block_header.view,
             executed_block_header.number,
@@ -1217,41 +1221,36 @@ impl Consensus {
             executed_block_header.gas_limit,
         );
 
+        // Set early_block
+        self.early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie));
+
         // Apply ready transactions in the mempool
-        let broadcasted_transactions = self.apply_transactions_to_block(
-            state,
-            &mut proposal,
-            &mut applied_transactions,
-            &mut transactions_trie,
-            &mut receipts_trie,
-        )?;
+        self.apply_transactions_to_block(state)?;
 
         // Restore the state to previous sane state
         state.set_to_root(previous_state_root_hash.into());
-
-        // Return the early proposal
-        Ok(Some((proposal, broadcasted_transactions)))
+        Ok(())
     }
 
-    /// Updates given proposal, applied_transactions, transcation_trie and receipts_trie with any transactions in the mempool
+    /// Updates self.early_proposal data (proposal, applied_transactions, transactions_trie, receipts_trie) to include any transactions in the mempool
     /// Note that this fn will mutate State
-    fn apply_transactions_to_block(
-        &mut self,
-        state: &mut State,
-        proposal: &mut Block,
-        applied_transactions: &mut Vec<VerifiedTransaction>,
-        transactions_trie: &mut EthTrie<MemoryDB>,
-        receipts_trie: &mut EthTrie<MemoryDB>,
-    ) -> Result<Vec<VerifiedTransaction>> {
+    fn apply_transactions_to_block(&mut self, state: &mut State) -> Result<()> {
+        if self.early_proposal.is_none() {
+            error!("could not apply transactions to early_proposal because it does not exist");
+        }
+
+        let proposal = self.early_proposal.as_ref().unwrap().0.clone();
+        trace!(
+            "apply transactions to proposal view {} block {}",
+            self.view.get_view(),
+            proposal.header.hash
+        );
+
         // Internal states
         state.set_to_root(proposal.state_root_hash().into());
         let mut updated_root_hash = state.root_hash()?;
         let mut gas_left = proposal.header.gas_limit - proposal.header.gas_used;
         let mut tx_index_in_block = proposal.transactions.len();
-
-        // This is a partial header of a block that will be proposed with some transactions executed below.
-        // It is needed so that each transaction is executed within proper block context (the block it belongs to)
-        let executed_block_header = proposal.header;
 
         // Assemble new block with whatever is in the mempool
         while let Some(tx) = self.transaction_pool.best_transaction() {
@@ -1275,7 +1274,7 @@ impl Consensus {
                 state,
                 self.db.clone(),
                 tx.clone(),
-                executed_block_header,
+                proposal.header,
                 inspector::noop(),
             )?;
 
@@ -1301,52 +1300,52 @@ impl Consensus {
 
             // Do necessary work to assemble the transaction
             self.transaction_pool.mark_executed(&tx);
-            transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
 
-            let receipt = Self::create_txn_receipt(
-                result,
-                tx.hash,
-                tx_index_in_block,
-                self.config.consensus.eth_block_gas_limit - gas_left,
+            // Grab and update early_proposal data in own scope to avoid multiple mutable references to self
+            {
+                let (_, applied_txs, transactions_trie, receipts_trie) =
+                    self.early_proposal.as_mut().unwrap();
+
+                transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
+
+                let receipt = Self::create_txn_receipt(
+                    result,
+                    tx.hash,
+                    tx_index_in_block,
+                    self.config.consensus.eth_block_gas_limit - gas_left,
+                );
+
+                let receipt_hash = receipt.compute_hash();
+                debug!("During assembly in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", self.view.get_view(), tx.hash, receipt, receipt_hash);
+                receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
+
+                tx_index_in_block += 1;
+                updated_root_hash = state.root_hash()?;
+                applied_txs.push(tx);
+            }
+        }
+
+        // Grab and update early_proposal data in own scope to avoid multiple mutable references to Self
+        {
+            let (proposal, applied_txs, transactions_trie, receipts_trie) =
+                self.early_proposal.as_mut().unwrap();
+
+            let applied_transaction_hashes = applied_txs.iter().map(|tx| tx.hash).collect_vec();
+            trace!(
+                "applied {} transactions to early block",
+                tx_index_in_block - proposal.transactions.len()
             );
 
-            let receipt_hash = receipt.compute_hash();
-            debug!("During assembly in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", self.view.get_view(), tx.hash, receipt, receipt_hash);
-
-            receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
-
-            tx_index_in_block += 1;
-            updated_root_hash = state.root_hash()?;
-            applied_transactions.push(tx);
+            // Update proposal with transactions added
+            proposal.header.state_root_hash = state.root_hash()?;
+            proposal.header.transactions_root_hash = Hash(transactions_trie.root_hash()?.into());
+            proposal.header.receipts_root_hash = Hash(receipts_trie.root_hash()?.into());
+            proposal.transactions = applied_transaction_hashes;
+            proposal.header.gas_used = proposal.header.gas_limit - gas_left;
         }
-
-        let applied_transaction_hashes =
-            applied_transactions.iter().map(|tx| tx.hash).collect_vec();
-
-        proposal.header.state_root_hash = state.root_hash()?;
-        proposal.header.transactions_root_hash = Hash(transactions_trie.root_hash()?.into());
-        proposal.header.receipts_root_hash = Hash(receipts_trie.root_hash()?.into());
-        proposal.transactions = applied_transaction_hashes;
-        proposal.header.gas_used = proposal.header.gas_limit - gas_left;
 
         // as a future improvement, process the proposal before broadcasting it
-        trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### proposing early block");
-        // intershard transactions are not meant to be broadcast
-        let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) =
-            applied_transactions
-                .clone()
-                .into_iter()
-                .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
-        // however, for the transactions that we are NOT broadcasting, we re-insert
-        // them into the pool - this is because upon broadcasting the proposal, we will
-        // have to re-execute it ourselves (in order to vote on it) and thus will
-        // need those transactions again
-        for tx in opaque_transactions {
-            let account_nonce = state.get_account(tx.signer)?.nonce;
-            self.transaction_pool.insert_transaction(tx, account_nonce);
-        }
-
-        Ok(broadcasted_transactions)
+        Ok(())
     }
 
     /// Assembles a Pending block.
@@ -1480,12 +1479,26 @@ impl Consensus {
     fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         let mut state = self.state.clone();
 
-        // give it a last try, even if it results in an empty block
         if self.early_proposal.is_none() {
             trace!("missing early proposal {}", self.view.get_view());
-            self.early_proposal = self.assemble_early_block_at(&mut state)?;
+            self.assemble_early_block_at(&mut state)?;
         }
-        let (pending_block, mut applied_txs) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
+        let (pending_block, applied_txs, _, _) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
+
+        // TODOtomos: move this somewhere neater. inside finish_early_proposal()?
+        // intershard transactions are not meant to be broadcast
+        let (mut broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) = applied_txs
+            .clone()
+            .into_iter()
+            .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
+        // however, for the transactions that we are NOT broadcasting, we re-insert
+        // them into the pool - this is because upon broadcasting the proposal, we will
+        // have to re-execute it ourselves (in order to vote on it) and thus will
+        // need those transactions again
+        for tx in opaque_transactions {
+            let account_nonce = state.get_account(tx.signer)?.nonce;
+            self.transaction_pool.insert_transaction(tx, account_nonce);
+        }
 
         // finalise the proposal
         let Some(final_block) =
@@ -1493,22 +1506,32 @@ impl Consensus {
         else {
             // Do not Propose.
             // Recover the proposed transactions into the pool.
-            while let Some(txn) = applied_txs.pop() {
+            while let Some(txn) = broadcasted_transactions.pop() {
                 self.transaction_pool.insert_ready_transaction(txn);
             }
             return Ok(None);
         };
 
+        trace!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, "######### proposing block");
+
         self.state = state;
 
-        Ok(Some((final_block, applied_txs)))
+        Ok(Some((final_block, broadcasted_transactions)))
     }
 
     /// Insert transaction and add to early_proposal if possible. Return true if transaction was new.
     pub fn handle_new_transaction(&mut self, txn: SignedTransaction) -> Result<bool> {
         let inserted = self.new_transaction(txn.verify()?)?;
-        if inserted && self.create_next_block_on_timeout {
-            self.assemble_early_block()?;
+        if inserted && self.create_next_block_on_timeout && self.early_proposal.is_some() {
+            info!("add transaction to early proposal {}", self.view.get_view());
+            let mut state = self.state.clone();
+            let previous_state_root_hash = state.root_hash()?;
+
+            self.apply_transactions_to_block(&mut state)?;
+
+            // Restore the state to previous sane state
+            state.set_to_root(previous_state_root_hash.into());
+            self.state = state;
         }
         Ok(inserted)
     }
@@ -1517,9 +1540,8 @@ impl Consensus {
     pub fn assemble_early_block(&mut self) -> Result<()> {
         // Rebuild early block if it doesn't exist or if there are transactions in the mempool
         if self.early_proposal.is_none() || self.transaction_pool.has_txn_ready() {
-            info!("assemble early proposal {}", self.view.get_view());
             let mut state = self.state.clone();
-            self.early_proposal = self.assemble_early_block_at(&mut state)?;
+            self.assemble_early_block_at(&mut state)?;
             self.state = state;
         }
         Ok(())
