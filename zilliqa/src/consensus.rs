@@ -17,7 +17,7 @@ use crate::{
     block_store::BlockStore,
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
-    crypto::{verify_messages, Hash, NodePublicKey, NodePublicKeyRaw, NodeSignature, SecretKey},
+    crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
     db::Db,
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
@@ -347,12 +347,7 @@ impl Consensus {
 
         // If we started from a checkpoint, execute the checkpointed block now
         if let Some((block, transactions, _parent)) = checkpoint_data {
-            consensus.execute_block(
-                None,
-                &block,
-                transactions,
-                &consensus.state.get_stakers_raw()?,
-            )?;
+            consensus.execute_block(None, &block, transactions, &consensus.state.get_stakers()?)?;
         }
 
         Ok(consensus)
@@ -633,7 +628,7 @@ impl Consensus {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}, head: {:?}", parent.state_root_hash(), self.state.root_hash()?, head_block);
                 self.state.set_to_root(parent.state_root_hash().into());
             }
-            let stakers: Vec<_> = self.state.get_stakers_raw()?;
+            let stakers: Vec<_> = self.state.get_stakers()?;
 
             // Only tell the block store where this block came from if it wasn't from ourselves.
             let from = (self.peer_id() != from).then_some(from);
@@ -713,12 +708,12 @@ impl Consensus {
     /// rewards are calculated, please change the comments in the configuration structure there.
     fn apply_rewards(
         &mut self,
-        committee: &[NodePublicKeyRaw],
+        committee: &[NodePublicKey],
         parent_block: &Block,
         view: u64,
         cosigned: &BitSlice,
     ) -> Result<()> {
-        let proposer_bytes = self.leader_at_block_raw(parent_block, view).unwrap().0;
+        let proposer = self.leader_at_block(parent_block, view).unwrap();
         let config = &self.config.consensus;
         self.state
             .set_to_root(parent_block.state_root_hash().into());
@@ -727,7 +722,7 @@ impl Consensus {
             &mut self.state,
             config,
             committee,
-            proposer_bytes,
+            proposer.public_key,
             view,
             cosigned,
         )
@@ -738,8 +733,8 @@ impl Consensus {
         parent_state_hash: Hash,
         at_state: &mut State,
         config: &ConsensusConfig,
-        committee: &[NodePublicKeyRaw],
-        proposer_bytes: NodePublicKeyRaw,
+        committee: &[NodePublicKey],
+        proposer: NodePublicKey,
         view: u64,
         cosigned: &BitSlice,
     ) -> Result<()> {
@@ -749,7 +744,7 @@ impl Consensus {
         // Get the reward addresses from the parent state
         let parent_state = at_state.at_root(parent_state_hash.into());
 
-        let proposer_address = parent_state.get_reward_address_raw(proposer_bytes)?;
+        let proposer_address = parent_state.get_reward_address(proposer)?;
 
         let mut total_cosigner_stake = 0;
         let cosigner_stake: Vec<_> = committee
@@ -757,14 +752,8 @@ impl Consensus {
             .enumerate()
             .filter(|(i, _)| cosigned[*i])
             .map(|(_, pub_key)| {
-                let reward_address = parent_state
-                    .get_reward_address_raw(pub_key.clone())
-                    .unwrap();
-                let stake = parent_state
-                    .get_stake_raw(pub_key.clone())
-                    .unwrap()
-                    .unwrap()
-                    .get();
+                let reward_address = parent_state.get_reward_address(*pub_key).unwrap();
+                let stake = parent_state.get_stake(*pub_key).unwrap().unwrap().get();
                 total_cosigner_stake += stake;
                 (reward_address, stake)
             })
@@ -1124,7 +1113,7 @@ impl Consensus {
         let qc = self.qc_from_bits(parent_block_hash, signatures, *cosigned, parent_block_view);
 
         // Retrieve the previous leader and committee - for rewards
-        let committee = state.get_stakers_at_block_raw(&parent_block)?;
+        let committee = state.get_stakers_at_block(&parent_block)?;
         let proposer = self
             .leader_at_block(&parent_block, parent_block_view + 1)
             .context("missing parent block leader")?
@@ -1138,7 +1127,7 @@ impl Consensus {
             state,
             &self.config.consensus,
             &committee,
-            proposer.into(), // Last leader
+            proposer, // Last leader
             parent_block_view + 1,
             &qc.cosigned, // QC cosigners
         )?;
@@ -1655,12 +1644,7 @@ impl Consensus {
                         self.state.set_to_root(parent.state_root_hash().into());
                     }
 
-                    self.apply_rewards(
-                        &committee.iter().map(|k| (*k).into()).collect::<Vec<_>>(),
-                        &parent,
-                        new_view.view,
-                        &high_qc.cosigned,
-                    )?;
+                    self.apply_rewards(&committee, &parent, new_view.view, &high_qc.cosigned)?;
 
                     let mut empty_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
                     let empty_root_hash = Hash(empty_trie.root_hash()?.into());
@@ -2075,7 +2059,7 @@ impl Consensus {
 
         let committee = self
             .state
-            .get_stakers_at_block_raw(&parent)
+            .get_stakers_at_block(&parent)
             .map_err(|e| (e, false))?;
 
         if verified.is_err() {
@@ -2090,11 +2074,6 @@ impl Consensus {
             parent.state_root_hash(),
         )
         .map_err(|e| (e, false))?;
-
-        let committee: Vec<_> = committee
-            .into_iter()
-            .map(|k| k.try_into().unwrap())
-            .collect();
 
         // Verify the block's QC signature - note the parent should be the committee the QC
         // was signed over.
@@ -2375,7 +2354,7 @@ impl Consensus {
     fn check_quorum_in_bits(
         &self,
         cosigned: &BitSlice,
-        committee: &[NodePublicKeyRaw],
+        committee: &[NodePublicKey],
         parent_state_hash: Hash,
     ) -> Result<()> {
         let parent_state = self.state.at_root(parent_state_hash.into());
@@ -2386,11 +2365,7 @@ impl Consensus {
             .map(|(i, public_key)| {
                 (
                     i,
-                    parent_state
-                        .get_stake_raw(public_key.clone())
-                        .unwrap()
-                        .unwrap()
-                        .get(),
+                    parent_state.get_stake(*public_key).unwrap().unwrap().get(),
                 )
             })
             .fold((0, 0), |(total_weight, cosigned_sum), (i, stake)| {
@@ -2445,29 +2420,17 @@ impl Consensus {
             }
         }
 
-        self.leader_at_block_raw(block, view)
-            .map(|leader| Validator {
-                public_key: leader.0.try_into().unwrap(),
-                peer_id: leader.1,
-            })
-    }
-
-    pub fn leader_at_block_raw(
-        &self,
-        block: &Block,
-        view: u64,
-    ) -> Option<(NodePublicKeyRaw, PeerId)> {
         let Ok(state_at) = self.try_get_state_at(block.number()) else {
             return None;
         };
 
-        let public_key = state_at.leader_raw(view).unwrap();
-        let peer_id = state_at
-            .get_peer_id_raw(public_key.clone())
-            .unwrap()
-            .unwrap();
+        let public_key = state_at.leader(view).unwrap();
+        let peer_id = state_at.get_peer_id(public_key).unwrap().unwrap();
 
-        Some((public_key, peer_id))
+        Some(Validator {
+            public_key,
+            peer_id,
+        })
     }
 
     fn total_weight(&self, committee: &[NodePublicKey]) -> u128 {
@@ -2603,7 +2566,7 @@ impl Consensus {
                 .iter()
                 .map(|tx_hash| self.get_transaction_by_hash(*tx_hash).unwrap().unwrap().tx)
                 .collect();
-            let committee: Vec<_> = self.state.get_stakers_at_block_raw(&block_pointer)?;
+            let committee: Vec<_> = self.state.get_stakers_at_block(&block_pointer)?;
             self.execute_block(None, &block_pointer, transactions, &committee)?;
         }
 
@@ -2615,7 +2578,7 @@ impl Consensus {
         from: Option<PeerId>,
         block: &Block,
         transactions: Vec<SignedTransaction>,
-        committee: &[NodePublicKeyRaw],
+        committee: &[NodePublicKey],
     ) -> Result<()> {
         debug!("Executing block: {:?}", block.header.hash);
 
