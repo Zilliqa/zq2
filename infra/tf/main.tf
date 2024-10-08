@@ -52,6 +52,10 @@ resource "google_compute_firewall" "allow_p2p" {
     protocol = "tcp"
     ports    = ["3333"]
   }
+  allow {
+    protocol = "udp"
+    ports    = ["3333"]
+  }
 }
 
 resource "google_compute_firewall" "allow_external_jsonrpc" {

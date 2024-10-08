@@ -87,6 +87,10 @@ enum DeployerCommands {
     Deposit(DeployerActionsArgs),
     /// Run RPC calls over the internal network nodes
     Rpc(DeployerRpcArgs),
+    /// Backup locally a node data dir
+    Backup(DeployerBackupArgs),
+    /// Restore a node data dir from a local backup
+    Restore(DeployerRestoreArgs),
 }
 
 #[derive(Args, Debug)]
@@ -149,6 +153,9 @@ pub struct DeployerActionsArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerRpcArgs {
+    /// Specifies the maximum time (in seconds) allowed for the entire request. Default: 30
+    #[clap(long)]
+    timeout: Option<usize>,
     /// Method to run
     #[clap(long, short, about)]
     method: String,
@@ -157,6 +164,27 @@ pub struct DeployerRpcArgs {
     params: Option<String>,
     /// The network deployer config file
     config_file: String,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerBackupArgs {
+    /// The path of the backup file
+    #[clap(long, short)]
+    file: String,
+    /// The network deployer config file
+    config_file: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerRestoreArgs {
+    /// The path of the backup file
+    #[clap(long, short)]
+    file: String,
+    /// Define the number of nodes to process in parallel. Default: 50
+    #[clap(long)]
+    max_parallel: Option<usize>,
+    /// The network deployer config file
+    config_file: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -474,6 +502,7 @@ async fn main() -> Result<()> {
 
     env_logger::Builder::new()
         .filter_level(cli.verbose.log_level_filter())
+        .format_target(false)
         .init();
 
     match &cli.command {
@@ -675,10 +704,39 @@ async fn main() -> Result<()> {
                 Ok(())
             }
             DeployerCommands::Rpc(ref args) => {
-                plumbing::run_rpc_call(&args.method, &args.params, &args.config_file)
+                plumbing::run_rpc_call(
+                    &args.method,
+                    &args.params,
+                    &args.config_file,
+                    &args.timeout,
+                )
+                .await
+                .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {}", err))?;
+                Ok(())
+            }
+            DeployerCommands::Backup(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_backup(&config_file, &arg.file)
                     .await
                     .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer rpc command: {}", err)
+                        anyhow::anyhow!("Failed to run deployer backup command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Restore(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_restore(&config_file, &arg.file, arg.max_parallel)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer restore command: {}", err)
                     })?;
                 Ok(())
             }
