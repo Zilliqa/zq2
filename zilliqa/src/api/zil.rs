@@ -175,6 +175,12 @@ fn create_transaction(
 
     // TODO: Perform some initial validation of the transaction
 
+    // If we don't trap this here, it will later cause the -1 in
+    // transaction::get_nonce() to panic.
+    if transaction.nonce == 0 {
+        return Err(anyhow!("Invalid nonce (0)"));
+    }
+
     let transaction = SignedTransaction::Zilliqa {
         tx: TxZilliqa {
             chain_id: chain_id as u16,
