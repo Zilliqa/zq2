@@ -356,11 +356,19 @@ impl DatabaseRef for &State {
     }
 
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
-        Ok(self
-            .block_store
-            .get_block_by_number(number)?
-            .map(|block| B256::new(block.hash().0))
-            .unwrap_or_default())
+        if let Some(current_block_number) = self.block_store.get_highest_block_number()? {
+            match current_block_number.checked_sub(number) {
+                None => Ok(B256::default()), // current_block_number - number < 0
+                Some(diff) if diff > 256 => Ok(B256::default()), // current_block_number - number > 256
+                Some(_) => Ok(self
+                    .block_store
+                    .get_block_by_number(number)?
+                    .map(|block| B256::new(block.hash().0))
+                    .unwrap_or_default()),
+            }
+        } else {
+            Ok(B256::default())
+        }
     }
 }
 

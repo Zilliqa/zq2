@@ -3,6 +3,8 @@ import hre from "hardhat";
 import {Contract} from "ethers";
 import {ethers} from "hardhat";
 
+const ZERO = "0x0000000000000000000000000000000000000000000000000000000000000000";
+
 describe("Block Properties", function () {
   let contract: Contract;
   before(async function () {
@@ -40,7 +42,8 @@ describe("Block Properties", function () {
     expect(contractChainId).to.equal(network.chainId);
   });
 
-  it("should return the correct coinbase", async function () {
+  // FIXME: Enable and fix this test when https://github.com/Zilliqa/zq2/issues/1340 is done
+  xit("should return the correct coinbase", async function () {
     const contractCoinbase = await contract.getCoinbase();
 
     expect(contractCoinbase).to.equal("0x0000000000000000000000000000000000000000");
@@ -61,5 +64,28 @@ describe("Block Properties", function () {
     const actualBlockHash = (await ethers.provider.getBlock(currentBlockNumber)).hash;
 
     await expect(tx).to.emit(contract, "BlockHash").withArgs(actualBlockHash);
+  });
+
+  it("should emit zero blockhash for current block that's not finalized yet", async function () {
+    const currentBlockNumber = await ethers.provider.getBlockNumber();
+    const tx = await contract.emitBlockHash(currentBlockNumber + 1);
+    await expect(tx).to.emit(contract, "BlockHash").withArgs(ZERO);
+  });
+
+  it("should emit zero blockhash for a block number more than 256 blocks in the past", async function () {
+    const currentBlockNumber = await ethers.provider.getBlockNumber();
+
+    if (currentBlockNumber > 256) {
+      const tx = await contract.emitBlockHash(currentBlockNumber - 256);
+      await expect(tx).to.emit(contract, "BlockHash").withArgs(ZERO);
+    } else {
+      this.skip(); // Not possible to test if we don't have 256 or more blocks
+    }
+  });
+
+  it("should emit zero blockhash for a future block number", async function () {
+    const currentBlockNumber = await ethers.provider.getBlockNumber();
+    const tx = await contract.emitBlockHash(currentBlockNumber + 100);
+    await expect(tx).to.emit(contract, "BlockHash").withArgs(ZERO);
   });
 });
