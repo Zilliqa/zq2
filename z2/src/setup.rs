@@ -299,9 +299,14 @@ impl Setup {
                 address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"),
                 5000000000000000000000u128.into(),
             ),
-            // privkey db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3
+            // privkey db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3 Eth address
             (
                 address!("cb57ec3f064a16cadb36c7c712f4c9fa62b77415"),
+                5000000000000000000000u128.into(),
+            ),
+            // privkey db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3 Zil address
+            (
+                address!("7bb3b0e8a59f3f61d9bff038f4aeb42cae2ecce8"),
                 5000000000000000000000u128.into(),
             ),
         ];

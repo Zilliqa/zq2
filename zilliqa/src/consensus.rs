@@ -1153,7 +1153,7 @@ impl Consensus {
             proposal.header.transactions_root_hash,
             proposal.header.receipts_root_hash,
             proposal.transactions,
-            proposal.header.timestamp,
+            SystemTime::max(SystemTime::now(), parent_block.header.timestamp),
             proposal.header.gas_used,
             proposal.header.gas_limit,
         );
