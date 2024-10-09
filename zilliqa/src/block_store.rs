@@ -45,6 +45,7 @@ impl BlockCacheEntry {
 /// We need to be careful to conserve block space in the presence of block flooding attacks, and we need to
 /// make sure we don't lose blocks that form part of the main chain repeatedly, else we will never be able
 /// to construct it.
+///
 /// Similarly, we should ensure that we always buffer proposals close to the head of the tree, else we will
 /// lose sync frequently and have to request, which will slow down block production.
 ///
@@ -53,12 +54,19 @@ impl BlockCacheEntry {
 ///
 /// I don't think it actually matters whether we use the view or the block number here, since we're not using
 /// fixed-size arrays.
+///
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlockCache {
-    /// Caches proposals that are not yet blocks, and are before the tail cache.
+    /// Caches proposals that are not yet blocks, and are before the head_cache.
     pub cache: BTreeMap<u128, BlockCacheEntry>,
     /// Caches proposals close to the head.
-    pub tail: BTreeMap<u128, BlockCacheEntry>,
+    /// This buys us out of the situation where we are, say, 2 blocks behind the head.
+    /// We request those blocks, but by the time we get them, a new block is proposed.
+    /// So we're now a block behind. We request it, and then, by the time we get it ...
+    /// and so on. The head_cache caches broadcast proposals at the head of the chain
+    /// so we only need to get to (head_of_chain - head_cache_entries) and we can
+    /// then catch up using the head cache.
+    pub head_cache: BTreeMap<u128, BlockCacheEntry>,
     /// Caches ranges where we think there is no block at all (just an empty view)
     pub empty_view_ranges: RangeMap,
     /// The head cache - this caches
@@ -78,7 +86,7 @@ impl BlockCache {
     pub fn new(max_blocks_in_flight: u64) -> Self {
         Self {
             cache: BTreeMap::new(),
-            tail: BTreeMap::new(),
+            head_cache: BTreeMap::new(),
             empty_view_ranges: RangeMap::new(),
             by_parent_hash: HashMap::new(),
             shift: 8 - constants::BLOCK_CACHE_LOG2_WAYS,
@@ -100,17 +108,17 @@ impl BlockCache {
         u128::from(view) << self.shift
     }
 
-    /// returns the minimum key (view << shift) that we are prepared to store in the tail cache.
+    /// returns the minimum key (view << shift) that we are prepared to store in the head cache.
     /// keys smaller than this are stored in the main cache.
     /// We compute this by subtracting a constant from (highest_known_view +1)<< shift - which is
     /// the highest key we think could currently exist (highest view we've ever seen +1 shifted up).
     /// (the constant is preshifted for efficiency)
-    /// This aims to keep the tail cache at roughly BLOCK_CACHE_TAIL_BUFFER_ENTRIES entries
-    /// (note that this will be BLOCK_CACHE_TAIL_BUFFER_ENTRIES >> shift cached views, since the
-    /// tail cache is set associative)
-    pub fn min_tail_key(&self, highest_known_view: u64) -> u128 {
+    /// This aims to keep the head cache at roughly BLOCK_CACHE_HEAD_BUFFER_ENTRIES entries
+    /// (note that this will be BLOCK_CACHE_HEAD_BUFFER_ENTRIES >> shift cached views, since the
+    /// head cache is set associative)
+    pub fn min_head_cache_key(&self, highest_known_view: u64) -> u128 {
         let highest_key = u128::from(highest_known_view + 1) << self.shift;
-        highest_key - u128::try_from(constants::BLOCK_CACHE_TAIL_BUFFER_ENTRIES).unwrap()
+        highest_key - u128::try_from(constants::BLOCK_CACHE_HEAD_BUFFER_ENTRIES).unwrap()
     }
 
     pub fn destructive_proposals_from_parent_hashes(
@@ -129,7 +137,7 @@ impl BlockCache {
             .filter_map(|key| {
                 self.cache
                     .remove(key)
-                    .or_else(|| self.tail.remove(key))
+                    .or_else(|| self.head_cache.remove(key))
                     .map(|entry| (entry.from, entry.proposal))
             })
             .collect::<Vec<(PeerId, Proposal)>>();
@@ -192,7 +200,7 @@ impl BlockCache {
         let mut lowest_view_in_cache: Option<u64> = None;
         let shift = self.shift;
 
-        for cache_ptr in [&mut self.cache, &mut self.tail] {
+        for cache_ptr in [&mut self.cache, &mut self.head_cache] {
             while let Some((k, v)) = cache_ptr.first_key_value() {
                 if selector(k, v) {
                     // Kill it!
@@ -227,8 +235,8 @@ impl BlockCache {
                 unlink_parent_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
             }
         }
-        while self.tail.len() > constants::BLOCK_CACHE_TAIL_BUFFER_ENTRIES {
-            if let Some((k, v)) = self.tail.pop_first() {
+        while self.head_cache.len() > constants::BLOCK_CACHE_HEAD_BUFFER_ENTRIES {
+            if let Some((k, v)) = self.head_cache.pop_first() {
                 unlink_parent_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
             }
         }
@@ -281,9 +289,9 @@ impl BlockCache {
         }
         // First, insert us.
         let key = self.key_from_view(from, proposal.header.view);
-        if key > self.min_tail_key(highest_known_view) {
+        if key > self.min_head_cache_key(highest_known_view) {
             insert_with_replacement(
-                &mut self.tail,
+                &mut self.head_cache,
                 &mut self.by_parent_hash,
                 from,
                 parent_hash,
@@ -329,7 +337,7 @@ impl BlockCache {
         for key in self.cache.keys() {
             let _ = u128::try_into(key >> shift).map(|x| result.with_elem(x));
         }
-        for key in self.tail.keys() {
+        for key in self.head_cache.keys() {
             let _ = u128::try_into(key >> shift).map(|x| result.with_elem(x));
         }
         result
