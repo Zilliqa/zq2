@@ -1,6 +1,7 @@
 name: "ZQ2 image release"
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - 'release/**'
