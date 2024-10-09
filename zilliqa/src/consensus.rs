@@ -99,6 +99,13 @@ struct CachedLeader {
     next_leader: Validator,
 }
 
+type EarlyProposal = (
+    Block,
+    Vec<VerifiedTransaction>,
+    EthTrie<MemoryDB>,
+    EthTrie<MemoryDB>,
+);
+
 /// The consensus algorithm is pipelined fast-hotstuff, as given in this paper: https://arxiv.org/pdf/2010.11454.pdf
 ///
 /// The algorithm can be condensed down into the following explanation:
@@ -152,12 +159,7 @@ pub struct Consensus {
     /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
     /// Pending proposal
-    early_proposal: Option<(
-        Block,
-        Vec<VerifiedTransaction>,
-        EthTrie<MemoryDB>,
-        EthTrie<MemoryDB>,
-    )>,
+    early_proposal: Option<EarlyProposal>,
     /// Flag indicating that block creation should be postponed due to empty mempool
     create_next_block_on_timeout: bool,
     pub new_blocks: broadcast::Sender<BlockHeader>,
