@@ -1163,7 +1163,6 @@ impl Consensus {
     /// It does all the needed work but with a dummy QC.
     fn assemble_early_block_at(&mut self, state: &mut State) -> Result<()> {
         if self.early_proposal.is_some() {
-            error!("attempted to assemble early proposal but it already exists");
             return Ok(());
         }
         info!("assemble early proposal for view {}", self.view.get_view());
