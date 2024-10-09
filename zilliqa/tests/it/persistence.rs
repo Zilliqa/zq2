@@ -197,7 +197,7 @@ async fn checkpoints_test(mut network: Network) {
         .tx_hash();
     network.run_until_receipt(&wallet, update_tx_hash, 50).await;
 
-    // Run until block 9 so that we can insert a tx in block 10
+    // Run until block 9 so that we can insert a tx in block 10 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
     network.run_until_block(&wallet, 9.into(), 200).await;
 
     let _hash = wallet
@@ -254,8 +254,6 @@ async fn checkpoints_test(mut network: Network) {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(block.transactions.len(), 1);
-
     let block_from_checkpoint = new_node_wallet
         .get_block(latest_block_number)
         .await
@@ -279,15 +277,15 @@ async fn checkpoints_test(mut network: Network) {
     let val = storage_getter.decode_output(&storage).unwrap();
     assert_eq!(val[0], Token::Uint(new_val.into()));
 
+    // check the new node catches up and keeps up with block production
+    network
+        .run_until_block(&new_node_wallet, 20.into(), 200)
+        .await;
+
     // check account nonce of old wallet
     let nonce = new_node_wallet
         .get_transaction_count(wallet.address(), None)
         .await
         .unwrap();
     assert_eq!(nonce, 3.into());
-
-    // check the new node catches up and keeps up with block production
-    network
-        .run_until_block(&new_node_wallet, 20.into(), 200)
-        .await;
 }
