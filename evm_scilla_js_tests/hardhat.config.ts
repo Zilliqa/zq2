@@ -115,8 +115,8 @@ const config: HardhatUserConfig = {
       miningState: false
     },
     public_testnet: {
-      url: "https://evm-api-dev.zilliqa.com",
-      websocketUrl: "https://evm-api-dev.zilliqa.com",
+      url: "https://dev-api.zilliqa.com",
+      websocketUrl: "https://dev-api.zilliqa.com",
       accounts: [
         "d96e9eb5b782a80ea153c937fa83e5948485fbfc8b7e7c069d7b914dbc350aba",
         "db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3",

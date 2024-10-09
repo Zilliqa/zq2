@@ -23,6 +23,7 @@ use scilla_parser::{
 };
 
 use crate::{
+    cfg::{ScillaExtLibsPath, ScillaExtLibsPathInScilla, ScillaExtLibsPathInZq2},
     exec::{scilla_call, PendingState, ScillaError, SCILLA_INVOKE_RUNNER},
     inspector::ScillaInspector,
     state::Code,
@@ -420,6 +421,11 @@ fn scilla_call_precompile(
         ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
         serde_json::to_string(&message).unwrap(),
         inspector,
+        // TODO: Do we need to store external libraries here too?
+        &ScillaExtLibsPath {
+            zq2: ScillaExtLibsPathInZq2("".to_string()),
+            scilla: ScillaExtLibsPathInScilla("".to_string()),
+        },
     ) else {
         return fatal("scilla call failed");
     };

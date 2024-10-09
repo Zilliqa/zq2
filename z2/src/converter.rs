@@ -43,7 +43,7 @@ use zilliqa::{
     node::{MessageSender, RequestId},
     schnorr,
     scilla::storage_key,
-    state::{contract_addr, Account, Code, State},
+    state::{contract_addr, Account, Code, ContractInit, State},
     time::SystemTime,
     transaction::{
         EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,

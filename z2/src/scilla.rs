@@ -19,7 +19,7 @@ impl collector::Runner for Runner {
 }
 
 impl Runner {
-    pub fn get_scilla_lib_dir(base_dir: &str) -> String {
+    pub fn get_scilla_stdlib_dir(base_dir: &str) -> String {
         format!("{base_dir}/scilla/_build/default/src/stdlib/")
     }
 
