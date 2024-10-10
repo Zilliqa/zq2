@@ -902,7 +902,7 @@ impl Node {
             response.proposals.len()
         );
         self.consensus
-            .receive_availability(from, &response.availability)?;
+            .receive_block_availability(from, &response.availability)?;
 
         self.consensus
             .buffer_lack_of_proposals(response.from_view, &response.proposals)?;
