@@ -812,6 +812,26 @@ impl Db {
     /// See block_store.rs::availability() for details.
     pub fn get_view_ranges(&self) -> Result<Vec<Range<u64>>> {
         // The island field is technically redundant, but it helps with debugging.
+        //
+        // First off, note that this function returns all available blocks - it is up to the ultimate receiver of those blocks
+        // to decide if they are _canonical_ blocks or not. We take no view and serve everything we have.
+        //
+        // This query:
+        //
+        // R1 = SELECT height, MIN(view) as vlb, MAX(view) as vub from blocks GROUP BY height
+        //   - Take everything in the blocks table, group by height and retrieve the max and min view for each block height.
+        //
+        // R2 = SELECT height, vlb, vub, ROW_NUMBER() OVER (ORDER BY height) AS rank FROM R1
+        //   - order the result by height, and find me the height, vlb, vub, and row number in the results (which we call rank).
+        //   (OVER is sqlite magic -see docs for details)
+        //
+        // R3 = SELECT MIN(vlb), MAX(vub), MIN(height), MAX(height), height-rank AS island FROM R2 GROUP BY island ORDER BY MIN(height) ASC
+        //   - now group R2 by island number (i.e contiguous range of heights), and select the max view, min view, max height and min height for this range.
+        //     Return this list ordered by MIN(height) for convenience.
+        //
+        // And now you have the set of ranges you can advertise that you can serve. You could get the same result by SELECT height FROM blocks, putting the results in
+        // a RangeMap and then iterating the resulting ranges - this query just makes the database do the work (and returns the associated views, since block requests
+        // are made by view).
         Ok(self.block_store.lock().unwrap()
             .prepare_cached("SELECT MIN(vlb), MAX(vub), MIN(height),MAX(height),height-rank AS island FROM ( SELECT height,vlb,vub,ROW_NUMBER() OVER (ORDER BY height) AS rank FROM
  (SELECT height,MIN(view) as vlb, MAX(view) as vub from blocks GROUP BY height ) )  GROUP BY island ORDER BY MIN(height) ASC")?
