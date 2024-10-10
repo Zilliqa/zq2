@@ -1106,6 +1106,19 @@ impl BlockStore {
         self.buffered.delete_empty_view_range_cache();
     }
 
+    /// Suppose that there is a view with no associated block.
+    /// Because we request views, not blocks, we will ask for blocks for those views.
+    /// Because there are no valid blocks in those views, we won't get them.
+    /// We will therefore ask again, and continue doing so forever, potentially exhausting our capacity for outstanding
+    /// view requests and blocking us from requesting blocks from views in which they might be extant.
+    /// We avoid this by finding the gaps between the view numbers of proposals we receive and caching
+    /// this list in the block_cache. We then arrange not to rerequest blocks in views for which we know there are no
+    /// valid blocks - remembering to clear this periodically in case a malicious node has lied to us about it.
+    ///
+    /// this function takes a list of proposals in a block response, works out the gaps between them and caches
+    /// the result. Gaps at the beginning of the sequence are recorded in the space between from_view and the view of the
+    /// first proposal; gaps at the end are ignored (and will be returned when we ask for the next view up from where
+    /// this block proposal left off).
     pub fn buffer_lack_of_proposals(
         &mut self,
         from_view: u64,
