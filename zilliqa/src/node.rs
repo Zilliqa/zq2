@@ -91,6 +91,9 @@ impl MessageSender {
     }
 
     /// Send a message to a remote node of the same shard.
+    /// Note that if this ever fails for individual messages (rather than because the channel is closed),
+    /// you will need to adjust consensus.rs to attempt to retain as much of multiple block responses
+    /// as possible.
     pub fn send_external_message(
         &mut self,
         peer: PeerId,

@@ -2296,17 +2296,18 @@ impl Consensus {
         self.block_store
             .process_block(from, block)?
             .into_iter()
-            .for_each(|(from_id, child_proposal)| {
-                // If we fail here, just fail - eventually someone will notice we did and
-                // retry the whole action.
-                let _ = self.message_sender.send_external_message(
+            .try_for_each(|(from_id, child_proposal)| -> Result<()> {
+                // The only reason this can fail is permanent failure of the messaging mechanism, so
+                // propagate it back here.
+                self.message_sender.send_external_message(
                     self.peer_id(),
                     ExternalMessage::ProcessProposal(ProcessProposal {
                         from: from_id.to_bytes(),
                         block: child_proposal,
                     }),
-                );
-            });
+                )?;
+                Ok(())
+            })?;
         Ok(())
     }
 
