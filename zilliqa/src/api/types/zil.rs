@@ -604,3 +604,10 @@ pub struct TransactionReceiptResponse {
     pub epoch_num: String,
     pub success: bool,
 }
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RecentTransactionsResponse {
+    #[serde(rename = "TxnHashes")]
+    pub txn_hashes: Vec<String>,
+    pub number: u64,
+}

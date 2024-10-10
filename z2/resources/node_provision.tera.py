@@ -282,7 +282,6 @@ metrics:
       - agent.googleapis.com/network/*
       - agent.googleapis.com/swap/*
       - agent.googleapis.com/pagefile/*
-      - agent.googleapis.com/processes/*
   service:
     log_level: info
     pipelines:
