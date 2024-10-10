@@ -29,92 +29,21 @@ moderately simple and recently maintained.
 
 ## A block store
 
-The block store is implemented in `block_store.rs`. It contains:
+The block store is implemented in `block_store.rs` - see that file for
+details; the block store is responsible for providing access to the
+blocks requested by the rest of the system.
 
- * A buffered block cache.
- * The highest confirmed view (the view at the head of the chain) and
-   the highest known view (the most recent view any node has alleged
-   exists)
- * Some configuration parameters
- * This node's available blocks - those it has stored for transmission
-   to other nodes - and the last time this was updated.
- * A list of `unserviceable_request` - requests this block wanted to
-   send, but couldn't because no other node advertised that they had
-   them available.
-
-## A buffered block cache
-
-This stores:
-
- * A cache of the oldest proposal sent to it (`cache`)
- * A cache of the newest propossals sent to it (`tail`)
- * A list of gaps in proposals sent to it (`empty_view_ranges`)
- * An index of parent hash -> block.
-
-When a proposal comes in, it is sorted in to `cache` and `tail` -
-`tail` exists so that we don't end up in a mess when we are nearly
-synced, constantly asking for blocks near the head only to find that,
-by the time we have recieved them, the head has moved on. It should
-really be called `head`.
-
-On a tick, `trim()` is called, which trims the cache contents back by
-discarding the end of `cache` (the most recent blocks received - these
-are the ones we're least likely to add to our growing head of chain
-soon) and the beginning of `tail` (these are the ones that are least
-likely to be recent soon).
-
-We also discard any view ranges or blocks that are behind the head of
-our canonical chain (we'll never need them).
-
+To do so, it contains mechanisms to request blocks and to cache blocks
+which it may one day be able to prove are part of the canonical chain.
 
 ## A tick hook
 
-This is in `node_launcher.rs`, and calls `consensus.rs` periodically to:
-
- - Send any requests it feels it needs to complete the chain.
- - Prune the buffered block cache (see later)
- - Repeatedly pull the next block in the chain (by hash), check its
-   integrity, and add it to the node's current view of the canonical
-   chain if it checks out.
+This is in `node_launcher.rs`, and calls `consensus.rs` periodically to
+drive the block fetching state machine.
 
 ## A block store
 
 This is held in `block_store.rs`
-
-The fundamental ops are
-
-### `request_missing_blocks()`
-
-Which
-
- - Looks through the blocks we have
- - Finds the next blocks it thinks we need
- - Iterates through our known peers.
-
-If we don't have availability for a peer, we will request it by
-sending an empty block request.
-
-If we do, we will try to request whatever blocks it has that we want.
-
-We limit the number of outstanding requests per peer, in order to
-avoid bufferbloat at the peer's input message queue.
-
-We don't ask for blocks that we think are in flight (ie. we've
-requested them but they have not yet arrived), those we don't think a
-peer has, or those we think are gaps (remember that requests are made
-by view, so you can't guarantee that every view has a block).
-
-We time out outstanding requests on a flat-timeout basis (our model
-being that if you haven't replied by now, the whole message has
-probably been lost).
-
-### `process_block()`
-
-Which, called originally from `tick()`, given a block, will attempt to
-process it. If it succeeded, it will try to retrieve the next block
-from the cache and send a `ProcessProposal` message to process it.
-
-We do this to avoid blocking `tick()` for too long.
 
 ## Block arrival
 

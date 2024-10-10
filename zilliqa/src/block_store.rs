@@ -646,6 +646,28 @@ impl BlockStore {
         Ok(())
     }
 
+    /// This function:
+    ///
+    ///     - Looks through the blocks we have
+    ///     - Finds the next blocks it thinks we need
+    ///     - Iterates through our known peers.
+    ///
+    /// If we don't have availability for a peer, we will request it by
+    /// sending an empty block request.
+    ///
+    /// If we do, we will try to request whatever blocks it has that we want.
+    ///
+    /// We limit the number of outstanding requests per peer, in order to
+    /// avoid bufferbloat at the peer's input message queue.
+    ///
+    /// We don't ask for blocks that we think are in flight (ie. we've
+    /// requested them but they have not yet arrived), those we don't think a
+    /// peer has, or those we think are gaps (remember that requests are made
+    /// by view, so you can't guarantee that every view has a block).
+    ///
+    /// We time out outstanding requests on a flat-timeout basis (our model
+    /// being that if you haven't replied by now, the whole message has
+    /// probably been lost).
     /// Returns whether this function thinks we are syncing or not.
     pub fn request_missing_blocks(&mut self) -> Result<bool> {
         // Get the highest view we currently have committed to our chain.
@@ -950,9 +972,14 @@ impl BlockStore {
         self.db.get_canonical_block_by_number(number)
     }
 
-    // If we get here, we have discovered a block that checks out and thus can be
-    // added to the chain. Add it and then see if we have any more blocks in the
-    // cache which we can add.
+    /// Called to process a block which can be added to the chain.
+    ///   - insert the block into any necessary databases
+    ///   - update the highest known and confirmed views, if necessary,
+    ///   - Return a list of proposals that can now be made part of the chain, removing
+    ///     them from the cache to free up space as we do so.
+    ///
+    /// The caller should arrange to process the returned list asynchronously to avoid
+    /// blocking message processing for too long.
     pub fn process_block(
         &mut self,
         from: Option<PeerId>,
