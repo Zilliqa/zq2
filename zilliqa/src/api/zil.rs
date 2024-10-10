@@ -624,8 +624,7 @@ pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlo
     let num_tx_blocks = node.get_chain_tip();
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
     let max_pages = num_ds_blocks / 10;
-    let page_requested: String = params.one()?;
-    let page_requested: u64 = page_requested.parse()?;
+    let page_requested: u64 = params.one()?;
 
     let base_blocknum = page_requested * 10;
     let end_blocknum = num_ds_blocks.min(base_blocknum + 10);
