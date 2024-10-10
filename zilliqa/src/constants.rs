@@ -1,5 +1,7 @@
 use crate::transaction::EvmGas;
 
+use std::time::Duration;
+
 // How big data slot a transaction can use
 pub const EVM_TX_SLOT_IN_BYTES: usize = 32 * 1024;
 
@@ -28,10 +30,10 @@ pub const ZIL_CONTRACT_CREATE_GAS: usize = 50;
 pub const ZIL_NORMAL_TXN_GAS: usize = 50;
 
 // Recompute available blocks after this many seconds
-pub const RECOMPUTE_BLOCK_AVAILABILITY_AFTER_S: u64 = 2;
+pub const RECOMPUTE_BLOCK_AVAILABILITY_AFTER: Duration = Duration::from_secs(2);
 
 // Maximum rate at which to send availability requests
-pub const REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE_MS: u64 = 1000;
+pub const REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE: Duration = Duration::from_millis(1000);
 
 // We assume that every node has the last ALWAYS_RETAIN_LAST_N_BLOCKS blocks, otherwise
 // it's hard ever to catch up. Set this too large and syncing will be hard because we will
@@ -43,7 +45,7 @@ pub const RETAINS_LAST_N_BLOCKS: u64 = 10;
 
 // WARNING: these must be at least 1000*max_blocks_in_flight.
 // All requests get this number of ms.
-pub const BLOCK_REQUEST_RESPONSE_TIMEOUT_MIN_MS: u64 = 4000;
+pub const BLOCK_REQUEST_RESPONSE_TIMEOUT_MIN: Duration = Duration::from_millis(4000);
 
 // log2 of the number of ways in the block cache. Max 8.
 pub const BLOCK_CACHE_LOG2_WAYS: usize = 4;
