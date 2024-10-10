@@ -854,7 +854,8 @@ impl BlockStore {
                         continue;
                     }
 
-                    if peer_info.pending_requests.len() >= constants::MAX_PENDING_REQUESTS_PER_PEER
+                    if peer_info.pending_requests.len()
+                        >= constants::MAX_PENDING_BLOCK_REQUESTS_PER_PEER
                     {
                         trace!(
                             ".. Skipping peer {peer} - too many pending requests {0}",
@@ -863,8 +864,8 @@ impl BlockStore {
                         continue;
                     }
                     // Split ..
-                    let left =
-                        constants::MAX_PENDING_REQUESTS_PER_PEER - peer_info.pending_requests.len();
+                    let left = constants::MAX_PENDING_BLOCK_REQUESTS_PER_PEER
+                        - peer_info.pending_requests.len();
                     let ranges = peer_info.get_ranges(to);
                     debug!("I want {remain:?} ({remain}) peer has ranges {ranges:?} ({ranges})");
                     let (req, rem) = remain.diff_inter_limited(&ranges, Some(left));
