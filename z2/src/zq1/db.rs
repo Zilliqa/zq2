@@ -107,10 +107,6 @@ impl DB for StateDatabase {
 
         Ok(())
     }
-
-    fn flush(&self) -> Result<(), Self::Error> {
-        Ok(())
-    }
 }
 
 pub struct Db {
