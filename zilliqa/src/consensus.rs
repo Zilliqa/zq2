@@ -2250,7 +2250,7 @@ impl Consensus {
     }
 
     // Receives availability and passes it on to the block store.
-    pub fn receive_availability(
+    pub fn receive_block_availability(
         &mut self,
         from: PeerId,
         availability: &Option<Vec<BlockStrategy>>,
@@ -2893,6 +2893,8 @@ impl Consensus {
     pub fn tick(&mut self) -> Result<()> {
         trace!("consensus::tick()");
         trace!("request_missing_blocks from timer");
+
+        // Drives the block fetching state machine - see docs/fetching_blocks.md
         if self.block_store.request_missing_blocks()? {
             // We're syncing..
             // Is it likely that the next thing in the buffer could be the next block?
