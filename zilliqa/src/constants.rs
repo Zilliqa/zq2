@@ -1,6 +1,6 @@
-use crate::transaction::EvmGas;
-
 use std::time::Duration;
+
+use crate::transaction::EvmGas;
 
 // How big data slot a transaction can use
 pub const EVM_TX_SLOT_IN_BYTES: usize = 32 * 1024;
