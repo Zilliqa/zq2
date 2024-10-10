@@ -39,6 +39,11 @@ pub const REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE: Duration = Duration::from_m
 // it's hard ever to catch up. Set this too large and syncing will be hard because we will
 // keep asking recently started nodes for blocks they don't have. Set it too small and
 // it will be hard because we'll need to keep waiting for availability.
+// Set to 10 because this is small enough that the statement is usually true (almost every node
+// will have the last 10 blocks), but large enough that we can realistically fetch blocks
+// near the head (set this to 1, for example, and we will loop requesting availability - at
+// least until proposal broadcasts save us - see the comment at the top of block_cache.rs for
+// details).
 pub const RETAINS_LAST_N_BLOCKS: u64 = 10;
 
 // How long do we wait before retrying a request to a peer?
@@ -55,7 +60,7 @@ pub const BLOCK_CACHE_LOG2_WAYS: usize = 4;
 pub const BLOCK_CACHE_HEAD_BUFFER_ENTRIES: usize = 16;
 
 /// Max pending requests per peer
-pub const MAX_PENDING_REQUESTS_PER_PEER: usize = 4;
+pub const MAX_PENDING_BLOCK_REQUESTS_PER_PEER: usize = 4;
 
 /// Number of previous blocks to examine at each level of fork counter. Should be
 /// set small enough to avoid serious database load, but large enough to jump any
