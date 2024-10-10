@@ -997,6 +997,8 @@ impl Consensus {
         if !cosigned[index] {
             signatures.push(vote.signature());
             cosigned.set(index, true);
+            // Update state to root pointed by voted block (in meantime it might have changed!)
+            self.state.set_to_root(block.state_root_hash().into());
             let Some(weight) = self.state.get_stake(vote.public_key)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
@@ -1109,6 +1111,8 @@ impl Consensus {
             return Ok(None);
         };
 
+        state.set_to_root(proposal.state_root_hash().into());
+
         // Compute the majority QC
         let qc = self.qc_from_bits(parent_block_hash, signatures, *cosigned, parent_block_view);
 
@@ -1120,8 +1124,6 @@ impl Consensus {
             .public_key;
 
         // Apply the rewards when exiting the round
-        let previous_state_root_hash = state.root_hash()?;
-        state.set_to_root(proposal.state_root_hash().into()); // proposal late state to apply rewards
         Self::apply_rewards_late_at(
             parent_block.state_root_hash(),
             state,
@@ -1158,7 +1160,7 @@ impl Consensus {
             proposal.header.gas_limit,
         );
 
-        state.set_to_root(previous_state_root_hash.into());
+        state.set_to_root(parent_block.state_root_hash().into());
 
         // Return the final proposal
         Ok(Some(proposal))
@@ -1302,9 +1304,6 @@ impl Consensus {
             executed_block_header.gas_limit - gas_left,
             executed_block_header.gas_limit,
         );
-
-        // Restore the state to previous sane state
-        state.set_to_root(previous_state_root_hash.into());
 
         // as a future improvement, process the proposal before broadcasting it
         trace!(proposal_hash = ?proposal.hash(), ?proposal.header.view, ?proposal.header.number, "######### proposing early block");
@@ -2615,26 +2614,15 @@ impl Consensus {
             verified_txns.push(txn);
         }
 
-        let transaction_hashes = verified_txns
-            .iter()
-            .map(|tx| format!("{:?}", tx.hash))
-            .join(",");
-
-        self.apply_rewards(committee, &parent, block.view(), &block.header.qc.cosigned)?;
-
-        // ZIP-9: Sink gas to zero account
-        self.state.mutate_account(Address::ZERO, |a| {
-            a.balance = a
-                .balance
-                .checked_add(block.gas_used().0 as u128)
-                .ok_or(anyhow!("Overflow occured in zero account balance"))?;
-            Ok(())
-        })?;
-
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+
+        let transaction_hashes = verified_txns
+            .iter()
+            .map(|tx| format!("{:?}", tx.hash))
+            .join(",");
 
         for (tx_index, txn) in verified_txns.into_iter().enumerate() {
             self.new_transaction(txn.clone())?;
@@ -2695,6 +2683,28 @@ impl Consensus {
             );
             return Ok(());
         }
+
+        // Apply rewards before executing transactions because some of the committee members may be removed and rewards can't be applied then!
+        let proposer = self.leader_at_block(&parent, block.view()).unwrap();
+        let config = &self.config.consensus;
+        Self::apply_rewards_late_at(
+            parent.state_root_hash(),
+            &mut self.state,
+            config,
+            committee,
+            proposer.public_key,
+            block.view(),
+            &block.header.qc.cosigned,
+        )?;
+
+        // ZIP-9: Sink gas to zero account
+        self.state.mutate_account(Address::ZERO, |a| {
+            a.balance = a
+                .balance
+                .checked_add(block.gas_used().0 as u128)
+                .ok_or(anyhow!("Overflow occured in zero account balance"))?;
+            Ok(())
+        })?;
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(
