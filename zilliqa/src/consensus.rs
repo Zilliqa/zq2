@@ -1048,7 +1048,7 @@ impl Consensus {
             );
         }
 
-        // Either way assemble early proposal now
+        // Either way assemble early proposal now if it doesnt already exist
         let mut state = self.state.clone();
         self.assemble_early_block_at(&mut state)?;
         self.state = state;
@@ -1144,7 +1144,9 @@ impl Consensus {
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
     fn assemble_early_block_at(&mut self, state: &mut State) -> Result<()> {
-        if self.early_proposal.is_some() {
+        if self.early_proposal.is_some()
+            && self.early_proposal.as_ref().unwrap().0.view() == self.view()
+        {
             return Ok(());
         }
         info!("assemble early proposal for view {}", self.view.get_view());
@@ -1338,15 +1340,10 @@ impl Consensus {
     }
 
     fn add_agg_qc_to_early_block(&mut self, agg: &AggregateQc) -> Result<()> {
-        if self.early_proposal.is_none() {
-            trace!(
-                "missing early proposal when adding aggQC for view {}. Creating",
-                self.view.get_view()
-            );
-            let mut state = self.state.clone();
-            self.assemble_early_block_at(&mut state)?;
-            self.state = state;
-        }
+        // We expect early_proposal to exist already but try create incase it doesn't
+        let mut state = self.state.clone();
+        self.assemble_early_block_at(&mut state)?;
+        self.state = state;
 
         let qc = self.get_highest_from_agg(agg)?;
 
@@ -1372,12 +1369,10 @@ impl Consensus {
             return self.propose_new_block();
         }
 
-        // We expect early_proposal to exist already but create incase it doesn't
-        if self.early_proposal.is_none() {
-            let mut state = self.state.clone();
-            self.assemble_early_block_at(&mut state)?;
-            self.state = state;
-        }
+        // We expect early_proposal to exist already but try create incase it doesn't
+        let mut state = self.state.clone();
+        self.assemble_early_block_at(&mut state)?;
+        self.state = state;
 
         // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
         // the last view change. At this point we should be ready to produce a new block.
@@ -1524,10 +1519,8 @@ impl Consensus {
     fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         let mut state = self.state.clone();
 
-        if self.early_proposal.is_none() {
-            trace!("missing early proposal {}", self.view.get_view());
-            self.assemble_early_block_at(&mut state)?;
-        }
+        // We expect early_proposal to exist already but try create incase it doesn't
+        self.assemble_early_block_at(&mut state)?;
         let (pending_block, applied_txs, _, _) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
 
         // intershard transactions are not meant to be broadcast
@@ -1754,7 +1747,7 @@ impl Consensus {
             );
         }
 
-        // Either way assemble early proposal now
+        // Either way assemble early proposal now if it doesnt already exist
         let mut state = self.state.clone();
         self.assemble_early_block_at(&mut state)?;
         self.state = state;
