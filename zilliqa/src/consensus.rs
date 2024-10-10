@@ -158,7 +158,7 @@ pub struct Consensus {
     db: Arc<Db>,
     /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
-    /// Pending proposal
+    /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
     early_proposal: Option<EarlyProposal>,
     /// Flag indicating that block creation should be postponed due to empty mempool
     create_next_block_on_timeout: bool,
@@ -1039,29 +1039,7 @@ impl Consensus {
                     return self.propose_new_block();
                 }
 
-                // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
-                let (
-                    time_since_last_view_change,
-                    exponential_backoff_timeout,
-                    minimum_time_left_for_empty_block,
-                ) = self.get_consensus_timeout_params();
-
-                if time_since_last_view_change + minimum_time_left_for_empty_block
-                    >= exponential_backoff_timeout
-                {
-                    return self.propose_new_block();
-                }
-
-                // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
-                // the last view change. At this point we should be ready to produce a new block.
-                self.create_next_block_on_timeout = true;
-                self.reset_timeout.send(
-                    self.config
-                        .consensus
-                        .empty_block_timeout
-                        .saturating_sub(Duration::from_millis(time_since_last_view_change)),
-                )?;
-                trace!("will propose new block {} on timeout", self.view.get_view());
+                return self.ready_for_block_proposal();
             }
         } else {
             self.votes.insert(
@@ -1359,23 +1337,61 @@ impl Consensus {
         Ok(())
     }
 
-    fn add_agg_qc_to_early_block(
-        &mut self,
-        qc: &QuorumCertificate,
-        agg: &AggregateQc,
-    ) -> Result<()> {
+    fn add_agg_qc_to_early_block(&mut self, agg: &AggregateQc) -> Result<()> {
         if self.early_proposal.is_none() {
-            error!("could not apply qc and agg to early_proposal because it does not exist");
-            return Ok(());
+            trace!(
+                "missing early proposal when adding aggQC for view {}. Creating",
+                self.view.get_view()
+            );
+            let mut state = self.state.clone();
+            self.assemble_early_block_at(&mut state)?;
+            self.state = state;
         }
 
-        let (proposal, _, _, _) = self.early_proposal.as_mut().unwrap();
-        proposal.header.qc = qc.clone();
-        proposal.agg = Some(agg.clone());
+        let qc = self.get_highest_from_agg(agg)?;
 
+        let (proposal, _, _, _) = self.early_proposal.as_mut().unwrap();
+        proposal.header.qc = qc;
+        proposal.agg = Some(agg.clone());
         Ok(())
     }
 
+    /// Called when consensus will accept our early_block.
+    /// Either propose now or set timeout to allow for txs to come in.
+    fn ready_for_block_proposal(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+        // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
+        let (
+            time_since_last_view_change,
+            exponential_backoff_timeout,
+            minimum_time_left_for_empty_block,
+        ) = self.get_consensus_timeout_params();
+
+        if time_since_last_view_change + minimum_time_left_for_empty_block
+            >= exponential_backoff_timeout
+        {
+            return self.propose_new_block();
+        }
+
+        // We expect early_proposal to exist already but create incase it doesn't
+        if self.early_proposal.is_none() {
+            let mut state = self.state.clone();
+            self.assemble_early_block_at(&mut state)?;
+            self.state = state;
+        }
+
+        // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
+        // the last view change. At this point we should be ready to produce a new block.
+        self.create_next_block_on_timeout = true;
+        self.reset_timeout.send(
+            self.config
+                .consensus
+                .empty_block_timeout
+                .saturating_sub(Duration::from_millis(time_since_last_view_change)),
+        )?;
+        trace!("will propose new block {} on timeout", self.view.get_view());
+
+        Ok(None)
+    }
     /// Assembles a Pending block.
     fn assemble_pending_block_at(&self, state: &mut State) -> Result<Option<Block>> {
         // Start with highest canonical block
@@ -1707,53 +1723,19 @@ impl Consensus {
                 // if we are already in the round in which the vote counts and have reached supermajority we can propose a block
                 if new_view.view == self.view.get_view() {
                     // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
-                    let agg = self.aggregate_qc_from_indexes(
-                        new_view.view,
-                        qcs.clone(),
-                        &signatures,
-                        cosigned,
-                    )?;
-                    let high_qc = self.get_highest_from_agg(&agg)?;
-                    let parent_hash = high_qc.block_hash;
-                    let parent = self
-                        .get_block(&parent_hash)?
-                        .ok_or_else(|| anyhow!("missing block"))?;
+                    let agg =
+                        self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, cosigned)?;
 
                     trace!(
                         view = self.view.get_view(),
-                        height = parent.header.number + 1,
                         "######### creating proposal block from new view"
                     );
 
-                    //
-                    self.add_agg_qc_to_early_block(&high_qc, &agg)?;
-
-                    //TODOtomos pull out into fn
-                    // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
-                    let (
-                        time_since_last_view_change,
-                        exponential_backoff_timeout,
-                        minimum_time_left_for_empty_block,
-                    ) = self.get_consensus_timeout_params();
-
-                    if time_since_last_view_change + minimum_time_left_for_empty_block
-                        >= exponential_backoff_timeout
-                    {
-                        return self.propose_new_block();
-                    }
-
-                    // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
-                    // the last view change. At this point we should be ready to produce a new block.
-                    self.create_next_block_on_timeout = true;
-                    self.reset_timeout.send(
-                        self.config
-                            .consensus
-                            .empty_block_timeout
-                            .saturating_sub(Duration::from_millis(time_since_last_view_change)),
-                    )?;
-                    trace!("will propose new block {} on timeout", self.view.get_view());
+                    // We now have a valid aggQC so add to early_block
+                    self.add_agg_qc_to_early_block(&agg)?;
 
                     // as a future improvement, process the proposal before broadcasting it
+                    return self.ready_for_block_proposal();
 
                     // we don't want to keep the collected votes if we proposed a new block
                     // we should remove the collected votes if we couldn't reach supermajority within the view
@@ -1773,7 +1755,6 @@ impl Consensus {
         }
 
         // Either way assemble early proposal now
-        // TODOtomos remove this state clone
         let mut state = self.state.clone();
         self.assemble_early_block_at(&mut state)?;
         self.state = state;
