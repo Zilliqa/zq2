@@ -38,7 +38,7 @@ clap = { version = "4.5.20", features = ["derive"] }
 crypto-bigint = "=0.5.5"
 eth_trie = {path =  "../eth-trie.rs"}
 ethabi = "18.0.0"
-futures = "0.3.30"
+futures = "0.3.31"
 hex = { version = "0.4.3", features = ["serde"] }
 http = "1.1.0"
 hyper = "1.4.1"
