@@ -839,7 +839,6 @@ impl Db {
     }
 
     /// Forget about a range of blocks; this saves space, but also allows us to test our block fetch algorithm.
-    /// If canonical is true, we'll forget the canonical block mappings for this range too - uses less space, but not so good for security.
     pub fn forget_block_range(&self, blocks: Range<u64>) -> Result<()> {
         self.with_sqlite_tx(move |tx| {
             // Remove everything!
@@ -847,7 +846,6 @@ impl Db {
                        named_params! {
                            ":low" : blocks.start,
                            ":high" : blocks.end } )?;
-            // @TODO can't yet remove transactions - we don't know the hashes.
             tx.execute("DELETE FROM receipts WHERE block_hash IN (SELECT block_hash FROM blocks WHERE height >= :low AND height < :high)",
                        named_params! {
                            ":low": blocks.start,
