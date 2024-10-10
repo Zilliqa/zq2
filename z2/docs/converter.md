@@ -29,7 +29,7 @@
 
   cat > config.toml <<-EOF
 p2p_port = 3333
-bootstrap_address = [ "12D3KooWNYaasyfY1wFrSHga3WBdZkb7bGhQiUz9926bQvk4HQj2", "/ip4/10.40.5.16/tcp/3333" ]
+bootstrap_address = [ "12D3KooWNYaasyfY1wFrSHga3WBdZkb7bGhQiUz9926bQvk4HQj2", "/ip4/10.40.5.16/udp/3333/quic-v1" ]
 
 [[nodes]]
 eth_chain_id = 33101 # change the chain it for your conversion
