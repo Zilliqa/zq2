@@ -235,6 +235,7 @@ impl P2pNode {
             self.swarm.dial(
                 DialOpts::peer_id(*peer)
                     .addresses(vec![address.clone()])
+                    .override_role() // triggers hole-punching
                     .build(),
             )?;
             self.swarm
