@@ -600,7 +600,7 @@ impl BlockStore {
         let now = SystemTime::now();
         if self.available_blocks_updated.map_or(true, |x| {
             now.duration_since(x).unwrap_or(Duration::ZERO)
-                > Duration::from_secs(constants::RECOMPUTE_BLOCK_AVAILABILITY_AFTER_S)
+                > constants::RECOMPUTE_BLOCK_AVAILABILITY_AFTER
         }) {
             debug!("Updating available views");
             self.available_blocks = self
@@ -742,7 +742,7 @@ impl BlockStore {
     pub fn prune_pending_requests(&mut self) -> Result<()> {
         // In the good old days, we could've done this by linear interpolation on the timestamp.
         let current_time = SystemTime::now();
-        let min_timeout_us = 1000 * constants::BLOCK_REQUEST_RESPONSE_TIMEOUT_MIN_MS;
+        let min_timeout_us = 1000 * constants::BLOCK_REQUEST_RESPONSE_TIMEOUT_MIN;
         for peer in self.peers.keys().cloned().collect::<Vec<PeerId>>() {
             let the_peer = self.peer_info(peer);
             the_peer.pending_requests = the_peer
@@ -752,8 +752,7 @@ impl BlockStore {
                     // How long since this request was sent?
                     match current_time.duration_since(*v1) {
                         Ok(since) => {
-                            let us = since.as_micros();
-                            if us > u128::from(min_timeout_us) {
+                            if since > min_timeout_us {
                                 // Time out everything.
                                 trace!("Timing out pending request {k:?} {v1:?} {v2} {v3}");
                                 None
@@ -878,9 +877,7 @@ impl BlockStore {
                             || peer_info.availability_requested_at.map_or(true, |x| {
                                 x.elapsed()
                                     .map(|v| {
-                                        v > Duration::from_millis(
-                                            constants::REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE_MS,
-                                        )
+                                        v > constants::REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE
                                     })
                                     .unwrap_or(true)
                             }));
