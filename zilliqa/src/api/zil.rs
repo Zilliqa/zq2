@@ -31,6 +31,7 @@ use crate::{
     api::types::zil::{CreateTransactionResponse, GetTxResponse, RPCErrorCode},
     crypto::Hash,
     exec::zil_contract_address,
+    message::Block,
     node::Node,
     schnorr,
     scilla::split_storage_key,
@@ -79,6 +80,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 "GetTransactionsForTxBlockEx",
                 get_transactions_for_tx_block_ex
             ),
+            ("GetTxnBodiesForTxBlock", get_txn_bodies_for_tx_block),
             ("GetTxnBodiesForTxBlockEx", get_txn_bodies_for_tx_block_ex),
             ("GetNumDSBlocks", get_num_ds_blocks),
             ("GetRecentTransactions", get_recent_transactions),
@@ -780,42 +782,9 @@ fn get_transactions_for_tx_block_ex(
     })
 }
 
-fn get_txn_bodies_for_tx_block_ex(
-    params: Params,
-    node: &Arc<Mutex<Node>>,
-) -> Result<TxnBodiesForTxBlockExResponse> {
-    let params: Vec<String> = params.parse()?;
-    let block_number: u64 = params[0].parse()?;
-    let page_number: usize = params[1].parse()?;
-
-    let node = node.lock().expect("Failed to acquire lock on node");
-    let block = node
-        .get_block(block_number)?
-        .ok_or_else(|| anyhow!("Block not found"))?;
-
-    let total_transactions = block.transactions.len();
-    let num_pages = (total_transactions / TRANSACTIONS_PER_PAGE)
-        + (if total_transactions % TRANSACTIONS_PER_PAGE != 0 {
-            1
-        } else {
-            0
-        });
-
-    // Ensure page is within bounds
-    if page_number >= num_pages {
-        return Ok(TxnBodiesForTxBlockExResponse {
-            curr_page: page_number as u64,
-            num_pages: num_pages as u64,
-            transactions: vec![],
-        });
-    }
-
-    let start = std::cmp::min(page_number * TRANSACTIONS_PER_PAGE, total_transactions);
-
-    let end = std::cmp::min(start + TRANSACTIONS_PER_PAGE, total_transactions);
-
-    let mut transactions = Vec::with_capacity(end - start);
-    for hash in &block.transactions[start..end] {
+fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<TransactionBody>> {
+    let mut transactions = Vec::with_capacity(block.transactions.len());
+    for hash in &block.transactions {
         let tx = node
             .get_transaction_by_hash(*hash)?
             .ok_or(anyhow!("Transaction hash missing"))?;
@@ -888,6 +857,62 @@ fn get_txn_bodies_for_tx_block_ex(
         };
         transactions.push(body);
     }
+    Ok(transactions)
+}
+
+fn get_txn_bodies_for_tx_block(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Vec<TransactionBody>> {
+    let params: Vec<String> = params.parse()?;
+    let block_number: u64 = params[0].parse()?;
+
+    let node = node.lock().expect("Failed to acquire lock on node");
+    let block = node
+        .get_block(block_number)?
+        .ok_or_else(|| anyhow!("Block not found"))?;
+
+    extract_transaction_bodies(&block, &node)
+}
+
+fn get_txn_bodies_for_tx_block_ex(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<TxnBodiesForTxBlockExResponse> {
+    let params: Vec<String> = params.parse()?;
+    let block_number: u64 = params[0].parse()?;
+    let page_number: usize = params[1].parse()?;
+
+    let node = node.lock().expect("Failed to acquire lock on node");
+    let block = node
+        .get_block(block_number)?
+        .ok_or_else(|| anyhow!("Block not found"))?;
+
+    let total_transactions = block.transactions.len();
+    let num_pages = (total_transactions / TRANSACTIONS_PER_PAGE)
+        + (if total_transactions % TRANSACTIONS_PER_PAGE != 0 {
+            1
+        } else {
+            0
+        });
+
+    // Ensure page is within bounds
+    if page_number >= num_pages {
+        return Ok(TxnBodiesForTxBlockExResponse {
+            curr_page: page_number as u64,
+            num_pages: num_pages as u64,
+            transactions: vec![],
+        });
+    }
+
+    let start = std::cmp::min(page_number * TRANSACTIONS_PER_PAGE, total_transactions);
+    let end = std::cmp::min(start + TRANSACTIONS_PER_PAGE, total_transactions);
+
+    let transactions = extract_transaction_bodies(&block, &node)?
+        .into_iter()
+        .skip(start)
+        .take(end - start)
+        .collect();
 
     Ok(TxnBodiesForTxBlockExResponse {
         curr_page: page_number as u64,
