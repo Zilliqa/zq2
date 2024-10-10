@@ -2786,6 +2786,8 @@ impl Consensus {
             })?;
         }
 
+        self.db.mark_block_as_canonical(block.hash())?;
+
         // Tell the block store to request more blocks if it can.
         self.block_store.request_missing_blocks()?;
         Ok(())
