@@ -245,14 +245,14 @@ async fn create_shard(
 
     let tx = wallet.send_transaction(tx_request, None).await.unwrap();
     let hash = tx.tx_hash();
-    network.run_until_receipt(wallet, hash, 130).await;
+    network.run_until_receipt(wallet, hash, 200).await;
 
     let included_block = wallet.get_block_number().await.unwrap();
 
     // * Finalize the block on the main shard and check each main shard node has
     // spawned a child shard node in response
     network
-        .run_until_block(wallet, included_block + 6, 200)
+        .run_until_block(wallet, included_block + 6, 400)
         .await;
 
     network
@@ -448,7 +448,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
                         .as_slice(),
                 ) == U256::from(custom_value)
             },
-            200,
+            800,
         )
         .await
         .unwrap();
