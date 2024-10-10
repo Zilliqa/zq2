@@ -87,4 +87,3 @@ This is theoretically fixable and we should one day - but I've not
 done it today because long forks in Zilliqa 2 are not envisioned and
 it would be hard both to write and to test.
 
-
