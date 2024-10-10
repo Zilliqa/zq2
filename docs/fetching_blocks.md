@@ -19,7 +19,9 @@ This operation is complicated because:
 As a result, the code for fetching blocks to complete our view of the
 chain is somewhat complex. It consists of:
 
-For essentially historical reasons, blocks are fetched by view, not block number.
+Blocks are fetched by view, not block number; it's important to keep
+these distinct - there may be many blocks with block number 5, but
+only one view.
 
 ## A range map implementation
 
