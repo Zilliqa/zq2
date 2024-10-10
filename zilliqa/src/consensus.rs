@@ -2733,7 +2733,7 @@ impl Consensus {
             return Ok(());
         }
 
-        // Apply rewards before executing transactions because some of the committee members may be removed and rewards can't be applied then!
+        // Apply rewards after executing transactions but with the committee members from the previous block
         let proposer = self.leader_at_block(&parent, block.view()).unwrap();
         let config = &self.config.consensus;
         Self::apply_rewards_late_at(
