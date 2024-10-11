@@ -144,7 +144,6 @@ contract Deposit {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
         require(signature.length == 96);
-        require(signerAddress != address(0));
 
         require(_stakerKeys.length < _maximumStakers, "too many stakers");
 
