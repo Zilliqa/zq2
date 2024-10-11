@@ -160,7 +160,7 @@ pub struct Consensus {
     transaction_pool: TransactionPool,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
     early_proposal: Option<EarlyProposal>,
-    /// Flag indicating that block creation should be postponed due to empty mempool
+    /// Flag indicating that block creation should be postponed at least until empty_block_timeout is reached
     create_next_block_on_timeout: bool,
     pub new_blocks: broadcast::Sender<BlockHeader>,
     pub receipts: broadcast::Sender<(TransactionReceipt, usize)>,
@@ -403,16 +403,13 @@ impl Consensus {
             return Ok(None);
         }
 
-        let head_block = self.head_block();
-        let head_block_view = head_block.view();
-
         let (
             time_since_last_view_change,
             exponential_backoff_timeout,
             minimum_time_left_for_empty_block,
         ) = self.get_consensus_timeout_params();
 
-        if head_block_view + 1 == self.view.get_view() && self.create_next_block_on_timeout {
+        if self.create_next_block_on_timeout {
             let empty_block_timeout_ms =
                 self.config.consensus.empty_block_timeout.as_millis() as u64;
 
@@ -453,7 +450,7 @@ impl Consensus {
             return Ok(None);
         }
 
-        trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", self.view.get_view(), time_since_last_view_change, exponential_backoff_timeout, self.high_qc.view, head_block.hash());
+        trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", self.view.get_view(), time_since_last_view_change, exponential_backoff_timeout, self.high_qc.view, self.head_block().hash());
 
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
             anyhow!("missing block corresponding to our high qc - this should never happen")
@@ -684,6 +681,7 @@ impl Consensus {
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader_at_block(&block, self.view.get_view());
                 self.create_next_block_on_timeout = false;
+                self.early_proposal = None;
 
                 let Some(next_leader) = next_leader else {
                     warn!("Next leader is currently not reachable, has it joined committee yet?");
@@ -713,7 +711,8 @@ impl Consensus {
 
     /// Note that the algorithm below is mentioned in cfg.rs - if you change the way
     /// rewards are calculated, please change the comments in the configuration structure there.
-    fn apply_rewards(
+    /// TODOtomos use or remove
+    pub fn apply_rewards(
         &mut self,
         committee: &[NodePublicKey],
         parent_block: &Block,
@@ -1050,7 +1049,7 @@ impl Consensus {
 
         // Either way assemble early proposal now if it doesnt already exist
         let mut state = self.state.clone();
-        self.early_proposal_assemble_at(&mut state)?;
+        self.early_proposal_assemble_at(&mut state, None)?;
         self.state = state;
 
         Ok(None)
@@ -1082,6 +1081,8 @@ impl Consensus {
             warn!("tried to finalise a proposal without majority");
             return Ok(None);
         };
+
+        state.set_to_root(proposal.state_root_hash().into());
 
         // Compute the majority QC. If aggQC exists then QC is already set to correct value.
         let final_qc = match proposal.agg {
@@ -1143,7 +1144,11 @@ impl Consensus {
     /// Assembles the Proposal block early.
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
-    fn early_proposal_assemble_at(&mut self, state: &mut State) -> Result<()> {
+    fn early_proposal_assemble_at(
+        &mut self,
+        state: &mut State,
+        agg: Option<AggregateQc>,
+    ) -> Result<()> {
         if self.early_proposal.is_some()
             && self.early_proposal.as_ref().unwrap().0.view() == self.view()
         {
@@ -1160,11 +1165,16 @@ impl Consensus {
             .get_block_by_number(num)?
             .context("missing canonical block")?; // retrieve highest canonical block
 
-        // Generate early QC
-        let qc = QuorumCertificate::new_with_identity(block.hash(), block.view());
+        // Generate early QC or use from aggQC if provided
+        let qc = match agg {
+            None => QuorumCertificate::new_with_identity(block.hash(), block.view()),
+            Some(ref agg) => self.get_highest_from_agg(agg)?,
+        };
+
         let parent = self
             .get_block(&qc.block_hash)?
-            .context("missing parent block")?;
+            .ok_or_else(|| anyhow!("missing block"))?;
+        info!("parent block number: {}", parent.header.number);
 
         // Ensure sane state
         let previous_state_root_hash = state.root_hash()?;
@@ -1203,7 +1213,7 @@ impl Consensus {
             executed_block_header.view,
             executed_block_header.number,
             qc, // dummy QC for early proposal
-            None,
+            agg,
             state.root_hash()?, // late state before rewards are applied
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
@@ -1213,7 +1223,7 @@ impl Consensus {
             executed_block_header.gas_limit,
         );
 
-        // Set early_block
+        // Set early_proposal
         self.early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie));
 
         // Apply ready transactions in the mempool
@@ -1231,11 +1241,6 @@ impl Consensus {
         }
 
         let proposal = self.early_proposal.as_ref().unwrap().0.clone();
-        trace!(
-            "apply transactions to proposal view {} block {}",
-            self.view.get_view(),
-            proposal.header.hash
-        );
 
         // Internal states
         state.set_to_root(proposal.state_root_hash().into());
@@ -1323,8 +1328,9 @@ impl Consensus {
 
             let applied_transaction_hashes = applied_txs.iter().map(|tx| tx.hash).collect_vec();
             trace!(
-                "applied {} transactions to early block",
-                tx_index_in_block - proposal.transactions.len()
+                "applied {} transactions to early block for view {}",
+                tx_index_in_block - proposal.transactions.len(),
+                proposal.header.view
             );
 
             // Update proposal with transactions added
@@ -1336,20 +1342,6 @@ impl Consensus {
         }
 
         // as a future improvement, process the proposal before broadcasting it
-        Ok(())
-    }
-
-    fn early_proposal_add_agg_qc(&mut self, agg: &AggregateQc) -> Result<()> {
-        // We expect early_proposal to exist already but try create incase it doesn't
-        let mut state = self.state.clone();
-        self.early_proposal_assemble_at(&mut state)?;
-        self.state = state;
-
-        let qc = self.get_highest_from_agg(agg)?;
-
-        let (proposal, _, _, _) = self.early_proposal.as_mut().unwrap();
-        proposal.header.qc = qc;
-        proposal.agg = Some(agg.clone());
         Ok(())
     }
 
@@ -1371,7 +1363,7 @@ impl Consensus {
 
         // We expect early_proposal to exist already but try create incase it doesn't
         let mut state = self.state.clone();
-        self.early_proposal_assemble_at(&mut state)?;
+        self.early_proposal_assemble_at(&mut state, None)?;
         self.state = state;
 
         // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
@@ -1383,7 +1375,10 @@ impl Consensus {
                 .empty_block_timeout
                 .saturating_sub(Duration::from_millis(time_since_last_view_change)),
         )?;
-        trace!("will propose new block {} on timeout", self.view.get_view());
+        trace!(
+            "will propose new proposal on timeout for view {}",
+            self.view.get_view()
+        );
 
         Ok(None)
     }
@@ -1520,7 +1515,7 @@ impl Consensus {
         let mut state = self.state.clone();
 
         // We expect early_proposal to exist already but try create incase it doesn't
-        self.early_proposal_assemble_at(&mut state)?;
+        self.early_proposal_assemble_at(&mut state, None)?;
         let (pending_block, applied_txs, _, _) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
 
         // intershard transactions are not meant to be broadcast
@@ -1724,8 +1719,10 @@ impl Consensus {
                         "######### creating proposal block from new view"
                     );
 
-                    // We now have a valid aggQC so add to early_block
-                    self.early_proposal_add_agg_qc(&agg)?;
+                    // We now have a valid aggQC so can create early_block with it
+                    let mut state = self.state.clone();
+                    self.early_proposal_assemble_at(&mut state, Some(agg))?;
+                    self.state = state;
 
                     // as a future improvement, process the proposal before broadcasting it
                     return self.ready_for_block_proposal();
@@ -1746,11 +1743,6 @@ impl Consensus {
                 },
             );
         }
-
-        // Either way assemble early proposal now if it doesnt already exist
-        let mut state = self.state.clone();
-        self.early_proposal_assemble_at(&mut state)?;
-        self.state = state;
 
         Ok(None)
     }
