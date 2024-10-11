@@ -233,7 +233,7 @@ pub struct ConsensusConfig {
     /// The initially staked deposits in the deposit contract at genesis, composed of
     /// (public key, peerId, amount, reward address) tuples.
     #[serde(default)]
-    pub genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)>,
+    pub genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address, Address)>,
     /// Accounts that will be pre-funded at genesis.
     #[serde(default)]
     pub genesis_accounts: Vec<(Address, Amount)>,
