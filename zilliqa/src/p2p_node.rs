@@ -214,11 +214,12 @@ impl P2pNode {
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        let mut addr: Multiaddr = "/ip4/0.0.0.0".parse().unwrap();
-        addr.push(Protocol::Udp(self.config.p2p_port));
-        addr.push(Protocol::QuicV1);
-
-        self.swarm.listen_on(addr)?;
+        self.swarm.listen_on(
+            Multiaddr::empty()
+                .with(Protocol::Ip4(std::net::Ipv4Addr::UNSPECIFIED))
+                .with(Protocol::Udp(self.config.p2p_port))
+                .with(Protocol::QuicV1),
+        )?;
 
         if let Some(bootstrap_address) = &self.config.bootstrap_address {
             self.swarm
@@ -234,6 +235,7 @@ impl P2pNode {
         if let Some((peer, address)) = &self.config.bootstrap_address {
             self.swarm.dial(
                 DialOpts::peer_id(*peer)
+                    .override_role() // hole-punch
                     .addresses(vec![address.clone()])
                     .build(),
             )?;
@@ -255,7 +257,7 @@ impl P2pNode {
                     debug!(?event, "swarm event");
                     match event {
                         SwarmEvent::NewListenAddr { address, .. } => {
-                            info!(%address, "started listening");
+                            info!(%address, "P2P swarm listening on");
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
                             for (peer_id, addr) in list {
